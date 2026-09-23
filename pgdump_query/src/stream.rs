@@ -2052,6 +2052,7 @@ fn prune_blocks(
     let bytes = matches.iter().map(|b| b.terminator_offset.saturating_sub(b.data_offset)).sum();
     let note = consulted.then_some(PlanNote {
         kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
+        levers: Vec::new(),
     });
     Pruned { kept, stops, note }
 }
@@ -2563,6 +2564,38 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanNote {
     pub kind: PlanNoteKind,
+    /// What a caller could change that would move what this note reports,
+    /// **for this source and this budget** — empty for a note naming no
+    /// budget. Computed where the plan reads the source's cost and the budget
+    /// it was carved, so a caller mapping each lever onto its own setting
+    /// names none that is inert here without re-deriving either
+    /// ([`PlanLever`]).
+    ///
+    /// **A subset of what the sentence names, never more**: the message
+    /// offers a lever wherever it can apply and says where it cannot, as
+    /// [`PlanNoteKind::ParallelismBudgetLimited`]'s does of the budget on a
+    /// plain source, while this lists only the ones that apply.
+    pub levers: Vec<PlanLever>,
+}
+
+/// One of the settings a caller holds that a [`PlanNote`] can name, in the
+/// library's vocabulary and in the order [`PlanNote::levers`] lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlanLever {
+    /// A larger resident allowance, carved as [`Parallelism::within`] carves
+    /// one — listed only where it would raise the budget the note quotes
+    /// ([`Parallelism::allowance_raises_budget`]), which on a source
+    /// recommending no per-reader cost stops at
+    /// `crate::io::DEFAULT_MEMORY_BUDGET`.
+    LargerAllowance,
+    /// A smaller read chunk (`crate::scan::ScanOptions::chunk_size_bytes`) —
+    /// listed only where the source sizes a reader from it
+    /// ([`crate::io::Partitioning::sized_by_read_chunk`]) or the plan charged
+    /// a batch span floored on it ([`derived_source_span`]).
+    SmallerReadChunk,
+    /// Fewer sub-streams asked for (`Parallelism::jobs`), which leaves each a
+    /// larger batch ([`PlanNoteKind::BatchSpanNarrowed`]).
+    FewerSubStreams,
 }
 
 /// What a [`PlanNote`] is about.
@@ -2652,6 +2685,17 @@ pub enum PlanNoteKind {
     /// deliberately not added: a plain `query` at the default budget already
     /// exceeds it once a batch's pin is counted. Never a reason to refuse
     /// anything.
+    ///
+    /// **It names its levers as its siblings do**: a larger memory budget
+    /// always, with their caveat that a larger allowance is not one on a
+    /// source recommending no per-reader cost (`KD32`), and a smaller read
+    /// chunk only where [`PlanNote::levers`] lists one — where the source
+    /// sizes a reader from the chunk and the budget is above zero, a budget of
+    /// zero being below every reader however small its chunk. On a plain
+    /// source the three arrangements differ: a zero budget moves with memory
+    /// alone, one between zero and a reader with memory or the chunk, and one
+    /// at `crate::io::DEFAULT_MEMORY_BUDGET` under a chunk past it with the
+    /// chunk alone.
     AllocationBelowFloor { unit_bytes: u64, memory_bytes: u64 },
     /// The batch span this query stated
     /// (`crate::batch::QueryOptions::max_source_span`) did not leave room for
@@ -2727,6 +2771,7 @@ impl PlanNote {
         max_block_uncompressed: u64,
         reader_bytes: u64,
         memory_bytes: u64,
+        allowance_raises: bool,
     ) -> Self {
         Self {
             kind: PlanNoteKind::CompressedBlockPathDeclined {
@@ -2735,11 +2780,20 @@ impl PlanNote {
                 reader_bytes,
                 memory_bytes,
             },
+            levers: levers(allowance_raises, false, false),
         }
     }
 
-    fn allocation_below_floor(unit_bytes: u64, memory_bytes: u64) -> Self {
-        Self { kind: PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } }
+    fn allocation_below_floor(
+        unit_bytes: u64,
+        memory_bytes: u64,
+        allowance_raises: bool,
+        chunk_sized: bool,
+    ) -> Self {
+        Self {
+            kind: PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes },
+            levers: levers(allowance_raises, chunk_sized && memory_bytes > 0, false),
+        }
     }
 
     fn batch_span_narrowed(
@@ -2747,6 +2801,7 @@ impl PlanNote {
         planned_bytes: u64,
         workers: usize,
         memory_bytes: u64,
+        allowance_raises: bool,
     ) -> Self {
         Self {
             kind: PlanNoteKind::BatchSpanNarrowed {
@@ -2755,6 +2810,7 @@ impl PlanNote {
                 workers,
                 memory_bytes,
             },
+            levers: levers(allowance_raises, false, true),
         }
     }
 
@@ -2764,6 +2820,8 @@ impl PlanNote {
         footprint: u64,
         max_source_span: Option<u64>,
         memory_bytes: u64,
+        allowance_raises: bool,
+        chunk_sized: bool,
     ) -> Self {
         Self {
             kind: PlanNoteKind::ParallelismBudgetLimited {
@@ -2773,6 +2831,8 @@ impl PlanNote {
                 max_source_span,
                 memory_bytes,
             },
+            // The span it charged is floored on the chunk wherever it fired.
+            levers: levers(allowance_raises, chunk_sized || max_source_span.is_some(), false),
         }
     }
 
@@ -2862,11 +2922,20 @@ impl Finding for PlanNote {
                  decoder and every backward read decodes forward from its block's start; raise \
                  the memory budget to {reader_bytes} byte(s) or more to read it a block at a time"
             ),
-            PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } => format!(
-                "a memory budget of {memory_bytes} byte(s) is less than the {unit_bytes} byte(s) \
-                 one reader of this source holds, so this runs at its one-slot floor whatever \
-                 concurrency is asked for"
-            ),
+            PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } => {
+                let chunk = if self.levers.contains(&PlanLever::SmallerReadChunk) {
+                    ", or a smaller read chunk, which this source sizes a reader from"
+                } else {
+                    ""
+                };
+                format!(
+                    "a memory budget of {memory_bytes} byte(s) is less than the {unit_bytes} \
+                     byte(s) one reader of this source holds, so this runs at its one-slot floor \
+                     whatever concurrency is asked for — what lifts it off the floor is a larger \
+                     memory budget, which is not the same as a larger allowance on a source that \
+                     recommends no per-reader cost of its own{chunk}"
+                )
+            }
             PlanNoteKind::BatchSpanNarrowed {
                 stated_bytes,
                 planned_bytes,
@@ -2894,6 +2963,18 @@ impl Finding for PlanNote {
     }
 }
 
+/// [`PlanNote::levers`] from which of them apply, in [`PlanLever`]'s order.
+fn levers(allowance: bool, chunk: bool, fewer: bool) -> Vec<PlanLever> {
+    [
+        (allowance, PlanLever::LargerAllowance),
+        (chunk, PlanLever::SmallerReadChunk),
+        (fewer, PlanLever::FewerSubStreams),
+    ]
+    .into_iter()
+    .filter_map(|(applies, lever)| applies.then_some(lever))
+    .collect()
+}
+
 /// Whether this source is a compressed one that *could* be read a
 /// block at a time and is not, because the budget in force leaves no room to
 /// hold a whole block ([`crate::io::Partitioning`], and
@@ -2919,6 +3000,10 @@ fn compressed_block_path_declined(
     if source.partitions(0..table.uncompressed_size()).max_partitions() != Some(1) {
         return None;
     }
+    // The budget actually in force, which is what the source compared its
+    // reader against: a caller that stated no number leaves every pool on
+    // this one.
+    let memory_bytes = parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET);
     Some(PlanNote::compressed_block_path_declined(
         table.block_count(),
         table.max_block_uncompressed(),
@@ -2926,10 +3011,8 @@ fn compressed_block_path_declined(
         // The fallback is unreachable, but nothing in the trait obliges the
         // two answers to agree.
         source.block_decode_bytes().unwrap_or(0),
-        // The budget actually in force, which is what the source compared its
-        // reader against: a caller that stated no number leaves every pool on
-        // this one.
-        parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET),
+        memory_bytes,
+        Parallelism::allowance_raises_budget(source.default_worker_memory(), memory_bytes),
     ))
 }
 
@@ -3035,7 +3118,14 @@ fn plan_partitions(
     // footprint that decides the sub-stream count is the largest of them.
     let advice: Vec<Partitioning> =
         matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
-    let footprint = advice.iter().map(Partitioning::partition_bytes).max().unwrap_or(0);
+    let widest = advice.iter().max_by_key(|advice| advice.partition_bytes());
+    let footprint = widest.map_or(0, Partitioning::partition_bytes);
+    // What the notes below offer, read off the source's cost and the budget
+    // it was carved by: both callers carve with this recommendation
+    // (`Parallelism::within`, `Parallelism::discover_for`).
+    let chunk_sized = widest.is_some_and(Partitioning::sized_by_read_chunk);
+    let recommended = source.default_worker_memory();
+    let raises = |budget| Parallelism::allowance_raises_budget(recommended, budget);
     // The span is a cost of a chunk-shaped source only. `all` over an empty
     // advice would be vacuously true, so the emptiness is tested.
     let retains_partitions =
@@ -3072,7 +3162,12 @@ fn plan_partitions(
         && footprint > 0
         && memory_bytes < footprint
     {
-        notes.push(PlanNote::allocation_below_floor(footprint, memory_bytes));
+        notes.push(PlanNote::allocation_below_floor(
+            footprint,
+            memory_bytes,
+            raises(memory_bytes),
+            chunk_sized,
+        ));
     }
     // **Said whenever the span moved, not only where the count fell short**:
     // the span is a number the caller stated on its own `QueryOptions`, so a
@@ -3086,6 +3181,7 @@ fn plan_partitions(
             planned as u64,
             workers,
             memory_bytes,
+            raises(memory_bytes),
         ));
     }
     if let Some(memory_bytes) = parallelism.memory_bytes()
@@ -3097,6 +3193,8 @@ fn plan_partitions(
             footprint,
             charged_span.map(|span| span as u64),
             memory_bytes,
+            raises(memory_bytes),
+            chunk_sized,
         ));
     }
 
@@ -4028,7 +4126,8 @@ mod tests {
     #[test]
     fn the_count_note_names_a_lever_a_plain_source_has() {
         for span in [Some(1 << 20), None] {
-            let note = PlanNote::parallelism_budget_limited(8, 2, 8 << 20, span, 64 << 20);
+            let note =
+                PlanNote::parallelism_budget_limited(8, 2, 8 << 20, span, 64 << 20, false, true);
             let message = note.message();
             assert!(message.contains("a smaller read chunk"), "{message}");
             assert!(message.contains("seats rather than speed"), "{message}");
@@ -4052,10 +4151,18 @@ mod tests {
     fn a_note_quoting_a_budget_is_the_one_that_reports_it() {
         let memory_bytes = 64 << 20;
         let notes = [
-            PlanNote::compressed_block_path_declined(9, 1 << 20, 2 << 20, memory_bytes),
-            PlanNote::allocation_below_floor(8 << 20, memory_bytes),
-            PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes),
-            PlanNote::parallelism_budget_limited(8, 7, 8 << 20, Some(1 << 20), memory_bytes),
+            PlanNote::compressed_block_path_declined(9, 1 << 20, 2 << 20, memory_bytes, true),
+            PlanNote::allocation_below_floor(8 << 20, memory_bytes, false, true),
+            PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes, false),
+            PlanNote::parallelism_budget_limited(
+                8,
+                7,
+                8 << 20,
+                Some(1 << 20),
+                memory_bytes,
+                false,
+                true,
+            ),
             PlanNote {
                 kind: PlanNoteKind::StatisticsPruned {
                     skipped_groups: 1,
@@ -4063,6 +4170,7 @@ mod tests {
                     skipped_bytes: 3,
                     bytes: 4,
                 },
+                levers: Vec::new(),
             },
         ];
         for note in notes {
@@ -4073,6 +4181,78 @@ mod tests {
         }
     }
 
+    /// **A plan note lists only the levers that move it, for this source and
+    /// this budget**, and `AllocationBelowFloor`'s sentence offers the chunk
+    /// exactly where its levers list one. Over a plain file, whose budget a
+    /// larger allowance raises only below `DEFAULT_MEMORY_BUDGET` and whose
+    /// reader the chunk sizes, the floor note has three arrangements: a zero
+    /// budget moved by memory alone, one between zero and a reader by memory
+    /// or the chunk, and one at that cap under a chunk past it by the chunk
+    /// alone. At the cap the count note keeps only the chunk, and the span
+    /// note only fewer sub-streams.
+    #[test]
+    fn a_plan_note_lists_only_the_levers_that_move_it() {
+        use crate::io::LocalFileSource;
+        use PlanLever::{FewerSubStreams, LargerAllowance, SmallerReadChunk};
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
+        let block = CopyBlock {
+            header: crate::copy::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
+            database: None,
+            header_offset: 0,
+            data_offset: 33,
+            terminator_offset: 42,
+            end_offset: 45,
+            row_count: 2,
+            partition_root: None,
+            statistics: None,
+            statistics_declined: None,
+            array_shapes: Vec::new(),
+        };
+        // Nothing is read: the plan prices the chunk the source was last told.
+        let plan = |chunk: usize, parallelism, span| {
+            source.hint_read_size(chunk);
+            plan_partitions(
+                &source,
+                std::slice::from_ref(&block),
+                &BTreeMap::new(),
+                parallelism,
+                span,
+                chunk,
+            )
+            .1
+        };
+        let floor = |chunk, budget| {
+            let notes = plan(chunk, Parallelism::workers(1, budget), None);
+            let [note] = notes.as_slice() else { panic!("{notes:?}") };
+            assert!(matches!(note.kind, PlanNoteKind::AllocationBelowFloor { .. }), "{note:?}");
+            let offers_chunk = note.message().contains("a smaller read chunk");
+            assert_eq!(offers_chunk, note.levers.contains(&SmallerReadChunk), "{}", note.message());
+            assert!(note.message().contains("a larger memory budget"), "{}", note.message());
+            note.levers.clone()
+        };
+        assert_eq!(floor(1 << 20, 0), vec![LargerAllowance]);
+        assert_eq!(floor(1 << 20, 4 << 20), vec![LargerAllowance, SmallerReadChunk]);
+        let cap = crate::io::DEFAULT_MEMORY_BUDGET;
+        assert_eq!(floor(2 * cap as usize, cap), vec![SmallerReadChunk]);
+        // The cap is what an allowance of any size carves for this source.
+        assert_eq!(Parallelism::within(1, None, 64 << 30).memory_bytes(), Some(cap));
+
+        let notes = plan(1 << 20, Parallelism::workers(8, cap), Some(64 << 20));
+        let levers: Vec<_> = notes.iter().map(|note| (&note.kind, note.levers.clone())).collect();
+        assert!(
+            matches!(
+                levers.as_slice(),
+                [
+                    (PlanNoteKind::BatchSpanNarrowed { .. }, narrowed),
+                    (PlanNoteKind::ParallelismBudgetLimited { .. }, limited),
+                ] if narrowed == &[FewerSubStreams] && limited == &[SmallerReadChunk]
+            ),
+            "{notes:?}"
+        );
+    }
+
     /// **A note is a `Warning` exactly where the budget declined something
     /// asked of it**: a skip and a narrowed span are `Info`, as `pgdt` has
     /// always printed them `note:`. A sink recovers the note itself.
@@ -4080,10 +4260,22 @@ mod tests {
     fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
         let memory_bytes = 64 << 20;
         let cases = [
-            (PlanNote::compressed_block_path_declined(9, 1, 2, memory_bytes), Severity::Warning),
-            (PlanNote::allocation_below_floor(8 << 20, memory_bytes), Severity::Warning),
-            (PlanNote::parallelism_budget_limited(8, 7, 1, None, memory_bytes), Severity::Warning),
-            (PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes), Severity::Info),
+            (
+                PlanNote::compressed_block_path_declined(9, 1, 2, memory_bytes, true),
+                Severity::Warning,
+            ),
+            (
+                PlanNote::allocation_below_floor(8 << 20, memory_bytes, false, true),
+                Severity::Warning,
+            ),
+            (
+                PlanNote::parallelism_budget_limited(8, 7, 1, None, memory_bytes, false, true),
+                Severity::Warning,
+            ),
+            (
+                PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes, false),
+                Severity::Info,
+            ),
             (
                 PlanNote {
                     kind: PlanNoteKind::StatisticsPruned {
@@ -4092,6 +4284,7 @@ mod tests {
                         skipped_bytes: 3,
                         bytes: 4,
                     },
+                    levers: Vec::new(),
                 },
                 Severity::Info,
             ),

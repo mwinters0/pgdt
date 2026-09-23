@@ -214,6 +214,9 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
     ] {
         assert!(floor.contains(&term), "{term}: {floor}");
     }
+    // A zero budget is below every reader however small its chunk, so the
+    // library lists no chunk lever and the clause names no chunk key.
+    assert!(!floor.contains("pgdump.chunk_size"), "{floor}");
 
     let _pruned = plan(&ctx, &format!("SELECT id FROM {ORDERED} WHERE id < 500")).await;
     let heard = plans.take();

@@ -17,8 +17,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use pgdump_query::{
-    ComparisonSemantics, DiagnosticSink, Finding, PlanNote, PlanNoteKind, Severity,
-    column_divergences,
+    ComparisonSemantics, DiagnosticSink, Finding, PlanLever, PlanNote, Severity, column_divergences,
 };
 
 use crate::budget::{AllowanceOrigin, BudgetAccount};
@@ -122,14 +121,17 @@ impl PgDumpTable {
 ///
 /// **Its message is the note's followed by one clause**: the allowance and
 /// its origin, the three holdings that came off it, and the settings that
-/// move the budget — each a key a user types as it stands. `pgdump.memory`
-/// always; `datafusion.runtime.memory_limit` where the session's pool states
-/// a limit; and, where the note's own sentence names the lever,
-/// `pgdump.chunk_size` for its smaller read chunk and
-/// `datafusion.execution.target_partitions` for its fewer sub-streams. What
-/// live scans drew is named and has no key (`KD38`). A caller wanting its own
-/// words reads [`BudgetedPlanNote::note`] and [`BudgetedPlanNote::account`]
-/// by downcasting ([`Finding::as_any`]).
+/// would move what the note reports — each a key a user types as it stands,
+/// and one for each lever the note lists ([`PlanNote::levers`]), so a key
+/// inert for this source and budget is never offered: `pgdump.memory` for a
+/// larger allowance, with `datafusion.runtime.memory_limit` beside it where
+/// the session's pool states a limit the allowance lost; `pgdump.chunk_size`
+/// for a smaller read chunk; `datafusion.execution.target_partitions` for
+/// fewer sub-streams. The levers are the library's, computed where the
+/// budget is carved and the reader sized, so nothing here re-derives either.
+/// What live scans drew is named and has no key (`KD38`). A caller wanting
+/// its own words reads [`BudgetedPlanNote::note`] and
+/// [`BudgetedPlanNote::account`] by downcasting ([`Finding::as_any`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetedPlanNote {
     /// The library's note, as its plan settled it.
@@ -188,22 +190,25 @@ impl BudgetedPlanNote {
                      came off it"
                 .to_string(),
         };
-        let mut levers = vec!["pgdump.memory (the allowance)"];
-        if allowance.is_some() && *pool_limit > 0 {
-            levers.push("datafusion.runtime.memory_limit (the pool's grant)");
-        }
-        match self.note.kind {
-            PlanNoteKind::ParallelismBudgetLimited { .. } => {
-                levers.push("pgdump.chunk_size (the read chunk)");
+        let mut keys = Vec::new();
+        for lever in &self.note.levers {
+            match lever {
+                PlanLever::LargerAllowance => {
+                    keys.push("pgdump.memory (the allowance)");
+                    if allowance.is_some() && *pool_limit > 0 {
+                        keys.push("datafusion.runtime.memory_limit (the pool's grant)");
+                    }
+                }
+                PlanLever::SmallerReadChunk => keys.push("pgdump.chunk_size (the read chunk)"),
+                PlanLever::FewerSubStreams => {
+                    keys.push("datafusion.execution.target_partitions (the sub-streams asked for)");
+                }
             }
-            PlanNoteKind::BatchSpanNarrowed { .. } => {
-                levers.push("datafusion.execution.target_partitions (the sub-streams asked for)");
-            }
-            PlanNoteKind::CompressedBlockPathDeclined { .. }
-            | PlanNoteKind::AllocationBelowFloor { .. }
-            | PlanNoteKind::StatisticsPruned { .. } => {}
         }
-        format!("{carved}; the settings that move it: {}", levers.join(", "))
+        match keys.as_slice() {
+            [] => format!("{carved}; no setting moves it for this source and budget"),
+            keys => format!("{carved}; the settings that move it: {}", keys.join(", ")),
+        }
     }
 }
 
@@ -211,23 +216,39 @@ impl BudgetedPlanNote {
 mod tests {
     use std::path::PathBuf;
 
+    use pgdump_query::PlanNoteKind;
+
     use super::*;
 
     fn account(origin: AllowanceOrigin, pool_limit: u64) -> BudgetAccount {
         BudgetAccount { allowance: Some(4 << 30), origin, pool_limit, resident: 7, drawn: 11 }
     }
 
-    fn note(kind: PlanNoteKind) -> PlanNote {
-        PlanNote { kind }
+    fn note(kind: PlanNoteKind, levers: &[PlanLever]) -> PlanNote {
+        PlanNote { kind, levers: levers.to_vec() }
+    }
+
+    const ALLOWANCE: &str = "pgdump.memory";
+    const POOL: &str = "datafusion.runtime.memory_limit";
+    const CHUNK: &str = "pgdump.chunk_size";
+    const COUNT: &str = "datafusion.execution.target_partitions";
+
+    /// The keys the clause's list names, the origin's own words aside.
+    fn keys(message: &str) -> Vec<&'static str> {
+        let listed = message.split_once("the settings that move it: ").map_or("", |(_, list)| list);
+        [ALLOWANCE, POOL, CHUNK, COUNT].into_iter().filter(|key| listed.contains(key)).collect()
     }
 
     /// **The note's sentence, then one clause**: the allowance and where it
-    /// came from, every holding by its number, and a key for each lever that
-    /// applies — the pool's only where it states a limit, the chunk and the
-    /// count only where the note's own sentence offers them.
+    /// came from, every holding by its number, and a key for each lever the
+    /// note lists and no other — the pool's beside the allowance's only where
+    /// it states a limit.
     #[test]
     fn the_clause_names_the_account_and_the_keys_that_move_it() {
-        let floor = note(PlanNoteKind::AllocationBelowFloor { unit_bytes: 8, memory_bytes: 0 });
+        let floor = note(
+            PlanNoteKind::AllocationBelowFloor { unit_bytes: 8, memory_bytes: 0 },
+            &[PlanLever::LargerAllowance],
+        );
         let read_from = PathBuf::from("/sys/fs/cgroup/memory.max");
         let wrapped = BudgetedPlanNote {
             note: floor.clone(),
@@ -240,50 +261,46 @@ mod tests {
             "the session's memory pool is granted 1048576 byte(s)",
             "statistics hold 7 byte(s)",
             "had drawn 11 byte(s)",
-            "pgdump.memory",
-            "datafusion.runtime.memory_limit",
         ] {
             assert!(message.contains(term), "{term}: {message}");
         }
-        for absent in ["pgdump.chunk_size", "target_partitions"] {
-            assert!(!message.contains(absent), "{absent}: {message}");
-        }
+        assert_eq!(keys(&message), [ALLOWANCE, POOL], "{message}");
         assert_eq!(wrapped.severity(), floor.severity());
 
         let limited = BudgetedPlanNote {
-            note: note(PlanNoteKind::ParallelismBudgetLimited {
-                requested: 4,
-                planned: 1,
-                footprint: 8,
-                max_source_span: None,
-                memory_bytes: 8,
-            }),
+            note: note(
+                PlanNoteKind::ParallelismBudgetLimited {
+                    requested: 4,
+                    planned: 1,
+                    footprint: 8,
+                    max_source_span: None,
+                    memory_bytes: 8,
+                },
+                &[PlanLever::LargerAllowance, PlanLever::SmallerReadChunk],
+            ),
             account: account(AllowanceOrigin::Setting, 0),
         };
         let message = limited.message();
-        for term in [
-            "stated by pgdump.memory",
-            "the session's memory pool states no limit",
-            "pgdump.chunk_size",
-        ] {
+        for term in ["stated by pgdump.memory", "the session's memory pool states no limit"] {
             assert!(message.contains(term), "{term}: {message}");
         }
-        for absent in ["datafusion.runtime.memory_limit", "target_partitions"] {
-            assert!(!message.contains(absent), "{absent}: {message}");
-        }
+        assert_eq!(keys(&message), [ALLOWANCE, CHUNK], "{message}");
 
         let narrowed = BudgetedPlanNote {
-            note: note(PlanNoteKind::BatchSpanNarrowed {
-                stated_bytes: 16,
-                planned_bytes: 8,
-                workers: 2,
-                memory_bytes: 8,
-            }),
-            account: account(AllowanceOrigin::HalfAvailable, 0),
+            note: note(
+                PlanNoteKind::BatchSpanNarrowed {
+                    stated_bytes: 16,
+                    planned_bytes: 8,
+                    workers: 2,
+                    memory_bytes: 8,
+                },
+                &[PlanLever::FewerSubStreams],
+            ),
+            account: account(AllowanceOrigin::HalfAvailable, 1 << 20),
         };
         let message = narrowed.message();
         assert!(message.contains("half of what the machine reports available"), "{message}");
-        assert!(message.contains("datafusion.execution.target_partitions"), "{message}");
+        assert_eq!(keys(&message), [COUNT], "no allowance key, so no pool key: {message}");
 
         let unfound = BudgetedPlanNote {
             note: floor,
@@ -297,6 +314,30 @@ mod tests {
         };
         let message = unfound.message();
         assert!(message.contains("no allowance was found"), "{message}");
-        assert!(!message.contains("datafusion.runtime.memory_limit"), "{message}");
+        assert_eq!(keys(&message), [ALLOWANCE], "{message}");
+    }
+
+    /// **A plain source's floor at `DEFAULT_MEMORY_BUDGET` offers the chunk
+    /// alone**: no allowance raises that budget, so neither `pgdump.memory`
+    /// nor the pool's key is named.
+    #[test]
+    fn a_floor_no_allowance_raises_names_only_the_chunk() {
+        let capped = BudgetedPlanNote {
+            note: note(
+                PlanNoteKind::AllocationBelowFloor {
+                    unit_bytes: 128 << 20,
+                    memory_bytes: pgdump_query::DEFAULT_MEMORY_BUDGET,
+                },
+                &[PlanLever::SmallerReadChunk],
+            ),
+            account: account(AllowanceOrigin::Setting, 1 << 20),
+        };
+        let message = capped.message();
+        assert_eq!(keys(&message), [CHUNK], "{message}");
+        let unmoved = BudgetedPlanNote {
+            note: note(capped.note.kind.clone(), &[]),
+            account: capped.account.clone(),
+        };
+        assert!(unmoved.message().ends_with("no setting moves it for this source and budget"));
     }
 }

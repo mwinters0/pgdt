@@ -74,9 +74,9 @@ pub use statistics::{
     StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{
-    BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TablePartitions,
-    TableStream, bounded_columns, gather_block_statistics, map_file, table_schema, table_stream,
-    table_stream_partitions,
+    BlockingTableIter, EarlyStop, MapRun, PlanLever, PlanNote, PlanNoteKind, ResumeToken,
+    TablePartitions, TableStream, bounded_columns, gather_block_statistics, map_file, table_schema,
+    table_stream, table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};
 

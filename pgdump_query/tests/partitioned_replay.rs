@@ -23,7 +23,7 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, Finding, LocalFileSource, Parallelism,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, Finding, LocalFileSource, Parallelism, PlanLever,
     PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
     table_stream_partitions,
 };
@@ -288,9 +288,11 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
         notes[0].message()
     );
     // Where the budget came from is the caller's to say
-    // (`docs/design/decisions.md`, "D64"), so the sentence stops at the floor.
+    // (`docs/design/decisions.md`, "D64"), so the sentence names its levers
+    // and not the budget's origin; at zero the chunk is not among them.
+    assert_eq!(notes[0].levers, vec![PlanLever::LargerAllowance]);
     assert!(
-        notes[0].message().ends_with("whatever concurrency is asked for"),
+        notes[0].message().ends_with("recommends no per-reader cost of its own"),
         "the message claims no provenance: {}",
         notes[0].message()
     );
@@ -777,6 +779,13 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
             _ => None,
         })
         .unwrap_or_else(|| panic!("{notes:?}"));
+    // A compressed source recommends what its readers cost, so a larger
+    // allowance raises its budget, and the note lists that lever alone.
+    let levers = notes
+        .iter()
+        .find(|n| matches!(n.kind, PlanNoteKind::CompressedBlockPathDeclined { .. }))
+        .map(|n| n.levers.clone());
+    assert_eq!(levers, Some(vec![PlanLever::LargerAllowance]), "{notes:?}");
     // The recourse the note names is the source's own number, not a multiple
     // this test re-derives: one reader's block with the retention list the
     // pool keeps beside it, the chunk buffer a straddling read is assembled

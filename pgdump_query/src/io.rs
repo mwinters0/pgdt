@@ -644,6 +644,20 @@ impl Partitioning {
         self.read
     }
 
+    /// Whether a smaller read chunk makes one reader of this source cheaper —
+    /// the question a plan note's [`crate::PlanLever::SmallerReadChunk`]
+    /// answers of [`Partitioning::partition_bytes`].
+    ///
+    /// **Read off how a reader reads**: a [`PartitionRead::Chunked`] reader
+    /// holds chunk buffers, so what it is charged is a count of chunks — a
+    /// plain file's [`PLAIN_PARTITION_CHUNKS`], and the one chunk a compressed
+    /// source's piecewise arm charges. A [`PartitionRead::Whole`] reader holds
+    /// the source's own unit, a decoded block the chunk does not size, and a
+    /// source charging nothing has no reader cost to lower.
+    pub fn sized_by_read_chunk(&self) -> bool {
+        matches!(self.read, PartitionRead::Chunked) && self.partition_bytes() > 0
+    }
+
     /// How many partitions this advice describes, or `None` for
     /// [`PartitionBoundaries::Anywhere`], which is bounded by the caller's
     /// worker count rather than by the source.
@@ -992,12 +1006,36 @@ impl Parallelism {
         charge_ceiling: Option<u64>,
     ) -> (usize, u64) {
         let jobs = jobs.max(1);
-        let Some(memory) = memory.filter(|memory| !memory.is_zero()) else {
+        let Some(memory) = recommended(memory) else {
             return (jobs, DEFAULT_MEMORY_BUDGET.min(cap));
         };
         let affords = memory.affords(charge_ceiling.map_or(cap, |ceiling| cap.min(ceiling)), jobs);
         (affords, cap.min(memory.at(affords)))
     }
+
+    /// Whether a larger allowance, carved as [`Parallelism::within`] carves
+    /// one, would raise a budget of `budget` bytes for a source recommending
+    /// `memory` ([`ByteRangeSource::default_worker_memory`]) — the question a
+    /// plan note's [`crate::PlanLever::LargerAllowance`] answers.
+    ///
+    /// **It is the carving's cap read backwards**, so the rule stays in one
+    /// place: a source recommending no cost is carved to
+    /// [`DEFAULT_MEMORY_BUDGET`] at most whatever the allowance
+    /// (`docs/design/decisions.md`, "D83", and `KD32`), so a budget already
+    /// there is one no allowance raises, and one below it — an allowance at
+    /// or under [`MEMORY_RESERVE`], or holdings the margin could not absorb —
+    /// is one a larger allowance does. A source recommending a cost is carved
+    /// by the count its cost affords, so a larger allowance raises its budget
+    /// with the count.
+    pub fn allowance_raises_budget(memory: Option<WorkerMemory>, budget: u64) -> bool {
+        recommended(memory).is_some() || budget < DEFAULT_MEMORY_BUDGET
+    }
+}
+
+/// A source's recommendation, where it states a cost at all: one stating
+/// none is carved as one recommending nothing ([`Parallelism::fit`]).
+fn recommended(memory: Option<WorkerMemory>) -> Option<WorkerMemory> {
+    memory.filter(|memory| !memory.is_zero())
 }
 
 /// The byte budget actually governing reads under `p`, worded for a status

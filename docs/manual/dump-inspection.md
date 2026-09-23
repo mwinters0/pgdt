@@ -672,7 +672,7 @@ very small budget rather than a floor**: at 384 MiB or less there is nothing
 left after the reserve, and pgdt reads compressed input through the streaming decoder and
 plain input a chunk at a time, which is correct and slower. `query` says so on
 stderr when it happens, naming the budget in force beside what one reader of
-that file holds, so a slow run inside a tight container is never silent about
+that file holds and what would lift it, so a slow run inside a tight container is never silent about
 why it is slow. And **where no limit is set at all**, pgdt does not size itself
 from the machine's RAM: it takes what the file asks for exactly as above, held
 under half of what the machine reports as available — half rather than all
