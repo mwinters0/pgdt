@@ -98,4 +98,29 @@ class Acknowledged:
 #: path and `--stale` skips the commit without being told — which is what the
 #: three entries that used to stand here were doing by hand, at one extra
 #: commit apiece.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="c151c64",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "`M138`'s fold rewrote one doc comment in `preamble.rs` to the "
+            "re-taken reading; that file holds `\"/*\"` beside code, which defeats "
+            "the syntactic oracle, so the claim is made by hand"
+        ),
+        verified=(
+            "git show --format= -U0 c151c64 -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
+    Acknowledged(
+        commit="c151c64",
+        figures=("session-drift",),
+        why=(
+            "`M138`'s fold changed `measure.py`'s rendered sentences, a step-pair "
+            "label, two docstrings and a comment; no command shape, input, regime "
+            "or gate moved, so no reading can"
+        ),
+        verified="git show --format= -U0 c151c64 -- scripts/measure.py  # read every hunk",
+    ),
+)
