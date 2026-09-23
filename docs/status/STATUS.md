@@ -384,7 +384,7 @@ a phase nobody has sliced.
   unowned**; promoted by a float column seen to hold both zeros at an extreme.
   Detail: `datafusion-pgdump/src/statistics.rs`.
 
-- **KD43** — a stated `--statistics-max-rows` can be passed by a block whose
+- **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
   90th-percentile group it is read at, so a block already past the maximum
   merges further past it. **(c) unowned**; promoted by a stated maximum seen

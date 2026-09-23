@@ -1,5 +1,5 @@
 //! `pgdt parse --statistics` / `--row-group-size` /
-//! `--statistics-min-rows` / `--statistics-max-rows`, and what `info` reports
+//! `--row-group-min-rows` / `--row-group-max-rows`, and what `info` reports
 //! of them.
 //!
 //! What a gathered statistic means is the library's
@@ -73,7 +73,7 @@ fn array(value: &Value) -> &Vec<Value> {
 /// **`parse` gathers every table by default at a mebibyte**, recording the
 /// minimum each block was sized under — which makes the block of the megabyte
 /// row, whose groups hold a row or none, one group of a coarser size — and
-/// `--statistics-min-rows 0` leaves that block at a mebibyte.
+/// `--row-group-min-rows 0` leaves that block at a mebibyte.
 #[test]
 fn parse_gathers_every_table_by_default_at_a_mebibyte() {
     let blocks = blocks_after(&[]);
@@ -89,7 +89,7 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
         assert_eq!(statistics["sizing"]["Density"]["min_rows"], 1024, "{table}");
         assert!(array(&statistics["columns"]).iter().all(|c| !c.is_null()), "{table}");
     }
-    for (table, block) in blocks_after(&["--statistics-min-rows", "0"]) {
+    for (table, block) in blocks_after(&["--row-group-min-rows", "0"]) {
         let statistics = &block["statistics"];
         assert_eq!(statistics["group_size"], 1 << 20, "{table}");
         assert_eq!(statistics["sizing"]["Density"]["min_rows"], 0, "{table}");
@@ -138,7 +138,7 @@ fn a_selection_gathers_its_tables_and_columns_alone() {
 fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
     let (_dir, dump) = sandboxed(DUMP, "maximum.sql");
     let source = dump.to_str().unwrap();
-    let flags = ["--statistics-min-rows", "8", "--statistics-max-rows", "100"];
+    let flags = ["--row-group-min-rows", "8", "--row-group-max-rows", "100"];
     let parse = |extra: &[&str]| {
         let mut args = vec!["parse", "--source", source];
         args.extend_from_slice(extra);
@@ -433,9 +433,9 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     assert!(stdout_again.starts_with("nothing to scan"), "{stdout_again}");
     assert_ne!(stdout, stdout_again);
 
-    let (_, stderr) = parse(&["--statistics-min-rows", "16"]);
+    let (_, stderr) = parse(&["--row-group-min-rows", "16"]);
     assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
-    let (_, stderr) = parse(&["--statistics-min-rows", "16"]);
+    let (_, stderr) = parse(&["--row-group-min-rows", "16"]);
     assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
     let (_, stderr) = parse(&[]);
     assert_eq!(backfill_lines(&stderr), 0, "an unstated minimum keeps a block's size: {stderr}");
@@ -489,22 +489,19 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
     let source = dump.to_str().unwrap();
     for (extra, says) in [
         (&["--statistics", "none", "--row-group-size", "64"][..], "drop one of them"),
-        (&["--statistics", "none", "--statistics-min-rows", "64"][..], "drop one of them"),
-        (&["--statistics", "none", "--statistics-max-rows", "64"][..], "drop one of them"),
+        (&["--statistics", "none", "--row-group-min-rows", "64"][..], "drop one of them"),
+        (&["--statistics", "none", "--row-group-max-rows", "64"][..], "drop one of them"),
+        (&["--row-group-max-rows", "64"][..], "1024 rows --row-group-min-rows asks for by default"),
         (
-            &["--statistics-max-rows", "64"][..],
-            "1024 rows --statistics-min-rows asks for by default",
+            &["--row-group-min-rows", "64", "--row-group-max-rows", "8"][..],
+            "below the 64 rows --row-group-min-rows asks for —",
         ),
-        (
-            &["--statistics-min-rows", "64", "--statistics-max-rows", "8"][..],
-            "below the 64 rows --statistics-min-rows asks for —",
-        ),
-        (&["--row-group-size", "4096", "--statistics-max-rows", "8"][..], "cannot be used with"),
-        (&["--preamble-only", "--statistics-max-rows", "8"][..], "cannot be used with"),
+        (&["--row-group-size", "4096", "--row-group-max-rows", "8"][..], "cannot be used with"),
+        (&["--preamble-only", "--row-group-max-rows", "8"][..], "cannot be used with"),
         (&["--row-group-size", "0"][..], "a group size of 0"),
         (&["--row-group-size", "1000"][..], "a power of two"),
-        (&["--row-group-size", "4096", "--statistics-min-rows", "8"][..], "cannot be used with"),
-        (&["--preamble-only", "--statistics-min-rows", "8"][..], "cannot be used with"),
+        (&["--row-group-size", "4096", "--row-group-min-rows", "8"][..], "cannot be used with"),
+        (&["--preamble-only", "--row-group-min-rows", "8"][..], "cannot be used with"),
         (&["--statistics", "public..id"][..], "is not a table"),
         (&["--statistics", "a.b.c.d"][..], "more parts"),
         (&["--preamble-only", "--statistics", "none"][..], "cannot be used with"),

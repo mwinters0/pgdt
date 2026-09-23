@@ -17,7 +17,7 @@ single group holding the whole block. A group no row starts in is a group all
 the same -- it carries an entry per tracked column -- so empty groups are in
 the distribution. A `parse` that states no minimum coarsens a block of sparse
 rows before it is cached, so the gathering run a reading reads states
-`--statistics-min-rows 0`.
+`--row-group-min-rows 0`.
 
 **A quantile is nearest-rank**: the `ceil(q * G)`-th smallest of `G` groups.
 **The minimum's median is the exception**: it reads the *upper* middle group,

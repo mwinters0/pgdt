@@ -402,6 +402,23 @@ They are stored in the cache beside the rest of the index; `info --detail`
 sums them per table and column, and `info --json` exports every group's (below), and
 `query` reads them to skip what its filter rules out (below).
 
+**A row group is Parquet's row group, used the same way**: a stretch of a
+table's rows, across every column, whose statistics let a query skip it. Four
+things differ.
+
+- **It indexes the dump rather than holding data.** The rows stay in the dump
+  as `pg_dump` wrote them and pgdt never rewrites it; a group is a range of its
+  bytes, and its statistics live in the cache beside the rest of the index.
+- **It is bounded by bytes, not rows.** A row belongs to the group its first
+  byte lies in, so a group a long row spans from end to end holds no row at
+  all, which a Parquet row group never does.
+- **Its size can change after the fact.** A Parquet file's row groups are fixed
+  when it is written; here a `parse` stating another size, minimum or maximum
+  re-reads the table and replaces its groups (below).
+- **It is much finer by default.** A mebibyte of text is nearer a Parquet
+  page than a Parquet writer's usual row group of about a million rows —
+  though a page holds one column, and a group every column of its rows.
+
 Gathering reads every value of every column, so it costs a `parse` time, memory
 and cache space that grow with the dump; the workers `--jobs` asks for gather
 as they read, and record exactly what one worker would. `--statistics none`
@@ -411,8 +428,8 @@ turns it off:
 pgdt parse --source big.sql --statistics none                        # nothing gathered
 pgdt parse --source big.sql --statistics public.orders,public.items.sku
 pgdt parse --source big.sql --row-group-size 65536                   # finer groups
-pgdt parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
-pgdt parse --source big.sql --statistics-max-rows 4096               # more, emptier groups
+pgdt parse --source big.sql --row-group-min-rows 4096                # fewer, fuller groups
+pgdt parse --source big.sql --row-group-max-rows 4096                # more, emptier groups
 ```
 
 A selection is a comma-separated list of tables (`schema.table`, or a bare
@@ -426,15 +443,15 @@ where values lie and costs memory and cache space in proportion.
 **A table of wide rows gets fewer groups.** A group costs the same memory
 whether it holds one row or thousands, so once a table's data is read, its
 groups double until at most half of them fall short of
-`--statistics-min-rows` rows, 1,024 by default, or the table is one group. Rows
+`--row-group-min-rows` rows, 1,024 by default, or the table is one group. Rows
 up to about 1 KiB wide keep the mebibyte; a table averaging 4 KiB a row ends
-at 4 MiB a group. `--statistics-min-rows 0` doubles nothing; a larger minimum
+at 4 MiB a group. `--row-group-min-rows 0` doubles nothing; a larger minimum
 keeps fewer, fuller groups, which a query skips less precisely.
 
-**`--statistics-max-rows` asks for the other side of that trade**, and there is
+**`--row-group-max-rows` asks for the other side of that trade**, and there is
 no default: state it and no group size is chosen that would put more than that
 many rows in the 90th-percentile group, so at most a tenth of a table's groups
-hold more. It wins wherever it and `--statistics-min-rows` cannot both be met,
+hold more. It wins wherever it and `--row-group-min-rows` cannot both be met,
 and it lifts the 4,096-group ceiling as well — you asked for the groups, so
 nothing quietly takes them away, and a table dense enough to need many of them
 costs the memory and the cache space they take. A table too dense to meet it at
@@ -448,7 +465,7 @@ third time, and every run under that maximum says so on stderr:
 ```
 
 A stated `--row-group-size` is exact, so it is refused beside
-`--statistics-min-rows` and `--statistics-max-rows`, a maximum below the
+`--row-group-min-rows` and `--row-group-max-rows`, a maximum below the
 minimum in force is refused, and none of the three is accepted beside
 `--statistics none`. No statistics flag combines with `--preamble-only`, which
 reads no row.
@@ -459,7 +476,7 @@ mapped without the statistics this one asks for — gathered with `--statistics
 none`, left out of a selection, without the least and greatest values this
 build keeps for a column, at a group size other than a
 `--row-group-size` stated now, or under bounds other than a
-`--statistics-min-rows` or `--statistics-max-rows` stated now — one `COPY`
+`--row-group-min-rows` or `--row-group-max-rows` stated now — one `COPY`
 block at a time, banking each as it goes, so an interrupted re-read continues
 where it stopped. A block this run scanned is re-read too where it is too
 dense for a stated maximum (above), that being the one thing a single read
@@ -524,7 +541,7 @@ is tuned, so raise `--memory` (or give the container more) and parse again.
 later `parse` at the same allowance or a smaller one leaves the block alone and
 prints that line again rather than re-reading 300 GB to decline a second time;
 one at a larger allowance re-reads it. `--row-group-size` and
-`--statistics-min-rows` do not help here: how fine the groups are is your
+`--row-group-min-rows` do not help here: how fine the groups are is your
 choice and is never quietly changed to fit memory, because a cache must not
 depend on the container that happened to write it.
 

@@ -670,8 +670,8 @@ enum Command {
         /// power of two. The default, 1 MiB, is coarse, and doubles for a
         /// table whose data would take more than 4,096 groups until it takes
         /// no more, and for a table whose rows are too wide for its groups to
-        /// hold `--statistics-min-rows`; it halves instead for one too dense
-        /// for a stated `--statistics-max-rows`, which lifts both of those; a
+        /// hold `--row-group-min-rows`; it halves instead for one too dense
+        /// for a stated `--row-group-max-rows`, which lifts both of those; a
         /// stated size is kept exactly, and a
         /// smaller group records more finely where values lie and costs memory
         /// and cache space in proportion. Stated, it also re-reads every block
@@ -699,17 +699,17 @@ enum Command {
             value_name = "ROWS",
             conflicts_with_all = ["preamble_only", "row_group_size"]
         )]
-        statistics_min_rows: Option<u64>,
+        row_group_min_rows: Option<u64>,
         /// The most rows a row group of statistics should hold under the
         /// default group size, read at the 90th-percentile group so that at
         /// most a tenth of them hold more. There is no default: stated, it
-        /// stops the doubling `--statistics-min-rows` would otherwise do, it
+        /// stops the doubling `--row-group-min-rows` would otherwise do, it
         /// lifts the 4,096-group ceiling, and a table too dense to meet it at
         /// 1 MiB a group is read a second time, at the finer size its groups
         /// predict — once, keeping what that gives and saying so if it still
         /// misses. Stated, it also re-reads every block sized under another
         /// maximum or at a stated group size; left unstated, a block keeps the
-        /// size it was gathered at. Refused below `--statistics-min-rows`,
+        /// size it was gathered at. Refused below `--row-group-min-rows`,
         /// which defaults to 1,024, and beside a stated
         /// `--row-group-size`, which is kept exactly.
         #[arg(
@@ -717,7 +717,7 @@ enum Command {
             value_name = "ROWS",
             conflicts_with_all = ["preamble_only", "row_group_size"]
         )]
-        statistics_max_rows: Option<u64>,
+        row_group_max_rows: Option<u64>,
         #[command(flatten)]
         identity: IdentityArgs,
         #[command(flatten)]
@@ -989,8 +989,8 @@ fn statistics_request(
     if selection == StatisticsSelection::None {
         let sizing = [
             (group_size.is_some(), "--row-group-size"),
-            (min_rows.is_some(), "--statistics-min-rows"),
-            (max_rows.is_some(), "--statistics-max-rows"),
+            (min_rows.is_some(), "--row-group-min-rows"),
+            (max_rows.is_some(), "--row-group-max-rows"),
         ];
         if let Some((_, flag)) = sizing.iter().find(|(stated, _)| *stated) {
             anyhow::bail!(
@@ -1002,8 +1002,8 @@ fn statistics_request(
     if max_rows.is_some_and(|max_rows| max_rows < floor) {
         let stated = if min_rows.is_some() { "" } else { " by default" };
         anyhow::bail!(
-            "--statistics-max-rows {} is below the {floor} rows \
-             --statistics-min-rows asks for{stated} — no group size holds both",
+            "--row-group-max-rows {} is below the {floor} rows \
+             --row-group-min-rows asks for{stated} — no group size holds both",
             max_rows.expect("read above")
         );
     }
@@ -1632,8 +1632,8 @@ async fn main() -> Result<()> {
             max_line_bytes,
             statistics,
             row_group_size,
-            statistics_min_rows,
-            statistics_max_rows,
+            row_group_min_rows,
+            row_group_max_rows,
             identity,
             parallel,
         } => {
@@ -1641,8 +1641,8 @@ async fn main() -> Result<()> {
             let statistics = statistics_request(
                 statistics,
                 row_group_size,
-                statistics_min_rows,
-                statistics_max_rows,
+                row_group_min_rows,
+                row_group_max_rows,
             )?;
             // `parse` scans to persist (`docs/design/decisions.md`, "D61").
             // Reject `--dtcache none` up front, before paying for a scan we
@@ -3061,8 +3061,8 @@ mod tests {
         ("jobs", FlagClass::Hardware),
         ("memory", FlagClass::Hardware),
         ("row-group-size", FlagClass::Intent),
-        ("statistics-min-rows", FlagClass::Intent),
-        ("statistics-max-rows", FlagClass::Intent),
+        ("row-group-min-rows", FlagClass::Intent),
+        ("row-group-max-rows", FlagClass::Intent),
         ("max-line-bytes", FlagClass::Contract),
         ("chunk-size", FlagClass::Expert),
     ];
