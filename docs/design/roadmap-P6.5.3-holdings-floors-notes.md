@@ -27,8 +27,8 @@ under the lowered budget.
 - **A compressed scan at one reader loses block decode** once the holdings
   push its budget below a block (D4); nothing here measures that and no `.xz`
   fixture exercises it through the provider.
-- **`M130` is unblocked**: `pgdt` passing a loaded cache as `held` gets this
-  rule by calling `within_shared`, D85's order changing with it.
+- **`pgdt` has the same rule** (`M130`): a cache's statistics are its
+  `held`, through `within_shared`, D85's order changing with it.
 
 ## Negative results
 

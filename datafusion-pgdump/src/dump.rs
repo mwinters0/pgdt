@@ -86,7 +86,7 @@ impl PgDump {
         // The claim first, as `pgdt` opens: it spares a compressed file's
         // footer walk, and refuses a cache for another file before one.
         let known = match cache::claim(path, &origin).await? {
-            CacheClaim::Compression(known) => known,
+            CacheClaim::Settles { compression, .. } => compression,
             CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
                 return Err(mode.source_mismatch(cached_stored_size, live_stored_size).into());
             }

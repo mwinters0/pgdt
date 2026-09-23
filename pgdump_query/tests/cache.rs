@@ -810,7 +810,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     cache::save(&path, &xz, &index).await.unwrap();
 
     let known = match cache::claim(&path, &Origin::local(compressed.path())).await.unwrap() {
-        CacheClaim::Compression(known) => known,
+        CacheClaim::Settles { compression, .. } => compression,
         other => panic!("the file's own cache describes it: {other:?}"),
     };
     assert_eq!(known, KnownCompression::Xz(xz.seek_table().unwrap()));
@@ -837,8 +837,34 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
 
     assert_eq!(
         cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Compression(KnownCompression::Plain)
+        CacheClaim::Settles {
+            compression: KnownCompression::Plain,
+            statistics_heap_bytes: index.statistics_heap_bytes(),
+        }
     );
+}
+
+/// A claim sizes the statistics the scan will load, before any source exists:
+/// the number a caller carving its workers first bills as held
+/// (`docs/design/decisions.md`, "D85"), and exactly what `load` hands back.
+#[tokio::test]
+async fn a_claim_sizes_the_statistics_a_load_hands_back() {
+    let (_dir, dump) = sandboxed();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let path = cache::colocated_path(&dump);
+    let mode = CacheMode::enabled(path.clone());
+    map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
+
+    let claimed = match cache::claim(&path, &Origin::local(&dump)).await.unwrap() {
+        CacheClaim::Settles { statistics_heap_bytes, .. } => statistics_heap_bytes,
+        other => panic!("the file's own cache describes it: {other:?}"),
+    };
+    let loaded = match mode.load(&source).await.unwrap() {
+        CacheLoad::Index(index) => index.statistics_heap_bytes(),
+        other => panic!("the file's own cache loads: {other:?}"),
+    };
+    assert!(claimed > 0, "a default parse gathers statistics");
+    assert_eq!(claimed, loaded);
 }
 
 /// Every unusable outcome but one collapses to "nothing is known": there is no
@@ -851,14 +877,14 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     let missing = dir.path().join("nothing.dtcache");
     assert_eq!(
         cache::claim(&missing, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Compression(KnownCompression::Unknown)
+        CacheClaim::Settles { compression: KnownCompression::Unknown, statistics_heap_bytes: 0 }
     );
 
     let foreign = dir.path().join("foreign.dtcache");
     std::fs::write(&foreign, b"not a cache at all").unwrap();
     assert_eq!(
         cache::claim(&foreign, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Compression(KnownCompression::Unknown)
+        CacheClaim::Settles { compression: KnownCompression::Unknown, statistics_heap_bytes: 0 }
     );
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
@@ -870,7 +896,10 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     // sentence to say.
     assert_eq!(
         cache::claim(&path, &Origin::local(dir.path().join("gone.sql"))).await.unwrap(),
-        CacheClaim::Compression(KnownCompression::Unknown)
+        CacheClaim::Settles {
+            compression: KnownCompression::Unknown,
+            statistics_heap_bytes: index.statistics_heap_bytes(),
+        }
     );
 }
 

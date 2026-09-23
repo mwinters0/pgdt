@@ -471,13 +471,13 @@ monotone under the cap; the cap yielding to a stated maximum block by block, a p
 leader's split would decide; a floor under the coarsening, a constant nothing prices. Code: `Gatherer::fit_cap`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
-`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers
-because a count is fixed before a byte is read; the CLI's is `--memory`, else the limit, else half of
-`MemAvailable` (RT8), an embedder stating none declining nothing (D1). A declined piece declines its block,
-dense group indices expressing no gap, and the account sees a window's pieces, so a decline is deliberately
-not the same serial and parallel. Rejected: a constant bound, an OOM on a wide table; coarsening to fit, a
-cache depending on its container; retrying every run; skipping the piece; MEMORY_RESERVE again, which carves
-the cap not this ceiling. Reopens: what the check costs, and what declining saves. Code: `Gatherer::decline`.
+`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, a
+count fixed before a byte is read; a cache's are known first, the workers' `held`. The CLI's is `--memory`,
+else the limit, else half of `MemAvailable` (RT8), an embedder stating none declining nothing (D1). A declined
+piece declines its block, dense group indices expressing no gap, and the account sees a window's pieces, so a
+decline deliberately differs serial and parallel. Rejected: a constant bound, an OOM on a wide table; coarsening
+to fit, a cache depending on its container; retrying every run; skipping the piece; MEMORY_RESERVE again, which
+carves the cap not this ceiling. Reopens: what the check costs, and what declining saves. Code: `Gatherer::decline`.
 
 ### D86 Statistics volume follows columns and groups, not row width
 Dictionary text is interned once per block and column, not per group, so an input of wide distinct text

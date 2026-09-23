@@ -782,14 +782,22 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
 /// is refused by every scan entry point ([`Error::CacheSourceMismatch`]), so
 /// opening the source first buys nothing and, for a many-streams `.xz`, costs
 /// a stream-footer walk. The other unusable outcomes stay collapsed into
-/// [`KnownCompression::Unknown`] — no cache, foreign bytes, a version this
-/// build does not read — since nothing downstream refuses on those and
+/// [`KnownCompression::Unknown`] and no statistics — no cache, foreign bytes,
+/// a version this build does not read — since nothing downstream refuses on those and
 /// [`load`] states the reason a moment later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheClaim {
-    /// What the cache says about the file's compression layer: the table a
-    /// previous walk produced, "no compression layer", or nothing known.
-    Compression(KnownCompression),
+    /// What the cache settles short of a refusal.
+    Settles {
+        /// The file's compression layer: the table a previous walk produced,
+        /// "no compression layer", or nothing known.
+        compression: KnownCompression,
+        /// The heap the cache's statistics hold once loaded
+        /// ([`DumpIndex::statistics_heap_bytes`]), zero where nothing decoded:
+        /// what a caller carving workers before its scan loads the cache bills
+        /// as held (`docs/design/decisions.md`, "D85").
+        statistics_heap_bytes: u64,
+    },
     /// The cache records a stored size this file does not have, so it
     /// describes some *other* file. The same condition [`load`] answers
     /// [`CacheStatus::SourceChanged`] with, and the same two numbers, reached
@@ -817,17 +825,24 @@ pub enum CacheClaim {
 /// the path that is about to fail.
 pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
     let Ok(file) = read_cache_file(cache_path)? else {
-        return Ok(CacheClaim::Compression(KnownCompression::Unknown));
+        return Ok(CacheClaim::Settles {
+            compression: KnownCompression::Unknown,
+            statistics_heap_bytes: 0,
+        });
     };
     let stored_size = file.identity.stored_size();
-    // The index is decoded only to be dropped, its statistics freed as they
-    // were decoded: inside a statistics scope (`crate::instrument`).
+    // The index is decoded only to be sized and dropped, its statistics freed
+    // as they were decoded: inside a statistics scope (`crate::instrument`).
     let CacheFile { compression, index, .. } = file;
+    let statistics_heap_bytes = index.statistics_heap_bytes();
     drop_attributed(index);
     // An origin that cannot be probed is left to the open that follows,
     // which is where that failure has a sentence to say.
     let Ok(live) = origin.probe().await else {
-        return Ok(CacheClaim::Compression(KnownCompression::Unknown));
+        return Ok(CacheClaim::Settles {
+            compression: KnownCompression::Unknown,
+            statistics_heap_bytes,
+        });
     };
     if stored_size != live.stored_size() {
         return Ok(CacheClaim::SourceChanged {
@@ -835,10 +850,11 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
             live_stored_size: live.stored_size(),
         });
     }
-    Ok(CacheClaim::Compression(match compression {
+    let compression = match compression {
         Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
         None => KnownCompression::Plain,
-    }))
+    };
+    Ok(CacheClaim::Settles { compression, statistics_heap_bytes })
 }
 
 /// Drop each block's statistics — the `Arc` sharing them included — inside a

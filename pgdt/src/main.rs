@@ -171,7 +171,7 @@ impl ParallelArgs {
     /// reserve at once (`pgdt/tests/data/runtime/`).
     #[cfg(test)]
     fn resolve_in(&self, root: &Path, source: &dyn ByteRangeSource) -> Resolved {
-        self.discover_in(root).resolve(source)
+        self.discover_in(root).resolve(source, 0)
     }
 
     /// The half of the resolution that needs no dump: the flags as typed, and
@@ -193,7 +193,7 @@ impl ParallelArgs {
         //
         // Deficiency register: `deficiency: KD29` — a flagless read-buffer
         // budget is not taken from this read: `Resolved` calls
-        // `Parallelism::discover_in`, which walks the limit again, so a limit
+        // `Parallelism::discover_holding_in`, which walks the limit again, so a limit
         // rewritten between the two walks is announced — and carved into a
         // statistics allowance, which does take this read — as one number
         // while the pools are budgeted from another. **(c) unowned**; promoted
@@ -210,7 +210,7 @@ impl ParallelArgs {
 struct Discovered<'a> {
     args: &'a ParallelArgs,
     /// The filesystem root the limit was read under, kept because
-    /// `Parallelism::discover_in` asks the same root again, for the limit
+    /// `Parallelism::discover_holding_in` asks the same root again, for the limit
     /// (`KD29`) and for what the machine reports free.
     root: &'a Path,
     /// The memory limit this process runs under, and the file that stated it.
@@ -275,7 +275,14 @@ impl Discovered<'_> {
     /// resolved-serial arrangement can state no budget, which is what lets the
     /// status line say `(default)` truthfully: `Workers::memory_bytes` is not
     /// an `Option`, so that variant carries `DEFAULT_MEMORY_BUDGET` bare.
-    fn resolve(self, source: &dyn ByteRangeSource) -> Resolved {
+    ///
+    /// **`cached_statistics` is held while the workers are carved**: the heap
+    /// the cache's statistics will hold once the scan loads them
+    /// (`CacheClaim::Settles`), billed against the margin's ceiling as the
+    /// provider bills a resident map, so it lowers the count first and, where
+    /// the count cannot fall, the budget (`Parallelism::within_shared`;
+    /// `docs/design/decisions.md`, "D85").
+    fn resolve(self, source: &dyn ByteRangeSource, cached_statistics: u64) -> Resolved {
         let args = self.args;
         // Asked of the source only where `--jobs` was absent: a stated count
         // is not a recommendation and has nothing to be lowered from.
@@ -287,9 +294,10 @@ impl Discovered<'_> {
         // One carving, whichever end the allowance came from: a stated
         // `--memory` replaces the discovered limit rather than bypassing the
         // reserve and the margin.
+        let memory = source.default_worker_memory();
         let carved = match args.memory {
-            Some(stated) => Parallelism::within(jobs, source.default_worker_memory(), stated),
-            None => Parallelism::discover_in(self.root, jobs, source.default_worker_memory()),
+            Some(stated) => Parallelism::within_shared(jobs, memory, stated, 0, cached_statistics),
+            None => Parallelism::discover_holding_in(self.root, jobs, memory, cached_statistics),
         };
         let parallelism = match (args.jobs, carved.memory_bytes()) {
             // A stated count is not lowered by the allowance; what the budget
@@ -1621,8 +1629,8 @@ async fn main() -> Result<()> {
             // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
             stated.announce();
-            let source = open_for_scan(&origin, &mode).await?;
-            let parallel = stated.resolve(source.as_ref());
+            let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
+            let parallel = stated.resolve(source.as_ref(), cached_statistics);
             parallel.announce();
             if preamble_only_flag {
                 let (metadata, diagnostics) =
@@ -1740,7 +1748,7 @@ async fn main() -> Result<()> {
             // condition keeps `info`'s own sentence, which names the two ways
             // out ahead of the command they enable.
             let source = match open_with_cache(&origin, &mode).await? {
-                Opened::Source(source) => source,
+                Opened::Source { source, .. } => source,
                 Opened::SourceChanged { cached_stored_size, live_stored_size } => {
                     let changed =
                         CacheStatus::SourceChanged { cached_stored_size, live_stored_size };
@@ -1829,8 +1837,8 @@ async fn main() -> Result<()> {
             // ahead of the open, as `parse` does.
             let stated = parallel.discover();
             stated.announce();
-            let source = open_for_scan(&origin, &mode).await?;
-            let parallel = stated.resolve(source.as_ref());
+            let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
+            let parallel = stated.resolve(source.as_ref(), cached_statistics);
             parallel.announce();
             // The refusals a query can raise that want more than the
             // library's own words: those about the source gain its name, and
@@ -2021,8 +2029,9 @@ async fn main() -> Result<()> {
 /// `Error::CacheSourceMismatch` and `info` prints the sentence naming the two
 /// ways out (`docs/design/decisions.md`, "D20").
 enum Opened {
-    /// The source, ready to read.
-    Source(Arc<dyn pgdump_query::ByteRangeSource>),
+    /// The source, ready to read, and the heap the cache's statistics will
+    /// hold once a scan loads them (`CacheClaim::Settles`).
+    Source { source: Arc<dyn pgdump_query::ByteRangeSource>, cached_statistics: u64 },
     /// The cache at this mode's path records a stored size the file does not
     /// have, so it describes another file — the condition, and the two
     /// numbers, `cache::load` would answer [`CacheStatus::SourceChanged`]
@@ -2046,17 +2055,19 @@ async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
         CacheMode::Enabled { path, .. } => Some(path.as_path()),
         CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
     };
-    let known = match claimed_by {
+    let (known, cached_statistics) = match claimed_by {
         Some(path) => match pgdump_query::cache::claim(path, origin).await? {
-            CacheClaim::Compression(known) => known,
+            CacheClaim::Settles { compression, statistics_heap_bytes } => {
+                (compression, statistics_heap_bytes)
+            }
             CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
                 return Ok(Opened::SourceChanged { cached_stored_size, live_stored_size });
             }
         },
-        None => KnownCompression::Unknown,
+        None => (KnownCompression::Unknown, 0),
     };
     match open(origin, known).await? {
-        Recognized::Source(source) => Ok(Opened::Source(source)),
+        Recognized::Source(source) => Ok(Opened::Source { source, cached_statistics }),
         Recognized::Mismatch => {
             let path =
                 claimed_by.expect("`KnownCompression::Unknown` claims nothing to contradict");
@@ -2070,13 +2081,15 @@ async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
 /// constructor the four scan entry points use, so this refusal is
 /// word-for-word the one it pre-empts. The library still refuses on its own:
 /// this spares the walk, it does not replace the guarantee
-/// (`docs/design/decisions.md`, "D20").
+/// (`docs/design/decisions.md`, "D20"). Beside the source it answers the heap
+/// the cache's statistics will hold, which [`Discovered::resolve`] carves the
+/// workers around.
 async fn open_for_scan(
     origin: &Origin,
     cache: &CacheMode,
-) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
+) -> Result<(Arc<dyn pgdump_query::ByteRangeSource>, u64)> {
     match open_with_cache(origin, cache).await? {
-        Opened::Source(source) => Ok(source),
+        Opened::Source { source, cached_statistics } => Ok((source, cached_statistics)),
         Opened::SourceChanged { cached_stored_size, live_stored_size } => Err(naming_the_source(
             cache.source_mismatch(cached_stored_size, live_stored_size),
             origin,
@@ -3391,6 +3404,47 @@ mod tests {
         let plain = tight.resolve_in(&root, &Recommends::jobs(1));
         assert_eq!(plain.parallelism().jobs(), 1);
         assert_eq!(plain.parallelism().memory_bytes(), Some(32 << 20));
+    }
+
+    /// **The statistics a cache hands the scan are carved around, not after**
+    /// (`docs/design/decisions.md`, "D85"): billed as held against the
+    /// margin's ceiling, they lower a recommended count first, and where the
+    /// count cannot fall — a source recommending no cost — the budget, so the
+    /// statistics allowance still covers what the cache holds. A discovered
+    /// limit and the same number stated carve them alike.
+    #[test]
+    fn a_cache_s_statistics_lower_the_count_and_then_the_budget() {
+        let reader = Recommends::reader(24, READER);
+        let limited = runtime_root("v2-limit");
+        let flagless = ParallelArgs { jobs: None, memory: None };
+        assert_eq!(flagless.discover_in(&limited).resolve(&reader, 0).parallelism().jobs(), 9);
+        // Two readers' worth held: the 563.2 MiB ceiling less 116 MiB affords
+        // seven, and the room seven leave absorbs the holding whole.
+        let holding = flagless.discover_in(&limited).resolve(&reader, 2 * READER);
+        assert_eq!(holding.parallelism().jobs(), 7);
+        assert_eq!(holding.parallelism().memory_bytes(), Some(7 * READER));
+
+        let allowance = 1u64 << 30;
+        let unlimited = runtime_root("no-limit");
+        let stated = ParallelArgs { jobs: None, memory: Some(allowance) };
+        assert_eq!(
+            stated.discover_in(&unlimited).resolve(&reader, 2 * READER).parallelism(),
+            holding.parallelism(),
+            "the same number stated is the same carving"
+        );
+
+        // A plain source's count cannot fall, so what the room beside its
+        // budget cannot absorb comes off the budget, and the statistics
+        // allowance is then exactly what the cache holds.
+        let plain = Recommends::jobs(1);
+        let budget = pgdump_query::DEFAULT_MEMORY_BUDGET;
+        let room = pgdump_query::statistics_allowance(allowance, budget);
+        let absorbed = stated.discover_in(&unlimited).resolve(&plain, room);
+        assert_eq!(absorbed.parallelism().memory_bytes(), Some(budget));
+        let short = 16 << 20;
+        let squeezed = stated.discover_in(&unlimited).resolve(&plain, room + short);
+        assert_eq!(squeezed.parallelism().memory_bytes(), Some(budget - short));
+        assert_eq!(squeezed.statistics_allowance(), Some(room + short));
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it

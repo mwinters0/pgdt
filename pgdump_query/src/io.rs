@@ -885,10 +885,26 @@ impl Parallelism {
     /// environments this machine cannot be put into
     /// (`pgdt/tests/data/runtime/`).
     pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
+        Self::discover_holding_in(root, jobs, memory, 0)
+    }
+
+    /// [`Parallelism::discover_in`] for a caller holding `held` bytes resident
+    /// besides the arrangement — the statistics a cache hands its scan — which
+    /// a discovered limit carves as [`Parallelism::within_shared`] does.
+    ///
+    /// **With no limit found, `held` changes nothing**: that arrangement is
+    /// held under no margin, the halving of what the machine reports free
+    /// being the margin there.
+    pub fn discover_holding_in(
+        root: &Path,
+        jobs: usize,
+        memory: Option<WorkerMemory>,
+        held: u64,
+    ) -> Self {
         let (cap, ceiling) = match discover_memory_limit_in(root) {
             // The one carving, shared with a stated allowance
             // ([`Parallelism::within`]).
-            Some(limit) => return Self::within(jobs, memory, limit.bytes),
+            Some(limit) => return Self::within_shared(jobs, memory, limit.bytes, 0, held),
             // Nothing discovered and nothing recommended: no cap to state, and
             // no recommendation to cap, which is the library's own default.
             None if memory.is_none() => (None, None),
@@ -1185,7 +1201,9 @@ fn margin_allowance(allowance: u64) -> u64 {
 ///
 /// **It is carved after the workers, never before them**
 /// (`docs/design/decisions.md`, "D85"): the count is fixed before a byte is
-/// read, while statistics are known only as they accumulate.
+/// read, while statistics are gathered only as they accumulate. Those a cache
+/// hands the pass are known first and bill the workers' carving as `held`
+/// ([`Parallelism::within_shared`]), so what is left here covers them too.
 ///
 /// **[`MEMORY_RESERVE`] is not subtracted again here.** The reserve comes off
 /// the top for the *cap* a count is solved against, where this is the *margin*

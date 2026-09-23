@@ -583,10 +583,15 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   unspent**, because what kills a container is one run's peak.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
+- **The statistics a cache already holds are counted before the workers**: a
+  `parse` or `query` over a cache with statistics in it pays for them out of
+  the same four fifths, so a large cache means fewer workers — and where the
+  count cannot fall, a plain dump or a single worker, a smaller read-buffer
+  budget.
 - **What is left under that fifth is what a gathering `parse`'s statistics may
-  hold**, and a table whose statistics will not fit it is skipped rather than
-  gathered — see "`--statistics`: what `parse` records for later queries"
-  above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
+  hold**, the cache's own included, and a table whose statistics will not fit
+  it is skipped rather than gathered — see "`--statistics`: what `parse`
+  records for later queries" above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
 So `--memory 1073741824` in a 1 GiB container asks for exactly what that
 container already told pgdt, and the read-buffer budget that follows is
@@ -653,8 +658,8 @@ and a budget of 106 MiB — and the run says as much before it starts (below,
 
 **The fifth left free is a second thing the worker count answers to.** pgdt
 takes the largest worker count whose predicted total — the readers' own
-buffers, plus 256 MiB for everything a scan holds outside them — still fits in
-four fifths of the allowance, and reads with that many. In a 1 GiB container a
+buffers, plus 256 MiB for everything a scan holds outside them, plus the
+statistics the cache holds — still fits in four fifths of the allowance, and reads with that many. In a 1 GiB container a
 24 MiB-block `.xz` reads with ten readers rather than the eleven the ceiling
 alone would buy. **Below about 640 MiB the fifth costs you nothing**, because
 the 384 MiB already taken off the top is the tighter of the two; above it, it
@@ -677,7 +682,8 @@ why it is slow. And **where no limit is set at all**, pgdt does not size itself
 from the machine's RAM: it takes what the file asks for exactly as above, held
 under half of what the machine reports as available — half rather than all
 because that figure is an estimate two processes reading at once would each see
-the whole of.
+the whole of. There is no fifth held back there, so a cache's statistics do not
+lower the workers either.
 
 If that is more than you want a flagless run to take, state `--memory`; a
 number you type wins over anything discovered, in both directions.

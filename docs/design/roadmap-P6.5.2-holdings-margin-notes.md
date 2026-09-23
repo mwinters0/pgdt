@@ -19,8 +19,8 @@ and `a_finite_pool_limit_is_read_off_the_session`
   count cannot fall, what the ceiling cannot absorb comes off the budget, which
   6.5.3 built
   ([`roadmap-P6.5.3-holdings-floors-notes.md`](roadmap-P6.5.3-holdings-floors-notes.md)).
-- **`Parallelism::within`, `pgdt`'s carving, passes `held = 0`**: statistics
-  are carved there after the workers (`statistics_allowance`, D85).
+- **`pgdt` passes a cache's statistics as `held`** (`M130`), sized by
+  `cache::claim` before its workers are carved (D85).
 
 ## Negative results
 
