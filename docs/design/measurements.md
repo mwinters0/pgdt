@@ -1494,11 +1494,26 @@ be published outside the sweep", above).
 the others' spreads. This table's 7.39 / 7.12 / 10.09 / 40.02 is outside them
 at both ends: the 1-block rows are ~1.2 MiB higher (7.30–7.47 against
 5.57–6.26) and the 4,000-block row ~4.2 MiB lower (39.80–40.06 against
-43.21–45.32), over the commits from `9b35bea` to `542fdfb`. The per-block fall
-is ranked, not named: `rss-attribution`'s `parse --preamble-only` leg, from the
-same sweep, fell from +6,101 to +3,382 B a block, which places it in the
-preamble without saying which change. The ~1.2 MiB rise at one block is
-unattributed. Naming both is `M139`'s, from the code.
+43.21–45.32), over the commits from `9b35bea` to `542fdfb`. Each end is one
+commit's, found by building the range under this figure's wrapper and named
+from its diff
+([`../status/history/2026-09-23.md`](../status/history/2026-09-23.md),
+"`M139`: what moved the resident figures"):
+
+- **The rise is the binary, not the heap.** `f672ad6` turned on
+  `pgdump_query`'s `http` feature in `pgdt`'s manifest, linking the HTTP client
+  stack into every build and doubling the binary. The extra pages are the
+  image's own mappings, resident before a source is opened — `pgdt --version`
+  carries them — and a build of that commit with the feature off reads as its
+  parent. A fixed term: it lifts every row and no slope.
+- **The fall is the save's two copies going.** `d767794` (D78) stopped
+  `cache::save` cloning the whole `DumpIndex` and encoding the clone into a
+  `Vec` — doubling to the next power of two above the cache file — before one
+  write. Both copies grow per table and were live together at the save, the
+  peak of a `--preamble-only` run and part of a full `parse`'s; the counting
+  allocator's high-water falls across that commit and is flat from there
+  to `542fdfb`. At 4,000 blocks the fall outweighs the rise, and at one block
+  there is nothing to fall.
 
 ## What the per-block resident growth is made of
 
@@ -1553,11 +1568,14 @@ schema section, before a single data block is read, and it is already carrying
 **+3,382 B** of the `parse` row's +8,968 — three eighths. `info` over the
 finished cache carries **+5,784 B** to hold an index that was deserialized
 rather than built, with no scanner, no census and no splice anywhere in the
-process: 2,402 B a block more than the preamble leg, where the previous sitting
-read the two within 5% of each other. So the two routes no longer cost the
-same — the finished index carries a term the preamble does not, unattributed,
-and this input cannot say whether it is per table or per block. The code, not
-another sitting, is what would name it (`M139`).
+process: 2,402 B a block more than the preamble leg. The previous sitting's
+agreement within 5% was two different peaks coinciding. The preamble leg's was
+its save, holding the index twice and its encoding until `d767794` (`peak-rss`,
+above); `info`'s is its report, which holds every block's resolved schema at
+once (`block_resolutions`, `pgdt/src/main.rs`) beside a finished index carrying
+what the preamble has not reached, each `CopyBlock` and its data spans. The
+save's copies went and `info`'s leg did not move with them, so the gap is those
+two terms, both per `COPY` block by construction.
 
 The two legs cannot be told apart by this input, because `blocks4000` gives
 every table exactly one `COPY` block — but they are told apart by *when*: the
@@ -1586,7 +1604,11 @@ at 31.00 against 28.50. Those readings came from a standalone script using
 `runs/pgdt-alloc-*` binaries whose source is not recoverable, so which build
 moved the fixed term cannot be said; that is a candidate rather than a finding.
 The paragraph above reads the slopes and not their ranking: three earlier
-sittings put glibc's lowest, and this one puts it highest.
+sittings put glibc's lowest, and this one puts it highest. The ranking turned at
+`d767794`, whose save copies had been a larger share of jemalloc's and
+mimalloc's slopes than of glibc's; why one transient costs three allocators
+differently is unattributed, being retention, which the counting allocator
+cannot see.
 
 **Retention is real, and not only where the throttle is off.** `--dtcache none`
 splices per block (`KD5`), and there glibc's +11,896 B sits **1,799 B above

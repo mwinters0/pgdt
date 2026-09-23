@@ -67,4 +67,4 @@ table as a work queue.
 | M136 | 2026-09-23 | `--where`: a `(` before a keyword is structure, as D60 states | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
 | M137 | 2026-09-23 | A declared type is read as PostgreSQL's grammar reads it — aliases, a mid-name typmod, `interval`'s fields; strikes `KD44` | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
 | M138 | 2026-09-23 | Every stale figure re-taken by `measure.py --all`, launched detached once `M136` and `M137` land | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
-| M139 | | Name, from the code, what moved `peak-rss` and `rss-attribution` between `9b35bea` and `542fdfb` | | [2026-09-23](../status/history/2026-09-23.md), "`M138`'s fold" |
+| M139 | 2026-09-23 | Named what moved `peak-rss` and `rss-attribution` between `9b35bea` and `542fdfb`: `f672ad6`'s linked HTTP stack and `d767794`'s save | | [2026-09-23](../status/history/2026-09-23.md), "`M139`: what moved the resident figures" |
