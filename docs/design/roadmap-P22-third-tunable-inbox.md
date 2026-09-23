@@ -32,24 +32,25 @@ is a censored reading, while the 6.6% headroom on the surviving leg is not.
 
 ---
 
-## Billing a query's loaded statistics is a live option, not a settled one
+## A query bills its loaded statistics rather than reserving them
 
-**Fact.** A branch stands registered and unspent: *a remainder that grows
-with the statistics volume is billed, not reserved* — a query billing its
-loaded cache statistics against its allowance before resolving its worker
-count, so it resolves fewer workers rather than being killed. It was left
-untaken because the constant it would have been priced against is one this
-phase may replace. The instrument the branch needs exists
-and is kept: `instrument::statistics_loaded`, the heap a cache load hands a
-pass, which is the only statistics term a query has.
+**Fact.** *A remainder that grows with the statistics volume is billed, not
+reserved*: `pgdt query`'s mapping pass bills a loaded cache's statistics
+against its allowance before resolving its worker count, so it resolves fewer
+workers rather than being killed, and its replay, which keeps none, is billed
+nothing ([`decisions.md`](decisions.md), "D85"). It was taken before the
+constant it is priced against, which this phase may replace. Its instrument is
+kept: `instrument::statistics_loaded`, the heap a cache load hands a pass,
+which is the only statistics term a query has.
 
-**Why P22 cares.** The branch is a fourth consumer resolving against the same
+**Why P22 cares.** The billing is a fourth consumer resolving against the same
 number, which is this phase's subject. Whether a query bills or reserves is
 not separable from what the third tunable means.
 
-**Origin.** 2026-09-16, the statistics-memory wrap; [`roadmap.md`](roadmap.md), "P23 —
-Statistics coverage and the resident reserve" holds the unspent intent and
-`KD34` the measured gap.
+**Origin.** 2026-09-16, the statistics-memory wrap, which registered the
+branch; taken on 2026-09-23. [`roadmap.md`](roadmap.md), "P23 — Statistics
+coverage and the resident reserve" holds the same fact and `KD34` the measured
+gap.
 
 ---
 

@@ -584,10 +584,12 @@ carved up in exactly the same way, so the two are one setting reached two ways:
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a
-  `parse` or `query` over a cache with statistics in it pays for them out of
-  the same four fifths, so a large cache means fewer workers — and where the
-  count cannot fall, a plain dump or a single worker, a smaller read-buffer
-  budget.
+  `parse` over a cache with statistics in it pays for them out of the same
+  four fifths, so a large cache means fewer workers — and where the count
+  cannot fall, a plain dump or a single worker, a smaller read-buffer budget.
+  A `query` pays for them only while it maps what the cache does not yet
+  reach: the rows it then reads hold none of them, so that part is sized as if
+  the cache held no statistics at all.
 - **What is left under that fifth is what a gathering `parse`'s statistics may
   hold**, the cache's own included, and a table whose statistics will not fit
   it is skipped rather than gathered — see "`--statistics`: what `parse`
@@ -959,8 +961,11 @@ discovered — so a log line naming a scan says what produced everything that
 follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
-started`'s `jobs=` is the count `resolved the arrangement` announced, and two
-things can still cut it: a compressed dump whose largest block the
+started`'s `jobs=` is the count `resolved the arrangement` announced — except
+on a `query` over a cache holding statistics, where `resolved the arrangement`
+names what the rows are read under and `scan started` names the mapping that
+comes first, which pays for those statistics and so may run fewer workers on a
+smaller budget. Two things can still cut it: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
 whatever `--jobs` said**, and a budget too small for the readers asked for buys
 fewer of them. Either prints one line, once per scan:

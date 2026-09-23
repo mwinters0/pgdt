@@ -192,11 +192,12 @@ impl ParallelArgs {
         // could answer differently.
         //
         // Deficiency register: `deficiency: KD29` — a flagless read-buffer
-        // budget is not taken from this read: `Resolved` calls
-        // `Parallelism::discover_holding_in`, which walks the limit again, so a limit
-        // rewritten between the two walks is announced — and carved into a
-        // statistics allowance, which does take this read — as one number
-        // while the pools are budgeted from another. **(c) unowned**; promoted
+        // budget is not taken from this read: each `Discovered::resolve` calls
+        // `Parallelism::discover_holding_in`, which walks the limit again —
+        // once per pass `query` carves — so a limit rewritten between two
+        // walks is announced — and carved into a statistics allowance, which
+        // does take this read — as one number while the pools are budgeted
+        // from another. **(c) unowned**; promoted
         // by a limit seen to move inside a run, or by a change to
         // `Parallelism`'s discovery that can take a limit already read.
         Discovered { args: self, root, limit: pgdump_query::discover_memory_limit_in(root) }
@@ -276,13 +277,14 @@ impl Discovered<'_> {
     /// status line say `(default)` truthfully: `Workers::memory_bytes` is not
     /// an `Option`, so that variant carries `DEFAULT_MEMORY_BUDGET` bare.
     ///
-    /// **`cached_statistics` is held while the workers are carved**: the heap
-    /// the cache's statistics will hold once the scan loads them
-    /// (`CacheClaim::Settles`), billed against the margin's ceiling as the
+    /// **`held` is what the pass keeps resident besides its workers while
+    /// they are carved**: the heap a cache's statistics hold once a pass loads
+    /// them (`CacheClaim::Settles`), billed against the margin's ceiling as the
     /// provider bills a resident map, so it lowers the count first and, where
     /// the count cannot fall, the budget (`Parallelism::within_shared`;
-    /// `docs/design/decisions.md`, "D85").
-    fn resolve(self, source: &dyn ByteRangeSource, cached_statistics: u64) -> Resolved {
+    /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
+    /// ([`Discovered::resolve_query`]).
+    fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
         let args = self.args;
         // Asked of the source only where `--jobs` was absent: a stated count
         // is not a recommendation and has nothing to be lowered from.
@@ -296,8 +298,8 @@ impl Discovered<'_> {
         // reserve and the margin.
         let memory = source.default_worker_memory();
         let carved = match args.memory {
-            Some(stated) => Parallelism::within_shared(jobs, memory, stated, 0, cached_statistics),
-            None => Parallelism::discover_holding_in(self.root, jobs, memory, cached_statistics),
+            Some(stated) => Parallelism::within_shared(jobs, memory, stated, 0, held),
+            None => Parallelism::discover_holding_in(self.root, jobs, memory, held),
         };
         let parallelism = match (args.jobs, carved.memory_bytes()) {
             // A stated count is not lowered by the allowance; what the budget
@@ -317,12 +319,39 @@ impl Discovered<'_> {
             .or_else(|| pgdump_query::available_memory_in(self.root).map(|free| free / 2));
         Resolved {
             parallelism,
-            limit: self.limit,
+            limit: self.limit.clone(),
             allowance_stated: args.memory,
             allowance,
             recommended_jobs,
         }
     }
+
+    /// **`query`'s two passes, carved apart**: each from the one allowance
+    /// with nothing drawn, since they never run at once, and each billed what
+    /// it holds. The mapping pass holds the loaded map while its readers
+    /// extend it, so it is carved around `cached_statistics`; the replay holds
+    /// none of them — the library's segments drop a block's statistics, and
+    /// the map is gone before a row is read — so it is carved around nothing.
+    /// Billing the replay the blocks it matched instead would need them known
+    /// before the mapping pass has found them.
+    fn resolve_query(&self, source: &dyn ByteRangeSource, cached_statistics: u64) -> QueryPasses {
+        QueryPasses {
+            mapping: self.resolve(source, cached_statistics),
+            replay: self.resolve(source, 0),
+        }
+    }
+}
+
+/// The arrangement each of `query`'s passes runs under
+/// ([`Discovered::resolve_query`]).
+struct QueryPasses {
+    /// The mapping pass's, in [`ScanOptions::parallelism`]: announced on its
+    /// own `scan started` line, printed only when it reads.
+    mapping: Resolved,
+    /// The replay's, in [`QueryOptions::parallelism`]: what `resolved the
+    /// arrangement` announces and a plan note's origin clause quotes, the
+    /// only one that reads over a map already settling the table.
+    replay: Resolved,
 }
 
 /// What a run resolved its two parallelism numbers to, and where each came
@@ -992,7 +1021,8 @@ struct ReadFlags {
 /// already-resolved arrangement ([`Discovered::resolve`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
-/// needs the same arrangement in [`QueryOptions`] as in its mapping pass.
+/// passes its mapping pass's, its replay's going into [`QueryOptions`]
+/// ([`Discovered::resolve_query`]).
 fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
     ScanOptions {
         chunk_size_bytes: read.chunk_size.unwrap_or(pgdump_query::SCAN_CHUNK_DEFAULT_SIZE_BYTES),
@@ -1838,8 +1868,9 @@ async fn main() -> Result<()> {
             let stated = parallel.discover();
             stated.announce();
             let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
-            let parallel = stated.resolve(source.as_ref(), cached_statistics);
-            parallel.announce();
+            let QueryPasses { mapping, replay } =
+                stated.resolve_query(source.as_ref(), cached_statistics);
+            replay.announce();
             // The refusals a query can raise that want more than the
             // library's own words: those about the source gain its name, and
             // a column name not found gains a note. Which wants the name is
@@ -1860,9 +1891,7 @@ async fn main() -> Result<()> {
                 schema_mode: schema_mode.into(),
                 filter,
                 projection: projection(column, no_columns),
-                // The same flags on both passes: one mapping scan and one
-                // replay over one source.
-                parallelism: parallel.parallelism(),
+                parallelism: replay.parallelism(),
                 use_statistics: statistics == QueryStatistics::All,
                 ..QueryOptions::default()
             };
@@ -1879,7 +1908,7 @@ async fn main() -> Result<()> {
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
-                scan_options(read, &parallel),
+                scan_options(read, &mapping),
                 query_options,
                 mode,
             )
@@ -1889,7 +1918,7 @@ async fn main() -> Result<()> {
             // `announce_comparisons` below, which waits on the first
             // resolved schema.
             if let Some(first) = streams.first() {
-                announce_plan_notes(first, &parallel);
+                announce_plan_notes(first, &replay);
             }
             let mut announced = false;
             let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
@@ -3445,6 +3474,30 @@ mod tests {
         let squeezed = stated.discover_in(&unlimited).resolve(&plain, room + short);
         assert_eq!(squeezed.parallelism().memory_bytes(), Some(budget - short));
         assert_eq!(squeezed.statistics_allowance(), Some(room + short));
+    }
+
+    /// **`query`'s replay is carved with nothing held**, its mapping pass
+    /// around the cache's statistics: the same holding that lowers the
+    /// mapping pass's count leaves the replay the arrangement a cache without
+    /// statistics would, under a discovered limit and a stated one alike.
+    #[test]
+    fn a_query_s_replay_is_carved_around_no_statistics() {
+        let reader = Recommends::reader(24, READER);
+        let flagless = ParallelArgs { jobs: None, memory: None };
+        let limited = runtime_root("v2-limit");
+        let stated = ParallelArgs { jobs: None, memory: Some(1 << 30) };
+        let unlimited = runtime_root("no-limit");
+        for discovered in [flagless.discover_in(&limited), stated.discover_in(&unlimited)] {
+            let passes = discovered.resolve_query(&reader, 2 * READER);
+            let bare = discovered.resolve(&reader, 0).parallelism();
+            assert_eq!(
+                passes.mapping.parallelism(),
+                discovered.resolve(&reader, 2 * READER).parallelism()
+            );
+            assert_eq!(passes.mapping.parallelism().jobs(), 7);
+            assert_eq!(passes.replay.parallelism(), bare);
+            assert_eq!(bare.jobs(), 9);
+        }
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it

@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P5, P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P6 — DataFusion integration | Current | [`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
-| P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
+| P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
@@ -639,11 +639,14 @@ What it inherits:
   input this phase would otherwise have to re-take. No sitting re-takes them:
   they are `runs/20.8-reserve-attribution-20260916-1857/readings.json`, named
   again by [`../status/history/2026-09-16.md`](../status/history/2026-09-16.md).
-- **A branch registered and unspent**: a remainder growing with the statistics
-  volume is billed to the query rather than reserved. Its instrument is kept —
+- **A branch already taken**: a remainder growing with the statistics volume
+  is billed to the query rather than reserved — `pgdt query`'s mapping pass
+  carves its workers around the statistics a loaded cache holds, and its
+  replay, which keeps none, around nothing (D85). Its instrument is kept —
   `instrument::statistics_loaded`, the heap a cache load hands a pass, which is
   the only statistics term a query has. It is filed for P22 as well, being a
-  fourth consumer of the one number, and whichever phase runs first settles it.
+  fourth consumer of the one number, and whichever phase runs first settles
+  whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
   and `statistics-pruning` are stale because the margin now binds a typed
   number, and are not re-taken until the constant settles.

@@ -1993,12 +1993,12 @@ impl ReplayPlan {
     /// as a whole block does, and every other starts inside its data.
     fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
         let Some(kept) = self.kept.get(&block.header_offset) else {
-            return vec![Segment {
-                block: block.clone(),
-                start: block.header_offset,
-                limit: block.end_offset,
-                entry: SegmentEntry::Header,
-            }];
+            return vec![Segment::new(
+                block,
+                block.header_offset,
+                block.end_offset,
+                SegmentEntry::Header,
+            )];
         };
         kept.iter().map(|run| Segment::over(block, run.clone())).collect()
     }
@@ -2167,6 +2167,8 @@ enum SegmentEntry {
 /// straddling a cut belongs to the piece before it, once.
 #[derive(Debug, Clone)]
 struct Segment {
+    /// The block this piece is of, **without its statistics**
+    /// ([`Segment::new`]).
     block: CopyBlock,
     start: u64,
     limit: u64,
@@ -2174,6 +2176,18 @@ struct Segment {
 }
 
 impl Segment {
+    /// The piece of `block` from `start` to `limit`, entered as `entry`.
+    ///
+    /// **The copy drops the block's statistics.** Nothing in a replay reads
+    /// them once [`ReplayPlan::new`] has pruned, and a copy keeping the `Arc`
+    /// would hold every matched block's resident for as long as the replay
+    /// runs, after the map that loaded them is gone — which is what lets a
+    /// caller carve a replay with nothing held for them.
+    fn new(block: &CopyBlock, start: u64, limit: u64, entry: SegmentEntry) -> Self {
+        let block = CopyBlock { statistics: None, ..block.clone() };
+        Segment { block, start, limit, entry }
+    }
+
     /// The piece of `block` replaying `run`, a range in segment terms: the
     /// run that begins before the block's first row starts at its header, as
     /// a whole block's first piece does, and any other inside its data.
@@ -2183,7 +2197,7 @@ impl Segment {
         } else {
             (run.start, SegmentEntry::Interior)
         };
-        Segment { block: block.clone(), start, limit: run.end, entry }
+        Segment::new(block, start, run.end, entry)
     }
 
     /// This piece as a stream resuming at `offset` — a row's start, or 0 —
@@ -3241,7 +3255,7 @@ fn plan_partitions(
                 } else {
                     (piece.start, SegmentEntry::Interior)
                 };
-                segments.push(Segment { block: block.clone(), start, limit: piece.end, entry });
+                segments.push(Segment::new(block, start, piece.end, entry));
             }
             continue;
         };
@@ -3721,6 +3735,10 @@ pub fn table_stream<'a>(
             .flat_map(|b| plan.segments(b))
             .filter_map(|segment| segment.resumed_at(resume_offset))
             .collect();
+        // Dropped before the replay rather than at the stream's end: the
+        // matches hold the blocks' statistics, which the segments do not
+        // ([`Segment::new`]).
+        drop(matches);
         let mut rows =
             Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
         while let Some(batch) = rows.next().await {
@@ -4614,6 +4632,56 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    /// **A replay keeps no block's statistics**: once its plan and segments
+    /// exist, the matched blocks the map handed over are the only holders of
+    /// each block's `Arc`, so dropping them frees the statistics before a row
+    /// is read, on the partitioned path and the serial one alike.
+    #[tokio::test]
+    async fn a_replay_holds_no_block_s_statistics() {
+        use crate::io::LocalFileSource;
+        use crate::statistics::{BlockStatistics, GroupSizing};
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
+        let query_options = QueryOptions {
+            scan_extent: ScanExtent::Full,
+            parallelism: Parallelism::workers(4, crate::io::DEFAULT_MEMORY_BUDGET),
+            ..QueryOptions::default()
+        };
+        let mapped = map_for_query(
+            &source,
+            "public.t",
+            &ScanOptions::default(),
+            &query_options,
+            &CacheMode::DISABLED,
+            &SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut matches = mapped.matches;
+        assert_eq!(matches.len(), 2);
+        for block in &mut matches {
+            block.statistics = Some(Arc::new(BlockStatistics {
+                group_size: 1 << 20,
+                sizing: GroupSizing::Stated,
+                groups: Vec::new(),
+                columns: vec![None; block.header.columns.len()],
+            }));
+        }
+        let held: Vec<_> =
+            matches.iter().map(|block| Arc::clone(block.statistics.as_ref().unwrap())).collect();
+
+        let (plan, groups, _) =
+            plan_replay(&source, &matches, mapped.metadata, ScanOptions::default(), query_options)
+                .unwrap();
+        let serial: Vec<Segment> = matches.iter().flat_map(|block| plan.segments(block)).collect();
+        assert!(groups.iter().flatten().chain(&serial).all(|s| s.block.statistics.is_none()));
+        drop(matches);
+        for statistics in &held {
+            assert_eq!(Arc::strong_count(statistics), 1, "only the test's own copy remains");
+        }
     }
 
     /// **The plan resolves every block before any is read, and activation
