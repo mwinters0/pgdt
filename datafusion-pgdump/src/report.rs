@@ -294,13 +294,13 @@ mod tests {
                     workers: 2,
                     memory_bytes: 8,
                 },
-                &[PlanLever::FewerSubStreams],
+                &[PlanLever::SmallerReadChunk, PlanLever::FewerSubStreams],
             ),
             account: account(AllowanceOrigin::HalfAvailable, 1 << 20),
         };
         let message = narrowed.message();
         assert!(message.contains("half of what the machine reports available"), "{message}");
-        assert_eq!(keys(&message), [COUNT], "no allowance key, so no pool key: {message}");
+        assert_eq!(keys(&message), [CHUNK, COUNT], "no allowance key, so no pool key: {message}");
 
         let unfound = BudgetedPlanNote {
             note: floor,

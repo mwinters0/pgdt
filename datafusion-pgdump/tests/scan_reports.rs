@@ -226,6 +226,34 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
     );
 }
 
+/// **A narrowed batch span on a plain source names the read chunk and not
+/// the allowance**: the budget stops at `DEFAULT_MEMORY_BUDGET` however large
+/// an allowance is stated (`docs/design/decisions.md`, "D83"), and each
+/// reader's charge is a multiple of the chunk, so a smaller one leaves every
+/// seated sub-stream a wider batch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_narrowed_span_on_a_plain_source_names_the_chunk() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = gathered_copy(dir.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let budget = Arc::new(ScanBudget::new(4 << 30));
+    let ctx = SessionContext::new_with_config(
+        SessionConfig::new().with_target_partitions(4).with_extension(budget),
+    );
+    let plans = Arc::new(Plans::default());
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&plans) as _).unwrap();
+    let _plan = plan(&ctx, &format!("SELECT * FROM {ORDERED}")).await;
+    let heard = plans.take();
+    let [(severity, message, note)] = heard.as_slice() else { panic!("{heard:#?}") };
+    assert!(matches!(note.kind, PlanNoteKind::BatchSpanNarrowed { .. }), "{heard:#?}");
+    assert_eq!(*severity, Severity::Info);
+    let (_, keys) = message.split_once("the settings that move it: ").expect(message);
+    for key in ["pgdump.chunk_size", "datafusion.execution.target_partitions"] {
+        assert!(keys.contains(key), "{key}: {message}");
+    }
+    assert!(!keys.contains("pgdump.memory"), "{message}");
+}
+
 /// **The groups statistics pruned and the bytes an early stop left unread
 /// are the scan's metrics**, as the plan note counts the first, and
 /// `EXPLAIN ANALYZE` shows both. A filter no sorted order closes stops

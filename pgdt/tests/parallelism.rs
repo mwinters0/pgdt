@@ -168,8 +168,9 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 /// at the library's own constant however large an allowance is stated
 /// (`docs/design/decisions.md`, "D83"; `KD32`).
 ///
-/// **And the remedy it names is one that is reachable there**: the sub-stream
-/// count, which `--jobs` states and the plan divides the budget by. Asserted
+/// **And the remedies it names are ones reachable there**: the sub-stream
+/// count, which `--jobs` states and the plan divides the budget by, and the
+/// read chunk, of which a plain reader's charge is a multiple. Asserted
 /// through the CLI because the clause is this layer's and the sentence is the
 /// library's, and nothing else joins them.
 #[test]
@@ -190,10 +191,9 @@ fn a_narrowed_span_is_a_note_and_still_says_where_its_budget_came_from() {
         narrowed.contains("--memory allows 536870912 resident byte(s)"),
         "a note quoting a budget says where it came from: {narrowed}"
     );
-    assert!(
-        narrowed.contains("fewer sub-streams"),
-        "and names a lever this source has: {narrowed}"
-    );
+    for lever in ["fewer sub-streams", "a smaller read chunk"] {
+        assert!(narrowed.contains(lever), "and names a lever this source has: {narrowed}");
+    }
 }
 
 /// **The budget is stated with no `--jobs` beside it**, which is the whole of
