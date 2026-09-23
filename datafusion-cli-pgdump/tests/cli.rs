@@ -66,7 +66,8 @@ async fn a_dump_answers_through_both_registrations() {
 }
 
 /// **Registration's warnings reach stderr, named, and `--quiet` keeps them
-/// off**; an `Info` never prints.
+/// off**; an `Info` never prints. The columns whose collation the dump does
+/// not record are one line, naming the dump, after the rest.
 #[tokio::test]
 async fn registration_warnings_reach_stderr_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
@@ -77,13 +78,39 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stderr = text(&out.stderr);
     let lines: Vec<&str> = stderr.lines().collect();
-    assert!(!lines.is_empty());
-    assert!(lines.iter().all(|line| line.starts_with("warning: shop.")), "{stderr}");
-    assert!(lines.iter().any(|line| line.contains("public.mood")), "{stderr}");
+    let (folded, columns) = lines.split_last().unwrap();
+    assert!(!columns.is_empty());
+    assert!(columns.iter().all(|line| line.starts_with("warning: shop.")), "{stderr}");
+    assert!(columns.iter().any(|line| line.contains("public.mood")), "{stderr}");
+    assert!(folded.starts_with(&format!("warning: {}: ", copy.display())), "{stderr}");
+    assert!(folded.contains(" table(s) are each compared bytewise: "), "{stderr}");
+    assert_eq!(lines.iter().filter(|line| line.contains("no COLLATE clause")).count(), 1);
 
     let out = run(&["-q", "--dump", &dump, "-c", "SELECT 1"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
+}
+
+/// **A `STORED AS PGDUMP` statement's uncollated columns are one line**,
+/// naming the table as the statement does.
+#[tokio::test]
+async fn a_statement_s_uncollated_columns_are_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let out = run(&[
+        "-c",
+        &format!(
+            "CREATE EXTERNAL TABLE ev STORED AS PGDUMP LOCATION '{}' \
+             OPTIONS ('pgdump.table' 'events')",
+            copy.display()
+        ),
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    let collation: Vec<&str> =
+        stderr.lines().filter(|line| line.contains("no COLLATE clause")).collect();
+    assert_eq!(collation.len(), 1, "{stderr}");
+    assert!(collation[0].starts_with("warning: ev: 1 column(s) in 1 table(s) "), "{stderr}");
 }
 
 /// **A scan's warnings reach stderr when it is planned, named**, and

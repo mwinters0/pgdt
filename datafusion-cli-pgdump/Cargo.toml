@@ -15,6 +15,7 @@ license = "Apache-2.0"
 # Every version below is the targeted `datafusion-cli` release's own
 # (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so the copied
 # `main.rs` builds against what it was written for.
+async-trait = "0.1.89"
 clap = { version = "4.5.60", features = ["cargo", "derive"] }
 datafusion = { version = "55.1.0", default-features = false }
 datafusion-cli = "=55.1.0"

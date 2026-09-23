@@ -73,6 +73,7 @@ cache itself:
 $ datafusion-cli-pgdump --dump shop=types.sql
 warning: shop.public.t_base_type: column `v_mybase` (public.mybase): opaque base type — information-free in the dump; its value is the file's text, and compares as that text
 warning: shop.public.t_enum_domain: `v_mood` (public.mood) is compared by its labels' text, as DataFusion compares the emitted dictionary, where PostgreSQL orders an enum's labels as its type declares them
+warning: types.sql: 14 column(s) in 6 table(s) are each compared bytewise: the column declares no COLLATE clause, so its collation is the database's, which a plain dump does not record — this matches the server only if that collation is C or POSIX
 ```
 
 Two kinds of column line. A column that came back as text says why. A column
@@ -83,6 +84,11 @@ an enum by its labels' text rather than their declared order, an `interval` by
 months, then days, then time, a bare `numeric`, `jsonb` or `inet` as the text
 it is emitted as. `pgdt query` compares as PostgreSQL does where it can
 ([type handling](type-handling.md)); here SQL is DataFusion's.
+
+**Text columns with no `COLLATE` clause are counted, not listed**: on a real
+dump that is nearly every text column, so the dump gets one line saying how
+many there are, after its other lines — and a `CREATE EXTERNAL TABLE`
+statement one line naming its table.
 
 **Planning a query prints what its scan could not do as asked**, once per
 table it reads, before any row is: fewer readers than DataFusion's
