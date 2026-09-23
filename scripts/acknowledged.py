@@ -138,4 +138,19 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -viE 'row[ _-]group|statistics[ _-]group'  # only rustfmt's reflows"
         ),
     ),
+    Acknowledged(
+        commit="f593a99",
+        figures=(),
+        why=(
+            "`M141` renamed `--statistics-min-rows` and `--statistics-max-rows` "
+            "to `--row-group-min-rows` and `--row-group-max-rows`, with their "
+            "fields, doc comments and refusal text; no code path, input or "
+            "command's meaning moved"
+        ),
+        verified=(
+            "git show --format= -U0 f593a99 -- pgdt/src | grep -E '^[+-]' | "
+            "grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -viE 'row[_-]group|statistics[_-](min|max)[_-]rows'  # empty"
+        ),
+    ),
 )
