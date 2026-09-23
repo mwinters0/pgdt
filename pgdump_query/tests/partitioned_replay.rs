@@ -619,7 +619,7 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 /// `.xz` retains by the *partition*: a batch holding views into a decoded
 /// block pins that block, which `partition_bytes` has already charged for, so
 /// adding `max_source_span` on top would count the same bytes twice
-/// (`docs/design/decisions.md`, "D47").
+/// (`docs/design/decisions.md`, "D46").
 ///
 /// One budget, one span and one job count, put to both source shapes:
 ///

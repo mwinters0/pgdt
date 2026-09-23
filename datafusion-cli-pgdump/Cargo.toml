@@ -5,11 +5,12 @@ edition.workspace = true
 # `src/main.rs` is a copy of `datafusion-cli`'s, which is Apache-2.0.
 license = "Apache-2.0"
 
-# `datafusion-cli` with the `pg_dump` provider built in
-# (`docs/design/roadmap-P6-datafusion.md`, "The binary: `datafusion-cli-pgdump`"):
-# a copy of the upstream binary's private `main.rs` plus our registrations,
-# re-copied at each DataFusion major. Its own crate, so an embedder of
-# `datafusion-pgdump` does not inherit `datafusion-cli`.
+# `datafusion-cli` with the `pg_dump` provider built in: a copy of the upstream
+# binary's private `main.rs` plus our registrations, re-copied at each
+# DataFusion major. Its own crate, so an embedder of `datafusion-pgdump` does
+# not inherit `datafusion-cli`, and named to sort beside it. Rejected: a `pgdt
+# sql` subcommand, which would put DataFusion into the build every figure in
+# `docs/design/measurements.md` times.
 
 [dependencies]
 # Every version below is the targeted `datafusion-cli` release's own

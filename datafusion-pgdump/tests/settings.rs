@@ -1,5 +1,4 @@
-//! The `pgdump.` session settings (`docs/design/roadmap-P6-datafusion.md`,
-//! "Workers and memory"): what `pgdt query` takes as `--memory`,
+//! The `pgdump.` session settings: what `pgdt query` takes as `--memory`,
 //! `--chunk-size` and `--max-line-bytes`, set with `SET` and read when a scan
 //! is planned.
 

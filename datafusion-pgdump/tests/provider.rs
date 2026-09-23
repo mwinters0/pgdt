@@ -1,5 +1,4 @@
-//! The provider against the library it wraps, over the committed fixtures
-//! (`docs/design/roadmap-P6-datafusion.md`, "Verification").
+//! The provider against the library it wraps, over the committed fixtures.
 //!
 //! **The library's own serial stream is the oracle.** A scan through
 //! DataFusion is the library's partitioned replay under DataFusion's
@@ -199,8 +198,7 @@ async fn fixture_dump(schema: &str, flag_set: &str, dir: &Path) -> (PathBuf, Arc
 }
 
 /// **A catalog per database, named after it, and a name only where the file
-/// names none** (`docs/design/roadmap-P6-datafusion.md`, "How a dump appears
-/// in SQL").
+/// names none** ([`datafusion_pgdump::register_dump`]).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -325,8 +323,7 @@ async fn projection_count_and_limit_reach_the_scan() {
 }
 
 /// **One budget per session, drawn by every scan alive and returned when its
-/// plan is gone** (`docs/design/roadmap-P6-datafusion.md`, "Workers and
-/// memory").
+/// plan is gone** ([`datafusion_pgdump::ScanBudget`]).
 #[tokio::test(flavor = "multi_thread")]
 async fn scans_draw_on_the_session_budget_and_return_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -363,8 +360,7 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
 /// registered dump's resident statistics, once per budget and returned when the
 /// dump is dropped, and a finite memory pool's limit read at every draw. Both
 /// come off the margin's ceiling, and what its room cannot absorb at the
-/// count a scan resolves comes off that scan's budget
-/// (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory"): a plain
+/// count a scan resolves comes off that scan's budget: a plain
 /// source, which recommends no per-reader memory and so keeps its count,
 /// draws only what they leave under the ceiling, and still reads. What they
 /// do to a source that recommends one is `budget.rs`'s unit tests.

@@ -1,6 +1,5 @@
 //! DataFusion's filters as the library's filter tree, for the filters a scan
-//! can answer itself (`docs/design/roadmap-P6-datafusion.md`, "Comparison
-//! means what DataFusion means").
+//! can answer itself.
 //!
 //! **A filter is pushed `Exact` or not at all.** It is `Exact` where it
 //! translates here and the library's plan resolves it in

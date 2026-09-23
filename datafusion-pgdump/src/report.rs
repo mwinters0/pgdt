@@ -1,5 +1,4 @@
-//! What registration and planning report to the caller's sink
-//! (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics: one sink").
+//! What registration and planning report to the caller's sink.
 //!
 //! **What a dump or a table is, is reported when it is registered**: the
 //! file-level channel once per dump, and each table's per-column notes and
@@ -12,6 +11,14 @@
 //! a scan finds while reading is a plan metric, not a finding
 //! ([`crate::exec`]). **A plan note quoting a budget is wrapped in a
 //! [`BudgetedPlanNote`]**, which says where that budget came from.
+//!
+//! The sink is the caller's because DataFusion 55 offers a provider no
+//! non-error channel — a `Diagnostic` rides only on an error — and `log` is
+//! hidden at `datafusion-cli`'s default level. *Rejected: reporting what a
+//! query raised after its statement*, which would mean owning
+//! `datafusion-cli`'s REPL loop; *a scan's counts drained per partition as
+//! `Info` findings*, which a stderr sink never prints, where a metric is what
+//! Parquet's pruning already is.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -114,8 +121,7 @@ impl PgDumpTable {
 }
 
 /// A plan note quoting a budget ([`PlanNote::budget_bytes`]), with the
-/// account of what that budget was carved from (`docs/design/roadmap-P6-datafusion.md`,
-/// "Diagnostics: one sink"). The library states a budget and never where it
+/// account of what that budget was carved from. The library states a budget and never where it
 /// came from (`docs/design/decisions.md`, "D64"), so this is the provider's
 /// half, as `pgdt`'s `plan_note_origin` is `pgdt`'s.
 ///
@@ -132,6 +138,11 @@ impl PgDumpTable {
 /// What live scans drew is named and has no key (`KD38`). A caller wanting
 /// its own words reads [`BudgetedPlanNote::note`] and
 /// [`BudgetedPlanNote::account`] by downcasting ([`Finding::as_any`]).
+///
+/// *Rejected: an English clause appended in `report_plan`*, leaving an
+/// embedder to parse prose; *the binary's sink wording it*, which has no
+/// account to read; *every key on every note*, which tells the reader nothing
+/// about this one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetedPlanNote {
     /// The library's note, as its plan settled it.

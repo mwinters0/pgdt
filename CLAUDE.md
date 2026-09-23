@@ -55,8 +55,8 @@ Never edit a `runs/` orchestration script while it is running.
   A phase is `P<k>`, allocated on discovery, never renumbered or reused; its
   spec is `docs/design/roadmap-P<k>-<slug>.md`, its inbox
   `…-inbox.md` (read and drained when the phase is grilled). No phase is
-  open right now (P6 is complete, awaiting its keystone); a phase is grilled
-  and specified before code is written.
+  open right now; the index's order says which is next, and a phase is
+  grilled and specified before code is written.
 - `docs/design/out-of-band.md` — work belonging to no phase. **Read it whole
   before allocating an `M<k>`** and before picking up unscheduled work.
 - `docs/design/postgres-invariants.md` (`I<n>`) and

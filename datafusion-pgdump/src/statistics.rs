@@ -1,7 +1,6 @@
 //! The map's statistics as DataFusion's, so `COUNT(*)`, `COUNT(<column>)`,
 //! `MIN` and `MAX` can be answered without reading a row
-//! (`docs/design/roadmap-P6-datafusion.md`, "Statistics handed to
-//! DataFusion").
+//! (`docs/design/decisions.md`, "D89").
 //!
 //! **`Exact` is a promise, and a wrong one is a wrong answer with no error**:
 //! DataFusion's `AggregateStatistics` rule replaces the aggregate with the

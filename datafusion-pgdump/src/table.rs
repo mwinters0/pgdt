@@ -80,8 +80,7 @@ impl PgDumpTable {
 
 /// What every query of `dump` asks, before a scan adds its projection,
 /// parallelism and batch size: the dump's schema mode, and DataFusion's
-/// comparison semantics (`docs/design/roadmap-P6-datafusion.md`, "Comparison
-/// means what DataFusion means").
+/// comparison semantics (`docs/design/decisions.md`, "D40").
 fn query_options(dump: &PgDump) -> QueryOptions {
     QueryOptions {
         schema_mode: dump.schema_mode(),

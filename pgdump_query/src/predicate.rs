@@ -1873,7 +1873,7 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///
 /// Three canonicalizations, chosen by whether the file's `*_out` text is a
 /// *unique* spelling of the value it holds (`docs/design/decisions.md`,
-/// "D57"):
+/// "D56"):
 ///
 /// - **[`Comparison::Canonical`] — the literal rendered once** into `*_out`
 ///   form, so the per-row comparison is a byte comparison. `text`'s rendering
@@ -1887,7 +1887,7 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///   bare `numeric` (I33), an `interval` (I40), `jsonb` (I41), and
 ///   `real`/`double precision`, which have two zeros. `time with time zone`
 ///   and `inet`/`cidr` decode for a reason about this build instead, and
-///   `macaddr` renders (`docs/design/decisions.md`, "D57").
+///   `macaddr` renders (`docs/design/decisions.md`, "D56").
 ///
 /// `None` when the literal is not a value of the column's type at all, which
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
@@ -3014,7 +3014,7 @@ impl ResolvedTerm {
     /// *unequal* would need every value to be the literal, and bounds equal
     /// to it say so of keys, where a canonicalized comparison reads spellings
     /// — one per key only in text `*_out` wrote
-    /// (`docs/design/decisions.md`, "D57").
+    /// (`docs/design/decisions.md`, "D56").
     fn bounded(&self, kind: &CompareKind, literal: &OrderKey, min: &str, max: &str) -> TruthSet {
         let (Some(low), Some(high)) = (order_key(kind, min), order_key(kind, max)) else {
             return TruthSet::TWO_VALUED;

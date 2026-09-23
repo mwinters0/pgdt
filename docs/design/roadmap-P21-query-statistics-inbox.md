@@ -23,7 +23,7 @@ failing. Such a gather has to bill what it keeps in the replay's own carving.
 Keeping them is local — the `Arc` each `CopyBlock` already carries — so the
 premise costs P21 nothing to change, only something to remember.
 
-**Origin.** `M135`, 2026-09-23;
+**Origin.** 2026-09-23 ([`decisions.md`](decisions.md), "D85");
 [`../status/history/2026-09-23.md`](../status/history/2026-09-23.md),
 "`pgdt query`'s two passes are carved apart". *Contingent on* `Segment` still
 dropping a block's statistics.

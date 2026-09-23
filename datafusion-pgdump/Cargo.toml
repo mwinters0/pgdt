@@ -5,7 +5,7 @@ edition.workspace = true
 
 # The DataFusion layer over `pgdump_query`: a catalog and a `TableProvider`
 # reading a dump through the complete cache `pgdt parse` leaves
-# (`docs/design/roadmap-P6-datafusion.md`). A library only; the binary that
+# (`docs/design/decisions.md`, "D90"). A library only; the binary that
 # carries it is a separate crate, so an embedder does not inherit
 # `datafusion-cli`.
 

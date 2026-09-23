@@ -1,5 +1,5 @@
 //! The session's byte budget: one allowance every pgdump scan the session runs
-//! draws from (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
+//! draws from.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,7 +14,12 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// **One object per session**, set on its [`datafusion::prelude::SessionConfig`]
 /// as an extension, the way DataFusion holds its own bounded shared objects:
 /// a scan planned while others are live draws what they leave rather than the
-/// whole, so a join of two dumps' tables is bounded by one number. The
+/// whole, so a join of two dumps' tables is bounded by one number.
+/// *Rejected: a budget per registered table*, which no DataFusion source has
+/// and which multiplies by the tables a join names; *and no budget*, sizing
+/// each scan by its worker count, which gives up bounded memory on a
+/// compressed source. DataFusion has nothing to divide instead: its memory
+/// pool does not cover data sources, and nothing in it reads a cgroup. The
 /// allowance means what `pgdt --memory` means — resident, the number a
 /// container is given — and each scan carves its read-buffer budget from it
 /// through [`Parallelism::within_shared`], the reserve once for the process.
@@ -36,7 +41,9 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`] of the
 /// container unused, short by that fraction of what the session holds.
 /// *Rejected: taking them off the cap as well*, as another scan's draw comes
-/// off, which bills them against the reserve's excess a second time.
+/// off, which bills them against the reserve's excess a second time; *and a
+/// plain source left alone*, what a plain budget is worth being `KD25`'s and
+/// `KD32`'s question.
 ///
 /// **An allowance the session states overrides the one the budget holds**,
 /// read at each draw (`pgdump.memory`, [`crate::PgDumpSettings`]): one `SET`

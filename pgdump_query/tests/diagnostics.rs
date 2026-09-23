@@ -1,7 +1,6 @@
 //! The diagnostics sink: the file-level, per-column and comparison channels
 //! drained into one caller-supplied `DiagnosticSink`, each finding on the
-//! shared `Severity` scale with its own sentence
-//! (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics: one sink").
+//! shared `Severity` scale with its own sentence.
 
 use std::sync::Mutex;
 

@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P6 — DataFusion integration | Complete | [`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md); [notes](roadmap-P6-datafusion-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -80,7 +79,7 @@ Two things distinguish this project from existing `pg_dump` tooling
 (`pgdumplib` and friends), and both shape the phase ordering below:
 
 - **Embeddable as a query data source**, not just a dump reader — Arrow-native
-  output, and ultimately a DataFusion `TableProvider` (P6).
+  output, and a DataFusion `TableProvider`.
 - **High performance is a core goal, not a later optimization**, specifically
   for the local-file reader. Dumps are routinely hundreds of gigabytes; the
   difference between a saturated-device scan and a merely-correct one is the
@@ -510,8 +509,7 @@ depends on, and the two move together.** A crate here that builds DataFusion
 plans hands DataFusion `arrow` types, so a second `arrow` major anywhere in the
 workspace is a build that does not link; the library does not keep a pin of
 its own. So an `arrow` upgrade waits for a DataFusion release that takes it,
-and a DataFusion upgrade takes its `arrow` in the same change. Settled when P6
-was grilled (2026-09-21).
+and a DataFusion upgrade takes its `arrow` in the same change.
 
 ### Four decisions that keep later phases additive
 
@@ -649,23 +647,14 @@ What it inherits:
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
   and `statistics-pruning` are stale because the margin now binds a typed
-  number, and are not re-taken until the constant settles.
-
-## P6 — DataFusion integration
-
-**Complete (2026-09-23):
-[`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md), with its
-[consolidated notes](roadmap-P6-datafusion-notes.md).** What the maintainer
-fixed before the grilling:
-
-- **DataFusion only.** An Apache DataFusion `TableProvider` over a dump's
-  tables, as a new workspace member. Python bindings are their own phase, P24;
-  Spark and Trino are dropped from the roadmap.
-- **A deliverable binary is expected**: a build of `datafusion-cli` with the
-  provider built in, named `datafusion-cli-pgdump`.
-- **The provider may require a complete cache** built by `pgdt parse` before
-  any DataFusion use. Starting a parse from inside the SQL shell is a
-  convenience, wanted only if it comes cheaply.
+  number, and are not re-taken until the constant settles. Both statistics
+  figures' inputs have moved since as well: bare `text` is bounded bytewise
+  now, so `statistics-gathering`'s control (`v_text`, `v_long_text`,
+  `v_escaped`) should grow, every retained column carrying one more
+  `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
+  `v_category` carries bounds its fidelity guard no longer asserts absent,
+  `pgdt query` still reading only its dictionary. What the heavier cache costs
+  either figure is unpriced.
 
 ## P15 — gzip input
 
@@ -791,10 +780,9 @@ under "Four decisions that keep later phases additive" above.
 ## P24 — Python bindings
 
 Python bindings over the library, likely through `pyo3`, as a new workspace
-member. Carved out of the embeddable-engine phase when P6 narrowed to
-DataFusion (2026-09-21), and sketched to corner-avoidance depth: whatever
-surface P6 settles for an embedder is what this phase presents, and P6's
-inbox entries that concern Python alone were re-filed to [this phase's
+member, sketched to corner-avoidance depth: the surface the library presents
+an embedder, which `datafusion-pgdump` is the first to use, is what this phase
+presents, and what concerns Python alone is in [its
 inbox](roadmap-P24-python-inbox.md).
 
 ## Out-of-band work
@@ -1068,20 +1056,18 @@ which is what makes the difference worth minding at the moment one is found.
   `pgdt query`'s merge; and whether `pgdump_query` re-exports `bytes::Bytes`,
   which `ByteRangeSource::read_range` names in its signature so that an
   embedder implementing a source must depend on `bytes` in step with us.
-  Decided 2026-09-21, grilling P6.
 
 - **Declared output ordering from recorded sortedness, for DataFusion.** A
   block's statistics record whether its values are sorted, which a provider
   could declare as a partition's output ordering and so let DataFusion drop a
   sort. It holds per block and so per partition only, and only under the
-  ordering DataFusion applies to the column's Arrow type. Left out of P6's first
-  cut, 2026-09-21.
+  ordering DataFusion applies to the column's Arrow type.
 
 - **Attach-time parse in `datafusion-cli-pgdump`.** Building a missing cache
   from inside the DataFusion binary instead of refusing and naming `pgdt parse`.
   It wants `pgdt`'s parse configuration — parallelism and memory discovery, the
   interrupt guard, the status output — moved into the library first, so that
-  the two binaries parse alike. Left out of P6, 2026-09-21.
+  the two binaries parse alike (`decisions.md`, "D90").
 
 - **An allocator-contention figure for a capped arena count.** Parallel `.xz` throughput under `MALLOC_ARENA_MAX=2` against uncapped — the price no figure takes, and what would reopen the in-binary cap `decisions.md`, "D13" refuses.
 
@@ -1099,7 +1085,7 @@ which is what makes the difference worth minding at the moment one is found.
   `pgdt query --max-line-bytes` and the provider's `pgdump.max_line_bytes` for
   a dump whose cache predates it. The limit is also what one row may cost
   resident ([`decisions.md`](decisions.md), "D23"), and the parse already paid
-  it. It moves the cache format, so it was left out of P6, 2026-09-22.
+  it. It moves the cache format.
 
 - **`RESET` for a provider's session settings, upstream.** DataFusion 55's
   `ConfigOptions::reset` refuses any key outside `datafusion.`, and
@@ -1107,4 +1093,4 @@ which is what makes the difference worth minding at the moment one is found.
   session returns to the discovered allowance only by `SET pgdump.memory = 0`.
   A `reset` on `ExtensionOptions` that `ConfigOptions::reset` routes to is an
   upstream change; taken at the pin that carries it, beside `0` rather than in
-  place of it. Left out of P6, 2026-09-22.
+  place of it.

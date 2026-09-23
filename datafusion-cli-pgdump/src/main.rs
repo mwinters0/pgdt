@@ -17,9 +17,13 @@
 
 // This file is `datafusion-cli/src/main.rs` from DataFusion 55.1.0, with the
 // upstream tests left out (they read upstream's test data) and every addition
-// of ours marked `pgdump:`. Re-copy it at each DataFusion major and re-apply
-// those; `src/pgdump.rs` holds everything else
-// (`docs/design/roadmap-P6-datafusion.md`, "The binary: `datafusion-cli-pgdump`").
+// of ours marked `pgdump:`. A downstream `main` of its own is upstream's
+// endorsed way to extend the CLI (`datafusion-cli/examples/cli-session-context.rs`),
+// and `src/pgdump.rs` holds everything else. At each DataFusion major, diff upstream's new `main.rs`
+// against 55.1.0's and re-apply the marked lines. The provider's tests that pin
+// upstream behaviour fail on purpose when it moves: `RESET` reaching only
+// `datafusion.` keys (`datafusion-pgdump/tests/settings.rs`), and a nested
+// column's NULL-first, unnormalized-zero order (`tests/pushdown.rs`).
 
 // pgdump: the registrations.
 mod pgdump;

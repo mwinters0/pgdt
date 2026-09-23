@@ -4,8 +4,7 @@
 //! [`crate::prune`] reads the same stored sets per group to skip one; this
 //! folds every group of every block of a table into one answer, for an
 //! embedder that plans over a table rather than reads it
-//! (`docs/design/roadmap-P6-datafusion.md`, "Statistics handed to
-//! DataFusion").
+//! (`docs/design/decisions.md`, "D89").
 //!
 //! **A summary says whether it is complete, and never how nearly.** A caller
 //! that answers a query from it needs to know that nothing was left out; a

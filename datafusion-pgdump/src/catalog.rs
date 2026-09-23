@@ -1,6 +1,6 @@
 //! A dump's databases as DataFusion catalogs: PostgreSQL schemas are
-//! DataFusion schemas and tables are tables
-//! (`docs/design/roadmap-P6-datafusion.md`, "How a dump appears in SQL").
+//! DataFusion schemas and tables are tables, each catalog named as
+//! [`crate::register_dump`] says.
 
 use std::collections::BTreeMap;
 use std::fmt;

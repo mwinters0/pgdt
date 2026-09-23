@@ -325,7 +325,7 @@ pub enum PartitionBoundaries {
 /// A caller budgeting sub-streams charges each one its held batch's span *on
 /// top of* the decode footprint, and that second charge is honest for one
 /// source shape and double-counts for the other
-/// (`docs/design/decisions.md`, "D47").
+/// (`docs/design/decisions.md`, "D46").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RetainedUnit {
     /// The read chunk. A batch spanning `crate::batch::QueryOptions`'
@@ -340,7 +340,7 @@ pub enum RetainedUnit {
     ReadChunk,
     /// The partition itself. A batch confined to a partition pins that
     /// partition whatever the span cap says
-    /// (`docs/design/decisions.md`, "D47"), and
+    /// (`docs/design/decisions.md`, "D46"), and
     /// [`Partitioning::partition_bytes`] has already charged for it — so
     /// adding the span would count the same bytes twice. A block-decoding
     /// source's answer.

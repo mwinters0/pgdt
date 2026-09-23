@@ -89,9 +89,8 @@ MAPPING = REPO / "pgdump_query" / "src" / "pgtype.rs"
 #: rows rather than restated here.
 PYPROJECT = REPO / "scripts" / "pyproject.toml"
 
-#: The page that publishes the floor to a user
-#: (`docs/design/roadmap-P6-datafusion.md`, "What the phase promises"), which
-#: names the release it holds for.
+#: The page that publishes the floor to a user, which names the release it
+#: holds for, so moving the pin obliges re-taking the sweep.
 MANUAL = REPO / "docs" / "manual" / "datafusion-cli-pgdump.md"
 
 #: The register the `money` disposition cites, and the checklist a waiting

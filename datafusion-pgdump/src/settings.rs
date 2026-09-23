@@ -1,6 +1,6 @@
 //! The `pgdump.` session settings: what `pgdt query` takes as `--memory`,
 //! `--chunk-size` and `--max-line-bytes`, set with `SET` and read when a scan
-//! is planned (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
+//! is planned.
 //!
 //! ```sql
 //! SET pgdump.memory = 4294967296;
@@ -38,7 +38,14 @@ use pgdump_query::{
 /// --memory 0` stays refused, because a flag is un-stated by leaving it off —
 /// absence is how `pgdt` asks for the discovered allowance
 /// (`docs/design/decisions.md`, "D64") — so there `0` could only mean no room to
-/// run in (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
+/// run in.
+///
+/// *Rejected: an allowance fixed at startup*, which a REPL user could change
+/// only by restarting; *per-table `OPTIONS`*, a read chunk being the device's
+/// and a line limit wanted by whatever reads that dump, which one `SET` covers;
+/// *a sentinel word for "discovered"*, which no DataFusion setting spells; and
+/// *a flag per setting on `datafusion-cli-pgdump`*, another line of upstream's
+/// `main.rs` to carry, where `-c` and `--rc` already run a `SET` at startup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgDumpSettings {
     /// `pgdump.memory`: the resident allowance every pgdump scan of the

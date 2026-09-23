@@ -1,6 +1,4 @@
-//! What a registration reports, and the single-table form
-//! (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics: one sink" and "How
-//! a dump appears in SQL").
+//! What a registration reports, and the single-table form.
 //!
 //! **A registration's findings are the library's own, named.** Each finding a
 //! sink hears is one the library produced — a `Diagnostic`, a `ColumnNote` or

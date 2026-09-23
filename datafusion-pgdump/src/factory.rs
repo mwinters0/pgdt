@@ -1,6 +1,5 @@
 //! `CREATE EXTERNAL TABLE … STORED AS PGDUMP`: one table of a dump registered
-//! on its own, over the same [`PgDump::table`] a catalog hands out
-//! (`docs/design/roadmap-P6-datafusion.md`, "How a dump appears in SQL").
+//! on its own, over the same [`PgDump::table`] a catalog hands out.
 //!
 //! ```sql
 //! CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'

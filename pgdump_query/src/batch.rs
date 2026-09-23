@@ -98,7 +98,7 @@ pub struct QueryOptions {
     /// from the start of its first selected row to the end of its latest, and
     /// the one trigger that bounds what a batch **pins** on a chunk-shaped
     /// source: the zero-copy `Utf8View` path holds a clone of every chunk it
-    /// views until the batch flushes (`docs/design/decisions.md`, "D47").
+    /// views until the batch flushes (`docs/design/decisions.md`, "D46").
     /// Defaults to 64 MiB, which no ordinary query reaches; `None` leaves a
     /// batch's span unbounded. What it bounds is the span rounded out to the
     /// retained unit, so on a block-shaped source, whose unit can exceed the

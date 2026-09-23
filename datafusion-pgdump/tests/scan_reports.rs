@@ -1,6 +1,5 @@
-//! What a scan reports (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics:
-//! one sink"): what its plan settled, to the sink its table was registered
-//! with, when it is planned; and what it finds while reading — the groups
+//! What a scan reports: what its plan settled, to the sink its table was
+//! registered with, when it is planned; and what it finds while reading — the groups
 //! statistics pruned, the bytes an early stop left unread — as the plan
 //! node's metrics under `EXPLAIN ANALYZE`.
 //!

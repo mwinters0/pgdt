@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the 575-line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D89 -->
+<!-- decision-watermark: D90 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -155,21 +155,26 @@ the stored size still refusing (D20), so two same-named dumps of equal size from
 directory read each other's map with a warning the origin makes legible. A local cache records none, its
 default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
 
+### D90 The DataFusion provider reads only a complete cache, never maps, and is cancelled by a drop
+`PgDump::open` believes a cache reaching the file's end whose identity checks pass, and names the `pgdt parse` that
+builds anything short; `datafusion-cli-pgdump` never parses either, a parse wanting `pgdt`'s discovery, interrupt
+guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
+stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
+no partial map to keep, a dropped stream is its whole cancellation, no `ScanOptions::cancel` set (D26). Rejected:
+falling back to a cold query's early-stopping map, which brings each of those back. Code: `datafusion-pgdump/src/dump.rs`.
+
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;
 every entry point spells the outcomes out. Bump on any persisted reshape, record it nowhere.
 
 ## The scanner (`scan.rs`, `copy.rs`)
-### D23 The scanner never owns the bytes it scans
+### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 `CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is
 `max_line_bytes`, and exceeding it errors, never truncates. A chunk is scanned in two passes,
-carried line then chunk in place (`ChunkCarry`); a growing buffer copied every byte twice.
-
-### D24 Parser robustness requirements (hardcoded)
-Only a line matching the whole `COPY … FROM stdin;` grammar is structural; inside a block only an
-exact `\.` line is looked at (I7). An off-grammar `COPY` line is ordinary SQL. A dollar-quoted
-region emits no lines, only a closing offset, since a body can match the grammar by coincidence
-(I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object region, skipped unread (I12).
+carried line then chunk in place (`ChunkCarry`); a growing buffer copied every byte twice. Only a
+line matching the whole `COPY … FROM stdin;` grammar is structural, an off-grammar one being ordinary SQL; inside a
+block only an exact `\.` line is looked at (I7). A dollar-quoted region emits no lines, only a closing offset, since a
+body can match the grammar by coincidence (I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object region, skipped unread (I12).
 
 ### D25 Parallelize what is CPU-bound
 Decode is always split, extraction on any source, discovery only behind a decoder; the worker is
@@ -304,12 +309,10 @@ cannot tighten; each transcribes the newest major and under-accepts (I35, I44). 
 `[lb:ub]=` or a field-count mismatch is refused, never reshaped. Evidence: `nested-decode-micro`.
 
 ## Batches, streams and the leader (`batch.rs`, `stream.rs`, `leader.rs`)
-### D46 Zero-copy views are top-level `Utf8View` only
+### D46 Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds pinned bytes
 Every other arm copies. A retained chunk is released only past its *last* byte
 (the carried row arrives inside the next chunk) and `invalidate_block_cache`
 runs on every flush keeping its batcher; any new flush trigger must honour it.
-
-### D47 `max_source_span` is the only trigger that bounds pinned bytes
 `max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
 The span term is dropped only where the advice is non-empty and uniformly by-partition (`KD23`).
 Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
@@ -372,11 +375,9 @@ holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a t
 literal alike) are wider; `boolean` deliberately not. A literal finer than the column's scale is
 refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
 
-### D56 Special values are a rank in the key
+### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives
 no `Ord`. Rejected: excluding the row like a NULL, which has no order (I33, I34).
-
-### D57 Equality has three canonicalizations, chosen by injectivity of `*_out`
 `v=1.5` hits a `numeric(10,2)` written `1.50`; rendering `timetz`, `inet` once is refused (I33, I38, I41).
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
@@ -401,7 +402,9 @@ quotes are stripped in `--filter` and nowhere else. Rejected: `&&`/`||`; backsla
 the scan's own refusals. A typed literal must be the column's Arrow type and is written by
 `render_field`, the decoders' inverse; a string one stands only where the library compares text.
 Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,
-answered from a set with no `-0` made `0`. Evidence: `datafusion-pgdump/tests/pushdown.rs`.
+answered from a set with no `-0` made `0`; `Exact` where the library agrees with PostgreSQL, which answers an enum `<`
+in declaration order pushed and in label order kept; `Inexact`, promising a superset another semantics can break.
+Evidence: `datafusion-pgdump/tests/pushdown.rs`.
 
 ## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`, `summary.rs`)
 ### D75 Pruning takes only what each operator family proves

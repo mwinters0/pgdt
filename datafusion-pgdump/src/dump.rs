@@ -1,6 +1,5 @@
-//! A dump opened through its complete cache
-//! (`docs/design/roadmap-P6-datafusion.md`, "The provider reads a complete
-//! cache, and never maps").
+//! A dump opened through its complete cache (`docs/design/decisions.md`,
+//! "D90").
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

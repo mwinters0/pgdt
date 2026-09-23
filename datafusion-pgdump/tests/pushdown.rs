@@ -1,5 +1,5 @@
 //! Filter pushdown against DataFusion's own comparison, over the committed
-//! fixtures (`docs/design/roadmap-P6-datafusion.md`, "Verification", 1 and 3).
+//! fixtures (`docs/design/decisions.md`, "D40" and "D88").
 //!
 //! **DataFusion is the oracle.** A filter the provider answers `Exact` is
 //! evaluated by the library in Arrow semantics and DataFusion never sees the

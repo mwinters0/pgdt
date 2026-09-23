@@ -149,7 +149,7 @@ fn find_dollar_delimiter(line: &[u8], from: usize) -> Option<std::ops::Range<usi
 /// PostgreSQL dollar-quoting (`$tag$ ... $tag$`, tag optional) is how
 /// `pg_dump` emits function/procedure bodies verbatim, and a line inside one
 /// can coincidentally match the `COPY` header grammar — see
-/// `docs/design/decisions.md`, "D24". The scanner must never structurally
+/// `docs/design/decisions.md`, "D23". The scanner must never structurally
 /// interpret a line while inside a dollar-quoted string.
 ///
 /// `tag` is the delimiter currently open, if any — `None` outside any

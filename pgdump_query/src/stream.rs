@@ -1852,6 +1852,13 @@ fn resolve_block(
 /// empty one: a table whose blocks list nothing has an empty order whatever
 /// its DDL declares, and each of its rows is an empty line read as a row of
 /// zero fields ([`crate::batch::RowBatcher::push_row`]).
+///
+/// *Rejected: the first block's order, every other refused*, which refuses
+/// ordinary partitioned dumps; *the union of the names, an absent column
+/// filled with `NULL`*, which states values PostgreSQL never held; *and a
+/// list-less block taking the declared names where its width matches*, which
+/// reads an empty line as one field and gives a table of generated columns
+/// `''` for every value.
 #[derive(Debug, Clone)]
 struct TableColumns {
     order: Vec<String>,
@@ -3889,8 +3896,7 @@ pub fn table_schema(
 /// A partitioned replay of one table over **a complete map the caller holds**,
 /// planned once and streamed per partition, for an embedder that schedules
 /// partitions itself and runs them in any order, or more than once
-/// (`docs/design/roadmap-P6-datafusion.md`, "The provider reads a complete
-/// cache, and never maps").
+/// (`docs/design/decisions.md`, "D90").
 ///
 /// [`table_stream_partitions`] with the mapping pass taken out: no cache is
 /// loaded or written and no byte is scanned for structure, so the map is

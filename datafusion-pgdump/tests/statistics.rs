@@ -1,5 +1,5 @@
 //! The statistics the provider hands DataFusion, against the answers a scan
-//! gives (`docs/design/roadmap-P6-datafusion.md`, "Verification", item 4).
+//! gives (`docs/design/decisions.md`, "D89").
 //!
 //! **The oracle is the same query with the rule that reads statistics taken
 //! out.** DataFusion answers `COUNT(*)`, `COUNT(<column>)`, `MIN` and `MAX`

@@ -7,7 +7,7 @@
 //! driver here ([`scan`]) and any future pull-mode stream.
 //!
 //! Robustness rules this implements (see `docs/design/decisions.md`,
-//! "D24"):
+//! "D23"):
 //!
 //! * `COPY` detection is line-anchored. Row data may contain a literal
 //!   `COPY ... TO stdout;` mid-line, and a non-anchored search would misfire.

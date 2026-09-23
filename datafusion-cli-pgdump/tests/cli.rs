@@ -1,6 +1,5 @@
 //! The binary as a user runs it: `--dump`, `STORED AS PGDUMP` and what reaches
-//! stderr (`docs/design/roadmap-P6-datafusion.md`, "The binary:
-//! `datafusion-cli-pgdump`").
+//! stderr.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

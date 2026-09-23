@@ -22,7 +22,16 @@
 //! What a scan finds while reading is a plan metric under `EXPLAIN ANALYZE`.
 //! `CREATE EXTERNAL TABLE … STORED AS PGDUMP` is [`register_table_factory`]'s.
 //!
-//! The design is `docs/design/roadmap-P6-datafusion.md`.
+//! **It reads only the complete cache `pgdt parse` leaves, and never maps**
+//! (`docs/design/decisions.md`, "D90"). A partition's error is the first
+//! DataFusion observes, as for any of its sources, not `pgdt query`'s earliest
+//! in file order ("D52"), and a partitioned read is not resumable.
+//!
+//! **No figure times it.** Every `query` figure in
+//! `docs/design/measurements.md` times `pgdt`, its text rendering included and,
+//! cold, a mapping pass, neither of which an embedder holding a cache pays; one
+//! taken over the provider would have to name the allocator, which is the
+//! embedder's (`docs/design/decisions.md`, "D13").
 
 mod budget;
 mod catalog;
@@ -82,7 +91,8 @@ pub enum Error {
 /// `name`. So `name` is required exactly where the file names no database, and
 /// refused on a file of several databases, where it would have to be invented
 /// into a prefix nobody wrote; given for a single named database, it replaces
-/// that database's name.
+/// that database's name. *Rejected: one registration per database, chosen by
+/// a fragment of the location.*
 ///
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
 /// unless it already carries one, and `dump`'s statistics are billed to it;

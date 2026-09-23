@@ -189,7 +189,7 @@ pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
 /// rows and time: the row groups the map's statistics ruled out, of those its
 /// blocks list ([`ROW_GROUPS_PRUNED_STATISTICS`]), and the bytes of rows an
 /// early stop left unread ([`BYTES_UNREAD_EARLY_STOP`]). Counts rather than
-/// findings (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics: one sink"):
+/// findings ([`crate::report`]):
 /// the note saying the same of the pruning is also a plan note, which the
 /// table's sink hears as an `Info`.
 ///

@@ -1,7 +1,7 @@
 //! What this binary adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
-//! and the sink printing what a registration finds to stderr
-//! (`docs/design/roadmap-P6-datafusion.md`, "The binary:
-//! `datafusion-cli-pgdump`" and "Diagnostics: one sink").
+//! and the sink printing what a registration finds to stderr. It never
+//! parses: a dump without a complete cache is refused naming the `pgdt parse`
+//! that builds one (`docs/design/decisions.md`, "D90").
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
