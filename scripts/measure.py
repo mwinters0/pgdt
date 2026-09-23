@@ -2505,8 +2505,8 @@ def stated_allowance(budget: int) -> int:
     The carve also holds the resolved *count* under `margin_allowance`, which a
     typed number never used to answer to, and that ceiling falls below the cap
     once the budget passes `4 x MEMORY_RESERVE - 5 x MEMORY_UNPOOLED_BOUND`.
-    Above that a leg resolves fewer readers than it did, so its cells are stale
-    and are not re-taken until the reserve constant settles; the number stated
+    Above that a leg resolves fewer readers than it did — `reserve`'s stated
+    axis is that arrangement, and `KD34` names what it reads; the number stated
     here is still the one the figure's text names.
 
     **Not the inverse of the carve**, which has none: nothing recovers the
@@ -2532,8 +2532,8 @@ def stated_allowance(budget: int) -> int:
 #: than fitted: the worst surviving block-path remainder there is 238.6 MiB at
 #: 24 MiB blocks and 142.0 MiB at 128, and this is the worst rounded up to a
 #: 64 MiB step (`rederived_unpooled_bound`), about 17 MiB above it. The
-#: published `reserve` sitting reads 4.7–179.5 MiB, which the same arithmetic
-#: rounds to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
+#: published `reserve` sitting's worst remainder rounds by the same arithmetic
+#: to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 
@@ -6017,12 +6017,10 @@ def run_parallel_scan_throughput(session: Session) -> str:
     a leg's whole column and leaves the ratio (`CONTENTION_LIMITS`).
 
     **The baseline row is the serial path, not a pool of one.** `--jobs 1` is
-    `Parallelism::Serial`, which carries no budget, so that row runs at the
-    library's `DEFAULT_MEMORY_BUDGET` where every other row runs at
-    `PARALLEL_BUDGET`. That is the arrangement this project ships and the one
-    every published table was taken under, which is what makes it the right
-    denominator; it also means the first row of a compressed leg is not the same
-    apparatus as the rest, and the note says so.
+    `Parallelism::Serial` carrying the same stated allowance as every other row,
+    so a compressed leg's first row is one block-decoding reader rather than the
+    streaming fallback. That serial path is the arrangement this project ships,
+    which is what makes it the right denominator.
 
     **Five reps**, for `xz-decode-scaling`'s reason: the increments that matter
     are between adjacent counts near the top of the curve, where three reps
@@ -6085,8 +6083,10 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "wait costs the rows above four is not separated from anything else they pay "
         '(`docs/design/decisions.md`, "D25").\n\n'
         + _substream_note()
-        + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no row is budget-"
-        "clamped.** A compressed reader is charged its block, the chunk buffer and the "
+        + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
+        "budget-clamped;** a plain source stays on the library's default budget whatever is "
+        'stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
+        "state. A compressed reader is charged its block, the chunk buffer and the "
         "decoder's own retention, and the readers together the block pool's retention list "
         '(`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller '
         "budget would hold the widest `.xz` rows below the twenty-four they are labelled.\n"
@@ -6153,8 +6153,9 @@ def run_parallel_peak_rss(session: Session) -> str:
     **The claim under test is that one stated number bounds the read path**, so
     the table's own witness is the column that stops rising: a leg whose peak
     keeps climbing with `--jobs` is a budget that is not a bound, and a leg that
-    stops *above* its stated budget is the block pool's slot ceiling following
-    the announced count rather than the delivered one (`KD21`). Two block
+    stops *above* the read-buffer budget its allowance leaves is the block
+    pool's slot ceiling following the announced count rather than the delivered
+    one (`KD21`). Two block
     sizes because a compressed reader's per-worker footprint is one decoded
     block, so the count the budget admits is a property of the *file* — at one
     size the table would publish that file's shape as the library's ceiling.
@@ -6225,7 +6226,8 @@ def run_parallel_peak_rss(session: Session) -> str:
         "is still climbing at the right-hand end; on the coarse leg the budget term "
         "binds and the leg levels off. That ceiling follows the `--jobs` announced "
         "rather than the readers the budget affords, so the coarse leg's flat value "
-        "sits above the stated budget — `KD21`, not a bound the library keeps.\n"
+        "sits above the read-buffer budget the allowance leaves, though within the stated "
+        "`--memory` — `KD21`, not a bound the library keeps.\n"
     )
     return table + notes
 
@@ -6418,7 +6420,7 @@ def _reserve_step_specs() -> list[RunSpec]:
             RESERVE_MECHANISM_INPUT,
             f"{RESERVE_STEP_FAMILY}{budget}",
             "warm-parallel",
-            f"{budget} stated, block decode "
+            f"`--memory {stated_allowance(budget)}`, block decode "
             + (
                 "afforded"
                 if block_path_afforded(RESERVE_MECHANISM_UNIT, budget)
@@ -7539,15 +7541,17 @@ def run_reserve(session: Session) -> str:
         "needs, and no other figure states it:\n\n"
         + step_table
         + f"\n\n**The stated-budget axis.** Each cell "
-        f"is peak resident set, then that reading **minus the budget the run stated** — the "
-        f"reserve. Every row states `--jobs {RESERVE_JOBS}` in a {PARALLEL_MEMORY} container, an "
+        f"is peak resident set, then that reading **minus the read-buffer budget the run's "
+        f"`--memory` states** — what the reserve has to cover. Where the margin lowers a typed "
+        f"count's budget below the one stated, the cell understates what the run holds above "
+        f"the budget it resolved, which the run reports. Every row states `--jobs {RESERVE_JOBS}` in a {PARALLEL_MEMORY} container, an "
         f"apparatus departure from the register's 512 MB, which is smaller than the largest "
         f"budget under test; the flagless legs above each carry their own allocation instead.\n\n"
         + table
         + f"\n\n**The worst cell of each arena leg**, which is what a `--jobs {RESERVE_JOBS}` scan "
-        "holds above a budget somebody handed it, and not the arrangement "
-        "`MEMORY_RESERVE` "
-        "governs — the flagless legs above are: "
+        "holds above the budget its `--memory` states, the count typed so that the margin "
+        "lowers only the budget — not the flagless arrangement `MEMORY_RESERVE` was read "
+        "off, which the legs above are: "
         + ", ".join(
             f"{arena} **{fmt_rss_delta(worst_stated[token])}**"
             for token, _, arena in RESERVE_ARENAS
@@ -7653,8 +7657,9 @@ def run_statistics_gathering(session: Session) -> str:
     return (
         table
         + f"\n\nEvery run is `pgdt parse` over the whole file at `--jobs {SWEEP_JOBS}`, "
-        f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the shipped "
-        f"default request — **in a {STATISTICS_MEMORY} container**, against the register's "
+        f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the default's "
+        "base size, gathered exactly where a flagless `parse` coarsens wide rows — "
+        f"**in a {STATISTICS_MEMORY} container**, against the register's "
         f"{session.cfg.memory}: nothing bills what statistics hold, so the limit is chosen "
         "generously and the resident column says what it left. Resident is recorded, not "
         "attributed.\n\nPer-rep readings (s; peak RSS):\n"

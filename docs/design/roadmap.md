@@ -116,8 +116,8 @@ assume.
 The guard is the other half and it is what stops the baseline becoming a
 ceiling: an optimization that helps at four and makes twenty-four slower *per
 worker* has over-fitted to the baseline. `parallel-scan-throughput`'s wide
-`--jobs` axis is kept for exactly that reading — a compressed parse scales to
-**5.60×** at twenty-four against 1.76× at four — so the wide numbers keep being
+`--jobs` axis is kept for exactly that reading — a compressed parse keeps
+scaling well past four (`measurements.md`, `parallel-scan-throughput`) — so the wide numbers keep being
 gathered wherever the machine can give them, and are read as a guard rather
 than as the target.
 
@@ -646,15 +646,27 @@ What it inherits:
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` are stale because the margin now binds a typed
-  number, and are not re-taken until the constant settles. Both statistics
-  figures' inputs have moved since as well: bare `text` is bounded bytewise
+  and `statistics-pruning` were re-taken at `542fdfb` against the reserve as it
+  stands, so a settled constant re-takes them. `reserve`'s stated axis — a
+  typed `--jobs 24` under `--memory` — is where the margin lowers only the
+  budget, and its worst rep held more above the resolved budget than
+  `MEMORY_RESERVE` (`measurements.md`, `reserve`; `KD34`). Both statistics
+  figures' inputs are owed a change as well: bare `text` is bounded bytewise
   now, so `statistics-gathering`'s control (`v_text`, `v_long_text`,
   `v_escaped`) should grow, every retained column carrying one more
   `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
   `v_category` carries bounds its fidelity guard no longer asserts absent,
   `pgdt query` still reading only its dictionary. What the heavier cache costs
   either figure is unpriced.
+- **A default `parse` on NVMe may be CPU-bound, which is D10's reopen
+  condition.** Every `scan-throughput-*` and `chunk-size` run states
+  `--statistics none`, where the shipped `parse` gathers, and
+  `statistics-gathering`'s warm gathering leg takes several times what the
+  NVMe needs to deliver the same bytes (`measurements.md`,
+  `statistics-gathering`, `scan-throughput-nvme`); no cold figure measures the
+  default. A cold-NVMe figure of the default `parse` is this phase's first
+  evidence, before D10 is re-read. The `INSERT` path meets the same condition
+  at any statistics setting (`KD9`).
 
 ## P15 — gzip input
 

@@ -5,21 +5,14 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a
-`<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on
-2026-09-13, against commit `9b35bea` (with uncommitted changes under a measured
-path), under the `system` allocator. **23 of the 25 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `statistics-gathering` (`312af13`), `statistics-pruning` (`d5c3764`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator. **All 25 figures below come from that sitting.**
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads each figure's own commit back and names the figures a diff has
-invalidated since. Of the twenty-three, twenty-two come from the sweep itself
-and `session-drift` is derived *across* two — an earlier sweep and a second one
-begun the minute it finished — which no sweep can take. The two statistics
-figures entered from a sitting of their own after it, each standing in no
-`shares` edge, which is the condition for publishing alone ("A figure may be
-published outside the sweep", below); `peak-rss`, which `rss-attribution` and
-`reserve` each borrow a run from, could not.
+invalidated since. The sweep takes every figure but `session-drift`, which is
+derived *across* two — an earlier sweep and a second one begun the minute it
+finished — and which no sweep can take.
 `peak-rss`, `parallel-peak-rss`, `rss-attribution` and `reserve` are denominated
 in bytes rather than seconds; `xz-decode-scaling` times no `pgdt` at all, being
 a property of the decoder rather than of the read path.
@@ -180,8 +173,10 @@ Eighteen standing rules for reading anything below:
   signs. Every figure here is glibc; the musl leg is the evidence for this
   rule and not a leg to repeat. What follows for a real figure: a cross-file
   per-row difference under **~0.5 µs/row** is
-  apparatus, that floor is measured rather than assumed (the seed-43 control,
-  "The cross-file subtraction bottoms out"), and no number of reps moves it.
+  apparatus, that floor is measured rather than assumed — the envelope the
+  seed-43 control and the composite column's takes have read *across*
+  sittings ("The cross-file subtraction bottoms out"), not any one sitting's
+  control, which can read far tighter — and no number of reps moves it.
   Reasoning:
   [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 - **A move smaller than the apparatus resolves is not a finding.** The floor is
@@ -1073,10 +1068,10 @@ are measured here and the table says so.
 
 | Warm, on tmpfs | `system` — the shipped binary | `jemalloc` | `mimalloc` |
 |---|---|---|---|
-| `pgdt parse` — structure discovery | **0.447 s** (0.432–0.479) | **0.440 s** (0.425–0.540) — 0.99× | **0.433 s** (0.423–0.452) — 0.97× |
-| `query --schema-mode strings` — zero-copy extraction | **3.52 s** (3.44–3.54) | **3.94 s** (3.83–4.03) — 1.12× | **3.40 s** (3.37–3.50) — 0.97× |
-| `query --schema-mode typed` | **4.84 s** (4.79–4.89) | **5.29 s** (5.24–5.30) — 1.09× | **4.71 s** (4.68–4.84) — 0.97× |
-| `dd` → `/dev/null` — the co-measured floor | **0.307 s** (0.302–0.316) | — | — |
+| `pgdt parse` — structure discovery | **0.479 s** (0.472–0.524) | **0.470 s** (0.464–0.515) — 0.98× | **0.489 s** (0.469–0.492) — 1.02× |
+| `query --schema-mode strings` — zero-copy extraction | **3.53 s** (3.53–3.65) | **4.14 s** (4.07–4.17) — 1.17× | **3.43 s** (3.39–3.44) — 0.97× |
+| `query --schema-mode typed` | **4.90 s** (4.89–5.01) | **5.56 s** (5.50–5.61) — 1.13× | **4.85 s** (4.80–4.90) — 0.99× |
+| `dd` → `/dev/null` — the co-measured floor | **0.343 s** (0.341–0.346) | — | — |
 
 Every leg was asked what it links against before it was timed — `system`, `jemalloc`, `mimalloc` — so a leg whose build silently dropped its feature cannot be published as a comparison of two identical binaries.
 
@@ -1086,25 +1081,26 @@ Shared, not measured again — the same binary, command and input:
 - the reference column's `query-typed` row, from `nested-end-to-end`.
 
 Per-rep readings (s):
-- `pgdt parse` — structure discovery (system): 0.456, 0.437, 0.479, 0.432, 0.458, 0.432
-- `pgdt parse` — structure discovery (jemalloc): 0.425, 0.540, 0.427, 0.450, 0.440
-- `pgdt parse` — structure discovery (mimalloc): 0.433, 0.423, 0.452, 0.428, 0.437
-- `query --schema-mode strings` — zero-copy extraction (system): 3.46, 3.54, 3.54, 3.52, 3.44
-- `query --schema-mode strings` — zero-copy extraction (jemalloc): 3.83, 3.89, 3.94, 3.94, 4.03
-- `query --schema-mode strings` — zero-copy extraction (mimalloc): 3.50, 3.46, 3.38, 3.37, 3.40
-- `query --schema-mode typed` (system): 4.79, 4.86, 4.84, 4.89, 4.80
-- `query --schema-mode typed` (jemalloc): 5.24, 5.29, 5.28, 5.30, 5.30
-- `query --schema-mode typed` (mimalloc): 4.84, 4.73, 4.68, 4.68, 4.71
-- `dd` → `/dev/null` (warm): 0.307, 0.316, 0.302, 0.303, 0.309
+- `pgdt parse` — structure discovery (system): 0.524, 0.487, 0.472, 0.476, 0.482, 0.474
+- `pgdt parse` — structure discovery (jemalloc): 0.470, 0.515, 0.487, 0.464, 0.466
+- `pgdt parse` — structure discovery (mimalloc): 0.489, 0.492, 0.470, 0.489, 0.469
+- `query --schema-mode strings` — zero-copy extraction (system): 3.53, 3.58, 3.53, 3.53, 3.65
+- `query --schema-mode strings` — zero-copy extraction (jemalloc): 4.14, 4.14, 4.07, 4.10, 4.17
+- `query --schema-mode strings` — zero-copy extraction (mimalloc): 3.43, 3.39, 3.44, 3.43, 3.41
+- `query --schema-mode typed` (system): 4.89, 4.90, 4.95, 5.01, 4.90
+- `query --schema-mode typed` (jemalloc): 5.61, 5.50, 5.59, 5.50, 5.56
+- `query --schema-mode typed` (mimalloc): 4.90, 4.80, 4.85, 4.84, 4.86
+- `dd` → `/dev/null` (warm): 0.344, 0.346, 0.341, 0.343, 0.341
 
-Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤10.81%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.73 GHz, ≤64°C.
+Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤6.97%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.67 GHz, ≤74°C.
 
 **`jemalloc` loses on both `query` shapes and is inside the noise on
-`parse`; `mimalloc` is marginally ahead on all three, and every one of its
-cells is inside the noise.** The `parse` column is the one the instrument does
-not hold still — four sittings have given four answers for it:
+`parse`; `mimalloc` is marginally ahead on both `query` shapes and marginally
+behind on `parse`, and its `strings` cell is outside the noise.** The `parse`
+column is the one the instrument does not hold still — five sittings have not
+agreed on it:
 
-- **`jemalloc`'s `parse` has read 1.87×, 1.02×, 1.02× and 0.99×.** The 1.87×
+- **`jemalloc`'s `parse` has read 1.87×, 1.02×, 1.02×, 0.99× and 0.98×.** The 1.87×
   was not jemalloc being slow on this shape: that sitting's excess was all
   system time — 0.27 s against 0.80 s on the host, with user time slightly
   *lower* and 8% fewer user instructions — and `strace -c` put it on 3,161
@@ -1113,25 +1109,30 @@ not hold still — four sittings have given four answers for it:
   `LocalFileSource::read_range` returned to the kernel and re-faulted once per
   chunk. The read buffer is pooled, and no sitting on the pooled read
   reproduces it. What is left on this shape is a cell whose spread —
-  0.425–0.540 — swallows the reference's 0.432–0.479 whole, so the 0.99× is a
-  draw and not a win. Its `strings` and `typed` cells are 1.12× and 1.09×, the
+  0.464–0.515 — overlaps the reference's 0.472–0.524 across nearly all of it, so
+  the 0.98× is a draw and not a win. Its `strings` and `typed` cells are 1.17×
+  and 1.13×, the
   clearest losses in the table and the two that have read the same way at every
   stamp.
-- **`mimalloc` reads 0.97×, 0.97× and 0.97×**, having read 0.97×, 0.97× and
-  0.99× at the previous stamp, 1.00×, 0.99× and 1.01× at the one before and
-  0.98×, 0.96× and 0.96× at the one before that. **Every cell's spread overlaps
-  the reference's** — 0.423–0.452 against 0.432–0.479, 3.37–3.50 against
-  3.44–3.54, 4.68–4.84 against 4.79–4.89 — and the largest gap, 3%, is twice
-  the 1.6% median drift the session-drift table below reads between two
-  sittings of identical binaries. A within-sitting ratio does not have that
-  excuse applied to it automatically, which is why this is flagged rather than
-  dismissed.
+- **`mimalloc` reads 1.02×, 0.97× and 0.99×**, having read 0.97×, 0.97× and
+  0.97× at the previous stamp, 0.97×, 0.97× and 0.99× at the one before,
+  1.00×, 0.99× and 1.01× at the one before that and 0.98×, 0.96× and 0.96×
+  before that. **Two cells' spreads overlap the reference's and one does
+  not**: `parse` 0.469–0.492 against 0.472–0.524 and `typed` 4.80–4.90 against
+  4.89–5.01 overlap, `strings` 3.39–3.44 against 3.53–3.65 does not. The
+  largest gap, 3% on `strings`, is about twice the 1.6% median drift the
+  session-drift table below reads between two sittings of identical binaries.
+  A within-sitting ratio does not have that excuse applied to it automatically,
+  and the `strings` cell's spreads would not admit it anyway, which is why this
+  is flagged rather than dismissed.
 
 **The decision this figure exists to make: the platform allocator stays**
-([`decisions.md`](decisions.md), "D13"). A 1–3% reading whose spreads all
-overlap does not overturn it — but three sittings of four put `mimalloc` ahead
-on every shape, so what the figure supports is "nothing beats it by more than
-the instrument's own noise", not "nothing beats it". The features stay in the
+([`decisions.md`](decisions.md), "D13"). A 1–3% reading does not overturn
+it, D13 having refused `mimalloc` on a few percent. But three sittings of five
+put `mimalloc` ahead on every shape, and this one puts its `strings` cell 3%
+ahead with spreads that do not overlap. What the figure supports is therefore
+"`mimalloc` beats it on extraction by a few percent, the margin D13 refused",
+not "nothing beats it by more than the instrument's own noise". The features stay in the
 manifest so a re-take costs five minutes.
 
 **Every leg is built by the sitting that times it.** `ensure_allocator_binary`
@@ -1191,18 +1192,18 @@ say so.
 `warm-parallel` only.* Applying the test leg by leg answers all four without a
 sitting. A **compressed** leg reads `control_xz`'s 563.8 MB while it decodes,
 so its demand is that size over the decode wall in "What a second decode worker
-buys" — 35.6 MB/s at one worker rising to **385 MB/s at twenty-four**, against a
-560 MB/s SATA floor and a 2647 MB/s NVMe one. It never reaches either device, so
+buys" — 35.3 MB/s at one worker rising to **382 MB/s at twenty-four**, against a
+561 MB/s SATA floor and a 2640 MB/s NVMe one. It never reaches either device, so
 a cold compressed curve is the warm one plus queueing. A **plain** leg is the
-opposite: `parse` runs at 7214 MB/s warm, above every device this project owns,
-and a typed `query` at 676 MB/s is already above the SATA floor at one worker.
-On the NVMe that leaves one apparently live cell: a typed `query` needs 3.92×
-to reach 2647 MB/s, where the warm column reads 1.03× at best, and no figure
+opposite: `parse` runs at 6725 MB/s warm, above every device this project owns,
+and a typed `query` at 657 MB/s is already above the SATA floor at one worker.
+On the NVMe that leaves one apparently live cell: a typed `query` needs 4.02×
+to reach 2640 MB/s, where the warm column reads 1.12× at best, and no figure
 here times a parallel scan on a real device.
 
 The device question concurrency *does* raise — whether scattering reads across N
 workers costs a device its sequential advantage — is fatal on rotational media
-and immaterial at 385 MB/s on either SSD, and it is answered on the HDD by the
+and immaterial at 382 MB/s on either SSD, and it is answered on the HDD by the
 koji scan below, on the same terms as everything else there.
 
 <!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
@@ -1211,21 +1212,21 @@ koji scan below, on the same terms as everything else there.
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **5.77 s** (5.76–5.83) | ~558 MB/s | 1.00× the floor's time |
-| Large-object region | **5.81 s** (5.77–5.82) | ~554 MB/s | 1.01× the floor's time |
-| `INSERT` run | **5.88 s** (5.87–6.00) | ~548 MB/s | 1.02× the floor's time |
-| `dd` → `/dev/null` | **5.75 s** (5.75–5.75) | ~560 MB/s | — |
+| `COPY` block | **5.78 s** (5.77–5.86) | ~557 MB/s | 1.01× the floor's time |
+| Large-object region | **5.81 s** (5.81–5.82) | ~554 MB/s | 1.01× the floor's time |
+| `INSERT` run | **5.94 s** (5.93–5.95) | ~542 MB/s | 1.03× the floor's time |
+| `dd` → `/dev/null` | **5.75 s** (5.75–5.75) | ~561 MB/s | — |
 
 Shared, not measured again — the same binary, command and input:
 - the `COPY` row, which is the census table's census-on column for this regime, from `census-brace-free`.
 
 Per-rep readings (s):
-- `COPY` block (cold): 5.83, 5.79, 5.79, 5.76, 5.76, 5.76
-- Large-object region (cold): 5.77, 5.81, 5.82
-- `INSERT` run (cold): 5.87, 5.88, 6.00
+- `COPY` block (cold): 5.86, 5.78, 5.77, 5.78, 5.77, 5.78
+- Large-object region (cold): 5.81, 5.82, 5.81
+- `INSERT` run (cold): 5.95, 5.93, 5.94
 - `dd` → `/dev/null` (cold): 5.75, 5.75, 5.75
 
-Apparatus over every run in this table: CPU stall ≤1.04%, I/O stall ≤20.04%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤66°C.
+Apparatus over every run in this table: CPU stall ≤0.87%, I/O stall ≤40.74%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.16 GHz, ≤61°C.
 
 <!-- figure: scan-throughput-warm — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-warm` -->
 
@@ -1233,21 +1234,21 @@ Apparatus over every run in this table: CPU stall ≤1.04%, I/O stall ≤20.04%,
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **0.447 s** (0.432–0.479) | ~7214 MB/s | 1.45× the floor's time |
-| Large-object region | **0.413 s** (0.410–0.459) | ~7800 MB/s | 1.34× the floor's time |
-| `INSERT` run | **2.20 s** (2.18–2.20) | ~1466 MB/s | 7.14× the floor's time |
-| `dd` → `/dev/null` | **0.308 s** (0.305–0.310) | ~10459 MB/s | — |
+| `COPY` block | **0.479 s** (0.472–0.524) | ~6725 MB/s | 1.39× the floor's time |
+| Large-object region | **0.424 s** (0.416–0.437) | ~7597 MB/s | 1.23× the floor's time |
+| `INSERT` run | **2.21 s** (2.21–2.24) | ~1455 MB/s | 6.42× the floor's time |
+| `dd` → `/dev/null` | **0.345 s** (0.344–0.350) | ~9337 MB/s | — |
 
 Shared, not measured again — the same binary, command and input:
 - the `COPY` row, which is the census table's census-on column for this regime, from `census-brace-free`.
 
 Per-rep readings (s):
-- `COPY` block (warm): 0.456, 0.437, 0.479, 0.432, 0.458, 0.432
-- Large-object region (warm): 0.413, 0.410, 0.459
-- `INSERT` run (warm): 2.18, 2.20, 2.20
-- `dd` → `/dev/null` (warm): 0.308, 0.310, 0.305
+- `COPY` block (warm): 0.524, 0.487, 0.472, 0.476, 0.482, 0.474
+- Large-object region (warm): 0.424, 0.416, 0.437
+- `INSERT` run (warm): 2.24, 2.21, 2.21
+- `dd` → `/dev/null` (warm): 0.350, 0.345, 0.344
 
-Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤6.73%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.18 GHz, ≤67°C.
+Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤21.07%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.07 GHz, ≤67°C.
 
 <!-- figure: scan-throughput-nvme — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-nvme` -->
 
@@ -1255,18 +1256,18 @@ Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤6.73%, 
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **1.289 s** (1.238–1.413) | ~2499 MB/s | 1.06× the floor's time |
-| Large-object region | **1.461 s** (1.339–1.469) | ~2205 MB/s | 1.20× the floor's time |
-| `INSERT` run | **3.19 s** (3.06–3.23) | ~1008 MB/s | 2.63× the floor's time |
-| `dd` → `/dev/null` | **1.217 s** (1.163–1.248) | ~2647 MB/s | — |
+| `COPY` block | **1.313 s** (1.290–1.424) | ~2453 MB/s | 1.08× the floor's time |
+| Large-object region | **1.488 s** (1.450–1.536) | ~2165 MB/s | 1.22× the floor's time |
+| `INSERT` run | **3.30 s** (3.27–3.42) | ~976 MB/s | 2.70× the floor's time |
+| `dd` → `/dev/null` | **1.220 s** (1.195–1.243) | ~2640 MB/s | — |
 
 Per-rep readings (s):
-- `COPY` block (cold-nvme): 1.345, 1.289, 1.413, 1.251, 1.238
-- Large-object region (cold-nvme): 1.463, 1.469, 1.339, 1.386, 1.461
-- `INSERT` run (cold-nvme): 3.19, 3.06, 3.21, 3.23, 3.18
-- `dd` → `/dev/null` (cold-nvme): 1.214, 1.242, 1.248, 1.163, 1.217
+- `COPY` block (cold-nvme): 1.297, 1.424, 1.313, 1.290, 1.329
+- Large-object region (cold-nvme): 1.488, 1.480, 1.536, 1.533, 1.450
+- `INSERT` run (cold-nvme): 3.28, 3.30, 3.31, 3.42, 3.27
+- `dd` → `/dev/null` (cold-nvme): 1.220, 1.243, 1.198, 1.195, 1.236
 
-Apparatus over every run in this table: CPU stall ≤0.87%, I/O stall ≤5.70%, machine ≤8% busy, steal ≤0.00%, busiest core ≥3.93 GHz, ≤64°C.
+Apparatus over every run in this table: CPU stall ≤0.97%, I/O stall ≤6.70%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.76 GHz, ≤65°C.
 
 Five reps rather than the other two tables' three — each reading here is a
 third of a cold SSD one, and what the table is read for is a ratio near 1 where
@@ -1286,23 +1287,23 @@ which reads it from inside the container and finds it flat in bytes and not
 flat in block count.
 
 **What this says.** All three paths are device-bound to the point of
-disappearing into the device: cold on the SSD, each spends **1.00–1.02×** the
+disappearing into the device: cold on the SSD, each spends **1.01–1.03×** the
 wall-clock of reading the same bytes and doing nothing. Warm, the same scans
-cost 0.447 s, 0.413 s and 2.20 s against a 0.308 s `dd` floor — so the CPU is
-there, and at 558 MB/s the disk covers all of it.
+cost 0.479 s, 0.424 s and 2.21 s against a 0.345 s `dd` floor — so the CPU is
+there, and at ~560 MB/s the disk covers all of it.
 
 **"Device-bound" is a claim about a device, and the NVMe is where it stops
-holding for one of the three.** At 2647 MB/s the `COPY` and large-object paths
-are still inside the device — **1.06×** and **1.20×** its time — and the
-`INSERT` path is not: **2.63×**, which is 1.97 s of a 3.19 s scan spent
+holding for one of the three.** At 2640 MB/s the `COPY` and large-object paths
+are still inside the device — **1.08×** and **1.22×** its time — and the
+`INSERT` path is not: **2.70×**, which is 2.08 s of a 3.30 s scan spent
 somewhere the disk is idle. **All three tables come from one sweep**, so
 their absolutes may be set beside each other as well as their ratios.
 
-**The one number the I/O-defaults levers are sized against is 1.06×.** Whatever
+**The one number the I/O-defaults levers are sized against is 1.08×.** Whatever
 readahead, `posix_fadvise` or a different chunk size could do, none of them can
 put a scan below the time the device takes to deliver the bytes — so on the
 fastest disk this project has, the whole prize for overlapping I/O with parsing
-is the **0.072 s** by which a cold `COPY` scan exceeds its own floor, **5.6%**
+is the **0.093 s** by which a cold `COPY` scan exceeds its own floor, **7.1%**
 of that scan, and less than that in practice since no scheme overlaps
 perfectly. The kernel's own readahead is what has already taken the rest.
 Nothing about a slower device changes that arithmetic in the levers' favour:
@@ -1313,31 +1314,35 @@ device-bound by a factor of several.
 that were already refused.** It first read 0.125 s and 8.9% on a slower `COPY`
 path; the read-path work — the buffer pool and the read-loop carry — took the
 parse below the device by more than it took the device. Every lever priced
-against 8.9% was declined at that number and is declined harder at 5.6%.
+against 8.9% was declined at that number and is declined at 7.1% too.
 
 **The `INSERT` path is still a different algorithm, and the warm table is the
-only place that shows it.** Warm, an `INSERT` run costs **2.20 s against the
-`COPY` path's 0.447 s on the same 3.00 GiB — 4.9× the per-byte CPU**, and
-**7.14× the `dd` floor** where the `COPY` path is 1.5×. A `COPY` block's data is
+only place that shows it.** Warm, an `INSERT` run costs **2.21 s against the
+`COPY` path's 0.479 s on the same 3.00 GiB — 4.6× the per-byte CPU**, and
+**6.42× the `dd` floor** where the `COPY` path is 1.4×. A `COPY` block's data is
 walked and skipped; an `INSERT` run's bytes have to be read quote-aware to
 find where each statement ends, because that is the only thing that says where
 one row stops ([`decisions.md`](decisions.md), "D33"). Cold on
-the SSD the difference is gone entirely — 1.02× against 1.00× — which is
+the SSD the difference is all but gone — 1.03× against 1.01× — which is
 exactly why these tables are here together rather than one being differenced
-against another's regime. **Cold on the NVMe it is back**: 2.63× against 1.06×,
+against another's regime. **Cold on the NVMe it is back**: 2.70× against 1.08×,
 the same algorithms against a device fast enough to stop paying for them.
 
-**The warm ratio grew once and has held since, and nothing about the `INSERT`
-path moved it.** Under the `ba2fc12` stamp it was 4.3×; it reached 4.9× when
-the `COPY` path fell 0.532 s → 0.457 s while the `INSERT` path barely moved,
-2.27 s → 2.25 s, and it reads 4.9× again here with both legs a little lower
-still, 0.447 s and 2.20 s. The read-path work is per byte of file and both
+**The warm ratio grew once and has stayed near 5× since, and nothing about
+the `INSERT` path moved it.** Under the `ba2fc12` stamp it was 4.3×. It reached
+4.9× when the `COPY` path fell 0.532 s → 0.457 s while the `INSERT` path barely
+moved, 2.27 s → 2.25 s. It read 4.9× again at `9b35bea` (0.447 s and 2.20 s).
+Here it reads 4.6×: the `INSERT` leg held at 2.21 s while the `COPY` leg read
+0.479 s, a 7% move inside the ~8% a warm absolute resolves across sessions,
+with the warm `dd` floor beside it 12% slower (0.308 → 0.345 s); what moved the
+leg is unattributed. The read-path work is per byte of file and both
 shapes read the same 3.00 GiB, so what changed is the denominator: `KD9`'s
 residual is a larger share of a faster scan.
 
-**Quote it as a small multiple, not to three figures.** The ratio is the
-durable half of this table and neither of its legs is: across sweeps the legs
-move several percent while the ratio does not.
+**Quote it as a small multiple, not to three figures.** Neither the ratio
+nor its legs holds to three figures across sweeps: the legs move several
+percent, and when only one of them moves, as the `COPY` leg did here, the ratio
+moves with it.
 
 **This table is what `KD9` is read off, and the warm row is what keeps the
 entry live.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
@@ -1350,9 +1355,9 @@ a property of the two algorithms — an `INSERT` run's end can only be found by
 crossing every byte — and partly two named, untaken cuts, which is why `KD9`
 is rewritten to the residual rather than struck. **The cold-SSD row was never
 the evidence that the residual is free, and the NVMe table is the evidence that
-it is not**: an `INSERT` scan there costs **2.62× the device's
-own time** where the `COPY` path costs 1.06×. A user on ordinary SATA storage
-pays nothing for the residual and a user on NVMe pays most of the scan for it,
+it is not**: an `INSERT` scan there costs **2.70× the device's
+own time** where the `COPY` path costs 1.08×. A user on ordinary SATA storage
+pays almost nothing for the residual and a user on NVMe pays most of the scan for it,
 which is the reading that settles what the entry is about. The claim is
 corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
@@ -1413,20 +1418,20 @@ thousands of them.
 
 | Input | Bytes | `COPY` blocks | Peak RSS |
 |---|---|---|---|
-| `one_block` | 2.0 MB | 1 | **6.20 MiB** (5.57–6.26) |
-| `control` | 3.00 GiB | 1 | **6.13 MiB** (6.00–6.24) |
-| `blocks500` | 242 KB | 500 | **9.77 MiB** (9.52–9.88) |
-| `blocks4000` | 1.9 MB | 4,000 | **44.19 MiB** (43.21–45.32) |
+| `one_block` | 2.0 MB | 1 | **7.39 MiB** (7.30–7.47) |
+| `control` | 3.00 GiB | 1 | **7.12 MiB** (7.02–7.18) |
+| `blocks500` | 242 KB | 500 | **10.09 MiB** (9.91–10.39) |
+| `blocks4000` | 1.9 MB | 4,000 | **40.02 MiB** (39.80–40.06) |
 
-Every subtraction is against `one_block`, the 1-block 2.0 MB pivot. **Per byte:** 1535× the bytes costs **-72 KiB**. **Per block**, at byte counts within an order of magnitude of the pivot's: 500 blocks cost +3.57 MiB (+7,502 bytes a block), and 4,000 blocks cost +37.99 MiB (+9,961 bytes a block).
+Every subtraction is against `one_block`, the 1-block 2.0 MB pivot. **Per byte:** 1535× the bytes costs **-272 KiB**. **Per block**, at byte counts within an order of magnitude of the pivot's: 500 blocks cost +2.70 MiB (+5,680 bytes a block), and 4,000 blocks cost +32.64 MiB (+8,558 bytes a block).
 
 Per-rep readings:
-- `one_block`: 6.26 MiB, 6.20 MiB, 5.57 MiB
-- `control`: 6.24 MiB, 6.13 MiB, 6.00 MiB
-- `blocks500`: 9.77 MiB, 9.88 MiB, 9.52 MiB
-- `blocks4000`: 43.21 MiB, 44.19 MiB, 45.32 MiB
+- `one_block`: 7.39 MiB, 7.30 MiB, 7.47 MiB
+- `control`: 7.12 MiB, 7.18 MiB, 7.02 MiB
+- `blocks500`: 10.39 MiB, 10.09 MiB, 9.91 MiB
+- `blocks4000`: 40.06 MiB, 40.02 MiB, 39.80 MiB
 
-Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤9.51%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.81 GHz, ≤60°C.
+Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤7.72%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.95 GHz, ≤60°C.
 
 Four inputs, each a warm `pgdt parse`, reporting peak resident set instead of
 wall clock — the only table here whose reading is not a time, so the rules
@@ -1458,9 +1463,11 @@ cannot do: 74 blocks over 784 GB is block-poor, so a cost scaling with block
 count cannot express itself in it at all.
 
 **What this says.** Nothing accumulates per byte — 1535× the bytes moves the
-reading by −72 KiB, inside the two rows' own spreads. Something accumulates
-**per block**: ~7.5 KB a block at 500 and ~10.0 KB at 4,000, so a 4,000-block
-scan sits at 44.2 MiB where a 1-block one sits at 6.2 MiB. So a resident set
+reading by −272 KiB, *down*, just outside the two rows' spreads (7.02–7.18
+against 7.30–7.47); why the larger file holds a quarter-MiB less is
+unattributed. Something accumulates **per block**: ~5.7 KB a block at 500 and
+~8.6 KB at 4,000, so a 4,000-block scan sits at 40.0 MiB where a 1-block one
+sits at 7.4 MiB. So a resident set
 is flat per byte and not per block, and a block-poor input like koji can show
 only the first of those.
 
@@ -1468,10 +1475,10 @@ only the first of those.
 `rss-attribution`, taken by the same sweep and borrowing this figure's two
 block-count runs: this one measures the whole, and attributing it needs legs
 this one does not run — another allocator, a scan that stops at the preamble, an
-index merely loaded. The finding is that most of it is *live structure per
-table* rather than any of the three churn mechanisms `KD14` was written
-against, and that a `parse` at 4,000 blocks holds about 4.5 KB a block more
-than an `info` over the same finished index does. **The per-*table* half of
+index merely loaded. The finding is that most of it is live index
+structure, over a third of it per *table*, rather than any of the three churn
+mechanisms `KD14` was written against, and that a `parse` at 4,000 blocks holds
+about 3.2 KB a block more than an `info` over the same finished index does. **The per-*table* half of
 that is not this figure's to license**: `blocks4000` gives every table exactly
 one `COPY` block, so per-table and per-block coincide in these inputs and only
 the preamble leg next door separates them.
@@ -1481,12 +1488,17 @@ a run from it — the two block-count `parse` legs and the shipped serial
 arrangement respectively — so it may only be re-taken with them ("A figure may
 be published outside the sweep", above).
 
-**Earlier sittings reproduce it**: `7ee5db5` read 5.88 / 5.64 / 9.53 / 43.59 MiB
-and `41c96bb` read 5.90 / 5.85 / 9.73 / 43.78, against this table's 6.20 / 6.13
-/ 9.77 / 44.19 — every reading inside or within a tenth of a MiB of the others'
-spreads, across read-path, compressed-source, cache and parallelism changes
-under this figure's declared paths. What a serial scan holds resident has not
-moved by anything a three-rep instrument can separate from its own scatter.
+**This sitting does not reproduce the earlier ones, at either end.**
+`7ee5db5` read 5.88 / 5.64 / 9.53 / 43.59 MiB, `41c96bb` 5.90 / 5.85 / 9.73 /
+43.78 and `9b35bea` 6.20 / 6.13 / 9.77 / 44.19, each within a tenth of a MiB of
+the others' spreads. This table's 7.39 / 7.12 / 10.09 / 40.02 is outside them
+at both ends: the 1-block rows are ~1.2 MiB higher (7.30–7.47 against
+5.57–6.26) and the 4,000-block row ~4.2 MiB lower (39.80–40.06 against
+43.21–45.32), over the commits from `9b35bea` to `542fdfb`. The per-block fall
+is ranked, not named: `rss-attribution`'s `parse --preamble-only` leg, from the
+same sweep, fell from +6,101 to +3,382 B a block, which places it in the
+preamble without saying which change. The ~1.2 MiB rise at one block is
+unattributed. Naming both is `M139`'s, from the code.
 
 ## What the per-block resident growth is made of
 
@@ -1503,87 +1515,92 @@ baseline folded into it.
 
 | Leg | 500 blocks | 4,000 blocks | Per block |
 |---|---|---|---|
-| `parse` — the `peak-rss` row | 9.77 MiB | 44.19 MiB | +10,311 B |
-| `parse`, jemalloc | 18.84 MiB | 60.91 MiB | +12,603 B |
-| `parse`, mimalloc | 28.90 MiB | 67.02 MiB | +11,421 B |
-| `parse --preamble-only` | 7.50 MiB | 27.86 MiB | +6,101 B |
-| `info --dtcache` over the finished cache | 7.08 MiB | 26.53 MiB | +5,826 B |
-| `query` (no match), cached | 9.55 MiB | 45.15 MiB | +10,666 B |
-| `query` (no match), `--dtcache none` | 10.16 MiB | 52.96 MiB | +12,823 B |
-| `query` (no match), `--dtcache none`, jemalloc | 18.64 MiB | 52.62 MiB | +10,181 B |
-| `query` (no match), `--dtcache none`, mimalloc | 29.07 MiB | 62.98 MiB | +10,158 B |
+| `parse` — the `peak-rss` row | 10.09 MiB | 40.02 MiB | +8,968 B |
+| `parse`, jemalloc | 20.25 MiB | 48.01 MiB | +8,316 B |
+| `parse`, mimalloc | 28.50 MiB | 52.54 MiB | +7,202 B |
+| `parse --preamble-only` | 7.76 MiB | 19.05 MiB | +3,382 B |
+| `info --dtcache` over the finished cache | 8.43 MiB | 27.73 MiB | +5,784 B |
+| `query` (no match), cached | 10.38 MiB | 41.88 MiB | +9,437 B |
+| `query` (no match), `--dtcache none` | 12.04 MiB | 51.75 MiB | +11,896 B |
+| `query` (no match), `--dtcache none`, jemalloc | 20.03 MiB | 53.98 MiB | +10,171 B |
+| `query` (no match), `--dtcache none`, mimalloc | 32.44 MiB | 66.14 MiB | +10,097 B |
 
 Shared, not measured again — the same binary, command and input:
 - the `parse` reference row at both block counts, from `peak-rss`.
 
 
 Per-rep readings (MiB, 500 then 4,000):
-- `parse` — the `peak-rss` row: 9.77, 9.88, 9.52 · 43.21, 44.19, 45.32
-- `parse`, jemalloc: 18.84, 18.90, 18.78 · 60.91, 60.87, 64.77
-- `parse`, mimalloc: 28.80, 28.90, 29.05 · 67.02, 67.23, 67.02
-- `parse --preamble-only`: 7.39, 7.71, 7.50 · 27.80, 28.08, 27.86
-- `info --dtcache` over the finished cache: 6.85, 7.08, 7.34 · 26.74, 26.21, 26.53
-- `query` (no match), cached: 9.56, 9.38, 9.55 · 45.15, 44.12, 46.70
-- `query` (no match), `--dtcache none`: 10.16, 9.82, 10.36 · 55.44, 52.23, 52.96
-- `query` (no match), `--dtcache none`, jemalloc: 24.18, 18.57, 18.64 · 52.62, 51.97, 52.63
-- `query` (no match), `--dtcache none`, mimalloc: 29.07, 29.21, 27.20 · 62.90, 62.98, 62.99
+- `parse` — the `peak-rss` row: 10.39, 10.09, 9.91 · 40.06, 40.02, 39.80
+- `parse`, jemalloc: 20.25, 20.28, 20.04 · 48.09, 48.01, 48.01
+- `parse`, mimalloc: 28.50, 28.49, 30.79 · 52.54, 52.31, 52.64
+- `parse --preamble-only`: 7.76, 7.80, 7.76 · 19.06, 18.73, 19.05
+- `info --dtcache` over the finished cache: 8.43, 8.28, 8.49 · 27.77, 27.73, 27.60
+- `query` (no match), cached: 10.24, 10.38, 10.62 · 41.88, 41.22, 41.89
+- `query` (no match), `--dtcache none`: 12.17, 12.01, 12.04 · 51.75, 51.48, 54.73
+- `query` (no match), `--dtcache none`, jemalloc: 20.03, 20.00, 20.26 · 54.17, 53.59, 53.98
+- `query` (no match), `--dtcache none`, mimalloc: 32.54, 32.44, 30.80 · 66.14, 62.49, 66.22
 
-Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.93%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤67°C.
+Apparatus over every run in this table: CPU stall ≤0.35%, I/O stall ≤14.91%, machine ≤8% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤69°C.
 
 **The first row is `peak-rss`'s own, not a second reading of it.** That borrow
 is why this figure is published only from a sitting that takes both: two
 instruments taking one command shape would put two disagreeing readings of it
 in the document. It is one run reported twice.
 
-**Most of it is live structure per *table*, and no `COPY` block has to be
-scanned to pay it.** `parse --preamble-only` stops at the end of the schema
-section, before a single data block is read, and it is already carrying
-**+6,101 B** of the `parse` row's +10,311 — three fifths. `info` over the
-finished cache agrees to within 5%: **+5,826 B** to hold an index that was
-deserialized rather than built, with no scanner, no census and no splice
-anywhere in the process. Two different routes to the same structures cost the
-same, so the number is the structures and not the route.
+**Over a third of it is live structure per *table*, and no `COPY` block
+has to be scanned to pay it.** `parse --preamble-only` stops at the end of the
+schema section, before a single data block is read, and it is already carrying
+**+3,382 B** of the `parse` row's +8,968 — three eighths. `info` over the
+finished cache carries **+5,784 B** to hold an index that was deserialized
+rather than built, with no scanner, no census and no splice anywhere in the
+process: 2,402 B a block more than the preamble leg, where the previous sitting
+read the two within 5% of each other. So the two routes no longer cost the
+same — the finished index carries a term the preamble does not, unattributed,
+and this input cannot say whether it is per table or per block. The code, not
+another sitting, is what would name it (`M139`).
 
 The two legs cannot be told apart by this input, because `blocks4000` gives
 every table exactly one `COPY` block — but they are told apart by *when*: the
-preamble leg pays it before the data section exists. So this is a per-table
-cost, and a dump with tables it never dumps rows for pays it too. The manual
-already says it that way ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),
-"`--chunk-size`"): roughly 10 KB per table, and a few thousand tables is tens of
-megabytes before any chunk size is chosen.
+preamble leg pays it before the data section exists. So the preamble leg's
+share is a per-table cost, and a dump with tables it never dumps rows for pays it
+too; the rest of the `parse` slope may be per table or per block, and this input
+cannot say which. The manual's "roughly 9 KB per table"
+([`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--chunk-size`")
+is the whole `parse` slope read as though all of it were per table.
 
 **The allocator is not the culprit in the shape that ships.** Under the
-throttle — the shipped `parse` — glibc has the *lowest* slope of the three:
-+10,311 B against mimalloc's +11,421 and jemalloc's +12,603, and glibc's
-baseline is 9.77 MiB where jemalloc's is 18.84 and mimalloc's 28.90. So "glibc
-returns little of what a churn of clones frees" cannot be what the growth is.
+throttle — the shipped `parse` — every allocator carries most of the slope:
+glibc's +8,968 B against jemalloc's +8,316 and mimalloc's +7,202. So at most a
+fifth of it (1,766 B, glibc over mimalloc) is anything a different allocator
+recovers, and glibc's baseline is 10.09 MiB where jemalloc's is 20.25 and
+mimalloc's 28.50. So "glibc returns little of what a churn of clones frees"
+cannot be what the growth is.
 It is also the reason the `allocator` figure above says nothing about memory:
 it is a timing table, and these three binaries differ resident by a factor of
 three at rest.
 
 **Only the slopes are read here, never the fixed terms, and one fixed term is
 unattributed.** An earlier sitting at `41c96bb` read jemalloc's legs at
-117.70 MiB and 163.43 against 18.84 and 60.91 here, and mimalloc's 500-block leg
-at 31.00 against 28.90, with every per-block slope within a kilobyte of this
-table's. Those readings came from a standalone script using
+117.70 MiB and 163.43 against 20.25 and 48.01 here, and mimalloc's 500-block leg
+at 31.00 against 28.50. Those readings came from a standalone script using
 `runs/pgdt-alloc-*` binaries whose source is not recoverable, so which build
 moved the fixed term cannot be said; that is a candidate rather than a finding.
-The paragraph above reads the *ranking of the slopes*, which three sittings
-agree on.
+The paragraph above reads the slopes and not their ranking: three earlier
+sittings put glibc's lowest, and this one puts it highest.
 
-**Retention is real, but only where the throttle is off.** `--dtcache none`
-splices per block (`KD5`), and there glibc's +12,823 B sits **2,665 B above
-mimalloc's +10,158** and 2,642 B above jemalloc's +10,181 — the one place a
-different allocator recovers anything. Against its own cached twin, which
-differs in that one flag and nothing else, the un-throttled splice costs
-**+2,157 B a block**. That is the whole-list clone's price in resident bytes,
-and it is a fifth of the growth rather than its cause. It is also the
-**noisiest leg here** — three sittings have read it at +1,303 B, +2,278 B and
-+2,157 B, where every other leg moved by under 3% — so read it as one to two
-kilobytes and not as a third digit.
+**Retention is real, and not only where the throttle is off.** `--dtcache none`
+splices per block (`KD5`), and there glibc's +11,896 B sits **1,799 B above
+mimalloc's +10,097** and 1,725 B above jemalloc's +10,171. Under the throttle
+glibc now sits 1,766 B and 652 B above the same two, so this is no longer the
+one place a different allocator recovers anything. Against its own cached twin,
+which differs in that one flag and nothing else, the un-throttled splice costs
+**+2,459 B a block**. That is the whole-list clone's price in resident bytes,
+and it is a fifth of the growth rather than its cause. It is also a noisy leg:
+four sittings have read it at +1,303 B, +2,278 B, +2,157 B and +2,459 B, so read
+it as one to two and a half kilobytes and not as a third digit.
 
 **What is left is the scan's own working set**, and it is the remainder rather
-than a leg: a full `parse` holds ~4.5 KB a block more than an `info` over the
+than a leg: a full `parse` holds ~3.2 KB a block more than an `info` over the
 same finished index. Spans, census and TOC accrue there, and so does whatever
 the throttled splices leave behind.
 
@@ -1611,58 +1628,58 @@ against its row. The figure exists to decide one of the three I/O defaults and
 to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 **Nine reps, not the throughput tables' three or five.** The cold-NVMe `COPY`
-row above spreads about a seventh of its median over five reps, against a total
-envelope for all three I/O levers of 5.6%. An instrument that cannot resolve a
+row above spreads about a tenth of its median over five reps, against a total
+envelope for all three I/O levers of 7.1%. An instrument that cannot resolve a
 lever can only report that it saw nothing.
 
 | Chunk | Warm, tmpfs | Cold, SATA SSD | Cold, NVMe |
 |---|---|---|---|
-| 64 KiB | **0.614 s** (0.594–0.636) · 1.39× | **5.77 s** (5.76–5.87) · 1.00× | **1.498 s** (1.449–1.624) · 1.17× |
-| 256 KiB | **0.471 s** (0.458–0.678) · 1.07× | **5.77 s** (5.75–5.78) · 1.00× | **1.312 s** (1.283–1.358) · 1.02× |
-| 1 MiB *(default)* | **0.442 s** (0.432–0.500) · 1.00× | **5.78 s** (5.76–5.83) · 1.00× | **1.285 s** (1.234–1.366) · 1.00× |
-| 4 MiB | **0.429 s** (0.420–0.461) · 0.97× | **5.77 s** (5.76–5.85) · 1.00× | **1.319 s** (1.294–1.424) · 1.03× |
-| 8 MiB | **0.421 s** (0.416–0.466) · 0.95× | **5.77 s** (5.76–5.81) · 1.00× | **1.437 s** (1.381–1.553) · 1.12× |
-| 16 MiB | **0.546 s** (0.535–0.628) · 1.24× | **5.78 s** (5.76–5.80) · 1.00× | **1.578 s** (1.548–1.684) · 1.23× |
+| 64 KiB | **0.680 s** (0.646–0.751) · 1.41× | **5.80 s** (5.79–5.82) · 1.00× | **1.635 s** (1.541–1.696) · 1.22× |
+| 256 KiB | **0.544 s** (0.509–0.642) · 1.13× | **5.79 s** (5.78–5.80) · 1.00× | **1.406 s** (1.377–1.523) · 1.05× |
+| 1 MiB *(default)* | **0.482 s** (0.474–0.535) · 1.00× | **5.79 s** (5.79–5.81) · 1.00× | **1.337 s** (1.305–1.396) · 1.00× |
+| 4 MiB | **0.470 s** (0.460–0.542) · 0.98× | **5.79 s** (5.79–5.81) · 1.00× | **1.411 s** (1.368–1.569) · 1.06× |
+| 8 MiB | **0.472 s** (0.465–0.595) · 0.98× | **5.80 s** (5.79–5.82) · 1.00× | **1.568 s** (1.514–1.610) · 1.17× |
+| 16 MiB | **0.601 s** (0.579–0.663) · 1.25× | **5.81 s** (5.81–5.84) · 1.00× | **1.678 s** (1.637–1.700) · 1.26× |
 Per-rep readings (s):
-- 64 KiB (warm): 0.629, 0.594, 0.598, 0.610, 0.636, 0.605, 0.629, 0.614, 0.618
-- 256 KiB (warm): 0.472, 0.458, 0.462, 0.678, 0.466, 0.505, 0.458, 0.471, 0.475
-- 1 MiB (warm): 0.442, 0.447, 0.466, 0.434, 0.435, 0.500, 0.465, 0.432, 0.434
-- 4 MiB (warm): 0.453, 0.461, 0.424, 0.420, 0.429, 0.432, 0.444, 0.428, 0.423
-- 8 MiB (warm): 0.418, 0.428, 0.466, 0.424, 0.416, 0.417, 0.417, 0.443, 0.421
-- 16 MiB (warm): 0.628, 0.567, 0.577, 0.565, 0.535, 0.546, 0.542, 0.541, 0.535
-- 64 KiB (cold): 5.87, 5.77, 5.77, 5.79, 5.77, 5.78, 5.76, 5.77, 5.78
-- 256 KiB (cold): 5.75, 5.76, 5.76, 5.76, 5.77, 5.77, 5.77, 5.77, 5.78
-- 1 MiB (cold): 5.78, 5.77, 5.79, 5.79, 5.83, 5.76, 5.78, 5.76, 5.76
-- 4 MiB (cold): 5.76, 5.77, 5.76, 5.76, 5.77, 5.78, 5.78, 5.79, 5.85
-- 8 MiB (cold): 5.81, 5.77, 5.78, 5.77, 5.78, 5.77, 5.76, 5.77, 5.76
-- 16 MiB (cold): 5.77, 5.78, 5.76, 5.78, 5.78, 5.80, 5.79, 5.80, 5.77
-- 64 KiB (cold-nvme): 1.475, 1.624, 1.453, 1.575, 1.449, 1.498, 1.480, 1.507, 1.537
-- 256 KiB (cold-nvme): 1.312, 1.283, 1.339, 1.300, 1.320, 1.358, 1.324, 1.297, 1.309
-- 1 MiB (cold-nvme): 1.366, 1.287, 1.285, 1.285, 1.258, 1.302, 1.287, 1.234, 1.268
-- 4 MiB (cold-nvme): 1.307, 1.294, 1.320, 1.299, 1.424, 1.415, 1.306, 1.353, 1.319
-- 8 MiB (cold-nvme): 1.553, 1.428, 1.486, 1.403, 1.451, 1.381, 1.420, 1.529, 1.437
-- 16 MiB (cold-nvme): 1.596, 1.578, 1.548, 1.565, 1.684, 1.636, 1.575, 1.591, 1.578
+- 64 KiB (warm): 0.657, 0.694, 0.680, 0.722, 0.721, 0.646, 0.672, 0.657, 0.751
+- 256 KiB (warm): 0.542, 0.545, 0.512, 0.635, 0.544, 0.606, 0.509, 0.523, 0.642
+- 1 MiB (warm): 0.494, 0.480, 0.482, 0.493, 0.474, 0.476, 0.535, 0.481, 0.507
+- 4 MiB (warm): 0.470, 0.470, 0.508, 0.463, 0.460, 0.486, 0.477, 0.462, 0.542
+- 8 MiB (warm): 0.468, 0.472, 0.500, 0.468, 0.468, 0.487, 0.465, 0.476, 0.595
+- 16 MiB (warm): 0.632, 0.584, 0.601, 0.579, 0.592, 0.617, 0.623, 0.596, 0.663
+- 64 KiB (cold): 5.80, 5.80, 5.80, 5.80, 5.80, 5.79, 5.79, 5.79, 5.82
+- 256 KiB (cold): 5.80, 5.78, 5.79, 5.79, 5.79, 5.80, 5.79, 5.79, 5.79
+- 1 MiB (cold): 5.79, 5.79, 5.79, 5.80, 5.79, 5.79, 5.79, 5.80, 5.81
+- 4 MiB (cold): 5.79, 5.79, 5.79, 5.79, 5.79, 5.79, 5.80, 5.80, 5.81
+- 8 MiB (cold): 5.81, 5.79, 5.80, 5.79, 5.80, 5.79, 5.80, 5.80, 5.82
+- 16 MiB (cold): 5.81, 5.81, 5.81, 5.83, 5.82, 5.81, 5.81, 5.81, 5.84
+- 64 KiB (cold-nvme): 1.635, 1.649, 1.649, 1.611, 1.541, 1.579, 1.664, 1.615, 1.696
+- 256 KiB (cold-nvme): 1.406, 1.413, 1.398, 1.462, 1.408, 1.377, 1.387, 1.393, 1.523
+- 1 MiB (cold-nvme): 1.337, 1.305, 1.326, 1.311, 1.350, 1.314, 1.340, 1.396, 1.374
+- 4 MiB (cold-nvme): 1.422, 1.411, 1.569, 1.376, 1.422, 1.458, 1.399, 1.395, 1.368
+- 8 MiB (cold-nvme): 1.610, 1.568, 1.514, 1.576, 1.568, 1.588, 1.519, 1.555, 1.544
+- 16 MiB (cold-nvme): 1.664, 1.657, 1.678, 1.637, 1.700, 1.690, 1.664, 1.686, 1.693
 
-Apparatus over every run in this table: CPU stall ≤1.16%, I/O stall ≤20.30%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤62°C.
+Apparatus over every run in this table: CPU stall ≤1.18%, I/O stall ≤21.40%, machine ≤12% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤63°C.
 
 **The default is the fastest row, and nothing is within reach of beating
 it.** On the one device class where a chunk size can show anything, 1 MiB is
-the fastest median in the table. Its two neighbours are not distinguishable
-from it — 256 KiB at 1.02× and 4 MiB at 1.03×, both inside the reps' own spread
-— and everything further out is clearly slower: 1.17× at 64 KiB, 1.12× at
-8 MiB, 1.23× at 16 MiB, each with a spread that does not reach the default's.
-So the chunk-size lever is not worth "at most 5.6%" — it is worth **nothing**:
-no value measured beats the one already shipped and the ones that could have
-are ties. The constant stays at 1 MiB and `--chunk-size` is a tuning escape
+the fastest median in the table. Its two neighbours are 256 KiB at 1.05×
+and 4 MiB at 1.06×, each median above the default's slowest rep — 1.406 s
+and 1.411 s against 1.305–1.396 — though their spreads overlap it. Everything
+further out is clearly slower: 1.22× at 64 KiB, 1.17× at 8 MiB, 1.26× at
+16 MiB, each with a spread that does not reach the default's. So the
+chunk-size lever is not worth "at most 7.1%" — it is worth **nothing**: no
+value measured beats the one already shipped. The constant stays at 1 MiB and `--chunk-size` is a tuning escape
 hatch for a device unlike these three.
 
 **The warm column ranks differently, and it is not a device.** Warm, 8 MiB
-reads 0.95× and 4 MiB 0.97×, both below the default with spreads that clear it
-— 0.416–0.466 and 0.420–0.461 against 0.432–0.500. That is the per-chunk work
+and 4 MiB both read 0.98×, each median just below the default's fastest rep —
+0.472 s and 0.470 s against 0.474–0.535 — with spreads that overlap it. That is the per-chunk work
 (a syscall, a pool take/give, a carry check) paid a quarter and an eighth as
 often, on a "device" that charges nothing for a deeper request. It does not
 argue for a larger default: tmpfs is the regime that exists to expose the CPU a
-device hides, and the two real devices in this table read 1.00× and 1.03–1.12×
+device hides, and the two real devices in this table read 1.00× and 1.06–1.17×
 at those sizes. A default chosen off the warm column would be a default chosen
 for a filesystem nobody parses a dump from.
 
@@ -1676,7 +1693,7 @@ included.
 row below the default is a synchronous read issued while the parser is idle —
 a deeper prefetch than `POSIX_FADV_SEQUENTIAL`'s doubled window, and one the
 kernel is told about rather than has to infer. Cold on the NVMe, nothing above
-1 MiB beats it: 4 MiB reads 1.03×, 8 MiB 1.12×, 16 MiB 1.23×.
+1 MiB beats it: 4 MiB reads 1.06×, 8 MiB 1.17×, 16 MiB 1.26×.
 
 **All three rows above the default carry that argument.** The 16 MiB row was
 excluded from it while `io::BufferPool` kept nothing over 8 MiB: every chunk at
@@ -1685,23 +1702,24 @@ remove, back once per chunk — so its penalty was a pool miss rather than a
 request depth. The pool keeps a buffer of whatever length a read loop announces
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and with that
 fixed the row fell warm 0.866 s → 0.546 s (1.93× → 1.24×) and cold on the NVMe
-1.829 s → 1.578 s (1.42× → 1.23×). It is still the slowest row in both
-regimes, so what the pool miss was hiding is a real depth penalty — cold time
+1.829 s → 1.578 s (1.42× → 1.23×). It is still the slowest row above the
+default in both regimes, so what the pool miss was hiding is a real depth
+penalty — cold time
 does not *fall* with request depth on any
 device here, so the kernel's own readahead has already taken what there was to
 take and a hint asking for more has nothing to win
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism", where
 both schemes are refused).
 
-**What is left of the 16 MiB warm penalty is not the pool.** 0.546 s against the
-8 MiB row's 0.421 s is 1.30×, where the pool miss alone was worth 1.83× at the
+**What is left of the 16 MiB warm penalty is not the pool.** 0.601 s against the
+8 MiB row's 0.472 s is 1.27×, where the pool miss alone was worth 1.83× at the
 previous stamp. The remainder is unattributed — a chunk that size is two orders
 of magnitude past this machine's L2 and the carry check moves more bytes per
 miss, either of which would do it, and nothing here separates them. Nothing
 rests on it: the row's job is to bracket the ceiling from above, which it does
 at any of these values.
 
-**Small chunks cost CPU, not I/O.** 64 KiB is 1.39× warm and 1.17× cold on the
+**Small chunks cost CPU, not I/O.** 64 KiB is 1.41× warm and 1.22× cold on the
 NVMe, and 1.00× on the SATA SSD — the per-chunk work paid 16× as often, which
 the slower device hides entirely and the faster one does not.
 
@@ -1728,48 +1746,53 @@ beside them.
 
 |  | Census off | Census on | Δ |
 |---|---|---|---|
-| cold, on the SSD | **5.78 s** (5.76–5.83) | **5.77 s** (5.76–5.83) | **-0.009 s, -0%** |
-| warm, on tmpfs | **0.402 s** (0.376–0.414) | **0.447 s** (0.432–0.479) | **+0.045 s, +11%** |
+| cold, on the SSD | **5.80 s** (5.79–5.85) | **5.78 s** (5.77–5.86) | **-0.018 s, -0%** |
+| warm, on tmpfs | **0.441 s** (0.423–0.510) | **0.479 s** (0.472–0.524) | **+0.038 s, +9%** |
 
-The census costs **+0.045 s per 3.00 GiB** of these rows — 55 ns per 16-column row of 3,956 bytes, over 814,362 rows.
-`dd` → `/dev/null` on the same file in the same container: **0.307 s** warm, **5.76 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
+The census costs **+0.038 s per 3.00 GiB** of these rows — 47 ns per 16-column row of 3,956 bytes, over 814,362 rows.
+`dd` → `/dev/null` on the same file in the same container: **0.344 s** warm, **5.75 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
 
 Per-rep readings (s):
-- cold, on the SSD — census off: 5.83, 5.80, 5.79, 5.78, 5.76, 5.77; census on: 5.83, 5.79, 5.79, 5.76, 5.76, 5.76
-- warm, on tmpfs — census off: 0.414, 0.405, 0.391, 0.376, 0.403, 0.400; census on: 0.456, 0.437, 0.479, 0.432, 0.458, 0.432
+- cold, on the SSD — census off: 5.85, 5.79, 5.80, 5.80, 5.79, 5.81; census on: 5.86, 5.78, 5.77, 5.78, 5.77, 5.78
+- warm, on tmpfs — census off: 0.502, 0.423, 0.446, 0.425, 0.435, 0.510; census on: 0.524, 0.487, 0.472, 0.476, 0.482, 0.474
 
-Apparatus over every run in this table: CPU stall ≤1.04%, I/O stall ≤22.51%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤60°C.
+Apparatus over every run in this table: CPU stall ≤1.14%, I/O stall ≤18.11%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.74 GHz, ≤64°C.
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table.
 
 **What this says.** The pre-filter is very nearly free on the shape a real
-dump mostly has: 55 ns per 16-column row of 3,956 bytes. That implies tens of
+dump mostly has: 47 ns per 16-column row of 3,956 bytes. That implies tens of
 GB/s, which is above what this machine's DRAM will give one core — so the
 reading is not a memory-bandwidth figure at all: the pre-filter re-walks bytes
 the scanner has just walked, out of cache, and `memchr2` is fast enough that
 what is left is the loop, not the bytes.
 
-**Cold, the census is invisible, and this stamp reads it negative**: −0.009 s
-on a 5.77 s scan, with the two legs' spreads all but identical (5.76–5.83
-against 5.76–5.83). Earlier stamps read the same row at +0.011 s, +0.004 s,
-+0.003 s, +0.002 s and −0.008 s, so the effect is smaller than the noise it
-sits in. That row is not a separate finding — it is the same CPU cost, hidden
-behind a device delivering 558 MB/s. Which one a user sees is decided by
+**Cold, the census is invisible, and this stamp reads it negative**: −0.018 s
+on a 5.80 s scan, with the two legs' spreads overlapping (5.79–5.85 against
+5.77–5.86). Earlier stamps read the same row at +0.011 s, +0.004 s, +0.003 s,
++0.002 s, −0.008 s and −0.009 s, so the effect is smaller than the noise it
+sits in. Rep by rep census-on is the faster leg in five of six, and without each
+leg's first rep the two do not overlap (5.79–5.81 against 5.77–5.78): a 0.3%
+difference in the direction the census cannot cause, inside the cold regime's
+~0.5% floor, and unattributed. That row is not a separate finding — it is the
+same CPU cost, hidden behind a device delivering 557 MB/s. Which one a user sees is decided by
 whether the bytes are already resident.
 
 **Read the warm Δ against the instrument, not to three figures.** "What a
 session's own drift costs" below puts warm sub-second readings several percent
 apart between two sweeps of identical binaries and inputs — and both legs of
 this Δ are such readings, moving independently — so the percentage is "a few
-percent to a seventh", and the +6%, +7%, +8%, +9%, +10%, +11% and +14% other
-sweeps read are the same measurement rather than a change. Eight sweeps have
+percent to a seventh", and the +6%, +7%, +8%, +9%, +10%, +11%, +11% and +14%
+other sweeps read are the same measurement rather than a change. Nine sweeps have
 read it and every one is positive, which is the finding; **the heading names no
 number** because that number is the half the instrument does not hold still,
 and `measure.py`'s own heading string for this figure still carries the 8% one
-sweep read. This stamp's reading is **+11%**, mid-band, with both legs a little
-lower than the previous stamp's — census-off 0.400 s → 0.402 s and census-on
-0.457 s → 0.447 s, neither move outside the other reading's spread.
+sweep read. This stamp's reading is **+9%**, mid-band, with both legs higher
+than the previous stamp's — census-off 0.402 s → 0.441 s and census-on
+0.447 s → 0.479 s — and this file's own warm `dd` floor rose with them,
+0.307 s → 0.344 s. So the move is the tmpfs floor's and not the binary's:
+census-off reads 1.28× its floor against 1.31× before.
 
 **The scalar loop it replaced cost a thousand times more.** `raw.iter().any(…)`
 before `memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded
@@ -1780,22 +1803,23 @@ legs is taken out
 is not a cost worth a knob.
 
 **The census's cost is two tiers.** It is paid by the rows that pass the
-pre-filter (next section), and the pre-filter is **20% of what such a row
-costs** — 55 ns against 282 ns. Under the `ba2fc12` stamp the same ratio was
+pre-filter (next section), and the pre-filter is **17% of what such a row
+costs** — 47 ns against 274 ns. Under the `ba2fc12` stamp the same ratio was
 60 ns against 1.49 µs, or 4%, which is what licensed calling the pre-filter a
 rounding error on the inspected path. Putting the splitter on `memchr` took the
 field split off a per-byte closure and the inspected row got five times cheaper
-while the pre-filter did not, so the two tiers are within a factor of four of
+while the pre-filter did not, so the two tiers are within a factor of six of
 each other and the subtraction below has to be read with that in mind. The
 census is unconditional either way ([`decisions.md`](decisions.md), "D35") — the
 alternative is a query that cannot retype its array columns without a second
 pass.
 
-**The two warm spreads separate**: census-off spans 0.376–0.414 against
-census-on's 0.432–0.479, with no overlap at all. That does not replace the
-pairing — six reps each, run in both orders, and eight sweeps reading the Δ
-positive — because a single sitting's separation is what the drift table exists
-to discount.
+**The two warm spreads overlap in this sitting**: census-off spans
+0.423–0.510 against census-on's 0.472–0.524, the overlap being census-off's
+first and last reps, and paired rep by rep census-on is slower in five of six.
+The finding is the pairing — six reps each, run in both orders, and nine sweeps
+reading the Δ positive — never one sitting's separation, which is what the drift
+table exists to discount.
 
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
@@ -1891,23 +1915,23 @@ Six reps each, the pair run in both orders; medians, with the full spread.
 
 |  | Census off | Census on | Δ |
 |---|---|---|---|
-| cold, on the SSD | **5.77 s** (5.76–5.82) | **5.77 s** (5.76–5.77) | **+0.002 s, +0%** |
-| warm, on tmpfs | **0.402 s** (0.381–0.439) | **0.600 s** (0.571–0.657) | **+0.198 s, +49%** |
+| cold, on the SSD | **5.83 s** (5.76–5.94) | **5.81 s** (5.79–5.87) | **-0.023 s, -0%** |
+| warm, on tmpfs | **0.366 s** (0.342–0.480) | **0.558 s** (0.534–0.595) | **+0.192 s, +52%** |
 
-The census costs **+0.198 s per 3.00 GiB** of these rows — 282 ns per 19-column row of 4,602 bytes, over 699,962 rows.
-`dd` → `/dev/null` on the same file in the same container: **0.309 s** warm, **5.75 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
+The census costs **+0.192 s per 3.00 GiB** of these rows — 274 ns per 19-column row of 4,602 bytes, over 699,962 rows.
+`dd` → `/dev/null` on the same file in the same container: **0.273 s** warm, **5.74 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
 
 Per-rep readings (s):
-- cold, on the SSD — census off: 5.82, 5.76, 5.78, 5.77, 5.76, 5.76; census on: 5.77, 5.77, 5.77, 5.77, 5.76, 5.77
-- warm, on tmpfs — census off: 0.411, 0.394, 0.425, 0.382, 0.381, 0.439; census on: 0.657, 0.604, 0.571, 0.596, 0.607, 0.576
+- cold, on the SSD — census off: 5.94, 5.76, 5.80, 5.82, 5.84, 5.85; census on: 5.87, 5.82, 5.80, 5.80, 5.79, 5.86
+- warm, on tmpfs — census off: 0.480, 0.389, 0.343, 0.344, 0.398, 0.342; census on: 0.595, 0.539, 0.561, 0.555, 0.566, 0.534
 
-Apparatus over every run in this table: CPU stall ≤1.04%, I/O stall ≤17.89%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.70 GHz, ≤63°C.
+Apparatus over every run in this table: CPU stall ≤1.08%, I/O stall ≤52.92%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.90 GHz, ≤65°C.
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table. Against that `dd` floor,
-census-on is 1.9× it.
+census-on is 2.0× it.
 
-**What this says.** The census costs 282 ns per 19-column row, which is **+49%**
+**What this says.** The census costs 274 ns per 19-column row, which is **+52%**
 on a scan reading from memory. Cold it is **+0%**, hidden behind the device
 exactly as the brace-free case is. Both rows are the same CPU; which one a user
 sees is decided by whether the bytes are already resident.
@@ -1921,14 +1945,14 @@ census's field split was the byte loop, not the census"). The figure was red on
 `pgdump_query/src/copy.rs` throughout — a red figure states only that a number
 may have moved, never how far.
 
-**The pre-filter is 55 ns of that 282 ns**, read off the previous section, the
+**The pre-filter is 47 ns of that 274 ns**, read off the previous section, the
 same census-off binary running the pre-filter on every row of both files, which
 is what licenses the subtraction, and it is a **within-sitting** one, both
 tables coming from the same sweep. Splitting the row into fields and running
 `observe` over all 19 of them, the work the pre-filter exists to avoid, is
-**80% of the census's whole cost**, down from 96–98% before the split went
+**83% of the census's whole cost**, down from 96–98% before the split went
 behind `memchr`. The pre-filter is what keeps the brace-free case off that
-path, at a fifth of the price rather than a rounding error. The census is
+path, at about a sixth of the price rather than a rounding error. The census is
 unconditional either way (`decisions.md`, "D35") — the alternative is a query
 that cannot retype its array columns without a second pass.
 
@@ -1949,7 +1973,7 @@ cd scripts && uv run generate_perf_data.py --arrays --composite \
 of a source edit — it would ship a build in which `decisions.md`'s "the census
 is unconditional" is untrue, serving a comparison taken about once a phase. The
 escape if the patch-and-revert ever bites is to drop the comparison, not to
-gate it: the absolute figures (55 ns/row rejected, 282 ns/row inspected) are
+gate it: the absolute figures (47 ns/row rejected, 274 ns/row inspected) are
 what the census's own section consumes ([`decisions.md`](decisions.md), "D35").
 
 ## Nested decode costs what it copies, and an element is now a borrowed slice
@@ -1960,27 +1984,27 @@ what the census's own section consumes ([`decisions.md`](decisions.md), "D35").
 because there are two questions.**
 
 - **Copy** — `String::from` over the same byte count: 20 ns at 49 bytes,
-  40 ns at 601, 20 ns at 42. A nested value's *element* has no borrowed arm at
+  41 ns at 601, 20 ns at 42. A nested value's *element* has no borrowed arm at
   the Arrow builder (`crate::batch::append_nested` copies whatever it is
   handed), so this isolates what the *parse* costs on top of the copy the
   builder cannot avoid.
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
-  **2.53 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
+  **3.00 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
   which is the point of a view. This is what a user comparing a text column
   against an array column actually pays.
 
 | Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 191 ns | 153 ns | **17.3×** | **136×** |
-| `integer[]`, 50 elements | 601 | 1.97 µs | 858 ns | **70.5×** | **1118×** |
-| two-field composite | 42 | 96 ns | 159 ns | **13.0×** | **101×** |
-The view control is `text_view_x1024`'s median ÷ 1024 = **2.53 ns**, a floor on the borrowed arm rather than the borrowed arm itself, so the `÷ view` column bounds the real ratio from above.
-Per-element slope between the two array lengths: **39 ns** decoding and **15 ns** rendering.
+| `integer[]`, 4 elements | 49 | 188 ns | 161 ns | **17.8×** | **117×** |
+| `integer[]`, 50 elements | 601 | 2.12 µs | 814 ns | **71.8×** | **981×** |
+| two-field composite | 42 | 107 ns | 153 ns | **13.0×** | **87×** |
+The view control is `text_view_x1024`'s median ÷ 1024 = **3.00 ns**, a floor on the borrowed arm rather than the borrowed arm itself, so the `÷ view` column bounds the real ratio from above.
+Per-element slope between the two array lengths: **42 ns** decoding and **14 ns** rendering.
 
 Criterion medians (ns):
 - copy control at 49 bytes: 20 ns
-- copy control at 601 bytes: 40 ns
+- copy control at 601 bytes: 41 ns
 - copy control at 42 bytes: 20 ns
 
 Apparatus: this figure runs no `pgdt` and reads no file, so it carries none of
@@ -1989,22 +2013,22 @@ the stall, temperature or device gates the sweep's tables do.
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
 `iter_batched_ref` gave ~12.6 ns against a harness floor that `bool/decode`
-puts at ~1.1 ns, so three quarters of it was criterion. And 2.53 ns is a
+puts at ~1.1 ns, so three quarters of it was criterion. And 3.00 ns is a
 *floor* on the borrowed arm rather than the borrowed arm itself:
 `push_utf8view_field` also scans the chunk deque with `find_map` and calls
 `block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
 **The `÷ copy` column for the 50-element row is the least stable number in the
 table**, because its denominator is: the 601-byte copy control has read 24, 42,
-41, 24, 24, 41, 41, 40 and now 40 ns over nine sittings, which has put that
-ratio at 122×, 226×, 94.8×, 67.6×, 67.1× and 70.5× while `decode` moved for
+41, 24, 24, 41, 41, 40, 40 and now 41 ns over ten sittings, which has put that
+ratio at 122×, 226×, 94.8×, 67.6×, 67.1×, 70.5× and 71.8× while `decode` moved for
 reasons of its own. Read the `decode` and `render` columns, which are what the design consumes;
 treat `÷ copy` as the order of magnitude it establishes.
 
 **What this says.** Cost is per *element* rather than per byte — the two
-array lengths differ only in element count — and the slope is **39 ns per
+array lengths differ only in element count — and the slope is **42 ns per
 element** decoding, against the 48 ns a linear force-quote set cost and the
-77 ns an allocation per element cost before that, and **15 ns per element**
+77 ns an allocation per element cost before that, and **14 ns per element**
 rendering, against 27 ns. An element of an array literal is a borrowed slice of
 the field unless it actually carried an escape
 ([`decisions.md`](decisions.md), "D45"), and the
@@ -2016,13 +2040,13 @@ count says it should: two fields, and it costs about half what a four-element
 array does.
 
 **Which direction is more expensive depends on the shape.** For the composite,
-`render` is the larger at 159 ns against 96 — the decode side stopped
+`render` is the larger at 153 ns against 107 — the decode side stopped
 allocating and its per-byte predicate got cheaper, while the record's render
 path holds a `String` per field. For the four-element array `decode` is ahead,
-191 ns against 153, having read the other way round at the previous stamp; the
+188 ns against 161, and earlier stamps have read it the other way round; the
 two are within a criterion sitting's scatter of each other on that row and the
-crossing is not a finding. At fifty elements decode is clear, 1.97 µs against
-858 ns, because
+crossing is not a finding. At fifty elements decode is clear, 2.12 µs against
+814 ns, because
 the force-quote set is the whole of `push_token`'s per-byte work and only part
 of `scan_token`'s — so which side dominates depends on element count as well as
 on shape. `render` is the CLI's write-back and no embedder pays it
@@ -2039,7 +2063,7 @@ It reads criterion's own `estimates.json` rather than scraping the console,
 because a rounded ratio is how a table acquires a number nobody can reproduce.
 The bench alone is `cargo bench -p pgdump_query --bench decoders -- nested`.
 
-## A typed query over nested columns costs 6.6 µs a row more than a string one
+## A typed query over nested columns costs 6.7 µs a row more than a string one
 
 <!-- figure: nested-end-to-end — reproduce with `cd scripts && uv run measure.py --figure nested-end-to-end` -->
 
@@ -2066,16 +2090,16 @@ whichever file went first. Medians of five:
 
 | File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
-| control — 16 scalar columns | 814,362 | 3.52 s | 4.84 s | **1.63 µs/row** | 1.38× |
-| `--composite` — the same 16 plus one composite | 803,995 | 3.53 s | 5.39 s | **2.32 µs/row** | 1.53× |
-| `--arrays --composite` — the same 16 plus three nested | 699,962 | 3.54 s | 9.33 s | **8.27 µs/row** | 2.63× |
+| control — 16 scalar columns | 814,362 | 3.53 s | 4.90 s | **1.68 µs/row** | 1.39× |
+| `--composite` — the same 16 plus one composite | 803,995 | 3.48 s | 5.39 s | **2.37 µs/row** | 1.55× |
+| `--arrays --composite` — the same 16 plus three nested | 699,962 | 3.52 s | 9.36 s | **8.34 µs/row** | 2.66× |
 
 Per-rep readings (s):
-- control — `strings`: 3.46, 3.54, 3.54, 3.52, 3.44; `typed`: 4.79, 4.86, 4.84, 4.89, 4.80
-- composite — `strings`: 3.44, 3.58, 3.51, 3.65, 3.53; `typed`: 5.25, 5.49, 5.37, 5.41, 5.39
-- arrays — `strings`: 3.53, 3.54, 3.67, 3.62, 3.50; `typed`: 9.13, 9.33, 9.35, 9.34, 9.19
+- control — `strings`: 3.53, 3.58, 3.53, 3.53, 3.65; `typed`: 4.89, 4.90, 4.95, 5.01, 4.90
+- composite — `strings`: 3.57, 3.48, 3.47, 3.65, 3.48; `typed`: 5.52, 5.38, 5.57, 5.36, 5.39
+- arrays — `strings`: 3.54, 3.52, 3.48, 3.50, 3.56; `typed`: 9.38, 9.26, 9.38, 9.30, 9.36
 
-Apparatus over every run in this table: CPU stall ≤0.17%, I/O stall ≤64.33%, machine ≤7% busy, steal ≤0.00%, busiest core ≥3.62 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.17%, I/O stall ≤2.41%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.78 GHz, ≤64°C.
 
 Every run completes inside the 512 MB cgroup; no max-RSS figure is quoted, for
 the reason under the scan-throughput table.
@@ -2084,14 +2108,14 @@ the reason under the scan-throughput table.
 travel.** A ratio carries that session's `strings` leg in its denominator, and
 that leg is apparatus-sensitive far beyond the session drift measured below:
 the same three files read 9.74 / 9.76 / 9.56 s on a page-cache-warm SSD with a
-musl binary and 0.77 s of wrapper, against 3.52 / 3.53 / 3.54 s here. Quote a
+musl binary and 0.77 s of wrapper, against 3.53 / 3.48 / 3.52 s here. Quote a
 ratio only against the sweep it came from; the design consumes the differences.
 
-**What this says.** Typing the 16 scalar columns costs **1.6 µs per row**;
+**What this says.** Typing the 16 scalar columns costs **1.7 µs per row**;
 typing those plus the three nested ones costs **8.3 µs per row**. So three
-nested columns — 19% more columns — cost **6.6 µs of every row**, four times
+nested columns — 19% more columns — cost **6.7 µs of every row**, four times
 what all sixteen scalar columns together cost. **The two array columns
-carry most of it** — 5.98 µs against the composite column's 0.78,
+carry most of it** — 6.13 µs against the composite column's 0.81,
 which the projection table below reads directly rather than by differencing two
 files.
 
@@ -2100,8 +2124,8 @@ leg fell furthest.** The control's `typed` went 10.36 s → 4.75 s and the array
 file's 19.93 s → 9.12 s, against `strings` legs that went 4.42 s → 3.44 s and
 5.36 s → 3.45 s. Four render-path changes, the scalar decoders and the read
 path were between those two stamps, and the nested-column increment more than
-halved with them: **13.5 µs → 6.5 µs a row**. It reads 6.6 µs here, with all
-six legs about 2% above their previous values and the ratio 2.65× → 2.63×,
+halved with them: **13.5 µs → 6.5 µs a row**. It reads 6.7 µs here, with all
+six legs within 1.5% of the previous stamp's and the ratio 2.63× → 2.66×,
 which is a session's drift rather than a move.
 
 Each per-row figure is that file's own `typed` minus its own `strings`, which
@@ -2110,9 +2134,9 @@ worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
-**The untyped baseline is file-dependent, and the census is the cause — but the
+**The untyped baseline is file-dependent, and the census is one term of it — but the
 effect is now about the size of the instrument.** All three `strings` legs read
-within 2% of each other (3.44 / 3.39 / 3.45 s) where the `--arrays --composite`
+within 2% of each other (3.53 / 3.48 / 3.52 s) where the `--arrays --composite`
 file once read 21% above the other two. Its rows are the only ones carrying a
 `{`, so they are the only ones the mapping pass's array-shape census splits
 into fields. Running the same query with the **census-off** binary is what
@@ -2122,25 +2146,26 @@ separates the two:
 
 |  | control | `--arrays --composite` | gap |
 |---|---|---|---|
-| census on | 3.445 s | 3.515 s | **+0.070 s** |
-| census off | 3.436 s | 3.353 s | **-0.083 s** |
+| census on | 3.572 s | 3.499 s | **-0.073 s** |
+| census off | 3.483 s | 3.252 s | **-0.231 s** |
 
 Per-rep readings (s):
-- census on, control: 3.56, 3.45, 3.44, 3.44, 3.44
-- census on, arrays: 3.54, 3.52, 3.69, 3.51, 3.50
-- census off, control: 3.44, 3.38, 3.44, 3.44, 3.39
-- census off, arrays: 3.49, 3.52, 3.27, 3.31, 3.35
+- census on, control: 3.51, 3.61, 3.57, 3.59, 3.53
+- census on, arrays: 3.49, 3.67, 3.49, 3.50, 3.54
+- census off, control: 3.61, 3.44, 3.42, 3.53, 3.48
+- census off, arrays: 3.29, 3.25, 3.40, 3.25, 3.24
 
-Apparatus over every run in this table: CPU stall ≤0.17%, I/O stall ≤2.93%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.98 GHz, ≤64°C.
+Apparatus over every run in this table: CPU stall ≤0.18%, I/O stall ≤2.90%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.93 GHz, ≤65°C.
 
-**With the census gone the gap still reverses**: +0.070 s becomes **−0.083 s**
-on a file carrying 14% *fewer* rows than the control. What has changed is the
-size of the thing being attributed. The census costs **0.162 s** on the arrays
-file here and **0.009 s** on the control, against the `parse` figures two
-sections above of +0.198 s and +0.045 s — the same order on a different
-command, off a different pair of legs; the control's 0.009 s is smaller than
-the leg's own scatter and says only that the brace-free pre-filter is invisible
-on this shape too. Under the `ba2fc12` stamp the same two
+**With the census on, the gap is already reversed, and removing the census
+widens it**: −0.073 s becomes **−0.231 s** on a file carrying 14% *fewer* rows
+than the control. What has changed is the size of the thing being attributed.
+The census costs **0.247 s** on the arrays file here and **0.089 s** on the
+control, against the `parse` figures two sections above of +0.192 s and
++0.038 s — the same order on a different command, off a different pair of legs.
+The control's 0.089 s is smaller than its census-off leg's own scatter
+(3.42–3.61 s) and says only that the brace-free pre-filter is not resolved on
+this shape either. Under the `ba2fc12` stamp the same two
 numbers were 1.031 s and 0.030 s, and it was the first of them that made the
 baseline gap large enough to see without the census-off binary.
 
@@ -2149,7 +2174,7 @@ is a scan plus a census whose price depends on the data's shape rather than a
 flat per-byte floor; but the census's field split came off a per-byte closure,
 and the shape-dependent term fell with it from about a fifth of the run to
 about a twentieth. A reader who wants to know whether the untyped baseline is
-file-independent still needs this table — the +0.033 s census-on gap is inside
+file-independent still needs this table — the −0.073 s census-on gap is inside
 the drift figure below and would be read as nothing at all. Both rows come from
 the same query loop below, run with each binary in turn:
 
@@ -2157,10 +2182,10 @@ the same query loop below, run with each binary in turn:
 cd scripts && uv run measure.py --figure census-attribution
 ```
 
-The micro above covers 3.4 µs of the 6.6 µs — decode plus render for a
-4-element array (344 ns), a 50-element array (2.83 µs) and a two-field
-composite (255 ns), which are exactly this file's three nested columns. The
-remaining ~3.2 µs is the Arrow build the micro does not reach: 56 per-element
+The micro above covers 3.5 µs of the 6.7 µs — decode plus render for a
+4-element array (349 ns), a 50-element array (2.93 µs) and a two-field
+composite (260 ns), which are exactly this file's three nested columns. The
+remaining ~3.1 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is about half of nested decoding**, which is the fact behind the
 refusal to stop copying nested values ([`decisions.md`](decisions.md), "D29").
@@ -2177,17 +2202,18 @@ and the control on the instrument that measures it:
 
 | Reading | Reps | Paired median | Per-rep readings |
 |---|---|---|---|
-| composite column's share — control against `--composite` | 5 | **+0.65 µs** | +0.50, +0.63, +0.65, +0.72, +0.75 |
-| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **-0.04 µs** | -0.23, -0.11, -0.05, -0.04, +0.14, +0.38 |
-Apparatus over every run in this table: CPU stall ≤0.18%, I/O stall ≤2.78%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.80 GHz, ≤64°C.
+| composite column's share — control against `--composite` | 5 | **+0.76 µs** | +0.30, +0.75, +0.76, +0.84, +0.87 |
+| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **+0.00 µs** | -0.07, -0.05, +0.00, +0.00, +0.02, +0.04 |
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤3.35%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.94 GHz, ≤65°C.
 
 The second row is the control on the *instrument*: two files that differ only
-in their random seed should differ by zero, and instead they span −0.23 to
-+0.38 µs per row. **In this sweep the two rows again do not overlap** — every
-composite rep sits above every floor rep, but by 0.12 µs where the previous
-sweep read 0.42 µs — and that is still not a resolution, because sweeps of the same binaries and inputs have
+in their random seed should differ by zero. In this sitting they nearly do, at
+−0.07 to +0.04 µs per row, while the composite row's own reps span +0.30 to
++0.87 in the same sitting. **In this sweep the two rows again do not overlap** —
+every composite rep sits above every floor rep, by 0.26 µs where the previous
+sweep read 0.12 µs — and that is still not a resolution, because sweeps of the same binaries and inputs have
 read the same composite share at +0.31, +0.39, +0.60, +0.62, +0.62, +0.65,
-+0.69, +0.72, +0.79 and +0.99 µs: takes of one quantity **0.7 µs/row apart**,
++0.69, +0.72, +0.76, +0.79 and +0.99 µs: takes of one quantity **0.7 µs/row apart**,
 which is wider than the quantity itself.
 It is also why the standing rule against quoting a
 standard error forbids quoting an interval here — an earlier draft put these at
@@ -2195,11 +2221,13 @@ standard error forbids quoting an interval here — an earlier draft put these a
 
 **The within-file reading is what settles the quantity, and it lands inside
 this bound.** Projecting the composite column in and out of one file puts it at
-**+0.75 µs/row** ("What a column costs" below), against nine cross-file takes
-spanning +0.31 to +0.99 — near the middle of that range. So the cross-file
-apparatus was not *wrong* about the composite column: it was imprecise by
-exactly the amount its own floor row says, which is the strongest statement
-available that the floor row measures the instrument rather than the data.
+**+0.81 µs/row** ("What a column costs" below), against eleven cross-file takes
+spanning +0.31 to +0.99 — inside that range, in its upper half. So the
+cross-file apparatus was not *wrong* about the composite column: it was
+imprecise, by the spread of those takes across sittings. One sitting's floor
+row does not bound it — this one spans 0.11 µs/row while its own composite reps
+span 0.57 — which is why the standing floor is the envelope across sittings
+("The apparatus").
 
 *Retracted:* the reading that this subtraction is *biased* rather than merely
 imprecise. A musl-built leg of the same sweep put the composite file
@@ -2266,55 +2294,54 @@ untyped baseline enters.
 
 | Projection | Median | Per row | Δ per row against the row above | What that buys |
 |---|---|---|---|---|
-| 0 — `--no-columns` | 1.175 s | 1.68 µs | — | the replay floor: no decode, no build, no render |
-| 1 — `v_smallint` | 1.247 s | 1.78 µs | **+0.11 µs** | one cheap scalar, above the floor |
-| 16 — every scalar | 4.41 s | 6.30 µs | **+4.53 µs** | the other 15 scalars |
-| 17 — the scalars and `v_comp` | 4.95 s | 7.07 µs | **+0.78 µs** | **the composite column alone** |
-| 19 — every column | 9.14 s | 13.06 µs | **+5.98 µs** | **the two array columns alone** |
+| 0 — `--no-columns` | 1.111 s | 1.59 µs | — | the replay floor: no decode, no build, no render |
+| 1 — `v_smallint` | 1.201 s | 1.72 µs | **+0.13 µs** | one cheap scalar, above the floor |
+| 16 — every scalar | 4.44 s | 6.35 µs | **+4.63 µs** | the other 15 scalars |
+| 17 — the scalars and `v_comp` | 5.01 s | 7.16 µs | **+0.81 µs** | **the composite column alone** |
+| 19 — every column | 9.29 s | 13.27 µs | **+6.13 µs** | **the two array columns alone** |
 
 One file — `--arrays --composite`, 699,962 rows of 19 columns — read 5 ways, warm and typed, through the CLI. Per-row differences are paired rep by rep and then taken as a median.
 
 Per-rep readings (s):
-- 0 — `--no-columns`: 1.208, 1.179, 1.228, 1.170, 1.160, 1.164
-- 1 — `v_smallint`: 1.245, 1.251, 1.241, 1.280, 1.248, 1.242
-- 16 — every scalar: 4.43, 4.40, 4.41, 4.40, 4.44, 4.41
-- 17 — the scalars and `v_comp`: 4.90, 4.99, 4.95, 4.95, 4.90, 5.00
-- 19 — every column: 9.14, 9.13, 9.14, 9.19, 9.08, 9.15
+- 0 — `--no-columns`: 1.148, 1.111, 1.156, 1.112, 1.104, 1.107
+- 1 — `v_smallint`: 1.246, 1.205, 1.197, 1.190, 1.190, 1.239
+- 16 — every scalar: 4.58, 4.41, 4.44, 4.47, 4.44, 4.45
+- 17 — the scalars and `v_comp`: 5.01, 5.03, 5.01, 4.97, 5.01, 5.01
+- 19 — every column: 9.28, 9.29, 9.34, 9.29, 9.25, 9.52
 
-Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤6.00%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤68°C.
+Apparatus over every run in this table: CPU stall ≤14.79%, I/O stall ≤7.84%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤68°C.
 
 **The zero-column row is the floor the rest is read against.** A zero-column
 projection is `COUNT(*)`: the block is still read,
 every row still walked and field-counted, the predicate still evaluated, and
-nothing is decoded, built or rendered. That is **1.68 µs of every row** —
-1.175 s against this file's own warm `dd` floor of 0.309 s, so 3.8× the cost of
+nothing is decoded, built or rendered. That is **1.59 µs of every row** —
+1.111 s against this file's own warm `dd` floor of 0.273 s, so 4.1× the cost of
 handing the bytes over. The same file in `--schema-mode strings`, which builds all 19 columns as
-zero-copy views, costs 3.54 s; typed and complete it costs 9.14 s.
+zero-copy views, costs 3.52 s; typed and complete it costs 9.29 s.
 
 **A scalar column is cheap and an array column is not, by an order of magnitude
-and more.** One `smallint` costs 0.11 µs a row. The other fifteen scalars cost
-4.53 µs between them, ~0.30 µs each. The composite costs **0.78 µs**. The two
+and more.** One `smallint` costs 0.13 µs a row. The other fifteen scalars cost
+4.63 µs between them, ~0.31 µs each. The composite costs **0.81 µs**. The two
 array columns — a 3–5 element `integer[]` and a 50-element one — cost
-**5.98 µs between them**, which is 88% of what all three nested columns cost
+**6.13 µs between them**, which is 88% of what all three nested columns cost
 together and more than every scalar column in the table.
 
 **It agrees with the two instruments it replaces, and it is sharper than
-either.** The three nested columns sum to 6.76 µs here against the 6.6 µs
+either.** The three nested columns sum to 6.94 µs here against the 6.7 µs
 `typed` − `strings` reads across a file boundary; the composite column's
-0.78 µs sits inside the +0.31 to +0.99 range ten cross-file sweeps have read
+0.81 µs sits inside the +0.31 to +0.99 range eleven cross-file sweeps have read
 for it, where the cross-file floor alone is ±0.5 µs. The micro figure above
-accounts for 3.17 µs of the arrays' 5.98 (decode plus render for both
+accounts for 3.28 µs of the arrays' 6.13 (decode plus render for both
 literals), leaving the Arrow build — 56 per-element `append_value` calls and
-the list offsets — as the marginally larger half, which is the same split the
-end-to-end figure reports.
+the list offsets — as the marginally smaller half, 2.85 µs.
 
-**Every row of this table roughly halved at the stamp before last, and the
+**Every row of this table roughly halved under the render-path work, and the
 shape did not.** The floor went 3.18 → 1.61 µs, the fifteen scalars
 11.03 → 4.46, the composite 0.98 → 0.75 and the two arrays 13.21 → 6.03; four
 render-path changes and the scalar decoders moved them, hardest on the
-expensive rows. This sitting reads 1.68 / 4.53 / 0.78 / 5.98, every one within
-a few percent of those — an array column is eight times a scalar's average and
-the ordering of the five rows is unchanged.
+expensive rows. This sitting reads 1.59 / 4.63 / 0.81 / 6.13, within 8% of
+those and the composite furthest — an array column is ten times a scalar's
+average and the ordering of the five rows is unchanged.
 
 The projections are spelled on the CLI, which is what makes this an end-to-end
 figure — `render_field` included — rather than a library-internal one:
@@ -2352,12 +2379,12 @@ all six. Two axes: how many terms, and how far into the row each one reaches.
 
 | Predicate | Median | Per row | Δ per row against the row above | What that buys |
 |---|---|---|---|---|
-| 1 term, 13th column | 0.944 s | 1.16 µs | — | the base: one term, thirteen fields in |
-| 2 terms, 13th column | 0.944 s | 1.16 µs | **+0.01 µs** | one more term at that depth |
-| 3 terms, 13th column | 0.978 s | 1.20 µs | **+0.03 µs** | one more |
-| 5 terms, 13th column | 0.978 s | 1.20 µs | **+0.01 µs** | two more — the five-way disjunction |
-| 5 terms, 1st column | 0.951 s | 1.17 µs | **-0.04 µs** | **the walk those five terms pay** |
-| 1 term, 1st column | 0.867 s | 1.07 µs | **-0.08 µs** | four of those five terms, walk-free |
+| 1 term, 13th column | 1.034 s | 1.27 µs | — | the base: one term, thirteen fields in |
+| 2 terms, 13th column | 1.050 s | 1.29 µs | **+0.03 µs** | one more term at that depth |
+| 3 terms, 13th column | 1.043 s | 1.28 µs | **-0.00 µs** | one more |
+| 5 terms, 13th column | 1.089 s | 1.34 µs | **+0.05 µs** | two more — the five-way disjunction |
+| 5 terms, 1st column | 1.016 s | 1.25 µs | **-0.07 µs** | **the walk those five terms pay** |
+| 1 term, 1st column | 0.963 s | 1.18 µs | **-0.07 µs** | four of those five terms, walk-free |
 
 One file — the brace-free control, 814,362 rows of 16 columns — read 6 ways, warm and `--schema-mode strings`, through the CLI. Every term is an equality against a literal no value of the column can equal, so every row is walked, every term is evaluated, and no row is decoded, built or rendered. Per-row differences are paired rep by rep and then taken as a median.
 
@@ -2370,20 +2397,20 @@ As written:
 - 1 term, 1st column: `--where 'id=zzz1'`
 
 Per-rep readings (s):
-- 1 term, 13th column: 0.928, 0.920, 0.950, 0.958, 0.938, 0.992
-- 2 terms, 13th column: 0.947, 0.941, 0.940, 0.951, 1.006, 0.939
-- 3 terms, 13th column: 0.989, 0.981, 0.956, 0.975, 1.033, 0.953
-- 5 terms, 13th column: 1.003, 0.972, 0.971, 0.985, 0.972, 0.991
-- 5 terms, 1st column: 0.922, 0.937, 1.004, 0.971, 0.917, 0.964
-- 1 term, 1st column: 0.867, 0.862, 0.865, 0.868, 0.902, 0.915
+- 1 term, 13th column: 1.105, 1.043, 1.025, 1.019, 1.052, 1.026
+- 2 terms, 13th column: 1.038, 1.059, 1.110, 1.044, 1.039, 1.055
+- 3 terms, 13th column: 1.046, 1.076, 1.041, 1.042, 1.036, 1.045
+- 5 terms, 13th column: 1.104, 1.089, 1.065, 1.072, 1.088, 1.090
+- 5 terms, 1st column: 1.024, 1.057, 1.006, 1.009, 1.007, 1.043
+- 1 term, 1st column: 0.967, 0.951, 0.975, 0.975, 0.948, 0.959
 
-Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤7.76%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤62°C.
+Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤7.38%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤65°C.
 
 **A term's cost is still mostly the walk to its field, and the depth is still
 what says so — but the walk is now paid once for the whole row.** A term against
 the control's thirteenth column reaches thirteen fields in and one against its
 first reaches one. The two five-term rows are the same five terms at those two
-depths and differ by **0.04 µs a row**: 3.1% of what the deep one costs, on a
+depths and differ by **0.07 µs a row**: 5% of what the deep one costs, on a
 query that decodes nothing. The two one-term rows differ by 0.09 µs, which is
 the same walk bought by a single term.
 
@@ -2393,13 +2420,12 @@ so five deep terms crossed sixty-five boundaries and the same depth difference
 read **0.27 µs, 18%** of the deep query. A row's boundaries are now found once
 by `copy::RowSplit` and read by every term and by `push_row` alike
 ([`decisions.md`](decisions.md), "Predicates"), and the depth penalty
-falls to between a quarter and a third of what it was — 0.07 µs at the previous
-stamp and 0.04 µs here, both inside this instrument's own scatter of each
-other.
+falls to a quarter of what it was or less — 0.04 µs at the previous stamp and
+0.07 µs here, both inside this instrument's own scatter of each other.
 
 **The term-count axis is flat, which is the sharper half of the result.**
-Going from one term to five at the same depth costs **+0.05 µs a row in total**
-(+0.01, +0.03, +0.01 across the three steps), against +0.37 µs under the
+Going from one term to five at the same depth costs **+0.08 µs a row in total**
+(+0.03, −0.00, +0.05 across the three steps), against +0.37 µs under the
 `ba2fc12` stamp. Five terms against one column cost almost exactly what one
 does, because four of them are reading boundaries the first already found. What
 the sharing measured on the deterministic instrument, over five more shapes than
@@ -2413,7 +2439,7 @@ walk already happens and sharing it costs less. Selectivity is the axis the
 sharing turns on, and a figure on which nothing survives sits at its pessimal
 end, which makes the losses read off this table **upper bounds**.
 
-**This sitting ran at ≤6% busy** with per-rep spreads inside 4% of their
+**This sitting ran at ≤5% busy** with per-rep spreads inside 7% of their
 medians. The deterministic corroboration is `runs/measure-7.7.tsv` — retired
 user instructions on the host, immune to what else the machine was doing —
 which put the walk at 49% of a five-term query's instructions under the
@@ -2454,20 +2480,20 @@ not this one's.
 
 ## What gathering row-group statistics costs a parse
 
-<!-- figure: statistics-gathering — taken at `312af13` — reproduce with `cd scripts && uv run measure.py --figure statistics-gathering` -->
+<!-- figure: statistics-gathering — reproduce with `cd scripts && uv run measure.py --figure statistics-gathering` -->
 
 | Input | `--statistics none` | Every statistic | Δ | Peak RSS, none | Peak RSS, every statistic | `dd` floor |
 |---|---|---|---|---|---|---|
-| `COPY` block | **0.512 s** (0.466–0.578) | **3.55 s** (3.52–3.67) | **+3.037 s, +593%** | **6.10 MiB** (5.95–6.21) | **15.95 MiB** (15.71–17.46) | 0.345 s |
-| Large-object region | **0.531 s** (0.517–0.603) | **0.554 s** (0.524–0.645) | **+0.023 s, +4%** | **6.03 MiB** (5.93–6.07) | **5.70 MiB** (5.61–6.09) | 0.361 s |
-| `INSERT` run | **2.37 s** (2.35–2.40) | **2.39 s** (2.35–2.43) | **+0.020 s, +1%** | **5.91 MiB** (5.73–6.04) | **5.91 MiB** (5.79–6.08) | 0.375 s |
+| `COPY` block | **0.473 s** (0.471–0.500) | **3.88 s** (3.85–3.93) | **+3.403 s, +719%** | **7.34 MiB** (7.02–7.52) | **18.93 MiB** (18.80–19.04) | 0.343 s |
+| Large-object region | **0.416 s** (0.404–0.461) | **0.421 s** (0.410–0.434) | **+0.005 s, +1%** | **7.10 MiB** (7.08–7.12) | **7.12 MiB** (6.95–7.29) | 0.288 s |
+| `INSERT` run | **2.24 s** (2.22–2.28) | **2.23 s** (2.22–2.29) | **-0.016 s, -1%** | **7.22 MiB** (7.11–7.33) | **7.19 MiB** (7.05–7.36) | 0.290 s |
 
 Every run is `pgdt parse` over the whole file at `--jobs 1`, statistics stated as `--statistics none` or `--statistics all --statistics-group-size 1048576` — the default's base size, gathered exactly where a flagless `parse` coarsens wide rows — **in a 2g container**, against the register's 512m: nothing bills what statistics hold, so the limit is chosen generously and the resident column says what it left. Resident is recorded, not attributed.
 
 **Gathering costs a `COPY`-dense parse most of its time, warm.** Every
-statistic over the control's 811,677 rows of 16 columns adds 3.04 s to a
-0.512 s scan — 6.9× the `none` leg, and 3.74 µs a row — the slowest `none`
-rep 0.578 s and the fastest gathering one 3.52 s. **The added time is
+statistic over the control's 814,362 rows of 16 columns adds 3.40 s to a
+0.473 s scan — 8.2× the `none` leg, and 4.18 µs a row — the slowest `none`
+rep 0.500 s and the fastest gathering one 3.85 s. **The added time is
 unattributed**: the per-value work `gather.rs` does (unescaping the field,
 keying it, holding each group's bounds and the previous value, a dictionary's
 linear membership test) and writing what it gathered into the cache the `parse`
@@ -2481,63 +2507,63 @@ resolves**: the large-object and `INSERT` rows' two legs overlap rep for rep,
 which is the control's row read from the other side — the gathering, not the
 request, is what costs.
 
-**Resident grows by 9.85 MiB on the control**, 6.10 MiB to 15.95 MiB, which is
-3.28 KiB for each of its 3,072 groups, or about 210 bytes a group a column, and
+**Resident grows by 11.59 MiB on the control**, 7.34 MiB to 18.93 MiB, which is
+3.86 KiB for each of its 3,072 groups, or about 250 bytes a group a column, and
 by nothing on the two rows that gather nothing. It is recorded and not
-attributed, as the spec asks; two of the five gathering reps read about
-1.5 MiB above the other three (17.35 and 17.46 MiB), and that spread has no
-name either. The 2g container left nearly all of itself unused.
+attributed; the five gathering reps agree within 0.24 MiB (18.80–19.04). The 2g
+container left nearly all of itself unused.
 
 Per-rep readings (s; peak RSS):
-- `COPY` block, `--statistics none`: 0.549, 0.512, 0.470, 0.466, 0.578; 5.95 MiB, 6.21 MiB, 6.10 MiB, 6.09 MiB, 6.21 MiB
-- `COPY` block, `--statistics all`: 3.57, 3.55, 3.52, 3.54, 3.67; 15.92 MiB, 17.35 MiB, 15.71 MiB, 17.46 MiB, 15.95 MiB
-- `COPY` block, `dd` → `/dev/null`: 0.345, 0.345, 0.343
-- Large-object region, `--statistics none`: 0.568, 0.517, 0.531, 0.526, 0.603; 6.01 MiB, 6.03 MiB, 5.93 MiB, 6.07 MiB, 6.05 MiB
-- Large-object region, `--statistics all`: 0.524, 0.554, 0.603, 0.538, 0.645; 5.91 MiB, 6.09 MiB, 5.70 MiB, 5.70 MiB, 5.61 MiB
-- Large-object region, `dd` → `/dev/null`: 0.367, 0.357, 0.361
-- `INSERT` run, `--statistics none`: 2.35, 2.40, 2.39, 2.37, 2.37; 5.91 MiB, 5.73 MiB, 6.01 MiB, 6.04 MiB, 5.82 MiB
-- `INSERT` run, `--statistics all`: 2.43, 2.39, 2.42, 2.35, 2.38; 5.79 MiB, 5.91 MiB, 6.08 MiB, 5.90 MiB, 6.03 MiB
-- `INSERT` run, `dd` → `/dev/null`: 0.369, 0.375, 0.382
+- `COPY` block, `--statistics none`: 0.473, 0.500, 0.473, 0.478, 0.471; 7.34 MiB, 7.21 MiB, 7.52 MiB, 7.47 MiB, 7.02 MiB
+- `COPY` block, `--statistics all`: 3.92, 3.85, 3.88, 3.93, 3.87; 18.92 MiB, 18.80 MiB, 18.94 MiB, 18.93 MiB, 19.04 MiB
+- `COPY` block, `dd` → `/dev/null`: 0.342, 0.343, 0.347
+- Large-object region, `--statistics none`: 0.413, 0.416, 0.438, 0.461, 0.404; 7.11 MiB, 7.08 MiB, 7.10 MiB, 7.10 MiB, 7.12 MiB
+- Large-object region, `--statistics all`: 0.425, 0.411, 0.410, 0.434, 0.421; 7.29 MiB, 6.95 MiB, 7.19 MiB, 7.12 MiB, 7.11 MiB
+- Large-object region, `dd` → `/dev/null`: 0.290, 0.288, 0.287
+- `INSERT` run, `--statistics none`: 2.24, 2.27, 2.23, 2.22, 2.28; 7.33 MiB, 7.22 MiB, 7.26 MiB, 7.11 MiB, 7.21 MiB
+- `INSERT` run, `--statistics all`: 2.22, 2.22, 2.23, 2.25, 2.29; 7.36 MiB, 7.19 MiB, 7.05 MiB, 7.27 MiB, 7.06 MiB
+- `INSERT` run, `dd` → `/dev/null`: 0.289, 0.295, 0.290
 
-Apparatus over every run in this table: CPU stall ≤0.33%, I/O stall ≤14.48%, machine ≤9% busy, steal ≤0.00%, busiest core ≥3.65 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤8.99%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤67°C.
 
 ## What row-group statistics buy a query
 
-<!-- figure: statistics-pruning — taken at `d5c3764` — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
+<!-- figure: statistics-pruning — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
 
 | Filter | `--statistics none` | Statistics used | Δ | Speedup | Statistics used, none in the cache | Δ carrying them | Groups skipped | Bytes a stop left unread | Of the rows' bytes, not read | Rows returned |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.499 s** (0.494–0.513) | **0.038 s** (0.037–0.039) | **-0.462 s, -92%** | **13.1×** | — | — | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
-| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.634 s** (0.595–0.641) | **0.036 s** (0.034–0.038) | **-0.598 s, -94%** | **17.4×** | — | — | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
-| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.462 s** (0.453–0.543) | **0.467 s** (0.465–0.523) | **+0.006 s, +1%** | **1.0×** | **0.473 s** (0.451–0.493) | **-0.006 s, -1%** | 0 of 3,072 | 0 | 0.00% | 13 |
+| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.536 s** (0.526–0.592) | **0.042 s** (0.041–0.044) | **-0.493 s, -92%** | **12.6×** | — | — | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
+| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.639 s** (0.625–0.652) | **0.043 s** (0.039–0.045) | **-0.596 s, -93%** | **14.7×** | — | — | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
+| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.496 s** (0.487–0.502) | **0.497 s** (0.486–0.545) | **+0.002 s, +0%** | **1.0×** | **0.483 s** (0.464–0.522) | **+0.015 s, +3%** | 0 of 3,072 | 0 | 0.00% | 13 |
 
-One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --statistics-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The cache is decoded whole whatever the query states, so the third filter also runs against a cache an untimed `parse` stating `--statistics none` wrote, with statistics used and none to consult, and its Δ against the cache carrying them is what carrying them costs that query. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.296 s**.
+One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --statistics-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The cache is decoded whole whatever the query states, so the third filter also runs against a cache an untimed `parse` stating `--statistics none` wrote, with statistics used and none to consult, and its Δ against the cache carrying them is what carrying them costs that query. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.326 s**.
 
 **Both pruned legs read a floor, not their bytes.** Each read under 0.5% of the
 file's row bytes — about 11.6 MiB for the range, which at the unpruned leg's
-own rate of 0.162 ms a MiB is about 2 ms of the 38 ms measured — so about
-36 ms of each pruned leg is not reading rows. Process start, the preamble, the
+own rate of 0.174 ms a MiB is about 2 ms of the 42 ms measured — so about
+40 ms of each pruned leg is not reading rows. Process start, the preamble, the
 plan and decoding the whole cache are in it, and **it is unattributed between
 them**. The speedups are therefore ratios against that floor: the range leg's
-bytes not read are 264× its bytes read, where its wall is 13.1× shorter. The
+bytes not read are 264× its bytes read, where its wall is 12.6× shorter. The
 dictionary leg reads fifteen groups to the range's twelve, three runs of about
-1,000 rows each, and lands within 2 ms of it, faster rather than slower, which
+1,000 rows each, and lands within 1 ms of it, which
 is what a fixed floor predicts. Six reps resolve both: neither spread is wider
-than 4 ms.
+than 6 ms.
 
 **Consulting statistics that skip nothing costs nothing this table resolves**:
-the third row's legs overlap, 0.465–0.523 s against 0.453–0.543 s, the query
+the third row's legs overlap, 0.486–0.545 s against 0.487–0.502 s, the query
 having consulted every one of 3,072 groups' statistics and skipped none.
 
-**Nor does carrying them.** Against a cache written without statistics the same
-query reads 0.451–0.493 s, overlapping both other legs' spreads, and its median
-is 6 ms *slower* than the carrying cache's; paired rep by rep the difference
-alternates in sign. Subtracting the two Δs to isolate the decode would give a
-negative cost, which is the spreads and not a term, so **the decode is
-unresolved here, not zero**. What bounds it is the pruned legs: each decodes
-this same cache whole, statistics included, inside a 34–39 ms wall, so
-decoding 3,072 groups' statistics costs at most that floor, well under what the
-unnarrowed legs' tens-of-ms spreads can see. Pricing it below the floor takes
+**Nor does carrying them, resolvably.** Against a cache written without
+statistics the same query reads 0.464–0.522 s, overlapping both other legs'
+spreads, and its median is 15 ms *faster* than the carrying cache's; paired rep
+by rep five of six differences favour it and one runs 29 ms the other way.
+Subtracting the two Δs to isolate the decode gives +13 ms, inside the 58 ms
+spread of the leg it is read against, so **the decode is unresolved here, not
+zero and not 13 ms**. What bounds it is the pruned legs: each decodes this same
+cache whole, statistics included, inside a 39–45 ms wall, so decoding 3,072
+groups' statistics costs at most that floor, which is no wider than the
+unnarrowed legs' own 15–59 ms spreads. Pricing it below the floor takes
 more groups or the process timing its own cache load, not another subtraction.
 
 **Rows returned agree across every leg**, 13 on the third, the cache without
@@ -2545,21 +2571,21 @@ statistics included, exactly as `generate_pruning_bench.py`'s draws, recomputed
 without writing the file, predicted — a count taken by a different route from
 the one timed.
 
-The three unpruned legs differ by their filters alone, 0.462 s to 0.634 s, the
+The three unpruned legs differ by their filters alone, 0.496 s to 0.639 s, the
 text equality on the last column slowest; that is the filter's own cost,
 `predicate-terms`' subject, and is not attributed here.
 
 Per-rep readings (s):
-- Range on the sorted `id`, `--statistics none`: 0.502, 0.502, 0.494, 0.497, 0.513, 0.496
-- Range on the sorted `id`, `--statistics all`: 0.038, 0.037, 0.038, 0.037, 0.039, 0.039
-- Equality on the low-cardinality `v_category`, `--statistics none`: 0.640, 0.602, 0.628, 0.595, 0.640, 0.641
-- Equality on the low-cardinality `v_category`, `--statistics all`: 0.037, 0.038, 0.035, 0.038, 0.034, 0.036
-- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.457, 0.463, 0.453, 0.495, 0.460, 0.543
-- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.468, 0.465, 0.523, 0.466, 0.518, 0.465
-- Equality on the uniformly drawn `v_smallint`, `--statistics all`, a cache written by `parse --statistics none`: 0.455, 0.480, 0.451, 0.471, 0.475, 0.493
-- `dd` → `/dev/null`: 0.297, 0.295, 0.296
+- Range on the sorted `id`, `--statistics none`: 0.533, 0.541, 0.538, 0.526, 0.526, 0.592
+- Range on the sorted `id`, `--statistics all`: 0.042, 0.041, 0.043, 0.041, 0.044, 0.043
+- Equality on the low-cardinality `v_category`, `--statistics none`: 0.642, 0.625, 0.641, 0.652, 0.638, 0.636
+- Equality on the low-cardinality `v_category`, `--statistics all`: 0.039, 0.042, 0.043, 0.045, 0.044, 0.044
+- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.502, 0.494, 0.487, 0.498, 0.496, 0.496
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.545, 0.508, 0.493, 0.502, 0.486, 0.492
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`, a cache written by `parse --statistics none`: 0.464, 0.484, 0.522, 0.489, 0.477, 0.482
+- `dd` → `/dev/null`: 0.326, 0.329, 0.319
 
-Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤7.51%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.74 GHz, ≤68°C.
+Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤8.84%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.77 GHz, ≤65°C.
 
 ## What a session's own drift costs, measured rather than asserted
 
@@ -2634,8 +2660,8 @@ either leg's absolute value across sweeps — the measurement behind the standin
 rule "re-take a comparison table whole". It is also the calibration for the
 standing rule against quoting a standard error: a cross-file per-row difference
 under ~0.5 µs/row is apparatus,
-and nine sweeps agree on that floor (−0.17, −0.11, −0.05, −0.04, −0.03, +0.01,
-+0.07, +0.07 and +0.08 µs/row) far better than any of them agrees on the leg it
+and ten sweeps agree on that floor (−0.17, −0.11, −0.05, −0.04, −0.03, +0.00,
++0.01, +0.07, +0.07 and +0.08 µs/row) far better than any of them agrees on the leg it
 came from.
 
 **The resolution floor in this doc's standing rules is read off this table**,
@@ -2651,13 +2677,13 @@ Both sweeps are `runs/measure-*` directories; the table is computed from their
 
 | Workers | Generated control | koji, 128 streams |
 |---|---|---|
-| 1 *(serial)* | **15.82 s** (15.73–16.04) · ~204 MB/s · 1.00× | **7.44 s** (7.40–7.50) · ~433 MB/s · 1.00× |
-| 2 | **8.49 s** (8.45–8.62) · ~379 MB/s · 1.86× | **3.94 s** (3.93–3.99) · ~818 MB/s · 1.89× |
-| 4 | **4.59 s** (4.54–4.62) · ~702 MB/s · 3.45× | **2.15 s** (2.13–2.18) · ~1497 MB/s · 3.46× |
-| 8 | **2.52 s** (2.51–2.53) · ~1280 MB/s · 6.28× | **1.279 s** (1.276–1.299) · ~2519 MB/s · 5.82× |
-| 12 | **1.888 s** (1.861–1.914) · ~1706 MB/s · 8.38× | **1.038 s** (1.032–1.065) · ~3104 MB/s · 7.17× |
-| 16 | **1.678 s** (1.657–1.715) · ~1920 MB/s · 9.43× | **0.971 s** (0.962–1.009) · ~3318 MB/s · 7.66× |
-| 24 | **1.463 s** (1.449–1.465) · ~2202 MB/s · 10.81× | **0.948 s** (0.928–0.950) · ~3398 MB/s · 7.85× |
+| 1 *(serial)* | **15.97 s** (15.89–16.01) · ~202 MB/s · 1.00× | **7.50 s** (7.48–7.53) · ~429 MB/s · 1.00× |
+| 2 | **8.60 s** (8.58–8.63) · ~375 MB/s · 1.86× | **3.98 s** (3.97–3.99) · ~808 MB/s · 1.88× |
+| 4 | **4.64 s** (4.59–4.65) · ~695 MB/s · 3.44× | **2.15 s** (2.13–2.18) · ~1496 MB/s · 3.48× |
+| 8 | **2.52 s** (2.49–2.55) · ~1276 MB/s · 6.33× | **1.278 s** (1.266–1.283) · ~2521 MB/s · 5.87× |
+| 12 | **1.870 s** (1.857–1.896) · ~1723 MB/s · 8.54× | **1.043 s** (1.034–1.066) · ~3089 MB/s · 7.19× |
+| 16 | **1.694 s** (1.686–1.715) · ~1902 MB/s · 9.43× | **0.975 s** (0.970–0.988) · ~3304 MB/s · 7.70× |
+| 24 | **1.476 s** (1.453–1.502) · ~2182 MB/s · 10.82× | **0.944 s** (0.936–0.971) · ~3413 MB/s · 7.95× |
 
 Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. The instrument is `pgdump_query/examples/xz_decode.rs` in a 2g container — **not** the register's 512 MB, which cannot hold 24 decoded 24 MiB blocks — and it refuses a run whose plan admits fewer workers than were asked for.
 
@@ -2665,37 +2691,39 @@ Each cell is wall clock, the plaintext rate it implies, and the speedup over tha
 - koji, 128 streams: 195.7 MB compressed, 3.00 GiB of plaintext, 15.70× (`scripts/generate_xz_input.py` refuses a slice outside 14–18×)
 
 Per-rep readings (s):
-- Generated control, 1w: 16.04, 15.75, 15.86, 15.82, 15.73
-- Generated control, 2w: 8.62, 8.45, 8.49, 8.54, 8.48
-- Generated control, 4w: 4.60, 4.54, 4.59, 4.62, 4.55
-- Generated control, 8w: 2.52, 2.53, 2.51, 2.51, 2.53
-- Generated control, 12w: 1.866, 1.905, 1.861, 1.888, 1.914
-- Generated control, 16w: 1.657, 1.664, 1.678, 1.715, 1.682
-- Generated control, 24w: 1.463, 1.465, 1.465, 1.449, 1.452
-- koji, 128 streams, 1w: 7.46, 7.50, 7.44, 7.40, 7.44
-- koji, 128 streams, 2w: 3.99, 3.94, 3.94, 3.97, 3.93
-- koji, 128 streams, 4w: 2.15, 2.16, 2.14, 2.18, 2.13
-- koji, 128 streams, 8w: 1.276, 1.297, 1.299, 1.276, 1.279
-- koji, 128 streams, 12w: 1.032, 1.038, 1.045, 1.065, 1.036
-- koji, 128 streams, 16w: 1.009, 0.962, 0.964, 0.972, 0.971
-- koji, 128 streams, 24w: 0.948, 0.949, 0.928, 0.937, 0.950
+- Generated control, 1w: 15.96, 16.01, 15.97, 15.89, 16.00
+- Generated control, 2w: 8.63, 8.60, 8.58, 8.63, 8.59
+- Generated control, 4w: 4.64, 4.59, 4.59, 4.65, 4.64
+- Generated control, 8w: 2.55, 2.49, 2.52, 2.54, 2.49
+- Generated control, 12w: 1.866, 1.857, 1.896, 1.883, 1.870
+- Generated control, 16w: 1.701, 1.693, 1.715, 1.686, 1.694
+- Generated control, 24w: 1.495, 1.463, 1.476, 1.502, 1.453
+- koji, 128 streams, 1w: 7.50, 7.53, 7.50, 7.52, 7.48
+- koji, 128 streams, 2w: 3.98, 3.99, 3.98, 3.99, 3.97
+- koji, 128 streams, 4w: 2.13, 2.15, 2.15, 2.18, 2.16
+- koji, 128 streams, 8w: 1.280, 1.274, 1.278, 1.266, 1.283
+- koji, 128 streams, 12w: 1.066, 1.043, 1.038, 1.054, 1.034
+- koji, 128 streams, 16w: 0.970, 0.970, 0.975, 0.976, 0.988
+- koji, 128 streams, 24w: 0.944, 0.936, 0.940, 0.946, 0.971
 
-Apparatus over every run in this table: CPU stall ≤1.89%, I/O stall ≤4.13%, machine ≤57% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤73°C.
+Apparatus over every run in this table: CPU stall ≤2.32%, I/O stall ≤4.74%, machine ≤56% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤76°C.
 
 **A decode rate is a rate per plaintext byte, so it is a property of the bytes,
-and the two legs are the proof.** The control's 5.45× decodes at ~204 MB/s on
-one core where koji's 15.70× decodes at ~433 — so nothing may say "koji decodes
-at 433 MB/s"; it says *3.00 GiB at 15.70× decodes at 433 MB/s*. koji is nowhere
+and the two legs are the proof.** The control's 5.45× decodes at ~202 MB/s on
+one core where koji's 15.70× decodes at ~429 — so nothing may say "koji decodes
+at 429 MB/s"; it says *3.00 GiB at 15.70× decodes at 429 MB/s*. koji is nowhere
 near homogeneous enough for one slice to stand for it — sampled at twelve depths
 its regions run from 5.02× to 33.05× — which is why the slice's density is
 gated rather than remembered, and why the control leg, sitting on top of koji's
 densest sampled region, is the floor to size workers against rather than koji's.
 
-**The curve is the transferable finding, and it does not survive past four
-workers.** Both legs are within a few percent of linear to four; past that koji
-flattens hard, reaching 7.85× at twenty-four, where the twenty-fourth worker
-buys essentially nothing over the sixteenth. The control keeps climbing further
-— 10.81× at twenty-four — which is the same ordering its lower density predicts.
+**The curve is the transferable finding, and it bends from the second
+worker.** Both legs are 6–7% short of linear at two (1.86×, 1.88×) and 13–14%
+short at four (3.44×, 3.48×). Past that koji flattens hard: its thirteenth
+through sixteenth workers add 0.13× each and its seventeenth through
+twenty-fourth 0.03× each, reaching 7.95× at twenty-four, so the twenty-fourth
+worker buys essentially nothing over the sixteenth. The control keeps climbing
+further, to 10.82× at twenty-four, which is the ordering its lower density predicts.
 So a worker count read off a linear extrapolation of a one-worker rate is a
 **floor on what will be needed**, not an estimate of what will suffice.
 
@@ -2705,55 +2733,55 @@ So a worker count read off a linear extrapolation of a one-worker rate is a
 
 | `--jobs` | Plain, `parse` | Plain, typed `query` | `.xz`, `parse` | `.xz`, typed `query` |
 |---|---|---|---|---|
-| 1 *(serial)* | **0.443 s** (0.428–0.462) · ~7271 MB/s · 1.00× | **4.76 s** (4.74–4.82) · ~676 MB/s · 1.00× | **16.07 s** (16.03–16.16) · ~200 MB/s · 1.00× | **35.52 s** (35.45–35.60) · ~91 MB/s · 1.00× |
-| 2 | **0.326 s** (0.293–0.348) · ~9881 MB/s · 1.36× | **4.69 s** (4.66–4.74) · ~687 MB/s · 1.02× | **16.62 s** (16.58–16.72) · ~194 MB/s · 0.97× | **36.05 s** (35.98–36.09) · ~89 MB/s · 0.99× |
-| 4 | **0.315 s** (0.293–0.321) · ~10226 MB/s · 1.41× | **4.64 s** (4.61–4.96) · ~695 MB/s · 1.03× | **9.12 s** (8.96–9.17) · ~353 MB/s · 1.76× | **28.61 s** (28.44–28.73) · ~113 MB/s · 1.24× |
-| 8 | **0.372 s** (0.363–0.376) · ~8659 MB/s · 1.19× | **4.68 s** (4.66–4.71) · ~689 MB/s · 1.02× | **5.22 s** (5.21–5.35) · ~617 MB/s · 3.08× | **25.13 s** (24.93–26.18) · ~128 MB/s · 1.41× |
-| 12 | **0.376 s** (0.365–0.386) · ~8567 MB/s · 1.18× | **4.68 s** (4.65–4.69) · ~688 MB/s · 1.02× | **4.28 s** (4.14–4.37) · ~753 MB/s · 3.76× | **24.00 s** (23.52–25.58) · ~134 MB/s · 1.48× |
-| 16 | **0.373 s** (0.364–0.391) · ~8636 MB/s · 1.19× | **4.66 s** (4.64–4.70) · ~691 MB/s · 1.02× | **3.43 s** (3.38–3.64) · ~939 MB/s · 4.68× | **23.42 s** (23.27–24.55) · ~138 MB/s · 1.52× |
-| 24 | **0.377 s** (0.362–0.382) · ~8544 MB/s · 1.18× | **4.71 s** (4.69–4.73) · ~684 MB/s · 1.01× | **2.87 s** (2.82–3.12) · ~1123 MB/s · 5.60× | **22.72 s** (22.70–22.88) · ~142 MB/s · 1.56× |
+| 1 *(serial)* | **0.476 s** (0.470–0.483) · ~6767 MB/s · 1.00× | **4.91 s** (4.88–4.97) · ~657 MB/s · 1.00× | **16.21 s** (16.17–16.27) · ~199 MB/s · 1.00× | **36.09 s** (35.86–37.59) · ~89 MB/s · 1.00× |
+| 2 | **0.344 s** (0.320–0.410) · ~9364 MB/s · 1.38× | **4.94 s** (4.88–5.05) · ~653 MB/s · 0.99× | **16.83 s** (16.75–16.85) · ~191 MB/s · 0.96× | **36.42 s** (36.36–37.53) · ~88 MB/s · 0.99× |
+| 4 | **0.363 s** (0.313–0.407) · ~8874 MB/s · 1.31× | **4.45 s** (4.40–4.50) · ~725 MB/s · 1.10× | **9.23 s** (9.00–9.28) · ~349 MB/s · 1.76× | **28.77 s** (28.73–29.39) · ~112 MB/s · 1.25× |
+| 8 | **0.396 s** (0.388–0.402) · ~8134 MB/s · 1.20× | **4.41 s** (4.37–4.45) · ~731 MB/s · 1.11× · 7 sub-streams | **5.29 s** (5.18–5.36) · ~609 MB/s · 3.07× | **25.16 s** (25.01–25.34) · ~128 MB/s · 1.43× |
+| 12 | **0.377 s** (0.367–0.406) · ~8544 MB/s · 1.26× | **4.39 s** (4.38–4.42) · ~733 MB/s · 1.12× · 7 sub-streams | **4.32 s** (4.11–4.34) · ~745 MB/s · 3.75× | **24.19 s** (23.85–24.32) · ~133 MB/s · 1.49× |
+| 16 | **0.396 s** (0.377–0.413) · ~8134 MB/s · 1.20× | **4.40 s** (4.36–4.45) · ~732 MB/s · 1.11× · 7 sub-streams | **3.59 s** (3.56–3.65) · ~897 MB/s · 4.52× | **23.52 s** (23.23–23.91) · ~137 MB/s · 1.53× |
+| 24 | **0.405 s** (0.397–0.413) · ~7954 MB/s · 1.18× | **4.38 s** (4.35–4.45) · ~736 MB/s · 1.12× · 7 sub-streams | **3.06 s** (2.99–3.23) · ~1053 MB/s · 5.30× | **22.88 s** (22.71–23.07) · ~141 MB/s · 1.58× |
 
 Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-job row. Both `.xz` legs decode the same 3.00 GiB of plaintext the plain legs read directly (563.8 MB on disk, 5.45×), so a rate is comparable across all four columns.
 
-Every row states `--parallel-memory 2147483648` (2.00 GiB) in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-job row states the same budget: `--jobs 1` is `Parallelism::Serial` carrying it, so an `.xz` leg's one-job row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
+Every row states `--memory 2550136832`, the allowance that leaves 2.00 GiB for read buffers, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-job row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, so an `.xz` leg's one-job row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
 
 **A plain leg's `--jobs` is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
 
-**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` caps a query's sub-stream count at `--parallel-memory` divided by what one sub-stream costs to read plus what its held batch pins (`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget the *harness* chose, not a ceiling the library ships. **At this budget neither typed-`query` leg reaches it**, so no cell carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a sub-stream and affords twenty-eight, and the `.xz` leg — which retains by the partition, so the span is not charged — is charged `34.03 MiB` a sub-stream plus a 24 MiB unit of the shared retention list for each past four, and affords thirty-five, both past the top of the axis.
+**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` caps a query's sub-stream count at the read-buffer budget divided by what one sub-stream costs to read plus what its held batch pins (`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget the *harness* chose, not a ceiling the library ships. The rows at or above that count on such a leg state the count they actually planned: `7` on plain. Below that count a cell's sub-stream figure equals its row label; at or above it, every further worker asked for buys nothing more to plan.
 
-**`PARALLEL_BUDGET` is 2.00 GiB so that no row is budget-clamped.** A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
+**`PARALLEL_BUDGET` is 2.00 GiB so that no `.xz` row is budget-clamped;** a plain source stays on the library's default budget whatever is stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above state. A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
 
 Per-rep readings (s):
-- Plain, `parse`, 1j: 0.462, 0.443, 0.454, 0.428, 0.433
-- Plain, `parse`, 2j: 0.305, 0.293, 0.335, 0.348, 0.326
-- Plain, `parse`, 4j: 0.309, 0.315, 0.320, 0.321, 0.293
-- Plain, `parse`, 8j: 0.371, 0.372, 0.376, 0.363, 0.376
-- Plain, `parse`, 12j: 0.368, 0.380, 0.376, 0.386, 0.365
-- Plain, `parse`, 16j: 0.370, 0.391, 0.383, 0.364, 0.373
-- Plain, `parse`, 24j: 0.380, 0.362, 0.365, 0.382, 0.377
-- Plain, typed `query`, 1j: 4.79, 4.82, 4.76, 4.75, 4.74
-- Plain, typed `query`, 2j: 4.73, 4.66, 4.69, 4.68, 4.74
-- Plain, typed `query`, 4j: 4.96, 4.63, 4.64, 4.73, 4.61
-- Plain, typed `query`, 8j: 4.71, 4.68, 4.66, 4.69, 4.67
-- Plain, typed `query`, 12j: 4.69, 4.65, 4.69, 4.68, 4.66
-- Plain, typed `query`, 16j: 4.70, 4.66, 4.64, 4.67, 4.65
-- Plain, typed `query`, 24j: 4.73, 4.72, 4.71, 4.69, 4.69
-- `.xz`, `parse`, 1j: 16.16, 16.07, 16.03, 16.09, 16.07
-- `.xz`, `parse`, 2j: 16.72, 16.62, 16.62, 16.64, 16.58
-- `.xz`, `parse`, 4j: 9.17, 9.07, 8.96, 9.12, 9.17
-- `.xz`, `parse`, 8j: 5.25, 5.22, 5.35, 5.21, 5.22
-- `.xz`, `parse`, 12j: 4.37, 4.28, 4.28, 4.14, 4.21
-- `.xz`, `parse`, 16j: 3.45, 3.43, 3.38, 3.42, 3.64
-- `.xz`, `parse`, 24j: 2.96, 2.87, 3.12, 2.85, 2.82
-- `.xz`, typed `query`, 1j: 35.52, 35.60, 35.56, 35.45, 35.47
-- `.xz`, typed `query`, 2j: 36.09, 35.98, 35.98, 36.06, 36.05
-- `.xz`, typed `query`, 4j: 28.53, 28.44, 28.61, 28.73, 28.62
-- `.xz`, typed `query`, 8j: 25.13, 24.94, 26.18, 25.17, 24.93
-- `.xz`, typed `query`, 12j: 23.88, 24.00, 25.58, 23.52, 24.09
-- `.xz`, typed `query`, 16j: 23.42, 23.27, 24.55, 23.48, 23.28
-- `.xz`, typed `query`, 24j: 22.70, 22.71, 22.84, 22.88, 22.72
+- Plain, `parse`, 1j: 0.481, 0.470, 0.476, 0.472, 0.483
+- Plain, `parse`, 2j: 0.359, 0.344, 0.341, 0.320, 0.410
+- Plain, `parse`, 4j: 0.313, 0.363, 0.407, 0.367, 0.357
+- Plain, `parse`, 8j: 0.402, 0.388, 0.396, 0.388, 0.399
+- Plain, `parse`, 12j: 0.406, 0.375, 0.377, 0.367, 0.377
+- Plain, `parse`, 16j: 0.396, 0.397, 0.377, 0.413, 0.388
+- Plain, `parse`, 24j: 0.408, 0.398, 0.405, 0.413, 0.397
+- Plain, typed `query`, 1j: 4.96, 4.88, 4.97, 4.91, 4.89
+- Plain, typed `query`, 2j: 4.94, 4.94, 4.88, 5.05, 4.91
+- Plain, typed `query`, 4j: 4.43, 4.46, 4.50, 4.40, 4.45
+- Plain, typed `query`, 8j: 4.39, 4.41, 4.37, 4.45, 4.43
+- Plain, typed `query`, 12j: 4.39, 4.39, 4.40, 4.38, 4.42
+- Plain, typed `query`, 16j: 4.37, 4.45, 4.40, 4.42, 4.36
+- Plain, typed `query`, 24j: 4.37, 4.45, 4.38, 4.35, 4.42
+- `.xz`, `parse`, 1j: 16.27, 16.21, 16.17, 16.19, 16.24
+- `.xz`, `parse`, 2j: 16.75, 16.83, 16.85, 16.80, 16.84
+- `.xz`, `parse`, 4j: 9.00, 9.28, 9.23, 9.24, 9.15
+- `.xz`, `parse`, 8j: 5.21, 5.29, 5.30, 5.18, 5.36
+- `.xz`, `parse`, 12j: 4.29, 4.11, 4.33, 4.32, 4.34
+- `.xz`, `parse`, 16j: 3.57, 3.56, 3.61, 3.59, 3.65
+- `.xz`, `parse`, 24j: 2.99, 3.12, 3.23, 2.99, 3.06
+- `.xz`, typed `query`, 1j: 36.16, 36.09, 37.59, 35.88, 35.86
+- `.xz`, typed `query`, 2j: 36.36, 36.42, 37.53, 36.38, 36.67
+- `.xz`, typed `query`, 4j: 28.87, 28.73, 29.39, 28.77, 28.75
+- `.xz`, typed `query`, 8j: 25.05, 25.34, 25.25, 25.16, 25.01
+- `.xz`, typed `query`, 12j: 23.99, 24.19, 24.32, 23.85, 24.19
+- `.xz`, typed `query`, 16j: 23.91, 23.43, 23.52, 23.55, 23.23
+- `.xz`, typed `query`, 24j: 23.07, 22.91, 22.71, 22.88, 22.80
 
-Apparatus over every run in this table: CPU stall ≤1.10%, I/O stall ≤13.02%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.61 GHz, ≤71°C.
+Apparatus over every run in this table: CPU stall ≤1.63%, I/O stall ≤20.68%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤74°C.
 
 ## What a parallel scan holds resident, at two block sizes
 
@@ -2761,38 +2789,38 @@ Apparatus over every run in this table: CPU stall ≤1.10%, I/O stall ≤13.02%,
 
 | `--jobs` | 24 MiB blocks | 128 MiB blocks |
 |---|---|---|
-| 1 *(serial)* | **110.95 MiB** (110.60–110.95) | **526.65 MiB** (526.49–526.72) |
-| 2 | **249.91 MiB** (228.22–250.73) · +138.96 MiB | **801.68 MiB** (801.60–801.85) · +275.03 MiB |
-| 4 | **344.02 MiB** (341.48–345.76) · +233.07 MiB | **1076.91 MiB** (1076.22–1077.28) · +550.26 MiB |
-| 8 | **571.69 MiB** (550.53–575.31) · +460.75 MiB | **2108.65 MiB** (2090.56–2128.91) · +1582.00 MiB |
-| 12 | **805.46 MiB** (798.90–826.19) · +694.52 MiB | **2611.64 MiB** (2609.67–2611.87) · +2084.98 MiB |
-| 16 | **1032.21 MiB** (1004.68–1052.75) · +921.26 MiB | **3032.11 MiB** (3003.16–3033.32) · +2505.45 MiB |
-| 24 | **1444.25 MiB** (1434.28–1463.94) · +1333.31 MiB | **3003.34 MiB** (2988.17–3005.48) · +2476.69 MiB |
+| 1 *(serial)* | **112.08 MiB** (112.06–112.36) | **528.26 MiB** (528.07–528.42) |
+| 2 | **250.93 MiB** (229.98–251.42) · +138.84 MiB | **803.67 MiB** (802.94–803.74) · +275.41 MiB |
+| 4 | **344.41 MiB** (321.66–346.79) · +232.33 MiB | **1077.93 MiB** (1077.48–1078.27) · +549.66 MiB |
+| 8 | **552.67 MiB** (547.23–575.40) · +440.59 MiB | **1863.71 MiB** (1863.70–1864.09) · +1335.45 MiB |
+| 12 | **806.55 MiB** (779.70–849.13) · +694.46 MiB | **2245.93 MiB** (2244.73–2248.92) · +1717.67 MiB |
+| 16 | **1032.52 MiB** (999.97–1034.67) · +920.44 MiB | **2247.78 MiB** (2247.73–2247.81) · +1719.52 MiB |
+| 24 | **1480.61 MiB** (1439.20–1484.80) · +1368.52 MiB | **2246.97 MiB** (2241.77–2247.32) · +1718.71 MiB |
 
-Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--parallel-memory 2147483648` (2.00 GiB) in a 4g container — an apparatus departure from the register's 512 MB, which is smaller than the budget under test. The one-job row states the same budget — `--jobs 1` is `Parallelism::Serial` carrying it — so every row on both legs block-decodes, the one-job row with one reader.
+Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--memory 2550136832`, the allowance that leaves 2.00 GiB for read buffers, in a 4g container — an apparatus departure from the register's 512 MB, which is smaller than the budget under test. The one-job row states the same allowance — `--jobs 1` is `Parallelism::Serial` carrying it — so every row on both legs block-decodes, the one-job row with one reader.
 
 - 24 MiB blocks: `control_xz`, 563.8 MB compressed
 - 128 MiB blocks: `control_xz128`, 560.5 MB compressed
 
 Per-rep readings (peak RSS):
-- 24 MiB blocks, 1j: 110.95 MiB, 110.95 MiB, 110.60 MiB
-- 24 MiB blocks, 2j: 249.91 MiB, 228.22 MiB, 250.73 MiB
-- 24 MiB blocks, 4j: 344.02 MiB, 345.76 MiB, 341.48 MiB
-- 24 MiB blocks, 8j: 571.69 MiB, 575.31 MiB, 550.53 MiB
-- 24 MiB blocks, 12j: 798.90 MiB, 805.46 MiB, 826.19 MiB
-- 24 MiB blocks, 16j: 1004.68 MiB, 1032.21 MiB, 1052.75 MiB
-- 24 MiB blocks, 24j: 1444.25 MiB, 1463.94 MiB, 1434.28 MiB
-- 128 MiB blocks, 1j: 526.49 MiB, 526.65 MiB, 526.72 MiB
-- 128 MiB blocks, 2j: 801.85 MiB, 801.60 MiB, 801.68 MiB
-- 128 MiB blocks, 4j: 1076.91 MiB, 1077.28 MiB, 1076.22 MiB
-- 128 MiB blocks, 8j: 2090.56 MiB, 2108.65 MiB, 2128.91 MiB
-- 128 MiB blocks, 12j: 2611.87 MiB, 2611.64 MiB, 2609.67 MiB
-- 128 MiB blocks, 16j: 3032.11 MiB, 3033.32 MiB, 3003.16 MiB
-- 128 MiB blocks, 24j: 3003.34 MiB, 3005.48 MiB, 2988.17 MiB
+- 24 MiB blocks, 1j: 112.06 MiB, 112.08 MiB, 112.36 MiB
+- 24 MiB blocks, 2j: 250.93 MiB, 251.42 MiB, 229.98 MiB
+- 24 MiB blocks, 4j: 346.79 MiB, 344.41 MiB, 321.66 MiB
+- 24 MiB blocks, 8j: 575.40 MiB, 552.67 MiB, 547.23 MiB
+- 24 MiB blocks, 12j: 806.55 MiB, 849.13 MiB, 779.70 MiB
+- 24 MiB blocks, 16j: 1032.52 MiB, 999.97 MiB, 1034.67 MiB
+- 24 MiB blocks, 24j: 1484.80 MiB, 1439.20 MiB, 1480.61 MiB
+- 128 MiB blocks, 1j: 528.07 MiB, 528.42 MiB, 528.26 MiB
+- 128 MiB blocks, 2j: 803.67 MiB, 803.74 MiB, 802.94 MiB
+- 128 MiB blocks, 4j: 1077.48 MiB, 1078.27 MiB, 1077.93 MiB
+- 128 MiB blocks, 8j: 1863.70 MiB, 1863.71 MiB, 1864.09 MiB
+- 128 MiB blocks, 12j: 2244.73 MiB, 2245.93 MiB, 2248.92 MiB
+- 128 MiB blocks, 16j: 2247.73 MiB, 2247.81 MiB, 2247.78 MiB
+- 128 MiB blocks, 24j: 2241.77 MiB, 2246.97 MiB, 2247.32 MiB
 
-**Where a leg goes flat, it is the block pool's slot ceiling that stopped growing.** The pool's slots are `clamp((budget - POOL_DEPTH*chunk) / unit, 1, max(POOL_DEPTH, jobs))`, and it holds one unit below that beside the block each reader has in flight. Above four workers the depth term is the stated `--jobs`, so which term binds is set by the *file's* block size: on the fine leg the budget term is far above the axis, the depth term binds, and the curve is still climbing at the right-hand end; on the coarse leg the budget term binds and the leg levels off. That ceiling follows the `--jobs` announced rather than the readers the budget affords, so the coarse leg's flat value sits above the stated budget — `KD21`, not a bound the library keeps.
+**Where a leg goes flat, it is the block pool's slot ceiling that stopped growing.** The block pool's slots are `clamp((budget - held) / unit, 1, max(POOL_DEPTH, jobs))`, where `held` is the chunk pool's own retention — `clamp(budget / chunk, 1, POOL_DEPTH) * chunk`, which is `POOL_DEPTH * chunk` only once the budget affords four chunk slots. It holds one unit below that beside the block each reader has in flight. Above four workers the depth term is the stated `--jobs`, so which term binds is set by the *file's* block size: on the fine leg the budget term is far above the axis, the depth term binds, and the curve is still climbing at the right-hand end; on the coarse leg the budget term binds and the leg levels off. That ceiling follows the `--jobs` announced rather than the readers the budget affords, so the coarse leg's flat value sits above the read-buffer budget the allowance leaves, though within the stated `--memory` — `KD21`, not a bound the library keeps.
 
-Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.20%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.67 GHz, ≤72°C.
+Apparatus over every run in this table: CPU stall ≤0.90%, I/O stall ≤2.03%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.88 GHz, ≤73°C.
 
 ## What a scan holds above the budget it was given
 
@@ -2830,32 +2858,32 @@ carries its own instead of the register's 512 MB.
 
 | Allocation | 24 MiB blocks | 128 MiB blocks |
 |---|---|---|
-| `-m 512m` | **110.91 MiB** (110.66–110.93) · 1r, 106.0 MiB · head 78.3% · *block path* | **15.03 MiB** (14.78–15.30) · 1r, 128.0 MiB · head 97.0% · *streaming* |
-| `-m 544m` | **251.94 MiB** (251.87–273.80) · 2r, 140.1 MiB · head 49.7% · *block path* | **14.87 MiB** (14.69–15.01) · 1r, 160.0 MiB · head 97.2% · *streaming* |
-| `-m 1g` | **687.92 MiB** (683.99–735.79) · 10r, 556.3 MiB · head 28.1% · *block path* | **526.93 MiB** (526.84–526.93) · 1r, 522.0 MiB · head 48.5% · *block path* |
-| `-m 1088m` | **745.98 MiB** (725.03–791.16) · 11r, 614.4 MiB · head 27.3% · *block path* | **526.70 MiB** (526.64–526.73) · 1r, 522.0 MiB · head 51.6% · *block path* |
-| `-m 1536m` | **1065.07 MiB** (1058.62–1099.08) · 17r, 962.6 MiB · head 28.4% · *block path* | **1076.48 MiB** (1075.87–1076.49) · 4r, 936.1 MiB · head 29.9% · *block path* |
-| `-m 2g` | **1471.91 MiB** (1410.73–1473.85) · 24r, 1368.8 MiB · head 28.0% · *block path* | **1338.04 MiB** (1327.45–1340.97) · 5r, 1202.2 MiB · head 34.5% · *block path* |
+| `-m 512m` | **112.09 MiB** (111.82–112.25) · 1r, 106.0 MiB · head 78.1% · *block path* | **16.29 MiB** (16.20–16.44) · 1r, 128.0 MiB · head 96.8% · *streaming* |
+| `-m 544m` | **251.09 MiB** (251.07–251.26) · 2r, 140.1 MiB · head 53.8% · *block path* | **16.37 MiB** (16.04–16.59) · 1r, 160.0 MiB · head 97.0% · *streaming* |
+| `-m 1g` | **688.09 MiB** (668.52–737.68) · 10r, 556.3 MiB · head 28.0% · *block path* | **528.38 MiB** (528.14–528.46) · 1r, 522.0 MiB · head 48.4% · *block path* |
+| `-m 1088m` | **743.38 MiB** (731.27–753.88) · 11r, 614.4 MiB · head 30.7% · *block path* | **528.15 MiB** (527.99–528.20) · 1r, 522.0 MiB · head 51.5% · *block path* |
+| `-m 1536m` | **1089.71 MiB** (1067.98–1090.63) · 17r, 962.6 MiB · head 29.0% · *block path* | **1078.35 MiB** (1077.80–1078.98) · 4r, 936.1 MiB · head 29.8% · *block path* |
+| `-m 2g` | **1465.82 MiB** (1412.68–1470.02) · 24r, 1368.8 MiB · head 28.2% · *block path* | **1343.87 MiB** (1343.86–1344.30) · 5r, 1202.2 MiB · head 34.4% · *block path* |
 
 **Resident against the reader count**, least squares over the legs that took the block path, the band being the same line over the per-rep extremes — a check on the charge's shape, not what either constant is read off. **Both terms are what a leg held *outside* the block pool's retention list**: that term is `(POOL_DEPTH.max(jobs) − 1) × unit`, known before the sitting and mirror-checked against the library's own constants, and it is constant below `POOL_DEPTH` = 4 and grows by a unit a reader above — so a leg's resident rises by one unit a reader at the bottom of this axis and by two at the top, and both families straddle the bend. Subtracting it and fitting the remainder is how a known term stays out of the intercept; fitting one straight line across the kink instead reads the intercept ≈49 MiB high at 24 MiB blocks and ≈421 MiB high at 128, and the slope 31% low. Each line names the window it covers, since a leg is censored exactly when its resident ran closest to its ceiling and a fit over what survives is a fit over the legs that had room. A family covering fewer than 3 distinct reader counts publishes a **secant** instead — the slope between its two ends, with no fixed term and no residual: the remainder still has two terms, so below that the residual printed beside it is zero by construction rather than a reading, while the slope is a difference the axis measured:
 
-- **24 MiB blocks**: outside the pool — fixed **73 MiB** (81–98), a reader **36.3 MiB** (34.1–36.3), over the 6 leg(s) it covers — `512m` at 1r, `544m` at 2r, `1g` at 10r, `1088m` at 11r, `1536m` at 17r, `2g` at 24r; residuals reach ±71 MiB
-- **128 MiB blocks**: outside the pool — fixed **-29 MiB** (-26–-29), a reader **174.5 MiB** (172.5–175.0), over the 4 leg(s) it covers — `1g` at 1r, `1088m` at 1r, `1536m` at 4r, `2g` at 5r; residuals reach ±23 MiB. `512m`, `544m` declined the block path and is not in the line
+- **24 MiB blocks**: outside the pool — fixed **74 MiB** (79–85), a reader **36.4 MiB** (34.3–36.5), over the 6 leg(s) it covers — `512m` at 1r, `544m` at 2r, `1g` at 10r, `1088m` at 11r, `1536m` at 17r, `2g` at 24r; residuals reach ±71 MiB
+- **128 MiB blocks**: outside the pool — fixed **-28 MiB** (-29–-28), a reader **175.3 MiB** (175.3–175.4), over the 4 leg(s) it covers — `1g` at 1r, `1088m` at 1r, `1536m` at 4r, `2g` at 5r; residuals reach ±22 MiB. `512m`, `544m` declined the block path and is not in the line
 
 **The charge against what was held**, cell by cell, which is the check this figure runs rather than a constant it searches for. The criterion has three lines and all of them are registered before the sitting: the unnamed remainder must be **non-negative**, a negative one being an over-bill — bytes the rule charged that nothing holds, and so a reader the allocation would have afforded — and it is read against two ceilings, which say different things. Above **`MEMORY_UNPOOLED_BOUND`** (256.0 MiB), the number `margin_allowance` predicts a count's resident with, the allocation still holds and the **bound** is wrong; above **`MEMORY_RESERVE`** (384.0 MiB), which is by construction what covers everything the charge does not bill, the **rule** is. The `Criterion` column names the band rather than saying only that a cell faulted, because the three are read differently: a cell in the `bound` band is a finding the sitting discharges itself, re-deriving the bound from these same remainders, while a cell above the reserve is an arrangement the discovery cannot keep inside its allocation and an over-bill is a charge nothing holds — neither of those two is apparatus scatter, and neither leaves the sitting anything to repair, so both refute the model. None of the three keeps the table out of this document. The middle column is the second term of that bill, reported apart because it is the one unbounded in the block size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with `POOL_DEPTH` = 4 and `BlockCache::slot` drains to one below it before taking the buffer `retain` pushes back, so the pool holds `(POOL_DEPTH.max(jobs) − 1) × unit` on top of the block each reader has in flight — billed at **every** count (`io.rs`, `WorkerMemory`). What is left is what the charge does not bill, and this column does not name it: the instrument legs below attribute a remainder of their own, which is a different subtraction on a different build. A leg that declined the block path is absent, holding none of these terms; a censored one is absent too, its reading being a bound:
 
 | Leg | Readers | Billed | of which pool list | Worst rep held | Unnamed | Criterion |
 |---|---|---|---|---|---|---|
-| 24 MiB blocks, `-m 512m` | 1r | 106.0 MiB | 72.0 MiB | 110.93 MiB | 4.9 MiB | met |
-| 24 MiB blocks, `-m 544m` | 2r | 140.1 MiB | 72.0 MiB | 273.80 MiB | 133.7 MiB | met |
-| 24 MiB blocks, `-m 1g` | 10r | 556.3 MiB | 216.0 MiB | 735.79 MiB | 179.5 MiB | met |
-| 24 MiB blocks, `-m 1088m` | 11r | 614.4 MiB | 240.0 MiB | 791.16 MiB | 176.8 MiB | met |
-| 24 MiB blocks, `-m 1536m` | 17r | 962.6 MiB | 384.0 MiB | 1099.08 MiB | 136.5 MiB | met |
-| 24 MiB blocks, `-m 2g` | 24r | 1368.8 MiB | 552.0 MiB | 1473.85 MiB | 105.1 MiB | met |
-| 128 MiB blocks, `-m 1g` | 1r | 522.0 MiB | 384.0 MiB | 526.93 MiB | 4.9 MiB | met |
-| 128 MiB blocks, `-m 1088m` | 1r | 522.0 MiB | 384.0 MiB | 526.73 MiB | 4.7 MiB | met |
-| 128 MiB blocks, `-m 1536m` | 4r | 936.1 MiB | 384.0 MiB | 1076.49 MiB | 140.4 MiB | met |
-| 128 MiB blocks, `-m 2g` | 5r | 1202.2 MiB | 512.0 MiB | 1340.97 MiB | 138.8 MiB | met |
+| 24 MiB blocks, `-m 512m` | 1r | 106.0 MiB | 72.0 MiB | 112.25 MiB | 6.2 MiB | met |
+| 24 MiB blocks, `-m 544m` | 2r | 140.1 MiB | 72.0 MiB | 251.26 MiB | 111.2 MiB | met |
+| 24 MiB blocks, `-m 1g` | 10r | 556.3 MiB | 216.0 MiB | 737.68 MiB | 181.4 MiB | met |
+| 24 MiB blocks, `-m 1088m` | 11r | 614.4 MiB | 240.0 MiB | 753.88 MiB | 139.5 MiB | met |
+| 24 MiB blocks, `-m 1536m` | 17r | 962.6 MiB | 384.0 MiB | 1090.63 MiB | 128.1 MiB | met |
+| 24 MiB blocks, `-m 2g` | 24r | 1368.8 MiB | 552.0 MiB | 1470.02 MiB | 101.2 MiB | met |
+| 128 MiB blocks, `-m 1g` | 1r | 522.0 MiB | 384.0 MiB | 528.46 MiB | 6.4 MiB | met |
+| 128 MiB blocks, `-m 1088m` | 1r | 522.0 MiB | 384.0 MiB | 528.20 MiB | 6.2 MiB | met |
+| 128 MiB blocks, `-m 1536m` | 4r | 936.1 MiB | 384.0 MiB | 1078.98 MiB | 142.8 MiB | met |
+| 128 MiB blocks, `-m 2g` | 5r | 1202.2 MiB | 512.0 MiB | 1344.30 MiB | 142.1 MiB | met |
 
 **The model holds at every cell above**: nothing here crosses any of its three lines.
 
@@ -2863,114 +2891,114 @@ carries its own instead of the register's 512 MB.
 
 | Leg | Readers | Peak RSS | glibc heap high-water | Rust live high-water | Arenas | Freed and held at exit | mmap-backed at exit |
 |---|---|---|---|---|---|---|---|
-| instrument, flagless in 512m | 1r | **110.88 MiB** (110.88–111.08) | 10.3 MiB | 98.1 MiB | 2 | 10.2 MiB | 0.0 MiB |
-| instrument, flagless in 544m | 2r | **252.67 MiB** (250.38–273.89) | 221.4 MiB | 148.1 MiB | 4 | 92.3 MiB | 0.0 MiB |
-| instrument, flagless in 1g | 10r | **730.27 MiB** (691.17–773.11) | 752.7 MiB | 516.1 MiB | 12 | 128.3 MiB | 0.0 MiB |
-| instrument, flagless in 1088m | 11r | **745.38 MiB** (722.05–770.96) | 808.8 MiB | 543.1 MiB | 13 | 202.2 MiB | 0.0 MiB |
-| instrument, flagless in 1536m | 17r | **1077.37 MiB** (1064.18–1133.46) | 1199.1 MiB | 837.1 MiB | 19 | 397.8 MiB | 0.0 MiB |
-| instrument, flagless in 2g | 24r | **1446.11 MiB** (1442.13–1460.80) | 1527.4 MiB | 1180.1 MiB | 26 | 306.8 MiB | 0.0 MiB |
-| instrument, flagless in 512m, `MALLOC_ARENA_MAX=2` | 1r | **110.92 MiB** (110.90–111.04) | 10.3 MiB | 98.1 MiB | 2 | 10.2 MiB | 0.0 MiB |
+| instrument, flagless in 512m | 1r | **112.45 MiB** (112.35–112.54) | 10.3 MiB | 98.1 MiB | 2 | 10.2 MiB | 0.0 MiB |
+| instrument, flagless in 544m | 2r | **251.40 MiB** (251.17–251.41) | 221.4 MiB | 148.1 MiB | 4 | 68.4 MiB | 0.0 MiB |
+| instrument, flagless in 1g | 10r | **714.34 MiB** (683.26–715.80) | 751.8 MiB | 494.1 MiB | 12 | 234.9 MiB | 0.0 MiB |
+| instrument, flagless in 1088m | 11r | **746.14 MiB** (727.71–770.82) | 808.8 MiB | 543.1 MiB | 13 | 209.3 MiB | 0.0 MiB |
+| instrument, flagless in 1536m | 17r | **1068.38 MiB** (1055.73–1099.83) | 1200.1 MiB | 837.1 MiB | 19 | 151.2 MiB | 0.0 MiB |
+| instrument, flagless in 2g | 24r | **1456.04 MiB** (1443.02–1468.36) | 1550.4 MiB | 1180.1 MiB | 26 | 309.8 MiB | 0.0 MiB |
+| instrument, flagless in 512m, `MALLOC_ARENA_MAX=2` | 1r | **112.43 MiB** (112.37–112.63) | 10.3 MiB | 98.1 MiB | 2 | 10.2 MiB | 0.0 MiB |
 
 **The account, term by term.** Each term is a high-water *of its own*, so the row bounds any single instant rather than describing one, and the last column is a residual of maxima. `liblzma` allocates through C `malloc`, so its per-reader dictionary — 8,388,608 bytes, read off a stack rather than modelled — is added back by hand: the counter cannot see it and glibc cannot separate it, and a decomposition that subtracted the two families would charge it to retention. Two columns can leave the range a resident term would keep, and both say the same thing: `RSS − heap high-water` goes **negative** where the arenas' summed high-water exceeds peak RSS, which it may, because `system max` is address space each arena obtained and no two arenas reach their maxima at once; and `fordblks` covers **more** than the remainder where retention at exit is larger than the gap between two maxima taken at different instants. Neither is an error in the reading — both are what non-simultaneity looks like, and they are why the last column is a share rather than a subtraction anyone should carry forward:
 
 | Leg | Peak RSS | RSS − heap high-water | Rust live high-water | Decoder dictionaries | Unattributed | Covered by `fordblks` |
 |---|---|---|---|---|---|---|
-| instrument, flagless in 512m | 110.88 MiB | 100.6 MiB | 98.1 MiB | 8.0 MiB | -95.8 MiB | — |
-| instrument, flagless in 544m | 252.67 MiB | 31.3 MiB | 148.1 MiB | 16.0 MiB | 57.3 MiB | 161% |
-| instrument, flagless in 1g | 730.27 MiB | -22.5 MiB | 516.1 MiB | 80.0 MiB | 156.6 MiB | 82% |
-| instrument, flagless in 1088m | 745.38 MiB | -63.4 MiB | 543.1 MiB | 88.0 MiB | 177.7 MiB | 114% |
-| instrument, flagless in 1536m | 1077.37 MiB | -121.7 MiB | 837.1 MiB | 136.0 MiB | 225.9 MiB | 176% |
-| instrument, flagless in 2g | 1446.11 MiB | -81.3 MiB | 1180.1 MiB | 192.0 MiB | 155.3 MiB | 198% |
-| instrument, flagless in 512m, `MALLOC_ARENA_MAX=2` | 110.92 MiB | 100.6 MiB | 98.1 MiB | 8.0 MiB | -95.8 MiB | — |
+| instrument, flagless in 512m | 112.45 MiB | 102.1 MiB | 98.1 MiB | 8.0 MiB | -95.8 MiB | — |
+| instrument, flagless in 544m | 251.40 MiB | 30.0 MiB | 148.1 MiB | 16.0 MiB | 57.3 MiB | 119% |
+| instrument, flagless in 1g | 714.34 MiB | -37.4 MiB | 494.1 MiB | 80.0 MiB | 177.6 MiB | 132% |
+| instrument, flagless in 1088m | 746.14 MiB | -62.7 MiB | 543.1 MiB | 88.0 MiB | 177.7 MiB | 118% |
+| instrument, flagless in 1536m | 1068.38 MiB | -131.7 MiB | 837.1 MiB | 136.0 MiB | 226.9 MiB | 67% |
+| instrument, flagless in 2g | 1456.04 MiB | -94.3 MiB | 1180.1 MiB | 192.0 MiB | 178.3 MiB | 174% |
+| instrument, flagless in 512m, `MALLOC_ARENA_MAX=2` | 112.43 MiB | 102.1 MiB | 98.1 MiB | 8.0 MiB | -95.8 MiB | — |
 
-**What the program itself held outside the block pool**, least squares over the 7 leg(s) that survived, the pool's retention list subtracted first because it is known before the sitting and bends the line at `POOL_DEPTH`: fixed **14 MiB**, a reader **26.0 MiB**. At the smallest arrangement in its own window — 1 reader(s) — it predicts 40 MiB against 26 MiB measured, a residual of 13 MiB. Against the charge: 26.0 MiB of Rust outside the pool plus the 8.0 MiB dictionary is **34.0 MiB** a reader, where `BlockCache::reader_bytes` bills 34.0 MiB a reader — 100% of it.
+**What the program itself held outside the block pool**, least squares over the 7 leg(s) that survived, the pool's retention list subtracted first because it is known before the sitting and bends the line at `POOL_DEPTH`: fixed **11 MiB**, a reader **26.0 MiB**. At the smallest arrangement in its own window — 1 reader(s) — it predicts 37 MiB against 26 MiB measured, a residual of 11 MiB. Against the charge: 26.0 MiB of Rust outside the pool plus the 8.0 MiB dictionary is **34.0 MiB** a reader, where `BlockCache::reader_bytes` bills 34.0 MiB a reader — 100% of it.
 
-**The remainder has a name**: glibc's own `fordblks` — bytes the program freed, the allocator kept and the kernel still counts resident — covers at least half of the account's `Unattributed` column at every surviving leg where that column is positive (worst 82%). That is the dynamic mmap threshold's signature and not program structure: a block-sized buffer stops being mmap-backed after the first one is freed, and the arena it lands in never returns it, which is why `hblkhd` reads zero on a run that decoded blocks throughout. It is not a coverage of the charge table's `Unnamed` column, which subtracts the bill from a black-box worst rep.
+**The remainder has a name**: glibc's own `fordblks` — bytes the program freed, the allocator kept and the kernel still counts resident — covers at least half of the account's `Unattributed` column at every surviving leg where that column is positive (worst 67%). That is the dynamic mmap threshold's signature and not program structure: a block-sized buffer stops being mmap-backed after the first one is freed, and the arena it lands in never returns it, which is why `hblkhd` reads zero on a run that decoded blocks throughout. It is not a coverage of the charge table's `Unnamed` column, which subtracts the bill from a black-box worst rep.
 
 **The check, which is what makes the two instruments independent**: the black-box legs measure the same arrangement through `getrusage`, sharing no mechanism with the report above, so a term the process names has to show up in the sum the wrapper measures.
 
-- `-m 512m`: the instrument build resolved the shipped build's arrangement, 1 reader(s), and held 110.88 MiB against **110.91 MiB** (110.66–110.93) — -28 KiB, 0% apart, inside the 10% a second build of the same source is allowed.
-- `-m 544m`: the instrument build resolved the shipped build's arrangement, 2 reader(s), and held 252.67 MiB against **251.94 MiB** (251.87–273.80) — +744 KiB, 0% apart, inside the 10% a second build of the same source is allowed.
-- `-m 1g`: the instrument build resolved the shipped build's arrangement, 10 reader(s), and held 730.27 MiB against **687.92 MiB** (683.99–735.79) — +42.36 MiB, 6% apart, inside the 10% a second build of the same source is allowed.
-- `-m 1088m`: the instrument build resolved the shipped build's arrangement, 11 reader(s), and held 745.38 MiB against **745.98 MiB** (725.03–791.16) — -608 KiB, 0% apart, inside the 10% a second build of the same source is allowed.
-- `-m 1536m`: the instrument build resolved the shipped build's arrangement, 17 reader(s), and held 1077.37 MiB against **1065.07 MiB** (1058.62–1099.08) — +12.29 MiB, 1% apart, inside the 10% a second build of the same source is allowed.
-- `-m 2g`: the instrument build resolved the shipped build's arrangement, 24 reader(s), and held 1446.11 MiB against **1471.91 MiB** (1410.73–1473.85) — -25.80 MiB, 2% apart, inside the 10% a second build of the same source is allowed.
+- `-m 512m`: the instrument build resolved the shipped build's arrangement, 1 reader(s), and held 112.45 MiB against **112.09 MiB** (111.82–112.25) — +360 KiB, 0% apart, inside the 10% a second build of the same source is allowed.
+- `-m 544m`: the instrument build resolved the shipped build's arrangement, 2 reader(s), and held 251.40 MiB against **251.09 MiB** (251.07–251.26) — +316 KiB, 0% apart, inside the 10% a second build of the same source is allowed.
+- `-m 1g`: the instrument build resolved the shipped build's arrangement, 10 reader(s), and held 714.34 MiB against **688.09 MiB** (668.52–737.68) — +26.25 MiB, 4% apart, inside the 10% a second build of the same source is allowed.
+- `-m 1088m`: the instrument build resolved the shipped build's arrangement, 11 reader(s), and held 746.14 MiB against **743.38 MiB** (731.27–753.88) — +2.76 MiB, 0% apart, inside the 10% a second build of the same source is allowed.
+- `-m 1536m`: the instrument build resolved the shipped build's arrangement, 17 reader(s), and held 1068.38 MiB against **1089.71 MiB** (1067.98–1090.63) — -21.33 MiB, 2% apart, inside the 10% a second build of the same source is allowed.
+- `-m 2g`: the instrument build resolved the shipped build's arrangement, 24 reader(s), and held 1456.04 MiB against **1465.82 MiB** (1412.68–1470.02) — -9.78 MiB, 1% apart, inside the 10% a second build of the same source is allowed.
 
 **What each mechanism moves**, at one block size and one allocation — `control_xz` flagless in `-m 512m`, which resolved 1 readers. The reference is the axis row above, not a re-take. **One leg, where three were registered**: the arena cap bounds how many arenas can hold a retained block, and at a cell whose uncapped process already runs no more arenas than the cap allows it cannot move one — the instrument's `Arenas` column says which this cell is. The two allocator legs are dropped rather than re-aimed because jemalloc and mimalloc do not have glibc's dynamic mmap threshold — swapping them removes the mechanism instead of measuring it. What replaced them is the instrument above, which reports the retention rather than differencing two runs:
 
 | Leg | Peak RSS | Against the reference |
 |---|---|---|
-| the reference — glibc, arenas uncapped | **110.91 MiB** (110.66–110.93) | — |
-| `MALLOC_ARENA_MAX=2` | **110.80 MiB** (110.42–110.99) | -112 KiB (-0%) |
+| the reference — glibc, arenas uncapped | **112.09 MiB** (111.82–112.25) | — |
+| `MALLOC_ARENA_MAX=2` | **112.19 MiB** (111.91–112.31) | +100 KiB (+0%) |
 
-**What the block path costs against the streaming fallback**, one byte of budget apart in the same 512m allocation at `--jobs 24`: +95.38 MiB between the two, 7.2×. `BlockCache::affordable` compares the budget against what **one** reader costs — the per-reader term plus that one reader's share of the pool's retention list — so the pair straddles that comparison at 106.0 MiB and differs in nothing else. It is what an operator deciding whether to set `--parallel-memory` needs, and no other figure states it:
+**What the block path costs against the streaming fallback**, one byte of budget apart in the same 512m allocation at `--jobs 24`: +95.71 MiB between the two, 6.8×. `BlockCache::affordable` compares the budget against what **one** reader costs — the per-reader term plus that one reader's share of the pool's retention list — so the pair straddles that comparison at 106.0 MiB and differs in nothing else. It is what an operator deciding whether to set `--memory` needs, and no other figure states it:
 
 | Leg | Peak RSS |
 |---|---|
-| `--parallel-memory 111183648` — one reader afforded | **110.73 MiB** (110.71–110.98) |
-| `--parallel-memory 111183647` — **one byte short**, block decode declined | **15.36 MiB** (15.12–15.37) |
+| `--memory 513836832` — 106.0 MiB of buffers — one reader afforded | **112.16 MiB** (111.99–112.23) |
+| `--memory 513836831` — 106.0 MiB of buffers — **one byte short**, block decode declined | **16.45 MiB** (15.80–16.53) |
 
-**The stated-budget axis.** Each cell is peak resident set, then that reading **minus the budget the run stated** — the reserve. Every row states `--jobs 24` in a 4g container, an apparatus departure from the register's 512 MB, which is smaller than the largest budget under test; the flagless legs above each carry their own allocation instead.
+**The stated-budget axis.** Each cell is peak resident set, then that reading **minus the read-buffer budget the run's `--memory` states** — what the reserve has to cover. Where the margin lowers a typed count's budget below the one stated, the cell understates what the run holds above the budget it resolved, which the run reports. Every row states `--jobs 24` in a 4g container, an apparatus departure from the register's 512 MB, which is smaller than the largest budget under test; the flagless legs above each carry their own allocation instead.
 
 | Leg | 64 MiB stated | 128 MiB stated | 256 MiB stated | 512 MiB stated |
 |---|---|---|---|---|
-| `.xz`, arenas uncapped | **15.01 MiB** (14.87–15.40) · -48.99 MiB | **134.60 MiB** (134.19–134.84) · +6.60 MiB | **463.35 MiB** (460.52–463.63) · +207.35 MiB | **908.22 MiB** (893.38–917.42) · +396.22 MiB |
-| `.xz`, `MALLOC_ARENA_MAX=2` | **15.18 MiB** (14.91–15.30) · -48.82 MiB | **134.66 MiB** (134.65–134.75) · +6.66 MiB | **421.16 MiB** (419.30–434.86) · +165.16 MiB | **843.86 MiB** (831.75–925.94) · +331.86 MiB |
-| plain, arenas uncapped | **9.61 MiB** (9.35–9.75) · -54.39 MiB | **9.50 MiB** (9.25–9.53) · -118.50 MiB | **9.59 MiB** (9.07–9.66) · -246.41 MiB | **9.33 MiB** (9.27–9.60) · -502.67 MiB |
-| plain, `MALLOC_ARENA_MAX=2` | **9.67 MiB** (9.60–9.77) · -54.33 MiB | **9.87 MiB** (9.59–9.89) · -118.13 MiB | **9.69 MiB** (9.54–9.78) · -246.31 MiB | **9.72 MiB** (9.35–9.89) · -502.28 MiB |
+| `.xz`, arenas uncapped | **16.38 MiB** (16.27–16.46) · -47.62 MiB | **112.39 MiB** (111.67–112.62) · -15.61 MiB | **417.01 MiB** (415.04–441.31) · +161.01 MiB | **790.26 MiB** (789.43–791.15) · +278.26 MiB |
+| `.xz`, `MALLOC_ARENA_MAX=2` | **16.54 MiB** (16.40–16.59) · -47.46 MiB | **111.98 MiB** (111.75–112.42) · -16.02 MiB | **384.33 MiB** (380.90–418.82) · +128.33 MiB | **822.71 MiB** (816.28–845.94) · +310.71 MiB |
+| plain, arenas uncapped | **10.72 MiB** (10.57–10.85) · -53.28 MiB | **10.94 MiB** (10.75–10.98) · -117.06 MiB | **10.94 MiB** (10.56–11.02) · -245.06 MiB | **11.01 MiB** (10.72–11.07) · -500.99 MiB |
+| plain, `MALLOC_ARENA_MAX=2` | **10.90 MiB** (10.64–11.23) · -53.10 MiB | **10.62 MiB** (10.47–10.74) · -117.38 MiB | **10.93 MiB** (10.46–11.03) · -245.07 MiB | **10.76 MiB** (10.23–10.85) · -501.24 MiB |
 
-**The worst cell of each arena leg**, which is what a `--jobs 24` scan holds above a budget somebody handed it, and not the arrangement `MEMORY_RESERVE` governs — the flagless legs above are: arenas uncapped **+396.22 MiB**, `MALLOC_ARENA_MAX=2` **+331.86 MiB**.
+**The worst cell of each arena leg**, which is what a `--jobs 24` scan holds above the budget its `--memory` states, the count typed so that the margin lowers only the budget — not the flagless arrangement `MEMORY_RESERVE` was read off, which the legs above are: arenas uncapped **+278.26 MiB**, `MALLOC_ARENA_MAX=2` **+310.71 MiB**.
 
-**The shipped serial arrangement is read beside it and not on either axis**: `control` at `--jobs 1` with no budget stated runs at the library's 64 MiB default and holds **6.13 MiB** (6.00–6.24), a reserve of **-57.87 MiB**. That run is `peak-rss`'s own `control` row — the same binary, command, input and regime — so it is one reading this table shares with that one rather than a second measurement of it.
+**The shipped serial arrangement is read beside it and not on either axis**: `control` at `--jobs 1` with no budget stated runs at the library's 64 MiB default and holds **7.12 MiB** (7.02–7.18), a reserve of **-56.88 MiB**. That run is `peak-rss`'s own `control` row — the same binary, command, input and regime — so it is one reading this table shares with that one rather than a second measurement of it.
 
 Shared, not measured again — the same binary, command and input:
 - the shipped serial arrangement's peak resident set, from `peak-rss`.
 
 Per-rep readings (peak RSS):
-- 24 MiB blocks, flagless in 512m: 110.91 MiB, 110.93 MiB, 110.66 MiB
-- 128 MiB blocks, flagless in 512m: 15.03 MiB, 15.30 MiB, 14.78 MiB
-- 24 MiB blocks, flagless in 544m: 251.87 MiB, 251.94 MiB, 273.80 MiB
-- 128 MiB blocks, flagless in 544m: 14.69 MiB, 14.87 MiB, 15.01 MiB
-- 24 MiB blocks, flagless in 1g: 735.79 MiB, 687.92 MiB, 683.99 MiB
-- 128 MiB blocks, flagless in 1g: 526.93 MiB, 526.93 MiB, 526.84 MiB
-- 24 MiB blocks, flagless in 1088m: 791.16 MiB, 745.98 MiB, 725.03 MiB
-- 128 MiB blocks, flagless in 1088m: 526.73 MiB, 526.70 MiB, 526.64 MiB
-- 24 MiB blocks, flagless in 1536m: 1058.62 MiB, 1099.08 MiB, 1065.07 MiB
-- 128 MiB blocks, flagless in 1536m: 1075.87 MiB, 1076.48 MiB, 1076.49 MiB
-- 24 MiB blocks, flagless in 2g: 1473.85 MiB, 1471.91 MiB, 1410.73 MiB
-- 128 MiB blocks, flagless in 2g: 1327.45 MiB, 1340.97 MiB, 1338.04 MiB
-- instrument, flagless in 512m: 111.08 MiB, 110.88 MiB, 110.88 MiB
-- instrument, flagless in 544m: 252.67 MiB, 273.89 MiB, 250.38 MiB
-- instrument, flagless in 1g: 730.27 MiB, 773.11 MiB, 691.17 MiB
-- instrument, flagless in 1088m: 745.38 MiB, 770.96 MiB, 722.05 MiB
-- instrument, flagless in 1536m: 1077.37 MiB, 1064.18 MiB, 1133.46 MiB
-- instrument, flagless in 2g: 1460.80 MiB, 1442.13 MiB, 1446.11 MiB
-- instrument, flagless in 512m, `MALLOC_ARENA_MAX=2`: 111.04 MiB, 110.90 MiB, 110.92 MiB
-- flagless in 512m, `MALLOC_ARENA_MAX=2`: 110.99 MiB, 110.42 MiB, 110.80 MiB
-- 111183648 stated, block decode afforded: 110.73 MiB, 110.98 MiB, 110.71 MiB
-- 111183647 stated, block decode declined: 15.37 MiB, 15.36 MiB, 15.12 MiB
-- `.xz` arenas uncapped, 64 MiB stated: 15.40 MiB, 14.87 MiB, 15.01 MiB
-- `.xz` arenas uncapped, 128 MiB stated: 134.60 MiB, 134.19 MiB, 134.84 MiB
-- `.xz` arenas uncapped, 256 MiB stated: 463.63 MiB, 460.52 MiB, 463.35 MiB
-- `.xz` arenas uncapped, 512 MiB stated: 908.22 MiB, 893.38 MiB, 917.42 MiB
-- `.xz` `MALLOC_ARENA_MAX=2`, 64 MiB stated: 14.91 MiB, 15.18 MiB, 15.30 MiB
-- `.xz` `MALLOC_ARENA_MAX=2`, 128 MiB stated: 134.66 MiB, 134.75 MiB, 134.65 MiB
-- `.xz` `MALLOC_ARENA_MAX=2`, 256 MiB stated: 434.86 MiB, 421.16 MiB, 419.30 MiB
-- `.xz` `MALLOC_ARENA_MAX=2`, 512 MiB stated: 831.75 MiB, 843.86 MiB, 925.94 MiB
-- plain arenas uncapped, 64 MiB stated: 9.35 MiB, 9.75 MiB, 9.61 MiB
-- plain arenas uncapped, 128 MiB stated: 9.25 MiB, 9.53 MiB, 9.50 MiB
-- plain arenas uncapped, 256 MiB stated: 9.66 MiB, 9.07 MiB, 9.59 MiB
-- plain arenas uncapped, 512 MiB stated: 9.27 MiB, 9.33 MiB, 9.60 MiB
-- plain `MALLOC_ARENA_MAX=2`, 64 MiB stated: 9.77 MiB, 9.67 MiB, 9.60 MiB
-- plain `MALLOC_ARENA_MAX=2`, 128 MiB stated: 9.89 MiB, 9.87 MiB, 9.59 MiB
-- plain `MALLOC_ARENA_MAX=2`, 256 MiB stated: 9.69 MiB, 9.54 MiB, 9.78 MiB
-- plain `MALLOC_ARENA_MAX=2`, 512 MiB stated: 9.72 MiB, 9.89 MiB, 9.35 MiB
-- plain, serial default: 6.24 MiB, 6.13 MiB, 6.00 MiB
+- 24 MiB blocks, flagless in 512m: 112.25 MiB, 111.82 MiB, 112.09 MiB
+- 128 MiB blocks, flagless in 512m: 16.29 MiB, 16.20 MiB, 16.44 MiB
+- 24 MiB blocks, flagless in 544m: 251.07 MiB, 251.09 MiB, 251.26 MiB
+- 128 MiB blocks, flagless in 544m: 16.37 MiB, 16.04 MiB, 16.59 MiB
+- 24 MiB blocks, flagless in 1g: 668.52 MiB, 688.09 MiB, 737.68 MiB
+- 128 MiB blocks, flagless in 1g: 528.14 MiB, 528.46 MiB, 528.38 MiB
+- 24 MiB blocks, flagless in 1088m: 743.38 MiB, 731.27 MiB, 753.88 MiB
+- 128 MiB blocks, flagless in 1088m: 527.99 MiB, 528.15 MiB, 528.20 MiB
+- 24 MiB blocks, flagless in 1536m: 1067.98 MiB, 1089.71 MiB, 1090.63 MiB
+- 128 MiB blocks, flagless in 1536m: 1078.35 MiB, 1078.98 MiB, 1077.80 MiB
+- 24 MiB blocks, flagless in 2g: 1465.82 MiB, 1412.68 MiB, 1470.02 MiB
+- 128 MiB blocks, flagless in 2g: 1344.30 MiB, 1343.86 MiB, 1343.87 MiB
+- instrument, flagless in 512m: 112.54 MiB, 112.35 MiB, 112.45 MiB
+- instrument, flagless in 544m: 251.17 MiB, 251.41 MiB, 251.40 MiB
+- instrument, flagless in 1g: 714.34 MiB, 683.26 MiB, 715.80 MiB
+- instrument, flagless in 1088m: 727.71 MiB, 746.14 MiB, 770.82 MiB
+- instrument, flagless in 1536m: 1099.83 MiB, 1055.73 MiB, 1068.38 MiB
+- instrument, flagless in 2g: 1443.02 MiB, 1456.04 MiB, 1468.36 MiB
+- instrument, flagless in 512m, `MALLOC_ARENA_MAX=2`: 112.63 MiB, 112.43 MiB, 112.37 MiB
+- flagless in 512m, `MALLOC_ARENA_MAX=2`: 112.31 MiB, 111.91 MiB, 112.19 MiB
+- `--memory 513836832`, block decode afforded: 112.16 MiB, 112.23 MiB, 111.99 MiB
+- `--memory 513836831`, block decode declined: 16.45 MiB, 15.80 MiB, 16.53 MiB
+- `.xz` arenas uncapped, 64 MiB stated: 16.27 MiB, 16.46 MiB, 16.38 MiB
+- `.xz` arenas uncapped, 128 MiB stated: 112.62 MiB, 112.39 MiB, 111.67 MiB
+- `.xz` arenas uncapped, 256 MiB stated: 415.04 MiB, 417.01 MiB, 441.31 MiB
+- `.xz` arenas uncapped, 512 MiB stated: 789.43 MiB, 790.26 MiB, 791.15 MiB
+- `.xz` `MALLOC_ARENA_MAX=2`, 64 MiB stated: 16.54 MiB, 16.59 MiB, 16.40 MiB
+- `.xz` `MALLOC_ARENA_MAX=2`, 128 MiB stated: 111.75 MiB, 111.98 MiB, 112.42 MiB
+- `.xz` `MALLOC_ARENA_MAX=2`, 256 MiB stated: 380.90 MiB, 418.82 MiB, 384.33 MiB
+- `.xz` `MALLOC_ARENA_MAX=2`, 512 MiB stated: 816.28 MiB, 845.94 MiB, 822.71 MiB
+- plain arenas uncapped, 64 MiB stated: 10.72 MiB, 10.85 MiB, 10.57 MiB
+- plain arenas uncapped, 128 MiB stated: 10.94 MiB, 10.98 MiB, 10.75 MiB
+- plain arenas uncapped, 256 MiB stated: 11.02 MiB, 10.56 MiB, 10.94 MiB
+- plain arenas uncapped, 512 MiB stated: 10.72 MiB, 11.07 MiB, 11.01 MiB
+- plain `MALLOC_ARENA_MAX=2`, 64 MiB stated: 10.90 MiB, 11.23 MiB, 10.64 MiB
+- plain `MALLOC_ARENA_MAX=2`, 128 MiB stated: 10.74 MiB, 10.62 MiB, 10.47 MiB
+- plain `MALLOC_ARENA_MAX=2`, 256 MiB stated: 11.03 MiB, 10.46 MiB, 10.93 MiB
+- plain `MALLOC_ARENA_MAX=2`, 512 MiB stated: 10.23 MiB, 10.85 MiB, 10.76 MiB
+- plain, serial default: 7.12 MiB, 7.18 MiB, 7.02 MiB
 
-Apparatus over every run in this table: CPU stall ≤1.39%, I/O stall ≤29.87%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤74°C.
+Apparatus over every run in this table: CPU stall ≤1.14%, I/O stall ≤9.93%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤73°C.
 
 **What the sitting settles.** Every cell of the charge table is `met`: the
-unnamed remainder runs 4.7–179.5 MiB, under both `MEMORY_UNPOOLED_BOUND`'s
+unnamed remainder runs 6.2–181.4 MiB, under both `MEMORY_UNPOOLED_BOUND`'s
 256 MiB and `MEMORY_RESERVE`'s 384 MiB at every arrangement, on both block
 sizes, with no leg killed anywhere in the sitting.
 
@@ -2979,32 +3007,36 @@ finer than that.** A least-squares line over the seven instrument legs — all o
 24 MiB blocks — reads 26.0 MiB of Rust a reader outside the block pool, which
 with the 8.0 MiB `liblzma` dictionary is 34.0 MiB against the 34.0 MiB
 `BlockCache::reader_bytes` bills; both are printed to a tenth of a MiB, and the
-line misses its one-reader leg by 13 MiB. It is a slope of what the program
-allocated, not of what was resident: the black-box lines above read 36.3 MiB a
-reader at 24 MiB blocks and 174.5 MiB at 128 MiB blocks, against 34.03 and
+line misses its one-reader leg by 11 MiB. It is a slope of what the program
+allocated, not of what was resident: the black-box lines above read 36.4 MiB a
+reader at 24 MiB blocks and 175.3 MiB at 128 MiB blocks, against 34.03 and
 138.03 billed, because the remainder above the charge is not flat in the count
-— about 5 MiB at one reader, 105–180 MiB from two readers up on 24 MiB blocks
-and 139–140 MiB at four and five readers on 128 MiB blocks. That remainder is
-what the reserve covers. `fordblks` covers at least 82% of the account table's
+— about 6 MiB at one reader, 101–181 MiB from two readers up on 24 MiB blocks
+and 142–143 MiB at four and five readers on 128 MiB blocks. That remainder is
+what the reserve covers. `fordblks` covers at least 67% of the account table's
 `Unattributed` column wherever that column is positive; against the charge
 table's `Unnamed` column, which is a different subtraction on a different build,
-the same `fordblks` readings run from 69% to 292%.
+the same `fordblks` readings run from 62% to 306%.
 
 **The two instruments are independent where it matters.** The black-box legs
 read peak resident through `getrusage` around the shipped binary; the
 introspection build reports its own live bytes and its allocator's retention
 from inside. They share the container, the input and the command shape and
-share no counter, and they agree to within 6% at every allocation.
+share no counter, and they agree to within 4% at every allocation.
 
-**The stated-budget axis is not the arrangement `MEMORY_RESERVE` governs, and
-its worst cell is larger than the constant.** Those four rows state `--jobs 24`
-and a budget outright, so the discovery path — the thing the reserve is
-subtracted inside — never runs; the +396.22 MiB is what a `--jobs 24` scan
-holds above a budget somebody handed it. `MEMORY_RESERVE` was read off the *flagless*
+**The stated-budget axis is not the arrangement `MEMORY_RESERVE` was read
+off.** Those four rows state `--jobs 24` and a `--memory` allowance of each
+budget plus the reserve, so the reserve comes off the top as it does for a
+discovered limit (D83), but the count is typed and the margin can lower only
+the budget: the 512 MiB column resolved 440.3 MiB, and its worst rep held
+405.7 MiB above that — over the reserve, and under the margin's 20% of the
+allowance — though no cell exceeded its stated `--memory` (`KD34`). The column
+subtracts the budget stated, not the one resolved, so it reads each cell
+71.7 MiB low. `MEMORY_RESERVE` was read off the *flagless*
 legs of a five-build reading — taken once and transcribed in
 [`decisions.md`](decisions.md), "I/O, memory and parallelism", not a
 figure here — against the fraction of the limit left at the worst rep; on this
-sitting's flagless legs the worst remainder is 179.5 MiB. The two numbers are
+sitting's flagless legs the worst remainder is 181.4 MiB. The two numbers are
 answers to different questions and neither bounds the other; the axis is here
 because an operator who sets `--memory` by hand needs it.
 
@@ -3119,8 +3151,8 @@ koji is the worst input in the tree for it: the claim has two halves — whether
 anything accumulates per byte, and whether anything accumulates per block — and
 koji cannot test the second, 74 blocks over 784 GB being block-poor. Both
 halves are cheap on inputs the harness already stages, so they are "What a scan
-holds resident, per byte and per block" above, which reads nothing measurable
-per byte and ~10.0 KB a block — 44.19 MiB at 4,000 blocks. As a registered
+holds resident, per byte and per block" above, which finds nothing
+accumulating per byte and several kilobytes a block. As a registered
 figure the claim carries a `depends` edge that goes red when the read path
 moves.
 
@@ -3346,23 +3378,23 @@ the worst case the generators can build:
 
 |  | Wall |
 |---|---|
-| `parse --preamble-only`, 4000-table dump | **0.040 s** |
-| full `parse` of the same file | 0.109 s |
+| `parse --preamble-only`, 4000-table dump | **0.033 s** |
+| full `parse` of the same file | 0.091 s |
 
 The first `COPY` header sits at byte 980,996 of 1,998,741 — 49% of the file is preamble, which is the most preamble-heavy shape available here.
 
 Shared, not measured again — the same binary, command and input:
 - the full-`parse` row, which is the quadratic table's 4000-block `parse` cell, from `per-block-quadratic`.
 
-Per-rep readings (s): 0.040, 0.041, 0.040, 0.039, 0.040
+Per-rep readings (s): 0.035, 0.033, 0.032, 0.034, 0.032
 
-Apparatus over every run in this table: CPU stall ≤0.25%, I/O stall ≤9.66%, machine ≤6% busy, steal ≤0.00%, busiest core ≥4.21 GHz, ≤63°C.
+Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤9.14%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.87 GHz, ≤63°C.
 
 The second row is not a second measurement: it is the quadratic table's
 4000-block `parse` cell. **The pair is not a ratio worth quoting**: the full
 `parse` is priced by the map and the save throttle's gate, which the prepass
 does not touch, so the ratio moves when they do. What has to hold is that the
-uncancellable region is *milliseconds*: 40 ms here, on the most preamble-heavy
+uncancellable region is *milliseconds*: 33 ms here, on the most preamble-heavy
 shape the generators can build, half of whose bytes are preamble — and 63,333
 bytes of one read on koji, against a scan of an hour.
 
@@ -3410,26 +3442,26 @@ and an expiry that refuses the figure when the two trees have drifted.
 | blocks | dump | final cache | parse | saves |
 |---|---|---|---|---|
 | 1 (control) | 2.0 MB | 1 KB | 0.003 s | 6 |
-| 500 | 242 KB | 319 KB | 0.014 s | 6 |
-| 1000 | 484 KB | 640 KB | 0.026 s | 6 |
-| 2000 | 973 KB | 1.3 MB | 0.052 s | 6 |
-| 4000 | 1.9 MB | 2.5 MB | 0.109 s | 6 |
+| 500 | 242 KB | 319 KB | 0.012 s | 6 |
+| 1000 | 484 KB | 640 KB | 0.023 s | 6 |
+| 2000 | 973 KB | 1.3 MB | 0.048 s | 6 |
+| 4000 | 1.9 MB | 2.5 MB | 0.091 s | 6 |
 
 Save counts are `strace -f -e trace=open,openat` on the host, untimed. Across a block count multiplying by 4,000× from the control, the save count stays at 6 — the throttle is a ratio against elapsed time, not a count of watermarks.
 
 Per-rep readings (s):
 - 1 (control): 0.003, 0.003
-- 500: 0.014, 0.014
-- 1000: 0.026, 0.027
-- 2000: 0.053, 0.052
-- 4000: 0.109, 0.109
+- 500: 0.012, 0.012
+- 1000: 0.023, 0.023
+- 2000: 0.051, 0.044
+- 4000: 0.093, 0.089
 
-Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤11.46%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.93 GHz, ≤58°C.
+Apparatus over every run in this table: CPU stall ≤0.22%, I/O stall ≤13.08%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.80 GHz, ≤60°C.
 
 **The control is the table's first row** — the same byte count in **one**
 `COPY` block — and it is what makes the rest readable as a series rather than a
 curve: it holds the bytes fixed so the only variable left is the block count,
-which is what lets the 4000-block `parse` be read as ~36× the same bytes in one
+which is what lets the 4000-block `parse` be read as ~30× the same bytes in one
 block rather than merely as large. The save count does not follow the block
 count, so the series is not pricing saves (below).
 
@@ -3461,37 +3493,37 @@ with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
 
 | blocks | 1000 | 2000 | 4000 |
 |---|---|---|---|
-| map only, no saving | 1.053 s | 4.65 s | 19.28 s |
+| map only, no saving | 1.005 s | 4.25 s | 18.84 s |
 
 Per-rep readings (s):
-- 1000 blocks: 1.053, 1.065, 1.051
-- 2000 blocks: 4.65, 4.67, 4.41
-- 4000 blocks: 20.49, 19.08, 19.28
+- 1000 blocks: 1.005, 0.996, 1.045
+- 2000 blocks: 4.18, 4.28, 4.25
+- 4000 blocks: 19.56, 18.50, 18.84
 
-Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤3.03%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.64 GHz, ≤67°C.
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤4.18%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.14 GHz, ≤70°C.
 
 **This table is what says the gate above did nothing here**, which is why it is
-re-taken alongside it rather than assumed. Four stamps have read it:
-1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07, 0.984 / 3.86 / 18.37 and
-1.053 / 4.65 / 19.28 s. `--dtcache none` makes
+re-taken alongside it rather than assumed. Five stamps have read it:
+1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07, 0.984 / 3.86 / 18.37,
+1.053 / 4.65 / 19.28 and 1.005 / 4.25 / 18.84 s. `--dtcache none` makes
 `cache::CacheMode::save` a no-op, so the throttle has no cost to amortize, its
 gate never closes, and the map is rebuilt at every `CopyEnd`. The 1000- and
-4000-block rows have held inside 7% and 5% across all four; the **2000-block
+4000-block rows have held inside 7% and 5% across all five; the **2000-block
 row is the one that moves**, spanning 3.86–4.65 s, and its per-rep spread
-within this sitting (4.41–4.67) covers a fifth of that. The sizes, which are
+within this sitting (4.18–4.28) covers an eighth of that. The sizes, which are
 what this figure is for, have never been in question — every stamp reads the
 doubling and then the quadrupling. **The read-path work did not touch it**,
 because a 2 MB file's cost is the map's rebuild and not its bytes.
 
 So the two tables bracket the same mechanism from either side. **With a cache,
-the map's rebuild is gone**: 0.109 s at 4000 blocks against the 20.75 s the
+the map's rebuild is gone**: 0.091 s at 4000 blocks against the 20.75 s the
 same command cost when it spliced per block — a
-cross-sitting difference, and the only kind this document permits, since 190×
+cross-sitting difference, and the only kind this document permits, since 230×
 is two orders of magnitude past the 14% a session's own drift reaches.
-**Without a cache it is the whole cost**: 19.3 s for the same file. The
+**Without a cache it is the whole cost**: 18.8 s for the same file. The
 *unthrottled* `b726f6b` build put the same 4000-block `parse` at 47.7 s with
 4003 saves ([`decisions.md`](decisions.md), "D63"), which splits roughly as
-28 s of saving on top of the ~19 s of mapping this table reads — a historical
+29 s of saving on top of the ~19 s of mapping this table reads — a historical
 reading rather than a column, that build being retired. What is left is `KD5`
 ([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies"): the
 rebuild is a whole-list clone, so it is only ever as cheap as the gate is

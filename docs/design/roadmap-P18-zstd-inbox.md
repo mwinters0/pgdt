@@ -85,7 +85,7 @@ count's resident with) were both read off `.xz` inputs alone, at 24 MiB and
 128 MiB block sizes ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). The second bounds what a scan holds *outside* what
 `WorkerMemory::at` bills: its worst over the 400-run grid the reserve was read
 off is 238.6 MiB at 24 MiB blocks and 142.0 MiB at 128, and the published
-`reserve` sitting reads 4.7–179.5 MiB — one codec at two decode units, and no
+`reserve` sitting's `Unnamed` column ([`measurements.md`](measurements.md), "What a scan holds above the budget it was given") is one codec at two decode units, and no
 reading on any other.
 
 **Why this phase cares.** A new decompressing source states its own

@@ -101,8 +101,9 @@ SCAN_CHUNK = 32 * 1024 * 1024
 #:
 #: A decode rate is a rate per *plaintext* byte, so it is a property of the
 #: bytes: this figure's own two legs are the proof, the generated control at
-#: 5.4x decoding around 200 MB/s on one core where koji's 15.70x decodes around
-#: 431. koji is nowhere near homogeneous — sampled at twelve depths it runs
+#: 5.45x decoding at under half the one-core rate koji's 15.70x slice does
+#: (`docs/design/measurements.md`, `xz-decode-scaling`). koji is nowhere near
+#: homogeneous — sampled at twelve depths it runs
 #: from 5.02x to 33.05x — so `--from-offset` picks a draw rather than a
 #: representative, and a moved offset, or a koji dump refreshed next year,
 #: could land in the 31.74x band and republish a rate for quite different bytes

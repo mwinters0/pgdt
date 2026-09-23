@@ -324,7 +324,7 @@ retained unit does not — and writes it onto the sub-streams. A plain source st
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
-readers the announced one seats. Reopens: a plain `query` at `--jobs 8` vs `--jobs 4`, the span floored on one leg. Code: `stream.rs`.
+readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream.rs`. Evidence: `parallel-scan-throughput`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is

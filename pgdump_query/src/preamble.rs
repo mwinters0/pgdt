@@ -75,8 +75,8 @@ pub struct DatabaseMetadata {
     ///
     /// Deficiency register: `deficiency: KD14` — this is the structure a scan
     /// holds per table, and peak resident set grows with the table count while
-    /// staying flat in dump bytes, most of it live structure the preamble
-    /// alone pays (`measurements.md`, `peak-rss` and `rss-attribution`).
+    /// staying flat in dump bytes, over a third of it live structure the
+    /// preamble alone pays (`measurements.md`, `peak-rss` and `rss-attribution`).
     /// **(c) unowned**; promoted by a dump with tens of thousands of tables,
     /// nothing in hand being one. It is also why every "resident set" claim
     /// about this system is the *one-block* reading and says so.

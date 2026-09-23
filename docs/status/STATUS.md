@@ -55,11 +55,9 @@ quotes a number: every figure is in
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
 && uv run measure.py --stale` names what is red and why. **Every register
-figure is red**, the statistics work having moved many declared paths with no
-sweep since. Four of them are held deliberately — `reserve`, `rss-attribution`,
-`statistics-gathering` and `statistics-pruning`, whose legs resolve fewer
-readers now that the margin binds a typed number, and which are re-taken once
-P23 settles `MEMORY_RESERVE`. Two more can never be cleared by a sweep at all:
+figure was re-taken at `542fdfb`**, the four P23 had held included: three
+resolve no reader count the margin could lower, and `reserve`'s stated axis,
+which does, is a reading `KD34` names. Two can never be cleared by a sweep at all:
 `session-drift`, whose apparatus is the harness itself and which only
 a second sweep run back to back with a first re-takes, and the koji section,
 outside the register, which only a run on the HDD clears. Red with the reason
@@ -197,8 +195,9 @@ a phase nobody has sliced.
   materialization, which is where the choice between a null, a sentinel and the
   error belongs. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD9** — an `INSERT` run costs **4.9×** a `COPY` scan's per-byte CPU warm
-  and **2.63×** the device's own time cold on NVMe against 1.06×, and two cuts
+- **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
+  warm and most of a cold NVMe scan's time (`measurements.md`,
+  `scan-throughput-warm` and `scan-throughput-nvme`), and two cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan both cuts are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
@@ -219,11 +218,11 @@ a phase nobody has sliced.
   locale or asking for one, which the bar refuses for every other type. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD17** — a plain typed `query` is flat at 1.02× across the whole `--jobs`
-  axis: the sub-streams it plans never run concurrently, total CPU staying
-  under one core. The named suspect — `POOL_DEPTH` clamping the chunk pool —
-  moved no cell measurably in a probe build that lifts it, so what serializes
-  them is unidentified. **(c) unowned**; promoted by a phase that
+- **KD17** — a plain typed `query` gains about a tenth by four sub-streams
+  and nothing past them (`measurements.md`, `parallel-scan-throughput`). The
+  named suspect — `POOL_DEPTH` clamping the chunk pool — moved no cell
+  measurably in a probe build that lifts it, so what caps them is
+  unidentified. **(c) unowned**; promoted by a phase that
   takes up plain-source extraction throughput, since no defaults change reaches
   it. Detail: `pgdump_query/src/stream.rs`.
 
@@ -288,9 +287,9 @@ a phase nobody has sliced.
   **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
   on a real device. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
-  table, three fifths of it live structure the preamble alone pays, so a
-  4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
+- **KD14** — peak resident set is flat in dump bytes but grows several
+  kilobytes per table, over a third of it live structure the preamble alone
+  pays (`measurements.md`, `peak-rss` and `rss-attribution`).
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `pgdump_query/src/preamble.rs`.
 

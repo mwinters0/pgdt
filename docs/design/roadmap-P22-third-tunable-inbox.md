@@ -63,7 +63,8 @@ actually has â€” a source cutting by it sizes both terms of the charge from it â
 and both say in the same sentence that either lever buys seats rather than
 speed, and that a plain source's sub-streams may not run concurrently at all.
 That qualification is `KD17`: `measurements.md`'s `parallel-scan-throughput`
-has the plain typed `query` column flat across the whole `--jobs` axis.
+has the plain typed `query` column gaining little from `--jobs`, and nothing
+from the sub-streams seated past four.
 [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--chunk-size`: you almost certainly do not need it" says the same to a user.
 

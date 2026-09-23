@@ -1119,7 +1119,10 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// 384 MiB held back here, with every wide-text compressed `query` leg from a
 /// 1 GiB limit up killed in every rep. That attribution was taken on the
 /// `introspect` build, so it sizes the gap without standing in for the blind
-/// gate a constant has to pass; P23 owns both.
+/// gate a constant has to pass; P23 owns both. The `reserve` figure's stated
+/// axis is a second reading: under a typed `--jobs` and `--memory` the margin
+/// lowers only the budget, and the worst rep there held more above the
+/// resolved budget than this value (`measurements.md`, `reserve`).
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as

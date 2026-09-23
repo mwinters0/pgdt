@@ -3113,11 +3113,11 @@ fn compressed_block_path_declined(
 /// name a count the budget cut.
 ///
 /// Deficiency register: `deficiency: KD17` — the sub-streams planned here
-/// never run concurrently on a plain typed `query`: throughput is flat across
-/// the whole `--jobs` axis and total CPU stays under one core
+/// gain little on a plain typed `query`: throughput rises about a tenth by four
+/// and nothing after, the sub-streams seated past four buying none of it
 /// (`measurements.md`, `parallel-scan-throughput`). The named suspect, `POOL_DEPTH`
 /// clamping the chunk pool, is spent — a probe build lifting it moved no cell
-/// materially — so what serializes them is unidentified. **(c) unowned**;
+/// materially — so what caps them is unidentified. **(c) unowned**;
 /// promoted by a phase taking up plain-source extraction throughput. **That
 /// reading needs a read-chunk axis on its `query` legs**, which no figure has:
 /// [`PlanNoteKind::ParallelismBudgetLimited`] points a caller at the chunk,

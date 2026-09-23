@@ -316,10 +316,9 @@ changes that, and the reason to mention it at all is to say that the default
 was chosen by measurement rather than by taste: over six sizes from 64 KiB to
 16 MiB, on a SATA SSD, an NVMe drive and a RAM disk, 1 MiB was the fastest on
 the NVMe — the only real device of the three whose speed a chunk size can
-change at all — and the sizes either side of it were ties rather than
-improvements. On the SATA SSD every size reads the same, the device being the
-whole cost. On the RAM disk, which is not storage, 4 and 8 MiB come out a few
-percent ahead of 1 MiB; that is the per-chunk work rather than anything a disk
+change at all — and neither size either side of it was an improvement. On the SATA SSD every size reads the same, the device being the
+whole cost. On the RAM disk, which is not storage, 4 and 8 MiB come out slightly
+ahead of 1 MiB; that is the per-chunk work rather than anything a disk
 does, and it is not what the default is chosen on.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
@@ -333,7 +332,7 @@ Past that the pool keeps a single buffer, which is the size you asked for.
 
 What it already holds does not grow with the *size* of the dump — a 3 GiB file
 costs no more than a 2 MB one, a few megabytes either way — but it does grow
-with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
+with the number of tables in it, by roughly 9 KB each. A dump of a few thousand
 tables is tens of megabytes resident before any chunk size is chosen.
 
 **An `.xz` source costs more than a plain one**, and by an amount the *file*
