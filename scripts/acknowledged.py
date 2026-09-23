@@ -123,4 +123,19 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show --format= -U0 c151c64 -- scripts/measure.py  # read every hunk",
     ),
+    Acknowledged(
+        commit="fd082b2",
+        figures=(),
+        why=(
+            "`M140` renamed the statistics group to the row group — three "
+            "constants, `--row-group-size` and one log message's text — with "
+            "rustfmt's reflow of the lines they shortened; no code path, input "
+            "or command's meaning moved"
+        ),
+        verified=(
+            "git show --format= -U0 fd082b2 -- pgdt/src pgdump_query/src "
+            "scripts/measure.py | grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -viE 'row[ _-]group|statistics[ _-]group'  # only rustfmt's reflows"
+        ),
+    ),
 )
