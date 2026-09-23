@@ -11,11 +11,12 @@ use arrow::util::pretty::pretty_format_batches;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    PgDump, PgDumpOptions, PgDumpSettings, ScanBudget, register_dump, register_table_factory,
+    AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings,
+    ScanBudget, register_dump, register_table_factory,
 };
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    DiagnosticSink, Finding, LocalFileSource, MEMORY_RESERVE, PlanNote, PlanNoteKind, ScanOptions,
+    DiagnosticSink, Finding, LocalFileSource, MEMORY_RESERVE, PlanNoteKind, ScanOptions,
     StatisticsRequest, map_file,
 };
 
@@ -34,24 +35,27 @@ async fn parsed_copy(dir: &Path) -> PathBuf {
     copy
 }
 
-/// The plan notes a sink heard; every other finding is registration's.
+/// The budget-quoting plan notes a sink heard, each with its account; every
+/// other finding is registration's, or a note quoting no budget.
 #[derive(Default)]
-struct Plans(Mutex<Vec<PlanNote>>);
+struct Plans(Mutex<Vec<BudgetedPlanNote>>);
 
 impl DiagnosticSink for Plans {
     fn report(&self, finding: &dyn Finding) {
-        if let Some(note) = finding.as_any().downcast_ref::<PlanNote>() {
+        if let Some(note) = finding.as_any().downcast_ref::<BudgetedPlanNote>() {
             self.0.lock().unwrap().push(note.clone());
         }
     }
 }
 
 impl Plans {
-    /// Whether a note since the last call says the budget seated no reader.
-    fn floored(&self) -> bool {
+    /// The account of a note since the last call saying the budget seated no
+    /// reader, if one did.
+    fn floored(&self) -> Option<BudgetAccount> {
         std::mem::take(&mut *self.0.lock().unwrap())
-            .iter()
-            .any(|note| matches!(note.kind, PlanNoteKind::AllocationBelowFloor { .. }))
+            .into_iter()
+            .find(|heard| matches!(heard.note.kind, PlanNoteKind::AllocationBelowFloor { .. }))
+            .map(|heard| heard.account)
     }
 }
 
@@ -85,7 +89,8 @@ async fn session(copy: &Path, allowance: u64, plans: &Arc<Plans>) -> SessionCont
 /// planned after it, and none planned before**: under an allowance the
 /// reserve takes whole the plan runs at its floor and says so, and a larger
 /// one stated seats it; stated small again, the next plan is floored while a
-/// plan already made keeps its draw.
+/// plan already made keeps its draw. **The floored note's account says which
+/// allowance bound it**, and what the live plan had drawn.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -95,18 +100,23 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     let query = format!("SELECT * FROM {EVENTS}");
 
     let _floored = plan(&ctx, &query).await;
-    assert!(plans.floored(), "the budget's own allowance seats no reader");
+    let account = plans.floored().expect("the budget's own allowance seats no reader");
+    assert_eq!(
+        (account.allowance, account.origin),
+        (Some(MEMORY_RESERVE), AllowanceOrigin::Stated)
+    );
 
     run(&ctx, &format!("SET pgdump.memory = {}", 8u64 << 30)).await.unwrap();
     let seated = plan(&ctx, &query).await;
-    assert!(!plans.floored(), "a stated allowance seats one");
+    assert!(plans.floored().is_none(), "a stated allowance seats one");
     let budget = ctx.state().config().get_extension::<ScanBudget>().unwrap();
     let drawn = budget.drawn();
     assert!(drawn > 0);
 
     run(&ctx, &format!("SET pgdump.memory = {MEMORY_RESERVE}")).await.unwrap();
     let _floored = plan(&ctx, &query).await;
-    assert!(plans.floored(), "the next plan is under the one stated now");
+    let account = plans.floored().expect("the next plan is under the one stated now");
+    assert_eq!((account.origin, account.drawn), (AllowanceOrigin::Setting, drawn));
     assert_eq!(budget.drawn(), drawn, "the live plan keeps what it drew");
     drop(seated);
     assert_eq!(budget.drawn(), 0);
@@ -128,11 +138,12 @@ async fn a_zero_allowance_returns_to_the_discovered_one() {
 
     run(&ctx, &format!("SET pgdump.memory = {}", 8u64 << 30)).await.unwrap();
     drop(plan(&ctx, &query).await);
-    assert!(!plans.floored(), "a stated allowance seats a reader");
+    assert!(plans.floored().is_none(), "a stated allowance seats a reader");
 
     run(&ctx, "SET pgdump.memory = 0").await.unwrap();
     drop(plan(&ctx, &query).await);
-    assert!(plans.floored(), "the budget's own allowance seats none");
+    let account = plans.floored().expect("the budget's own allowance seats none");
+    assert_eq!(account.origin, AllowanceOrigin::Stated, "the budget's own, not a setting");
     let state = ctx.state();
     let settings = state.config().options().extensions.get::<PgDumpSettings>().unwrap();
     assert_eq!(settings.memory, None, "the allowance is unstated again");

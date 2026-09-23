@@ -10,15 +10,18 @@
 //! as DataFusion does, so that channel is empty
 //! (`pgdump_query::column_divergences` said it already, per column) — and what
 //! a scan finds while reading is a plan metric, not a finding
-//! ([`crate::exec`]).
+//! ([`crate::exec`]). **A plan note quoting a budget is wrapped in a
+//! [`BudgetedPlanNote`]**, which says where that budget came from.
 
 use std::any::Any;
 use std::sync::Arc;
 
 use pgdump_query::{
-    ComparisonSemantics, DiagnosticSink, Finding, PlanNote, Severity, column_divergences,
+    ComparisonSemantics, DiagnosticSink, Finding, PlanNote, PlanNoteKind, Severity,
+    column_divergences,
 };
 
+use crate::budget::{AllowanceOrigin, BudgetAccount};
 use crate::dump::PgDump;
 use crate::table::PgDumpTable;
 
@@ -28,7 +31,9 @@ use crate::table::PgDumpTable;
 /// hears every table of every registered dump.
 ///
 /// [`Finding::as_any`] is the wrapped finding's, so a sink downcasting to the
-/// library's own record still reaches it; the subject is in the sentence.
+/// library's own record still reaches it — save a plan note quoting a budget,
+/// which is reached inside its [`BudgetedPlanNote`]; the subject is in the
+/// sentence.
 #[derive(Debug)]
 struct Located<'a> {
     subject: &'a str,
@@ -75,7 +80,8 @@ impl PgDumpTable {
     /// **`sink` is kept, and hears every scan's plan notes from then on**
     /// (`pgdump_query::PlanNote`), under the same `subject`: what the memory
     /// budget declined and what statistics let the scan skip, settled when
-    /// the scan is planned. A table reported again reports its scans to the
+    /// the scan is planned, one quoting a budget wrapped in a
+    /// [`BudgetedPlanNote`]. A table reported again reports its scans to the
     /// latest sink; one never reported reports no scan.
     pub fn report(&self, subject: &str, sink: Arc<dyn DiagnosticSink>) {
         let resolved = self.resolved_schema();
@@ -90,13 +96,207 @@ impl PgDumpTable {
     }
 
     /// Hand what one scan's plan settled to the sink this table was reported
-    /// to, if it was.
-    pub(crate) fn report_plan(&self, notes: &[PlanNote]) {
+    /// to, if it was, each note quoting a budget wrapped with `account`, the
+    /// scan's own.
+    pub(crate) fn report_plan(&self, notes: &[PlanNote], account: &BudgetAccount) {
         // Taken out of the lock, so a sink that reports this table again
         // does not wait on itself.
         let Some(reporting) = self.reporting().lock().unwrap().clone() else { return };
-        for finding in notes {
-            reporting.sink.report(&Located { subject: &reporting.subject, finding });
+        let subject = reporting.subject.as_str();
+        for note in notes {
+            if note.budget_bytes().is_some() {
+                let finding = &BudgetedPlanNote { note: note.clone(), account: account.clone() };
+                reporting.sink.report(&Located { subject, finding });
+            } else {
+                reporting.sink.report(&Located { subject, finding: note });
+            }
         }
+    }
+}
+
+/// A plan note quoting a budget ([`PlanNote::budget_bytes`]), with the
+/// account of what that budget was carved from (`docs/design/roadmap-P6-datafusion.md`,
+/// "Diagnostics: one sink"). The library states a budget and never where it
+/// came from (`docs/design/decisions.md`, "D64"), so this is the provider's
+/// half, as `pgdt`'s `plan_note_origin` is `pgdt`'s.
+///
+/// **Its message is the note's followed by one clause**: the allowance and
+/// its origin, the three holdings that came off it, and the settings that
+/// move the budget — each a key a user types as it stands. `pgdump.memory`
+/// always; `datafusion.runtime.memory_limit` where the session's pool states
+/// a limit; and, where the note's own sentence names the lever,
+/// `pgdump.chunk_size` for its smaller read chunk and
+/// `datafusion.execution.target_partitions` for its fewer sub-streams. What
+/// live scans drew is named and has no key (`KD38`). A caller wanting its own
+/// words reads [`BudgetedPlanNote::note`] and [`BudgetedPlanNote::account`]
+/// by downcasting ([`Finding::as_any`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetedPlanNote {
+    /// The library's note, as its plan settled it.
+    pub note: PlanNote,
+    /// What the scan's budget was carved from, when the scan drew it.
+    pub account: BudgetAccount,
+}
+
+impl Finding for BudgetedPlanNote {
+    fn severity(&self) -> Severity {
+        self.note.severity()
+    }
+
+    fn message(&self) -> String {
+        format!("{} — {}", self.note.message(), self.clause())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl BudgetedPlanNote {
+    /// Where the budget came from, and what moves it.
+    fn clause(&self) -> String {
+        let BudgetAccount { allowance, origin, pool_limit, resident, drawn } = &self.account;
+        let carved = match allowance {
+            Some(allowance) => {
+                let origin = match origin {
+                    AllowanceOrigin::Setting => "stated by pgdump.memory".to_string(),
+                    AllowanceOrigin::Stated => {
+                        "stated when the session's budget was built".to_string()
+                    }
+                    AllowanceOrigin::Limit { read_from } => {
+                        format!("the limit {} states", read_from.display())
+                    }
+                    AllowanceOrigin::HalfAvailable => {
+                        "half of what the machine reports available, no memory limit being found"
+                            .to_string()
+                    }
+                    // `ScanBudget` never pairs an allowance with this origin.
+                    AllowanceOrigin::NoneFound => "whose origin was not recorded".to_string(),
+                };
+                let pool = match pool_limit {
+                    0 => "the session's memory pool states no limit".to_string(),
+                    bytes => format!("the session's memory pool is granted {bytes} byte(s)"),
+                };
+                format!(
+                    "that budget was carved from an allowance of {allowance} resident byte(s), \
+                     {origin}, against which {pool}, the attached dumps' statistics hold \
+                     {resident} byte(s) and the scans still running had drawn {drawn} byte(s)"
+                )
+            }
+            None => "no allowance was found — no memory limit, and the machine reports no free \
+                     memory — so that budget is the library's own and nothing the session holds \
+                     came off it"
+                .to_string(),
+        };
+        let mut levers = vec!["pgdump.memory (the allowance)"];
+        if allowance.is_some() && *pool_limit > 0 {
+            levers.push("datafusion.runtime.memory_limit (the pool's grant)");
+        }
+        match self.note.kind {
+            PlanNoteKind::ParallelismBudgetLimited { .. } => {
+                levers.push("pgdump.chunk_size (the read chunk)");
+            }
+            PlanNoteKind::BatchSpanNarrowed { .. } => {
+                levers.push("datafusion.execution.target_partitions (the sub-streams asked for)");
+            }
+            PlanNoteKind::CompressedBlockPathDeclined { .. }
+            | PlanNoteKind::AllocationBelowFloor { .. }
+            | PlanNoteKind::StatisticsPruned { .. } => {}
+        }
+        format!("{carved}; the settings that move it: {}", levers.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn account(origin: AllowanceOrigin, pool_limit: u64) -> BudgetAccount {
+        BudgetAccount { allowance: Some(4 << 30), origin, pool_limit, resident: 7, drawn: 11 }
+    }
+
+    fn note(kind: PlanNoteKind) -> PlanNote {
+        PlanNote { kind }
+    }
+
+    /// **The note's sentence, then one clause**: the allowance and where it
+    /// came from, every holding by its number, and a key for each lever that
+    /// applies — the pool's only where it states a limit, the chunk and the
+    /// count only where the note's own sentence offers them.
+    #[test]
+    fn the_clause_names_the_account_and_the_keys_that_move_it() {
+        let floor = note(PlanNoteKind::AllocationBelowFloor { unit_bytes: 8, memory_bytes: 0 });
+        let read_from = PathBuf::from("/sys/fs/cgroup/memory.max");
+        let wrapped = BudgetedPlanNote {
+            note: floor.clone(),
+            account: account(AllowanceOrigin::Limit { read_from }, 1 << 20),
+        };
+        let message = wrapped.message();
+        assert!(message.starts_with(&format!("{} — ", floor.message())), "{message}");
+        for term in [
+            "an allowance of 4294967296 resident byte(s), the limit /sys/fs/cgroup/memory.max states",
+            "the session's memory pool is granted 1048576 byte(s)",
+            "statistics hold 7 byte(s)",
+            "had drawn 11 byte(s)",
+            "pgdump.memory",
+            "datafusion.runtime.memory_limit",
+        ] {
+            assert!(message.contains(term), "{term}: {message}");
+        }
+        for absent in ["pgdump.chunk_size", "target_partitions"] {
+            assert!(!message.contains(absent), "{absent}: {message}");
+        }
+        assert_eq!(wrapped.severity(), floor.severity());
+
+        let limited = BudgetedPlanNote {
+            note: note(PlanNoteKind::ParallelismBudgetLimited {
+                requested: 4,
+                planned: 1,
+                footprint: 8,
+                max_source_span: None,
+                memory_bytes: 8,
+            }),
+            account: account(AllowanceOrigin::Setting, 0),
+        };
+        let message = limited.message();
+        for term in [
+            "stated by pgdump.memory",
+            "the session's memory pool states no limit",
+            "pgdump.chunk_size",
+        ] {
+            assert!(message.contains(term), "{term}: {message}");
+        }
+        for absent in ["datafusion.runtime.memory_limit", "target_partitions"] {
+            assert!(!message.contains(absent), "{absent}: {message}");
+        }
+
+        let narrowed = BudgetedPlanNote {
+            note: note(PlanNoteKind::BatchSpanNarrowed {
+                stated_bytes: 16,
+                planned_bytes: 8,
+                workers: 2,
+                memory_bytes: 8,
+            }),
+            account: account(AllowanceOrigin::HalfAvailable, 0),
+        };
+        let message = narrowed.message();
+        assert!(message.contains("half of what the machine reports available"), "{message}");
+        assert!(message.contains("datafusion.execution.target_partitions"), "{message}");
+
+        let unfound = BudgetedPlanNote {
+            note: floor,
+            account: BudgetAccount {
+                allowance: None,
+                origin: AllowanceOrigin::NoneFound,
+                pool_limit: 1 << 20,
+                resident: 0,
+                drawn: 0,
+            },
+        };
+        let message = unfound.message();
+        assert!(message.contains("no allowance was found"), "{message}");
+        assert!(!message.contains("datafusion.runtime.memory_limit"), "{message}");
     }
 }

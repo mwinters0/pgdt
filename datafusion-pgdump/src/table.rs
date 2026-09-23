@@ -186,7 +186,7 @@ impl TableProvider for PgDumpTable {
         )
         .await
         .map_err(external)?;
-        self.report_plan(partitions.plan_notes());
+        self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema;

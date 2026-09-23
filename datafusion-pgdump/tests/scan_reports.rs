@@ -14,10 +14,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use arrow::util::pretty::pretty_format_batches;
+use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, collect};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, ScanBudget, register_dump};
+use datafusion_pgdump::{
+    AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget,
+    register_dump,
+};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     DiagnosticSink, Finding, LocalFileSource, MEMORY_RESERVE, PlanNote, PlanNoteKind, ScanOptions,
@@ -48,22 +52,39 @@ async fn gathered_copy(dir: &Path) -> PathBuf {
 }
 
 /// What a sink heard of the plan-note channel: each note, with its severity
-/// and sentence. Every other finding is registration's, and dropped.
+/// and sentence, and a budget-quoting one's account. Every other finding is
+/// registration's, and dropped.
 #[derive(Default)]
-struct Plans(Mutex<Vec<(Severity, String, PlanNote)>>);
+struct Plans(Mutex<Vec<(Severity, String, PlanNote)>>, Mutex<Vec<BudgetAccount>>);
 
 impl DiagnosticSink for Plans {
     fn report(&self, finding: &dyn Finding) {
-        if let Some(note) = finding.as_any().downcast_ref::<PlanNote>() {
-            let heard = (finding.severity(), finding.message(), note.clone());
-            self.0.lock().unwrap().push(heard);
-        }
+        let any = finding.as_any();
+        let note = match any.downcast_ref::<BudgetedPlanNote>() {
+            Some(budgeted) => {
+                self.1.lock().unwrap().push(budgeted.account.clone());
+                &budgeted.note
+            }
+            None => match any.downcast_ref::<PlanNote>() {
+                Some(note) => {
+                    assert_eq!(note.budget_bytes(), None, "a budget-quoting note arrives wrapped");
+                    note
+                }
+                None => return,
+            },
+        };
+        let heard = (finding.severity(), finding.message(), note.clone());
+        self.0.lock().unwrap().push(heard);
     }
 }
 
 impl Plans {
     fn take(&self) -> Vec<(Severity, String, PlanNote)> {
         std::mem::take(&mut self.0.lock().unwrap())
+    }
+
+    fn accounts(&self) -> Vec<BudgetAccount> {
+        std::mem::take(&mut self.1.lock().unwrap())
     }
 }
 
@@ -140,6 +161,64 @@ async fn a_scan_s_plan_notes_reach_its_table_s_sink_when_it_is_planned() {
     let heard = plans.take();
     assert!(
         matches!(heard.as_slice(), [(_, message, _)] if message.starts_with("o: row-group")),
+        "{heard:#?}"
+    );
+}
+
+/// **A note quoting a budget says what that budget was carved from**: the
+/// allowance and its origin, the session pool's limit, the dumps' resident
+/// statistics and what live scans had drawn, each in the sentence the sink
+/// hears beside the setting keys that move them; a note quoting none — a
+/// pruning filter's — reaches the sink as the library's own.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_budget_quoting_note_carries_the_scan_s_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = gathered_copy(dir.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let pool = 64usize << 20;
+    let runtime = RuntimeEnvBuilder::new().with_memory_limit(pool, 1.0).build_arc().unwrap();
+    let budget = Arc::new(ScanBudget::new(MEMORY_RESERVE));
+    let ctx = SessionContext::new_with_config_rt(
+        SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&budget)),
+        runtime,
+    );
+    let plans = Arc::new(Plans::default());
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&plans) as _).unwrap();
+    let resident = budget.resident();
+    assert!(resident > 0, "the gathered statistics are billed");
+
+    let _plan = plan(&ctx, &format!("SELECT * FROM {ORDERED}")).await;
+    let heard = plans.take();
+    let floors: Vec<&String> = heard
+        .iter()
+        .filter(|(_, _, note)| matches!(note.kind, PlanNoteKind::AllocationBelowFloor { .. }))
+        .map(|(_, message, _)| message)
+        .collect();
+    let [floor] = floors.as_slice() else { panic!("{heard:#?}") };
+    let accounts = plans.accounts();
+    let expected = BudgetAccount {
+        allowance: Some(MEMORY_RESERVE),
+        origin: AllowanceOrigin::Stated,
+        pool_limit: pool as u64,
+        resident,
+        drawn: 0,
+    };
+    // Every note of that plan quotes its budget, each with the one account.
+    assert_eq!(accounts, vec![expected; heard.len()], "{heard:#?}");
+    for term in [
+        format!("an allowance of {MEMORY_RESERVE} resident byte(s)"),
+        format!("granted {pool} byte(s)"),
+        format!("statistics hold {resident} byte(s)"),
+        "pgdump.memory".to_string(),
+        "datafusion.runtime.memory_limit".to_string(),
+    ] {
+        assert!(floor.contains(&term), "{term}: {floor}");
+    }
+
+    let _pruned = plan(&ctx, &format!("SELECT id FROM {ORDERED} WHERE id < 500")).await;
+    let heard = plans.take();
+    assert!(
+        heard.iter().any(|(_, _, note)| matches!(note.kind, PlanNoteKind::StatisticsPruned { .. })),
         "{heard:#?}"
     );
 }

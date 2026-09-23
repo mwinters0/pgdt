@@ -92,8 +92,18 @@ through its streaming decoder because one of its blocks would not fit
 ([Memory](#memory)).
 
 ```
-warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for
+warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for — that budget was carved from an allowance of 4294967296 resident byte(s), the limit /sys/fs/cgroup/memory.max states, against which the session's memory pool is granted 8589934592 byte(s), the attached dumps' statistics hold 7598 byte(s) and the scans still running had drawn 0 byte(s); the settings that move it: pgdump.memory (the allowance), datafusion.runtime.memory_limit (the pool's grant)
 ```
+
+**A warning that quotes a memory budget says where that budget came from**:
+the allowance and whether `pgdump.memory` stated it, a memory limit's file
+did, or half of what was free; what `--memory-limit` granted DataFusion's own
+operators; what the attached dumps' caches hold; and what queries still
+running had taken. Then it names the settings that move it, each as you
+would `SET` it: `pgdump.memory` always, `datafusion.runtime.memory_limit`
+where a pool limit was taken, and `pgdump.chunk_size` or
+`datafusion.execution.target_partitions` where the warning's own sentence
+offers a smaller read or fewer readers.
 
 `-q` keeps these warnings off and leaves errors on.
 

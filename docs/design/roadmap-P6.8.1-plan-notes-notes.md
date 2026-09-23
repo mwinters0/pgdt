@@ -41,8 +41,9 @@ for the severity.
 - **`EarlyStop` does not implement `Finding`.** The spec makes early stops
   a metric, and nothing drains them into a sink. `pgdt` still sums them
   after the query in `announce_early_stops`.
-- **The provider adds no provenance clause to a note that quotes a budget.**
-  The spec's "Diagnostics: one sink" now asks for one; 6.12 builds it.
+- **This slice added no provenance clause to a note that quotes a budget.**
+  [6.12](roadmap-P6.12-budget-account-notes.md) wraps one in
+  `BudgetedPlanNote`.
 - **`bytes_unread_early_stop` shows `0` wherever no stop was planned.** A
   per-partition counter is registered for every partition that runs. The
   pruning metric appears only where statistics were consulted.

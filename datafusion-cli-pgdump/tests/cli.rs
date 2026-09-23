@@ -88,7 +88,8 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
 
 /// **A scan's warnings reach stderr when it is planned, named**, and
 /// `--quiet` keeps them off: a `--memory-limit` beyond any allowance a host
-/// reports leaves the scans nothing, and the plan says it runs at its floor.
+/// reports leaves the scans nothing, and the plan says it runs at its floor —
+/// and what that budget was carved from, the pool's grant among it.
 #[tokio::test]
 async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
     let dir = tempfile::tempdir().unwrap();
@@ -107,6 +108,15 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
     let out = run(&args);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(floor(&text(&out.stderr)), 1, "{}", text(&out.stderr));
+    // The provider's clause, printed unchanged: the pool's grant is named by
+    // the setting that moves it.
+    assert!(
+        text(&out.stderr).lines().any(|line| line.contains("floor")
+            && line.contains(&format!("pool is granted {} byte(s)", 1024u64 << 40))
+            && line.contains("datafusion.runtime.memory_limit")),
+        "{}",
+        text(&out.stderr)
+    );
 
     let out = run(&[&["-q"], &args[..]].concat());
     assert!(out.status.success(), "{}", text(&out.stderr));
@@ -115,7 +125,8 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
 
 /// **The scan settings are `SET` like DataFusion's own and listed beside
 /// them**: an allowance stated too small for one reader floors the next scan,
-/// whatever the host reports, and `SHOW ALL` names every `pgdump.` key.
+/// whatever the host reports and saying the setting stated it, and `SHOW ALL`
+/// names every `pgdump.` key.
 #[tokio::test]
 async fn a_scan_setting_is_set_by_sql() {
     let dir = tempfile::tempdir().unwrap();
@@ -134,7 +145,9 @@ async fn a_scan_setting_is_set_by_sql() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.lines().any(|line| {
-            line.starts_with("warning: shop.logs.events: ") && line.contains("floor")
+            line.starts_with("warning: shop.logs.events: ")
+                && line.contains("floor")
+                && line.contains("an allowance of 1 resident byte(s), stated by pgdump.memory")
         }),
         "{stderr}"
     );

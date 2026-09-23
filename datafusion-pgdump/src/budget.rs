@@ -1,6 +1,7 @@
 //! The session's byte budget: one allowance every pgdump scan the session runs
 //! draws from (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use datafusion::catalog::Session;
@@ -51,7 +52,45 @@ use pgdump_query::{Parallelism, WorkerMemory};
 #[derive(Debug)]
 pub struct ScanBudget {
     allowance: Option<u64>,
+    origin: AllowanceOrigin,
     held: Mutex<Held>,
+}
+
+/// Where the allowance a scan's budget was carved from came from: the half of
+/// a budget-quoting plan note the library does not tell, provenance being the
+/// caller's fact (`docs/design/decisions.md`, "D64"), and what
+/// [`crate::BudgetedPlanNote`] names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AllowanceOrigin {
+    /// `pgdump.memory`, stated in the session ([`crate::PgDumpSettings`]).
+    Setting,
+    /// Stated by whoever built the budget ([`ScanBudget::new`]).
+    Stated,
+    /// A memory limit this process runs under, and the file that states it
+    /// ([`pgdump_query::MemoryLimit`]).
+    Limit { read_from: PathBuf },
+    /// Half of what the machine reports available, no limit being found.
+    HalfAvailable,
+    /// Nothing: no limit found, and no free memory reported.
+    NoneFound,
+}
+
+/// What one scan's budget was carved from, taken when the scan drew it: the
+/// allowance and where it came from, and the three holdings that came off it
+/// ([`ScanBudget::draw`]'s terms).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetAccount {
+    /// The resident allowance carved, or `None` where nothing stated or
+    /// discovered one, and the library's own discovery sized the scan.
+    pub allowance: Option<u64>,
+    /// Where [`BudgetAccount::allowance`] came from.
+    pub origin: AllowanceOrigin,
+    /// The session memory pool's `Finite` limit, `0` where it states none.
+    pub pool_limit: u64,
+    /// The statistics the dumps billed to the budget held resident.
+    pub resident: u64,
+    /// The read-buffer bytes the scans still alive had drawn.
+    pub drawn: u64,
 }
 
 /// What a [`ScanBudget`]'s holders have taken of it.
@@ -76,16 +115,34 @@ impl ScanBudget {
     /// what DataFusion holds resident beyond any pool limit it states, which a
     /// `pgdt` process does not hold.
     pub fn discover() -> Self {
-        let allowance = pgdump_query::discover_memory_limit()
-            .map(|limit| limit.bytes)
-            .or_else(|| pgdump_query::available_memory().map(|free| free / 2));
-        Self { allowance, held: Mutex::default() }
+        Self::discover_in(Path::new("/"))
+    }
+
+    /// [`ScanBudget::discover`] against an arbitrary filesystem root, the
+    /// seam [`pgdump_query::discover_memory_limit_in`] offers, so each origin
+    /// can be pinned on a machine that has only one of them.
+    pub fn discover_in(root: &Path) -> Self {
+        let (allowance, origin) = match pgdump_query::discover_memory_limit_in(root) {
+            Some(limit) => {
+                (Some(limit.bytes), AllowanceOrigin::Limit { read_from: limit.read_from })
+            }
+            None => match pgdump_query::available_memory_in(root) {
+                Some(free) => (Some(free / 2), AllowanceOrigin::HalfAvailable),
+                None => (None, AllowanceOrigin::NoneFound),
+            },
+        };
+        Self { allowance, origin, held: Mutex::default() }
     }
 
     /// A stated resident allowance, in bytes, carved exactly as a discovered
     /// one is.
     pub fn new(allowance: u64) -> Self {
-        Self { allowance: Some(allowance), held: Mutex::default() }
+        Self { allowance: Some(allowance), origin: AllowanceOrigin::Stated, held: Mutex::default() }
+    }
+
+    /// Where [`ScanBudget::allowance`] came from.
+    pub fn origin(&self) -> &AllowanceOrigin {
+        &self.origin
     }
 
     /// The resident allowance, or `None` where nothing stated or discovered
@@ -118,7 +175,7 @@ impl ScanBudget {
     /// budget's own allowance, affords, at what that many spend less whatever
     /// of the holdings the margin cannot fit beside them
     /// ([`Parallelism::within_shared`]). Held until the returned [`Draw`]
-    /// drops.
+    /// drops, which keeps the [`BudgetAccount`] of what it was carved from.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
@@ -137,6 +194,17 @@ impl ScanBudget {
         let mut held = self.held.lock().unwrap();
         let holdings = held.maps.saturating_add(pool);
         let allowance = stated.or(self.allowance);
+        let origin = match stated {
+            Some(_) => AllowanceOrigin::Setting,
+            None => self.origin.clone(),
+        };
+        let account = BudgetAccount {
+            allowance,
+            origin,
+            pool_limit: pool,
+            resident: held.maps,
+            drawn: held.scans,
+        };
         let parallelism = match allowance {
             Some(allowance) => {
                 Parallelism::within_shared(jobs, memory, allowance, held.scans, holdings)
@@ -148,7 +216,7 @@ impl ScanBudget {
             None => 0,
         };
         held.scans += bytes;
-        Draw { budget: Arc::clone(self), bytes, parallelism }
+        Draw { budget: Arc::clone(self), bytes, parallelism, account }
     }
 
     /// The budget `state` carries, or the process's own where a session was
@@ -202,12 +270,18 @@ pub(crate) struct Draw {
     budget: Arc<ScanBudget>,
     bytes: u64,
     parallelism: Parallelism,
+    account: BudgetAccount,
 }
 
 impl Draw {
     /// The arrangement the scan runs under.
     pub(crate) fn parallelism(&self) -> Parallelism {
         self.parallelism
+    }
+
+    /// What the scan's budget was carved from.
+    pub(crate) fn account(&self) -> &BudgetAccount {
+        &self.account
     }
 }
 
@@ -280,10 +354,78 @@ mod tests {
         assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 4);
         assert_eq!(budget.allowance(), Some(10 << 30));
 
-        let unfound = Arc::new(ScanBudget { allowance: None, held: Mutex::default() });
+        let unfound = Arc::new(ScanBudget {
+            allowance: None,
+            origin: AllowanceOrigin::NoneFound,
+            held: Mutex::default(),
+        });
         let stated = unfound.draw(24, memory, 0, Some(10 << 30));
         assert_eq!(stated.parallelism().jobs(), 7);
         assert_eq!(unfound.drawn(), 7 * per_worker);
+    }
+
+    /// **A discovered allowance keeps where it came from**: the limit and the
+    /// file stating it, else half of what the machine reports available, else
+    /// nothing; a stated one is `Stated`, and a `pgdump.memory` passed to a
+    /// draw is `Setting` for that draw alone.
+    #[test]
+    fn an_allowance_keeps_its_origin() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |path: &str, text: &str| {
+            let path = root.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        let found = ScanBudget::discover_in(root.path());
+        assert_eq!((found.allowance(), found.origin()), (None, &AllowanceOrigin::NoneFound));
+
+        write("proc/meminfo", "MemAvailable: 1024 kB\n");
+        let found = ScanBudget::discover_in(root.path());
+        assert_eq!(
+            (found.allowance(), found.origin()),
+            (Some(512 << 10), &AllowanceOrigin::HalfAvailable)
+        );
+
+        write("proc/self/cgroup", "0::/svc\n");
+        write("sys/fs/cgroup/svc/memory.max", "1073741824\n");
+        let found = ScanBudget::discover_in(root.path());
+        let read_from = root.path().join("sys/fs/cgroup/svc/memory.max");
+        assert_eq!(
+            (found.allowance(), found.origin()),
+            (Some(1 << 30), &AllowanceOrigin::Limit { read_from })
+        );
+
+        let stated = Arc::new(ScanBudget::new(10 << 30));
+        assert_eq!(stated.origin(), &AllowanceOrigin::Stated);
+        let draw = stated.draw(2, None, 0, Some(4 << 30));
+        assert_eq!(draw.account().origin, AllowanceOrigin::Setting);
+        assert_eq!(draw.account().allowance, Some(4 << 30));
+        assert_eq!(stated.draw(2, None, 0, None).account().origin, AllowanceOrigin::Stated);
+    }
+
+    /// **A draw's account is what the budget held when it drew**: the pool's
+    /// limit, the maps billed and the scans alive before it, its own draw not
+    /// among them.
+    #[test]
+    fn a_draw_s_account_is_what_it_was_carved_against() {
+        let per_worker = 1u64 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let budget = Arc::new(ScanBudget::new(10 << 30));
+        let _map = budget.hold(1 << 20);
+        let first = budget.draw(2, memory, 0, None);
+        assert_eq!(
+            first.account(),
+            &BudgetAccount {
+                allowance: Some(10 << 30),
+                origin: AllowanceOrigin::Stated,
+                pool_limit: 0,
+                resident: 1 << 20,
+                drawn: 0,
+            }
+        );
+        let second = budget.draw(2, memory, 128 << 20, None);
+        assert_eq!(second.account().pool_limit, 128 << 20);
+        assert_eq!(second.account().drawn, 2 * per_worker);
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,

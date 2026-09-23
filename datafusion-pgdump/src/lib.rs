@@ -40,12 +40,13 @@ use std::sync::Arc;
 use datafusion::prelude::SessionContext;
 use pgdump_query::{DiagnosticSink, TableName};
 
-pub use budget::ScanBudget;
+pub use budget::{AllowanceOrigin, BudgetAccount, ScanBudget};
 pub use catalog::{PgDumpCatalog, UNQUALIFIED_SCHEMA};
 pub use dump::{PgDump, PgDumpOptions};
 pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
+pub use report::BudgetedPlanNote;
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
 
