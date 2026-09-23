@@ -500,16 +500,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdt query` bills a cache's whole statistics, though its replay drops
-  the map** (`M130`). `Discovered::resolve` (`pgdt/src/main.rs`) holds what
-  `cache::claim` sized for both scanning commands, so a `query` over a large
-  cache runs fewer readers, or a smaller plain budget, for its whole run —
-  yet `map_for_query` (`pgdump_query/src/stream.rs`) drops the index once the
-  mapping pass settles, and the replay keeps only the matched blocks. Made so
-  because one `Parallelism` serves both passes (`QueryOptions::parallelism`
-  beside `scan_options`), and the mapping pass holds the whole map while its
-  workers read whatever the cache lacks. Reconsidering means a second carving
-  for the replay, billed only the matched blocks' statistics — a library
-  change, the plan being cut inside `table_stream_partitions` — or billing
-  `query` nothing, as before.
