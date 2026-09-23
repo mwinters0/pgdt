@@ -64,6 +64,6 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M136 | | `--where`: a `(` before a keyword is structure, as D60 states | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
+| M136 | 2026-09-23 | `--where`: a `(` before a keyword is structure, as D60 states | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
 | M137 | | A type's internal name resolves as its SQL spelling; strikes `KD44` | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
 | M138 | | Every stale figure re-taken by `measure.py --all`, launched detached once `M136` and `M137` land | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |

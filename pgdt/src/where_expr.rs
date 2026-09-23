@@ -54,9 +54,8 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
 /// makes the refused set *exactly* the disagreeing set by construction.
 ///
 /// **The check is on the `--filter` path alone.** A `--where` leaf is what
-/// came *out* of this tokenizer, and text that is one leaf inside its
-/// expression need not be one on its own — `--where 'x=(and b)'` cuts a leaf
-/// `and b`, whose leading `and` had a paren before it there and nothing here.
+/// came *out* of this tokenizer, and its edges met a boundary there as they
+/// meet the string's ends here, so it is one leaf on its own too.
 ///
 /// A term with no operator, such as `and is null`, is refused too even though
 /// it returns no wrong rows: a string one flag accepts and the other rejects
@@ -136,8 +135,8 @@ fn preceding_word(bytes: &[u8], i: usize) -> &[u8] {
 }
 
 /// A keyword is recognised only where structure could legitimately be —
-/// against whitespace, a paren on the matching side, or the end of the
-/// string.
+/// against whitespace, a paren, or an end of the string, on both sides
+/// (`docs/design/decisions.md`, "D60").
 ///
 /// Stricter than a word boundary, deliberately: under a bare word boundary
 /// `--where 'tag=and'` would tokenize as the term `tag=` followed by `AND`,
@@ -148,7 +147,8 @@ fn preceding_word(bytes: &[u8], i: usize) -> &[u8] {
 /// leaf grammar's; splitting them would make `--where 'v IS NOT NULL'` a
 /// negation of the leaf `NULL`.
 fn keyword_at(bytes: &[u8], i: usize) -> Option<(usize, Token<'static>)> {
-    let before_ok = i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b')';
+    let before_ok =
+        i == 0 || bytes[i - 1].is_ascii_whitespace() || matches!(bytes[i - 1], b'(' | b')');
     if !before_ok {
         return None;
     }
@@ -413,6 +413,18 @@ mod tests {
         assert_eq!(ok("not (a=1 or b=2)"), "not(or(a=1, b=2))");
         assert_eq!(ok("((a=1))"), "a=1");
         assert_eq!(ok("(a=1)and(b=2)"), "and(a=1, b=2)", "a paren is its own boundary");
+    }
+
+    /// **A paren is a boundary on either side of a keyword**, so a group may
+    /// open on a negation with no space between.
+    #[test]
+    fn a_group_opens_on_a_keyword() {
+        assert_eq!(ok("(not a=1)"), "not(a=1)");
+        assert_eq!(ok("(NOT a=1)"), "not(a=1)");
+        assert_eq!(ok("a=1 and (not b=2)"), "and(a=1, not(b=2))");
+        assert_eq!(ok("a=1 and(not b=2)"), "and(a=1, not(b=2))");
+        assert_eq!(ok("(\"not a\"=1)"), "not a=1", "a quoted name stays a name");
+        assert!(err("(and a=1)").contains("`AND`"), "{}", err("(and a=1)"));
     }
 
     /// `NOT NOT` is two negations, not a fault — the rule is `not := NOT not`

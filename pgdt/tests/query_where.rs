@@ -78,6 +78,14 @@ fn negation_drops_the_null_row_and_is_distinct_from_keeps_it() {
     assert_eq!(kept(&["--where", "is_active is distinct from t"]), ["beta", ""]);
 }
 
+/// A group may open on its negation with no space between, the paren being
+/// the keyword's boundary as whitespace is.
+#[test]
+fn a_group_opening_on_not_negates() {
+    assert_eq!(kept(&["--where", "(not is_active=t)"]), ["beta"]);
+    assert_eq!(kept(&["--where", "name=beta and(NOT is_active=t)"]), ["beta"]);
+}
+
 /// The two flags compose, and the composition is a conjunction: the
 /// expression and every term must hold.
 #[test]
