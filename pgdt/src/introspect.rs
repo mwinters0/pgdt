@@ -43,9 +43,8 @@
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
 //! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
 //! process, C included — `liblzma` is the active `.xz` backend, so its share
-//! of a reader's decoder working set (`xz_seek::Layout::decode_footprint`,
-//! which also counts xz-seek's own input chunk) is invisible to one and fully
-//! present in the other. Their difference is therefore not retention.
+//! of a reader's decoder working set (`xz_seek::Layout::decoder_bytes`) is
+//! invisible to one and fully present in the other. Their difference is therefore not retention.
 //!
 //! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
 //! that variable is unset — see [`report`].
@@ -297,14 +296,15 @@ mod enabled {
     }
 
     /// What the two scopes mean, in the report itself rather than only in the
-    /// document that explains it. The number is
-    /// `xz_seek::Layout::decode_footprint` at an 8 MiB dictionary, xz-seek's
-    /// input chunk included (`docs/design/decisions.md`, "D15").
+    /// document that explains it. What it names is
+    /// `xz_seek::Layout::decoder_bytes`, not `decode_footprint`: xz-seek's
+    /// input chunk passes through `GlobalAlloc` (`docs/design/decisions.md`, "D15").
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
         "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",
-        "# included: `liblzma` is the active `.xz` backend and allocates ~9.47 MB\n",
-        "# a reader the counter cannot see. The two are not commensurable, and\n",
+        "# included: `liblzma` is the active `.xz` backend and allocates its\n",
+        "# dictionary and state (`xz_seek::Layout::decoder_bytes`) a reader,\n",
+        "# which the counter cannot see. The two are not commensurable, and\n",
         "# their difference is not retention.\n",
     );
 

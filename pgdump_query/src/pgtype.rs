@@ -1045,12 +1045,12 @@ fn builtin_scalar(
     use arrow::datatypes::TimeUnit::Microsecond;
     let agrees = ComparisonPlan::agrees;
     let text = ComparisonPlan::AS_TEXT;
-    // deficiency: KD44 — only the SQL spellings `format_type` writes are
-    // arms here, so a declaration by a type's internal name (`int4`, `int8`,
-    // `float8`, `bool`, `timestamptz`, …), which PostgreSQL reads as the same
-    // type, resolves `Unknown`: a weaker type, never a wrong one. **(c)
-    // unowned**; promoted by a hand-written or non-`pg_dump` file declaring
-    // one, `pg_dump` never doing so.
+    // deficiency: KD44 — only SQL spellings are arms here, so a declaration by
+    // a type's internal name (`int4`, `int8`, `float8`, `bool`, `timestamptz`,
+    // …), which PostgreSQL reads as the same type, resolves `Unknown`: a
+    // weaker type, never a wrong one. `format_type` writes one itself, `bpchar`
+    // for a `character` column with no typmod. **(b)**, queued in
+    // `docs/design/out-of-band.md`'s ledger.
     Some(match base.to_ascii_lowercase().as_str() {
         "smallint" => (Int16, agrees(K::Int)),
         "integer" => (Int32, agrees(K::Int)),

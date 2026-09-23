@@ -21,8 +21,8 @@ parallel figures are warm-tmpfs). Evidence: `scan-throughput-*`, `parallel-scan-
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves where being wrong kills the
-process. `MEMORY_MARGIN_PERCENT` binds the resolved *count*, not the budget (a budget ceiling never
-binds once `BufferPool::slots` clamps). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
+process. `MEMORY_MARGIN_PERCENT` binds the resolved *count*, and the budget only by the part of `held`
+the ceiling cannot absorb (`within_shared`). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
 per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary
 `.xz`; clearing that gate picks one number for two questions. Evidence: `reserve`, `chunk-size`.
 
@@ -57,9 +57,9 @@ caller decides. The scheduler's only refusal is a memory floor against the
 file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
 
 ### D8 The cut is one unit wide, sized apart from the charge
-`BOUNDARIED_PARTITION_UNITS = 1`; `window_end` sizes the cut, `partition_bytes` the charge. A wider
-cut wins at two stated readers and loses at the flagless default. Rejected: deriving width from the
-charge. Reopens: an explanation of the flagless collapse.
+`BOUNDARIED_PARTITION_UNITS = 1`; on a boundaried source `window_end` sizes the cut, `partition_bytes` the
+charge, and on `Anywhere` the cut is the charge (`KD25`). A wider cut wins at two stated readers and loses at
+the flagless default. Rejected: deriving width from the charge. Reopens: an explanation of the flagless collapse.
 
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on release: a chunk read and
@@ -145,7 +145,7 @@ back-fill goes on for a file it knows was rewritten; re-mapped, cache data is re
 `SourceIdentity`'s variants are read through signal accessors, so two kinds compare rather than refuse.
 **Two questions, split by tense.** Between runs a weak signal — modification, and where a source was
 fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term
-alone, absence included. During one the cadence follows the cost of asking: `SourceWatch` re-reads the open
+alone, a missing time included. During one the cadence follows the cost of asking: `SourceWatch` re-reads the open
 descriptor at the save's cadence (D62) and at run end, aborting without saving or removing, where a server
 compares every ranged GET against the probe's validators and one stating neither is read unpinned.
 
@@ -274,8 +274,8 @@ An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `
 every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
 ### D40 The comparison is decided per declared type, in the same arm
-`builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; six
-types share `Utf8View` under six comparisons, and `predicate.rs` never reads the Arrow type. Arrow
+`builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
+sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. Arrow
 semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`); no
 term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
 text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column
@@ -283,8 +283,8 @@ ordered as DataFusion does — a `TODO` there; for `macaddr`, refusing a literal
 keeping the octet key for one that is, a per-literal switch bought for range pruning.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
-An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in
-`domain_terminal`. All `Typename` spellings collapse to element plus one level (I21, I28);
+An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided on
+`domain_terminal`'s result by `resolve_array` and `array_comparison`. All `Typename` spellings collapse to element plus one level (I21, I28);
 normalizing on parse would edit the user's DDL. Containers recurse unguarded (I24): `KD3`, `KD4`.
 
 ### D42 `interval` is the struct; special values are decode failures
@@ -370,9 +370,9 @@ column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not s
 holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
-`*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. `jsonb`
-(its canonical form is untypeable), hex digits of either case, and integers (`str::parse`, field and
-literal alike) are wider; `boolean` deliberately not. A literal finer than the column's scale is
+`*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —
+one value's other spellings, field and literal alike, and `jsonb` (its canonical form is untypeable) — are
+listed on `accepted_form` alone; `boolean` deliberately not. A literal finer than the column's scale is
 refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
@@ -495,10 +495,10 @@ sizing an attribution input by row width. Evidence: `statistics-gathering`.
 `TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec`
 *holds* one instead of parenting it: a parent's child can be replaced under it. Rows are `Exact` off block
 counts; a bound where every group of every block contributed and the stored text is the value, `Inexact`
-where it still bounds, all `Inexact` under a pushed filter or fetch as in v55's file sources. It answers
-over a value its Arrow type cannot hold (`KD8`) that a read refuses, as D54 does. Rejected: `Absent` for a
-partial bound, giving up cardinality; withholding NULL counts where a bound fails to decode, buying only
-that refusal. Code: `datafusion-pgdump/src/{exec,statistics}.rs`, `summary.rs`. Evidence: `tests/statistics.rs`.
+where it still bounds, all `Inexact` under a pushed filter or a fetch below the exact row count, as in v55's
+file sources. It answers over a value its Arrow type cannot hold (`KD8`) that a read refuses, as D54 does.
+Rejected: `Absent` for a partial bound, giving up cardinality; withholding NULL counts where a bound fails
+to decode, buying only that refusal. Code: `datafusion-pgdump/src/{exec,statistics}.rs`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

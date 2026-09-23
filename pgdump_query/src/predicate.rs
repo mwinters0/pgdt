@@ -451,8 +451,9 @@ impl NumericKey {
         (self.int.capacity() + self.frac.capacity()) as u64
     }
 
-    /// `[-]digits[.digits]`, the only shape `numeric_out` writes: no
-    /// exponent, no sign but `-`, and at least one digit somewhere — the same
+    /// `[-]digits[.digits]`: no exponent, no sign but `-`, at least one digit
+    /// somewhere, and a point at either end or leading zeros allowed, which
+    /// `numeric_out` never writes ([`accepted_form`] lists them). It is the same
     /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
     /// typmod'd column. The two differ only on the typmod, which a bare
     /// `numeric` has none of.
@@ -1947,8 +1948,8 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 ///
 /// That second half is advice rather than the boundary of what is accepted:
 /// [`order_key`]'s integer arms are `str::parse`, so they take a leading `+`
-/// and leading zeros no `*_out` writes (`docs/design/decisions.md`, "D55",
-/// whose exception this is). There is no per-leaf clause list, [`nested_key`]
+/// and leading zeros no `*_out` writes, one of the exceptions [`accepted_form`]
+/// lists (`docs/design/decisions.md`, "D55"). There is no per-leaf clause list, [`nested_key`]
 /// answering only "not a value of this type".
 fn nested_accepted_form(plan: &NestedCompare) -> String {
     // The one form with no leaf clause to add, because it has no leaf: an

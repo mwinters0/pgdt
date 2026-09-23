@@ -164,7 +164,7 @@ impl SourceIdentity {
     }
 
     /// Where the object was fetched from, or `None` for a source that was not
-    /// fetched from anywhere (D19).
+    /// fetched from anywhere (D87).
     fn origin(&self) -> Option<&str> {
         match self {
             SourceIdentity::LocalFile { .. } => None,
@@ -204,7 +204,7 @@ impl SourceIdentity {
     ///
     /// **Two sources that were both fetched from nowhere agree**, which is
     /// what makes `location` inert on a local file rather than a refusal
-    /// nobody asked for (D19).
+    /// nobody asked for (D87).
     fn origin_against(&self, live: &Self) -> OriginMatch {
         match (self.origin(), live.origin()) {
             (cached, live) if cached == live => OriginMatch::Agrees,
@@ -244,7 +244,7 @@ impl SourceIdentity {
 /// **Advisory by default and only two states**, where the modification signal
 /// has four: an absent origin is not silence, it is the positive statement
 /// that a source was not fetched from anywhere, so two of them agree and
-/// [`StrictIdentity::location`] binds nothing on a local file (D19).
+/// [`StrictIdentity::location`] binds nothing on a local file (D87).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OriginMatch {
     /// Both were fetched from the same place, or neither was fetched at all.

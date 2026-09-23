@@ -393,9 +393,9 @@ a phase nobody has sliced.
 
 - **KD44** — a column declared by a type's internal name (`int4`, `float8`,
   `bool`, …) resolves `Unknown`, though PostgreSQL reads it as the type the SQL
-  spelling names: a weaker type, never a wrong one. **(c) unowned**; promoted
-  by a hand-written or non-`pg_dump` file declaring one, which `pg_dump` never
-  writes. Detail: `pgdump_query/src/pgtype.rs`.
+  spelling names: a weaker type, never a wrong one. `pg_dump` writes one, an
+  unbounded `character` column's `bpchar`. **(b) owned by `M137`**. Detail:
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
