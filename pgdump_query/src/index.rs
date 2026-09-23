@@ -54,8 +54,10 @@ pub struct ArrayShape {
 impl ArrayShape {
     /// Fold one still-COPY-escaped field into this column's census. The
     /// field is not decoded first: neither `{` nor the `[lb:ub]=` prefix is
-    /// in COPY TEXT's escape set (I15). Anything that is not an array literal
-    /// contributes nothing.
+    /// in COPY TEXT's escape set (I15). A field that does not open with `{`,
+    /// past any `[lb:ub]=` prefix, contributes nothing; one that does counts
+    /// whatever its column's type, the census being type-blind (D35) and read
+    /// only for a column resolved to an array.
     ///
     /// Dimensionality is the **leading brace run** (I25): `array_out` opens
     /// with exactly `ndim` braces and force-quotes any element containing a
@@ -177,8 +179,9 @@ pub struct CopyBlock {
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order. Every mapping pass censuses
     /// (`docs/design/decisions.md`, "D35"), so a block in the map always
-    /// carries one, and an empty vector means "censused, saw no array-shaped
-    /// literal". Shorter than `header.columns` never happens; *longer* only
+    /// carries one: a column that saw no array-shaped literal holds the default
+    /// shape, and the vector is empty only for a header naming no columns.
+    /// Shorter than `header.columns` never happens; *longer* only
     /// where a row is wider than its header, which a query refuses.
     pub array_shapes: Vec<ArrayShape>,
 }
@@ -616,8 +619,10 @@ mod tests {
     }
 
     /// The census runs over every field of a row it did not type-check, so
-    /// non-array values reach it and none of them may contribute: a composite
-    /// opens with `(`, and a text value starting `[` has no `=`-then-`{`.
+    /// non-array values reach it, and none of these may contribute: a
+    /// composite opens with `(`, and a text value starting `[` has no
+    /// `=`-then-`{`. A text value opening with `{` does count, and is read
+    /// only if its column resolves to an array.
     #[test]
     fn a_field_that_is_not_an_array_literal_contributes_nothing() {
         for field in ["", "\\N", "42", "(1,2)", "[hello]", "[a=b]", "hello {world}", "[1:2]=x"] {

@@ -46,6 +46,16 @@ pub(crate) fn table_statistics(
             if matches!(resolved.schema.field(i).data_type(), DataType::Dictionary(..)) {
                 return statistics;
             }
+            // deficiency: KD42 — a float's stored bound is gathered in
+            // PostgreSQL's order, where `-0` and `0` tie and the first seen
+            // stands, while DataFusion's `MIN`/`MAX` over a float column orders
+            // by `total_cmp`, `-0` below `0`. So a column holding both zeros
+            // can be handed an `Exact` minimum of `0` where reading it answers
+            // `-0`, or a maximum of `-0` where it answers `0`: a wrong answer
+            // with no error. **(c) unowned**; promoted by a float column
+            // holding both zeros at an extreme, the fix being the zero's sign
+            // kept as `total_cmp` would at the extremes, or a zero bound handed
+            // over `Inexact`.
             statistics.min_value = bound(column.min.as_ref(), column.bounds_complete);
             statistics.max_value = bound(column.max.as_ref(), column.bounds_complete);
             statistics

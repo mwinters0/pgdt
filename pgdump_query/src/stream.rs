@@ -447,8 +447,9 @@ fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool {
 /// frontier, which it cannot infer; [`splice`] places its spans after the
 /// frontier (`docs/design/decisions.md`, "D48").
 ///
-/// **Not every completed block is persisted; every exit but an error is** — see
-/// [`SaveThrottle`]. **`index.metadata` is restated at each `\connect`ed
+/// **Not every completed block is persisted; every exit past the first read
+/// but an error is** — see [`SaveThrottle`]; the two that return before one,
+/// the map unchanged, save nothing. **`index.metadata` is restated at each `\connect`ed
 /// database's first `COPY` block**, which per I1 is one of the two boundaries
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
@@ -918,7 +919,7 @@ const SAVE_THROTTLE_K: u32 = 20;
 /// **The rule is self-tuning, not an interval**: skip a block's save unless at
 /// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
 /// since it. **Exits are exempt** — EOF, a settled target and an interrupt all
-/// save unconditionally.
+/// save unconditionally once the pass has read anything.
 ///
 /// **The gate also decides when the map is rebuilt.** `stream::splice` fires
 /// at the openings of this gate rather than at every `CopyEnd` (see
@@ -993,8 +994,9 @@ pub struct MapRun {
     /// under this run's allowance or an earlier, larger one
     /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run the
     /// interrupt reached before the back-fill finished, which is where the
-    /// count is taken, and for one that stated no allowance
-    /// (`docs/design/decisions.md`, "D85").
+    /// count is taken. A run stating no allowance declines nothing itself, so
+    /// it counts only a block an earlier run declined whose held statistics
+    /// already cover this request (`docs/design/decisions.md`, "D85").
     pub declined_statistics: usize,
     /// What the run's statistics held when it returned, by term, and the most
     /// they held (`docs/design/decisions.md`, "D81").
@@ -1788,7 +1790,7 @@ impl<'a> TableStream<'a> {
     /// sub-stream and always emitting the lowest of these offsets re-assembles
     /// the serial order. It is a *start*, not the end [`Self::resume_token`]
     /// reports. A batch carrying no rows — reachable only through a `max_rows`
-    /// of 0 — reports the scanner's position instead, so the value is monotone
+    /// or `max_bytes` of 0 — reports the scanner's position instead, so the value is monotone
     /// within a sub-stream either way.
     pub fn batch_source_offset(&self) -> u64 {
         *self.batch_offset.lock().unwrap()
@@ -1955,7 +1957,7 @@ struct ReplayPlan {
     query_options: QueryOptions,
     metadata: Option<DumpMetadata>,
     table: TableColumns,
-    /// Every matched block with a column list, resolved and keyed by the
+    /// Every matched block, resolved and keyed by the
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
     blocks: BTreeMap<u64, PlannedBlock>,
@@ -2016,8 +2018,7 @@ struct Pruned {
 /// ([`prune_block`]), where a sorted block's rows stop being read, and the
 /// [`PlanNote`] saying what was skipped. Nothing is pruned or stopped where
 /// the caller turned statistics off or the filter reads no field — no
-/// statistic can rule out a row of a filter that keeps every one — nor in a
-/// block with no [`PlannedBlock`], whose field count only its first row says.
+/// statistic can rule out a row of a filter that keeps every one.
 ///
 /// **A block whose statistics keep every group is left out of `kept`**, so
 /// it is replayed exactly as an unpruned query replays it, bar its stop.
@@ -2380,7 +2381,8 @@ fn validate_request(
 
 /// Pass 1 of a query, whole: load or start the map, capture the preamble,
 /// extend the map until this query's table is settled, then narrow the
-/// name-only matches to at most one candidate and take their census. Yields
+/// name-only matches to at most one candidate, whose census the plan takes
+/// ([`TableColumns`]). Yields
 /// no rows — see the module docs. **Both entry points run exactly this**, so a
 /// partitioned replay maps the file once rather than once per sub-stream.
 async fn map_for_query(
@@ -3076,7 +3078,8 @@ fn compressed_block_path_declined(
 /// budget that cannot seat `jobs` readers beside it narrows the span before it
 /// cuts the count, stopping at `chunk_size` — the length this caller's replay
 /// will announce to the source, and so the unit a batch actually pins. The
-/// third return value is what was charged, which the caller writes back onto
+/// third return value is the span charged — the stated one where none was,
+/// every block's advice retaining by partition — which the caller writes back onto
 /// the sub-streams' own `QueryOptions` so the batches are the size the plan
 /// was solved for.
 ///
@@ -3773,8 +3776,7 @@ pub fn table_stream<'a>(
 /// sub-stream's first block resolves, so a caller wanting the schema before
 /// consuming much reads it off the *first* sub-stream after its first poll:
 /// that sub-stream's first segment is the first block's and publishes its
-/// schema on entry, holding a row or not — but for a block whose header names
-/// no columns, which publishes at its first row. [`TableStream::resume_token`] is stamped with the
+/// schema on entry, holding a row or not. [`TableStream::resume_token`] is stamped with the
 /// partition it came from, so feeding one back to [`table_stream`] is
 /// `Error::ResumeQueryMismatch`: resuming a partitioned replay is not
 /// supported.

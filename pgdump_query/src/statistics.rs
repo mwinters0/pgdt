@@ -88,8 +88,8 @@ pub struct StatisticsRequest {
     /// the 90th-percentile group ([`max_rows_group`]) — and **there is no
     /// default**: a maximum applies only where a caller states one.
     ///
-    /// It is the only thing that makes a block finer than
-    /// [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
+    /// Short of a stated group size, it is the only thing that makes a block
+    /// finer than [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
     /// both the minimum and [`BLOCK_MAX_STATISTICS_GROUPS`]**, which it turns off
     /// ([`Self::group_cap`]) — a person sensitive to what a query reads asked
     /// for the groups, and neither a default nor a bound on memory quietly

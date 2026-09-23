@@ -242,7 +242,7 @@ impl SourceIdentity {
 /// (`docs/design/decisions.md`, "D87").
 ///
 /// **Advisory by default and only two states**, where the modification signal
-/// has three: an absent origin is not silence, it is the positive statement
+/// has four: an absent origin is not silence, it is the positive statement
 /// that a source was not fetched from anywhere, so two of them agree and
 /// [`StrictIdentity::location`] binds nothing on a local file (D19).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,8 +276,8 @@ impl OriginMatch {
 /// What the weak half of identity said when a cache was checked against the
 /// live source it was written for (`docs/design/decisions.md`, "D21").
 ///
-/// **Three states rather than a `bool`, because [`StrictIdentity::time`]
-/// refuses on two of them.** A source that offers no modification signal at
+/// **Four states rather than a `bool`, because [`StrictIdentity::time`]
+/// refuses on three of them.** A source that offers no modification signal at
 /// all and a cache that recorded none agree on nothing: they are silent, and
 /// silence is exactly what a caller asking for a guarantee is refused on.
 ///

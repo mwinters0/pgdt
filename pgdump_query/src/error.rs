@@ -97,10 +97,10 @@ pub enum Error {
     SourceChangedWhileRead { differences: String },
     /// A weak identity signal the caller asked to *bind* does not hold, or
     /// cannot be had at all. Raised by `crate::cache::CacheMode::load` under
-    /// `crate::cache::StrictIdentity::time`, where the advisory
-    /// `crate::diagnostic::DiagnosticKind::CacheMtimeChanged` would otherwise
-    /// be. Absence is a failure under a selected term: silence is what strict
-    /// identity exists to refuse.
+    /// `crate::cache::StrictIdentity::time` or `location`, where an advisory
+    /// diagnostic would otherwise be. Under `time` a missing modification
+    /// signal fails too, silence being what strict identity exists to refuse;
+    /// under `location` two sources fetched from nowhere agree.
     ///
     /// `term` is which selector was not met — `time` or `location` — and
     /// `unmet` names what was compared, not only the verdict, so the refusal

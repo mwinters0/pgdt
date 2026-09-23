@@ -117,8 +117,9 @@ pub enum DiagnosticKind {
     /// now has — an mtime locally, a `Last-Modified` remotely. Not an
     /// invalidation by default (`docs/design/decisions.md`, "D21"); a caller
     /// that asked for `crate::cache::StrictIdentity::time` is refused instead
-    /// of being handed this. A *size* mismatch is an invalidation either way,
-    /// and never reaches this channel because the cache is discarded outright.
+    /// of being handed this. A *size* mismatch never reaches this channel: the
+    /// run is refused, the cache left as it is (`docs/design/decisions.md`,
+    /// "D20").
     CacheMtimeChanged,
     /// The stronger half of the same signal: both sides carry a server's
     /// **entity tag** and the two differ, which is the server's own statement
@@ -148,7 +149,7 @@ pub enum DiagnosticKind {
     /// The index was loaded from a retained `.dtcache` with no live dump file
     /// to check it against (`docs/design/decisions.md`,
     /// "The compressed source and the cache") — unverified, there being no
-    /// recorded size/mtime to compare. Pushed unconditionally by
+    /// live source to compare its recorded size and mtime with. Pushed unconditionally by
     /// [`crate::cache::CacheMode::load_offline`] on every successful
     /// cache-only load, `Incomplete` included.
     CacheOffline,

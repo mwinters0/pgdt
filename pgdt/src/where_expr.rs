@@ -50,8 +50,8 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
 ///
 /// **The refusal set is the tokenizer's, not a copy of it**
 /// (`docs/design/decisions.md`, "D60"): a term is accepted only where
-/// [`tokenize`] gives back a single [`Token::Leaf`], which makes the refused
-/// set *exactly* the disagreeing set by construction.
+/// [`tokenize`] gives back a single [`Token::Leaf`], or nothing at all, which
+/// makes the refused set *exactly* the disagreeing set by construction.
 ///
 /// **The check is on the `--filter` path alone.** A `--where` leaf is what
 /// came *out* of this tokenizer, and text that is one leaf inside its

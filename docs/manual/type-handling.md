@@ -499,8 +499,9 @@ though the dump never declares it. Nesting composes without special cases:
 a composite array is `List(Struct(…))`, a composite with a `text[]` field is
 `Struct("label": Utf8View, "tags": List(Utf8View))`, and an array of ranges is
 `List(Range<…>)` — the same Arrow type a multirange gets, since they are the
-same shape; the declared PostgreSQL type on the same `pgdt info` line is what
-tells them apart.
+same shape; the declared PostgreSQL type — on the table's `columns:` line in
+`pgdt info`, above the Arrow types `--detail` lists, and beside the Arrow type
+in `--json` — is what tells them apart.
 
 However an array column was declared, it is the same type: PostgreSQL accepts
 `integer[]`, `integer[3]`, `integer[][]`, `integer[3][4]`, `integer ARRAY` and

@@ -957,8 +957,10 @@ impl Parallelism {
     /// bounds**: [`MEMORY_RESERVE`] covers the process however many
     /// arrangements run inside it, while every byte another arrangement holds
     /// is a byte of the cap and of [`margin_allowance`]'s ceiling this one
-    /// cannot spend. An allowance already drawn to nothing leaves one worker
-    /// on a budget of zero, the floor [`Parallelism::within`] has too.
+    /// cannot spend. An allowance already drawn to nothing leaves a source
+    /// recommending a per-worker cost one worker on a budget of zero, the
+    /// floor [`Parallelism::within`] has too, and one recommending none its
+    /// count on that zero.
     ///
     /// **What is `held` comes off the ceiling alone**, as
     /// [`statistics_allowance`] bills statistics (`docs/design/decisions.md`,
@@ -972,7 +974,7 @@ impl Parallelism {
     /// ceiling bounds, or one worker, the floor — the predicted resident still
     /// stays under the margin, and a budget pushed below a unit declines it
     /// (`docs/design/decisions.md`, "D4"). The cap is untouched, and with
-    /// nothing held the budget is exactly what the count spends.
+    /// nothing held the budget is [`Parallelism::fit`]'s.
     /// *Rejected: a plain-source exception*, what a plain budget is worth
     /// being `KD25`'s and `KD32`'s question rather than this rule's.
     pub fn within_shared(
@@ -994,8 +996,9 @@ impl Parallelism {
     }
 
     /// The largest pair `(count, budget)` that fits inside `cap`: as many of
-    /// `jobs` workers as `cap` affords at `per_worker` each, and exactly what
-    /// that many of them spend.
+    /// `jobs` workers as `cap` affords at `per_worker` each, and what that
+    /// many of them spend, never more than `cap` — so at the one-worker floor
+    /// a worker costing more than `cap` is budgeted `cap`.
     ///
     /// **The floor is one worker at whatever `cap` is**, not one worker's
     /// worth of bytes: a cgroup at or under [`MEMORY_RESERVE`] resolves to a
@@ -1004,8 +1007,8 @@ impl Parallelism {
     /// capped at [`DEFAULT_MEMORY_BUDGET`] and keeps its count.
     ///
     /// **It solves rather than divides** ([`WorkerMemory::affords`]), and the
-    /// budget it names is what that many workers actually spend, pool included
-    /// (`docs/design/decisions.md`, "D4").
+    /// budget it names is what that many workers actually spend, pool
+    /// included, up to `cap` (`docs/design/decisions.md`, "D4").
     ///
     /// **`charge_ceiling` is the margin, and it bounds the count alone**: the
     /// most this arrangement may be *charged* if its predicted resident —
@@ -1139,7 +1142,7 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 ///
 /// **It bounds the count, and the budget only by what a caller holds besides
 /// its arrangements**: [`Parallelism::fit`] keeps one worker at whatever the
-/// cap is and reports the budget that count spends, and
+/// cap is and reports the budget that count spends, up to the cap, and
 /// [`BlockCache::affordable`] reads the budget the cap leaves, lowered only by
 /// the holdings [`Parallelism::within_shared`] cannot fit under the margin.
 ///
@@ -1557,7 +1560,7 @@ const PLAIN_PARTITION_CHUNKS: usize = 8;
 /// policy.** [`BufferPool::obtain`] waits for a free slot where the read loop
 /// granted [`WaitPolicy::MayWait`] and allocates past the budget where it
 /// granted [`WaitPolicy::NeverWait`] (`docs/design/decisions.md`, "D5").
-/// [`BufferPool::take`] is the unwaiting primitive underneath both.
+/// [`BufferPool::pick`] is the unwaiting primitive underneath both.
 #[derive(Debug)]
 struct BufferPool {
     /// The free list and the count of charged buffers outstanding, under
@@ -2039,8 +2042,9 @@ impl ByteRangeSource for LocalFileSource {
     }
 
     /// **The budget sizes the free list; the worker count does not.** This
-    /// source has one read unit, and a chunk buffer is taken and released
-    /// inside a single `read_range` — so what the free list has to hold is the
+    /// source has one read unit, and a chunk buffer is taken by one
+    /// `read_range` and returned when its caller drops the bytes — so what the
+    /// free list has to hold is the
     /// *replay* path's depth, which is what [`POOL_DEPTH`] is, and not a
     /// worker count (`docs/design/decisions.md`, "D9").
     ///
@@ -2320,8 +2324,8 @@ struct XzBudget {
     budget: AtomicUsize,
     /// The worker ceiling the caller stated — 1 until one is announced. It is
     /// the **block** pool's depth: one retained block per concurrent reader,
-    /// where a chunk buffer is taken and released inside one read and wants
-    /// the replay path's depth instead
+    /// where a chunk buffer is taken by one read and returned when its bytes
+    /// are dropped, and wants the replay path's depth instead
     /// ([`LocalFileSource::hint_parallelism`]).
     jobs: AtomicUsize,
 }
@@ -3100,8 +3104,9 @@ impl ByteRangeSource for XzSource {
     }
 
     /// **The permission reaches the chunk pool only.** A chunk buffer is taken
-    /// and released inside one `read_range`, so the loop that granted the wait
-    /// holds exactly one of them — which is the discipline
+    /// by one `read_range` and returned when its bytes are dropped, so a loop
+    /// releasing each chunk before its next read holds one of them — which is
+    /// the discipline
     /// [`BufferPool::obtain`] documents. The **block** pool's holder is
     /// [`BlockCache`], which *retains*: it is the exempt class, exactly as the
     /// replay loop is, so it is left at [`WaitPolicy::NeverWait`] whatever a
@@ -3252,7 +3257,7 @@ pub async fn walk_seek_table(
 ///   it — so what is held is the compressed window and the decoder, never the
 ///   plaintext. [`XzSource`] answers that arm the same way over a file it pulls
 ///   from, and this one keeps the window and the handle together across reads
-///   so that a block a scan sits inside is decoded once (D20, D21,
+///   so that a block a scan sits inside is decoded once (D15,
 ///   [`HeldBlock`]).
 ///
 /// **Leaving a block completes it**, which is what compares its check. Reading
@@ -3266,7 +3271,7 @@ pub struct FetchedXzSource {
     source: Arc<dyn ByteRangeSource>,
     /// The table, the memory limit, the verification state and the backend as
     /// one value — everything a decode needs that is not bytes. It holds no
-    /// source, which is what lets this type exist (D13).
+    /// source, which is what lets this type exist (D14).
     layout: xz_seek::Layout,
     /// The layout's own table, aliased rather than copied, so `size()`,
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
@@ -3432,12 +3437,13 @@ impl FetchedXzSource {
     }
 
     /// A read served **without holding a whole decoded block**: each covering
-    /// block is fetched, skipped forward to the first wanted byte, read into
-    /// the caller's buffer and completed.
+    /// block is fetched, skipped forward to the first wanted byte and read
+    /// into the caller's buffer, and each but the last it touches is
+    /// completed.
     ///
     /// It is [`XzSource::read_in_pieces`]'s mechanism over a fetched window
     /// instead of a file, which is the one asymmetry between the providers
-    /// (D20). What it holds is the compressed window, the decoder and one chunk
+    /// (D15). What it holds is the compressed window, the decoder and one chunk
     /// buffer — never the block's plaintext, which is the point.
     ///
     /// **The window and the handle are kept between reads together**
@@ -3468,7 +3474,7 @@ impl FetchedXzSource {
                     // Completing and dropping the outgoing block goes
                     // **before** the next window is fetched: holding both
                     // across a boundary would be one window more than
-                    // `decode_bytes` counts (D21). The drain is a decode, so
+                    // `decode_bytes` counts (D15). The drain is a decode, so
                     // it goes off the runtime like every other one.
                     if let Some(leaving) = held.take() {
                         tokio::task::spawn_blocking(move || leaving.leave())
@@ -3634,10 +3640,11 @@ impl ByteRangeSource for FetchedXzSource {
                     // decoded from, so a block the piecewise arm left behind
                     // would be one window more than `decode_bytes` counts —
                     // and a budget raised mid-run is what reaches here with
-                    // one retained (D21). The handle is dropped rather than
-                    // completed, which is `xz_seek::Verify::Full`'s own
-                    // sentence and what the local arm does with its live
-                    // handle in the same case ([`LiveBlock`]).
+                    // one retained (`docs/design/decisions.md`, "D15"). The
+                    // handle is dropped rather than completed, which is
+                    // `xz_seek::Verify::Full`'s own sentence; the local arm
+                    // leaves its live handle seated in the same case
+                    // ([`LiveBlock`]), holding no window beside it.
                     drop(self.take_held());
                     self.read_by_blocks(offset, len, &cache).await
                 }
@@ -3855,7 +3862,7 @@ impl Origin {
     /// **This is where "HTTP only" is enforced rather than merely stated**: the scheme must be
     /// `http` or `https`, and a URL carrying a username or password is refused
     /// by name rather than silently stripped, so nobody believes a credential
-    /// was sent (D17). A presigned URL needs none — the signature rides in the
+    /// was sent. A presigned URL needs none — the signature rides in the
     /// query string, which this preserves.
     ///
     /// The client is built here and reading nothing: the first round trip is
@@ -3905,7 +3912,7 @@ impl Origin {
     /// `http` and `https` select the network; `file:` is a local path, because
     /// a user who has seen `--source https://…` work may reasonably conclude
     /// that a local file now needs `file://`, and being right about how the
-    /// tool works should not be a way to get an error (D17). An empty or
+    /// tool works should not be a way to get an error. An empty or
     /// `localhost` host is this filesystem; any other host is refused by name,
     /// this build speaking no network file protocol. Every other scheme is
     /// refused by name, which is what a mistyped one deserves.
@@ -4207,7 +4214,7 @@ impl RemoteObject {
     ///
     /// **The server does the comparing**, which is why the cadence is every
     /// request here where it is every cache save locally: the check rides on
-    /// a request the read was already making (D11).
+    /// a request the read was already making (D21).
     ///
     /// The entity tag is preferred, and `If-Unmodified-Since` is the fallback
     /// for a server that sends none. A `Last-Modified` this build reads as
@@ -4866,8 +4873,8 @@ mod tests {
     }
 
     /// A plain file has one read unit, so the stated budget sizes its free
-    /// list and the worker count does not — a chunk buffer is taken and
-    /// released inside one read, where a retained block is not.
+    /// list and the worker count does not — a chunk buffer is held only until
+    /// one read's bytes are dropped, where a retained block is kept.
     #[test]
     fn a_plain_source_takes_the_budget_and_not_the_worker_count() {
         let (_file, source) = source_of(b"0123456789abcdef");
@@ -5129,7 +5136,7 @@ mod tests {
 
     /// **A streaming-fallback source advises one partition even though its
     /// table has boundaries** (`docs/design/decisions.md`, "D15"). Asserted
-    /// against a synthetic multi-block table, `partition_advice` being a free
+    /// against a synthetic multi-block table, `xz_partition_advice` being a free
     /// function precisely so that the fallback arm can be handed a table that
     /// *does* have boundaries.
     #[test]
@@ -5516,9 +5523,11 @@ mod tests {
         }
     }
 
-    /// A read at an offset behind the live decode's position must restart the
-    /// covering block rather than return the wrong bytes — the one path
-    /// `LocalFileSource` never has.
+    /// A read at an offset behind an earlier one must serve the covering
+    /// block rather than return the wrong bytes — the one path
+    /// `LocalFileSource` never has. The default budget affords these blocks,
+    /// so this is the block path; the piecewise arm's backward read is
+    /// `a_budget_below_the_block_unit_reads_in_pieces_and_still_reads_the_same_bytes`'s.
     #[tokio::test]
     async fn xz_source_seeks_backward_across_a_block_boundary() {
         let payload = xz_test_payload();
@@ -5534,9 +5543,8 @@ mod tests {
         let near = source.read_range(500, 1000).await.unwrap();
         assert_eq!(&near[..], &payload[500..1500]);
 
-        // And forward again, past where the first read left off — the live
-        // decode was rebuilt by the backward read, so this is a second
-        // restart, not a continuation of the first pass.
+        // And forward again, past where the first read left off, into a
+        // block neither earlier read touched.
         let later = source.read_range(18_000, 2000).await.unwrap();
         assert_eq!(&later[..], &payload[18_000..20_000]);
     }
@@ -5956,7 +5964,7 @@ mod tests {
         let forward = source.read_range(10_000, 5000).await.unwrap();
         assert_eq!(&forward[..], &payload[10_000..15_000]);
 
-        // Backward, forcing a decode from byte zero of the sole block.
+        // Backward, into the sole block the forward read already retained.
         let backward = source.read_range(0, 3000).await.unwrap();
         assert_eq!(&backward[..], &payload[0..3000]);
     }
@@ -6202,7 +6210,7 @@ mod tests {
 
     /// The piecewise arm: a budget too small to hold a decoded block reads the
     /// same bytes out of the same windows, through `xz_seek::BlockRead` rather
-    /// than into a pooled slot (D20). The two arms are asserted against each
+    /// than into a pooled slot (D15). The two arms are asserted against each
     /// other rather than against a constant, which is what makes a divergence
     /// visible as one.
     #[tokio::test]
@@ -6223,7 +6231,7 @@ mod tests {
     /// **A block a forward scan sits inside is decoded once**, not once per
     /// read: the piecewise arm keeps its handle across reads as the local one
     /// does, so what costs a decode is leaving a block and coming back to it
-    /// (D21). Counted rather than argued, which is what the `introspect`
+    /// (D15). Counted rather than argued, which is what the `introspect`
     /// build is for — and it is never a timed build.
     #[cfg(feature = "introspect")]
     #[tokio::test]
@@ -6328,7 +6336,7 @@ mod tests {
     /// window this file's blocks would make us fetch. It is not the local
     /// charge *plus* that window — the local one carries a compressed input
     /// chunk this source never builds — so what is asserted is that the window
-    /// cannot have gone unbilled (D20).
+    /// cannot have gone unbilled (D15).
     #[tokio::test]
     async fn the_compressed_window_is_inside_the_charge() {
         let payload = xz_test_payload();
@@ -7019,7 +7027,8 @@ mod tests {
             Parallelism::workers(8, 0),
         );
 
-        // Nothing held is the budget the count spends, even past the ceiling.
+        // Nothing held is `fit`'s budget, even past the ceiling: one worker
+        // costing more than the cap is budgeted the cap.
         let narrow = 1 << 30;
         let alone = Parallelism::within_shared(1, memory, narrow, 0, 0);
         assert_eq!(alone.memory_bytes(), Some(narrow - MEMORY_RESERVE));

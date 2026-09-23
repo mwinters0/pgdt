@@ -159,9 +159,9 @@ impl Finding for ColumnNote {
     }
 }
 
-/// A table query's resolved schema: the Arrow schema a fully-typed decoder
-/// would eventually produce (see the module docs for why that's not yet what
-/// `RecordBatch`es actually carry), plus one [`ColumnNote`] per column.
+/// A table query's resolved schema: the Arrow schema a query's
+/// `RecordBatch`es carry (see the module docs), plus one [`ColumnNote`] per
+/// column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedSchema {
     pub schema: SchemaRef,
@@ -593,8 +593,8 @@ mod tests {
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
     }
 
-    /// Every non-`Mapped` outcome `crate::pgtype` can produce, seen through
-    /// the join — and the plan a `Utf8View` fallback carries, which is
+    /// Every non-`Mapped` outcome `crate::pgtype` can produce but
+    /// `NestedArrayElement`, seen through the join — and the plan a `Utf8View` fallback carries, which is
     /// `Scalar` whichever reason put it there.
     #[test]
     fn unknown_opaque_and_empty_enum_outcomes() {

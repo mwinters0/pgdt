@@ -367,7 +367,8 @@ struct Resolved {
     /// `None` means no limit is being *enforced*.
     limit: Option<pgdump_query::MemoryLimit>,
     /// The resident allowance `--memory` stated, or `None` where it was not
-    /// given — in which case the allowance is the discovered limit, or nothing.
+    /// given — in which case the allowance is the discovered limit, else half
+    /// of what the machine reports available, or nothing.
     allowance_stated: Option<u64>,
     /// **The resident allowance in force**, whichever end it came from:
     /// `--memory`, else the discovered limit, else half of what the machine
@@ -1315,8 +1316,9 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
 /// default cache is named after the URL's last path segment and sits in the
 /// working directory, so "the cache at `koji.dump.dtcache`" does not say which
 /// `koji.dump` this run asked for
-/// (`docs/design/decisions.md`, "D87"). The fourth, a
-/// block refused against a map with no cache attached, names neither.
+/// (`docs/design/decisions.md`, "D87"). The fourth, the in-flight refusal,
+/// names neither, and nor does the back-fill's against a map with no cache
+/// attached.
 ///
 /// **It is an exhaustive match, not a test of the variants somebody
 /// remembered.** Whether a refusal wants the source's name is a property of
@@ -4013,8 +4015,8 @@ mod tests {
 
     /// A built-in multirange and an array of the matching range are the
     /// *same* Arrow type and different plans, so rendering identically is
-    /// correct — the declared PostgreSQL type on the same line tells them
-    /// apart.
+    /// correct — the declared PostgreSQL type, on the table's `columns:` line
+    /// and beside it in `--json`, tells them apart.
     #[test]
     fn a_multirange_and_an_array_of_the_matching_range_render_identically() {
         let multirange = arrow_type_label(

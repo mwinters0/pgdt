@@ -30,7 +30,8 @@ pub enum TypeOutcome {
     /// A declared type string this build has no mapping for at all — neither
     /// a built-in, nor found in the database's `CREATE TYPE`/`DOMAIN` list,
     /// nor a composite whose declared field list survived parsing
-    /// ([`TypeKind::Composite`] is all-or-nothing).
+    /// ([`TypeKind::Composite`] is all-or-nothing) — or a domain that bottoms
+    /// out at one of those.
     Unknown,
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type, or a shell type, through any chain of domains.
@@ -79,7 +80,8 @@ pub enum TypeOutcome {
 /// differs per nesting level.
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
-/// included), which is where every branch bottoms out. `Serialize` so
+/// included), which is where every branch bottoms out but at `Int2Vector`,
+/// a childless terminal of its own. `Serialize` so
 /// `pgdt info --json` can export a resolved schema's plans structurally
 /// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
 /// persisted** — the cache holds what the dump said, never what we concluded
@@ -120,8 +122,9 @@ pub enum NestedPlan {
 /// A small closed vocabulary rather than the Arrow type, which does not
 /// correspond to it (`docs/design/decisions.md`, "D40").
 ///
-/// **Not `Copy`**: two variants carry the column's own facts — an enum's
-/// labels, and whether a `numeric` column's typmod excludes the infinities.
+/// **Not `Copy`**: three variants carry the column's own facts — an enum's
+/// labels, a typmodded `numeric`'s scale, and whether a bare one's typmod
+/// excludes the infinities — and the labels are not `Copy`.
 /// The kind is cloned once, into the `OrderTerm` the block's resolution
 /// builds, never on the per-row path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,7 +388,8 @@ pub enum ComparisonDivergence {
     /// by declaration (I33). Equality agrees, a label being unique.
     ///
     /// This and the five variants after it are Arrow semantics' own:
-    /// produced by [`CompareKind::arrow_divergence`] and
+    /// produced by [`CompareKind::arrow_divergence`],
+    /// [`NestedCompare::arrow_divergences`] and
     /// `crate::predicate::column_divergences`, never by the register — as
     /// [`CompareKind::IntervalFields`] is produced by
     /// [`CompareKind::arrow_order`] alone.
@@ -451,7 +455,7 @@ impl ComparisonDivergence {
     /// the bytes are equal, so `texteq`/`bpchareq` are byte comparisons
     /// whatever that collation otherwise orders, leaving three of the four
     /// divergences of *order* alone. [`Self::NonDeterministicCollation`] is
-    /// the one a dump states outright (I42); the other two `true` answers are
+    /// the one a dump states outright (I42); the other six `true` answers are
     /// not about a collation at all.
     ///
     /// There is no `affects_ordering` beside this: every variant does.
@@ -519,9 +523,10 @@ pub enum NestedCompare {
     /// order**: the column falls back to a byte comparison of the container's
     /// whole `*_out` text, and this says what that fallback costs *here*.
     /// [`ComparisonDivergence::AsText`] is the one value it takes — `json`,
-    /// where the server has no equality either. `None` is a position only
-    /// *this build* declines (I22, I26, an empty enum), where the server's `=`
-    /// is value equality over the same canonical text.
+    /// where the server has no equality either. `None` makes no claim about
+    /// the server's `=`: a position only *this build* declines (I22, I26, an
+    /// empty enum), or one whose type the register does not model, whose
+    /// server equality may not be the text's (`KD10`).
     Uncomparable { declared: String, divergence: Option<ComparisonDivergence> },
     /// `array_cmp`: elements first, up to the shorter array's length, then
     /// element count, dimension count, dimensions and lower bounds (I45).
@@ -1013,7 +1018,7 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
 /// gets, and how two of its values compare. That pairing is the comparison
 /// register's exhaustiveness check — a type added here without a comparison
 /// does not compile — and it is why the register is keyed on the declared
-/// type rather than on the Arrow type four unrelated declared types share
+/// type rather than on the Arrow type many unrelated declared types share
 /// (`docs/design/decisions.md`, "D40").
 ///
 /// `collation` is the column's own `COLLATE` clause, verbatim, and
@@ -1040,6 +1045,12 @@ fn builtin_scalar(
     use arrow::datatypes::TimeUnit::Microsecond;
     let agrees = ComparisonPlan::agrees;
     let text = ComparisonPlan::AS_TEXT;
+    // deficiency: KD44 — only the SQL spellings `format_type` writes are
+    // arms here, so a declaration by a type's internal name (`int4`, `int8`,
+    // `float8`, `bool`, `timestamptz`, …), which PostgreSQL reads as the same
+    // type, resolves `Unknown`: a weaker type, never a wrong one. **(c)
+    // unowned**; promoted by a hand-written or non-`pg_dump` file declaring
+    // one, `pg_dump` never doing so.
     Some(match base.to_ascii_lowercase().as_str() {
         "smallint" => (Int16, agrees(K::Int)),
         "integer" => (Int32, agrees(K::Int)),
@@ -1705,8 +1716,8 @@ fn nested_position(
 /// (`docs/design/decisions.md`, "D40").
 ///
 /// It walks the declared type exactly as [`resolve_declared_type`] does —
-/// array first, then the built-in table, then the database's own
-/// `CREATE TYPE`/`DOMAIN` list — so the two answers are reached through one
+/// array first, then a schema-qualified name through the database's own
+/// `CREATE TYPE`/`DOMAIN` list, then the built-in table — so the two answers are reached through one
 /// spelling of the same string and a domain compares as whatever it bottoms
 /// out at.
 ///
@@ -2459,8 +2470,10 @@ mod tests {
     /// scalar, and how a column of it compares
     /// (`docs/design/decisions.md`, "D40").
     ///
-    /// **Every arm of [`builtin_scalar`] appears here**: a type added to that
-    /// table without a row here is one nothing states the comparison of.
+    /// **Every arm of [`builtin_scalar`] appears here** but `int2vector`'s,
+    /// which maps to a list and compares as a nested column (D58): a type
+    /// added to that table without a row here is one nothing states the
+    /// comparison of.
     #[test]
     fn the_register_answers_every_builtin_scalar() {
         use CompareKind as K;
@@ -2530,7 +2543,8 @@ mod tests {
         assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int));
     }
 
-    /// Six unrelated declared types reach `Utf8View`, which is why the
+    /// Six unrelated declared types reach the same text columns — five as
+    /// `Utf8View`, an enum as a `Dictionary` of its labels — which is why the
     /// register cannot be keyed on the Arrow type: an enum compares by
     /// declaration order, a bare `numeric` by decimal value, an `inet` by
     /// family-then-prefix, a `jsonb` by a walk down two containers, `text`
@@ -3156,8 +3170,10 @@ mod tests {
             // as for the order.
             ("box[]", "[]", "box", false),
             ("public.gtype[]", "[]", "public.gtype", false),
-            // I26: an array whose element is itself an array, which resolves
-            // the column to text as well.
+            // An element this walk cannot find, `types` declaring no
+            // `public.intarr`: refused as an unknown type. The fixture's own
+            // `public.intarr`, an array element that is itself an array
+            // (I26), is the oracle walk's (`predicate.rs`'s `REFUSED`).
             ("public.intarr[]", "[]", "public.intarr", false),
         ] {
             let plan = comparison_for(declared, None, &types, &[]);
@@ -3165,7 +3181,7 @@ mod tests {
             let ComparisonPlan::Nested(tree) = plan else { panic!("{declared}: not nested") };
             assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
             // The three refused for a reason of *this build's* announce
-            // nothing: PostgreSQL orders `public.intarr[]` through
+            // nothing: PostgreSQL orders an array of arrays through
             // `array_ops` and compares `box[]` element-wise.
             let expected: Vec<_> = announces
                 .then(|| (path.to_string(), at.to_string(), ComparisonDivergence::AsText))

@@ -42,8 +42,9 @@
 //! **The two families do not cover the same memory**, so the report labels
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
 //! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
-//! process, C included — `liblzma` is the active `.xz` backend, so a reader's
-//! `XZ_DECODE_FOOTPRINT` of decoder working set is invisible to one and fully
+//! process, C included — `liblzma` is the active `.xz` backend, so its share
+//! of a reader's decoder working set (`xz_seek::Layout::decode_footprint`,
+//! which also counts xz-seek's own input chunk) is invisible to one and fully
 //! present in the other. Their difference is therefore not retention.
 //!
 //! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
@@ -75,9 +76,10 @@ pub const OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 ///
 /// Held in `main`, so the report is emitted on the ordinary return **and** on
 /// an error propagated out of it, while tokio's blocking pool threads are
-/// still alive — a per-thread arena already torn down reports nothing. The one
-/// exit that skips destructors, `std::process::exit` on the interrupt path,
-/// calls [`report`] itself.
+/// still alive — a per-thread arena already torn down reports nothing. The
+/// interrupt path's `std::process::exit` calls [`report`] itself; a second
+/// signal's exit, and clap's own on a usage error, `--help` or `--version`,
+/// write none.
 pub struct AtExit(());
 
 /// Record what a mapping pass's statistics account held when it returned,
@@ -137,7 +139,8 @@ mod enabled {
     pub struct Counting;
 
     /// `Relaxed` throughout: the atomics are read only after every thread
-    /// that touched them has stopped, so nothing here orders anything else. A
+    /// that touched them has finished its work, so nothing here orders
+    /// anything else. A
     /// concurrent allocation landing between the `fetch_add` and the
     /// `fetch_max` can only understate the peak, so `PEAK` is a lower bound.
     fn took(bytes: usize) {
@@ -294,8 +297,9 @@ mod enabled {
     }
 
     /// What the two scopes mean, in the report itself rather than only in the
-    /// document that explains it. The number is `XZ_DECODE_FOOTPRINT`
-    /// (`docs/design/decisions.md`, "D15").
+    /// document that explains it. The number is
+    /// `xz_seek::Layout::decode_footprint` at an 8 MiB dictionary, xz-seek's
+    /// input chunk included (`docs/design/decisions.md`, "D15").
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
         "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",

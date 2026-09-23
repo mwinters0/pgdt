@@ -206,7 +206,8 @@ struct Gatherer {
     /// The most rows a merge here may put in the finished block's
     /// 90th-percentile group; `None` for an exact size and for a piece. Not a
     /// ceiling: a block already past it at the size it gathered from merges
-    /// nothing and finishes over it, the re-read in
+    /// nothing, where its groups pair evenly ([`density_merges`]), and
+    /// finishes over it, the re-read in
     /// [`crate::statistics::StatisticsRequest::backfill`] being what brings it
     /// back within one.
     max_rows: Option<u64>,
@@ -706,14 +707,18 @@ impl BlockObserver for Gatherer {
 ///
 /// **`max_rows` stops the merging first**, wherever the next size would put
 /// more than that many rows in its 90th-percentile group ([`max_rows_group`]):
-/// so a stated maximum outranks the minimum, and a block meeting neither ends
-/// at the coarsest size the maximum allows. That predicate is monotone in size
-/// too — the `k`-th smallest of the pairwise sums is at least the `2k`-th
-/// smallest of their parts, and `2⌈9⌈G/2⌉/10⌉ ≥ ⌈9G/10⌉` — so stopping at the
-/// first merge that breaks it loses no coarser size that would have held it.
-/// Nothing here can make a block *finer*: a block breaking `max_rows` at the
-/// size it gathered from is re-read instead
-/// ([`StatisticsRequest::backfill`]).
+/// so a stated maximum outranks the minimum. Nothing here can make a block
+/// *finer*: a block breaking `max_rows` at the size it gathered from is
+/// re-read instead ([`StatisticsRequest::backfill`]).
+///
+/// deficiency: KD43 — the maximum's predicate is monotone in size only where
+/// every group pairs. A last odd group stands alone, so a pairwise sum can
+/// rank below the parts it replaces: at 19, 39, 59… groups a block already
+/// past the maximum can merge once (`[10, 10, 0 × 17]` under a maximum of 5
+/// becomes `[20, 0 × 9]`, whose 90th-percentile group is 0), and stopping at
+/// the first merge that breaks the predicate can miss a coarser size that
+/// would hold it. **(c) unowned**; promoted by a stated maximum seen to
+/// leave a block's groups past it.
 fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
     let mut merges = 0;
     while rows.len() > 1 && min_rows_group(&rows) < min_rows {
@@ -2537,12 +2542,10 @@ mod tests {
         merges
     }
 
-    /// **A stated maximum stops the merging, whatever the minimum asks**, and
-    /// its predicate is monotone in size too: once the 90th-percentile group
-    /// passes the maximum, no coarser size brings it back, so stopping at the
-    /// first merge that breaks it loses no size that would have held it. A
-    /// block already past the maximum at the size it holds merges nothing —
-    /// nothing here makes a block finer.
+    /// **A stated maximum stops the merging, whatever the minimum asks.** A
+    /// block already past the maximum at the size it holds, its groups pairing
+    /// evenly, merges nothing — nothing here makes a block finer. An odd last
+    /// group can let one merge through (`density_merges`' deficiency note).
     #[test]
     fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
         assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(2)), 1, "one merge fits, two do not");

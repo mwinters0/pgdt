@@ -1275,8 +1275,9 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 /// PostgreSQL's float order, not Rust's: `NaN` is greater than every other
 /// value, infinities included, and `NaN = NaN` is true (I33), where Rust's
 /// `partial_cmp` answers `None`. `real`/`double precision` are the only
-/// columns whose decoder yields a NaN at all: a `NaN` in a `numeric(p,s)`
-/// column has no `Decimal128` representation and fails to decode first (I4).
+/// columns whose key is a float `NaN`: a `NaN` in a `numeric(p,s)` column is
+/// keyed as a special value ([`special_order_key`]) before any float is read,
+/// having no `Decimal128` representation (I4).
 fn pg_float_cmp(a: f64, b: f64) -> Ordering {
     match (a.is_nan(), b.is_nan()) {
         (true, true) => Ordering::Equal,
@@ -2202,7 +2203,9 @@ struct BelievedStatistics {
     bounds: Option<Box<(CompareKind, OrderKey)>>,
     /// Whether a group's dictionary answers this term: one of the four
     /// equality operators, on a `Compared` column whose divergence, if any,
-    /// does not reach equality.
+    /// does not reach equality — and in Arrow's semantics not a
+    /// `character(n)`, whose entries are stored unpadded
+    /// ([`ComparisonPlan::dictionary_answers_in`]).
     dictionary: bool,
 }
 
@@ -5189,7 +5192,7 @@ mod tests {
         );
     }
 
-    /// The three tie-breaks `array_cmp` reaches only when the elements agree,
+    /// The four tie-breaks `array_cmp` reaches only when the elements agree,
     /// in the order it reaches them: element count, then dimension count,
     /// then the dimensions themselves, then the lower bounds (I45).
     ///
@@ -5495,8 +5498,9 @@ mod tests {
 
         /// The declared types whose columns the register refuses an ordering
         /// operator on, so none of their ordering cells is asserted: `xml`, an enum with
-        /// no labels, a user-defined base type with no operator class, and the
-        /// two nested shapes that are refused for reasons of their own.
+        /// no labels, a user-defined base type with no operator class, a domain
+        /// over a type the register has no comparison for, and the two nested
+        /// shapes that are refused for reasons of their own.
         /// PostgreSQL orders all of them and this build does not.
         ///
         /// **`json` is not here**, and the difference is the point: it *is*
@@ -5576,7 +5580,7 @@ mod tests {
         ///   `en_US.utf8` on this apparatus: case is a lower-weight
         ///   difference than letter, an accent sorts with its base letter
         ///   rather than after `z`, and punctuation is ignored at the primary
-        ///   level, so `_x` sorts where `x` does. The four unordered pairs the
+        ///   level, so `_x` sorts where `x` does. The five unordered pairs the
         ///   case table chose for those reasons are here in both directions,
         ///   and `_x` reaches every letter in the alphabet rather than only
         ///   `ax`.
