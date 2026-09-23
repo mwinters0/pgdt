@@ -20,7 +20,7 @@
 use std::cmp::Ordering;
 
 use pgdump_query::{
-    DICTIONARY_ENTRY_MAX_BYTES, SCAN_CHUNK_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
+    DICTIONARY_ENTRY_MAX_BYTES, ROW_GROUP_DEFAULT_SIZE_BYTES, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
 };
 
 mod common;
@@ -189,7 +189,7 @@ fn a_long_value_runs_past_the_read_chunk_the_group_size_and_the_stored_value_cap
             "a value past the read chunk on {version}: {lengths:?}"
         );
         assert!(
-            lengths.iter().any(|&len| len as u64 > STATISTICS_GROUP_DEFAULT_SIZE_BYTES),
+            lengths.iter().any(|&len| len as u64 > ROW_GROUP_DEFAULT_SIZE_BYTES),
             "a value past the default group size on {version}: {lengths:?}"
         );
         assert!(

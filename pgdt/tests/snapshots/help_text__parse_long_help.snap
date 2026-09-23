@@ -56,7 +56,7 @@ Options:
           statistics asked for here is re-read for them once the rest of the file is scanned,
           keeping any it already had
 
-      --statistics-group-size <BYTES>
+      --row-group-size <BYTES>
           The bytes of a table's data each row group of statistics covers, a power of two. The
           default, 1 MiB, is coarse, and doubles for a table whose data would take more than 4,096
           groups until it takes no more, and for a table whose rows are too wide for its groups to
@@ -72,8 +72,8 @@ Options:
           rows or the table is one group, so a table of wide rows keeps fewer groups; the default,
           1,024, leaves rows up to about 1 KiB wide at 1 MiB a group, and 0 doubles nothing. Stated,
           it also re-reads every block sized under another minimum or at a stated group size; left
-          unstated, a block keeps the size it was gathered at. A stated `--statistics-group-size` is
-          kept exactly, so the two are refused together
+          unstated, a block keeps the size it was gathered at. A stated `--row-group-size` is kept
+          exactly, so the two are refused together
 
       --statistics-max-rows <ROWS>
           The most rows a row group of statistics should hold under the default group size, read at
@@ -84,7 +84,7 @@ Options:
           if it still misses. Stated, it also re-reads every block sized under another maximum or at
           a stated group size; left unstated, a block keeps the size it was gathered at. Refused
           below `--statistics-min-rows`, which defaults to 1,024, and beside a stated
-          `--statistics-group-size`, which is kept exactly
+          `--row-group-size`, which is kept exactly
 
       --strict-identity[=<TERMS>]
           Which weak signs of a source's identity must hold, as a comma-separated selection of

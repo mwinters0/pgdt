@@ -18,9 +18,9 @@ use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolv
 use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
     DumpIndex, DumpMetadata, Finding, KnownCompression, NestedPlan, Origin, Parallelism, Predicate,
-    PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS, ScanOptions,
-    Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind,
-    open, preamble_only, render_field_into,
+    PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ScanOptions, Severity, Span,
+    SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open,
+    preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -680,10 +680,10 @@ enum Command {
         #[arg(
             long,
             value_name = "BYTES",
-            value_parser = parse_statistics_group_size,
+            value_parser = parse_row_group_size,
             conflicts_with = "preamble_only"
         )]
-        statistics_group_size: Option<NonZeroU64>,
+        row_group_size: Option<NonZeroU64>,
         /// The fewest rows a row group of statistics should hold under the
         /// default group size. Once a table's data is read, its groups double
         /// until at most half of them fall short of this many rows or the
@@ -692,12 +692,12 @@ enum Command {
         /// doubles nothing. Stated, it also re-reads every block sized under
         /// another minimum or at a stated group size; left unstated, a block
         /// keeps the size it was gathered at. A stated
-        /// `--statistics-group-size` is kept exactly, so the two are refused
+        /// `--row-group-size` is kept exactly, so the two are refused
         /// together.
         #[arg(
             long,
             value_name = "ROWS",
-            conflicts_with_all = ["preamble_only", "statistics_group_size"]
+            conflicts_with_all = ["preamble_only", "row_group_size"]
         )]
         statistics_min_rows: Option<u64>,
         /// The most rows a row group of statistics should hold under the
@@ -711,11 +711,11 @@ enum Command {
         /// maximum or at a stated group size; left unstated, a block keeps the
         /// size it was gathered at. Refused below `--statistics-min-rows`,
         /// which defaults to 1,024, and beside a stated
-        /// `--statistics-group-size`, which is kept exactly.
+        /// `--row-group-size`, which is kept exactly.
         #[arg(
             long,
             value_name = "ROWS",
-            conflicts_with_all = ["preamble_only", "statistics_group_size"]
+            conflicts_with_all = ["preamble_only", "row_group_size"]
         )]
         statistics_max_rows: Option<u64>,
         #[command(flatten)]
@@ -960,10 +960,10 @@ fn parse_statistics(text: &str) -> std::result::Result<StatisticsSelection, Stri
     Ok(StatisticsSelection::Only(targets))
 }
 
-/// A `--statistics-group-size` value: a byte count, never zero, which would
+/// A `--row-group-size` value: a byte count, never zero, which would
 /// put every row in a group of its own past the end of the data, and a power
 /// of two, so that every size a block's groups can merge to nests in it.
-fn parse_statistics_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
+fn parse_row_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
     match text.parse::<u64>() {
         Ok(0) => Err("a group size of 0 covers no bytes".to_string()),
         Ok(n) if !n.is_power_of_two() => {
@@ -988,7 +988,7 @@ fn statistics_request(
     let selection = selection.unwrap_or_default();
     if selection == StatisticsSelection::None {
         let sizing = [
-            (group_size.is_some(), "--statistics-group-size"),
+            (group_size.is_some(), "--row-group-size"),
             (min_rows.is_some(), "--statistics-min-rows"),
             (max_rows.is_some(), "--statistics-max-rows"),
         ];
@@ -998,7 +998,7 @@ fn statistics_request(
             );
         }
     }
-    let floor = min_rows.unwrap_or(STATISTICS_GROUP_DEFAULT_MIN_ROWS);
+    let floor = min_rows.unwrap_or(ROW_GROUP_DEFAULT_MIN_ROWS);
     if max_rows.is_some_and(|max_rows| max_rows < floor) {
         let stated = if min_rows.is_some() { "" } else { " by default" };
         anyhow::bail!(
@@ -1631,7 +1631,7 @@ async fn main() -> Result<()> {
             chunk_size,
             max_line_bytes,
             statistics,
-            statistics_group_size,
+            row_group_size,
             statistics_min_rows,
             statistics_max_rows,
             identity,
@@ -1640,7 +1640,7 @@ async fn main() -> Result<()> {
             let read = ReadFlags { chunk_size, max_line_bytes };
             let statistics = statistics_request(
                 statistics,
-                statistics_group_size,
+                row_group_size,
                 statistics_min_rows,
                 statistics_max_rows,
             )?;
@@ -3060,7 +3060,7 @@ mod tests {
     const FLAG_CLASSES: &[(&str, FlagClass)] = &[
         ("jobs", FlagClass::Hardware),
         ("memory", FlagClass::Hardware),
-        ("statistics-group-size", FlagClass::Intent),
+        ("row-group-size", FlagClass::Intent),
         ("statistics-min-rows", FlagClass::Intent),
         ("statistics-max-rows", FlagClass::Intent),
         ("max-line-bytes", FlagClass::Contract),

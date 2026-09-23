@@ -485,7 +485,7 @@ cap not this ceiling. Reopens: what the check costs, and what declining saves. C
 ### D86 Statistics volume follows columns and groups, not row width
 Dictionary text is interned once per block and column, not per group, so an input of wide distinct text
 cannot fill an allowance — the attribution sitting's wide-text leg was deleted rather than corrected.
-Final groups are about `min(block bytes / group size, BLOCK_MAX_STATISTICS_GROUPS, rows / minimum)`, so above one
+Final groups are about `min(block bytes / group size, BLOCK_MAX_ROW_GROUPS, rows / minimum)`, so above one
 group size per minimum row count the density merge binds and doubling a row's width halves the volume;
 many short columns raise it, as does a bytewise-comparable column earning per-group bounds. The allowance
 is itself non-monotone in the container limit, being `margin_allowance(allowance) − budget`. Rejected:

@@ -1,4 +1,4 @@
-//! `pgdt parse --statistics` / `--statistics-group-size` /
+//! `pgdt parse --statistics` / `--row-group-size` /
 //! `--statistics-min-rows` / `--statistics-max-rows`, and what `info` reports
 //! of them.
 //!
@@ -102,7 +102,7 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
 #[test]
 fn none_gathers_nothing_and_a_stated_size_is_recorded() {
     assert!(blocks_after(&["--statistics", "none"]).iter().all(|(_, b)| b["statistics"].is_null()));
-    for (table, block) in blocks_after(&["--statistics-group-size", "4096"]) {
+    for (table, block) in blocks_after(&["--row-group-size", "4096"]) {
         assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
         assert_eq!(block["statistics"]["sizing"], "Stated", "{table}");
     }
@@ -152,7 +152,7 @@ fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
     assert!(stderr.contains("statistics back-fill complete blocks=1"), "{stderr}");
     assert!(
         stderr.contains(
-            "statistics groups still hold more rows than the stated maximum \
+            "row groups still hold more rows than the stated maximum \
              table=\"ordered\" group_size=65536 max_rows=100"
         ),
         "{stderr}"
@@ -240,7 +240,7 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
 /// compact line, with no rollup beside the blocks.
 #[test]
 fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
-    let (_dir, dump, _) = info_after(&["--statistics-group-size", "4096"]);
+    let (_dir, dump, _) = info_after(&["--row-group-size", "4096"]);
     let text = run_ok(&["info", "--source", dump.to_str().unwrap(), "--json"]);
     assert_eq!(text.lines().count(), 1, "compact: one line");
     let json: Value = serde_json::from_str(&text).unwrap();
@@ -295,7 +295,7 @@ fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
 /// statistics at all says so in one line.
 #[test]
 fn the_detail_listing_rolls_up_the_exports_groups() {
-    let (_dir, dump, json) = info_after(&["--statistics-group-size", "4096"]);
+    let (_dir, dump, json) = info_after(&["--row-group-size", "4096"]);
     let detail = run_ok(&["info", "--source", dump.to_str().unwrap(), "--detail"]);
     let section: Vec<&str> = detail
         .lines()
@@ -419,7 +419,7 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
         "{stdout}"
     );
 
-    let (stdout, stderr) = parse(&["--statistics-group-size", "4096"]);
+    let (stdout, stderr) = parse(&["--row-group-size", "4096"]);
     assert!(stderr.contains("statistics back-fill started blocks=3"), "{stderr}");
     assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
     let sizes: Vec<u64> = blocks_of(&info_json(&dump))
@@ -488,7 +488,7 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
     let (_dir, dump) = sandboxed(DUMP, "refused.sql");
     let source = dump.to_str().unwrap();
     for (extra, says) in [
-        (&["--statistics", "none", "--statistics-group-size", "64"][..], "drop one of them"),
+        (&["--statistics", "none", "--row-group-size", "64"][..], "drop one of them"),
         (&["--statistics", "none", "--statistics-min-rows", "64"][..], "drop one of them"),
         (&["--statistics", "none", "--statistics-max-rows", "64"][..], "drop one of them"),
         (
@@ -499,17 +499,11 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
             &["--statistics-min-rows", "64", "--statistics-max-rows", "8"][..],
             "below the 64 rows --statistics-min-rows asks for —",
         ),
-        (
-            &["--statistics-group-size", "4096", "--statistics-max-rows", "8"][..],
-            "cannot be used with",
-        ),
+        (&["--row-group-size", "4096", "--statistics-max-rows", "8"][..], "cannot be used with"),
         (&["--preamble-only", "--statistics-max-rows", "8"][..], "cannot be used with"),
-        (&["--statistics-group-size", "0"][..], "a group size of 0"),
-        (&["--statistics-group-size", "1000"][..], "a power of two"),
-        (
-            &["--statistics-group-size", "4096", "--statistics-min-rows", "8"][..],
-            "cannot be used with",
-        ),
+        (&["--row-group-size", "0"][..], "a group size of 0"),
+        (&["--row-group-size", "1000"][..], "a power of two"),
+        (&["--row-group-size", "4096", "--statistics-min-rows", "8"][..], "cannot be used with"),
         (&["--preamble-only", "--statistics-min-rows", "8"][..], "cannot be used with"),
         (&["--statistics", "public..id"][..], "is not a table"),
         (&["--statistics", "a.b.c.d"][..], "more parts"),
@@ -538,7 +532,7 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
 fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
     let (_dir, dump) = sandboxed(DUMP, "pruned.sql");
     let source = dump.to_str().unwrap();
-    run_ok(&["parse", "--source", source, "--statistics-group-size", "1024"]);
+    run_ok(&["parse", "--source", source, "--row-group-size", "1024"]);
     for jobs in ["1", "3"] {
         let query = |extra: &[&str]| {
             let mut args = vec![

@@ -118,7 +118,7 @@ INSERT INTO public.specials VALUES
     (7, 'NaN', '-0', 'NaN', 'NaN');
 
 -- ---------------------------------------------------------------------
--- A value longer than the read chunk and the default statistics group size,
+-- A value longer than the read chunk and the default row group size,
 -- both one mebibyte, so a scan carries one row across chunks, a group holds a
 -- row running past its end, a small stated group size leaves groups in which
 -- no row starts, and a leader cut can land inside the row. Past the stored

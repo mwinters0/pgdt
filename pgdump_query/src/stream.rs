@@ -1438,7 +1438,7 @@ fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
                 table = block.header.table,
                 group_size = held.group_size,
                 max_rows,
-                "statistics groups still hold more rows than the stated maximum",
+                "row groups still hold more rows than the stated maximum",
             );
         }
     }

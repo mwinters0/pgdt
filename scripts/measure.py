@@ -2189,9 +2189,9 @@ SWEEP_JOBS = 1
 #: it states none.
 NO_STATISTICS = "--statistics none"
 
-#: `pgdump_query::statistics::STATISTICS_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
+#: `pgdump_query::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
 #: held to the library's by a test.
-STATISTICS_GROUP_SIZE = 1 << 20
+ROW_GROUP_SIZE = 1 << 20
 
 #: **What the two statistics figures state instead, where they gather.**
 #: Their subject is the gathering the rule above keeps out of every other
@@ -2201,7 +2201,7 @@ STATISTICS_GROUP_SIZE = 1 << 20
 #: its figure the day one did. The size stated is the default's base size, and a
 #: stated size is gathered exactly, so what is priced is gathering at a
 #: mebibyte, which a flagless `parse` coarsens where rows are wide.
-GATHER_STATISTICS = f"--statistics all --statistics-group-size {STATISTICS_GROUP_SIZE}"
+GATHER_STATISTICS = f"--statistics all --row-group-size {ROW_GROUP_SIZE}"
 
 #: `statistics-gathering`'s shapes: one whole-file `parse` under the resident
 #: wrapper, with statistics and without, `<family><leg>-rss`. **Both legs are

@@ -28,7 +28,7 @@ use crate::instrument;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
-pub const STATISTICS_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;
+pub const ROW_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;
 
 /// The most groups a block's statistics hold under an unstated group size and
 /// an unstated maximum: past it, adjacent groups merge pairwise and the
@@ -37,7 +37,7 @@ pub const STATISTICS_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;
 /// maximum turns the cap off ([`StatisticsRequest::group_cap`]), so a block
 /// gathered under one may hold more groups than this. A judgement, not a
 /// reading.
-pub const BLOCK_MAX_STATISTICS_GROUPS: usize = 4096;
+pub const BLOCK_MAX_ROW_GROUPS: usize = 4096;
 
 /// The fewest rows a block's median group — its upper middle one, so that at
 /// most half the groups fall short — holds under an unstated group size and an
@@ -45,9 +45,9 @@ pub const BLOCK_MAX_STATISTICS_GROUPS: usize = 4096;
 /// pairwise until that group reaches it, the block is one group, or the next
 /// size would break a stated maximum, which outranks the minimum
 /// (`gather::density_merges`; `docs/design/decisions.md`, "D82").
-/// `STATISTICS_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
+/// `ROW_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
 /// not a reading.
-pub const STATISTICS_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
+pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
 
 /// The longest text any stored bound or dictionary entry may be, in bytes.
 pub const DICTIONARY_ENTRY_MAX_BYTES: usize = 256;
@@ -69,8 +69,8 @@ pub struct StatisticsRequest {
     /// The columns statistics are gathered for.
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
-    /// [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
-    /// [`BLOCK_MAX_STATISTICS_GROUPS`] groups and short of [`Self::min_rows`]; a
+    /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
+    /// [`BLOCK_MAX_ROW_GROUPS`] groups and short of [`Self::min_rows`]; a
     /// stated size is gathered exactly.
     /// Kept apart from the default because a stated size and an unstated one
     /// are different requests to a block already gathered at another. In a
@@ -79,7 +79,7 @@ pub struct StatisticsRequest {
     /// nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
     /// The fewest rows a block's median group should hold, `None` when the
-    /// caller stated none and [`STATISTICS_GROUP_DEFAULT_MIN_ROWS`] applies; `0`
+    /// caller stated none and [`ROW_GROUP_DEFAULT_MIN_ROWS`] applies; `0`
     /// coarsens nothing. Kept apart from the default for the reason
     /// [`Self::group_size`] is. Under a stated group size, which is gathered
     /// exactly, it sizes nothing and is ignored.
@@ -89,8 +89,8 @@ pub struct StatisticsRequest {
     /// default**: a maximum applies only where a caller states one.
     ///
     /// Short of a stated group size, it is the only thing that makes a block
-    /// finer than [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
-    /// both the minimum and [`BLOCK_MAX_STATISTICS_GROUPS`]**, which it turns off
+    /// finer than [`ROW_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
+    /// both the minimum and [`BLOCK_MAX_ROW_GROUPS`]**, which it turns off
     /// ([`Self::group_cap`]) — a person sensitive to what a query reads asked
     /// for the groups, and neither a default nor a bound on memory quietly
     /// overrules them. Under a stated group size it sizes nothing and is
@@ -124,25 +124,22 @@ impl StatisticsRequest {
 
     /// The group size this request gathers at, before any merge.
     pub fn group_size(&self) -> u64 {
-        self.group_size.map_or(STATISTICS_GROUP_DEFAULT_SIZE_BYTES, NonZeroU64::get)
+        self.group_size.map_or(ROW_GROUP_DEFAULT_SIZE_BYTES, NonZeroU64::get)
     }
 
     /// The most groups a block this request gathers may hold:
-    /// [`BLOCK_MAX_STATISTICS_GROUPS`] under an unstated size and an unstated
+    /// [`BLOCK_MAX_ROW_GROUPS`] under an unstated size and an unstated
     /// maximum, `None` under either, both being sizes a caller asked for
     /// exactly.
     pub fn group_cap(&self) -> Option<usize> {
-        (self.group_size.is_none() && self.max_rows.is_none())
-            .then_some(BLOCK_MAX_STATISTICS_GROUPS)
+        (self.group_size.is_none() && self.max_rows.is_none()).then_some(BLOCK_MAX_ROW_GROUPS)
     }
 
     /// The density minimum a block this request gathers is sized by at its
     /// end: the stated or default minimum under an unstated size, `None` under
     /// a stated one.
     pub fn min_rows(&self) -> Option<u64> {
-        self.group_size
-            .is_none()
-            .then(|| self.min_rows.unwrap_or(STATISTICS_GROUP_DEFAULT_MIN_ROWS))
+        self.group_size.is_none().then(|| self.min_rows.unwrap_or(ROW_GROUP_DEFAULT_MIN_ROWS))
     }
 
     /// The density maximum a block this request gathers is sized by at its
@@ -305,7 +302,7 @@ pub struct StatisticsBackfill {
     /// The group size gathered at: the request's stated size; or, for a block
     /// whose groups break a stated maximum, the finer size
     /// [`BlockStatistics::predicted_group_size`] predicts; or else the size
-    /// the block already held, or else [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`].
+    /// the block already held, or else [`ROW_GROUP_DEFAULT_SIZE_BYTES`].
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
     /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its
@@ -434,8 +431,8 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], merged pairwise
-    /// past [`BLOCK_MAX_STATISTICS_GROUPS`] groups and, once the block is finished,
+    /// An unstated size: [`ROW_GROUP_DEFAULT_SIZE_BYTES`], merged pairwise
+    /// past [`BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
     /// `max_rows` is the stated maximum the size was chosen under, if any: it

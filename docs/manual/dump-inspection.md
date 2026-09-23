@@ -410,7 +410,7 @@ turns it off:
 ```sh
 pgdt parse --source big.sql --statistics none                        # nothing gathered
 pgdt parse --source big.sql --statistics public.orders,public.items.sku
-pgdt parse --source big.sql --statistics-group-size 65536            # finer groups
+pgdt parse --source big.sql --row-group-size 65536                   # finer groups
 pgdt parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
 pgdt parse --source big.sql --statistics-max-rows 4096               # more, emptier groups
 ```
@@ -419,7 +419,7 @@ A selection is a comma-separated list of tables (`schema.table`, or a bare
 `table` matching any schema) and single columns (`schema.table.column`); every
 other table gathers nothing and is read as `--statistics none` reads it. A name
 is split at its dots, so a quoted identifier containing one cannot be named.
-`--statistics-group-size` states the bytes of data each group covers, a power of
+`--row-group-size` states the bytes of data each group covers, a power of
 two kept exactly however long the table: a smaller group records more finely
 where values lie and costs memory and cache space in proportion.
 
@@ -444,10 +444,10 @@ even that misses, the run keeps what the second read gave rather than reading a
 third time, and every run under that maximum says so on stderr:
 
 ```
-2026-07-23T15:10:09.570016894Z  INFO statistics groups still hold more rows than the stated maximum table="events" group_size=262144 max_rows=3000
+2026-07-23T15:10:09.570016894Z  INFO row groups still hold more rows than the stated maximum table="events" group_size=262144 max_rows=3000
 ```
 
-A stated `--statistics-group-size` is exact, so it is refused beside
+A stated `--row-group-size` is exact, so it is refused beside
 `--statistics-min-rows` and `--statistics-max-rows`, a maximum below the
 minimum in force is refused, and none of the three is accepted beside
 `--statistics none`. No statistics flag combines with `--preamble-only`, which
@@ -458,7 +458,7 @@ rest of the file is scanned, `parse` re-reads each table's data an earlier run
 mapped without the statistics this one asks for — gathered with `--statistics
 none`, left out of a selection, without the least and greatest values this
 build keeps for a column, at a group size other than a
-`--statistics-group-size` stated now, or under bounds other than a
+`--row-group-size` stated now, or under bounds other than a
 `--statistics-min-rows` or `--statistics-max-rows` stated now — one `COPY`
 block at a time, banking each as it goes, so an interrupted re-read continues
 where it stopped. A block this run scanned is re-read too where it is too
@@ -523,7 +523,7 @@ is tuned, so raise `--memory` (or give the container more) and parse again.
 **The cache records that it declined, and the number it declined under.** A
 later `parse` at the same allowance or a smaller one leaves the block alone and
 prints that line again rather than re-reading 300 GB to decline a second time;
-one at a larger allowance re-reads it. `--statistics-group-size` and
+one at a larger allowance re-reads it. `--row-group-size` and
 `--statistics-min-rows` do not help here: how fine the groups are is your
 choice and is never quietly changed to fit memory, because a cache must not
 depend on the container that happened to write it.

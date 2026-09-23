@@ -61,7 +61,7 @@ fn cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
 /// `pgdt parse` gathering every statistic at [`TINY_GROUP`] bytes a group, so
 /// every fixture block holds many groups and nearly every cut falls inside one.
 fn gathered_cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
-    parse_cache(dump, out, &["--statistics-group-size", TINY_GROUP], extra)
+    parse_cache(dump, out, &["--row-group-size", TINY_GROUP], extra)
 }
 
 /// The group size the gathering legs state: tens of bytes, where the shipped

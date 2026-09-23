@@ -160,7 +160,7 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     let (dump, cache) = (dump.to_str().unwrap(), cache.to_str().unwrap());
     assert_every_column_maps(Path::new(dump), Path::new(cache));
     std::fs::remove_file(cache).unwrap();
-    pgdt(&["parse", "--source", dump, "--dtcache", cache, "--statistics-group-size", "1048576"]);
+    pgdt(&["parse", "--source", dump, "--dtcache", cache, "--row-group-size", "1048576"]);
     let detail = pgdt(&["info", "--dtcache", cache, "--detail"]);
     let line = |column: &str| {
         detail

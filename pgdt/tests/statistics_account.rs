@@ -296,12 +296,12 @@ fn the_account_reconciles_with_the_live_statistics_heap() {
         let longest = generate(&input);
 
         let serial = copy(dir.path(), &input, &format!("{shape}-serial.sql"));
-        let read = parse(&serial, &report, &["--statistics-group-size", size, "--jobs", "1"]);
+        let read = parse(&serial, &report, &["--row-group-size", size, "--jobs", "1"]);
         lines.push(reconcile(&format!("{shape} serial"), &read, true, longest));
 
         let split = copy(dir.path(), &input, &format!("{shape}-split.sql"));
         let workers = [
-            "--statistics-group-size",
+            "--row-group-size",
             size,
             "--jobs",
             "4",
@@ -314,7 +314,7 @@ fn the_account_reconciles_with_the_live_statistics_heap() {
         assert!(read["statistics_account_pieces_peak_bytes"] > 0, "{shape}: nothing split");
         lines.push(reconcile(&format!("{shape} split"), &read, true, longest));
 
-        let refill = ["--statistics-group-size", refill_size, "--jobs", "1"];
+        let refill = ["--row-group-size", refill_size, "--jobs", "1"];
         let read = parse(&serial, &report, &refill);
         assert!(read["statistics_account_loaded_peak_bytes"] > 0, "{shape}: nothing loaded");
         lines.push(reconcile(&format!("{shape} back-fill"), &read, true, longest));

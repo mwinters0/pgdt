@@ -488,8 +488,8 @@ class StatisticsFigures(unittest.TestCase):
 
     def test_the_group_size_stated_is_the_librarys_default(self):
         src = (measure.REPO / "pgdump_query/src/statistics.rs").read_text()
-        self.assertEqual(measure.STATISTICS_GROUP_SIZE, 1 << 20)
-        self.assertIn("pub const STATISTICS_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;", src)
+        self.assertEqual(measure.ROW_GROUP_SIZE, 1 << 20)
+        self.assertIn("pub const ROW_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;", src)
 
     def test_a_gathering_legs_parse_states_its_request(self):
         for leg, flags in measure.STATISTICS_LEGS:
@@ -591,7 +591,7 @@ class StatisticsFigures(unittest.TestCase):
         self.assertEqual(int(literal), 0)
         fidelity = (measure.REPO / "pgdt/tests/perf_generator_fidelity.rs").read_text()
         self.assertIn(f'"{expr}"', fidelity)
-        self.assertIn(str(measure.STATISTICS_GROUP_SIZE), fidelity)
+        self.assertIn(str(measure.ROW_GROUP_SIZE), fidelity)
 
     def test_the_query_notes_are_read_as_the_cli_prints_them(self):
         got = measure.parse_query_notes(self.QUERY_STDERR)

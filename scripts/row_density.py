@@ -75,7 +75,7 @@ from typing import Iterable, Sequence
 
 #: The density minimum's default, in rows: `2^20` stays right for rows up to
 #: `REASONABLE_ROW_BYTES`, so `2^20 / 2^10` rows a group.
-#: `pgdump_query::statistics::STATISTICS_GROUP_DEFAULT_MIN_ROWS`, mirrored, and held
+#: `pgdump_query::statistics::ROW_GROUP_DEFAULT_MIN_ROWS`, mirrored, and held
 #: to the library's by a test; `pgdt` chooses a block's size by the same rule
 #: as `choose` at the median.
 DEFAULT_MIN_ROWS = 1024

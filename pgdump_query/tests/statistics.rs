@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    BLOCK_MAX_STATISTICS_GROUPS, BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET,
+    BLOCK_MAX_ROW_GROUPS, BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET,
     DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
-    MapRun, Parallelism, STATISTICS_GROUP_DEFAULT_MIN_ROWS, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
-    ScanOptions, Sortedness, StatisticsBackfill, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, bounded_columns, gather_block_statistics, map_file,
+    MapRun, Parallelism, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions,
+    Sortedness, StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -309,7 +309,7 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     assert_eq!(StatisticsRequest::default(), StatisticsRequest::ALL);
     let index = gathered(&dump, &StatisticsRequest::default()).await;
     let default_sizing =
-        GroupSizing::Density { min_rows: STATISTICS_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
+        GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
     for block in index.blocks() {
         let statistics = statistics(block);
         assert_eq!(statistics.columns.len(), block.header.columns.len());
@@ -318,14 +318,14 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
         assert_eq!(statistics.groups.len(), 1, "{}", block.header.table);
     }
     let ordered = statistics(block(&index, "public.ordered"));
-    assert_eq!(ordered.group_size, pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES);
+    assert_eq!(ordered.group_size, pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
     let long_value = statistics(block(&index, "public.long_value"));
-    assert!(long_value.group_size > pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES);
+    assert!(long_value.group_size > pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
 
     let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::ALL };
     let index = gathered(&dump, &uncoarsened).await;
     let long_value = statistics(block(&index, "public.long_value"));
-    assert_eq!(long_value.group_size, pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES);
+    assert_eq!(long_value.group_size, pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
     assert!(long_value.groups.len() > 1);
     assert_eq!(long_value.sizing, GroupSizing::Density { min_rows: 0, max_rows: None });
 }
@@ -780,7 +780,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
             .map(|table| statistics(block(&run.index, table)).sizing)
     };
     let density = |min_rows| GroupSizing::Density { min_rows, max_rows: None };
-    let default = density(STATISTICS_GROUP_DEFAULT_MIN_ROWS);
+    let default = density(ROW_GROUP_DEFAULT_MIN_ROWS);
     let only_id = StatisticsRequest {
         selection: StatisticsSelection::Only(vec![StatisticsTarget::Column {
             table: "public.ordered".to_string(),
@@ -795,8 +795,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     assert_eq!(run.backfilled, 3, "ordered lacks columns, the others everything");
     assert_eq!(records(&run), [density(0), default, default], "ordered kept its record");
 
-    let run =
-        mapped_into_cache(&dump, &options, &with_min(STATISTICS_GROUP_DEFAULT_MIN_ROWS)).await;
+    let run = mapped_into_cache(&dump, &options, &with_min(ROW_GROUP_DEFAULT_MIN_ROWS)).await;
     assert_eq!(run.backfilled, 1, "only ordered was sized under another minimum");
     assert_eq!(records(&run), [default; 3]);
     let long_value = |run: &MapRun| statistics(block(&run.index, "public.long_value")).clone();
@@ -811,7 +810,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
         assert_eq!(run.backfilled, 0, "{request:?}");
     }
 
-    let at_default_size = request(StatisticsSelection::All, STATISTICS_GROUP_DEFAULT_SIZE_BYTES);
+    let at_default_size = request(StatisticsSelection::All, ROW_GROUP_DEFAULT_SIZE_BYTES);
     let run = mapped_into_cache(&dump, &options, &at_default_size).await;
     assert_eq!(run.backfilled, 0, "every block is at the size stated, whatever sized it");
     let run = mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, 4096)).await;
@@ -819,8 +818,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     assert_eq!(records(&run), [GroupSizing::Stated; 3]);
     let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
     assert_eq!(run.backfilled, 0, "an unstated minimum keeps a stated size");
-    let run =
-        mapped_into_cache(&dump, &options, &with_min(STATISTICS_GROUP_DEFAULT_MIN_ROWS)).await;
+    let run = mapped_into_cache(&dump, &options, &with_min(ROW_GROUP_DEFAULT_MIN_ROWS)).await;
     assert_eq!(run.backfilled, 3);
     assert_eq!(records(&run), [default; 3]);
     assert_eq!(long_value(&run), coarse, "re-read from the first row, as gathered cold");
@@ -871,10 +869,8 @@ async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predict
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
     let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
-    let sizing = GroupSizing::Density {
-        min_rows: STATISTICS_GROUP_DEFAULT_MIN_ROWS,
-        max_rows: Some(MAX_ROWS),
-    };
+    let sizing =
+        GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: Some(MAX_ROWS) };
     let tables = ["public.dense", "public.clustered"];
 
     // Flagless first: both blocks are at the default size, and both break the
@@ -882,7 +878,7 @@ async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predict
     let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
     for table in tables {
         let held = statistics(block(&run.index, table));
-        assert_eq!(held.group_size, STATISTICS_GROUP_DEFAULT_SIZE_BYTES, "{table}");
+        assert_eq!(held.group_size, ROW_GROUP_DEFAULT_SIZE_BYTES, "{table}");
         assert!(densest_group(held) > MAX_ROWS, "{table}: {}", densest_group(held));
     }
 
@@ -891,11 +887,7 @@ async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predict
     let dense = statistics(block(&run.index, "public.dense")).clone();
     let clustered = statistics(block(&run.index, "public.clustered")).clone();
     for (table, held) in tables.iter().zip([&dense, &clustered]) {
-        assert!(
-            held.group_size < STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
-            "{table}: {}",
-            held.group_size
-        );
+        assert!(held.group_size < ROW_GROUP_DEFAULT_SIZE_BYTES, "{table}: {}", held.group_size);
         assert_eq!(held.sizing, sizing, "{table}");
     }
     assert!(densest_group(&dense) <= MAX_ROWS, "dense: {}", densest_group(&dense));
@@ -937,7 +929,7 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
-    assert_eq!(StatisticsRequest::ALL.group_cap(), Some(BLOCK_MAX_STATISTICS_GROUPS));
+    assert_eq!(StatisticsRequest::ALL.group_cap(), Some(BLOCK_MAX_ROW_GROUPS));
     let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
     assert_eq!(bounded.group_cap(), None, "a stated maximum is a size a caller asked for");
 
@@ -947,7 +939,7 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     let mut rows: Vec<u64> = held.groups.iter().map(|group| group.rows).collect();
     rows.sort_unstable();
     let median = rows[rows.len() / 2];
-    assert!(median < STATISTICS_GROUP_DEFAULT_MIN_ROWS, "the minimum is unmet at {median} rows");
+    assert!(median < ROW_GROUP_DEFAULT_MIN_ROWS, "the minimum is unmet at {median} rows");
     let flagless = gathered(&dump, &StatisticsRequest::ALL).await;
     let coarse = statistics(block(&flagless, "public.dense"));
     assert!(
@@ -1014,7 +1006,7 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
             let backfill = unstated
                 .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
                 .expect("the block holds no statistics");
-            assert_eq!(backfill.group_cap, Some(BLOCK_MAX_STATISTICS_GROUPS));
+            assert_eq!(backfill.group_cap, Some(BLOCK_MAX_ROW_GROUPS));
             assert_eq!(
                 stated
                     .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
@@ -1102,11 +1094,9 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
             let backfill = unstated
                 .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
                 .expect("the block holds no statistics");
-            let default_sizing = GroupSizing::Density {
-                min_rows: STATISTICS_GROUP_DEFAULT_MIN_ROWS,
-                max_rows: None,
-            };
-            assert_eq!(backfill.min_rows, Some(STATISTICS_GROUP_DEFAULT_MIN_ROWS));
+            let default_sizing =
+                GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
+            assert_eq!(backfill.min_rows, Some(ROW_GROUP_DEFAULT_MIN_ROWS));
             assert_eq!(backfill.sizing, default_sizing);
             let exact_request = stated
                 .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
