@@ -6,7 +6,9 @@
 //! from `Exact` statistics by replacing the aggregate with a literal, so a
 //! wrong `Exact` is a wrong answer with no error; a session whose physical
 //! optimizer does not carry `aggregate_statistics` reads every row instead,
-//! and the two must agree wherever reading the column answers at all.
+//! and the two must agree wherever reading the column answers at all. Where a
+//! typed read refuses (`KD8`), a count is still checked: read as text, no
+//! value refuses, and a `COUNT(<column>)` counts values without their meaning.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,7 +20,9 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
 use pgdump_query::cache::CacheMode;
-use pgdump_query::{Finding, LocalFileSource, ScanOptions, StatisticsRequest, TableName, map_file};
+use pgdump_query::{
+    Finding, LocalFileSource, ScanOptions, SchemaMode, StatisticsRequest, TableName, map_file,
+};
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
@@ -129,8 +133,15 @@ fn rendered(batches: &Result<Vec<RecordBatch>, String>) -> String {
 }
 
 /// The aggregate's answer with and without the statistics, and a note of
-/// whether the statistics actually answered it.
-async fn agrees(reading: &SessionContext, blind: &SessionContext, sql: &str) -> bool {
+/// whether the statistics actually answered it. `text` is a session reading
+/// the same dump as text without its statistics, the oracle for a count over
+/// a column the typed read refuses.
+async fn agrees(
+    reading: &SessionContext,
+    blind: &SessionContext,
+    text: Option<&SessionContext>,
+    sql: &str,
+) -> Answer {
     let from_statistics = rows(reading, sql).await;
     let from_rows = rows(blind, sql).await;
     let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
@@ -149,64 +160,143 @@ async fn agrees(reading: &SessionContext, blind: &SessionContext, sql: &str) -> 
             "`{sql}` was answered from statistics and still refused: {}",
             rendered(&from_statistics)
         );
-        return answered;
+        if !sql.starts_with("SELECT COUNT(") {
+            return Answer::FromStatistics;
+        }
+        let text = text.unwrap_or_else(|| panic!("`{sql}` refused with no text session to count"));
+        assert_eq!(
+            rendered(&from_statistics),
+            rendered(&rows(text, sql).await),
+            "`{sql}` counted differently from the statistics than read as text"
+        );
+        return Answer::CountedAsText;
     }
     assert_eq!(
         rendered(&from_statistics),
         rendered(&from_rows),
         "`{sql}` answered differently with the statistics than without them"
     );
-    answered
+    if answered { Answer::FromStatistics } else { Answer::FromRows }
 }
 
-#[tokio::test]
-async fn statistics_never_change_an_answer() {
-    let scratch = tempfile::tempdir().unwrap();
-    // Each set by the first query the statistics actually answer, so a build
-    // that hands none over fails rather than passing vacuously.
-    let mut answered_a_bound = false;
-    let mut answered_a_count = false;
-    let mut answered_a_null_count = false;
-    for fixture in every_fixture() {
-        let copy = parsed_copy(&fixture, scratch.path()).await;
-        let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-        let (reading, blind) = sessions();
-        let catalogs = register_in((&reading, &blind), &dump);
-        for table in dump.tables() {
-            let catalog = catalogs
-                .iter()
-                .find(|(database, _)| *database == table.database)
-                .unwrap()
-                .1
-                .clone();
-            let from = from(&catalog, table);
-            answered_a_count |=
-                agrees(&reading, &blind, &format!("SELECT COUNT(*) FROM {from}")).await;
-            let provider = dump.table(table.database.as_deref(), None, &table.table).unwrap();
-            for field in provider.resolved_schema().schema.fields() {
-                let column = quoted(field.name());
-                // `COUNT(c)` is the table's rows less the column's NULLs, so
-                // it reads the null count rather than a bound.
-                let sql = format!("SELECT COUNT({column}) FROM {from}");
-                answered_a_null_count |= agrees(&reading, &blind, &sql).await;
-                // DataFusion plans no `MIN`/`MAX` over a list or a struct, in
-                // either session, so there is nothing to compare.
-                if matches!(
-                    field.data_type(),
-                    DataType::List(_) | DataType::LargeList(_) | DataType::Struct(_)
-                ) {
-                    continue;
-                }
-                for op in ["MIN", "MAX"] {
-                    let sql = format!("SELECT {op}({column}) FROM {from}");
-                    answered_a_bound |= agrees(&reading, &blind, &sql).await;
-                }
+/// Where an aggregate's answer came from, and what it was checked against.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Answer {
+    /// The plan read the rows; nothing was asked of the statistics.
+    FromRows,
+    /// The statistics answered, and the rows agreed or could not be read.
+    FromStatistics,
+    /// The statistics counted a column the typed read refuses, and the count
+    /// read as text agreed.
+    CountedAsText,
+}
+
+impl Answer {
+    fn answered(self) -> bool {
+        self != Answer::FromRows
+    }
+}
+
+/// Which of the statistics' answers one schema mode's pass saw, so a build
+/// that hands none over fails rather than passing vacuously.
+#[derive(Default, Debug)]
+struct Seen {
+    count: bool,
+    null_count: bool,
+    bound: bool,
+    counted_as_text: bool,
+}
+
+/// `dump` opened in `schema_mode` and registered in a reading and a blind
+/// session.
+async fn opened(
+    copy: &Path,
+    schema_mode: SchemaMode,
+) -> (Arc<PgDump>, SessionContext, SessionContext, Vec<(Option<String>, String)>) {
+    let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };
+    let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
+    let (reading, blind) = sessions();
+    let catalogs = register_in((&reading, &blind), &dump);
+    (dump, reading, blind, catalogs)
+}
+
+/// Every table's `COUNT(*)`, and every column's `COUNT`, `MIN` and `MAX`, of
+/// `dump` asked of both sessions.
+async fn every_aggregate(
+    dump: &Arc<PgDump>,
+    (reading, blind): (&SessionContext, &SessionContext),
+    catalogs: &[(Option<String>, String)],
+    text: &SessionContext,
+    seen: &mut Seen,
+) {
+    for table in dump.tables() {
+        let catalog =
+            catalogs.iter().find(|(database, _)| *database == table.database).unwrap().1.clone();
+        let from = from(&catalog, table);
+        seen.count |= agrees(reading, blind, Some(text), &format!("SELECT COUNT(*) FROM {from}"))
+            .await
+            .answered();
+        let provider = dump.table(table.database.as_deref(), None, &table.table).unwrap();
+        for field in provider.resolved_schema().schema.fields() {
+            let column = quoted(field.name());
+            // `COUNT(c)` is the table's rows less the column's NULLs, so it
+            // reads the null count rather than a bound.
+            let sql = format!("SELECT COUNT({column}) FROM {from}");
+            let answer = agrees(reading, blind, Some(text), &sql).await;
+            seen.null_count |= answer.answered();
+            seen.counted_as_text |= answer == Answer::CountedAsText;
+            // DataFusion plans no `MIN`/`MAX` over a list or a struct, in
+            // either session, so there is nothing to compare.
+            if matches!(
+                field.data_type(),
+                DataType::List(_) | DataType::LargeList(_) | DataType::Struct(_)
+            ) {
+                continue;
+            }
+            for op in ["MIN", "MAX"] {
+                let sql = format!("SELECT {op}({column}) FROM {from}");
+                seen.bound |= agrees(reading, blind, Some(text), &sql).await.answered();
             }
         }
     }
-    assert!(answered_a_count, "no `COUNT(*)` was answered from the statistics");
-    assert!(answered_a_null_count, "no `COUNT(<column>)` was answered from the statistics");
-    assert!(answered_a_bound, "no `MIN`/`MAX` was answered from the statistics");
+}
+
+/// **Typed and as text**, as the provider's other targets are: the text pass
+/// is the typed one's oracle wherever a typed read refuses (`KD8`), and is
+/// itself read against the rows, bounds included (D89).
+#[tokio::test]
+async fn statistics_never_change_an_answer() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut typed = Seen::default();
+    let mut strings = Seen::default();
+    for fixture in every_fixture() {
+        let copy = parsed_copy(&fixture, scratch.path()).await;
+        let (text_dump, text_reading, text_blind, text_catalogs) =
+            opened(&copy, SchemaMode::Strings).await;
+        let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
+        every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut typed).await;
+        every_aggregate(
+            &text_dump,
+            (&text_reading, &text_blind),
+            &text_catalogs,
+            &text_blind,
+            &mut strings,
+        )
+        .await;
+    }
+    for (mode, seen) in [(SchemaMode::Typed, &typed), (SchemaMode::Strings, &strings)] {
+        assert!(seen.count, "no `COUNT(*)` was answered from the statistics ({mode:?})");
+        assert!(
+            seen.null_count,
+            "no `COUNT(<column>)` was answered from the statistics ({mode:?})"
+        );
+        assert!(seen.bound, "no `MIN`/`MAX` was answered from the statistics ({mode:?})");
+    }
+    assert!(
+        typed.counted_as_text,
+        "no typed `COUNT(<column>)` over a refusing column was checked against the text"
+    );
+    assert!(!strings.counted_as_text, "a text read refused: {strings:?}");
 }
 
 /// A filter cuts rows out of the scan, so the table's own counts and extremes
@@ -221,14 +311,14 @@ async fn a_filtered_scan_answers_nothing_from_the_table_s_statistics() {
     register_in((&reading, &blind), &dump);
     let unfiltered = "SELECT COUNT(*), MIN(id), MAX(id) FROM \"dump\".public.t_int";
     assert!(
-        agrees(&reading, &blind, unfiltered).await,
+        agrees(&reading, &blind, None, unfiltered).await.answered(),
         "the unfiltered aggregate is the control, and it must answer from the statistics"
     );
     for filtered in
         [format!("{unfiltered} WHERE id > 0"), format!("{unfiltered} WHERE v_integer < 100")]
     {
         assert!(
-            !agrees(&reading, &blind, &filtered).await,
+            !agrees(&reading, &blind, None, &filtered).await.answered(),
             "`{filtered}` was answered from statistics describing the unfiltered table"
         );
     }
