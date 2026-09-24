@@ -6,7 +6,7 @@
 //! declared type text and `COLLATE` clause a column's statistics were computed
 //! under, counts, and bounds as unescaped field text — what `pg_dump` wrote
 //! where the value fits [`DICTIONARY_ENTRY_MAX_BYTES`], and a prefix or a successor of it
-//! where it does not ([`Bounds::max_exact`]). Which
+//! where it does not ([`Bounds::min_exact`], [`Bounds::max_exact`]). Which
 //! column gets which statistic, and how a value is ordered, is decided above
 //! this layer by whatever implements [`BlockObserver`]; the mapping pass hands
 //! it every row and stays type-blind.
@@ -501,12 +501,20 @@ pub struct ColumnBounds {
 /// A lower and an upper bound on one group's non-NULL values, as unescaped
 /// field text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] — a `character` value's
 /// without the trailing blanks its comparison ignores.
+///
+/// **A float's bounds tell its zeros apart**: where `-0` and `0` tie at an
+/// extreme, `min` is `-0` and `max` is `0` if the group holds that zero, as
+/// IEEE `totalOrder` — DataFusion's order for a float — places them. Still
+/// bounds in PostgreSQL's order, where the two are equal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bounds {
     /// No value orders below it.
     pub min: String,
     /// No value orders above it.
     pub max: String,
+    /// Whether `min` is a value the group holds. A truncated lower bound is a
+    /// prefix below every value and is never read as one.
+    pub min_exact: bool,
     /// Whether `max` is a value the group holds. A truncated upper bound is
     /// above every value and is never read as one.
     pub max_exact: bool,

@@ -256,7 +256,7 @@ mod tests {
     }
 
     fn bounds() -> Option<Bounds> {
-        Some(Bounds { min: "1".into(), max: "2".into(), max_exact: true })
+        Some(Bounds { min: "1".into(), max: "2".into(), min_exact: true, max_exact: true })
     }
 
     /// A column keeping bounds in `bounded` of its groups, in `sortedness`, and

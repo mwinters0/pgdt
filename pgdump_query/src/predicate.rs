@@ -1338,9 +1338,25 @@ impl ValueKey {
         order_key(kind, text).map(Self)
     }
 
-    /// [`compare_keys`]: a total order over the keys of one kind.
+    /// [`compare_keys`]: a total order over the keys of one kind, the one a
+    /// filter compares by — what a test holds [`Self::stored_order`] against.
+    #[cfg(test)]
     pub(crate) fn compare(&self, other: &Self) -> Ordering {
         compare_keys(&self.0, &other.0)
+    }
+
+    /// **The order a stored bound and a block's row order are kept in**:
+    /// [`compare_keys`], the order a filter compares by, with a float's `-0`
+    /// below `0` where it ties them, as IEEE `totalOrder` — the order Arrow
+    /// sorts a float by and DataFusion takes its `MIN`/`MAX` in — places
+    /// them. A refinement, so an extreme in it is one in the filter's order
+    /// and a block sorted in it is sorted in that order too
+    /// (`docs/design/decisions.md`, "D79").
+    pub(crate) fn stored_order(&self, other: &Self) -> Ordering {
+        compare_keys(&self.0, &other.0).then_with(|| match (&self.0, &other.0) {
+            (OrderKey::Float(x), OrderKey::Float(y)) => x.total_cmp(y),
+            _ => Ordering::Equal,
+        })
     }
 
     /// The heap this key holds, as the sizes the allocator was asked for:
@@ -6000,7 +6016,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (24, 7_882_341_807_793_490_139);
+        const GOLDEN_ORDER: (u32, u64) = (25, 2_008_420_983_373_127_703);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -6013,9 +6029,10 @@ mod tests {
         /// digest with no change to any comparison, and is re-pinned alone.
         ///
         /// The digest is FNV-1a over each major, each declared type and its
-        /// values in key order, ties broken by text, with whether each value
-        /// keys equal to the one before it — so equality moves it as well as
-        /// order.
+        /// values in stored order ([`ValueKey::stored_order`]), ties broken by
+        /// text, with whether each value keys equal to the one before it, and
+        /// whether only the stored order tells the two apart — so equality
+        /// moves it as well as order.
         #[tokio::test]
         async fn golden_order_is_pinned_to_the_format_version() {
             fn fnv(hash: &mut u64, bytes: &[u8]) {
@@ -6054,13 +6071,21 @@ mod tests {
                             .iter()
                             .map(|v| (ValueKey::of(&kind, v).expect("the server wrote it"), v))
                             .collect();
-                        keyed.sort_by(|(ka, a), (kb, b)| ka.compare(kb).then_with(|| a.cmp(b)));
+                        keyed
+                            .sort_by(|(ka, a), (kb, b)| ka.stored_order(kb).then_with(|| a.cmp(b)));
                         let name = kind_name(&kind);
                         fnv(&mut digest, format!("{major}\t{declared}\t{name}\n").as_bytes());
                         let mut previous: Option<&ValueKey> = None;
                         for (key, value) in &keyed {
-                            let tie = previous.is_some_and(|p| p.compare(key) == Ordering::Equal);
-                            fnv(&mut digest, if tie { b"=" } else { b"<" });
+                            let tie = previous.map(|p| (p.compare(key), p.stored_order(key)));
+                            fnv(
+                                &mut digest,
+                                match tie {
+                                    Some((Ordering::Equal, Ordering::Equal)) => b"=",
+                                    Some((Ordering::Equal, _)) => b"~",
+                                    _ => b"<",
+                                },
+                            );
                             fnv(&mut digest, value.as_bytes());
                             previous = Some(key);
                             values_sorted += 1;

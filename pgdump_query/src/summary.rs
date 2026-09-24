@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
-use crate::gather::{clips, declared_columns, dictionary_holds_field_text, stored_resolution};
+use crate::gather::{declared_columns, dictionary_holds_field_text, stored_resolution};
 use crate::index::{CopyBlock, DumpIndex, TableName};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::preamble::{ColumnDef, DumpMetadata};
@@ -74,7 +74,8 @@ pub struct Bound {
     /// A one-element array of the column's Arrow type ([`decode_field`]).
     pub value: ArrayRef,
     /// Whether the value is one the column holds, rather than a bound outside
-    /// every value ([`crate::statistics::Bounds::max_exact`]).
+    /// every value ([`crate::statistics::Bounds::min_exact`],
+    /// [`crate::statistics::Bounds::max_exact`]).
     pub exact: bool,
 }
 
@@ -190,8 +191,8 @@ pub fn table_summary(
 
 /// One column's extremes while the blocks are walked, each as the stored text
 /// and its key, so two blocks' bounds are compared exactly as the kind that
-/// stored them orders; and the union of its dictionaries, borrowed from the
-/// map, while every group so far has kept one.
+/// stored them orders ([`ValueKey::stored_order`]); and the union of its
+/// dictionaries, borrowed from the map, while every group so far has kept one.
 struct Accumulator<'a> {
     /// The kind bounds are read by, or `None` where this semantics believes
     /// none for the column.
@@ -241,16 +242,13 @@ impl<'a> Accumulator<'a> {
     }
 
     fn fold(&mut self, kind: &CompareKind, bounds: &Bounds) {
-        // A keyed kind stores whole values; a bytewise one may have clipped
-        // either end, and says so only of the upper (`gather::clips`).
-        let min_exact = !clips(kind);
         if let Some(key) = ValueKey::of(kind, &bounds.min) {
             let lower = self
                 .min
                 .as_ref()
-                .is_none_or(|(held, _, _)| key.compare(held) == std::cmp::Ordering::Less);
+                .is_none_or(|(held, _, _)| key.stored_order(held) == std::cmp::Ordering::Less);
             if lower {
-                self.min = Some((key, bounds.min.clone(), min_exact));
+                self.min = Some((key, bounds.min.clone(), bounds.min_exact));
             }
         } else {
             self.complete = false;
@@ -259,7 +257,7 @@ impl<'a> Accumulator<'a> {
             let higher = self
                 .max
                 .as_ref()
-                .is_none_or(|(held, _, _)| key.compare(held) == std::cmp::Ordering::Greater);
+                .is_none_or(|(held, _, _)| key.stored_order(held) == std::cmp::Ordering::Greater);
             if higher {
                 self.max = Some((key, bounds.max.clone(), bounds.max_exact));
             }
@@ -324,10 +322,10 @@ fn believed(column: &ColumnStatistics, declared: Option<&[ColumnDef]>, name: &st
 ///   upper one still bounds. Blocks the plan pruned whole, or that hold no
 ///   row, are not between the two.
 ///
-/// A float column is never proved, its order being recorded as PostgreSQL's
-/// rather than `total_cmp`'s (`KD42`). Partitions are not cut at block
-/// boundaries to spare the third condition (`docs/design/decisions.md`,
-/// "D51").
+/// A float qualifies like any other column: its bounds and row order are
+/// kept with its zeros told apart as Arrow sorts them
+/// ([`ValueKey::stored_order`]). Partitions are not cut at block boundaries
+/// to spare the third condition (`docs/design/decisions.md`, "D51").
 pub(crate) fn partition_orders(
     matches: &[CopyBlock],
     metadata: Option<&DumpMetadata>,
@@ -348,9 +346,6 @@ fn column_order(
     runs: &[Vec<u64>],
 ) -> Option<Sortedness> {
     let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::Arrow)?;
-    if matches!(kind, CompareKind::Float32 | CompareKind::Float64) {
-        return None;
-    }
     let name = resolved.schema.field(i).name();
     let mut order = None;
     // Each block's first and last group holding a row, by header offset. A
@@ -406,7 +401,7 @@ fn column_order(
                 _ => (&earlier.max, &later.min),
             };
             let (high, low) = (ValueKey::of(&kind, high)?, ValueKey::of(&kind, low)?);
-            if high.compare(&low) == std::cmp::Ordering::Greater {
+            if high.stored_order(&low) == std::cmp::Ordering::Greater {
                 return None;
             }
         }

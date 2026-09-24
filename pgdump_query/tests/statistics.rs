@@ -104,12 +104,6 @@ fn held<'a>(declared: &str, value: &'a str) -> &'a str {
 /// dump's one zone at one width, so its text is in its order too. The enum
 /// `public.mood` by its labels' declared positions.
 fn order(declared: &str, a: &str, b: &str) -> Ordering {
-    let number = |v: &str| match v {
-        "NaN" => f64::NAN,
-        "Infinity" => f64::INFINITY,
-        "-Infinity" => f64::NEG_INFINITY,
-        _ => v.parse::<f64>().unwrap(),
-    };
     let mood = |v: &str| ["sad", "ok", "happy"].iter().position(|label| *label == v).unwrap();
     match declared {
         "text" | "timestamp with time zone" => a.as_bytes().cmp(b.as_bytes()),
@@ -130,10 +124,21 @@ fn order(declared: &str, a: &str, b: &str) -> Ordering {
     }
 }
 
+/// A number as the fixture writes one, `NaN` and the infinities included.
+fn number(v: &str) -> f64 {
+    match v {
+        "NaN" => f64::NAN,
+        "Infinity" => f64::INFINITY,
+        "-Infinity" => f64::NEG_INFINITY,
+        _ => v.parse::<f64>().unwrap(),
+    }
+}
+
 /// Every statistic of `block` against the file: the groups' extents and row
 /// counts, and per column its NULL counts, that each bound is on the right side
-/// of every value in its group — an exact one being a value there — and that
-/// each dictionary is exactly the group's distinct texts or absent past a cap.
+/// of every value in its group — an exact one being a value there, a float's
+/// in IEEE `totalOrder` as well, which tells its zeros apart — and that each
+/// dictionary is exactly the group's distinct texts or absent past a cap.
 fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
     let stats = statistics(block);
     let rows = file_rows(dump, block);
@@ -201,6 +206,18 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
                                 || values.iter().any(|v| v.len() > DICTIONARY_ENTRY_MAX_BYTES),
                             "{what}: min"
                         );
+                        assert_eq!(
+                            b.min_exact,
+                            values.contains(&b.min.as_str()),
+                            "{what}: min_exact"
+                        );
+                        if matches!(declared, "real" | "double precision") {
+                            let (min, max) = (number(&b.min), number(&b.max));
+                            for v in values.iter().map(|v| number(v)) {
+                                assert!(min.total_cmp(&v).is_le(), "{what}: min {v} in totalOrder");
+                                assert!(max.total_cmp(&v).is_ge(), "{what}: max {v} in totalOrder");
+                            }
+                        }
                         assert_eq!(
                             b.max_exact,
                             values.contains(&b.max.as_str()),
@@ -304,6 +321,13 @@ async fn sortedness_is_the_blocks_row_order() {
         }
         assert_eq!(sortedness(block(&index, "public.long_value"), "v"), Some(Ascending));
 
+        // A float's row order tells its zeros apart as Arrow sorts them: `0`
+        // then `-0` ascends in PostgreSQL's order and not in `totalOrder`.
+        let zeros = block(&index, "public.zeros");
+        for (column, expected) in [("min_pos_first", Unsorted), ("min_neg_first", Ascending)] {
+            assert_eq!(sortedness(zeros, column), Some(expected), "{column} on {version}");
+        }
+
         // An enum descends in its declared order and ascends in Arrow's, its
         // labels' text.
         let moods = block(&index, "public.moods");
@@ -313,8 +337,8 @@ async fn sortedness_is_the_blocks_row_order() {
     }
 }
 
-/// A value past the stored-value cap is bounded by a truncated text: a prefix
-/// below it and a successor above it marked inexact, neither past the cap —
+/// A value past the stored-value cap is bounded by truncated texts: a prefix
+/// below it and a successor above it, each marked inexact, neither past the cap —
 /// and a group size under the megabyte row leaves groups no row starts in.
 #[tokio::test]
 async fn a_long_value_is_bounded_by_truncated_texts() {
@@ -326,9 +350,15 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
         let stats = statistics(long);
         assert!(stats.groups.iter().any(|g| g.rows == 0), "empty groups on {version}");
         let v = stats.columns[1].as_ref().unwrap();
-        let truncated: Vec<_> =
-            v.bounds.as_ref().unwrap().groups.iter().flatten().filter(|b| !b.max_exact).collect();
+        let groups = || v.bounds.as_ref().unwrap().groups.iter().flatten();
+        let truncated: Vec<_> = groups().filter(|b| !b.max_exact).collect();
         assert_eq!(truncated.len(), 2, "the 300-byte and the megabyte value on {version}");
+        let prefixed: Vec<_> = groups().filter(|b| !b.min_exact).collect();
+        assert_eq!(
+            prefixed.len(),
+            1,
+            "the megabyte value, the 300-byte one sharing a group with `a-short`, on {version}"
+        );
         assert!(v.dictionary.as_ref().unwrap().groups.iter().any(Option::is_none));
     }
 }

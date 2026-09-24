@@ -62,17 +62,6 @@ pub(crate) fn table_statistics(
             if matches!(resolved.schema.field(i).data_type(), DataType::Dictionary(..)) {
                 return statistics;
             }
-            // deficiency: KD42 — a float's stored bound is gathered in
-            // PostgreSQL's order, where `-0` and `0` tie and the first seen
-            // stands, while DataFusion's `MIN`/`MAX` over a float column orders
-            // by `total_cmp`, `-0` below `0`. So a column holding both zeros
-            // can be handed an `Exact` minimum of `0` where reading it answers
-            // `-0`, or a maximum of `-0` where it answers `0`: a wrong answer
-            // with no error. The same tie lets a float block be recorded
-            // sorted where `total_cmp` would not call it so, so no ordering
-            // can be declared from it. **(b) owned by P25**, the fix being the
-            // zero's sign kept as `total_cmp` would at the extremes and in the
-            // order recorded.
             statistics.min_value = bound(column.min.as_ref(), column.bounds_complete);
             statistics.max_value = bound(column.max.as_ref(), column.bounds_complete);
             statistics
@@ -94,19 +83,10 @@ fn count(value: u64, complete: bool) -> Precision<usize> {
 }
 
 /// One end of a column's range, `Exact` only where it is the value the column
-/// holds and the summary covers every group.
-///
-/// deficiency: KD39 — two cases never reach `Exact`, so `MIN` or `MAX` over
-/// them is read rather than answered. **(b) owned by P25.** **A text-ordered column's lower bound**
-/// is stored clipped to `DICTIONARY_ENTRY_MAX_BYTES` where the value is
-/// longer, and the stored shape records that of the upper bound alone
-/// (`statistics::Bounds::max_exact`), so a lower bound is never known to be
-/// the value: the fix is a flag beside it and a `CACHE_FORMAT_VERSION` bump,
-/// and it costs `MIN` on every `Utf8View` and `Binary` column. **A
-/// `character(n)`'s** own set is stored unpadded, so under PostgreSQL's
-/// semantics — which the provider does not ask for — it is not a value the
-/// column emits; its Arrow set is the padded text and is unaffected. An
-/// enum's is refused above (`KD45`).
+/// holds and the summary covers every group: a text or `bytea` extreme
+/// clipped to `DICTIONARY_ENTRY_MAX_BYTES` says so, and is read rather than
+/// answered. Where a float's extreme is a zero, it is the one `total_cmp`,
+/// which DataFusion's `MIN`/`MAX` orders by, picks of those the column holds.
 ///
 /// A bound is withheld where it is itself a value the Arrow type cannot hold:
 /// it does not decode, and the module's note above says what that leaves.

@@ -1332,7 +1332,9 @@ holds them — `null` for a block `parse` gathered nothing for. Each has its
 entry per column of the block's header, `null` for a column a `--statistics`
 selection left out: the column's `declared_type` and `collation`, its
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
-`min`, `max` and `max_exact`, or `null`), `arrow_bounds` (the same, in a
+`min`, `max`, `min_exact` and `max_exact`, or `null` — an `_exact` flag is
+`false` where a value too long to store was cut to a prefix below it or a
+successor above it), `arrow_bounds` (the same, in a
 DataFusion query's order, for a column whose PostgreSQL order is another, and
 `null` for every other column), and `dictionary` (the block's
 distinct `entries` once each, and per group a list of indices into them, or

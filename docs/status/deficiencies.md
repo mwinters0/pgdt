@@ -258,11 +258,6 @@ than reading as a phase nobody has sliced.
   choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
   of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
 
-- **KD39** — a `MIN` never answers from the DataFusion provider's statistics
-  for a text-ordered column: a stored lower bound does not say whether it is
-  the value it came from, only the upper one does, so the query reads every
-  row. **(b) owned by P25**, slice `25.5`: a flag beside `max_exact` and a
-  `CACHE_FORMAT_VERSION` bump. Detail: `datafusion-pgdump/src/statistics.rs`.
 - **KD45** — neither extreme of an enum column answers from the DataFusion
   provider's statistics: the column is emitted `Dictionary`, whose `MIN`/`MAX`
   DataFusion types as the value type and orders by label text, where the
@@ -285,14 +280,6 @@ than reading as a phase nobody has sliced.
   so the smaller chunk a plan note advises seats nothing more on that plan.
   **(c) unowned**; promoted by a stated chunk seen not to seat what the note
   promised. Detail: `pgdump_query/src/stream.rs`.
-
-- **KD42** — a float column holding both `-0` and `0` at an extreme can be
-  handed to DataFusion an `Exact` `MIN` or `MAX` of the other zero: its bound
-  is gathered in PostgreSQL's order, where the two tie, and DataFusion's
-  aggregate orders by `total_cmp`. A wrong answer with no error, and a float
-  block's recorded order is not one a declared ordering could promise.
-  **(b) owned by P25**, slice `25.5`, which gathers the sign. Detail:
-  `datafusion-pgdump/src/statistics.rs`.
 
 - **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the

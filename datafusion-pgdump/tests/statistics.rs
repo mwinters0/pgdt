@@ -239,37 +239,12 @@ async fn agrees(
         );
         return Answer::CountedAsText;
     }
-    // `KD42`: a float's bound gathered in PostgreSQL's order, handed over
-    // `Exact` as the other zero. Named rather than tolerated: the target
-    // asserts `public.zeros` reaches it, so the change closing it deletes this
-    // arm.
-    if answered && the_other_zero(&from_statistics, &from_rows) {
-        return Answer::OtherZero;
-    }
     assert_eq!(
         rendered(&from_statistics),
         rendered(&from_rows),
         "`{sql}` answered differently with the statistics than without them"
     );
     if answered { Answer::FromStatistics } else { Answer::FromRows }
-}
-
-/// Whether two one-value answers are a float's two zeros.
-fn the_other_zero(
-    a: &Result<Vec<RecordBatch>, String>,
-    b: &Result<Vec<RecordBatch>, String>,
-) -> bool {
-    let value = |answer: &Result<Vec<RecordBatch>, String>| {
-        let batches = answer.as_ref().ok()?;
-        let batch = batches.iter().find(|batch| batch.num_rows() > 0)?;
-        ScalarValue::try_from_array(batch.column(0), 0).ok()
-    };
-    let zero = |value: Option<ScalarValue>| match value? {
-        ScalarValue::Float64(Some(v)) if v == 0.0 => Some(v.is_sign_negative()),
-        ScalarValue::Float32(Some(v)) if v == 0.0 => Some(v.is_sign_negative()),
-        _ => None,
-    };
-    matches!((zero(value(a)), zero(value(b))), (Some(x), Some(y)) if x != y)
 }
 
 /// Where an aggregate's answer came from, and what it was checked against.
@@ -282,8 +257,6 @@ enum Answer {
     /// The statistics counted a column the typed read refuses, and the count
     /// read as text agreed.
     CountedAsText,
-    /// The statistics answered a float's extreme with the other zero (`KD42`).
-    OtherZero,
 }
 
 impl Answer {
@@ -299,9 +272,11 @@ struct Seen {
     count: bool,
     null_count: bool,
     bound: bool,
+    /// A `MIN` over a text or binary column, whose stored lower bound may be
+    /// a clipped prefix and says whether it is.
+    text_min: bool,
     distinct: bool,
     counted_as_text: bool,
-    other_zero: bool,
 }
 
 impl Seen {
@@ -310,9 +285,9 @@ impl Seen {
             count: self.count || other.count,
             null_count: self.null_count || other.null_count,
             bound: self.bound || other.bound,
+            text_min: self.text_min || other.text_min,
             distinct: self.distinct || other.distinct,
             counted_as_text: self.counted_as_text || other.counted_as_text,
-            other_zero: self.other_zero || other.other_zero,
         }
     }
 }
@@ -395,11 +370,15 @@ async fn every_aggregate(
             ) {
                 continue;
             }
+            let bytes = matches!(
+                field.data_type(),
+                DataType::Utf8View | DataType::Utf8 | DataType::Binary | DataType::BinaryView
+            );
             for op in ["MIN", "MAX"] {
                 let sql = format!("SELECT {op}({column}) FROM {from}");
                 let answer = agrees(reading, blind, Some(text), &sql).await;
                 seen.bound |= answer.answered();
-                seen.other_zero |= answer == Answer::OtherZero;
+                seen.text_min |= bytes && op == "MIN" && answer.answered();
             }
             // Asked of every column the rows can answer it for, statistics or
             // none: a `SUM` is answered from an `Exact` sum, a distinct count
@@ -454,6 +433,10 @@ fn statistics_never_change_an_answer() {
         );
         assert!(seen.bound, "no `MIN`/`MAX` was answered from the statistics ({mode:?})");
         assert!(
+            seen.text_min,
+            "no text or binary `MIN` was answered from the statistics ({mode:?})"
+        );
+        assert!(
             seen.distinct,
             "no `COUNT(DISTINCT <column>)` was answered from the statistics ({mode:?})"
         );
@@ -462,8 +445,39 @@ fn statistics_never_change_an_answer() {
         typed.counted_as_text,
         "no typed `COUNT(<column>)` over a refusing column was checked against the text"
     );
-    assert!(typed.other_zero, "`public.zeros` no longer reaches `KD42`: {typed:?}");
     assert!(!strings.counted_as_text, "a text read refused: {strings:?}");
+}
+
+/// **An extreme answers exactly where its stored bound is the value**: a text
+/// minimum longer than a stored value may be is kept as a prefix, says so and
+/// is read, while a column's whole one answers; and a float column holding
+/// both zeros at an extreme answers with the one `total_cmp` picks, whichever
+/// was seen first. Each answer is the blind session's.
+#[tokio::test]
+async fn an_extreme_answers_where_its_stored_bound_is_the_value() {
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/statistics/default.sql");
+    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let (reading, blind) = sessions();
+    register_in((&reading, &blind), &dump);
+    let expected = [
+        ("MIN", "v", "long_min", Answer::FromRows),
+        ("MIN", "vc", "long_min", Answer::FromRows),
+        ("MAX", "v", "long_min", Answer::FromStatistics),
+        ("MIN", "c_text", "ordered", Answer::FromStatistics),
+        ("MIN", "min_pos_first", "zeros", Answer::FromStatistics),
+        ("MIN", "min_neg_first", "zeros", Answer::FromStatistics),
+        ("MIN", "r_min_pos_first", "zeros", Answer::FromStatistics),
+        ("MAX", "max_neg_first", "zeros", Answer::FromStatistics),
+        ("MAX", "max_pos_first", "zeros", Answer::FromStatistics),
+        ("MAX", "r_max_neg_first", "zeros", Answer::FromStatistics),
+    ];
+    for (op, column, table, answer) in expected {
+        let aggregate = format!("{op}({column})");
+        let sql = format!("SELECT {aggregate} FROM \"dump\".public.{table}");
+        assert_eq!(agrees(&reading, &blind, None, &sql).await, answer, "{sql}");
+    }
 }
 
 /// A filter cuts rows out of the scan, so the table's own counts and extremes
@@ -995,6 +1009,9 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                 if name.table == "moods" {
                     enum_proved(&what, equivalences.oeq_class().iter());
                 }
+                if name.table == "specials" {
+                    floats_proved(&what, equivalences.oeq_class().iter());
+                }
                 if let Ok(part) = schema.index_of("part")
                     && fixture.file_stem().is_some_and(|stem| stem == "load-via-partition-root")
                     && name.table == "spans"
@@ -1137,6 +1154,30 @@ fn crossing_proved<'a>(what: &str, orderings: impl Iterator<Item = &'a LexOrderi
             "{what}: `{column}` was declared ordered across a boundary: {declared:?}"
         );
     }
+}
+
+/// `public.specials`' `f8` and `f4`, ascending through `-0` then `0` and up to
+/// `NaN`, are declared ascending — the partition check above reading them
+/// under Arrow's comparator, which puts `-0` below `0` — and `f8_unsorted`,
+/// the same values out of order, is not.
+fn floats_proved<'a>(what: &str, orderings: impl Iterator<Item = &'a LexOrdering>) {
+    let declared: BTreeSet<(String, bool)> = orderings
+        .filter_map(|ordering| {
+            let first = ordering.first();
+            let column = first.expr.downcast_ref::<ColumnExpr>()?;
+            Some((column.name().to_string(), first.options.descending))
+        })
+        .collect();
+    for column in ["f8", "f4"] {
+        assert!(
+            declared.contains(&(column.to_string(), false)),
+            "{what}: the float `{column}` is not declared ascending: {declared:?}"
+        );
+    }
+    assert!(
+        !declared.iter().any(|(name, _)| name == "f8_unsorted"),
+        "{what}: `f8_unsorted` was declared ordered: {declared:?}"
+    );
 }
 
 /// `public.moods.m`, an enum ascending by label text and descending in its

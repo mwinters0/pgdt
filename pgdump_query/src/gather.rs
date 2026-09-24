@@ -5,9 +5,10 @@
 //! [`observer_for`] builds one per `COPY` block from the block's resolved
 //! schema. Every tracked column counts its NULLs per group; a scalar column
 //! also keeps per-group bounds and the block's row order in each order some
-//! semantics compares it by exactly, under the key a filter orders by
-//! ([`ValueKey`]) — one set where the orders coincide, two where PostgreSQL's
-//! is exact and Arrow's is another (`crate::ResolvedSchema::bounds_kinds`);
+//! semantics compares it by exactly, under the key a filter orders by, a
+//! float's zeros told apart ([`ValueKey::stored_order`]) — one set where the
+//! orders coincide, two where PostgreSQL's is exact and Arrow's is another
+//! (`crate::ResolvedSchema::bounds_kinds`);
 //! and a column its comparison equates exactly keeps a dictionary per group.
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
@@ -1091,23 +1092,11 @@ enum Order {
     /// keyed, since a key copies the whole value and a value may be hundreds
     /// of megabytes, and a bound past [`DICTIONARY_ENTRY_MAX_BYTES`] is truncated.
     Bytewise(Canonical),
-    /// By [`ValueKey`], the key a filter orders by. A value past
+    /// By [`ValueKey::stored_order`]: the key a filter orders by, a float's
+    /// zeros told apart as Arrow's order tells them. A value past
     /// [`DICTIONARY_ENTRY_MAX_BYTES`] leaves its group unbounded and its block unordered,
     /// no truncation of it being a bound.
     Keyed(CompareKind),
-}
-
-/// Whether a stored bound of `kind` may be a clipped stand-in for the value
-/// it came from rather than the value itself — true of exactly the bytewise
-/// kinds, whose extremes [`clipped_bounds`] cuts to
-/// [`DICTIONARY_ENTRY_MAX_BYTES`]. A keyed kind stores whole values and loses
-/// the group instead, so both its bounds are values the group holds.
-///
-/// **Only the upper bound says which it is** ([`Bounds::max_exact`]); a
-/// clipped lower bound is indistinguishable from an exact one, which is
-/// `KD39`.
-pub(crate) fn clips(kind: &CompareKind) -> bool {
-    matches!(kind, CompareKind::Text | CompareKind::PaddedText | CompareKind::Bytea)
 }
 
 /// The bytewise kinds, each by the text whose bytes order as its key does.
@@ -1217,12 +1206,12 @@ struct BoundsGatherer {
     order: Order,
     /// Per closed group, **as a merge needs it rather than as it is stored**:
     /// a keyed group's stored bounds, and a bytewise group's two extremes'
-    /// heads ([`Clipped`]), `max_exact` saying whether the greatest's head is
-    /// its whole value — stored bounds only once [`Self::finish`] clips them,
-    /// since a clipped upper bound no longer orders as its value does
-    /// (`docs/design/decisions.md`, "D82").
+    /// heads ([`Clipped`]), `min_exact` and `max_exact` saying whether each
+    /// head is its whole value — stored bounds only once [`Self::finish`]
+    /// clips them, since a clipped upper bound no longer orders as its value
+    /// does (`docs/design/decisions.md`, "D82").
     groups: Vec<Option<Bounds>>,
-    /// Per closed group, [`LOST`] and [`MIN_WHOLE`].
+    /// Per closed group, [`LOST`].
     flags: Vec<u8>,
     /// The text every entry of `groups` holds, summed as they are pushed.
     stored: u64,
@@ -1232,9 +1221,6 @@ struct BoundsGatherer {
 /// A closed group held a value its bounds could not cover, so it has none —
 /// where a group with `None` and no flag held no non-NULL value.
 const LOST: u8 = 1;
-
-/// A closed bytewise group's least value's head is the whole value.
-const MIN_WHOLE: u8 = 2;
 
 /// One group's running bounds.
 enum GroupBounds {
@@ -1270,12 +1256,14 @@ impl GroupBounds {
             ) => {
                 *lost |= later_lost;
                 if let Some(value) = later_min
-                    && min.as_ref().is_none_or(|(m, _)| value.0.compare(m) == Ordering::Less)
+                    && min.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Less)
                 {
                     *min = Some(value);
                 }
                 if let Some(value) = later_max
-                    && max.as_ref().is_none_or(|(m, _)| value.0.compare(m) == Ordering::Greater)
+                    && max
+                        .as_ref()
+                        .is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Greater)
                 {
                     *max = Some(value);
                 }
@@ -1363,7 +1351,7 @@ impl RowOrder {
                     previous.locate_bytes(prefix, *len)
                 }
                 (Previous::Keyed(previous), FirstValue::Keyed(first)) => {
-                    Some(first.compare(previous))
+                    Some(first.stored_order(previous))
                 }
                 _ => unreachable!("one column's values are ordered one way"),
             };
@@ -1448,14 +1436,14 @@ impl BoundsGatherer {
                 let GroupBounds::Keyed { min, max, .. } = group else {
                     unreachable!("a keyed order keeps keyed bounds")
                 };
-                if min.as_ref().is_none_or(|(m, _)| key.compare(m) == Ordering::Less) {
+                if min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Less) {
                     *min = Some((key.clone(), text.to_owned()));
                 }
-                if max.as_ref().is_none_or(|(m, _)| key.compare(m) == Ordering::Greater) {
+                if max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Greater) {
                     *max = Some((key.clone(), text.to_owned()));
                 }
                 let step = match &self.rows.previous {
-                    Some(Previous::Keyed(previous)) => Some(key.compare(previous)),
+                    Some(Previous::Keyed(previous)) => Some(key.stored_order(previous)),
                     Some(Previous::Bytewise(_)) => unreachable!("a keyed order places no head"),
                     None => {
                         self.rows.first = Some(FirstValue::Keyed(key.clone()));
@@ -1480,11 +1468,13 @@ impl BoundsGatherer {
     /// A closed group's running bounds again, as they stood when it closed.
     fn reopen(&self, bounds: Option<Bounds>, flags: u8) -> GroupBounds {
         match (&self.order, bounds) {
-            (Order::Bytewise(_), Some(Bounds { min, max, max_exact })) => GroupBounds::Bytewise {
-                min: Some(Clipped { head: min, whole: flags & MIN_WHOLE != 0 }),
-                max: Some(Clipped { head: max, whole: max_exact }),
-                lost: false,
-            },
+            (Order::Bytewise(_), Some(Bounds { min, max, min_exact, max_exact })) => {
+                GroupBounds::Bytewise {
+                    min: Some(Clipped { head: min, whole: min_exact }),
+                    max: Some(Clipped { head: max, whole: max_exact }),
+                    lost: false,
+                }
+            }
             (Order::Keyed(kind), Some(Bounds { min, max, .. })) => {
                 let key = |text: &str| ValueKey::of(kind, text).expect("a stored bound keyed");
                 GroupBounds::Keyed {
@@ -1550,9 +1540,9 @@ impl BoundsGatherer {
         };
         let mut groups = self.groups;
         if let Order::Bytewise(canonical) = self.order {
-            for (group, flags) in groups.iter_mut().zip(&self.flags) {
-                if let Some(Bounds { min, max, max_exact }) = group.take() {
-                    let min = Clipped { head: min, whole: flags & MIN_WHOLE != 0 };
+            for group in groups.iter_mut() {
+                if let Some(Bounds { min, max, min_exact, max_exact }) = group.take() {
+                    let min = Clipped { head: min, whole: min_exact };
                     *group =
                         clipped_bounds(canonical, min, Clipped { head: max, whole: max_exact });
                 }
@@ -1582,11 +1572,11 @@ pub(crate) fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bou
 fn closed(group: GroupBounds) -> (Option<Bounds>, u8) {
     match group {
         GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
-            let flags = if min.whole { MIN_WHOLE } else { 0 };
-            (Some(Bounds { min: min.head, max: max.head, max_exact: max.whole }), flags)
+            let (min_exact, max_exact) = (min.whole, max.whole);
+            (Some(Bounds { min: min.head, max: max.head, min_exact, max_exact }), 0)
         }
         GroupBounds::Keyed { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
-            (Some(Bounds { min, max, max_exact: true }), 0)
+            (Some(Bounds { min, max, min_exact: true, max_exact: true }), 0)
         }
         GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => {
             (None, if lost { LOST } else { 0 })
@@ -1613,20 +1603,21 @@ fn merge_adjacent<T: Default>(items: &mut Vec<T>, mut merge: impl FnMut(T, T) ->
 /// cap, otherwise a prefix below and a successor above.
 fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bounds> {
     let fits = |c: &Clipped| c.whole && c.head.len() <= DICTIONARY_ENTRY_MAX_BYTES;
-    let lower = if fits(&min) {
+    let min_exact = fits(&min);
+    let lower = if min_exact {
         min.head
     } else {
         text_prefix(&min.head, DICTIONARY_ENTRY_MAX_BYTES).to_owned()
     };
     if fits(&max) {
-        return Some(Bounds { min: lower, max: max.head, max_exact: true });
+        return Some(Bounds { min: lower, max: max.head, min_exact, max_exact: true });
     }
     let upper = match canonical {
         Canonical::Text => text_upper(&max.head, false)?,
         Canonical::PaddedText => text_upper(&max.head, true)?,
         Canonical::Bytea => bytea_upper(&max.head)?,
     };
-    Some(Bounds { min: lower, max: upper, max_exact: false })
+    Some(Bounds { min: lower, max: upper, min_exact, max_exact: false })
 }
 
 /// The longest prefix of `text` no longer than `cap` bytes that ends on a
