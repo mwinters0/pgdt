@@ -508,41 +508,44 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
     }
 }
 
-/// One resolution outcome's name.
-///
-/// **The match is deliberately exhaustive, with no wildcard arm.** Adding a
-/// [`ColumnResolution`] variant stops this file compiling, which is what turns
-/// the check below from a habit into a rule the build enforces.
-fn outcome_name(resolution: &ColumnResolution) -> &'static str {
-    match resolution {
-        ColumnResolution::Mapped => "Mapped",
-        ColumnResolution::UnknownType => "UnknownType",
-        ColumnResolution::NotDeclared => "NotDeclared",
-        // Exempt from `EVERY_OUTCOME` below: a property of how much of the
-        // file was read, not of a declared type, and every fixture here is
-        // scanned to EOF. See this test's docs.
-        ColumnResolution::MetadataNotScanned => "MetadataNotScanned",
-        ColumnResolution::OpaqueElementType => "OpaqueElementType",
-        ColumnResolution::NestedArrayElement => "NestedArrayElement",
-        ColumnResolution::VaryingArrayShape => "VaryingArrayShape",
-        ColumnResolution::OpaqueBaseType => "OpaqueBaseType",
-        ColumnResolution::EmptyEnum => "EmptyEnum",
-    }
+/// **Every [`ColumnResolution`] variant, written once**, either as an outcome a
+/// fixture column must produce or as the written exemption, and from that one
+/// list: `outcome_name`, whose match has no wildcard arm and denies an
+/// unreachable one, so a new variant stops this file compiling until it is
+/// placed, and a variant placed twice does too; `EVERY_OUTCOME`, the outcomes
+/// a fixture must produce; and `EXEMPT`, those it cannot.
+macro_rules! resolution_outcomes {
+    (fixture: [$($covered:ident),* $(,)?], exempt: [$($exempt:ident),* $(,)?] $(,)?) => {
+        /// One resolution outcome's name.
+        #[deny(unreachable_patterns)]
+        fn outcome_name(resolution: &ColumnResolution) -> &'static str {
+            match resolution {
+                $(ColumnResolution::$covered => stringify!($covered),)*
+                $(ColumnResolution::$exempt => stringify!($exempt),)*
+            }
+        }
+
+        /// Every outcome that must have a fixture column behind it.
+        const EVERY_OUTCOME: &[ColumnResolution] = &[$(ColumnResolution::$covered),*];
+
+        /// The outcomes no fixture can produce, which the test below holds to.
+        const EXEMPT: &[ColumnResolution] = &[$(ColumnResolution::$exempt),*];
+    };
 }
 
-/// Every outcome that must have a fixture column behind it, in the order they
-/// are declared. Kept beside `outcome_name`, whose exhaustive match is what
-/// catches a variant missing from this list.
-const EVERY_OUTCOME: [ColumnResolution; 8] = [
-    ColumnResolution::Mapped,
-    ColumnResolution::UnknownType,
-    ColumnResolution::NotDeclared,
-    ColumnResolution::OpaqueElementType,
-    ColumnResolution::NestedArrayElement,
-    ColumnResolution::VaryingArrayShape,
-    ColumnResolution::OpaqueBaseType,
-    ColumnResolution::EmptyEnum,
-];
+resolution_outcomes! {
+    fixture: [
+        Mapped,
+        UnknownType,
+        NotDeclared,
+        OpaqueElementType,
+        NestedArrayElement,
+        VaryingArrayShape,
+        OpaqueBaseType,
+        EmptyEnum,
+    ],
+    exempt: [MetadataNotScanned],
+}
 
 /// **`roadmap.md`'s fixture rule, made mechanical.** "A shape observed to work
 /// is not covered until a fixture holds it" is a rule with nothing enforcing
@@ -559,15 +562,16 @@ const EVERY_OUTCOME: [ColumnResolution; 8] = [
 /// half stays a judgement call, and naming the limit beats a check that
 /// implies coverage it does not have.
 ///
-/// **An outcome no fixture *can* produce is left out of `EVERY_OUTCOME`, and
-/// that is the only legitimate exemption.** It applies to an outcome that is a
+/// **An outcome no fixture *can* produce is listed under `EXEMPT`, and that is
+/// the only legitimate exemption.** It applies to an outcome that is a
 /// property of how much of the file was read rather than of a declared type.
-/// `ColumnResolution::MetadataNotScanned` is the one instance: it needs a
-/// `pg_dumpall`/`--create` dump whose scan stopped inside a later database,
-/// and every fixture here is scanned to EOF. `outcome_name`'s exhaustive match
-/// still forces the exemption to be written down, and
-/// `tests/partial_reporting.rs` covers the outcome against a real truncated
-/// index instead.
+/// `ColumnResolution::MetadataNotScanned` is the one instance: no mapping scan
+/// leaves a banked block whose database's DDL it never read (the variant's
+/// own docs), so no fixture reaches it, and `pgdt/tests/partial_reporting.rs`
+/// pins it against a hand-built truncated cache instead.
+/// `resolution_outcomes!` forces the exemption to be written down, and a
+/// fixture column producing an exempt outcome fails the test, the exemption's
+/// premise then being false.
 #[tokio::test]
 async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
     use std::collections::BTreeMap;
@@ -607,5 +611,14 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
         "no fixture column produces {missing:?} — add one to scripts/fixture_schema_*.sql and \
          regenerate, rather than exempting the outcome (docs/design/roadmap.md, \"Expand the \
          generated fixtures freely\").\nCovered: {witnesses:#?}"
+    );
+    let reached: Vec<(&str, &String)> = EXEMPT
+        .iter()
+        .map(outcome_name)
+        .filter_map(|name| witnesses.get(name).map(|witness| (name, witness)))
+        .collect();
+    assert!(
+        reached.is_empty(),
+        "an exempt outcome has a fixture column, so is not exempt: {reached:?}"
     );
 }

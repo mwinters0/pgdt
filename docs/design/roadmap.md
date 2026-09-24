@@ -310,11 +310,15 @@ right about the type and says nothing about the bytes.
 **Half the rule is mechanical.**
 `tests/pgtype.rs::every_resolution_outcome_is_produced_by_a_real_fixture_column`
 requires each `ColumnResolution` variant to have a real fixture column behind
-it, and its exhaustive match makes a new variant a compile error until it is
-listed — so a new refusal cannot land without the `pg_dump` output that
-reaches it. The other half, a shape that resolves to an existing outcome and
-merely works, stays a judgement call; naming that limit beats a check implying
-coverage it does not have.
+it, and the list it reads is also its exhaustive match: a new variant is a
+compile error until it is listed, so a new refusal cannot land without the
+`pg_dump` output that reaches it. **The one exemption is an outcome no scan can
+produce**, a property of how much of the file was read rather than of a
+declared type: `MetadataNotScanned`, listed apart in the same list, pinned by
+`pgdt/tests/partial_reporting.rs` against a hand-built cache, and failing the
+test should a fixture ever reach it. The other half, a shape that resolves to
+an existing outcome and merely works, stays a judgement call; naming that limit
+beats a check implying coverage it does not have.
 
 The cost is real and bounded — regeneration needs Docker and the six
 PostgreSQL images (`CLAUDE.md`), and added columns widen literals other tests
@@ -339,10 +343,10 @@ becoming a way to skip a fixture that was perfectly possible.
 
 **The check.** Every standing rule here carries one, and this rule's is
 partial by nature: a test walks every fixture, resolves every column of every
-block, and asserts that **each `ColumnResolution` variant is produced by at
-least one real fixture column**. Adding a resolution outcome without a fixture
-that reaches it then fails a test instead of relying on discipline — which is
-exactly what 4.4 would have hit. It lands with 4.4.2, reusing the fixture-walk
+block, and asserts that **each `ColumnResolution` variant but the exemption
+above is produced by at least one real fixture column**. Adding a resolution
+outcome without a fixture that reaches it then fails a test instead of relying
+on discipline — which is exactly what 4.4 would have hit. It lands with 4.4.2, reusing the fixture-walk
 helper `tests/map.rs` already has.
 
 What it does *not* check is the other half: a shape that resolves to an

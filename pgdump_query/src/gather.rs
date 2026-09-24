@@ -755,7 +755,8 @@ impl BlockObserver for Gatherer {
 /// past the maximum can merge once (`[10, 10, 0 × 17]` under a maximum of 5
 /// becomes `[20, 0 × 9]`, whose 90th-percentile group is 0), and stopping at
 /// the first merge that breaks the predicate can miss a coarser size that
-/// would hold it. **(c) unowned**; promoted by a stated maximum seen to
+/// would hold it. `an_unpaired_last_group_lets_a_block_past_the_maximum_merge`
+/// pins the example. **(c) unowned**; promoted by a stated maximum seen to
 /// leave a block's groups past it.
 fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
     let mut merges = 0;
@@ -2710,8 +2711,11 @@ mod tests {
 
     /// **A stated maximum stops the merging, whatever the minimum asks.** A
     /// block already past the maximum at the size it holds, its groups pairing
-    /// evenly, merges nothing — nothing here makes a block finer. An odd last
-    /// group can let one merge through (`density_merges`' deficiency note).
+    /// evenly, merges nothing — nothing here makes a block finer. Past the
+    /// maximum, a size whose groups all pair stays past it at the next: of `G`
+    /// groups, `⌊G/10⌋+1` past it leave at least `⌊G/20⌋+1` pairs past it. A
+    /// size whose last group stands unpaired is exempt, and can let one merge
+    /// through (`an_unpaired_last_group_lets_a_block_past_the_maximum_merge`).
     #[test]
     fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
         assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(2)), 1, "one merge fits, two do not");
@@ -2736,20 +2740,33 @@ mod tests {
             assert!(merges <= alone, "round {round}: a maximum never merges further");
             stopped += usize::from(merges < alone);
             agreed_with_minimum += usize::from(merges == alone);
-            // Monotone: every level from the first that passes the maximum on.
+            // Monotone from every level past the maximum whose groups pair.
             let mut level = rows.clone();
-            let mut broken = false;
-            for _ in 0..groups {
-                broken |= max_rows_group(&level) > max_rows;
-                assert!(
-                    !broken || max_rows_group(&level) > max_rows,
-                    "round {round}: {rows:?} came back within {max_rows}"
-                );
-                level = level.chunks(2).map(|pair| pair.iter().sum()).collect();
+            while level.len() > 1 {
+                let coarser: Vec<u64> = level.chunks(2).map(|pair| pair.iter().sum()).collect();
+                if level.len().is_multiple_of(2) && max_rows_group(&level) > max_rows {
+                    assert!(
+                        max_rows_group(&coarser) > max_rows,
+                        "round {round}: {rows:?} came back within {max_rows} from {level:?}"
+                    );
+                }
+                level = coarser;
             }
         }
         assert!(stopped > 300, "only {stopped} rounds were stopped by their maximum");
         assert!(agreed_with_minimum > 300, "only {agreed_with_minimum} rounds reached it");
+    }
+
+    /// **`KD43`, pinned**: nineteen groups, two of them past a maximum of 5,
+    /// put the block past it, and the merge that pairs them leaves ten whose
+    /// 90th-percentile group is empty, so the merge goes through and the block
+    /// holds a group of 20. Closing the deficiency makes this block merge
+    /// nothing, and flips the assertion.
+    #[test]
+    fn an_unpaired_last_group_lets_a_block_past_the_maximum_merge() {
+        let rows: Vec<u64> = [10, 10].into_iter().chain([0; 17]).collect();
+        assert!(max_rows_group(&rows) > 5, "the block is past the maximum as gathered");
+        assert_eq!(density_merges(rows, 1, Some(5)), 1);
     }
 
     /// **A block sized between its bounds gathers exactly what gathering at
