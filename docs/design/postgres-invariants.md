@@ -1318,9 +1318,10 @@ output.
 **Verified against:** v13.23 and v18.6 (`heap.c`, same check and message),
 plus both rejections observed live on the local PostgreSQL 16 instance.
 
-**Relied on by:** `decisions.md`, "Type resolution and decoders" — it is why
-`resolve_declared_type` recurses through domains, composites, ranges and array
-elements with no cycle guard and no depth limit.
+**Relied on by:** `decisions.md`, "D41" — it is why `pgtype.rs`'s type walks
+can be bounded by the number of definitions the file declares: a path that
+visits more has visited one twice, which only a file this does not hold for
+reaches, and it answers `Unknown` rather than recursing without end.
 
 **Re-verify:**
 

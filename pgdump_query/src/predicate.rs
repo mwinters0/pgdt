@@ -932,8 +932,9 @@ impl<'a> JsonCursor<'a> {
             }
         }
         // Where the point lands, counted in digits from the left of
-        // `int ++ frac`. Both directions need padding, and both are bounded.
-        let point = i64::try_from(int.len()).ok()? + exponent;
+        // `int ++ frac`. Both directions need padding, and both are bounded;
+        // an exponent near `i64::MAX` is refused here rather than wrapping.
+        let point = i64::try_from(int.len()).ok()?.checked_add(exponent)?;
         if !(-JSONB_MAX_EXPONENT..=JSONB_MAX_EXPONENT).contains(&point) {
             return None;
         }
@@ -4490,6 +4491,9 @@ mod tests {
             "\"\\u0000\"",
             "\"a\nb\"",
             "1e999999",
+            "1e9223372036854775807",
+            "12e9223372036854775806",
+            "1e9223372036854775808",
         ] {
             let err =
                 ordered("jsonb", DataType::Utf8View, PredicateOp::Gt, literal, "1").unwrap_err();

@@ -898,11 +898,31 @@ fn collation_parts(reference: &str) -> Option<(Option<String>, String)> {
 ///
 /// **The schema is checked, not just the name**: a collation called `"C"` in
 /// another schema is not it, and answering "agrees" for one is the one
-/// direction of error this register must not make.
-fn collation_is_bytewise(reference: &str) -> bool {
+/// direction of error this register must not make. An unqualified `"C"` is
+/// `pg_catalog`'s under the default search path, where `pg_catalog` is
+/// searched first — and not bytewise where `collations` declares one of that
+/// name elsewhere, which a path the file sets could put ahead of it.
+///
+/// Deficiency register: `deficiency: KD48` — a file's `SET search_path` is
+/// not read, so an unqualified name resolves as under the default path: a
+/// collation a declared one could shadow answers the weaker verdict here, and
+/// a type is looked up by its schema-qualified name alone, so an unqualified
+/// user type resolves `Unknown` and a built-in's name keeps the built-in
+/// though a declared type could shadow it. `pg_dump` qualifies every name
+/// outside `pg_catalog` and empties the path (I8), so only a hand-written file
+/// reaches it. **(c) unowned**; promoted by such a file in hand, the fix being
+/// to model the path the file sets.
+fn collation_is_bytewise(reference: &str, collations: &[CollationDef]) -> bool {
     let Some((schema, name)) = collation_parts(reference) else { return false };
-    let known_schema = schema.as_deref().is_none_or(|s| s == "pg_catalog");
-    known_schema && (name == "C" || name == "POSIX")
+    if name != "C" && name != "POSIX" {
+        return false;
+    }
+    match schema {
+        Some(schema) => schema == "pg_catalog",
+        None => !collations.iter().any(|declared| {
+            collation_parts(&declared.name).is_some_and(|(_, declared_name)| declared_name == name)
+        }),
+    }
 }
 
 /// The comparison for a collatable type, given its bytewise comparison
@@ -921,13 +941,15 @@ fn collated_text(
 ) -> ComparisonPlan {
     // First, because it is the strongest thing the file can say about a
     // collation: the other three branches read a *name*, this one a statement
-    // the dump wrote. The two can never both match (I42), so the order is
-    // evidence, not precedence.
+    // the dump wrote. The two can never both match — a dump declares nothing
+    // in `pg_catalog` (I42), and an unqualified name a declared collation
+    // shares is not taken for the built-in — so the order is evidence, not
+    // precedence.
     if collation.is_some_and(|reference| states_non_deterministic(reference, collations)) {
         return ComparisonPlan::diverging(kind, ComparisonDivergence::NonDeterministicCollation);
     }
     let bytewise = match collation {
-        Some(reference) => collation_is_bytewise(reference),
+        Some(reference) => collation_is_bytewise(reference, collations),
         None => type_default == TypeCollation::Bytewise,
     };
     if bytewise {
@@ -952,7 +974,7 @@ fn collated_text(
 ///
 /// **A reference with no schema matches on the name alone.** `pg_dump` writes
 /// both sides schema-qualified, so the case is reachable only from a
-/// hand-written file, whose search path the file does not carry. Matching is
+/// hand-written file, whose search path is not read (`KD48`). Matching is
 /// the announcing direction — a spurious note over correct rows, never a
 /// silent wrong row set.
 fn states_non_deterministic(reference: &str, collations: &[CollationDef]) -> bool {
@@ -1003,7 +1025,9 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 ///   latter itself: `bpchar`, for a `character` column with no typmod.
 /// - **A quoted name is a catalog name alone**, case and all, as the grammar
 ///   takes it: `"char"` is the one-byte internal type, not `character`, and
-///   reaches no arm.
+///   reaches no arm; nor does `"integer"` or any spelling only the grammar
+///   knows, which names a type `pg_catalog` does not hold and so answers
+///   quoted.
 fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>) {
     let (words, typmod) = match (declared.find('('), declared.rfind(')')) {
         (Some(open), Some(close)) if open < close => (
@@ -1014,7 +1038,12 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
     };
     let words = words.trim();
     if let Some(quoted) = words.strip_prefix('"').and_then(|w| w.strip_suffix('"')) {
-        return (catalog_name(quoted).unwrap_or(quoted).to_owned().into(), typmod);
+        let name = match catalog_name(quoted) {
+            Some(sql) => sql.to_owned(),
+            None if CATALOG_NAMES.iter().any(|&(_, sql)| sql == quoted) => words.to_owned(),
+            None => quoted.to_owned(),
+        };
+        return (name.into(), typmod);
     }
     let words = words.split_ascii_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
     let keyword = match words.as_str() {
@@ -1047,24 +1076,28 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
     (keyword.into(), typmod)
 }
 
+/// Each catalog type name whose SQL spelling is another, beside that
+/// spelling. The right-hand names are the grammar's alone: `pg_catalog` holds
+/// no type called `integer`.
+const CATALOG_NAMES: [(&str, &str); 12] = [
+    ("int2", "smallint"),
+    ("int4", "integer"),
+    ("int8", "bigint"),
+    ("float4", "real"),
+    ("float8", "double precision"),
+    ("bool", "boolean"),
+    ("bpchar", "character"),
+    ("varchar", "character varying"),
+    ("timestamp", "timestamp without time zone"),
+    ("timestamptz", "timestamp with time zone"),
+    ("time", "time without time zone"),
+    ("timetz", "time with time zone"),
+];
+
 /// A catalog type name whose SQL spelling is another, as that spelling —
 /// `None` where the two agree or the name is not a built-in's.
 fn catalog_name(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "int2" => "smallint",
-        "int4" => "integer",
-        "int8" => "bigint",
-        "float4" => "real",
-        "float8" => "double precision",
-        "bool" => "boolean",
-        "bpchar" => "character",
-        "varchar" => "character varying",
-        "timestamp" => "timestamp without time zone",
-        "timestamptz" => "timestamp with time zone",
-        "time" => "time without time zone",
-        "timetz" => "time with time zone",
-        _ => return None,
-    })
+    CATALOG_NAMES.iter().find(|&&(catalog, _)| catalog == name).map(|&(_, sql)| sql)
 }
 
 /// `numeric(p,s)` -> `Decimal128`/`Decimal256` when `p` fits; bare `numeric`
@@ -1270,12 +1303,21 @@ impl CanonicalExtension {
 /// here is load-bearing for decoding — the metadata is a claim about the
 /// bytes, never an input to producing them.
 pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExtension> {
-    let declared = declared.trim();
-    if array_element(declared).is_some() {
-        return None;
-    }
-    let (base, _) = split_typmod(declared);
-    if base.contains('.') {
+    let mut declared = declared.trim();
+    // Bounded as `domain_terminal` is: a chain visits each `CREATE DOMAIN` at
+    // most once, so a walk still going past the list's length is in a cycle.
+    for _ in 0..=types.len() {
+        if array_element(declared).is_some() {
+            return None;
+        }
+        let (base, _) = split_typmod(declared);
+        if !base.contains('.') {
+            return match &*builtin_name(declared).0 {
+                "uuid" => Some(CanonicalExtension::Uuid),
+                "json" | "jsonb" => Some(CanonicalExtension::Json),
+                _ => None,
+            };
+        }
         // A domain is the only user-defined kind that can reach a built-in;
         // an enum, composite, range or opaque base type maps to a type no
         // canonical extension names.
@@ -1283,13 +1325,9 @@ pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExten
         else {
             return None;
         };
-        return extension_for(base_type, types);
+        declared = base_type.trim();
     }
-    match &*builtin_name(declared).0 {
-        "uuid" => Some(CanonicalExtension::Uuid),
-        "json" | "jsonb" => Some(CanonicalExtension::Json),
-        _ => None,
-    }
+    None
 }
 
 /// [`extension_for`], applied — the one call site's whole job, kept here so
@@ -1306,7 +1344,12 @@ pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) ->
 /// (`CREATE TYPE ... AS RANGE`), those never appear schema-qualified and have
 /// no `CREATE TYPE` anywhere in the file (I10), so they need bare-name
 /// recognition here or they fall through to `Unknown`.
-fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<TypeOutcome> {
+fn map_builtin(
+    base: &str,
+    typmod: Option<&str>,
+    types: &[TypeDef],
+    visits: Visits,
+) -> Option<TypeOutcome> {
     // No collation: an Arrow type never depends on one, and the comparison
     // half of the pair is discarded here.
     if let Some((mapped, _)) = builtin_scalar(base, typmod, None, &[]) {
@@ -1333,7 +1376,7 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
     // appear bare, never schema-qualified, so both need this table rather
     // than the user-defined lookup (I8).
     let BuiltinRange { subtype, multi, .. } = builtin_range_subtype(base)?;
-    let (bound, bound_plan) = resolve_nested(subtype, types);
+    let (bound, bound_plan) = resolve_nested(subtype, types, visits);
     Some(if multi {
         TypeOutcome::Mapped(
             list_of(range_struct(bound)),
@@ -1403,13 +1446,40 @@ fn range_struct(bound: DataType) -> DataType {
     ]))
 }
 
+/// How many more `CREATE TYPE`/`CREATE DOMAIN` definitions one path of a
+/// recursive type walk may visit — [`resolve_declared_type`]'s and
+/// [`comparison_for`]'s, through domains, composites, ranges and array
+/// elements alike.
+///
+/// PostgreSQL's type graph is acyclic (I24), so a path visits each definition
+/// at most once and the list's length is always enough. A path that runs out
+/// has visited one twice: a cycle a hand-edited file made, or one the
+/// name-keyed list holds where the server's did not, a rename the preamble
+/// does not follow being enough. That walk answers `Unknown` — and a
+/// comparison `Refused` — rather than recursing until the stack is gone
+/// (`docs/design/decisions.md`, "D41").
+#[derive(Debug, Clone, Copy)]
+struct Visits(usize);
+
+impl Visits {
+    /// The allowance for one walk over `types`.
+    fn over(types: &[TypeDef]) -> Self {
+        Self(types.len())
+    }
+
+    /// One definition visited: what is left, or `None` where nothing was.
+    fn spend(self) -> Option<Self> {
+        self.0.checked_sub(1).map(Self)
+    }
+}
+
 /// Resolve a type sitting *inside* a nested one — an array's element, a
 /// composite's field, a range's bound.
 ///
 /// Every non-`Mapped` outcome becomes `Utf8View` **in that position**, which
 /// is what the same type would have become at top level.
-fn resolve_nested(declared: &str, types: &[TypeDef]) -> (DataType, NestedPlan) {
-    match resolve_declared_type(declared, types) {
+fn resolve_nested(declared: &str, types: &[TypeDef], visits: Visits) -> (DataType, NestedPlan) {
+    match resolve_walk(declared, types, visits) {
         TypeOutcome::Mapped(data_type, plan) => (data_type, plan),
         _ => (DataType::Utf8View, NestedPlan::Scalar),
     }
@@ -1418,9 +1488,9 @@ fn resolve_nested(declared: &str, types: &[TypeDef]) -> (DataType, NestedPlan) {
 /// The user-defined half: look `name` up in `types` (already schema-qualified,
 /// matching how [`crate::preamble::TypeDef::name`] is stored) and resolve by
 /// kind. A domain recurses on its base type — legal to nest (a domain over a
-/// domain), and always finite: PostgreSQL cannot create a domain over a type
-/// that does not exist yet, so there is no cycle to guard against.
-fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
+/// domain) — and every visit is spent from `visits`, which bounds a cycle.
+fn resolve_user_type(name: &str, types: &[TypeDef], visits: Visits) -> TypeOutcome {
+    let Some(visits) = visits.spend() else { return TypeOutcome::Unknown };
     let Some(def) = types.iter().find(|t| t.name == name) else {
         // Not a type of its own — but it might be a range's auto-created
         // multirange companion, which `pg_dump` emits no `CREATE TYPE` for
@@ -1432,7 +1502,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
         });
         return match companion_of.map(|t| &t.kind) {
             Some(TypeKind::Range { subtype, .. }) => {
-                let (bound, plan) = range_bound(subtype.as_deref(), types);
+                let (bound, plan) = range_bound(subtype.as_deref(), types, visits);
                 TypeOutcome::Mapped(list_of(range_struct(bound)), NestedPlan::Multirange(plan))
             }
             _ => TypeOutcome::Unknown,
@@ -1444,7 +1514,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
             DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
             NestedPlan::Scalar,
         ),
-        TypeKind::Domain { base_type, .. } => resolve_declared_type(base_type, types),
+        TypeKind::Domain { base_type, .. } => resolve_walk(base_type, types, visits),
         // The field list is all-or-nothing: `None` means the grammar could
         // not read the body, and a `Struct` built from a short list would
         // refuse every valid row (see `TypeKind::Composite`). A zero-field
@@ -1454,7 +1524,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
             let mut arrow_fields = Vec::with_capacity(fields.len());
             let mut plans = Vec::with_capacity(fields.len());
             for field in fields {
-                let (data_type, plan) = resolve_nested(&field.declared_type, types);
+                let (data_type, plan) = resolve_nested(&field.declared_type, types, visits);
                 arrow_fields.push(Field::new(&field.name, data_type, true));
                 plans.push(plan);
             }
@@ -1464,7 +1534,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
             )
         }
         TypeKind::Range { subtype, .. } => {
-            let (bound, plan) = range_bound(subtype.as_deref(), types);
+            let (bound, plan) = range_bound(subtype.as_deref(), types, visits);
             TypeOutcome::Mapped(range_struct(bound), NestedPlan::Range(plan))
         }
         // Both genuinely information-free — one diagnostic bucket for both.
@@ -1476,9 +1546,13 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
 /// A range whose parameter list the grammar could not read keeps its struct
 /// shape with `Utf8View` bounds — the bounds are still exactly the text the
 /// file holds, which is what every other unmapped position falls back to.
-fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<NestedPlan>) {
+fn range_bound(
+    subtype: Option<&str>,
+    types: &[TypeDef],
+    visits: Visits,
+) -> (DataType, Box<NestedPlan>) {
     let (data_type, plan) = match subtype {
-        Some(subtype) => resolve_nested(subtype, types),
+        Some(subtype) => resolve_nested(subtype, types, visits),
         None => (DataType::Utf8View, NestedPlan::Scalar),
     };
     (data_type, Box::new(plan))
@@ -1509,7 +1583,7 @@ fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<Neste
 ///
 /// See [`TypeOutcome::OpaqueElementType`] and
 /// [`TypeOutcome::NestedArrayElement`] for why each shape is refused.
-fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
+fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcome {
     let terminal = domain_terminal(element, types);
     let opaque = terminal.eq_ignore_ascii_case("box")
         || matches!(
@@ -1524,7 +1598,7 @@ fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
     }
     // The element resolves through `resolve_declared_type`, so nesting
     // composes with no special case: `public.comp[]` is `List<Struct<…>>`.
-    let (data_type, plan) = resolve_nested(element, types);
+    let (data_type, plan) = resolve_nested(element, types, visits);
     TypeOutcome::Mapped(list_of(data_type), NestedPlan::Array(Box::new(plan)))
 }
 
@@ -1651,16 +1725,21 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
 /// collapses to the element type plus one array level (I28) before anything
 /// else looks at the string.
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
+    resolve_walk(declared, types, Visits::over(types))
+}
+
+/// [`resolve_declared_type`], at one step of its walk.
+fn resolve_walk(declared: &str, types: &[TypeDef], visits: Visits) -> TypeOutcome {
     let declared = declared.trim();
     if let Some(element) = array_element(declared) {
-        return resolve_array(element, types);
+        return resolve_array(element, types, visits);
     }
     let (base, _) = split_typmod(declared);
     if base.contains('.') {
-        return resolve_user_type(base, types);
+        return resolve_user_type(base, types, visits);
     }
     let (base, typmod) = builtin_name(declared);
-    map_builtin(&base, typmod, types).unwrap_or(TypeOutcome::Unknown)
+    map_builtin(&base, typmod, types, visits).unwrap_or(TypeOutcome::Unknown)
 }
 
 /// The comparison for an array column, from the same walk [`resolve_array`]
@@ -1678,6 +1757,7 @@ fn array_comparison(
     collation: Option<&str>,
     types: &[TypeDef],
     collations: &[CollationDef],
+    visits: Visits,
 ) -> ComparisonPlan {
     let Some(element) = array_element(declared) else {
         return ComparisonPlan::Refused;
@@ -1694,7 +1774,7 @@ fn array_comparison(
         // takes the plan away before this tree is reached.
         NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
     } else {
-        match nested_position(element, collation, types, collations) {
+        match nested_position(element, collation, types, collations, visits) {
             Ok(child) => child,
             Err(reason) => return ComparisonPlan::Unanswerable(reason),
         }
@@ -1722,9 +1802,10 @@ fn range_comparison(
     multi: bool,
     types: &[TypeDef],
     collations: &[CollationDef],
+    visits: Visits,
 ) -> ComparisonPlan {
     let Some(subtype) = subtype else { return ComparisonPlan::Refused };
-    let bound = match nested_position(subtype, None, types, collations) {
+    let bound = match nested_position(subtype, None, types, collations, visits) {
         Ok(bound) => Box::new(bound),
         Err(reason) => return ComparisonPlan::Unanswerable(reason),
     };
@@ -1773,8 +1854,9 @@ fn nested_position(
     collation: Option<&str>,
     types: &[TypeDef],
     collations: &[CollationDef],
+    visits: Visits,
 ) -> Result<NestedCompare, UnanswerableReason> {
-    Ok(match comparison_for(declared, collation, types, collations) {
+    Ok(match comparison_walk(declared, collation, types, collations, visits) {
         ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
             NestedCompare::Uncomparable {
                 declared: declared.to_string(),
@@ -1817,13 +1899,24 @@ pub fn comparison_for(
     types: &[TypeDef],
     collations: &[CollationDef],
 ) -> ComparisonPlan {
+    comparison_walk(declared, collation, types, collations, Visits::over(types))
+}
+
+/// [`comparison_for`], at one step of its walk.
+fn comparison_walk(
+    declared: &str,
+    collation: Option<&str>,
+    types: &[TypeDef],
+    collations: &[CollationDef],
+    visits: Visits,
+) -> ComparisonPlan {
     let declared = declared.trim();
     if array_element(declared).is_some() {
-        return array_comparison(declared, collation, types, collations);
+        return array_comparison(declared, collation, types, collations, visits);
     }
     let (base, _) = split_typmod(declared);
     if base.contains('.') {
-        return comparison_user_type(base, collation, types, collations);
+        return comparison_user_type(base, collation, types, collations, visits);
     }
     let (base, typmod) = builtin_name(declared);
     if let Some((_, plan)) = builtin_scalar(&base, typmod, collation, collations) {
@@ -1833,9 +1926,14 @@ pub fn comparison_for(
     // `builtin_scalar` and appear in no `CREATE TYPE` (I10) — the same fourth
     // step `map_builtin` takes, so the two walks agree.
     match builtin_range_subtype(&base) {
-        Some(range) => {
-            range_comparison(Some(range.subtype), range.discrete, range.multi, types, collations)
-        }
+        Some(range) => range_comparison(
+            Some(range.subtype),
+            range.discrete,
+            range.multi,
+            types,
+            collations,
+            visits,
+        ),
         None => ComparisonPlan::Refused,
     }
 }
@@ -1845,12 +1943,15 @@ pub fn comparison_for(
 ///
 /// **Exhaustive over `TypeKind` with no wildcard arm**, so a kind added to the
 /// preamble grammar has to choose a comparison rather than inheriting one.
+/// Every visit is spent from `visits`, as [`resolve_user_type`]'s is.
 fn comparison_user_type(
     name: &str,
     collation: Option<&str>,
     types: &[TypeDef],
     collations: &[CollationDef],
+    visits: Visits,
 ) -> ComparisonPlan {
+    let Some(visits) = visits.spend() else { return ComparisonPlan::Refused };
     // Absent from the list: either an unknown type or a range's multirange
     // companion, which `pg_dump` emits no `CREATE TYPE` for (I10). The
     // companion is found through the range whose DDL names it, exactly as
@@ -1866,7 +1967,9 @@ fn comparison_user_type(
             Some(TypeDef { name, kind: TypeKind::Range { subtype, canonical, .. } }) => {
                 match canonical {
                     Some(function) => unanswerable_range(name, function),
-                    None => range_comparison(subtype.as_deref(), false, true, types, collations),
+                    None => {
+                        range_comparison(subtype.as_deref(), false, true, types, collations, visits)
+                    }
                 }
             }
             _ => ComparisonPlan::Refused,
@@ -1883,13 +1986,17 @@ fn comparison_user_type(
             ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect()))
         }
         // A domain compares as what it bottoms out at, through any chain —
-        // the same recursion `resolve_declared_type` makes, finite because
-        // PostgreSQL cannot create a cycle. The collation walks down with it
-        // and the *column's* clause wins: a domain's own `COLLATE` is its
-        // type default, which a column-level clause only overrides (I37).
-        TypeKind::Domain { base_type, collation: domain_collation } => {
-            comparison_for(base_type, collation.or(domain_collation.as_deref()), types, collations)
-        }
+        // the same recursion `resolve_declared_type` makes, bounded the same
+        // way. The collation walks down with it and the *column's* clause
+        // wins: a domain's own `COLLATE` is its type default, which a
+        // column-level clause only overrides (I37).
+        TypeKind::Domain { base_type, collation: domain_collation } => comparison_walk(
+            base_type,
+            collation.or(domain_collation.as_deref()),
+            types,
+            collations,
+            visits,
+        ),
         // Field-wise in declaration order, which is `record_cmp`'s rule and
         // the order `record_out` writes them in (I23). A field list the
         // grammar could not read is all-or-nothing: a composite parsed short
@@ -1902,8 +2009,14 @@ fn comparison_user_type(
                         // A composite is not collatable, so the *column's*
                         // clause cannot reach a field; each attribute
                         // carries its own (I37).
-                        nested_position(&f.declared_type, f.collation.as_deref(), types, collations)
-                            .map(|position| (f.name.clone(), position))
+                        nested_position(
+                            &f.declared_type,
+                            f.collation.as_deref(),
+                            types,
+                            collations,
+                            visits,
+                        )
+                        .map(|position| (f.name.clone(), position))
                     })
                     .collect();
                 match positions {
@@ -1920,7 +2033,7 @@ fn comparison_user_type(
         // none.
         TypeKind::Range { subtype, canonical, .. } => match canonical {
             Some(function) => unanswerable_range(&def.name, function),
-            None => range_comparison(subtype.as_deref(), false, false, types, collations),
+            None => range_comparison(subtype.as_deref(), false, false, types, collations, visits),
         },
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
     }
@@ -2066,11 +2179,29 @@ mod tests {
     }
 
     /// A quoted name is a catalog name, case and all: `"char"` is the one-byte
-    /// internal type, which no arm maps, and `"INT4"` names nothing.
+    /// internal type, which no arm maps, `"INT4"` names nothing, and a
+    /// spelling only the grammar knows names a type `pg_catalog` does not
+    /// hold, so `"integer"` is not `integer`. A catalog name whose SQL
+    /// spelling is itself is still the built-in quoted.
     #[test]
     fn a_quoted_name_is_only_a_catalog_name() {
-        for declared in ["\"char\"", "\"INT4\"", "\"bit\"", "interval fortnight"] {
+        for declared in [
+            "\"char\"",
+            "\"INT4\"",
+            "\"bit\"",
+            "interval fortnight",
+            "\"integer\"",
+            "\"double precision\"",
+            "\"character varying\"(10)",
+            "\"boolean\"",
+            "\"timestamp with time zone\"",
+        ] {
             assert_eq!(resolve_declared_type(declared, &[]), TypeOutcome::Unknown, "`{declared}`");
+            assert_eq!(comparison_for(declared, None, &[], &[]), ComparisonPlan::Refused);
+            assert_eq!(extension_for(declared, &[]), None, "`{declared}`");
+        }
+        for (declared, bare) in [("\"text\"", "text"), ("\"numeric\"(10,2)", "numeric(10,2)")] {
+            assert_eq!(resolve_declared_type(declared, &[]), resolve_declared_type(bare, &[]));
         }
     }
 
@@ -2969,7 +3100,7 @@ mod tests {
             ComparisonPlan::diverging(K::Text, nd)
         );
         // An unqualified reference matches on the name alone — the
-        // announcing direction, since the file does not carry a search path.
+        // announcing direction, since a file's search path is not read.
         assert_eq!(
             comparison_for("text", Some("icu_ci"), &[], &declared),
             ComparisonPlan::diverging(K::Text, nd)
@@ -2978,6 +3109,23 @@ mod tests {
         assert_eq!(
             comparison_for("text", Some("elsewhere.icu_ci"), &[], &declared),
             ComparisonPlan::diverging(K::Text, named)
+        );
+        // An unqualified `"C"` is the built-in unless the dump declares one of
+        // that name, which a search path it sets could put first (`KD48`):
+        // then it is the weaker verdict, and never both branches at once.
+        let c = ComparisonPlan::agrees(K::Text);
+        assert_eq!(comparison_for("text", Some("\"C\""), &[], &declared), c);
+        assert_eq!(
+            comparison_for("text", Some("pg_catalog.\"C\""), &[], &[coll("public.\"C\"", true)]),
+            c
+        );
+        assert_eq!(
+            comparison_for("text", Some("\"C\""), &[], &[coll("public.\"C\"", true)]),
+            ComparisonPlan::diverging(K::Text, named)
+        );
+        assert_eq!(
+            comparison_for("text", Some("\"POSIX\""), &[], &[coll("public.\"POSIX\"", false)]),
+            ComparisonPlan::diverging(K::Text, nd)
         );
     }
 
@@ -3062,6 +3210,58 @@ mod tests {
         );
         // A domain over something with no order here has none either.
         assert_eq!(comparison_for("public.dmoney", None, &types, &[]), ComparisonPlan::Refused);
+    }
+
+    /// A walk visits each definition at most once along a path, so the list's
+    /// length bounds it (I24): a chain using every entry still resolves, and a
+    /// cycle — which only a hand-edited file or an unfollowed rename makes —
+    /// answers the weaker `Unknown`, `Refused` and no extension rather than
+    /// exhausting the stack.
+    #[test]
+    fn a_type_walk_is_bounded_by_the_definitions_the_file_declares() {
+        let chain: Vec<TypeDef> = (0..64)
+            .map(|i| {
+                let base = if i == 0 { "uuid".to_string() } else { format!("public.d{}", i - 1) };
+                ty(&format!("public.d{i}"), TypeKind::domain(&base))
+            })
+            .collect();
+        assert_eq!(
+            resolve_declared_type("public.d63", &chain),
+            TypeOutcome::Mapped(DataType::FixedSizeBinary(16), NestedPlan::Scalar)
+        );
+        assert_eq!(comparison_for("public.d63", None, &chain, &[]), agrees(CompareKind::Uuid));
+        assert_eq!(extension_for("public.d63", &chain), Some(CanonicalExtension::Uuid));
+
+        let cycle = [
+            ty("public.a", TypeKind::domain("public.b")),
+            ty("public.b", TypeKind::domain("public.a")),
+        ];
+        assert_eq!(resolve_declared_type("public.a", &cycle), TypeOutcome::Unknown);
+        // An array over one keeps its level, its element held as text.
+        assert_eq!(
+            resolve_declared_type("public.b[]", &cycle),
+            TypeOutcome::Mapped(
+                list_of(DataType::Utf8View),
+                NestedPlan::Array(Box::new(NestedPlan::Scalar))
+            )
+        );
+        assert_eq!(comparison_for("public.a", None, &cycle, &[]), ComparisonPlan::Refused);
+        assert_eq!(extension_for("public.a", &cycle), None);
+
+        // A composite holding itself terminates too, its innermost position
+        // falling back to text as any unresolved one does.
+        let holder = [ty(
+            "public.holder",
+            TypeKind::Composite { fields: Some(vec![ColumnDef::new("x", "public.holder[]")]) },
+        )];
+        assert!(matches!(
+            resolve_declared_type("public.holder", &holder),
+            TypeOutcome::Mapped(DataType::Struct(_), NestedPlan::Record(_))
+        ));
+        assert!(matches!(
+            comparison_for("public.holder", None, &holder, &[]),
+            ComparisonPlan::Nested(NestedCompare::Record(_))
+        ));
     }
 
     /// A domain over an enum carries the enum's labels, through any chain —

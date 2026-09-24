@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD47 -->
-**`KD1`–`KD47` are allocated, and nothing at or below `KD47` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD48 -->
+**`KD1`–`KD48` are allocated, and nothing at or below `KD48` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -85,6 +85,14 @@ than reading as a phase nobody has sliced.
   complete map. **(c) unowned**; promoted by a concatenated or
   `pg_dumpall`-style file reaching a user through a cold query. Detail:
   `pgdump_query/src/batch.rs`.
+
+- **KD48** — a file's `SET search_path` is not read, so an unqualified name
+  resolves as under the default path: a collation a declared one could shadow
+  gets the weaker verdict, an unqualified user type resolves `Unknown`, and a
+  built-in's name keeps the built-in though a declared type could shadow it.
+  Only a hand-written file reaches it (I8). **(c) unowned**; promoted by such a
+  file in hand, the fix being to model the path. Detail:
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD7** — a column that *states* a collation this build does not implement is
   compared bytewise, so the row set is not the server's: under `<`/`>` always,

@@ -286,7 +286,8 @@ keeping the octet key for one that is, a per-literal switch bought for range pru
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided on
 `domain_terminal`'s result by `resolve_array` and `array_comparison`. All `Typename` spellings collapse to element plus one level (I21, I28);
-normalizing on parse would edit the user's DDL. Containers recurse unguarded (I24): `KD3`, `KD4`.
+normalizing on parse would edit the user's DDL. A walk spends a visit per definition, the list's
+length bounding an acyclic one (I24), so a cycle answers `Unknown`: `KD3`, `KD4`.
 
 ### D42 `interval` is the struct; special values are decode failures
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and

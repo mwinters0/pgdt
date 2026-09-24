@@ -102,3 +102,13 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`M142` applied "the weaker answer where a declared object could shadow"
+  to collations only.** The 2026-09-24 settlement states it for any
+  unqualified name, and the ledger row names the collation; a built-in type
+  name a declared type could shadow under a `SET search_path` — `text` beside
+  a `public.text` — still resolves the built-in, filed in `KD48` rather than
+  fixed. Doing it means telling a grammar keyword, which always names
+  `pg_catalog`'s type, from a catalog name the path resolves (`int4`, `text`,
+  `bool`), a table `builtin_name` does not keep. Reconsidering makes it a row
+  of its own, or part of `M143`, which already reworks those lookups.
