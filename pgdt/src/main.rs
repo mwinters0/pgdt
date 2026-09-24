@@ -3,7 +3,7 @@ use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
@@ -339,6 +339,7 @@ impl Discovered<'_> {
         QueryPasses {
             mapping: self.resolve(source, cached_statistics),
             replay: self.resolve(source, 0),
+            held: cached_statistics,
         }
     }
 }
@@ -346,13 +347,49 @@ impl Discovered<'_> {
 /// The arrangement each of `query`'s passes runs under
 /// ([`Discovered::resolve_query`]).
 struct QueryPasses {
-    /// The mapping pass's, in [`ScanOptions::parallelism`]: announced on its
-    /// own `scan started` line, printed only when it reads.
+    /// The mapping pass's, in [`ScanOptions::parallelism`]: its count and
+    /// budget are on its own `scan started` line, printed only when it reads,
+    /// and a count its statistics lowered is said by
+    /// [`QueryPasses::announce`].
     mapping: Resolved,
     /// The replay's, in [`QueryOptions::parallelism`]: what `resolved the
     /// arrangement` announces and a plan note's origin clause quotes, the
     /// only one that reads over a map already settling the table.
     replay: Resolved,
+    /// The heap the cache's statistics hold once loaded, which the mapping
+    /// pass was carved around and the replay was not.
+    held: u64,
+}
+
+impl QueryPasses {
+    /// The mapping pass's count and the replay's, where the statistics the
+    /// mapping pass holds cut the first below the second. The two passes are
+    /// carved from one allowance and differ only in `held`, so a lower count
+    /// has that one cause; a stated `--jobs` is never lowered, and only its
+    /// budget can differ.
+    fn mapping_shortfall(&self) -> Option<(usize, usize)> {
+        let (jobs, asked) = (self.mapping.parallelism().jobs(), self.replay.parallelism().jobs());
+        (jobs < asked).then_some((jobs, asked))
+    }
+
+    /// Say what `resolved the arrangement` names — the replay's — and, where
+    /// the mapping pass runs fewer readers, what cut it, in the words a
+    /// leader's shortfall uses: `jobs=`, `asked=` and `bound_by=`, with the
+    /// bytes the statistics hold beside them (`docs/design/decisions.md`,
+    /// "D64", "D85"). Said before the file is read, it states what a mapping
+    /// pass runs under; a cache that already settles the table runs none.
+    fn announce(&self) {
+        self.replay.announce();
+        if let Some((jobs, asked)) = self.mapping_shortfall() {
+            tracing::info!(
+                jobs,
+                asked,
+                bound_by = "statistics",
+                held_bytes = self.held,
+                "mapping arrangement",
+            );
+        }
+    }
 }
 
 /// What a run resolved its two parallelism numbers to, and where each came
@@ -485,9 +522,10 @@ impl Resolved {
     /// source's recommendation and the allowance fitted to.
     ///
     /// **The line that names the count the allowance lowered** — a query's
-    /// mapping pass, carved around its cached statistics, prints its own count
-    /// bare on `scan started`, and a leader's shortfall is `scan arrangement`'s
-    /// `bound_by=` — which is why the report is two lines: neither number
+    /// mapping pass, carved around its cached statistics, says what cut its
+    /// count on `mapping arrangement` ([`QueryPasses::announce`]), and a
+    /// leader's shortfall is `scan arrangement`'s `bound_by=` — which is why
+    /// the report is two lines: neither number
     /// exists until the file has been opened and asked
     /// ([`Discovered::announce`] carries the half that does). A recommendation
     /// cut to fit otherwise surfaces as unexplained slowness — with no limit
@@ -1525,29 +1563,51 @@ fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<Stri
 /// kind, exits immediately, so a save that wedges cannot hold the process.
 ///
 /// Returns the cell the exit code is read from: `0` until a signal lands,
-/// then that signal's number.
-fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<Arc<AtomicI32>> {
+/// then that signal's number. **It is written by the signal handler itself**,
+/// not by the task that cancels: the handlers outlive the scan, and the task
+/// runs only when this thread awaits, so a signal landing past the last await
+/// — the listing — would otherwise be swallowed and the run exit `0`
+/// (`docs/design/decisions.md`, "D26").
+fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<Arc<AtomicUsize>> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let signalled = Arc::new(AtomicI32::new(0));
+    let signalled = Arc::new(AtomicUsize::new(0));
+    // Whether either task has already asked the scan to stop — the task's own
+    // record, `signalled` being set before any task runs.
+    let asked = Arc::new(AtomicBool::new(false));
     for kind in [SignalKind::interrupt(), SignalKind::terminate()] {
         let number = kind.as_raw_value();
+        signal_hook::flag::register_usize(number, Arc::clone(&signalled), number as usize)
+            .with_context(|| format!("installing handler for {number}"))?;
         let mut stream =
             signal(kind).with_context(|| format!("installing handler for {number}"))?;
-        let (cancel, signalled) = (Arc::clone(&cancel), Arc::clone(&signalled));
+        let (cancel, asked) = (Arc::clone(&cancel), Arc::clone(&asked));
         tokio::spawn(async move {
             while stream.recv().await.is_some() {
-                // A non-zero previous value means the other handler, or this
-                // one, has already asked the scan to stop.
-                let already = signalled.swap(number, Ordering::SeqCst);
+                let already = asked.swap(true, Ordering::SeqCst);
                 cancel.cancel();
-                if already != 0 {
+                if already {
                     std::process::exit(128 + number);
                 }
             }
         });
     }
     Ok(signalled)
+}
+
+/// Exit by the signal `signalled` records, if one has landed: `128 + n`, so a
+/// script can tell an interrupt from a failure. An `interrupted` run always
+/// exits, `SIGINT`'s code standing in for a number nothing recorded.
+/// `std::process::exit` runs no destructors, so the instrument is asked here
+/// rather than left to `main`'s guard.
+fn exit_if_signalled(signalled: &AtomicUsize, interrupted: bool) {
+    let number = match signalled.load(Ordering::SeqCst) {
+        0 if interrupted => tokio::signal::unix::SignalKind::interrupt().as_raw_value(),
+        0 => return,
+        n => n as i32,
+    };
+    introspect::report();
+    std::process::exit(128 + number);
 }
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
@@ -1615,7 +1675,7 @@ fn init_status_output() {
 /// proportional to how many there are, so this does not on its own make the
 /// process smaller and no reading here says it does.
 ///
-/// The `signal` handlers of [`install_interrupt_guard`] are ordinary
+/// The tasks [`install_interrupt_guard`] cancels from are ordinary
 /// `tokio::spawn` tasks and run on this thread: the scan loop awaits a
 /// `spawn_blocking` join at every piece, so the runtime is parked in
 /// `block_on` — driving the signal driver — whenever work is running.
@@ -1724,13 +1784,7 @@ async fn main() -> Result<()> {
                     );
                     eprintln!("re-run `pgdt parse --source {origin}` to continue");
                 }
-                // Exit by signal (130/143), so a script can tell an
-                // interrupt from a failure; `SIGINT` is the fallback.
-                // `std::process::exit` runs no destructors, so the instrument
-                // is asked here rather than left to `main`'s guard.
-                introspect::report();
-                let number = signalled.load(Ordering::SeqCst);
-                std::process::exit(128 + if number == 0 { 2 } else { number });
+                exit_if_signalled(&signalled, true);
             }
             // The listing describes the file's state after this run, not
             // this invocation's diff, so the one line that *is* about the
@@ -1745,6 +1799,11 @@ async fn main() -> Result<()> {
             print_index(&run.index, None, false, false, true);
             println!();
             println!("wrote cache to {}", path.display());
+            // A signal past the mapping pass's last check, or during the
+            // listing, found a run that completed: what it printed is true,
+            // and the exit code is still the signal's
+            // (`docs/design/decisions.md`, "D26").
+            exit_if_signalled(&signalled, false);
         }
         Command::Info { source: file, dtcache, detail, map, json, identity } => {
             if json && (detail || map) {
@@ -1874,9 +1933,9 @@ async fn main() -> Result<()> {
             let stated = parallel.discover();
             stated.announce();
             let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
-            let QueryPasses { mapping, replay } =
-                stated.resolve_query(source.as_ref(), cached_statistics);
-            replay.announce();
+            let passes = stated.resolve_query(source.as_ref(), cached_statistics);
+            passes.announce();
+            let QueryPasses { mapping, replay, .. } = passes;
             // The refusals a query can raise that want more than the
             // library's own words: those about the source gain its name, and
             // a column name not found gains a note. Which wants the name is
@@ -3504,7 +3563,15 @@ mod tests {
             assert_eq!(passes.mapping.parallelism().jobs(), 7);
             assert_eq!(passes.replay.parallelism(), bare);
             assert_eq!(bare.jobs(), 9);
+            // What `mapping arrangement` says: seven of the nine, cut by the
+            // statistics; with none held the passes agree and it is silent.
+            assert_eq!(passes.mapping_shortfall(), Some((7, 9)));
+            assert_eq!(discovered.resolve_query(&reader, 0).mapping_shortfall(), None);
         }
+        // A stated count is never lowered, so only its budget can differ.
+        let typed = ParallelArgs { jobs: Some(9), memory: None };
+        let passes = typed.discover_in(&limited).resolve_query(&reader, 2 * READER);
+        assert_eq!(passes.mapping_shortfall(), None);
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it

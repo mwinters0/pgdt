@@ -740,3 +740,54 @@ async fn a_later_databases_blocks_report_metadata_not_scanned() {
         }
     }
 }
+
+/// **A signal that lands during the listing is still owed its exit code**
+/// (`docs/design/decisions.md`, "D26"). The handlers outlive the scan, and
+/// the listing awaits nothing, so the task that cancels never runs there: only
+/// a number the handler itself records can reach the exit.
+///
+/// Deterministic without timing: the dump lists far more than a pipe holds,
+/// so once its first byte has been read the process is inside the listing,
+/// blocked on a write, when the signal is sent.
+#[test]
+fn a_signal_during_the_listing_exits_by_signal() {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("many_tables.sql");
+    let mut text = String::new();
+    for n in 0..4000 {
+        writeln!(text, "CREATE TABLE public.table_{n:04} (id integer, label text);\n").unwrap();
+        writeln!(text, "COPY public.table_{n:04} (id, label) FROM stdin;\n{n}\tx\n\\.\n").unwrap();
+    }
+    std::fs::write(&dump, text).unwrap();
+
+    let mut child = pgdt()
+        .args(["parse", "--source", dump.to_str().unwrap()])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the pgdt binary runs");
+    let mut stdout = child.stdout.take().unwrap();
+    let mut first = [0u8; 1];
+    stdout.read_exact(&mut first).expect("the listing starts");
+    assert!(
+        std::process::Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .expect("`kill` runs")
+            .success()
+    );
+    let mut rest = Vec::new();
+    stdout.read_to_end(&mut rest).unwrap();
+    let out = child.wait_with_output().expect("pgdt exits");
+    let listing = String::from_utf8(rest).unwrap();
+
+    // The run completed before the signal: what it printed is the whole
+    // listing, and 130 is what says a signal arrived.
+    assert!(listing.contains("public.table_3999"), "{listing}");
+    assert!(listing.contains("wrote cache to"), "{listing}");
+    assert_eq!(out.status.code(), Some(130), "{}", stderr_of(&out));
+}

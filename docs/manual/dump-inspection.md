@@ -65,7 +65,9 @@ re-run `pgdt parse --source koji.dump` to continue
 An interrupt that arrives before the first banking says so instead — `nothing
 was scanned or written`, and the re-run it suggests starts from the beginning
 rather than continuing. No cache file is left behind in that case, so nothing
-is named.
+is named. One that arrives after the scan has finished — while the listing
+prints — finds nothing to stop: the listing and the cache are whole, and the
+exit is still 130 or 143.
 
 A clean stop loses whatever the scan has done since it last banked, which is
 the block it was reading plus any that finished in the moment before the
@@ -981,7 +983,12 @@ started`'s `jobs=` is the count `resolved the arrangement` announced — except
 on a `query` over a cache holding statistics, where `resolved the arrangement`
 names what the rows are read under and `scan started` names the mapping that
 comes first, which pays for those statistics and so may run fewer workers on a
-smaller budget. Two things can still cut it: a compressed dump whose largest block the
+smaller budget. Where it runs fewer, a line beneath `resolved the arrangement`
+says so in the words below — `mapping arrangement jobs=7 asked=9
+bound_by="statistics" held_bytes=…`, the last being what the cache's
+statistics hold. It is said before the file is read, so it states what a
+mapping pass would run under; a query the cache already settles runs none and
+prints no `scan started`. Two things can still cut it: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
 whatever `--jobs` said**, and a budget too small for the readers asked for buys
 fewer of them. Either prints one line, once per scan:

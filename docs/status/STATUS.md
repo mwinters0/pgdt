@@ -102,3 +102,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`mapping arrangement` prints before the file is read** (`M146`,
+  `QueryPasses::announce`), so a query the cache already settles says what a
+  mapping pass would run under and then runs none. The call: the CLI holds
+  the provenance (D64) and cannot know whether the pass reads; printing only
+  where it reads, as a leader's shortfall does, would have the library carry
+  the replay's count beside `ScanOptions`. Reconsidering moves the line into
+  `map_forward` beside `scan started`.
+- **`pgdt` depends on `signal-hook`** (`M146`, `install_interrupt_guard`) for
+  a signal's number stored by the handler itself, which a signal landing
+  during the listing needs. The call: a small crate over the registry `tokio`
+  already installs through, rather than an `unsafe` registration in `pgdt` or
+  a listing run on a blocking thread, whose wake leaves a window. Reconsidering
+  swaps the one `flag::register_usize` call.

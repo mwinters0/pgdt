@@ -48,6 +48,12 @@ mimalloc = { version = "0.1.50", optional = true }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
+# `flag` alone: an interrupt's number is stored by the handler itself, beside
+# the `tokio` stream that cancels the scan, so a signal landing where nothing
+# awaits -- the listing -- is still owed its exit code
+# (`docs/design/decisions.md`, "D26"). Its registry is the one `tokio`'s
+# `signal` already installs through, so the two actions run side by side.
+signal-hook = { version = "0.4.4", default-features = false }
 tikv-jemallocator = { version = "0.6.0", optional = true }
 # `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and
 # dispatches every unit of work through `spawn_blocking`, so the multi-threaded
