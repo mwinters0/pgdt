@@ -1,6 +1,6 @@
 //! The map's statistics as DataFusion's, so `COUNT(*)`, `COUNT(<column>)`,
-//! `MIN` and `MAX` can be answered without reading a row
-//! (`docs/design/decisions.md`, "D89").
+//! `COUNT(DISTINCT <column>)`, `MIN` and `MAX` can be answered without
+//! reading a row (`docs/design/decisions.md`, "D89").
 //!
 //! **`Exact` is a promise, and a wrong one is a wrong answer with no error**:
 //! DataFusion's `AggregateStatistics` rule replaces the aggregate with the
@@ -37,6 +37,13 @@ pub(crate) fn table_statistics(
         .map(|(i, column)| {
             let mut statistics = ColumnStatistics::new_unknown();
             statistics.null_count = count(column.nulls, column.nulls_complete);
+            // Never the union's size where a group kept no dictionary: that
+            // is only a floor, and a low distinct count inflates a join's
+            // estimate.
+            statistics.distinct_count = column
+                .distinct
+                .and_then(|distinct| usize::try_from(distinct).ok())
+                .map_or(Precision::Absent, Precision::Exact);
             // deficiency: KD45 — an enum is emitted `Dictionary`, and
             // DataFusion types a `MIN` or `MAX` of one as the dictionary's value
             // type, not the column's (`get_min_max_result_type`), so a statistic

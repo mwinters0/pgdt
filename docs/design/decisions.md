@@ -448,7 +448,7 @@ where exact, else Arrow's (bytewise: text in any collation, `jsonb`, off-`C` `ch
 no DDL), and Arrow's beside an exact one it differs from (a D78 bump); `macaddr`'s serves both (I40).
 A term reads the set keyed by its compared kind as gathering resolved the column, not by its plan. A
 dictionary needs equality alone, reaching `KD7`'s text, never an Arrow encoding (D37); nested columns
-get neither. Rejected: a distinct count; bounds off a dictionary (D75); one slot; a second `macaddr`
+get neither. Rejected: gathering a distinct count (D89 derives one); bounds off a dictionary (D75); one slot; a second `macaddr`
 set; a kind stored per set; a DDL flag. Code: `bounds_kinds`, `bounds_set_keyed_by`.
 
 ### D80 An early stop is reported after the fact, per block, in bytes
@@ -494,11 +494,11 @@ sizing an attribution input by row width. Evidence: `statistics-gathering`.
 ### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
 `TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec` *holds* one instead of
 parenting it: a parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block
-contributed and the stored text is the value, `Inexact` where it still bounds; all `Inexact` under a fetch below the exact rows or a
-pushed filter, whose rows are the kept groups' plus each unconsulted block's. It answers over a value its Arrow type cannot hold
-(`KD8`) that a read refuses, as D54 does. Rejected: `Absent` for a partial bound, giving up cardinality; NULL counts withheld where
-a bound fails to decode, buying only that refusal; under a filter, v55's whole-table rows or a guessed selectivity, wrong where a
-bound is not. Code: `datafusion-pgdump/src/{exec,statistics,table}.rs`, `summary.rs`. Evidence: `tests/statistics.rs`.
+contributed and the stored text is the value, else `Inexact`; a distinct count the dictionaries' union — derived, not gathered (D79) —
+where every group kept one of emitted text (I48), else `Absent`; all `Inexact` under a fetch below the exact rows or a pushed filter,
+whose rows are the kept groups' plus each unconsulted block's. It answers over a value a read refuses (`KD8`), as D54. Rejected: `Absent`
+for a partial bound, giving up cardinality; the union as `Inexact`, a floor inflating a join's estimate; NULL counts withheld where a
+bound fails to decode; under a filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

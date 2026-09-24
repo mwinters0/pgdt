@@ -298,6 +298,7 @@ struct Seen {
     count: bool,
     null_count: bool,
     bound: bool,
+    distinct: bool,
     counted_as_text: bool,
     other_zero: bool,
 }
@@ -308,6 +309,7 @@ impl Seen {
             count: self.count || other.count,
             null_count: self.null_count || other.null_count,
             bound: self.bound || other.bound,
+            distinct: self.distinct || other.distinct,
             counted_as_text: self.counted_as_text || other.counted_as_text,
             other_zero: self.other_zero || other.other_zero,
         }
@@ -400,9 +402,12 @@ async fn every_aggregate(
             }
             // Asked of every column the rows can answer it for, statistics or
             // none: a `SUM` is answered from an `Exact` sum, a distinct count
-            // from an `Exact` distinct count.
-            let sql = format!("SELECT COUNT(DISTINCT {column}) FROM {from}");
-            agrees(reading, blind, Some(text), &sql).await;
+            // from an `Exact` distinct count. A lone `COUNT(DISTINCT c)` is
+            // planned as a count over `GROUP BY c`, whose rows are never
+            // `Exact`, so it is asked beside `COUNT(*)`, which keeps it an
+            // aggregate of its own.
+            let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM {from}");
+            seen.distinct |= agrees(reading, blind, Some(text), &sql).await.answered();
             if field.data_type().is_numeric() {
                 let sql = format!("SELECT SUM({column}) FROM {from}");
                 agrees(reading, blind, Some(text), &sql).await;
@@ -447,6 +452,10 @@ fn statistics_never_change_an_answer() {
             "no `COUNT(<column>)` was answered from the statistics ({mode:?})"
         );
         assert!(seen.bound, "no `MIN`/`MAX` was answered from the statistics ({mode:?})");
+        assert!(
+            seen.distinct,
+            "no `COUNT(DISTINCT <column>)` was answered from the statistics ({mode:?})"
+        );
     }
     assert!(
         typed.counted_as_text,
@@ -533,6 +542,64 @@ async fn a_fetched_or_filtered_plan_states_no_exact_statistic() {
                 "{what} left a column statistic exact: {column:?}"
             );
         }
+    }
+}
+
+/// A distinct count is `Exact` where every group of every block kept a
+/// dictionary of the texts the column emits, and `Absent` everywhere else —
+/// never the union's size as a guess (`docs/design/decisions.md`, "D89").
+/// Each `Exact` one answers `COUNT(DISTINCT)`, which the blind session reads
+/// back; the aggregate target asks every column, and this one pins which
+/// qualify.
+#[tokio::test]
+async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_emitted_text() {
+    let scratch = tempfile::tempdir().unwrap();
+    let spans = fixtures_root().join("16/statistics/load-via-partition-root.sql");
+    let spans = parsed_copy(&spans, scratch.path()).await;
+    let types = parsed_copy(&fixtures_root().join("16/types/default.sql"), scratch.path()).await;
+    // `public.spans` is three blocks. `tint`'s union is larger than any one
+    // block's, `small` holds NULLs, and `stamp` wrote one instant from two
+    // offsets. `wide` overflows every block's dictionaries and `mixed` the
+    // third's; `id` has more values than a group keeps; `padded` and `bare`
+    // are `character`, whose entries give up the blanks they emit.
+    let exact = [("tint", 9), ("colour", 4), ("flag", 2), ("small", 5), ("stamp", 2)];
+    let absent = ["wide", "mixed", "id", "padded", "bare"];
+    for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
+        let (dump, reading, blind, _) = opened(&spans, schema_mode).await;
+        let table = dump.table(None, Some("public"), "spans").unwrap();
+        let state = reading.state();
+        let plan = table.scan(&state, None, &[], None).await.unwrap();
+        let statistics =
+            StatisticsContext::new().compute(plan.as_ref(), &StatisticsArgs::new()).unwrap();
+        let distinct = |name: &str| {
+            let index = table.schema().index_of(name).unwrap();
+            statistics.column_statistics[index].distinct_count
+        };
+        for (name, count) in exact {
+            assert_eq!(distinct(name), Precision::Exact(count), "{name} ({schema_mode:?})");
+            let sql = format!("SELECT COUNT(DISTINCT {name}), COUNT(*) FROM \"dump\".public.spans");
+            assert!(
+                agrees(&reading, &blind, None, &sql).await.answered(),
+                "{sql} ({schema_mode:?})"
+            );
+        }
+        for name in absent {
+            assert_eq!(distinct(name), Precision::Absent, "{name} ({schema_mode:?})");
+            let sql = format!("SELECT COUNT(DISTINCT {name}), COUNT(*) FROM \"dump\".public.spans");
+            assert!(
+                !agrees(&reading, &blind, None, &sql).await.answered(),
+                "{sql} ({schema_mode:?})"
+            );
+        }
+    }
+    // An enum is emitted `Dictionary`, whose `MIN` and `MAX` DataFusion types
+    // as the value type (`KD45`); its `COUNT(DISTINCT)` is an `Int64` and
+    // counts labels, so it answers. So does an `interval`, a
+    // `MonthDayNano` distinct wherever its text is.
+    let (_dump, reading, blind, _) = opened(&types, SchemaMode::Typed).await;
+    for (column, table) in [("v_mood", "t_enum_domain"), ("v_interval", "t_interval")] {
+        let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM \"dump\".public.{table}");
+        assert!(agrees(&reading, &blind, None, &sql).await.answered(), "{sql}");
     }
 }
 

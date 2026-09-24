@@ -1,5 +1,6 @@
 //! What a complete map's statistics say about a whole table: its rows, and
-//! per column its NULLs and its extremes, in one comparison semantics.
+//! per column its NULLs, its extremes in one comparison semantics, and its
+//! distinct values where the dictionaries hold them all.
 //!
 //! [`crate::prune`] reads the same stored sets per group to skip one; this
 //! folds every group of every block of a table into one answer, for an
@@ -11,15 +12,17 @@
 //! caller estimating does not care by how much, and a partial extreme is
 //! still a bound on the whole table.
 
+use std::collections::HashSet;
+
 use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
-use crate::gather::{clips, declared_columns, stored_bounds_kinds};
+use crate::gather::{clips, declared_columns, dictionary_holds_field_text, stored_resolution};
 use crate::index::{DumpIndex, TableName};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
-use crate::statistics::Bounds;
+use crate::statistics::{Bounds, ColumnDictionary};
 
 /// What a table's stored statistics amount to, one entry per column of the
 /// schema it was summarized against.
@@ -50,6 +53,16 @@ pub struct ColumnSummary {
     /// bound. `false` makes [`Self::min`] and [`Self::max`] bounds on the
     /// table rather than its extremes.
     pub bounds_complete: bool,
+    /// How many distinct non-NULL values the column emits, where every group
+    /// of every block kept a dictionary of its field texts: the size of their
+    /// union. `None` wherever one group did not — the union being only a
+    /// floor there — and for a `character` column, whose entries give up the
+    /// trailing blanks it emits (`docs/design/decisions.md`, "D89").
+    ///
+    /// Distinct text is a distinct value in the column's Arrow type as in its
+    /// text: each type is written in one form (I4, I40, I41), a
+    /// `timestamptz` in one zone a table (I48).
+    pub distinct: Option<u64>,
 }
 
 /// One end of a column's range.
@@ -93,6 +106,7 @@ pub fn table_summary(
                 min: None,
                 max: None,
                 complete: true,
+                distinct: Some(HashSet::new()),
             }
         })
         .collect();
@@ -109,7 +123,7 @@ pub fn table_summary(
         }
         let declared =
             declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
-        let kinds = stored_bounds_kinds(&block.header, metadata, block.database.as_deref());
+        let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
         let mut seen = vec![false; fields.len()];
         for (c, name) in block.header.columns.iter().enumerate() {
             let Some(i) = fields.iter().position(|field| field.name() == name) else { continue };
@@ -123,17 +137,22 @@ pub fn table_summary(
             if column.null_counts.len() != statistics.groups.len() {
                 accumulator.nulls_complete = false;
             }
-            // The bounds and the row order are believed only under the DDL
-            // they were gathered under; the NULL counts above are read off
-            // the text and are believed regardless (D78).
+            // The bounds, the row order and the dictionary are believed only
+            // under the DDL they were gathered under; the NULL counts above
+            // are read off the text and are believed regardless (D78).
             let def = declared.and_then(|columns| columns.iter().find(|d| &d.name == name));
             let believed = column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
                 && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref());
+            let dictionary = column
+                .dictionary
+                .as_ref()
+                .filter(|_| believed && dictionary_holds_field_text(&gathered, c));
+            accumulator.union(dictionary, statistics.groups.len());
             let stored = accumulator
                 .kind
                 .as_ref()
                 .filter(|_| believed)
-                .and_then(|kind| bounds_set_keyed_by(&kinds[c], kind))
+                .and_then(|kind| bounds_set_keyed_by(&gathered.bounds_kinds(c), kind))
                 .and_then(|set| column.bounds_in(set));
             let Some(stored) = stored else {
                 accumulator.complete = false;
@@ -170,8 +189,9 @@ pub fn table_summary(
 
 /// One column's extremes while the blocks are walked, each as the stored text
 /// and its key, so two blocks' bounds are compared exactly as the kind that
-/// stored them orders.
-struct Accumulator {
+/// stored them orders; and the union of its dictionaries, borrowed from the
+/// map, while every group so far has kept one.
+struct Accumulator<'a> {
     /// The kind bounds are read by, or `None` where this semantics believes
     /// none for the column.
     kind: Option<CompareKind>,
@@ -180,14 +200,43 @@ struct Accumulator {
     min: Option<(ValueKey, String, bool)>,
     max: Option<(ValueKey, String, bool)>,
     complete: bool,
+    distinct: Option<HashSet<&'a str>>,
 }
 
-impl Accumulator {
-    /// A block said nothing about this column: neither its NULLs nor its
-    /// extremes cover the table any more.
+impl<'a> Accumulator<'a> {
+    /// A block said nothing about this column: neither its NULLs, its
+    /// extremes nor its distinct values cover the table any more.
     fn uncounted(&mut self) {
         self.nulls_complete = false;
         self.complete = false;
+        self.distinct = None;
+    }
+
+    /// Add a block's dictionary to the union, or give the union up where the
+    /// block kept none of field text or any of its `groups` groups kept none.
+    fn union(&mut self, dictionary: Option<&'a ColumnDictionary>, groups: usize) {
+        let Some(distinct) = &mut self.distinct else { return };
+        let Some(dictionary) = dictionary.filter(|d| d.groups.len() == groups) else {
+            self.distinct = None;
+            return;
+        };
+        // Every group's own entries, not the block's list: a list may keep an
+        // entry no group still names.
+        for group in &dictionary.groups {
+            let Some(indices) = group else {
+                self.distinct = None;
+                return;
+            };
+            for &index in indices {
+                match dictionary.entries.get(index as usize) {
+                    Some(entry) => distinct.insert(entry.as_str()),
+                    None => {
+                        self.distinct = None;
+                        return;
+                    }
+                };
+            }
+        }
     }
 
     fn fold(&mut self, kind: &CompareKind, bounds: &Bounds) {
@@ -239,6 +288,7 @@ impl Accumulator {
             min,
             max,
             bounds_complete: complete,
+            distinct: self.distinct.map(|distinct| distinct.len() as u64),
         }
     }
 }

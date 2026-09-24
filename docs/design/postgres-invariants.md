@@ -3501,3 +3501,59 @@ docker rm -f pgdt-i47
 are `'1 2 3'`, `''`, `'0'` and `'-32768 32767'`; `in` is `'1 2'`; `dims` is
 `[0:2]`; all three `cmp` rows answer `t|f`; and the three notices are `22P02`,
 `22003` and `22P02`.
+
+---
+
+## I48 — A `timestamptz` is written in its session's one zone, so within a table its text is a function of its instant
+
+**Claim.** Every `timestamptz` value one `pg_dump` connection writes is
+rendered in that connection's `TimeZone`, which nothing `pg_dump` runs
+changes. The ISO text carries the wall-clock time in that zone and the zone's
+offset at that instant, so the text fixes the instant and the instant, in one
+zone, fixes the text: **two values of one table are one text exactly when they
+are one instant**, however each was written in. Only the offsets vary with the
+zone's own rules (DST), never with how a value was entered.
+
+**Proof.** `timestamptz_out` in `src/backend/utils/adt/timestamp.c` calls
+`timestamp2tm(dt, &tz, tm, &fsec, &tzn, NULL)`, and `timestamp2tm` takes a
+`NULL` zone to mean `session_timezone`; `EncodeDateTime` then writes the
+fields and `EncodeTimezone` the offset — hours, then minutes and seconds
+wherever they are not zero. `pg_dump`'s `setup_connection` pins `DATESTYLE`,
+`INTERVALSTYLE` and `extra_float_digits` and never `TimeZone` (I4), and no
+source file of `src/bin/pg_dump/` sets one: the word appears only in
+`pg_backup_archiver.c`'s comment on reading an archive's own creation date.
+The infinities have one spelling each (I34).
+
+**Observed.** `fixtures/<13–18>/statistics/*.sql`'s `public.spans.stamp` is
+inserted from `2026-01-01 00:00:00+00` and `2026-01-01 05:00:00+05`, one
+instant, and `2026-07-01 12:00:00-07`: every major writes two texts, the first
+two as `2026-01-01 00:00:00+00` (`pgdump_query/tests/statistics_fixture.rs`
+asserts the count).
+
+**Scope limit.** **Per connection, so per database.** `pg_dumpall` runs one
+`pg_dump` a database, and an `ALTER DATABASE … SET timezone` makes two
+databases' zones differ — which no table spans. A directory-format dump's
+workers each open a connection, set up alike from one environment; a
+`timezone` set on the role or database between two of them opening is outside
+this claim. A zone whose offset has seconds (`LMT`) is still one text an
+instant.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
+carry `timestamptz_out`'s `timestamp2tm(..., NULL)` call and
+`timestamp2tm`'s `session_timezone` fallback, and none sets a time zone in
+`src/bin/pg_dump/`; observed in the `statistics` fixture at all six.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D89" — a distinct count
+read off a `timestamptz` column's dictionary is its distinct instants, and so
+its distinct Arrow values (`summary.rs`, `ColumnSummary::distinct`).
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^timestamptz_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/timestamp.c | grep -n timestamp2tm
+awk '/^timestamp2tm\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n session_timezone
+grep -rniE 'SET +(TIME +ZONE|timezone)|PGTZ' src/bin/pg_dump/*.c
+```
+
+The first two print one line each; the third prints nothing.

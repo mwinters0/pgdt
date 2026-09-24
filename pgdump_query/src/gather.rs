@@ -50,7 +50,7 @@ use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
-use crate::resolve::{SchemaMode, resolve_columns};
+use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, Charge, ColumnBounds, ColumnDictionary,
     ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, GroupSizing, RowGroup,
@@ -90,8 +90,7 @@ pub(crate) fn observer_tracking(
     // resolution's scratch is freed, so neither update reads either as held.
     let charge = Charge::new(Arc::clone(account), Term::Gathering);
     let qualified = header.qualified_name();
-    let resolved =
-        resolve_columns(&qualified, &header.columns, metadata, database, SchemaMode::Typed, &[]);
+    let resolved = stored_resolution(header, metadata, database);
     let declared = declared_columns(metadata, database, &qualified);
     let columns: Vec<Option<ColumnGatherer>> = header
         .columns
@@ -142,15 +141,37 @@ pub(crate) fn stored_bounds_kinds(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
 ) -> Vec<[Option<CompareKind>; 2]> {
-    let resolved = resolve_columns(
+    let resolved = stored_resolution(header, metadata, database);
+    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)).collect()
+}
+
+/// `header`'s columns resolved as [`observer_tracking`] resolves them, under
+/// the DDL `metadata` states for it now: for a column whose statistics record
+/// that declared type and collation, the resolution they were gathered under.
+pub(crate) fn stored_resolution(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> ResolvedSchema {
+    resolve_columns(
         &header.qualified_name(),
         &header.columns,
         metadata,
         database,
         SchemaMode::Typed,
         &[],
-    );
-    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)).collect()
+    )
+}
+
+/// Whether gathering keeps column `i` of `stored` a dictionary whose entries
+/// are each field's own text, as [`ColumnGatherer::new`] and
+/// [`DictionaryGatherer::observe`] decide it: every dictionary kept but a
+/// `character` column's, whose entries give up their trailing blanks.
+pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> bool {
+    let comparison = &stored.comparisons[i];
+    stored.plans[i] == NestedPlan::Scalar
+        && comparison.dictionary_answers_in(ComparisonSemantics::Postgres)
+        && !matches!(comparison, ComparisonPlan::Compared { kind: CompareKind::PaddedText, .. })
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —
