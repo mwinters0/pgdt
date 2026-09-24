@@ -558,8 +558,8 @@ fn json_types(json: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
 }
 
 /// **`--detail` names every user-defined type, beneath the count that had
-/// been their only trace.** Nothing else in `info` names one at any
-/// verbosity, so a user could not learn from it that `public.mood` exists.
+/// been their only trace.** Nothing else in `info` says what one is at any
+/// verbosity, a column naming only its declared type.
 ///
 /// The listing is one line per type in declaration order, and **every
 /// `TypeKind` arm renders** — a listing headed `user-defined types` that

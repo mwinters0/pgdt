@@ -136,8 +136,8 @@ fn a_value_that_holds_structure_is_asked_for_quoted() {
 }
 
 /// **The refusal is narrow**, which is the half a rule restated beside the
-/// tokenizer would have got wrong. Only whitespace or a paren can put a
-/// keyword next to structure, so an unquoted multi-word value still needs no
+/// tokenizer would have got wrong. Only whitespace, a paren or the string's
+/// end can put a keyword next to structure, so an unquoted multi-word value still needs no
 /// quotes and the cheap `--filter` spelling survives.
 #[test]
 fn a_value_with_no_reserved_spelling_still_needs_no_quotes() {

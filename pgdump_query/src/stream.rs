@@ -1774,8 +1774,9 @@ impl<'a> TableStream<'a> {
     /// What the early stop did in each block this stream replays with one
     /// planned ([`EarlyStop`]), in file order — **found while rows are read,
     /// so reported after the fact** where [`Self::plan_notes`] is settled
-    /// before. Complete once the stream is drained; before that it covers what
-    /// has been read, and before the first poll nothing. A block with no stop
+    /// before. Complete once the stream is drained; from the first poll every
+    /// block with a stop planned has an entry, one not yet read holding `None`
+    /// as one whose stop saved nothing does, and before it nothing. A block with no stop
     /// planned has no entry: the filter requires no bound its sort order
     /// closes, or statistics were not used.
     pub fn early_stops(&self) -> Vec<EarlyStop> {
@@ -2218,8 +2219,8 @@ enum SegmentEntry {
     /// schema. Also how a [`ResumeToken`] that paused *between* blocks
     /// re-enters.
     Header,
-    /// Inside the block's data: reading begins at the first row boundary at
-    /// or after [`Segment::start`], and the schema comes from the map's own
+    /// Inside the block's data: reading begins at the first row boundary
+    /// after [`Segment::start`], and the schema comes from the map's own
     /// copy of the header, no header line being in range.
     Interior,
 }
@@ -2384,7 +2385,7 @@ fn activate(
     Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
 }
 
-/// The offset of the first row boundary at or after `from`, searching no
+/// The offset of the first row boundary after `from`, searching no
 /// further than `end` — the byte just past the first LF in `[from, end)`, or
 /// `None` when there is none.
 ///
@@ -2699,21 +2700,22 @@ pub enum PlanNoteKind {
     /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and the
     /// span is not among the levers left.
     ///
-    /// **Both levers that are left are named, because only one of them always
-    /// works** (`KD32`, as [`PlanNoteKind::BatchSpanNarrowed`] states it too):
+    /// **Both levers that are left are named, because neither always works**
+    /// (`KD32`, as [`PlanNoteKind::BatchSpanNarrowed`] states it too, and `KD41`):
     /// a source recommending no per-reader cost is left on
     /// `crate::io::DEFAULT_MEMORY_BUDGET` however large an allowance is stated
     /// (`docs/design/decisions.md`, "D83"), so a message offering the budget
     /// alone is inert exactly where this fires on a plain one. The other is
     /// the announced read chunk
-    /// (`crate::scan::ScanOptions::chunk_size_bytes`), which a source cutting
-    /// by it sizes both terms from — `footprint` a fixed multiple of it
+    /// (`crate::scan::ScanOptions::chunk_size_bytes`), which a replay plan
+    /// never announces (`KD41`), and which a source cutting by it sizes both
+    /// terms from — `footprint` a fixed multiple of it
     /// (`crate::io::Partitioning::partition_bytes`) and the span floored on it
     /// ([`derived_source_span`]).
     ///
     /// **Both levers buy seats rather than speed, and the sentence says so.**
-    /// The sub-streams a plain typed `query` plans do not run concurrently
-    /// (`KD17`, at [`plan_partitions`]), so a caller who shrinks the chunk to
+    /// The sub-streams a plain typed `query` plans gain little from running
+    /// concurrently (`KD17`, at [`plan_partitions`]), so a caller who shrinks the chunk to
     /// seat more pays the per-chunk cost for a count that does not become
     /// throughput. What that cost *is* on this path is unmeasured — the figure
     /// pricing a chunk size measures a mapping pass, which does far less work
@@ -2815,7 +2817,8 @@ pub enum PlanNoteKind {
     /// The row-group statistics a mapping pass stored proved that
     /// `skipped_groups` of the `groups` listed by the blocks carrying them
     /// hold no row the filter keeps, so their `skipped_bytes` of rows are
-    /// never read out of the `bytes` of rows every matched block holds
+    /// never parsed — read at most as the tail of a kept run's last chunk —
+    /// out of the `bytes` of rows every matched block holds
     /// (`crate::batch::QueryOptions::use_statistics`). Stated wherever a
     /// block's statistics were consulted, a skip of nothing included; never
     /// where none were, nor where the filter keeps every row
@@ -3835,7 +3838,7 @@ pub fn table_stream<'a>(
 /// `query_options.parallelism` allows. **The caller runs them**, concurrently
 /// or not: running them in order and concatenating is exactly what
 /// [`table_stream`] yields. The returned `Vec` is never empty and never holds
-/// an empty sub-stream beyond the degenerate one a table with no rows
+/// an empty sub-stream beyond the degenerate one a table with no blocks
 /// produces; the serial state is one sub-stream.
 ///
 /// **Each sub-stream carries its own schema, notes and position.**
@@ -4029,7 +4032,7 @@ impl TablePartitions {
     }
 
     /// Always `false`: a plan holds at least one partition, the degenerate one
-    /// of a table with no rows included.
+    /// of a table with no blocks included.
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty()
     }

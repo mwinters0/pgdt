@@ -52,8 +52,9 @@ fn query(dump: &Path, table: &str, extra: &[&str]) -> Output {
 }
 
 /// Every setting of the two flags answers the same rows on a plain file. The
-/// budgets bracket the read chunk: 1 MiB is one chunk buffer's worth, which is
-/// the pool's one-slot floor, and 512 MiB is more than anything here can use.
+/// budgets bracket the read chunk: 1 MiB is below the reserve, so it carves to
+/// no budget and the pool's one-slot floor, and 512 MiB is more than anything
+/// here can use.
 ///
 /// **The reference is `--jobs 1` stated, not the default**, since `--jobs` cuts
 /// the replay. The default is 1 today, so the two coincide — but a reference

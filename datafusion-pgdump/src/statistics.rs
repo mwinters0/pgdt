@@ -1,6 +1,6 @@
 //! The map's statistics as DataFusion's, so `COUNT(*)`, `COUNT(<column>)`,
-//! `COUNT(DISTINCT <column>)`, `MIN`, `MAX` and `SUM` can be answered without
-//! reading a row (`docs/design/decisions.md`, "D89"), a join's sides can be
+//! `MIN`, `MAX`, `SUM` and a `COUNT(DISTINCT <column>)` beside another count
+//! can be answered without reading a row (`docs/design/decisions.md`, "D89"), a join's sides can be
 //! weighed by the bytes each emits ([`byte_size`]), and a sort the scan's
 //! recorded order already satisfies is not planned ([`output_orderings`]).
 //!

@@ -108,12 +108,11 @@ impl Token<'_> {
     }
 }
 
-/// Whether `b` continues an identifier, and therefore cannot be the boundary
-/// a keyword needs.
+/// Whether `b` continues an identifier, as [`preceding_word`] reads one.
 ///
 /// **Every byte above ASCII counts**: a UTF-8 lead or continuation byte is
-/// part of whatever character it belongs to, and without this `éand=1` would
-/// find a keyword one byte into a character.
+/// part of whatever character it belongs to, and without this `éis` would
+/// read as the word `is` one byte into a character.
 fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
 }

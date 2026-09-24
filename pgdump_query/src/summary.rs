@@ -12,7 +12,7 @@
 //! **A summary says whether it is complete, and never how nearly.** A caller
 //! that answers a query from it needs to know that nothing was left out; a
 //! caller estimating does not care by how much, and a partial extreme is
-//! still a bound on the whole table.
+//! still an estimate of the whole table's.
 
 use std::collections::{HashMap, HashSet};
 
@@ -53,8 +53,9 @@ pub struct ColumnSummary {
     pub max: Option<Bound>,
     /// Whether every group of every block contributed — an unbounded group
     /// holding nothing but NULLs counts as contributing, having no value to
-    /// bound. `false` makes [`Self::min`] and [`Self::max`] bounds on the
-    /// table rather than its extremes.
+    /// bound. `false` makes [`Self::min`] and [`Self::max`] the extremes of
+    /// the groups that contributed, estimates of the table's rather than its
+    /// own.
     pub bounds_complete: bool,
     /// How many distinct non-NULL values the column emits, where every group
     /// of every block kept a dictionary of its field texts: the size of their
@@ -96,7 +97,7 @@ pub struct Bound {
 /// Summarize `table` over `index`, a complete map, against the schema a query
 /// of it resolves and in the semantics that query compares in.
 ///
-/// **A block's bounds are read exactly as pruning reads them** — the set
+/// **A block's bounds are read from the set pruning reads** — the set
 /// gathering stored under the kind a term in `semantics` compares by, and
 /// only where the DDL the column was gathered under still stands
 /// (`docs/design/decisions.md`, "D78", "D79"). A block with no statistics
@@ -353,8 +354,9 @@ fn believed(column: &ColumnStatistics, declared: Option<&[ColumnDef]>, name: &st
 ///   upper bound of the earlier block's last group holding a row is at most
 ///   the lower bound of the later block's first. A sorted block's extremes
 ///   are in those groups, and a clipped lower bound or a successor for an
-///   upper one still bounds. Blocks the plan pruned whole, or that hold no
-///   row, are not between the two.
+///   upper one still bounds. A block that holds no row is not between the
+///   two; one the plan pruned whole is, its header's empty run keeping it in
+///   the partition.
 ///
 /// A float qualifies like any other column: its bounds and row order are
 /// kept with its zeros told apart as Arrow sorts them

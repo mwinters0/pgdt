@@ -46,8 +46,9 @@ pub enum ColumnResolution {
     /// No DDL explained this column — `--data-only`, a typed table (`CREATE
     /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
     NotDeclared,
-    /// The scan never read this block's database's DDL, so nothing is yet
-    /// known about *any* of its columns.
+    /// The scan has not finished reading this block's database's DDL, and it
+    /// has not declared this column — so nothing is yet known about it, nor
+    /// about any column where the scan never reached that DDL at all.
     ///
     /// **No mapping scan produces this pairing**: `crate::stream`'s mapping
     /// pass states a database's DDL at that database's first `COPY` block

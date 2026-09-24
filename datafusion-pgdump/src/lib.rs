@@ -12,8 +12,8 @@
 //! settings a `SET` states read as each scan is planned ([`PgDumpSettings`]).
 //! The plan node carries
 //! what the map's statistics say about the table, so `COUNT(*)`,
-//! `COUNT(<column>)`, `COUNT(DISTINCT <column>)`, `MIN`, `MAX` and `SUM` can
-//! be answered without reading a row, and a join weighs its sides by the
+//! `COUNT(<column>)`, `MIN`, `MAX`, `SUM` and a `COUNT(DISTINCT <column>)`
+//! beside another count can be answered without reading a row, and a join weighs its sides by the
 //! bytes each emits ([`crate::statistics`]).
 //!
 //! **What a registration finds is handed to the caller's sink**

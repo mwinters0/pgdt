@@ -632,7 +632,7 @@ async fn location_refuses_a_cache_written_for_another_origin() {
 
 /// A cache written for a source that was fetched from nowhere, read against
 /// one that was, differs in origin — one side records none, which is a
-/// statement rather than silence (D19).
+/// statement rather than silence (D87).
 #[tokio::test]
 async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
     let (_dir, dump) = sandboxed();

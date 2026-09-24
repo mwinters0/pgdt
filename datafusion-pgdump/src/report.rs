@@ -1,7 +1,7 @@
 //! What registration and planning report to the caller's sink.
 //!
 //! **What a dump or a table is, is reported when it is registered**: the
-//! file-level channel once per dump, and each table's per-column notes and
+//! file-level channel once per registration, and each table's per-column notes and
 //! its columns' divergence from PostgreSQL in the semantics every scan asks
 //! for. **What a scan's plan settled is reported when it is planned**, from
 //! `scan()`, to the sink the table was registered with. A query raises nothing

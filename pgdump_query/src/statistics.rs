@@ -4,8 +4,8 @@
 //!
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
-//! under, counts, and bounds as unescaped field text — what `pg_dump` wrote
-//! where the value fits [`DICTIONARY_ENTRY_MAX_BYTES`], and a prefix or a successor of it
+//! under, counts, and bounds as unescaped field text — what `pg_dump` wrote, a
+//! `character`'s without its trailing blanks, where the value fits [`DICTIONARY_ENTRY_MAX_BYTES`], and a prefix or a successor of it
 //! where it does not ([`Bounds::min_exact`], [`Bounds::max_exact`]). Which
 //! column gets which statistic, and how a value is ordered, is decided above
 //! this layer by whatever implements [`BlockObserver`]; the mapping pass hands
@@ -70,8 +70,8 @@ pub struct StatisticsRequest {
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
     /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
-    /// [`BLOCK_MAX_ROW_GROUPS`] groups and short of [`Self::min_rows`]; a
-    /// stated size is gathered exactly.
+    /// [`BLOCK_MAX_ROW_GROUPS`] groups unless [`Self::max_rows`] is stated,
+    /// and short of [`Self::min_rows`]; a stated size is gathered exactly.
     /// Kept apart from the default because a stated size and an unstated one
     /// are different requests to a block already gathered at another. In a
     /// block the request does not track ([`Self::tracked_columns`] answering
@@ -212,8 +212,9 @@ impl StatisticsRequest {
     /// block's header (`crate::stream::bounded_columns`;
     /// `docs/design/decisions.md`, "D79"), where the request
     /// **states** a group size other than the one the block was gathered at,
-    /// or where it states no size and **states** a bound — minimum or maximum
-    /// — other than the block's record ([`BlockStatistics::sizing`]). A
+    /// or where it states no size, **states** a bound — minimum or maximum —
+    /// and the sizing that makes, the other bound at its default, is not the
+    /// block's record ([`BlockStatistics::sizing`]). A
     /// resized block is re-read from its first row as the request sizes it; an
     /// unstated size and bounds lack nothing a gathered block holds, and
     /// re-read a block lacking a column at the size it holds, exactly, keeping
@@ -299,10 +300,11 @@ impl StatisticsRequest {
 pub struct StatisticsBackfill {
     /// The columns gathered, positionally to the block's header.
     pub columns: Vec<bool>,
-    /// The group size gathered at: the request's stated size; or, for a block
-    /// whose groups break a stated maximum, the finer size
-    /// [`BlockStatistics::predicted_group_size`] predicts; or else the size
-    /// the block already held, or else [`ROW_GROUP_DEFAULT_SIZE_BYTES`].
+    /// The group size gathered at: for a block re-read from its first row,
+    /// the request's stated size, else [`ROW_GROUP_DEFAULT_SIZE_BYTES`]; for
+    /// a block whose groups break a stated maximum, the finer size
+    /// [`BlockStatistics::predicted_group_size`] predicts; and for one lacking
+    /// only a column, the size it already held.
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
     /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its
@@ -431,7 +433,8 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`ROW_GROUP_DEFAULT_SIZE_BYTES`], merged pairwise
+    /// An unstated size: [`ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
+    /// re-read for a broken maximum predicts, merged pairwise
     /// past [`BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
@@ -537,7 +540,7 @@ pub struct Bounds {
 
 /// Whether a column's non-NULL values are in order row by row over a block.
 /// Equal neighbours are in either order; a column with at most one distinct
-/// value is `Ascending`. A value gathering cannot place against its neighbour —
+/// value, every one placed, is `Ascending`. A value gathering cannot place against its neighbour —
 /// one that does not key, a keyed one past [`DICTIONARY_ENTRY_MAX_BYTES`], or a bytewise
 /// one agreeing with it past what a bound reads — makes the column `Unsorted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -703,8 +706,9 @@ where
     Option::<Arc<BlockStatistics>>::deserialize(deserializer)
 }
 
-/// The most growth an observer holds uncharged: past it, the observer updates
-/// the pass's [`StatisticsAccount`] before it observes another row. A
+/// The growth an observer holds uncharged before it updates the pass's
+/// [`StatisticsAccount`], which it does, once past it, before it observes
+/// another row — so one wide row can carry it further. A
 /// judgement setting only how often a wide observer updates.
 pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 

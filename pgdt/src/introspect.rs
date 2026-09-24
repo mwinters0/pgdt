@@ -24,7 +24,8 @@
 //! * **`mallinfo_*`** — glibc's own view at exit: `arena` (arena-backed bytes
 //!   obtained from the OS), `hblkhd` (mmap-backed), `uordblks` (in use) and
 //!   `fordblks` (freed, held, still resident). The gap between `uordblks` and
-//!   `live_bytes` is allocator bookkeeping; the gap between `arena` and
+//!   `live_bytes` is allocator bookkeeping and what C code allocates past
+//!   the counter; the gap between `arena` and
 //!   `uordblks` is retention.
 //! * **`malloc_*`** — `malloc_info`'s document-level totals, plus the raw XML,
 //!   which carries **each arena's own `system type="max"`** — the one number
@@ -34,8 +35,8 @@
 //!   attributed to statistics (`pgdump_query::instrument`) at the same moment,
 //!   their peaks, and the worst difference either way any update of the
 //!   account read (`docs/design/decisions.md`, "D81"). Where no pass returned
-//!   an account — a `query`, which loads a cache's statistics and charges
-//!   nothing for them — the lines are `statistics_account=none` and
+//!   an account — a `query`, which loads a cache's statistics and bills them
+//!   only as held when its workers are carved — the lines are `statistics_account=none` and
 //!   `statistics_loaded_bytes`, the heap the cache handed the pass, which is
 //!   the only statistics term a query has.
 //!
@@ -170,8 +171,8 @@ mod enabled {
     ///
     /// **Two shapes, because two commands hold statistics.** A mapping pass
     /// returns an account and the account's terms are the reading; a `query`
-    /// returns none — it loads the cache, charges nothing and prints no
-    /// `statistics held` line. The second shape says `statistics_account=none`
+    /// returns none — it loads the cache, bills it only as held when its
+    /// workers are carved, and prints no `statistics held` line. The second shape says `statistics_account=none`
     /// and leans on `statistics_loaded_bytes`, the heap the cache handed the
     /// pass: the scope counter is not that term, seeing the decode's frees
     /// without its allocations, so a query reading it alone would understate

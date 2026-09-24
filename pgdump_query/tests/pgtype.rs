@@ -93,7 +93,7 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
         assert!(m("public.t_json").iter().all(|r| *r == Mapped), "pg_dump {v}");
         assert!(m("public.t_net").iter().all(|r| *r == Mapped), "pg_dump {v}");
 
-        // `interval` maps to `Utf8View` deliberately too.
+        // `interval` maps too, to its `MonthDayNano` struct.
         assert!(m("public.t_interval").iter().all(|r| *r == Mapped), "pg_dump {v}");
 
         // Arrays: every array column maps to a `List` of its element type,
@@ -116,8 +116,8 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
         // Every column of the array-shape table maps from the declared type
         // alone — `integer[][]`, a column whose rows disagree about
         // dimensionality, and one carrying an `[lb:ub]=` prefix are
-        // indistinguishable here (I21). Only the data separates them, and it
-        // does so at decode time, not here.
+        // indistinguishable here (I21). Only the data separates them: the
+        // block's census, which resolution reads once it has one (D43).
         let shape_res = m("public.t_array_shape");
         assert!(shape_res.iter().all(|r| *r == Mapped), "pg_dump {v}: t_array_shape");
 

@@ -11,7 +11,7 @@
 //! (`crate::ResolvedSchema::bounds_kinds`);
 //! a column its comparison equates exactly keeps a dictionary per group; and a
 //! column the typed read emits as an integer or a `Decimal128` keeps a sum per
-//! group, one it emits as text or bytes its values' text bytes per group.
+//! group; and every column keeps its values' text bytes per group.
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
@@ -119,7 +119,7 @@ pub(crate) fn observer_tracking(
     let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
     gatherer.charge_held();
     // An account already full declines this block before its first row, so a
-    // pass past its allowance costs nothing per block after it
+    // pass past its allowance gathers no row of any block after it
     // (`docs/design/decisions.md`, "D85").
     gatherer.decline_if_over();
     Box::new(gatherer)
@@ -1228,7 +1228,7 @@ enum Order {
 /// The bytewise kinds, each by the text whose bytes order as its key does.
 #[derive(Clone, Copy)]
 enum Canonical {
-    /// `text`, `varchar`, `name` under a bytewise collation: the text.
+    /// `text`, `varchar`, `name`, bounded bytewise in any collation: the text.
     Text,
     /// `character`: the text without its trailing blanks, which its comparison
     /// ignores — so a bound is stored unpadded.
@@ -2845,7 +2845,8 @@ mod tests {
 
     /// **A piece that declined declines its block**, the block having lost
     /// that piece's rows; and a block that declined while a window ran drops
-    /// every piece it is handed, its pieces gathering nothing from there on
+    /// every piece it is handed, a piece made after the decline gathering
+    /// nothing
     /// (`docs/design/decisions.md`, "D85").
     #[test]
     fn a_declined_piece_declines_its_block_and_a_declined_block_its_pieces() {

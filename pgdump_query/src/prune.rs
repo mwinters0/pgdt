@@ -62,7 +62,7 @@ pub(crate) struct BlockPruning {
 /// and a NULL makes an ordering term `Unknown`, so the term — required of
 /// every kept row ([`ResolvedExpr::required_ordering_terms`]) — is `True` of
 /// no later row. A replay of the block stops there, inside a group if need
-/// be, and nothing past it is read.
+/// be, and nothing past it is parsed, nor read past the chunk holding it.
 ///
 /// *Not taken:* stopping a sub-stream's later segments of a stopped block —
 /// pruning already skips a later run, and the rest is the read before a later

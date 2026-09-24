@@ -25,7 +25,8 @@ use crate::{Error, Result};
 /// Where the register has no plan for a column — it did not resolve, one of
 /// its nested positions is not compared, or this build orders its type not at
 /// all — `Eq`/`Ne` compare the canonical `*_out` text the file holds and the
-/// ordering operators are refused.
+/// ordering operators are refused, where a query's Arrow semantics orders
+/// them bytewise instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -1081,7 +1082,8 @@ impl OrderKey {
 /// PostgreSQL's special values, for the kinds whose columns can hold one and
 /// in the exact spelling that type's own `*_out` writes (I34): `date`,
 /// `timestamp`, `timestamptz` and `interval` write `infinity`/`-infinity`,
-/// and a `numeric` writes `NaN`. Nothing else is accepted — a `date` field or
+/// and a `numeric` writes `NaN`, a bare one its infinities too (below).
+/// Nothing else is accepted — a `date` field or
 /// literal reading `Infinity` is a decode failure
 /// (`docs/design/decisions.md`, "D55").
 ///
@@ -1236,7 +1238,7 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
         // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
         // 4294967295 and this build does not implement that wrap, so a
-        // signed literal is `Error::PredicateValueDecode`. Every value the
+        // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
@@ -2033,8 +2035,8 @@ fn accepted_form(kind: &CompareKind) -> String {
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
         // `numeric` past 76 digits — has `NaN` and nothing else. Only the
         // typed arm carries a scale to be finer than: a `p > 76` column is
-        // compared as text through `NumericKey`, which normalizes rather than
-        // rescaling.
+        // held as text and compared by value through `NumericKey`, which
+        // normalizes rather than rescaling.
         K::Decimal(scale) => decimal_accepted_form(*scale),
         K::Numeric { infinities: false } => "as a number, or `NaN`".into(),
         K::Numeric { infinities: true } => {
@@ -2160,7 +2162,7 @@ enum Comparison {
     /// A nested column, under **any** comparing operator: both sides read
     /// into a [`NestedKey`] and compared structurally
     /// (`docs/design/decisions.md`, "D58"). One variant for both operator
-    /// families, where a scalar has three, because a nested value's `=` is
+    /// families, where a scalar has four, because a nested value's `=` is
     /// byte-comparable only when *every* leaf beneath it canonicalizes.
     ///
     /// *Rejected: rendering the literal back and comparing bytes where every
@@ -2169,7 +2171,7 @@ enum Comparison {
     /// covers.
     ///
     /// Boxed: a `NestedKey` carries three vectors, and this variant is the
-    /// only large one in an enum that sits inside every resolved leaf.
+    /// only large one in an enum that sits inside every comparing leaf.
     Nested(Box<NestedComparison>),
 }
 
@@ -2215,8 +2217,8 @@ struct BelievedStatistics {
     /// its literal read as a key — present only where the term's semantics
     /// believes bounds in that kind ([`ComparisonPlan::bounds_read_by`]).
     /// Carried for the equality operators too, whose [`Comparison`] keeps no
-    /// kind. Boxed, as [`Comparison::Nested`] is, because every resolved leaf
-    /// carries it.
+    /// kind. Boxed, as [`Comparison::Nested`] is, because every comparing
+    /// leaf carries it.
     bounds: Option<Box<(CompareKind, OrderKey)>>,
     /// Whether a group's dictionary answers this term: one of the four
     /// equality operators, on a `Compared` column whose divergence, if any,
@@ -2575,10 +2577,10 @@ fn believed_bounds(
 
 impl ResolvedTerm {
     /// Evaluate this term against `raw_row`, in SQL's three-valued domain.
-    /// `table` and `row_offset` are context for the one error this can raise:
-    /// a field that does not decode as its mapped type under a comparison
-    /// that reads it, which is `Error::FieldDecode`, worded exactly as the
-    /// typed build path words it.
+    /// `table` and `row_offset` are context for the error a field raises that
+    /// does not decode as its mapped type under a comparison that reads it,
+    /// `Error::FieldDecode`, worded exactly as the typed build path words it;
+    /// a field that does not unescape raises the row's own error.
     ///
     /// A NULL field is [`Truth::Unknown`] under every comparing operator. The
     /// four that answer two-valued instead are `IsNull`/`IsNotNull`, which
@@ -2612,9 +2614,9 @@ impl ResolvedTerm {
     /// This term's answer for one **already unescaped** value of its column,
     /// `None` being SQL NULL — the row path's whole comparison, with no row
     /// in it. [`Self::eval`] is this after splitting and unescaping a field;
-    /// a value that did not come from a row, such as a statistic's stored
-    /// bound or dictionary entry, is answered by the same code and so cannot
-    /// be answered differently.
+    /// a value that did not come from a row, such as a statistic's dictionary
+    /// entry, is answered by the same code and so cannot be answered
+    /// differently.
     ///
     /// `None` back is a non-NULL value that is not a value of the column's
     /// type under this term's comparison — what the row path reports as
@@ -4990,7 +4992,7 @@ mod tests {
             assert_eq!(accepted_form(&CompareKind::Decimal(scale)), expected, "scale {scale}");
         }
         // The scale-free arm keeps the scale-free clause: a `p > 76` column
-        // compares as text and refuses no literal for its shape.
+        // is held as text and refuses no literal for its shape.
         assert_eq!(
             accepted_form(&CompareKind::Numeric { infinities: false }),
             "as a number, or `NaN`"

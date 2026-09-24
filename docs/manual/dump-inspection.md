@@ -9,14 +9,14 @@ pgdt parse --source mydump.sql   # reads the dump, writes mydump.sql.dtcache
 pgdt info  --source mydump.sql   # reports what that cache holds
 ```
 
-**`parse` reads your dump. `info` never does.** On a
+**`parse` reads your dump. `info` never scans it.** On a
 5KB dump the difference is invisible; on a 784GB one, `parse` is an hour of
 disk and `info` is instant. Splitting them means a command that reads like a
 question — "what is in this file?" — can never turn into an hour of I/O you
 did not ask for.
 
 Run `parse` once per dump file. Everything after that is `info`, answered from
-the cache alone, and `query`, which answers from the cache *and* the blocks it
+the cache, and `query`, which answers from the cache *and* the blocks it
 needs — row data is never cached, so `query` always reads the file.
 
 ## `parse`: reading the dump
@@ -351,9 +351,9 @@ no room for one such reader is read a different way — see `--memory` below.
 **A parallel `query` may point you at this flag.** Where the memory budget
 seats fewer sub-streams than `--jobs` asked for, the plan says a smaller read
 chunk is what would seat more. That is true about seats and says nothing about
-speed: on a plain dump the sub-streams a query plans do not run concurrently
-today, so a smaller chunk buys a larger count, the per-chunk cost above, and no
-measured gain. Raising `--memory` instead does not help there either — see
+speed: on a plain dump the sub-streams a query plans gain little from running
+concurrently today, so a smaller chunk buys a larger count, the per-chunk
+cost above, and little measured gain. Raising `--memory` instead does not help there either — see
 "`--jobs` and `--memory`".
 
 The flag exists for a device unlike any of those three. If you have one and
@@ -1119,8 +1119,9 @@ not parsed)`. A C-level type says `base type` or `shell type` because that is
 genuinely all the dump records about it: the *server* knows how to parse its
 values, and the dump does not say.
 
-Nothing else in `info` names a user-defined type, so this is where you find
-out that `public.mood` exists before going looking for what it holds.
+Nothing else in `info` says what a user-defined type is — a column names only
+its declared type — so this is where you find out what `public.mood` is
+before going looking for what it holds.
 
 An enum column also gets its declared labels, in the type's own order, on the
 line beneath — the same list, repeated where you are already looking:
@@ -1190,7 +1191,7 @@ are five different messages because they mean five different things:
 | `… is not a pgdt cache` | Something else is at that path — or a cache from a pgdt build whose format changed, which usually reads this way rather than as the next row. Check `--dtcache`. |
 | `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
-| `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round. |
+| `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
 
 **The first three send you straight to `pgdt parse`; the last two do not.** The
 split is whether the file at the cache path is worth keeping. For the first
@@ -1238,7 +1239,9 @@ would be after a complete parse. There is no half-known block; there are only
 blocks past the frontier that are not there at all.
 
 That is why coverage is stated once, at the top, and nothing below it carries a
-caveat. Finish the `parse` and the listing grows; nothing in it changes.
+caveat. Finish the `parse` and the listing grows; nothing in it changes but
+an array column's resolution, which a partial map reads optimistically until
+every block's array shapes are in.
 
 **Column types included**, and that holds for a `pg_dumpall` or `--create`
 dump with several databases too. Each database's `CREATE TABLE` statements sit

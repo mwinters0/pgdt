@@ -651,7 +651,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     assert!(
         xz.seek_table().unwrap().is_seekable(),
         "this test's whole point is the seekable shape — a non-seekable fixture would earn a \
-         D2 diagnostic the plain file's index does not have, and pass for the wrong reason"
+         D19 diagnostic the plain file's index does not have, and pass for the wrong reason"
     );
     assert_eq!(xz.size().await.unwrap(), plain.size().await.unwrap());
     assert_ne!(

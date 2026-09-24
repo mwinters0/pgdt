@@ -5,7 +5,7 @@
 //! ```sql
 //! SET pgdump.memory = 4294967296;
 //! SET pgdump.chunk_size = 4194304;
-//! SET pgdump.memory = 0;  -- the discovered allowance again
+//! SET pgdump.memory = 0;  -- the budget's own allowance again
 //! ```
 
 use std::any::Any;
@@ -32,8 +32,9 @@ use pgdump_query::{
 /// refusing every line a read splits.
 ///
 /// **`pgdump.memory = 0` un-states the allowance**, returning the session to
-/// the one its budget discovered, as `datafusion.execution.target_partitions =
-/// 0` returns to the machine's parallelism: a `SET` cannot be taken back, and
+/// its budget's own — the discovered one, where the provider installed the
+/// budget — as `datafusion.execution.target_partitions = 0` returns to the
+/// machine's parallelism: a `SET` cannot be taken back, and
 /// DataFusion 55's `RESET` reaches only its own `datafusion.` keys. `pgdt
 /// --memory 0` stays refused, because a flag is un-stated by leaving it off —
 /// absence is how `pgdt` asks for the discovered allowance

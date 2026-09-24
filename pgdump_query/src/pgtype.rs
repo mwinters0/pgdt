@@ -80,8 +80,8 @@ pub enum TypeOutcome {
 /// differs per nesting level.
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
-/// included), which is where every branch bottoms out but at `Int2Vector`,
-/// a childless terminal of its own. `Serialize` so
+/// included), which is where every branch bottoms out but at `Int2Vector`
+/// and a composite of no fields, childless terminals of their own. `Serialize` so
 /// `pgdt info --json` can export a resolved schema's plans structurally
 /// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
 /// persisted** — the cache holds what the dump said, never what we concluded
@@ -122,9 +122,9 @@ pub enum NestedPlan {
 /// A small closed vocabulary rather than the Arrow type, which does not
 /// correspond to it (`docs/design/decisions.md`, "D40").
 ///
-/// **Not `Copy`**: three variants carry the column's own facts — an enum's
-/// labels, a typmodded `numeric`'s scale, and whether a bare one's typmod
-/// excludes the infinities — and the labels are not `Copy`.
+/// **Not `Copy`**: several variants carry the column's own facts — an enum's
+/// labels, a typmodded `numeric`'s scale, whether one held as text admits the
+/// infinities — and the labels are not `Copy`.
 /// The kind is cloned once, into the `OrderTerm` the block's resolution
 /// builds, never on the per-row path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,8 +307,8 @@ pub enum ComparisonDivergence {
     /// no comparison at all. **`json` is its one member**: PostgreSQL defines
     /// no `=`, no order and no operator class for it, so bytewise offers
     /// *more* than the server does rather than less. Every other text-held
-    /// type carries a comparison of its own, and every collatable one carries
-    /// one of the two collation variants below.
+    /// type carries a comparison of its own, and a collatable one either
+    /// agrees or carries one of the three collation variants below.
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
@@ -395,7 +395,7 @@ pub enum ComparisonDivergence {
     /// [`CompareKind::arrow_order`] alone.
     LabelText,
     /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
-    /// a bare `numeric`, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
+    /// a bare `numeric` or one past 76 digits, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
     /// `jsonb` — which DataFusion compares bytewise. Equality too: a literal
     /// matches only the text the server writes, so `'12:00+00'` misses
     /// `12:00:00+00`, `'10.0.0.1/32'` misses an `inet`'s `10.0.0.1` and
@@ -1618,11 +1618,11 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 
 /// Walk a chain of domains to the type name it bottoms out at — the declared
 /// spelling of the first non-domain it reaches, or of `name` itself when that
-/// is not a domain. The terminal is returned as the DDL spelled it; its one
-/// reader normalizes what it needs to.
+/// is not a domain. The terminal is returned as the DDL spelled it; each of
+/// its two readers normalizes what it needs to.
 ///
-/// [`resolve_array`] tests this terminal rather than the declared spelling
-/// (I22, I26; `docs/design/decisions.md`, "D41").
+/// [`resolve_array`] and [`array_comparison`] test this terminal rather than
+/// the declared spelling (I22, I26; `docs/design/decisions.md`, "D41").
 ///
 /// The loop is bounded by the type list's length — a domain chain visits each
 /// `CREATE DOMAIN` at most once — which keeps a hand-edited file from
@@ -1706,7 +1706,7 @@ fn array_comparison(
 /// **The bound is asked with no `COLLATE` clause**, which is the one place
 /// this walk knowingly answers weaker than the file allows: a range type
 /// carries its own `collation` parameter and the preamble grammar keeps only
-/// `subtype` and `multirange_type_name` (I10), so a `text`-bounded range
+/// `subtype`, `multirange_type_name` and `canonical` (I10), so a `text`-bounded range
 /// reaches [`collated_text`]'s no-clause arm. That is the conservative
 /// direction — reading the parameter would move the verdict and never the
 /// answer, so it is a property here rather than a deficiency.

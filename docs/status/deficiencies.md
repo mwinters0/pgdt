@@ -169,8 +169,8 @@ than reading as a phase nobody has sliced.
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
   `pgdump_query/src/io.rs`.
 
-- **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS × chunk` a reader
-  where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
+- **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS` chunks a reader,
+  capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
   memory at all, so plain readers are bounded by a charge describing nothing held — 8 MiB
   billed against 4 held at the shipped chunk, and unbounded above a budget of
   `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
@@ -185,11 +185,11 @@ than reading as a phase nobody has sliced.
   has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
-  D83 leaves at `DEFAULT_MEMORY_BUDGET` capped by the allowance on a plain
-  source whatever `--memory` states, so a plain `query`'s sub-stream count and
-  batch size are fixed at the number D3 picked to decline block decode on an
-  ordinary `.xz`: a stated allowance moves neither, and the only flag that
-  does is `--chunk-size`, both terms of the charge sized from it.
+  D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
+  `MEMORY_RESERVE`) on a plain source whatever `--memory` states, so a plain
+  `query`'s sub-stream count and batch size are fixed at the number D3 picked
+  to decline block decode on an ordinary `.xz`: a stated allowance raises
+  neither, and only `--chunk-size`, which sizes both terms, moves them.
   **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
   on a real device. Detail: `pgdump_query/src/stream.rs`.
 

@@ -264,7 +264,7 @@ impl Discovered<'_> {
     /// **A stated `--memory` and a discovered limit are the same number to
     /// the library** (`docs/design/decisions.md`, "D83"): the allowance is
     /// typed or read, and `Parallelism::within` carves both the same way, so
-    /// the environment is asked only where the flag is absent. Only a
+    /// the environment's allowance is carved only where the flag is absent. Only a
     /// *recommended* count is lowered to fit (`docs/design/roadmap.md`, "A
     /// default runs as fast as the allocation permits"); either allowance may
     /// put the budget below `DEFAULT_MEMORY_BUDGET`, and what it affords still
@@ -2755,7 +2755,7 @@ fn print_index(
     }
 
     println!();
-    // No byte count here: the coverage line above owns that.
+    // No byte count here: `info`'s coverage line owns that.
     println!("{} COPY block(s), {} row(s)", blocks.len(), index.total_rows());
     if total_unmapped > 0 {
         println!(
@@ -2936,7 +2936,8 @@ mod tests {
         // The in-flight check is on under every selection but `none`.
         assert!(binds("time").in_flight() && binds("location").in_flight());
         assert!(!binds("none").in_flight());
-        // What the bare flag means, read off the value clap substitutes.
+        // What the bare flag means, spelled as clap substitutes it (the test
+        // below reads the attribute).
         assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
 
         assert!(parse_strict_identity("none,time").is_err(), "`none` is exclusive");
@@ -3001,7 +3002,7 @@ mod tests {
     }
 
     /// The bare flag is `time,location`, stated once — in the attribute — and
-    /// read back here so the doc comment above it cannot drift from it.
+    /// read back here, so what it binds is pinned.
     #[test]
     fn the_bare_strict_identity_flag_binds_both_terms() {
         let cli = Cli::try_parse_from(["pgdt", "parse", "--source", "d.sql", "--strict-identity"])
@@ -3373,8 +3374,8 @@ mod tests {
 
         // A stated allowance still wins outright here: it *replaces* the
         // allocation discovery found rather than being capped by it. It pays
-        // the same reserve, so 400 MiB past the reserve is what reaches the
-        // pools, and the count beside it is nobody's statement and is cut to
+        // the same reserve and the same margin, whose ceiling binds below the
+        // 400 MiB past the reserve, and the count beside it is nobody's statement and is cut to
         // what those bytes afford.
         let stated =
             ParallelArgs { jobs: None, memory: Some(pgdump_query::MEMORY_RESERVE + (400 << 20)) };

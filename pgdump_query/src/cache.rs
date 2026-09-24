@@ -1029,8 +1029,8 @@ pub enum CacheMode {
     /// "The compressed source and the cache"). Never constructed by
     /// [`CacheMode::resolve`]; a caller builds it directly (`pgdt info` with
     /// no `--source`). Every method below that takes a live `source` rejects
-    /// it as a caller-contract violation, and [`load_offline`] rejects
-    /// `Enabled`/`Disabled` the other way. It carries no strictness: with no
+    /// it as a caller-contract violation, and [`CacheMode::load_offline`]
+    /// rejects `Enabled`/`Disabled` the other way. It carries no strictness: with no
     /// source there is nothing to compare against.
     Offline(PathBuf),
 }

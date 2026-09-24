@@ -239,8 +239,8 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
 /// (`pgdump_query/tests/statistics_fixture.rs`): at a group size of a few KiB
 /// `ordered` spans several groups, its `id` ascends group over group and
 /// `reversed` descends, `high_card` overflows every group's dictionary and
-/// `low_card` fills none, and text under the default collation keeps no
-/// bounds. The long value leaves groups no row starts in. The document is one
+/// `low_card` fills none, and text under the default collation keeps one
+/// set of bytewise bounds. The long value leaves groups no row starts in. The document is one
 /// compact line, with no rollup beside the blocks.
 #[test]
 fn info_json_exports_every_groups_statistics_compact_and_unrolled() {

@@ -468,7 +468,8 @@ impl WorkerMemory {
     /// The shared pool at `workers` readers: `pool_depth.max(workers) − 1`
     /// units, which is [`BufferPool::slots`] less the slot a decode is writing
     /// into — flat up to the depth and rising with the count above it, and
-    /// zero only for a depth of one at one reader.
+    /// zero for a shape with no pool unit ([`WorkerMemory::per_worker`]) or a
+    /// depth of at most one at one reader.
     pub fn pool_bytes(self, workers: usize) -> u64 {
         (self.pool_depth.max(workers).saturating_sub(1) as u64).saturating_mul(self.pool_unit)
     }
@@ -1635,8 +1636,9 @@ struct BufferPool {
 /// What a [`BufferPool`] holds under its lock.
 #[derive(Debug, Default)]
 struct PoolState {
-    /// Buffers nobody is using, at most [`BufferPool::slots`] of them as of
-    /// the last release: a lowered limit trims nothing until then.
+    /// Buffers nobody is using. A release adds one only while fewer than
+    /// [`BufferPool::free_slots`] are here, and nothing trims them, so a
+    /// lowered limit leaves the list over it until acquisitions drain it.
     free: Vec<Vec<u8>>,
     /// Buffers handed to a [`WaitPolicy::MayWait`] loop and not yet
     /// returned — the term a waiting acquisition is bounded by, and the only
@@ -1961,9 +1963,8 @@ impl ByteRangeSource for LocalFileSource {
         Box::pin(async move {
             let file = Arc::clone(&self.file);
             let pool = Arc::clone(&self.pool);
-            // A read that fails drops its buffer instead of returning it: the
-            // pool is an optimization, and an error path is the one place where
-            // re-allocating costs nothing anyone will measure.
+            // A read that fails drops its buffer, whose `Drop` releases it to
+            // the pool as any holder's does.
             //
             // **The slot is taken inside the blocking task, not before it.**
             // `obtain` blocks for a loop that granted the wait, and blocking the
@@ -2034,8 +2035,7 @@ impl ByteRangeSource for LocalFileSource {
     // Deficiency register: `deficiency: KD25` — so plain readers are bounded
     // by a charge describing nothing the path holds: the bill grows with the
     // count while what is held is flat at `POOL_DEPTH` chunks, and above a
-    // budget of `PLAIN_PARTITION_CHUNKS × chunk × jobs` nothing bounds them at
-    // all. **(c) unowned.** Closing it means billing the pool's real depth and
+    // budget of that bill times `jobs` nothing bounds them at all. **(c) unowned.** Closing it means billing the pool's real depth and
     // recommending what a reader costs; a reading of a parallel plain scan on a real
     // device is what reopens it.
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
@@ -2357,7 +2357,8 @@ impl XzBudget {
     ///
     /// One stated number bounds the source, not each of its pools, so the
     /// block pool is given what is left after the chunk pool's own ceiling
-    /// (`BufferPool::held_bytes`), which is [`POOL_DEPTH`] chunk slots. Chunks
+    /// (`BufferPool::held_bytes`), its slot count at its slot size — up to
+    /// [`POOL_DEPTH`] slots, fewer where the budget affords fewer. Chunks
     /// come first because that pool is the one every read path uses and the
     /// one the pool-miss cost was measured through (`chunk-size`)
     /// (`docs/design/decisions.md`, "D17").
@@ -2682,8 +2683,8 @@ impl XzSource {
         // A slot is the file's largest block, so `len` is never above it and a
         // released slot is exactly the length the pool was hinted with.
         let mut slot = cache.slot();
-        // A decode that fails drops its slot rather than returning it, as the
-        // plain source's failed read does.
+        // A decode that fails drops its slot, which `Drop` releases to the
+        // pool as the plain source's failed read does.
         task.decode_into(file, &mut slot.as_mut()[..len])?;
         let block = Arc::new(DecodedBlock { slot, len });
         cache.retain(index, Arc::clone(&block));
@@ -4194,10 +4195,10 @@ impl RemoteObject {
     /// Build the client for `url`, whose scheme [`Origin::remote`] has already
     /// accepted.
     fn open(url: url::Url, read_timeout: Duration) -> Result<Self> {
-        // Four client settings, three of them the crate's own: the retry
+        // Four client settings, two of them the crate's own: the retry
         // configuration and `http1_only` are left alone, `allow_http` follows
         // the scheme the user typed — which is their statement that plaintext
-        // is acceptable — and only the timeout is ours.
+        // is acceptable — and the timeouts are ours.
         let options = object_store::ClientOptions::new()
             .with_timeout_disabled()
             .with_read_timeout(read_timeout)
