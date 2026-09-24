@@ -153,4 +153,14 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -viE 'row[_-]group|statistics[_-](min|max)[_-]rows'  # empty"
         ),
     ),
+    Acknowledged(
+        commit="bb0909b",
+        figures=("session-drift",),
+        why=(
+            "the repoint findings' record correction changed two of "
+            "`measure.py`'s rendered sentences, folded from a `--render`; no "
+            "command shape, input, regime or gate moved, so no reading can"
+        ),
+        verified="git show --format= -U0 bb0909b -- scripts/measure.py  # read every hunk",
+    ),
 )
