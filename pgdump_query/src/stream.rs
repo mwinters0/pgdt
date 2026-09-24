@@ -1980,6 +1980,9 @@ struct ReplayPlan {
     pruned: Option<PlanNote>,
     /// At least the rows the replay can emit ([`Pruned::rows`]).
     kept_rows: u64,
+    /// At least the text bytes the replay emits of each projected field
+    /// ([`Pruned::value_bytes`]).
+    kept_value_bytes: Vec<Option<u64>>,
 }
 
 impl ReplayPlan {
@@ -1995,7 +1998,7 @@ impl ReplayPlan {
     ) -> Result<Self> {
         let table = TableColumns::settle(matches, metadata.as_ref())?;
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
-        let Pruned { kept, stops, note: pruned, rows: kept_rows } =
+        let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
         Ok(Self {
             scan_options,
@@ -2007,6 +2010,7 @@ impl ReplayPlan {
             stops,
             pruned,
             kept_rows,
+            kept_value_bytes,
         })
     }
 
@@ -2036,6 +2040,11 @@ struct Pruned {
     /// nothing guessed below that — where a sorted block stops is found only
     /// as its rows are read.
     rows: u64,
+    /// Per projected field, the text bytes of its values in the groups `rows`
+    /// counts ([`crate::statistics::ColumnStatistics::value_bytes`]) — `None`
+    /// wherever a block counted none — bounding what the replay emits of it
+    /// as `rows` bounds its rows.
+    value_bytes: Vec<Option<u64>>,
 }
 
 /// Settle which row groups of `matches` the query's filter skips
@@ -2054,12 +2063,19 @@ fn prune_blocks(
 ) -> Pruned {
     let (mut kept, mut stops) = (BTreeMap::new(), BTreeMap::new());
     let mut rows = 0;
+    let fields = blocks.values().next().map_or(0, |planned| planned.resolved.schema.fields().len());
+    let mut value_bytes = vec![Some(0); fields];
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
         let pruning = blocks
             .get(&block.header_offset)
             .filter(|planned| query_options.use_statistics && planned.filter.reads_fields())
             .and_then(|planned| prune_block(block, &planned.filter, metadata));
+        let kept_groups = pruning.as_ref().map(|pruning| pruning.kept_groups.as_slice());
+        let block_bytes = field_value_bytes(block, blocks.get(&block.header_offset), kept_groups);
+        for (field, held) in value_bytes.iter_mut().enumerate() {
+            *held = held.zip(block_bytes.get(field).copied().flatten()).map(|(a, b)| a + b);
+        }
         let Some(pruning) = pruning else {
             rows += block.row_count;
             continue;
@@ -2081,7 +2097,32 @@ fn prune_blocks(
         kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
         levers: Vec::new(),
     });
-    Pruned { kept, stops, note, rows }
+    Pruned { kept, stops, note, rows, value_bytes }
+}
+
+/// Per field of `planned`, the text bytes `block`'s statistics count of its
+/// values in the groups `kept` keeps — every group where `kept` is `None` —
+/// and `None` for a field the block's statistics did not count
+/// ([`crate::statistics::ColumnStatistics::value_bytes_where`]).
+fn field_value_bytes(
+    block: &CopyBlock,
+    planned: Option<&PlannedBlock>,
+    kept: Option<&[bool]>,
+) -> Vec<Option<u64>> {
+    let Some(planned) = planned else { return Vec::new() };
+    let mut bytes = vec![None; planned.resolved.schema.fields().len()];
+    let Some(statistics) = block.statistics.as_deref() else { return bytes };
+    if statistics.columns.len() != block.header.columns.len() {
+        return bytes;
+    }
+    let groups = statistics.groups.len();
+    let keep = |g: usize| kept.is_none_or(|kept| kept.get(g).copied().unwrap_or(false));
+    for (column, target) in statistics.columns.iter().zip(&planned.field_targets) {
+        if let (Some(column), Some(field)) = (column, *target) {
+            bytes[field] = column.value_bytes_where(groups, keep);
+        }
+    }
+    bytes
 }
 
 /// One block's schema, filter and projection, resolved against a query —
@@ -4013,6 +4054,16 @@ impl TablePartitions {
     /// the table's rows.
     pub fn kept_rows(&self) -> u64 {
         self.plan.kept_rows
+    }
+
+    /// **Never fewer text bytes than the plan's partitions emit of each
+    /// field together**, parallel to [`Self::resolved_schema`]'s fields and
+    /// settled as [`Self::kept_rows`] is: each field's values' text bytes over
+    /// the groups pruning kept and every group of a block it did not consult
+    /// ([`crate::statistics::ColumnStatistics::value_bytes`]). `None` for a
+    /// field some block's statistics did not count.
+    pub fn kept_value_bytes(&self) -> &[Option<u64>] {
+        &self.plan.kept_value_bytes
     }
 
     /// **The order every partition emits each column in**, parallel to

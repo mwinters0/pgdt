@@ -1,8 +1,8 @@
 //! What a complete map's statistics say about a whole table: its rows, and
-//! per column its NULLs, its extremes in one comparison semantics, and its
-//! distinct values where the dictionaries hold them all; and the order a
-//! replay's partitions emit a column in, where the map proves one
-//! ([`partition_orders`]).
+//! per column its NULLs, its extremes in one comparison semantics, its
+//! distinct values where the dictionaries hold them all, its sum and its
+//! values' text bytes; and the order a replay's partitions emit a column in,
+//! where the map proves one ([`partition_orders`]).
 //!
 //! [`crate::prune`] reads the same stored sets per group to skip one; this
 //! folds every group of every block of a table into one answer, for an
@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
-use crate::gather::{declared_columns, dictionary_holds_field_text, stored_resolution};
+use crate::gather::{declared_columns, dictionary_holds_field_text, keeps_sums, stored_resolution};
 use crate::index::{CopyBlock, DumpIndex, TableName};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::preamble::{ColumnDef, DumpMetadata};
@@ -66,6 +66,20 @@ pub struct ColumnSummary {
     /// text: each type is written in one form (I4, I40, I41), a
     /// `timestamptz` in one zone a table (I48).
     pub distinct: Option<u64>,
+    /// The column's non-NULL values summed as integers — a decimal's unscaled
+    /// — and wrapped at 128 bits, which reduces exactly to any narrower
+    /// wrapping sum ([`crate::statistics::ColumnStatistics::sums`]): where
+    /// every group of every block kept one, under the DDL it was gathered
+    /// under, and the column is emitted in the type it was summed as. `None`
+    /// elsewhere, and where the column holds no non-NULL value, whose sum is
+    /// no number.
+    pub sum: Option<i128>,
+    /// The summed text bytes of the column's non-NULL values, where every
+    /// group of every block counted them
+    /// ([`crate::statistics::ColumnStatistics::value_bytes`]); `None`
+    /// elsewhere. Read off the text, so believed whatever the DDL now says,
+    /// as the NULL counts are.
+    pub value_bytes: Option<u64>,
 }
 
 /// One end of a column's range.
@@ -111,6 +125,8 @@ pub fn table_summary(
                 max: None,
                 complete: true,
                 distinct: Some(HashSet::new()),
+                sum: Some(0),
+                value_bytes: Some(0),
             }
         })
         .collect();
@@ -145,6 +161,16 @@ pub fn table_summary(
             // under the DDL they were gathered under; the NULL counts above
             // are read off the text and are believed regardless (D78).
             let believed = believed(column, declared, name);
+            let groups = statistics.groups.len();
+            accumulator.value_bytes = accumulator
+                .value_bytes
+                .zip(column.value_bytes_where(groups, |_| true))
+                .map(|(held, block)| held + block);
+            let sums = column.sums.as_ref().filter(|sums| believed && sums.len() == groups);
+            accumulator.sum = accumulator
+                .sum
+                .zip(sums)
+                .map(|(held, sums)| sums.iter().fold(held, |sum, &group| sum.wrapping_add(group)));
             let dictionary = column
                 .dictionary
                 .as_ref()
@@ -184,7 +210,7 @@ pub fn table_summary(
     let columns = accumulators
         .into_iter()
         .enumerate()
-        .map(|(i, accumulator)| accumulator.finish(resolved, i))
+        .map(|(i, accumulator)| accumulator.finish(resolved, i, rows))
         .collect();
     TableSummary { rows, columns }
 }
@@ -203,6 +229,8 @@ struct Accumulator<'a> {
     max: Option<(ValueKey, String, bool)>,
     complete: bool,
     distinct: Option<HashSet<&'a str>>,
+    sum: Option<i128>,
+    value_bytes: Option<u64>,
 }
 
 impl<'a> Accumulator<'a> {
@@ -212,6 +240,8 @@ impl<'a> Accumulator<'a> {
         self.nulls_complete = false;
         self.complete = false;
         self.distinct = None;
+        self.sum = None;
+        self.value_bytes = None;
     }
 
     /// Add a block's dictionary to the union, or give the union up where the
@@ -266,7 +296,7 @@ impl<'a> Accumulator<'a> {
         }
     }
 
-    fn finish(self, resolved: &ResolvedSchema, i: usize) -> ColumnSummary {
+    fn finish(self, resolved: &ResolvedSchema, i: usize, rows: u64) -> ColumnSummary {
         let mut complete = self.complete && self.kind.is_some();
         let data_type = resolved.schema.field(i).data_type();
         let mut decode = |end: Option<(ValueKey, String, bool)>| {
@@ -281,6 +311,8 @@ impl<'a> Accumulator<'a> {
         };
         let min = decode(self.min);
         let max = decode(self.max);
+        let valued = self.nulls_complete && self.nulls < rows;
+        let sum = self.sum.filter(|_| valued && keeps_sums(data_type));
         ColumnSummary {
             nulls: self.nulls,
             nulls_complete: self.nulls_complete,
@@ -288,6 +320,8 @@ impl<'a> Accumulator<'a> {
             max,
             bounds_complete: complete,
             distinct: self.distinct.map(|distinct| distinct.len() as u64),
+            sum,
+            value_bytes: self.value_bytes,
         }
     }
 }

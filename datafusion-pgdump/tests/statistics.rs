@@ -227,6 +227,9 @@ async fn agrees(
             "`{sql}` was answered from statistics and still refused: {}",
             rendered(&from_statistics)
         );
+        // A sum cannot leave out the value the read refuses, as a count or a
+        // bound can: a column holding one keeps none.
+        assert!(!sql.starts_with("SELECT SUM("), "`{sql}` summed a column its type cannot hold");
         // A distinct count read as text counts spellings, not values.
         if !sql.starts_with("SELECT COUNT(") || sql.starts_with("SELECT COUNT(DISTINCT") {
             return Answer::FromStatistics;
@@ -276,6 +279,7 @@ struct Seen {
     /// a clipped prefix and says whether it is.
     text_min: bool,
     distinct: bool,
+    sum: bool,
     counted_as_text: bool,
 }
 
@@ -287,6 +291,7 @@ impl Seen {
             bound: self.bound || other.bound,
             text_min: self.text_min || other.text_min,
             distinct: self.distinct || other.distinct,
+            sum: self.sum || other.sum,
             counted_as_text: self.counted_as_text || other.counted_as_text,
         }
     }
@@ -390,7 +395,7 @@ async fn every_aggregate(
             seen.distinct |= agrees(reading, blind, Some(text), &sql).await.answered();
             if field.data_type().is_numeric() {
                 let sql = format!("SELECT SUM({column}) FROM {from}");
-                agrees(reading, blind, Some(text), &sql).await;
+                seen.sum |= agrees(reading, blind, Some(text), &sql).await.answered();
             }
         }
     }
@@ -441,6 +446,8 @@ fn statistics_never_change_an_answer() {
             "no `COUNT(DISTINCT <column>)` was answered from the statistics ({mode:?})"
         );
     }
+    // A text column has no `SUM`, so only the typed pass asks one.
+    assert!(typed.sum, "no `SUM` was answered from the statistics");
     assert!(
         typed.counted_as_text,
         "no typed `COUNT(<column>)` over a refusing column was checked against the text"
@@ -615,6 +622,49 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
     for (column, table) in [("v_mood", "t_enum_domain"), ("v_interval", "t_interval")] {
         let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM \"dump\".public.{table}");
         assert!(agrees(&reading, &blind, None, &sql).await.answered(), "{sql}");
+    }
+}
+
+/// **A sum answers where every group of every block kept one, wrapped as
+/// DataFusion's `SUM` wraps** (`docs/design/decisions.md`, "D89"): over
+/// `public.spans` read as three blocks, every integer, `oid` and typmodded
+/// `numeric` column answers — `big` wrapping the `Int64` every integer is
+/// summed as, `i2` and `i4` passing their own types, and `huge` wrapping
+/// `Decimal128` — and the blind session reads each back. A float, a column
+/// holding no non-NULL value, and one holding a value its type cannot (`KD8`)
+/// state no sum, and are read.
+#[tokio::test]
+async fn a_sum_answers_where_every_group_kept_one() {
+    let scratch = tempfile::tempdir().unwrap();
+    let spans = fixtures_root().join("16/statistics/load-via-partition-root.sql");
+    let spans = parsed_copy(&spans, scratch.path()).await;
+    let default = fixtures_root().join("16/statistics/default.sql");
+    let default = parsed_copy(&default, scratch.path()).await;
+    let types = parsed_copy(&fixtures_root().join("16/types/default.sql"), scratch.path()).await;
+    let summed = ["part", "id", "gappy", "small", "i2", "i4", "big", "ident", "amount", "huge"];
+    let unsummed = [
+        (&spans, "spans", "stamp"),
+        (&default, "zeros", "min_pos_first"),
+        (&default, "zeros", "r_min_pos_first"),
+        (&default, "ordered", "all_null"),
+        (&types, "t_numeric", "v_small"),
+    ];
+    let checks = summed.iter().map(|column| (&spans, "spans", *column, true));
+    let checks = checks.chain(unsummed.into_iter().map(|(dump, t, c)| (dump, t, c, false)));
+    for (copy, table_name, column, answers) in checks {
+        let (dump, reading, blind, _) = opened(copy, SchemaMode::Typed).await;
+        let table = dump.table(None, Some("public"), table_name).unwrap();
+        let plan = table.scan(&reading.state(), None, &[], None).await.unwrap();
+        let statistics =
+            StatisticsContext::new().compute(plan.as_ref(), &StatisticsArgs::new()).unwrap();
+        let sum = &statistics.column_statistics[table.schema().index_of(column).unwrap()].sum_value;
+        let what = format!("{table_name}.{column}");
+        assert_eq!(matches!(sum, Precision::Exact(_)), answers, "{what}: {sum:?}");
+        let sql = format!("SELECT SUM({column}) FROM \"dump\".public.{table_name}");
+        if column == "stamp" {
+            continue;
+        }
+        assert_eq!(agrees(&reading, &blind, None, &sql).await.answered(), answers, "{sql}");
     }
 }
 
@@ -795,6 +845,10 @@ struct Estimates {
     /// Scans whose filter's row bound fell below the table's rows — each one
     /// a scan that pruned.
     tightened: usize,
+    /// Filtered scans stating the bytes they emit.
+    sized: usize,
+    /// Filtered scans whose byte bound fell below the unfiltered scan's.
+    shrunk: usize,
 }
 
 /// **An estimate is never below what the scan emits, and an `Exact` one is
@@ -812,11 +866,15 @@ fn an_estimate_is_never_below_what_the_scan_emits() {
             filtered: sum.filtered + seen.filtered,
             pruning: sum.pruning + seen.pruning,
             tightened: sum.tightened + seen.tightened,
+            sized: sum.sized + seen.sized,
+            shrunk: sum.shrunk + seen.shrunk,
         },
     );
     assert!(seen.filtered > 20_000, "{seen:?}");
     assert!(seen.pruning > seen.filtered / 5, "{seen:?}");
     assert!(seen.tightened > seen.pruning * 9 / 10, "{seen:?}");
+    assert!(seen.sized > seen.filtered / 3, "{seen:?}");
+    assert!(seen.shrunk > seen.tightened / 3, "{seen:?}");
 }
 
 /// [`an_estimate_is_never_below_what_the_scan_emits`] over one major's
@@ -876,6 +934,7 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
                     == TableProviderFilterPushDown::Exact
             });
             let mut filters: Vec<Option<Expr>> = vec![None];
+            let mut whole_bytes = None;
             filters.extend(terms.iter().cloned().map(Some));
             if !terms.is_empty() {
                 filters
@@ -936,6 +995,18 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
                             assert!(pruned, "{what}: a bound below the table's with no pruning");
                             seen.tightened += 1;
                         }
+                        let bytes = statistics.total_byte_size.get_value().copied();
+                        seen.sized += usize::from(bytes.is_some());
+                        if bytes.zip(whole_bytes).is_some_and(|(bytes, whole)| bytes < whole) {
+                            assert!(
+                                pruned,
+                                "{what}: a byte bound below the table's with no pruning"
+                            );
+                            seen.shrunk += 1;
+                        }
+                    }
+                    if filter.is_none() && limit.is_none() {
+                        whole_bytes = statistics.total_byte_size.get_value().copied();
                     }
                 }
             }
@@ -1202,11 +1273,12 @@ fn build_side(plan: &Arc<dyn ExecutionPlan>, marker: &str) -> Option<(bool, Part
     plan.children().into_iter().find_map(|child| build_side(child, marker))
 }
 
-/// **Rows alone choose a join's build side today**, the scan stating no byte
-/// size: `public.long_value`, four rows each carrying up to a mebibyte, is the
-/// smaller side by rows and is collected whole to build — the shape a byte
-/// size would move, the wide side then being the larger. Its answer is the
-/// blind session's.
+/// **Bytes choose a join's build side, where both sides state them**:
+/// `public.long_value`, four rows each carrying up to a mebibyte, is the
+/// smaller side by rows and the larger by bytes, so `ordered`, a thousand
+/// integers, is collected whole to build instead — `long_value` being past
+/// the bytes DataFusion collects a side under, where by rows alone it was
+/// under them. Its answer is the blind session's.
 #[tokio::test]
 async fn a_join_builds_the_side_its_statistics_call_smaller() {
     let scratch = tempfile::tempdir().unwrap();
@@ -1222,9 +1294,20 @@ async fn a_join_builds_the_side_its_statistics_call_smaller() {
     let shape = build_side(&plan, "v");
     assert_eq!(
         shape,
-        Some((true, PartitionMode::CollectLeft)),
+        Some((false, PartitionMode::CollectLeft)),
         "{}",
         displayable(plan.as_ref()).indent(false)
+    );
+    let threshold =
+        reading.state().config().options().optimizer.hash_join_single_partition_threshold;
+    let long_value = dump.table(None, Some("public"), "long_value").unwrap();
+    let scan = long_value.scan(&reading.state(), None, &[], None).await.unwrap();
+    let statistics =
+        StatisticsContext::new().compute(scan.as_ref(), &StatisticsArgs::new()).unwrap();
+    assert!(
+        statistics.total_byte_size.get_value().is_some_and(|bytes| *bytes > threshold),
+        "long_value's bytes, {:?}, are not past the collecting threshold",
+        statistics.total_byte_size
     );
 }
 

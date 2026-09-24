@@ -47,6 +47,8 @@ pub(crate) struct BlockPruning {
     /// every row a replay of the block can emit, and more wherever a kept
     /// group's rows fail the filter or a [`SortedStop`] ends the read.
     pub(crate) kept_rows: u64,
+    /// Per group the statistics list, whether the filter keeps it.
+    pub(crate) kept_groups: Vec<bool>,
     /// Where the block's row order ends its reading early, if anywhere.
     pub(crate) stop: Option<SortedStop>,
 }
@@ -150,6 +152,7 @@ pub(crate) fn prune_block(
         skipped_groups: 0,
         skipped_bytes: 0,
         kept_rows: 0,
+        kept_groups: vec![false; statistics.groups.len()],
         stop: (!terms.is_empty()).then_some(SortedStop { terms }),
     };
     for (index, group) in statistics.groups.iter().enumerate() {
@@ -159,6 +162,7 @@ pub(crate) fn prune_block(
             continue;
         }
         pruning.kept_rows += group.rows;
+        pruning.kept_groups[index] = true;
         let k = index as u64;
         let start = block.data_offset + k * n - 1;
         let end =

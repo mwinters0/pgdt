@@ -1336,9 +1336,17 @@ selection left out: the column's `declared_type` and `collation`, its
 `false` where a value too long to store was cut to a prefix below it or a
 successor above it), `arrow_bounds` (the same, in a
 DataFusion query's order, for a column whose PostgreSQL order is another, and
-`null` for every other column), and `dictionary` (the block's
+`null` for every other column), `dictionary` (the block's
 distinct `entries` once each, and per group a list of indices into them, or
-`null`). Every per-group array is as long as `groups`. Nothing is summed per
+`null`), `sums` (per group, the sum of its values — a `numeric(p,s)`'s
+counted in units of `10^-s` — for an integer or `oid` column and a
+`numeric(p,s)` of at most 38 digits, and
+`null` for every other column and for one holding a value that is not its
+type; a sum wraps at 128 bits, which can be past what a JSON reader parses
+as a number), and `value_bytes` (per group, the bytes of its values' text,
+for a column a typed query reads as text or as `bytea`, and `null` for every
+other). Every per-group array is
+as long as `groups`. Nothing is summed per
 table the way `--detail` sums it; that is yours to do, and the export grows
 with the dump — every group of every column is in it.
 

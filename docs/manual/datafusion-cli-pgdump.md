@@ -140,7 +140,8 @@ is the function's name where the driver gives its OID.
 `timestamp`, a typed `numeric`) nor an `interval` too long for its Arrow type:
 reading such a value is an error, and `:strings` reads it as its text. A
 `COUNT(column)` with no `WHERE` can still answer, from the statistics `pgdt
-parse` recorded, without reading the column.
+parse` recorded, without reading the column; a `SUM` cannot, a sum having no
+way to leave the value out, so it reads the column and errors.
 
 ## Memory
 

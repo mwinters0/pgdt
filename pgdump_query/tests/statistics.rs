@@ -134,8 +134,41 @@ fn number(v: &str) -> f64 {
     }
 }
 
+/// The scale a `declared` column's values are summed at, where the typed read
+/// emits it as an integer or a `Decimal128` — `int2`, `int4`, `int8`, `oid`,
+/// or a `numeric(p,s)` of at most 38 digits — and `None` for every other.
+fn summed_scale(declared: &str) -> Option<u32> {
+    match declared {
+        "smallint" | "integer" | "bigint" | "oid" => Some(0),
+        _ => {
+            let typmod = declared.strip_prefix("numeric(")?.strip_suffix(')')?;
+            let (precision, scale) = typmod.split_once(',').unwrap_or((typmod, "0"));
+            let precision: u32 = precision.trim().parse().unwrap();
+            (precision <= 38).then(|| scale.trim().parse().unwrap())
+        }
+    }
+}
+
+/// A fixture value of a column summed at `scale` as the integer it sums as:
+/// a `numeric(p,s)` is written with exactly `s` fractional digits.
+fn unscaled(value: &str, scale: u32) -> i128 {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    assert_eq!(fraction.len() as u32, scale, "{value} at scale {scale}");
+    format!("{whole}{fraction}").parse().unwrap()
+}
+
+/// Whether the typed read emits a `declared` column as text or bytes, whose
+/// values' lengths the statistics sum: every fixture type bar the numbers, the
+/// booleans, the timestamps and the enum.
+fn measured(declared: &str) -> bool {
+    matches!(declared, "text" | "numeric" | "bytea")
+        || blank_padded(declared)
+        || declared.starts_with("character varying")
+}
+
 /// Every statistic of `block` against the file: the groups' extents and row
-/// counts, and per column its NULL counts, that each bound is on the right side
+/// counts, and per column its NULL counts, its sum wrapped at 128 bits and its
+/// values' text bytes where the column keeps them, that each bound is on the right side
 /// of every value in its group — an exact one being a value there, a float's
 /// in IEEE `totalOrder` as well, which tells its zeros apart — and that each
 /// dictionary is exactly the group's distinct texts or absent past a cap.
@@ -172,6 +205,23 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let unpadded: Vec<&str> = values.iter().map(|v| held(declared, v)).collect();
             let what = format!("{label}: group {k}, column {c} ({declared})");
             assert_eq!(column.null_counts[k], (members.len() - values.len()) as u64, "{what}");
+            match (&column.sums, summed_scale(declared)) {
+                (Some(sums), Some(scale)) => {
+                    let sum =
+                        values.iter().fold(0i128, |sum, v| sum.wrapping_add(unscaled(v, scale)));
+                    assert_eq!(sums[k], sum, "{what}: sum");
+                }
+                (None, None) => {}
+                (sums, scale) => panic!("{what}: sums {sums:?} for a column summed at {scale:?}"),
+            }
+            match &column.value_bytes {
+                Some(bytes) => {
+                    assert!(measured(declared), "{what}: text bytes of a fixed-width column");
+                    let length = values.iter().map(|v| v.len() as u64).sum::<u64>();
+                    assert_eq!(bytes[k], length, "{what}: text bytes");
+                }
+                None => assert!(!measured(declared), "{what}: no text bytes"),
+            }
             // The fixture's columns keeping a second set are a bare `numeric`
             // and an enum, whose Arrow order is their text's.
             let sets =

@@ -605,6 +605,8 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
 /// `id >= 990` over `ordered`, the block's rows less those of every group
 /// whose maximum is below the bound — never fewer than the replay emits, and
 /// the whole block's where statistics are turned off or nothing is filtered.
+/// **Its text bytes are bounded the same way**, per field: `low_card`'s over
+/// the same groups, and none for `id`, whose width no text measures.
 #[tokio::test]
 async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
     use pgdump_query::cache::{SourceWatch, StrictIdentity};
@@ -616,26 +618,29 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         let block = index.blocks_for("public.ordered").next().unwrap();
         let statistics = block.statistics.as_deref().unwrap();
         let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
-        let below: u64 = id
+        let skipped: Vec<bool> = id
             .groups
             .iter()
-            .zip(&statistics.groups)
-            .filter(|(bounds, _)| {
-                bounds.as_ref().is_some_and(|b| b.max.parse::<i64>().unwrap() < 990)
-            })
-            .map(|(_, group)| group.rows)
-            .sum();
+            .map(|bounds| bounds.as_ref().is_some_and(|b| b.max.parse::<i64>().unwrap() < 990))
+            .collect();
+        let below: u64 =
+            statistics.groups.iter().zip(&skipped).filter(|&(_, &s)| s).map(|(g, _)| g.rows).sum();
         assert!(below > 0, "pg_dump {version}: no row below the bound");
+        let low_card = statistics.columns[8].as_ref().unwrap().value_bytes.as_ref().unwrap();
+        let text_bytes = low_card.iter().sum::<u64>();
+        let kept_text_bytes: u64 =
+            low_card.iter().zip(&skipped).filter(|&(_, &s)| !s).map(|(bytes, _)| bytes).sum();
+        assert!(kept_text_bytes < text_bytes, "pg_dump {version}: no text below the bound");
 
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let watch =
             Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
         let table = index.tables().into_iter().find(|t| t.qualified() == "public.ordered").unwrap();
         let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
-        for (options, expected) in [
-            (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below),
-            (with(filter.clone(), false, SPLIT_JOBS), block.row_count),
-            (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count),
+        for (options, expected, expected_text) in [
+            (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below, kept_text_bytes),
+            (with(filter.clone(), false, SPLIT_JOBS), block.row_count, text_bytes),
+            (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count, text_bytes),
         ] {
             let what = format!("pg_dump {version} under {:?}", options.filter);
             let plan = TablePartitions::plan(
@@ -649,6 +654,8 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
             .await
             .unwrap();
             assert_eq!(plan.kept_rows(), expected, "{what}");
+            assert_eq!(plan.kept_value_bytes()[0], None, "{what}: id");
+            assert_eq!(plan.kept_value_bytes()[8], Some(expected_text), "{what}: low_card");
             let mut emitted = 0;
             for partition in 0..plan.len() {
                 let mut stream = plan.stream(partition, 1024);

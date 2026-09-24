@@ -1,6 +1,7 @@
 //! The map's statistics as DataFusion's, so `COUNT(*)`, `COUNT(<column>)`,
-//! `COUNT(DISTINCT <column>)`, `MIN` and `MAX` can be answered without
-//! reading a row (`docs/design/decisions.md`, "D89"), and a sort the scan's
+//! `COUNT(DISTINCT <column>)`, `MIN`, `MAX` and `SUM` can be answered without
+//! reading a row (`docs/design/decisions.md`, "D89"), a join's sides can be
+//! weighed by the bytes each emits ([`byte_size`]), and a sort the scan's
 //! recorded order already satisfies is not planned ([`output_orderings`]).
 //!
 //! **`Exact` is a promise, and a wrong one is a wrong answer with no error**:
@@ -36,11 +37,15 @@ pub(crate) fn table_statistics(
     resolved: &ResolvedSchema,
 ) -> Statistics {
     let summary = pgdump_query::table_summary(index, table, resolved, ComparisonSemantics::Arrow);
-    let column_statistics = summary
+    // Every block of a complete map carries its row count, whether or not it
+    // gathered statistics.
+    let rows = Precision::Exact(summary.rows as usize);
+    let column_statistics: Vec<ColumnStatistics> = summary
         .columns
         .iter()
         .enumerate()
         .map(|(i, column)| {
+            let data_type = resolved.schema.field(i).data_type();
             let mut statistics = ColumnStatistics::new_unknown();
             statistics.null_count = count(column.nulls, column.nulls_complete);
             // Never the union's size where a group kept no dictionary: that
@@ -59,22 +64,89 @@ pub(crate) fn table_statistics(
             // bound here is DataFusion's extreme. **(b) owned by P27**, whose
             // dynamic filters compare an enum in that label order too; the fix
             // is bounds kept in it, handed over in the value type.
-            if matches!(resolved.schema.field(i).data_type(), DataType::Dictionary(..)) {
+            if matches!(data_type, DataType::Dictionary(..)) {
                 return statistics;
             }
             statistics.min_value = bound(column.min.as_ref(), column.bounds_complete);
             statistics.max_value = bound(column.max.as_ref(), column.bounds_complete);
+            statistics.sum_value = sum(column.sum, data_type);
+            statistics.byte_size = byte_size(data_type, rows, column.value_bytes);
             statistics
         })
         .collect();
-    Statistics {
-        // Every block of a complete map carries its row count, whether or not
-        // it gathered statistics.
-        num_rows: Precision::Exact(summary.rows as usize),
-        // The Arrow bytes a scan produces, which nothing here measures.
-        total_byte_size: Precision::Absent,
-        column_statistics,
+    let total_byte_size = total_byte_size(&column_statistics);
+    Statistics { num_rows: rows, total_byte_size, column_statistics }
+}
+
+/// A column's sum as DataFusion's `SUM` would answer it: a 16-, 32- or 64-bit
+/// integer's wrapped at 64 bits, as the `Int64` its argument is cast to wraps,
+/// an `oid`'s at 64 unsigned ones, and a `Decimal128`'s at 128, in the
+/// column's own type, which `SUM` widens without checking the value. Each
+/// narrows the library's 128-bit wrapping sum exactly
+/// (`docs/design/decisions.md`, "D91").
+fn sum(sum: Option<i128>, data_type: &DataType) -> Precision<ScalarValue> {
+    let Some(sum) = sum else { return Precision::Absent };
+    match data_type {
+        DataType::Int16 | DataType::Int32 | DataType::Int64 => {
+            Precision::Exact(ScalarValue::Int64(Some(sum as i64)))
+        }
+        DataType::UInt32 => Precision::Exact(ScalarValue::UInt64(Some(sum as u64))),
+        DataType::Decimal128(precision, scale) => {
+            Precision::Exact(ScalarValue::Decimal128(Some(sum), *precision, *scale))
+        }
+        _ => Precision::Absent,
     }
+}
+
+/// The Arrow bytes a scan emits of a column of `data_type` over `rows` rows,
+/// its values' text being `value_bytes` long: its width for every row of a
+/// fixed-width type, exact where the rows are; the text's length for a
+/// `Utf8View`, the bytes its views point at, and for a `Binary` a bound above
+/// its decoded bytes — `Inexact` both, a view's bytes living in a buffer the
+/// batches share (`docs/design/decisions.md`, "D46"); and `Absent` for every
+/// other type, which nothing here measures (`docs/design/decisions.md`,
+/// "D91").
+pub(crate) fn byte_size(
+    data_type: &DataType,
+    rows: Precision<usize>,
+    value_bytes: Option<u64>,
+) -> Precision<usize> {
+    let width = match data_type {
+        DataType::FixedSizeBinary(width) => usize::try_from(*width).ok(),
+        _ => data_type.primitive_width(),
+    };
+    if let Some(width) = width {
+        return match rows {
+            Precision::Exact(rows) => {
+                rows.checked_mul(width).map_or(Precision::Absent, Precision::Exact)
+            }
+            Precision::Inexact(rows) => {
+                rows.checked_mul(width).map_or(Precision::Absent, Precision::Inexact)
+            }
+            Precision::Absent => Precision::Absent,
+        };
+    }
+    match (data_type, value_bytes.and_then(|bytes| usize::try_from(bytes).ok())) {
+        (DataType::Utf8View | DataType::Binary, Some(bytes)) => Precision::Inexact(bytes),
+        _ => Precision::Absent,
+    }
+}
+
+/// The bytes a scan emits of every column `columns` describes: their sum,
+/// `Exact` only where every one is, and `Absent` where any is.
+pub(crate) fn total_byte_size(columns: &[ColumnStatistics]) -> Precision<usize> {
+    let exact = Precision::Exact(0usize);
+    columns
+        .iter()
+        .try_fold(exact, |total, column| match (total, column.byte_size) {
+            (_, Precision::Absent) => None,
+            (Precision::Exact(a), Precision::Exact(b)) => a.checked_add(b).map(Precision::Exact),
+            (total, column) => {
+                let (a, b) = (*total.get_value()?, *column.get_value()?);
+                a.checked_add(b).map(Precision::Inexact)
+            }
+        })
+        .unwrap_or(Precision::Absent)
 }
 
 fn count(value: u64, complete: bool) -> Precision<usize> {

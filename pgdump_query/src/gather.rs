@@ -9,7 +9,9 @@
 //! float's zeros told apart ([`ValueKey::stored_order`]) — one set where the
 //! orders coincide, two where PostgreSQL's is exact and Arrow's is another
 //! (`crate::ResolvedSchema::bounds_kinds`);
-//! and a column its comparison equates exactly keeps a dictionary per group.
+//! a column its comparison equates exactly keeps a dictionary per group; and a
+//! column the typed read emits as an integer or a `Decimal128` keeps a sum per
+//! group, one it emits as text or bytes its values' text bytes per group.
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
@@ -45,8 +47,10 @@ use std::collections::HashMap;
 use std::mem::{self, align_of, size_of};
 use std::sync::{Arc, OnceLock};
 
+use arrow::datatypes::DataType;
+
 use crate::copy::{CopyHeader, decode_field, split_fields};
-use crate::decode::{decode_bytea, render_bytea};
+use crate::decode::{decimal_unscaled_digits, decode_bytea, render_bytea};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
@@ -106,6 +110,7 @@ pub(crate) fn observer_tracking(
                     resolved.bounds_kinds(i),
                     &resolved.comparisons[i],
                     &resolved.plans[i],
+                    resolved.schema.field(i).data_type(),
                 )
             })
         })
@@ -173,6 +178,13 @@ pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> 
     stored.plans[i] == NestedPlan::Scalar
         && comparison.dictionary_answers_in(ComparisonSemantics::Postgres)
         && !matches!(comparison, ComparisonPlan::Compared { kind: CompareKind::PaddedText, .. })
+}
+
+/// Whether gathering keeps sums for a column the typed read emits as
+/// `data_type` ([`crate::statistics::ColumnStatistics::sums`]) — and so
+/// whether a column a query emits so is the one they were summed as.
+pub(crate) fn keeps_sums(data_type: &DataType) -> bool {
+    Summand::of(data_type).is_some()
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —
@@ -754,10 +766,60 @@ fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u
     merges
 }
 
+/// How a column's values are summed: parsed as the typed read parses them
+/// (`crate::batch`), and widened to the 128 bits every sum is kept in
+/// (`docs/design/decisions.md`, "D91").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Summand {
+    Int16,
+    Int32,
+    Int64,
+    UInt32,
+    /// A `numeric(p,s)`'s value unscaled at `s` places.
+    Decimal128 {
+        scale: i8,
+    },
+}
+
+impl Summand {
+    /// How a column the typed read emits as `data_type` is summed, or `None`
+    /// for a type that keeps no sum.
+    fn of(data_type: &DataType) -> Option<Self> {
+        match data_type {
+            DataType::Int16 => Some(Self::Int16),
+            DataType::Int32 => Some(Self::Int32),
+            DataType::Int64 => Some(Self::Int64),
+            DataType::UInt32 => Some(Self::UInt32),
+            DataType::Decimal128(_, scale) => Some(Self::Decimal128 { scale: *scale }),
+            _ => None,
+        }
+    }
+
+    /// `text` as the integer the typed read appends, or `None` where the read
+    /// would refuse it.
+    fn value(self, text: &str) -> Option<i128> {
+        match self {
+            Self::Int16 => text.parse::<i16>().ok().map(i128::from),
+            Self::Int32 => text.parse::<i32>().ok().map(i128::from),
+            Self::Int64 => text.parse::<i64>().ok().map(i128::from),
+            Self::UInt32 => text.parse::<u32>().ok().map(i128::from),
+            Self::Decimal128 { scale } => decimal_unscaled_digits(text, scale)?.parse().ok(),
+        }
+    }
+}
+
 struct ColumnGatherer {
     declared_type: Option<String>,
     collation: Option<String>,
     null_counts: Vec<u64>,
+    /// How a value is summed, for a column keeping sums.
+    summand: Option<Summand>,
+    /// Each closed group's sum, `None` for a column keeping none and once a
+    /// value has failed to decode ([`ColumnStatistics::sums`]).
+    sums: Option<Vec<i128>>,
+    /// Each closed group's text bytes, for a column keeping them
+    /// ([`ColumnStatistics::value_bytes`]).
+    value_bytes: Option<Vec<u64>>,
     /// One per [`BoundsSet`], in its order.
     bounds: [Option<BoundsGatherer>; 2],
     dictionary: Option<DictionaryGatherer>,
@@ -771,13 +833,16 @@ impl ColumnGatherer {
     /// A set of bounds under each of `bounds`, the kinds some semantics
     /// orders the column by exactly (`crate::ResolvedSchema::bounds_kinds`),
     /// and a dictionary where the comparison equates exactly
-    /// (`docs/design/decisions.md`, "D79").
+    /// (`docs/design/decisions.md`, "D79"); a sum per group where the typed
+    /// read emits `data_type` as an integer or a `Decimal128`, and text bytes
+    /// per group where it emits a variable-width one ([`ColumnStatistics`]).
     fn new(
         declared_type: Option<String>,
         collation: Option<String>,
         bounds: [Option<CompareKind>; 2],
         comparison: &ComparisonPlan,
         plan: &NestedPlan,
+        data_type: &DataType,
     ) -> Self {
         let postgres = ComparisonSemantics::Postgres;
         let dictionary = match comparison {
@@ -787,7 +852,9 @@ impl ColumnGatherer {
             _ => None,
         };
         let bounds = bounds.map(|kind| kind.map(BoundsGatherer::new));
-        Self::with(declared_type, collation, bounds, dictionary)
+        let summand = Summand::of(data_type);
+        let value_bytes = matches!(data_type, DataType::Utf8View | DataType::Binary);
+        Self::with(declared_type, collation, bounds, dictionary, summand, value_bytes)
     }
 
     fn with(
@@ -795,12 +862,17 @@ impl ColumnGatherer {
         collation: Option<String>,
         bounds: [Option<BoundsGatherer>; 2],
         dictionary: Option<DictionaryGatherer>,
+        summand: Option<Summand>,
+        value_bytes: bool,
     ) -> Self {
         let group = GroupState::fresh(&bounds);
         Self {
             declared_type,
             collation,
             null_counts: Vec::new(),
+            summand,
+            sums: summand.map(|_| Vec::new()),
+            value_bytes: value_bytes.then(Vec::new),
             bounds,
             dictionary,
             group,
@@ -814,7 +886,10 @@ impl ColumnGatherer {
     fn held(&self) -> (u64, u64) {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
-        let mut structure = named + vec_heap(&self.null_counts) + self.group.heap_bytes() + head;
+        let per_group = vec_heap(&self.null_counts)
+            + self.sums.as_ref().map_or(0, vec_heap)
+            + self.value_bytes.as_ref().map_or(0, vec_heap);
+        let mut structure = named + per_group + self.group.heap_bytes() + head;
         for bounds in self.bounds.iter().flatten() {
             structure += vec_heap(&bounds.groups)
                 + vec_heap(&bounds.flags)
@@ -844,6 +919,8 @@ impl ColumnGatherer {
             self.collation.clone(),
             self.bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh)),
             self.dictionary.as_ref().map(DictionaryGatherer::fresh),
+            self.summand,
+            self.value_bytes.is_some(),
         )
     }
 
@@ -866,6 +943,14 @@ impl ColumnGatherer {
                 return 0;
             }
             Ok(Some(text)) => {
+                self.group.value_bytes += text.len() as u64;
+                if let Some(summand) = self.summand {
+                    self.group.sum = self
+                        .group
+                        .sum
+                        .zip(summand.value(&text))
+                        .map(|(sum, value)| sum.wrapping_add(value));
+                }
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
                         bounds.observe(group, &text);
@@ -876,8 +961,11 @@ impl ColumnGatherer {
                 }
             }
             // Not text at all, so neither a key nor an entry: the group can
-            // cover the row with neither, and the block's order is lost.
+            // cover the row with neither, and the block's order is lost. No
+            // decoding is longer than the escaped field, and nothing sums it.
             Err(_) => {
+                self.group.value_bytes += field.len() as u64;
+                self.group.sum = None;
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
                         bounds.lose_value(group);
@@ -900,6 +988,15 @@ impl ColumnGatherer {
         let base = charge.charged();
         let group = self.take_group();
         push_charged(&mut self.null_counts, group.nulls, charge);
+        if let Some(value_bytes) = &mut self.value_bytes {
+            push_charged(value_bytes, group.value_bytes, charge);
+        }
+        match (&mut self.sums, group.sum) {
+            (Some(sums), Some(sum)) => push_charged(sums, sum, charge),
+            // The column held a value that is not its type: it has no sum.
+            (sums, None) => *sums = None,
+            (None, Some(_)) => {}
+        }
         for (bounds, group) in self.bounds.iter_mut().zip(group.bounds) {
             if let (Some(bounds), Some(group)) = (bounds, group) {
                 bounds.close_group(group, charge);
@@ -918,6 +1015,12 @@ impl ColumnGatherer {
     fn merge_pairs(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
         merge_adjacent(&mut self.null_counts, |a, b| a + b);
+        if let Some(sums) = &mut self.sums {
+            merge_adjacent(sums, i128::wrapping_add);
+        }
+        if let Some(value_bytes) = &mut self.value_bytes {
+            merge_adjacent(value_bytes, |a, b| a + b);
+        }
         for bounds in self.bounds.iter_mut().flatten() {
             bounds.merge_pairs();
         }
@@ -940,13 +1043,17 @@ impl ColumnGatherer {
     fn reopen_last(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
         let nulls = self.null_counts.pop().expect("a closed group counts its NULLs");
+        // A column that has lost its sums reopens a group without one, which
+        // loses nothing further.
+        let sum = self.sums.as_mut().map(|sums| sums.pop().expect("a closed group sums"));
+        let value_bytes = self.value_bytes.as_mut().and_then(Vec::pop).unwrap_or(0);
         let bounds = self.bounds.each_mut().map(|b| b.as_mut().map(BoundsGatherer::reopen_last));
         let texts = match &mut self.dictionary {
             Some(dictionary) => dictionary.reopen_last(),
             None => Some(Vec::new()),
         };
         let text_bytes = texts.iter().flatten().map(text_heap).sum();
-        let mut group = GroupState { nulls, bounds, texts, text_bytes };
+        let mut group = GroupState { nulls, sum, value_bytes, bounds, texts, text_bytes };
         group.absorb(mem::replace(&mut self.group, GroupState::fresh(&[None, None])));
         self.group = group;
         let after = self.held();
@@ -971,6 +1078,23 @@ impl ColumnGatherer {
         reserve_charged(&mut self.null_counts, later.null_counts.len(), charge);
         self.null_counts.extend_from_slice(&later.null_counts);
         later.null_counts = Vec::new();
+        resync(pair(self, later), charge);
+        if let (Some(mine), Some(theirs)) = (&mut self.value_bytes, &mut later.value_bytes) {
+            reserve_charged(mine, theirs.len(), charge);
+            mine.append(theirs);
+            *theirs = Vec::new();
+            resync(pair(self, later), charge);
+        }
+        match (&mut self.sums, &mut later.sums) {
+            (Some(mine), Some(theirs)) => {
+                reserve_charged(mine, theirs.len(), charge);
+                mine.append(theirs);
+                *theirs = Vec::new();
+            }
+            // The piece met a value that is not the column's type.
+            (sums, None) => *sums = None,
+            (None, Some(_)) => {}
+        }
         resync(pair(self, later), charge);
         for set in 0..self.bounds.len() {
             let (Some(mine), Some(theirs)) = (&mut self.bounds[set], &mut later.bounds[set]) else {
@@ -998,6 +1122,8 @@ impl ColumnGatherer {
             declared_type: self.declared_type,
             collation: self.collation,
             null_counts: self.null_counts,
+            sums: self.sums,
+            value_bytes: self.value_bytes,
             bounds: primary.map(BoundsGatherer::finish),
             arrow_bounds: arrow.map(BoundsGatherer::finish),
             dictionary: self.dictionary.map(DictionaryGatherer::finish),
@@ -1008,6 +1134,11 @@ impl ColumnGatherer {
 /// One column over one group while the group is open.
 struct GroupState {
     nulls: u64,
+    /// The values' wrapping sum so far, `None` once one did not decode as
+    /// the column's type; read only for a column keeping sums.
+    sum: Option<i128>,
+    /// The values' text bytes so far; read only for a column keeping them.
+    value_bytes: u64,
     /// One per [`BoundsSet`], `None` for a set the column does not keep.
     bounds: [Option<GroupBounds>; 2],
     /// The group's distinct texts in first-seen order, `None` once past a cap
@@ -1022,6 +1153,8 @@ impl GroupState {
     fn fresh(bounds: &[Option<BoundsGatherer>; 2]) -> Self {
         Self {
             nulls: 0,
+            sum: Some(0),
+            value_bytes: 0,
             bounds: bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh_group)),
             texts: Some(Vec::new()),
             text_bytes: 0,
@@ -1061,6 +1194,8 @@ impl GroupState {
     /// cap is passed.
     fn absorb(&mut self, later: GroupState) {
         self.nulls += later.nulls;
+        self.sum = self.sum.zip(later.sum).map(|(sum, more)| sum.wrapping_add(more));
+        self.value_bytes += later.value_bytes;
         for (mine, theirs) in self.bounds.iter_mut().zip(later.bounds) {
             if let (Some(mine), Some(theirs)) = (mine, theirs) {
                 mine.absorb(theirs);
@@ -2112,7 +2247,8 @@ mod tests {
         [CompareKind::Text, CompareKind::PaddedText, CompareKind::Bytea, CompareKind::Int];
 
     /// A block's columns: one per [`JOIN_KINDS`], each keeping bounds and a
-    /// dictionary, and an untracked one.
+    /// dictionary — the three bytewise ones text bytes, the keyed one sums —
+    /// and an untracked one.
     fn join_columns() -> Vec<Option<ColumnGatherer>> {
         let plan =
             |kind: &CompareKind| ComparisonPlan::Compared { kind: kind.clone(), divergence: None };
@@ -2121,7 +2257,19 @@ mod tests {
             .map(|kind| {
                 let plan = plan(kind);
                 let bounds = plan.bounds_kinds();
-                Some(ColumnGatherer::new(None, None, bounds, &plan, &NestedPlan::Scalar))
+                let data_type = match kind {
+                    CompareKind::Int => DataType::Int64,
+                    CompareKind::Bytea => DataType::Binary,
+                    _ => DataType::Utf8View,
+                };
+                Some(ColumnGatherer::new(
+                    None,
+                    None,
+                    bounds,
+                    &plan,
+                    &NestedPlan::Scalar,
+                    &data_type,
+                ))
             })
             .chain([None])
             .collect()
@@ -2319,6 +2467,7 @@ mod tests {
         let mut rng = Rng(0x0001_0105);
         let (mut straddles, mut ordered, mut inexact, mut dictionaries, mut overflowed) =
             (0, 0, 0, 0, 0);
+        let (mut summed, mut unsummed, mut measured) = (0, 0, 0);
         for round in 0..600 {
             let block = random_block(&mut rng, round);
             let exact = sized(block.group_size, None, None);
@@ -2338,8 +2487,17 @@ mod tests {
                 if block.short {
                     overflowed += dictionary.groups.iter().filter(|g| g.is_none()).count();
                 }
+                match (&column.sums, &column.value_bytes) {
+                    (Some(sums), None) if sums.iter().any(|&sum| sum != 0) => summed += 1,
+                    (None, None) => unsummed += 1,
+                    (None, Some(bytes)) if bytes.iter().any(|&bytes| bytes > 0) => measured += 1,
+                    _ => {}
+                }
             }
         }
+        assert!(summed > 100, "only {summed} columns summed");
+        assert!(unsummed > 20, "only {unsummed} columns lost their sums to a value not their type");
+        assert!(measured > 500, "only {measured} columns measured");
         assert!(straddles > 500, "only {straddles} cuts fell inside a group");
         assert!(ordered > 200, "only {ordered} columns ordered");
         assert!(inexact > 500, "only {inexact} truncated upper bounds");

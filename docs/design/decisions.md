@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the 575-line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D90 -->
+<!-- decision-watermark: D91 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -500,6 +500,15 @@ where every group kept one of emitted text (I48), else `Absent`; all `Inexact` u
 whose rows are the kept groups' plus each unconsulted block's. It answers over a value a read refuses (`KD8`), as D54. Rejected: `Absent`
 for a partial bound, giving up cardinality; the union as `Inexact`, a floor inflating a join's estimate; NULL counts withheld where a
 bound fails to decode; under a filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
+
+### D91 A sum is kept wrapped and handed over as `SUM` wraps; a byte size is the text's length
+The value owed is DataFusion's `SUM`, which wraps (`add_wrapping`), not PostgreSQL's: wrapping addition is associative, so group sums
+kept at 128 bits narrow exactly to the `Int64` an integer is cast to and the `UInt64` an `oid` is, and are a `Decimal128`'s own, handed
+over in the column's type, which `SUM` widens unchecked. A value that does not decode drops its column's sums, which cannot leave it out
+as a bound does (D54). A byte size is a `Utf8View`'s text length, a bound above a `Binary`'s bytes, both `Inexact` (D46), or rows × width,
+`Exact` unfiltered; a filter bounds both by the kept groups as it bounds rows. Rejected: a float's sum, order-dependent; a bare `numeric`'s,
+emitted as text; a sum per group kept through a loss, nothing reading a partial one; a `bytea`'s decoded length, below what a `:strings`
+read emits; a byte size scaled by a guessed selectivity. Code: `gather::Summand`, `datafusion-pgdump`'s `statistics.rs`. Evidence: `tests/statistics.rs`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

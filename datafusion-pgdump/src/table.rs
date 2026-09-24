@@ -24,7 +24,7 @@ use crate::exec::{PgDumpExec, ScanMetrics};
 use crate::pushdown::translate;
 use crate::report::Reporting;
 use crate::settings::PgDumpSettings;
-use crate::statistics::{output_orderings, table_statistics};
+use crate::statistics::{byte_size, output_orderings, table_statistics, total_byte_size};
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
 /// from the map and the DDL alone (`pgdump_query::table_schema`), so asking for
@@ -203,7 +203,7 @@ impl TableProvider for PgDumpTable {
                 }) as Arc<dyn PartitionStream>
             })
             .collect();
-        let statistics = self
+        let mut statistics = self
             .statistics
             .get_or_init(|| {
                 Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved))
@@ -213,19 +213,26 @@ impl TableProvider for PgDumpTable {
             .project(projection);
         // A pushed-down filter takes rows out, so the table's counts and
         // extremes stop describing what the node emits and are handed over as
-        // estimates, and its rows are bounded by what pruning kept, with no
-        // selectivity guessed below that (`docs/design/decisions.md`, "D89").
-        // `limit` is the plan node's, and is applied there.
-        let statistics = if filters.is_empty() {
-            statistics
-        } else {
-            let mut statistics = statistics.to_inexact();
+        // estimates, and its rows and each column's bytes are bounded by what
+        // pruning kept, with no selectivity guessed below that
+        // (`docs/design/decisions.md`, "D89", "D91"). `limit` is the plan
+        // node's, and is applied there.
+        if !filters.is_empty() {
+            statistics = statistics.to_inexact();
             statistics.num_rows = match usize::try_from(partitions.kept_rows()) {
                 Ok(rows) => Precision::Inexact(rows),
                 Err(_) => Precision::Absent,
             };
-            statistics
-        };
+            let kept_bytes = partitions.kept_value_bytes();
+            for (i, column) in statistics.column_statistics.iter_mut().enumerate() {
+                let value_bytes = kept_bytes.get(i).copied().flatten();
+                column.byte_size =
+                    byte_size(schema.field(i).data_type(), statistics.num_rows, value_bytes);
+            }
+        }
+        // The projection keeps the whole table's total, which only the
+        // projected columns' own sum describes.
+        statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
         let orderings = output_orderings(&schema, partitions.orders());
         let inner = StreamingTableExec::try_new(schema, streams, None, orderings, false, limit)?;
         Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics)))

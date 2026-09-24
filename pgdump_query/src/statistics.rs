@@ -474,6 +474,20 @@ pub struct ColumnStatistics {
     pub arrow_bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,
+    /// Per group, the sum of its non-NULL values as integers — a decimal's
+    /// unscaled — wrapped at 128 bits, which reduces exactly to any narrower
+    /// wrapping sum. Kept for a column the typed read emits as `Int16`,
+    /// `Int32`, `Int64`, `UInt32` or `Decimal128` — `int2`, `int4`, `int8`,
+    /// `oid` and a `numeric(p,s)` of at most 38 digits — and `None` for every
+    /// other, **and for one holding a value that does not decode as its
+    /// type**: a sum cannot leave a value out the way a bound can.
+    pub sums: Option<Vec<i128>>,
+    /// Per group, the summed length of its non-NULL fields' text once
+    /// unescaped — the bytes a `Utf8View` of them holds, and never fewer than
+    /// a `bytea`'s decoded bytes — a field that does not decode counting its
+    /// escaped bytes. Present for a column the typed read emits as `Utf8View`
+    /// or `Binary`, the variable-width columns a length measures.
+    pub value_bytes: Option<Vec<u64>>,
 }
 
 /// Which of a column's stored sets of bounds and row order a statistic is read
@@ -657,7 +671,21 @@ impl ColumnStatistics {
                 + vec_heap(&dictionary.groups)
                 + dictionary.groups.iter().flatten().map(vec_heap).sum::<u64>()
         });
-        named + vec_heap(&self.null_counts) + bounds + dictionary
+        let sums = self.sums.as_ref().map_or(0, vec_heap);
+        let value_bytes = self.value_bytes.as_ref().map_or(0, vec_heap);
+        named + vec_heap(&self.null_counts) + bounds + dictionary + sums + value_bytes
+    }
+
+    /// The summed [`Self::value_bytes`] of the groups `keep` answers `true`
+    /// for, of a block holding `groups` groups — `None` where this column
+    /// counted none, or not one per group.
+    pub(crate) fn value_bytes_where(
+        &self,
+        groups: usize,
+        keep: impl Fn(usize) -> bool,
+    ) -> Option<u64> {
+        let counted = self.value_bytes.as_ref().filter(|counted| counted.len() == groups)?;
+        Some(counted.iter().enumerate().filter(|&(g, _)| keep(g)).map(|(_, bytes)| bytes).sum())
     }
 }
 
