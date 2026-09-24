@@ -552,6 +552,48 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
     assert_eq!(group, vec!["000000x", "0003"]);
 }
 
+/// **A column's stored groups are read only where they are one to a group**:
+/// a NULL count listing a group the block does not hold describes other
+/// groups, so an unbounded group it calls all NULL leaves the extremes
+/// incomplete rather than `Exact` over the groups that kept a bound.
+#[tokio::test]
+async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
+    use pgdump_query::map::{DataBlock, SpanBody};
+    use pgdump_query::{ComparisonSemantics, QueryOptions, TableName, table_schema, table_summary};
+
+    let mut index = gathered(
+        &statistics_fixture(16, "default"),
+        &request(StatisticsSelection::All, SMALL_GROUP),
+    )
+    .await;
+    let name = TableName::of(block(&index, "public.ordered"));
+    let summary = |index: &DumpIndex| {
+        let resolved = table_schema(index, &name, &QueryOptions::default()).unwrap();
+        let id = resolved.schema.index_of("id").unwrap();
+        table_summary(index, &name, &resolved, ComparisonSemantics::Arrow).columns[id].clone()
+    };
+    assert!(summary(&index).bounds_complete, "every group of `id` is bounded");
+
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
+            && block.header.table == "ordered"
+        {
+            let mut held = BlockStatistics::clone(block.statistics.as_deref().unwrap());
+            assert!(held.groups.len() > 1);
+            let first = held.groups[0].rows;
+            let c = block.header.columns.iter().position(|c| c == "id").unwrap();
+            let column = held.columns[c].as_mut().unwrap();
+            for set in [&mut column.bounds, &mut column.arrow_bounds].into_iter().flatten() {
+                set.groups[0] = None;
+            }
+            column.null_counts[0] = first;
+            column.null_counts.push(0);
+            block.statistics = Some(Arc::new(held));
+        }
+    }
+    assert!(!summary(&index).bounds_complete);
+}
+
 /// **A `character` dictionary entry is stored and measured without its
 /// trailing blanks**, as its bounds are: a `character(300)` column of short
 /// values keeps a dictionary, one entry per value however it is padded, where

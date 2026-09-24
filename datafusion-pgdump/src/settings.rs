@@ -179,7 +179,9 @@ impl ExtensionOptions for PgDumpSettings {
                 "memory",
                 self.memory.map(|n| n.to_string()),
                 "Bytes every pgdump scan of the session may hold resident between them; \
-                 unset or 0, the memory limit found, else half of what is available.",
+                 unset or 0, the allowance the session's pgdump budget was built with — \
+                 unless its embedder stated one, the memory limit found, else half of what \
+                 is available.",
             ),
             entry(
                 "chunk_size",

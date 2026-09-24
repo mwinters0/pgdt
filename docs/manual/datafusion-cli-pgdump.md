@@ -31,7 +31,9 @@ datafusion-cli-pgdump --dump koji=https://example.com/dumps/koji.dump.xz:strings
 
 Each database in the file becomes a **catalog**, each of its PostgreSQL
 schemas a schema, and each table a table, so `koji.public.build` names a
-table and `SHOW TABLES` lists them all. `--dump` is repeatable.
+table and `SHOW TABLES` lists them all — bar a table no query can read,
+which is left out and named on stderr with why
+([below](#what-it-says-on-stderr)). `--dump` is repeatable.
 
 - **A database the file names is a catalog of that name.** A dump taken with
   `--create`, and every database in a `pg_dumpall` file, is named by the file.
@@ -84,6 +86,10 @@ an enum by its labels' text rather than their declared order, an `interval` by
 months, then days, then time, a bare `numeric`, `jsonb` or `inet` as the text
 it is emitted as. `pgdt query` compares as PostgreSQL does where it can
 ([type handling](type-handling.md)); here SQL is DataFusion's.
+
+**A table no query can read is an `error:` line, and is not listed** — one
+whose `COPY` blocks name different columns, say, which no one schema holds.
+Every other table attaches.
 
 **Text columns with no `COLLATE` clause are counted, not listed**: on a real
 dump that is nearly every text column, so the dump gets one line saying how

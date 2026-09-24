@@ -56,7 +56,7 @@ pub use dump::{PgDump, PgDumpOptions};
 pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
-pub use report::BudgetedPlanNote;
+pub use report::{BudgetedPlanNote, RefusedTable};
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
 
@@ -100,7 +100,8 @@ pub enum Error {
 /// and the [`PgDumpSettings`] `SET` moves, unless it already carries them.
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
-/// that name.
+/// that name; a table whose plan refuses is not listed, and is one
+/// [`RefusedTable`] finding instead.
 pub fn register_dump(
     ctx: &SessionContext,
     name: Option<&str>,

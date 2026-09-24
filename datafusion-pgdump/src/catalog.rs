@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
@@ -12,6 +12,7 @@ use datafusion::common::Result;
 use pgdump_query::{DiagnosticSink, TableName};
 
 use crate::dump::PgDump;
+use crate::report::RefusedTable;
 use crate::table::PgDumpTable;
 
 /// Where a table whose `COPY` header names no schema is listed. `pg_dump`
@@ -19,6 +20,16 @@ use crate::table::PgDumpTable;
 pub const UNQUALIFIED_SCHEMA: &str = "public";
 
 /// One database of a dump.
+///
+/// **Every table's provider is built when the catalog is**, from the map
+/// alone, so `SHOW TABLES` and `information_schema`, which ask for every
+/// table, find each one built and none is built twice. **A table whose plan
+/// refuses is not listed**: its refusal is a finding [`PgDumpCatalog::report`]
+/// hands the sink instead, so a listing names what can be queried. *Rejected:
+/// listing it and raising its refusal where it is asked for*, which fails every
+/// listing of the session over one table; *building each table on its first
+/// lookup*, which two statements planned at once build twice, the sink kept
+/// by a provider then replaced.
 pub struct PgDumpCatalog {
     schemas: BTreeMap<String, Arc<PgDumpSchema>>,
 }
@@ -31,39 +42,48 @@ impl fmt::Debug for PgDumpCatalog {
 
 impl PgDumpCatalog {
     /// The database `database` names in `dump` — `None` for the one no
-    /// `\connect` names.
+    /// `\connect` names — with every table's provider built.
     pub fn new(dump: &Arc<PgDump>, database: Option<&str>) -> Self {
-        let mut schemas: BTreeMap<String, BTreeMap<String, TableName>> = BTreeMap::new();
+        let mut named: BTreeMap<String, BTreeMap<String, TableName>> = BTreeMap::new();
         for table in dump.tables().iter().filter(|t| t.database.as_deref() == database) {
             let schema = table.schema.as_deref().unwrap_or(UNQUALIFIED_SCHEMA);
-            schemas
+            named
                 .entry(schema.to_string())
                 .or_default()
                 .entry(table.table.clone())
                 .or_insert_with(|| table.clone());
         }
-        let schemas = schemas
+        let schemas = named
             .into_iter()
             .map(|(name, tables)| {
-                let schema =
-                    PgDumpSchema { dump: Arc::clone(dump), tables, providers: Mutex::default() };
+                let mut schema = PgDumpSchema::default();
+                for (table, qualified) in tables {
+                    match PgDumpTable::build(Arc::clone(dump), qualified.clone()) {
+                        Ok(provider) => {
+                            schema.tables.insert(table, Arc::new(provider));
+                        }
+                        Err(error) => {
+                            schema.refused.insert(table, RefusedTable { table: qualified, error });
+                        }
+                    }
+                }
                 (name, Arc::new(schema))
             })
             .collect();
         Self { schemas }
     }
 
-    /// Hand every table's findings to `sink`, each named as SQL reaches it
-    /// under `catalog`, and make it the sink their scans report to
-    /// ([`PgDumpTable::report`]). A table whose plan refuses reports nothing
-    /// here, its refusal being what a query of it raises.
+    /// Hand every table's findings to `sink`, each named as SQL would reach
+    /// it under `catalog`, and make it the sink the listed tables' scans
+    /// report to ([`PgDumpTable::report`]). A table left unlisted is one
+    /// [`RefusedTable`] finding, its refusal.
     pub(crate) fn report(&self, catalog: &str, sink: &Arc<dyn DiagnosticSink>) {
         for (schema_name, schema) in &self.schemas {
-            for table in schema.tables.keys() {
-                if let Ok(provider) = schema.provider(table) {
-                    let subject = format!("{catalog}.{schema_name}.{table}");
-                    provider.report(&subject, Arc::clone(sink));
-                }
+            for (table, provider) in &schema.tables {
+                provider.report(&format!("{catalog}.{schema_name}.{table}"), Arc::clone(sink));
+            }
+            for (table, refused) in &schema.refused {
+                refused.report(&format!("{catalog}.{schema_name}.{table}"), sink.as_ref());
             }
         }
     }
@@ -79,33 +99,20 @@ impl CatalogProvider for PgDumpCatalog {
     }
 }
 
-/// One PostgreSQL schema of one database.
-///
-/// **`table` is cheap after its first call**: `SHOW TABLES` and
-/// `information_schema` ask it of every table, so each provider is built once,
-/// from the map alone, and kept.
+/// One PostgreSQL schema of one database: the tables it lists, and those its
+/// dump holds that it does not.
+#[derive(Default)]
 struct PgDumpSchema {
-    dump: Arc<PgDump>,
-    tables: BTreeMap<String, TableName>,
-    providers: Mutex<BTreeMap<String, Arc<PgDumpTable>>>,
-}
-
-impl PgDumpSchema {
-    /// The provider for `name`, built from the map on the first call and kept.
-    fn provider(&self, name: &str) -> Result<Arc<PgDumpTable>> {
-        if let Some(provider) = self.providers.lock().unwrap().get(name) {
-            return Ok(Arc::clone(provider));
-        }
-        let table = self.tables[name].clone();
-        let provider = Arc::new(PgDumpTable::new(Arc::clone(&self.dump), table)?);
-        self.providers.lock().unwrap().insert(name.to_string(), Arc::clone(&provider));
-        Ok(provider)
-    }
+    tables: BTreeMap<String, Arc<PgDumpTable>>,
+    refused: BTreeMap<String, RefusedTable>,
 }
 
 impl fmt::Debug for PgDumpSchema {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PgDumpSchema").field("tables", &self.tables.keys()).finish()
+        f.debug_struct("PgDumpSchema")
+            .field("tables", &self.tables.keys())
+            .field("refused", &self.refused.keys())
+            .finish()
     }
 }
 
@@ -116,10 +123,7 @@ impl SchemaProvider for PgDumpSchema {
     }
 
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>> {
-        if !self.tables.contains_key(name) {
-            return Ok(None);
-        }
-        Ok(Some(self.provider(name)? as Arc<dyn TableProvider>))
+        Ok(self.tables.get(name).map(|provider| Arc::clone(provider) as Arc<dyn TableProvider>))
     }
 
     fn table_exist(&self, name: &str) -> bool {

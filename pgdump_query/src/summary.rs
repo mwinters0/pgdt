@@ -182,24 +182,27 @@ pub fn table_summary(
                 .as_ref()
                 .filter(|_| believed)
                 .and_then(|kind| bounds_set_keyed_by(&gathered.bounds_kinds(c), kind))
-                .and_then(|set| column.bounds_in(set));
+                .and_then(|set| column.bounds_in(set))
+                // A set or a NULL count not one to a group describes other
+                // groups, and nothing it says is read.
+                .filter(|stored| {
+                    stored.groups.len() == groups && column.null_counts.len() == groups
+                });
             let Some(stored) = stored else {
                 accumulator.complete = false;
                 continue;
             };
             let kind = accumulator.kind.clone().expect("a stored set was found for it");
-            for (g, (group, bounds)) in statistics.groups.iter().zip(&stored.groups).enumerate() {
+            let per_group = statistics.groups.iter().zip(&stored.groups).zip(&column.null_counts);
+            for ((group, bounds), &nulls) in per_group {
                 match bounds {
                     Some(bounds) => accumulator.fold(&kind, bounds),
                     // A group whose every row is NULL has no value to bound,
                     // so it leaves the column's extremes complete; one that
                     // lost a value to gathering does not.
-                    None if column.null_counts.get(g).copied() == Some(group.rows) => {}
+                    None if nulls == group.rows => {}
                     None => accumulator.complete = false,
                 }
-            }
-            if stored.groups.len() != statistics.groups.len() {
-                accumulator.complete = false;
             }
         }
         for (accumulator, seen) in accumulators.iter_mut().zip(seen) {

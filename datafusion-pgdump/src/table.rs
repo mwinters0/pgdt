@@ -36,9 +36,9 @@ pub struct PgDumpTable {
     resolved: ResolvedSchema,
     /// What the map's statistics say about the whole table, in the schema's
     /// own column order. Read off the resident map, so it never changes; and
-    /// taken on the first scan rather than here, because a catalog builds a
-    /// table for every `SHOW TABLES` row and folding every block's groups is
-    /// not what that should cost.
+    /// taken on the first scan rather than here, because a catalog builds
+    /// every table it lists when it is registered, and folding every block's
+    /// groups is not what that should cost.
     statistics: OnceLock<Arc<Statistics>>,
     /// Where this table's scans report their plans, once it has been
     /// reported ([`PgDumpTable::report`]).
@@ -58,8 +58,12 @@ impl PgDumpTable {
     /// `name`, which must be one of `dump`'s own [`PgDump::tables`], or the
     /// refusal its plan would raise.
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
-        let resolved = pgdump_query::table_schema(dump.index(), &name, &query_options(&dump))
-            .map_err(external)?;
+        Self::build(dump, name).map_err(external)
+    }
+
+    /// [`PgDumpTable::new`], its refusal the library's own.
+    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> pgdump_query::Result<Self> {
+        let resolved = pgdump_query::table_schema(dump.index(), &name, &query_options(&dump))?;
         Ok(Self { dump, name, resolved, statistics: OnceLock::new(), reporting: Mutex::default() })
     }
 

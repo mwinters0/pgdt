@@ -3,7 +3,7 @@
 //! **What a dump or a table is, is reported when it is registered**: the
 //! file-level channel once per registration, and each table's per-column notes and
 //! its columns' divergence from PostgreSQL in the semantics every scan asks
-//! for. **What a scan's plan settled is reported when it is planned**, from
+//! for — or, for a table the catalog does not list, its [`RefusedTable`]. **What a scan's plan settled is reported when it is planned**, from
 //! `scan()`, to the sink the table was registered with. A query raises nothing
 //! on the comparison channel here — a pushed filter is one the library answers
 //! as DataFusion does, so that channel is empty
@@ -24,7 +24,8 @@ use std::any::Any;
 use std::sync::Arc;
 
 use pgdump_query::{
-    ComparisonSemantics, DiagnosticSink, Finding, PlanLever, PlanNote, Severity, column_divergences,
+    ComparisonSemantics, DiagnosticSink, Finding, PlanLever, PlanNote, Severity, TableName,
+    column_divergences,
 };
 
 use crate::budget::{AllowanceOrigin, BudgetAccount};
@@ -117,6 +118,42 @@ impl PgDumpTable {
                 reporting.sink.report(&Located { subject, finding: note });
             }
         }
+    }
+}
+
+/// A table of the dump its catalog does not list, because the library's plan
+/// of it refuses — its `COPY` blocks naming different columns, say — with
+/// that refusal. It is what [`crate::register_dump`] hands the sink in place
+/// of the table's findings, and the only place its refusal is said: a query
+/// naming the table finds no such table ([`crate::PgDumpCatalog`]).
+#[derive(Debug)]
+pub struct RefusedTable {
+    /// The table, as the dump names it.
+    pub table: TableName,
+    /// What planning it raised.
+    pub error: pgdump_query::Error,
+}
+
+impl Finding for RefusedTable {
+    /// An error: the dump holds rows no query of this session can reach.
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self) -> String {
+        format!("not listed, since no query of it can be planned: {}", self.error)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl RefusedTable {
+    /// Hand this refusal to `sink`, prefixed with `subject`, the name SQL
+    /// would have reached the table by.
+    pub(crate) fn report(&self, subject: &str, sink: &dyn DiagnosticSink) {
+        sink.report(&Located { subject, finding: self });
     }
 }
 

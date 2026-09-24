@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump, register_table_factory};
+use datafusion_pgdump::{
+    PgDump, PgDumpOptions, RefusedTable, register_dump, register_table_factory,
+};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ColumnNote, ComparisonNote, Diagnostic, DiagnosticSink, Finding, LocalFileSource, ScanOptions,
@@ -47,6 +49,8 @@ impl DiagnosticSink for Heard {
             "column"
         } else if any.is::<ComparisonNote>() {
             "comparison"
+        } else if any.is::<RefusedTable>() {
+            "refused"
         } else {
             "unknown"
         };
@@ -130,6 +134,49 @@ async fn a_strings_registration_warns_each_column_once() {
     assert!(!columns.is_empty());
     assert!(columns.iter().all(|(severity, _, _)| *severity == Severity::Warning), "{columns:#?}");
     assert!(heard.iter().all(|(_, _, channel)| *channel != "comparison"), "{heard:#?}");
+}
+
+/// **A table whose plan refuses is not listed, and its refusal is a finding**:
+/// `SHOW TABLES` lists the rest, a query of the rest answers, and a query of
+/// it finds no such table — so one table the library cannot plan never fails
+/// a listing, and its refusal is said once, at registration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump_path = dir.path().join("disagreeing.sql");
+    std::fs::write(
+        &dump_path,
+        "COPY public.t (a, b) FROM stdin;\n1\tx\n\\.\n\n\
+         COPY public.t (a, c) FROM stdin;\n4\tz\n\\.\n\n\
+         COPY public.ok (a) FROM stdin;\n7\n\\.\n",
+    )
+    .unwrap();
+    let source = LocalFileSource::open(&dump_path).unwrap();
+    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&dump_path));
+    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::NONE).await.unwrap();
+    let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let heard = Arc::new(Heard::default());
+    let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
+
+    let refused: Vec<_> =
+        heard.take().into_iter().filter(|(_, _, channel)| *channel == "refused").collect();
+    assert!(
+        matches!(refused.as_slice(), [(Severity::Error, message, _)]
+            if message.starts_with("shop.public.t: ") && message.contains("different columns")),
+        "{refused:#?}"
+    );
+    let schema = ctx.catalog("shop").unwrap().schema("public").unwrap();
+    assert_eq!(schema.table_names(), ["ok"]);
+    assert!(!schema.table_exist("t"));
+
+    let listed = rows(&ctx, "SHOW TABLES").await.unwrap();
+    let listed = arrow::util::pretty::pretty_format_batches(&listed).unwrap().to_string();
+    assert!(listed.contains("| ok ") && !listed.contains("| t "), "{listed}");
+    let ok = rows(&ctx, "SELECT * FROM shop.public.ok").await.unwrap();
+    assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
+    let err = rows(&ctx, "SELECT * FROM shop.public.t").await.unwrap_err();
+    assert!(err.contains("not found"), "{err}");
 }
 
 /// **`STORED AS PGDUMP` registers the table its options name**, answering
