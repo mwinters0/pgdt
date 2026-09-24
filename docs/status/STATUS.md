@@ -78,9 +78,7 @@ instrument can see").
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** P25 is complete, its notes in
-  [`../design/roadmap-P25-plan-answers-notes.md`](../design/roadmap-P25-plan-answers-notes.md)
-  until the keystone that strikes it. A dump is readable
+- **No phase is open.** A dump is readable
   over HTTP, plain and `.xz`, with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in

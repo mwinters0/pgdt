@@ -138,8 +138,8 @@ INSERT INTO public.long_value VALUES
 
 -- ---------------------------------------------------------------------
 -- What the DataFusion provider's plan answers are checked against
--- (docs/design/roadmap-P25-plan-answers.md, "Evidence"): each table below
--- holds a shape one of those answers can get wrong with no error.
+-- (docs/design/decisions.md, "D89"): each table below holds a shape one of
+-- those answers can get wrong with no error.
 -- ---------------------------------------------------------------------
 
 -- A table whose rows arrive as **several blocks of one table** under

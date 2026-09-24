@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P25 — plan answers from the map's statistics | **Complete** | [`roadmap-P25-plan-answers.md`](roadmap-P25-plan-answers.md); [notes](roadmap-P25-plan-answers-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P27 — DataFusion's dynamic filters | Sketched; not grilled | this file, below |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -562,8 +561,8 @@ item; see below.
 55 pushes into the probe-side scan at run time, and `PgDumpExec` accepts
 none**, so a selective join reads all of its probe table and an `ORDER BY …
 LIMIT` reads every group — though the statistics already held would rule most
-of them out. Filed by P25's grilling, which kept to answers settled at plan
-time; sketched to corner-avoidance depth, and after P25. What it starts from:
+of them out. It needs no new statistic, but moves pruning from the plan into
+the replay's stream; sketched to corner-avoidance depth. What it starts from:
 
 - **The leaf's hook is `handle_child_pushdown_result`**, in the `Post` filter
   pushdown phase; the default `gather_filters_for_pushdown` serves a leaf.
@@ -582,7 +581,9 @@ time; sketched to corner-avoidance depth, and after P25. What it starts from:
 - **An enum is compared in label order by DataFusion**, where its stored
   bounds are in declaration order, so a dynamic filter over one prunes nothing
   until bounds are kept in that order — which also lets its `MIN`/`MAX` answer
-  from statistics (`KD45`, owned here).
+  from statistics (`KD45`, owned here). A declared ordering over one is
+  already in label order, the set Arrow orders a `Dictionary` by
+  (`summary::partition_orders`).
 - **`decisions.md`'s "D53" — the closed operator set — is reconsidered here**,
   since what a dynamic filter holds is DataFusion's choice, not ours.
 
@@ -689,8 +690,10 @@ What it inherits:
   `v_escaped`) should grow, every retained column carrying one more
   `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
   `v_category` carries bounds its fidelity guard no longer asserts absent,
-  `pgdt query` still reading only its dictionary. What the heavier cache costs
-  either figure is unpriced.
+  `pgdt query` still reading only its dictionary. Since those re-takes a
+  summed column keeps an `i128` a group and every tracked column a `u64` of
+  text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times; what the
+  heavier cache costs either figure is unpriced.
 - **A default `parse` on NVMe may be CPU-bound, which is D10's reopen
   condition.** Every `scan-throughput-*` and `chunk-size` run states
   `--statistics none`, where the shipped `parse` gathers, and
@@ -706,16 +709,15 @@ What it inherits:
 **Statistics a gather could keep in the pass it already runs, refused because
 of what keeping them costs** — CPU, memory under the statistics account
 ([`decisions.md`](decisions.md), "D85", "D86") or cache volume — reconsidered
-together, against what each would let a query skip or answer. Filed by P25's
-grilling, which kept to what is cheap; sketched to corner-avoidance depth. What
-it starts from:
+together, against what each would let a query skip or answer. Sketched to
+corner-avoidance depth. What it starts from:
 
 - **A per-group bloom filter**, for equality and `IN` on an unsorted column of
   many distinct values — the one shape measured to prune nothing today
   ([`measurements.md`](measurements.md), `statistics-pruning`, the `v_smallint`
   row), and the membership a hash join's dynamic filter would test.
 - **A per-block distinct-count sketch**, refused as a gathered count by "D79";
-  P25 derives an exact count from complete dictionaries instead, so what is
+  "D89" derives an exact count from complete dictionaries instead, so what is
   left is the estimate for columns whose dictionaries overflow.
 - **Every other refusal the register grounds in gathering cost** — "D76"'s
   clipped head in place of a key for a bytewise value is one — swept from

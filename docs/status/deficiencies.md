@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD45 -->
-**`KD1`–`KD45` are allocated, and nothing at or below `KD45` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD47 -->
+**`KD1`–`KD47` are allocated, and nothing at or below `KD47` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -264,6 +264,17 @@ than reading as a phase nobody has sliced.
   stored bounds are in declaration order. **(b) owned by P27**, whose dynamic
   filters compare an enum in that same label order. Detail:
   `datafusion-pgdump/src/statistics.rs`.
+
+- **KD46** — a block holding one distinct value records `Ascending`, so a
+  descending table holding one declares no ordering to DataFusion and a sort
+  it would satisfy is planned. **(c) unowned**; promoted by a table seen to lose its
+  ordering to one. Detail: `pgdump_query/src/summary.rs`.
+
+- **KD47** — where an exact bound and a clipped one share their text, the
+  first folded is kept, so a clipped one first leaves a column's `MIN` or
+  `MAX` `Inexact` and read rather than answered from statistics. **(c)
+  unowned**; promoted by an extreme seen read where it could answer. Detail:
+  `pgdump_query/src/summary.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
   collation (I32), and nothing reads it: every text column with no `COLLATE`

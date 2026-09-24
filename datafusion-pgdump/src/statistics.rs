@@ -81,7 +81,9 @@ pub(crate) fn table_statistics(
 /// A column's sum as DataFusion's `SUM` would answer it: a 16-, 32- or 64-bit
 /// integer's wrapped at 64 bits, as the `Int64` its argument is cast to wraps,
 /// an `oid`'s at 64 unsigned ones, and a `Decimal128`'s at 128, in the
-/// column's own type, which `SUM` widens without checking the value. Each
+/// column's own type, which `SUM` widens without checking the value — arrow's
+/// same-scale decimal cast does not validate, and the blind session in
+/// `tests/statistics.rs` fails on `public.spans.huge` once it does. Each
 /// narrows the library's 128-bit wrapping sum exactly
 /// (`docs/design/decisions.md`, "D91").
 fn sum(sum: Option<i128>, data_type: &DataType) -> Precision<ScalarValue> {
@@ -109,7 +111,10 @@ fn sum(sum: Option<i128>, data_type: &DataType) -> Precision<ScalarValue> {
 ///   bytes living in a buffer the batches share (`docs/design/decisions.md`,
 ///   "D46");
 /// - for an enum's `Dictionary`, its keys' width a row and its values' text,
-///   which bounds the labels each batch's dictionary holds, `Inexact`;
+///   which bounds the labels each batch's dictionary holds, `Inexact` — true
+///   while `StringDictionaryBuilder` keeps only the labels appended since its
+///   last `finish`, which the estimate target in `tests/statistics.rs`
+///   measures batch by batch;
 /// - and `Absent` for a nested type, whose text bounds nothing of its leaves'.
 pub(crate) fn byte_size(
     data_type: &DataType,
