@@ -1,6 +1,6 @@
 ---
 name: go
-description: Start a round of autonomous, unattended implementation work on the roadmap — pick up the next slice, land it, update the docs, stop at the right boundary. Use when the user invokes /go, or asks for the next round of work to be done autonomously/unattended.
+description: Start a round of autonomous, unattended implementation work on the roadmap — pick up the next slice, or with no phase open the next out-of-band item, land it, update the docs, stop at the right boundary. Use when the user invokes /go, or asks for the next round of work to be done autonomously/unattended.
 ---
 
 This session is **unattended**. Nobody is here to answer a question, review an
@@ -13,7 +13,8 @@ approach, or unblock you.
 2. Read `docs/status/STATUS.md` — the phase checklist, "Not started" and
    "Decisions worth another look" — and the deficiency register beside it,
    `docs/status/deficiencies.md`.
-3. Read the current phase spec and the notes docs of its landed slices.
+3. Read the current phase spec and the notes docs of its landed slices, if a
+   phase is open.
 4. Read `docs/design/out-of-band.md` **whole**, for rows whose Date is empty;
    they are in allocation order, so a partial read is how one goes unpicked-up.
 5. **If the slice takes, reads or reasons from a measurement, invoke the
@@ -29,6 +30,12 @@ take the lowest such `M<k>`, one to a round. Otherwise take the next unticked
 slice **in order** — not the most interesting one, not a refactor you noticed on
 the way, not several at once; a partly-landed slice's checklist entry says what
 remains, and that is what you finish.
+
+**With no phase open — `STATUS.md` carries no checklist — the ledger is the
+work**: take the lowest `M<k>` whose Date is empty, one to a round. Allocation
+order is run order; the history entry a row points at says if it is not. An open
+phase whose boxes are all ticked is a wrap waiting, not a licence to drain the
+ledger: stop there.
 
 **Re-test the premise before building, and stop if it fails.** For an out-of-band
 row that is the admission rule — changes no decision any spec records, *and* fits

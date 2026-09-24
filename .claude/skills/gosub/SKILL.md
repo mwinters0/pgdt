@@ -1,9 +1,10 @@
 ---
 name: gosub
-description: Run rounds of unattended roadmap work, each in a fresh subagent, committing between rounds and stopping the moment something needs the maintainer. Use when the user invokes /gosub, or asks for several slices to be landed autonomously in sequence.
+description: Run rounds of unattended roadmap work, each in a fresh subagent, committing between rounds and stopping the moment something needs the maintainer. Use when the user invokes /gosub, or asks for several slices or out-of-band items to be landed autonomously in sequence.
 ---
 
-Drive `/go` in a loop. Each round is a **fresh subagent** that lands one slice;
+Drive `/go` in a loop. Each round is a **fresh subagent** that lands one slice,
+or with no phase open one out-of-band item;
 this session orchestrates and never implements. `/gosub [max-rounds]`, cap **5**.
 
 Every round is a new `Agent` call, `subagent_type: "general-purpose"`, no `model`
@@ -20,17 +21,18 @@ status --short`) — a dirty tree means the previous round did not finish, so st
 the current text of STATUS's **"Decisions worth another look"**; the unticked
 slice boxes in order; and the rows in `docs/design/out-of-band.md` whose Date is
 empty, noting which name the open phase in `Blocks`. A blocking row is what the
-round picks up ahead of the next slice.
+round picks up ahead of the next slice; with no phase open, the lowest row whose
+Date is empty is what it picks up (`go`, "Pick the work").
 
 **2. Dispatch a fresh subagent**, with this prompt and nothing else:
 
 > Invoke the `go` skill (Skill tool, `skill: "go"`) and follow it exactly. Land
-> exactly one slice — the next unticked box in the STATUS checklist — reporting
+> exactly one piece of work — the one its "Pick the work" selects — reporting
 > the number of the task you've selected before you implement. If it requires a
 > job you expect to run over 30 minutes, read `.claude/skills/gosub/handoff.md`
 > and follow that instead of finishing the slice.
 >
-> Then report: the slice number and title, or the `M<k>` if you took a blocking
+> Then report: the slice number and title, or the `M<k>` if you took an
 > out-of-band row; whether you ticked its box and what remains if not; any
 > entries you added to STATUS's "Decisions worth another look", quoted in full;
 > any split and the `<N>.<M>.<K>` it earned; the verbatim result lines from
@@ -87,8 +89,9 @@ Any one ends the loop. Report it plainly; do not work around it.
   `<N>.<M>.<K>`, or an out-of-band row whose Date is still empty — except a round
   that handed off a long job, unticked *by design* and ticked by step 5 below.
 - **`cargo test`, `clippy`, or `fmt --check` fails**, whatever the report said.
-- **No unticked slices remain** — a phase boundary is always a stop.
-- **The tree did not change**, or the round ticked nothing.
+- **Nothing is left to take**: an open phase with no unticked slice — a phase
+  boundary is always a stop — or, with none open, no row whose Date is empty.
+- **The tree did not change**, or the round ticked nothing and filled no Date.
 - **The round cap is reached.**
 - **The subagent reports it stopped at a boundary** or needs the maintainer.
 - **`repoint.py`'s meter is red.** The live record has outgrown its last blind

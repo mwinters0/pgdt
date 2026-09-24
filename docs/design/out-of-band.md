@@ -30,7 +30,8 @@ decision can say which; a session picking the row up weeks later cannot, and
 guesses. `Blocks` names the open phase when that phase's remaining slices
 should not be landed around it, and is empty otherwise. It is read by the
 unattended loop — [`.claude/skills/go/SKILL.md`](../../.claude/skills/go/SKILL.md)
-takes a blocking row ahead of the next unticked slice — and cleared when the
+takes a blocking row ahead of the next unticked slice, and with no phase open
+takes every row in allocation order — and cleared when the
 item lands, at the same time the Date is filled in.
 
 **Admission rule.** An item is out-of-band only if it changes no decision any
