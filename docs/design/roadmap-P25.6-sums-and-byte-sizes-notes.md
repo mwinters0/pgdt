@@ -2,11 +2,12 @@
 
 The slice built the spec's last two "Same-pass gathering" items
 ([`roadmap-P25-plan-answers.md`](roadmap-P25-plan-answers.md)): a per-group
-sum and a per-group byte size. `CACHE_FORMAT_VERSION` is 26. The stored
+sum and a per-group byte size, bumping `CACHE_FORMAT_VERSION`. The stored
 fields are `ColumnStatistics::sums` and `ColumnStatistics::value_bytes`. The
-reasons the code cannot give are `decisions.md`, "D91". One call made without
-the maintainer is under STATUS's "Decisions worth another look": text bytes
-are gathered for the typed read's text and `bytea` columns only.
+reasons the code cannot give are `decisions.md`, "D91". Its text bytes, kept
+here for the typed read's text and `bytea` columns only, are kept for every
+column by 25.7 ([notes](roadmap-P25.7-every-column-sized-notes.md)), which
+also says what a boolean, an enum and a nested column state.
 
 ## What the next slices inherit
 
@@ -33,12 +34,11 @@ are gathered for the typed read's text and `bytea` columns only.
   make the sum go unanswered rather than wrong.
 - **Byte sizes are the provider's.** `table_statistics` states a fixed-width
   column's `rows × width` `Exact` (`primitive_width`, and `FixedSizeBinary`),
-  a `Utf8View` or `Binary` column's text bytes `Inexact`, and nothing for a
-  boolean, an enum or a nested column. `total_byte_size` is recomputed after
-  the projection and is `Absent` where any projected column is. Under a
-  filter the scan restates each column from `TablePartitions::kept_value_bytes`
-  and the filtered row bound, summed where `kept_rows` is. That uses a
-  `kept_groups` mask now on `BlockPruning`.
+  a `Utf8View` or `Binary` column's text bytes `Inexact`. `total_byte_size`
+  is recomputed after the projection and is `Absent` where any projected
+  column is. Under a filter the scan restates each column from
+  `TablePartitions::kept_value_bytes` and the filtered row bound, summed where
+  `kept_rows` is. That uses a `kept_groups` mask now on `BlockPruning`.
 - **What the harness now pins.** `statistics_never_change_an_answer` asserts
   `Seen::sum` in the typed pass and fails a `SUM` answered over a column the
   read refuses. The new target `a_sum_answers_where_every_group_kept_one`
@@ -63,9 +63,6 @@ are gathered for the typed read's text and `bytea` columns only.
   `long_value`. 25.1's notes expected both the build side and the mode to
   move. The side moved, and the mode is still `CollectLeft`, now over the
   small side.
-- **About half the filtered scans state a total.** A table projecting a
-  boolean, an enum or a nested column states no total. In the typed pass
-  those are the only columns without a measure.
 - **A `numeric(p,s)` past 38 digits keeps no sum.** It is emitted as
   `Decimal256`, which the spec left out and a 128-bit sum cannot hold. A
   bare `numeric` keeps none either, since it is emitted as text.

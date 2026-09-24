@@ -484,10 +484,11 @@ pub struct ColumnStatistics {
     pub sums: Option<Vec<i128>>,
     /// Per group, the summed length of its non-NULL fields' text once
     /// unescaped — the bytes a `Utf8View` of them holds, and never fewer than
-    /// a `bytea`'s decoded bytes — a field that does not decode counting its
-    /// escaped bytes. Present for a column the typed read emits as `Utf8View`
-    /// or `Binary`, the variable-width columns a length measures.
-    pub value_bytes: Option<Vec<u64>>,
+    /// a `bytea`'s decoded bytes or an enum's labels — a field that does not
+    /// decode counting its escaped bytes. Kept for every column, whatever the
+    /// typed read emits it as: the measure is the text's, so a read in
+    /// [`crate::SchemaMode::Strings`] sizes every column by it.
+    pub value_bytes: Vec<u64>,
 }
 
 /// Which of a column's stored sets of bounds and row order a statistic is read
@@ -672,19 +673,19 @@ impl ColumnStatistics {
                 + dictionary.groups.iter().flatten().map(vec_heap).sum::<u64>()
         });
         let sums = self.sums.as_ref().map_or(0, vec_heap);
-        let value_bytes = self.value_bytes.as_ref().map_or(0, vec_heap);
+        let value_bytes = vec_heap(&self.value_bytes);
         named + vec_heap(&self.null_counts) + bounds + dictionary + sums + value_bytes
     }
 
     /// The summed [`Self::value_bytes`] of the groups `keep` answers `true`
     /// for, of a block holding `groups` groups — `None` where this column
-    /// counted none, or not one per group.
+    /// did not count one per group.
     pub(crate) fn value_bytes_where(
         &self,
         groups: usize,
         keep: impl Fn(usize) -> bool,
     ) -> Option<u64> {
-        let counted = self.value_bytes.as_ref().filter(|counted| counted.len() == groups)?;
+        let counted = Some(&self.value_bytes).filter(|counted| counted.len() == groups)?;
         Some(counted.iter().enumerate().filter(|&(g, _)| keep(g)).map(|(_, bytes)| bytes).sum())
     }
 }

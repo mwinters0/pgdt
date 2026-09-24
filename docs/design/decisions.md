@@ -502,13 +502,13 @@ for a partial bound, giving up cardinality; the union as `Inexact`, a floor infl
 bound fails to decode; under a filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
 ### D91 A sum is kept wrapped and handed over as `SUM` wraps; a byte size is the text's length
-The value owed is DataFusion's `SUM`, which wraps (`add_wrapping`), not PostgreSQL's: wrapping addition is associative, so group sums
-kept at 128 bits narrow exactly to the `Int64` an integer is cast to and the `UInt64` an `oid` is, and are a `Decimal128`'s own, handed
-over in the column's type, which `SUM` widens unchecked. A value that does not decode drops its column's sums, which cannot leave it out
-as a bound does (D54). A byte size is a `Utf8View`'s text length, a bound above a `Binary`'s bytes, both `Inexact` (D46), or rows × width,
-`Exact` unfiltered; a filter bounds both by the kept groups as it bounds rows. Rejected: a float's sum, order-dependent; a bare `numeric`'s,
-emitted as text; a sum per group kept through a loss, nothing reading a partial one; a `bytea`'s decoded length, below what a `:strings`
-read emits; a byte size scaled by a guessed selectivity. Code: `gather::Summand`, `datafusion-pgdump`'s `statistics.rs`. Evidence: `tests/statistics.rs`.
+The value owed is DataFusion's `SUM`, which wraps (`add_wrapping`), not PostgreSQL's, and wrapping addition is associative: group sums at
+128 bits narrow exactly to the `Int64` an integer is cast to and an `oid`'s `UInt64`, and are a `Decimal128`'s own, which `SUM` widens
+unchecked. A value that does not decode drops its column's sums, unable to leave it out as a bound does (D54). Text bytes are kept for every
+column, a cache being gathered typed whatever reads it: a `Utf8View`'s size, a `Binary`'s bound and an enum's labels beside its keys, `Inexact`
+(D46); rows × width, a bit a boolean, `Exact` unfiltered; a nested column none, its text bounding no leaf; a filter bounds each by the kept groups.
+Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings` sized by bounds
+and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

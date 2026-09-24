@@ -1344,8 +1344,7 @@ counted in units of `10^-s` — for an integer or `oid` column and a
 `null` for every other column and for one holding a value that is not its
 type; a sum wraps at 128 bits, which can be past what a JSON reader parses
 as a number), and `value_bytes` (per group, the bytes of its values' text,
-for a column a typed query reads as text or as `bytea`, and `null` for every
-other). Every per-group array is
+for every column). Every per-group array is
 as long as `groups`. Nothing is summed per
 table the way `--detail` sums it; that is yours to do, and the export grows
 with the dump — every group of every column is in it.

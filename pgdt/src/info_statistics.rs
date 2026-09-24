@@ -276,7 +276,7 @@ mod tests {
                 groups: bounded.iter().map(|_| Some(vec![0])).collect(),
             }),
             sums: Some(vec![1; bounded.len()]),
-            value_bytes: None,
+            value_bytes: vec![1; bounded.len()],
         })
     }
 

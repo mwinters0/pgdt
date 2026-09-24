@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arrow::array::{Array, ArrayRef, AsArray, RecordBatch};
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Schema};
 use arrow::row::{RowConverter, SortField};
 use arrow::util::display::{ArrayFormatter, FormatOptions};
 use arrow::util::pretty::pretty_format_batches;
@@ -717,13 +717,23 @@ async fn readable_columns(ctx: &SessionContext, table: &PgDumpTable) -> Vec<usiz
     readable
 }
 
-/// The bytes a column emits by the measure a byte-size statistic is checked
-/// against: its width for every row of a fixed-width type, and the length of
-/// every non-null value of a variable-width one — the values' own bytes, not
-/// the buffers holding them, a view's living in a buffer the batches share
-/// (`docs/design/decisions.md`, "D46"). `None` for a type with no measure
-/// here, where a stated byte size fails the check rather than passing it.
-fn emitted_bytes(array: &dyn Array) -> Option<usize> {
+/// The bytes a column emits over `arrays`, its every batch, by the measure a
+/// byte-size statistic is checked against: its width for every row of a
+/// fixed-width type and a bit a row of a boolean; the length of every non-null
+/// value of a variable-width one — the values' own bytes, not the buffers
+/// holding them, a view's living in a buffer the batches share
+/// (`docs/design/decisions.md`, "D46"); and a dictionary's keys and the values
+/// each batch's dictionary holds. `None` for a type with no measure here,
+/// where a stated byte size fails the check rather than passing it.
+fn emitted_bytes(arrays: &[&dyn Array]) -> Option<usize> {
+    if arrays.first().is_some_and(|array| *array.data_type() == DataType::Boolean) {
+        return Some(arrays.iter().map(|array| array.len()).sum::<usize>().div_ceil(8));
+    }
+    arrays.iter().map(|array| batch_bytes(*array)).sum()
+}
+
+/// [`emitted_bytes`] of one batch, for a type measured batch by batch.
+fn batch_bytes(array: &dyn Array) -> Option<usize> {
     let data_type = array.data_type();
     if let Some(width) = data_type.primitive_width() {
         return Some(array.len() * width);
@@ -736,6 +746,10 @@ fn emitted_bytes(array: &dyn Array) -> Option<usize> {
             Some(array.as_binary_view().iter().flatten().map(<[u8]>::len).sum())
         }
         DataType::Binary => Some(array.as_binary::<i32>().iter().flatten().map(<[u8]>::len).sum()),
+        DataType::Dictionary(..) => {
+            let dictionary = array.as_any_dictionary();
+            Some(batch_bytes(dictionary.keys())? + batch_bytes(dictionary.values().as_ref())?)
+        }
         _ => None,
     }
 }
@@ -764,7 +778,11 @@ fn check_estimates(what: &str, statistics: &Statistics, batches: &[RecordBatch])
     bounds(&format!("{what}: rows"), &statistics.num_rows, Some(rows));
     let columns = statistics.column_statistics.len();
     let per_column: Vec<Option<usize>> = (0..columns)
-        .map(|i| batches.iter().map(|batch| emitted_bytes(batch.column(i).as_ref())).sum())
+        .map(|i| {
+            let arrays: Vec<&dyn Array> =
+                batches.iter().map(|batch| batch.column(i).as_ref()).collect();
+            emitted_bytes(&arrays)
+        })
         .collect();
     let total = per_column.iter().copied().sum::<Option<usize>>();
     bounds(&format!("{what}: total bytes"), &statistics.total_byte_size, total);
@@ -849,15 +867,61 @@ struct Estimates {
     sized: usize,
     /// Filtered scans whose byte bound fell below the unfiltered scan's.
     shrunk: usize,
+    /// Typed booleans stating `Exact` bytes, typed enums `Inexact` ones and
+    /// typed nested columns none, unfiltered.
+    booleans: usize,
+    enums: usize,
+    nested: usize,
+    /// Unfiltered scans read as text, every one stating its total bytes.
+    text_sized: usize,
+}
+
+/// **Which columns state their bytes**, unfiltered: read as text every one,
+/// its text's length; typed, a boolean exactly, an enum as a bound, and a
+/// nested column none (`docs/design/decisions.md`, "D91"). Checked against
+/// the emitted bytes by [`check_estimates`]; counted into `seen` here.
+fn which_are_sized(
+    what: &str,
+    schema_mode: SchemaMode,
+    schema: &Schema,
+    statistics: &Statistics,
+    seen: &mut Estimates,
+) {
+    for (field, column) in schema.fields().iter().zip(&statistics.column_statistics) {
+        let (stated, what) = (&column.byte_size, format!("{what}: {}'s bytes", field.name()));
+        match (schema_mode, field.data_type()) {
+            (SchemaMode::Strings, _) => {
+                assert!(matches!(stated, Precision::Inexact(_)), "{what}: {stated:?}");
+            }
+            (_, DataType::Boolean) => {
+                assert!(matches!(stated, Precision::Exact(_)), "{what}: {stated:?}");
+                seen.booleans += 1;
+            }
+            (_, DataType::Dictionary(..)) => {
+                assert!(matches!(stated, Precision::Inexact(_)), "{what}: {stated:?}");
+                seen.enums += 1;
+            }
+            (_, data_type) if data_type.is_nested() => {
+                assert_eq!(*stated, Precision::Absent, "{what}");
+                seen.nested += 1;
+            }
+            _ => {}
+        }
+    }
+    if schema_mode == SchemaMode::Strings {
+        assert!(statistics.total_byte_size.get_value().is_some(), "{what}: no total bytes");
+        seen.text_sized += 1;
+    }
 }
 
 /// **An estimate is never below what the scan emits, and an `Exact` one is
 /// what it emits**: every table of [`planned_fixtures`], gathered at
-/// [`SMALL_GROUP`], unfiltered, fetched, and under each term the provider
-/// pushes and seeded trees of them — for the whole node and for each
-/// partition, rows and bytes alike. Past a filter or a fetch no column
-/// statistic may be `Exact`, and a filter's row bound falls below the table's
-/// rows only where its pruning skipped a group.
+/// [`SMALL_GROUP`] and read typed and as text, unfiltered, fetched, and under
+/// each term the provider pushes and seeded trees of them — for the whole node
+/// and for each partition, rows and bytes alike. Past a filter or a fetch no
+/// column statistic may be `Exact`, and a filter's row bound falls below the
+/// table's rows only where its pruning skipped a group. Which columns state
+/// their bytes at all is [`which_are_sized`]'s.
 #[test]
 fn an_estimate_is_never_below_what_the_scan_emits() {
     let seen = per_major(planned_fixtures(), estimates_over).into_iter().fold(
@@ -868,6 +932,10 @@ fn an_estimate_is_never_below_what_the_scan_emits() {
             tightened: sum.tightened + seen.tightened,
             sized: sum.sized + seen.sized,
             shrunk: sum.shrunk + seen.shrunk,
+            booleans: sum.booleans + seen.booleans,
+            enums: sum.enums + seen.enums,
+            nested: sum.nested + seen.nested,
+            text_sized: sum.text_sized + seen.text_sized,
         },
     );
     assert!(seen.filtered > 20_000, "{seen:?}");
@@ -875,6 +943,8 @@ fn an_estimate_is_never_below_what_the_scan_emits() {
     assert!(seen.tightened > seen.pruning * 9 / 10, "{seen:?}");
     assert!(seen.sized > seen.filtered / 3, "{seen:?}");
     assert!(seen.shrunk > seen.tightened / 3, "{seen:?}");
+    assert!(seen.booleans > 0 && seen.enums > 0 && seen.nested > 0, "{seen:?}");
+    assert!(seen.text_sized > 0, "{seen:?}");
 }
 
 /// [`an_estimate_is_never_below_what_the_scan_emits`] over one major's
@@ -887,126 +957,139 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
     let mut seen = Estimates::default();
     for fixture in fixtures {
         let copy = parsed_copy_in_small_groups(&fixture, scratch.path()).await;
-        let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-        let (ctx, _blind) = sessions_at(3);
-        let state = ctx.state();
-        for name in dump.tables() {
-            let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
-            let what = format!("{} in {}", name.qualified(), fixture.display());
-            let projection = readable_columns(&ctx, &table).await;
-            if projection.is_empty() {
-                continue;
-            }
-            let unfiltered = table.scan(&state, Some(&projection), &[], None).await.unwrap();
-            let whole = partitions_of(&ctx, Arc::clone(&unfiltered)).await.unwrap();
-            let all: Vec<RecordBatch> = whole.iter().flatten().cloned().collect();
-            let table_rows = all.iter().map(RecordBatch::num_rows).sum::<usize>();
-            let schema = unfiltered.schema();
-            let resolved = table.resolved_schema();
-            let mut terms = Vec::new();
-            for (at, &index) in projection.iter().enumerate() {
-                let field = schema.field(at);
-                terms.push(column(field.name()).is_null());
-                terms.push(column(field.name()).is_not_null());
-                if resolved.plans[index] != NestedPlan::Scalar {
+        for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
+            let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };
+            let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
+            let (ctx, _blind) = sessions_at(3);
+            let state = ctx.state();
+            for name in dump.tables() {
+                let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
+                let what =
+                    format!("{} in {} ({schema_mode:?})", name.qualified(), fixture.display());
+                let projection = readable_columns(&ctx, &table).await;
+                if projection.is_empty() {
                     continue;
                 }
-                let values =
-                    all.iter().map(|batch| Arc::clone(batch.column(at))).collect::<Vec<_>>();
-                let Some(values) = (!values.is_empty()).then(|| {
-                    arrow::compute::concat(&values.iter().map(AsRef::as_ref).collect::<Vec<_>>())
+                let unfiltered = table.scan(&state, Some(&projection), &[], None).await.unwrap();
+                let whole = partitions_of(&ctx, Arc::clone(&unfiltered)).await.unwrap();
+                let all: Vec<RecordBatch> = whole.iter().flatten().cloned().collect();
+                let table_rows = all.iter().map(RecordBatch::num_rows).sum::<usize>();
+                let schema = unfiltered.schema();
+                let resolved = table.resolved_schema();
+                let mut terms = Vec::new();
+                for (at, &index) in projection.iter().enumerate() {
+                    let field = schema.field(at);
+                    terms.push(column(field.name()).is_null());
+                    terms.push(column(field.name()).is_not_null());
+                    if resolved.plans[index] != NestedPlan::Scalar {
+                        continue;
+                    }
+                    let values =
+                        all.iter().map(|batch| Arc::clone(batch.column(at))).collect::<Vec<_>>();
+                    let Some(values) = (!values.is_empty()).then(|| {
+                        arrow::compute::concat(
+                            &values.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+                        )
                         .unwrap()
-                }) else {
-                    continue;
-                };
-                for value in literals(&values) {
-                    for op in OPERATORS {
-                        terms.push(binary(
-                            column(field.name()),
-                            op,
-                            Expr::Literal(value.clone(), None),
-                        ));
+                    }) else {
+                        continue;
+                    };
+                    for value in literals(&values) {
+                        for op in OPERATORS {
+                            terms.push(binary(
+                                column(field.name()),
+                                op,
+                                Expr::Literal(value.clone(), None),
+                            ));
+                        }
                     }
                 }
-            }
-            terms.retain(|term| {
-                table.supports_filters_pushdown(&[term]).unwrap()[0]
-                    == TableProviderFilterPushDown::Exact
-            });
-            let mut filters: Vec<Option<Expr>> = vec![None];
-            let mut whole_bytes = None;
-            filters.extend(terms.iter().cloned().map(Some));
-            if !terms.is_empty() {
-                filters
-                    .extend((0..TREES_PER_TABLE).map(|_| Some(random_tree(&mut rng, &terms, 3))));
-            }
-            for filter in filters {
-                let pushed = filter.iter().cloned().collect::<Vec<_>>();
-                for limit in [None, Some(7)] {
-                    let what = match &filter {
-                        Some(filter) => format!("{what} under {filter}, fetch {limit:?}"),
-                        None => format!("{what}, fetch {limit:?}"),
-                    };
-                    let plan = table.scan(&state, Some(&projection), &pushed, limit).await.unwrap();
-                    let partitions = partitions_of(&ctx, Arc::clone(&plan)).await.unwrap();
-                    let statistics = StatisticsContext::new()
-                        .compute(plan.as_ref(), &StatisticsArgs::new())
-                        .unwrap();
-                    match limit {
-                        // A fetch is applied above the partitions, which may
-                        // emit more than it keeps.
-                        Some(limit) => {
-                            let rows = partitions.iter().flatten().map(RecordBatch::num_rows);
-                            let kept = rows.sum::<usize>().min(limit);
-                            bounds(&format!("{what}: rows"), &statistics.num_rows, Some(kept));
-                        }
-                        None => {
-                            let batches: Vec<RecordBatch> =
-                                partitions.iter().flatten().cloned().collect();
-                            check_estimates(&what, &statistics, &batches);
-                            for (i, partition) in partitions.iter().enumerate() {
-                                let args = StatisticsArgs::new().with_partition(Some(i));
-                                let statistics =
-                                    StatisticsContext::new().compute(plan.as_ref(), &args).unwrap();
-                                let what = format!("{what}, partition {i}");
-                                check_estimates(&what, &statistics, partition);
+                terms.retain(|term| {
+                    table.supports_filters_pushdown(&[term]).unwrap()[0]
+                        == TableProviderFilterPushDown::Exact
+                });
+                let mut filters: Vec<Option<Expr>> = vec![None];
+                let mut whole_bytes = None;
+                filters.extend(terms.iter().cloned().map(Some));
+                if !terms.is_empty() {
+                    filters.extend(
+                        (0..TREES_PER_TABLE).map(|_| Some(random_tree(&mut rng, &terms, 3))),
+                    );
+                }
+                for filter in filters {
+                    let pushed = filter.iter().cloned().collect::<Vec<_>>();
+                    for limit in [None, Some(7)] {
+                        let what = match &filter {
+                            Some(filter) => format!("{what} under {filter}, fetch {limit:?}"),
+                            None => format!("{what}, fetch {limit:?}"),
+                        };
+                        let plan =
+                            table.scan(&state, Some(&projection), &pushed, limit).await.unwrap();
+                        let partitions = partitions_of(&ctx, Arc::clone(&plan)).await.unwrap();
+                        let statistics = StatisticsContext::new()
+                            .compute(plan.as_ref(), &StatisticsArgs::new())
+                            .unwrap();
+                        match limit {
+                            // A fetch is applied above the partitions, which may
+                            // emit more than it keeps.
+                            Some(limit) => {
+                                let rows = partitions.iter().flatten().map(RecordBatch::num_rows);
+                                let kept = rows.sum::<usize>().min(limit);
+                                bounds(&format!("{what}: rows"), &statistics.num_rows, Some(kept));
+                            }
+                            None => {
+                                let batches: Vec<RecordBatch> =
+                                    partitions.iter().flatten().cloned().collect();
+                                check_estimates(&what, &statistics, &batches);
+                                for (i, partition) in partitions.iter().enumerate() {
+                                    let args = StatisticsArgs::new().with_partition(Some(i));
+                                    let statistics = StatisticsContext::new()
+                                        .compute(plan.as_ref(), &args)
+                                        .unwrap();
+                                    let what = format!("{what}, partition {i}");
+                                    check_estimates(&what, &statistics, partition);
+                                }
                             }
                         }
-                    }
-                    // A fetch the table's rows fit under takes nothing out.
-                    let fetch_cuts = limit.is_some_and(|limit| table_rows > limit);
-                    if filter.is_some() || fetch_cuts {
-                        nothing_exact_per_column(&what, &statistics);
-                    }
-                    if filter.is_some() && limit.is_none() {
-                        seen.filtered += 1;
-                        let metrics = plan.metrics().unwrap_or_default().aggregate_by_name();
-                        let pruned = metrics.iter().any(|metric| {
-                            matches!(
-                                metric.value(),
-                                MetricValue::PruningMetrics { name, pruning_metrics }
-                                    if name == "row_groups_pruned_statistics"
-                                        && pruning_metrics.pruned() > 0
-                            )
-                        });
-                        seen.pruning += usize::from(pruned);
-                        let bound = statistics.num_rows.get_value().copied();
-                        if bound.is_some_and(|bound| bound < table_rows) {
-                            assert!(pruned, "{what}: a bound below the table's with no pruning");
-                            seen.tightened += 1;
+                        // A fetch the table's rows fit under takes nothing out.
+                        let fetch_cuts = limit.is_some_and(|limit| table_rows > limit);
+                        if filter.is_some() || fetch_cuts {
+                            nothing_exact_per_column(&what, &statistics);
                         }
-                        let bytes = statistics.total_byte_size.get_value().copied();
-                        seen.sized += usize::from(bytes.is_some());
-                        if bytes.zip(whole_bytes).is_some_and(|(bytes, whole)| bytes < whole) {
-                            assert!(
-                                pruned,
-                                "{what}: a byte bound below the table's with no pruning"
-                            );
-                            seen.shrunk += 1;
+                        if filter.is_some() && limit.is_none() {
+                            seen.filtered += 1;
+                            let metrics = plan.metrics().unwrap_or_default().aggregate_by_name();
+                            let pruned = metrics.iter().any(|metric| {
+                                matches!(
+                                    metric.value(),
+                                    MetricValue::PruningMetrics { name, pruning_metrics }
+                                        if name == "row_groups_pruned_statistics"
+                                            && pruning_metrics.pruned() > 0
+                                )
+                            });
+                            seen.pruning += usize::from(pruned);
+                            let bound = statistics.num_rows.get_value().copied();
+                            if bound.is_some_and(|bound| bound < table_rows) {
+                                assert!(
+                                    pruned,
+                                    "{what}: a bound below the table's with no pruning"
+                                );
+                                seen.tightened += 1;
+                            }
+                            let bytes = statistics.total_byte_size.get_value().copied();
+                            seen.sized += usize::from(bytes.is_some());
+                            if bytes.zip(whole_bytes).is_some_and(|(bytes, whole)| bytes < whole) {
+                                assert!(
+                                    pruned,
+                                    "{what}: a byte bound below the table's with no pruning"
+                                );
+                                seen.shrunk += 1;
+                            }
                         }
-                    }
-                    if filter.is_none() && limit.is_none() {
-                        whole_bytes = statistics.total_byte_size.get_value().copied();
+                        if filter.is_none() && limit.is_none() {
+                            whole_bytes = statistics.total_byte_size.get_value().copied();
+                            which_are_sized(&what, schema_mode, &schema, &statistics, &mut seen);
+                        }
                     }
                 }
             }

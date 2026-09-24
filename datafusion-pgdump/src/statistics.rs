@@ -55,6 +55,7 @@ pub(crate) fn table_statistics(
                 .distinct
                 .and_then(|distinct| usize::try_from(distinct).ok())
                 .map_or(Precision::Absent, Precision::Exact);
+            statistics.byte_size = byte_size(data_type, rows, column.value_bytes);
             // deficiency: KD45 — an enum is emitted `Dictionary`, and
             // DataFusion types a `MIN` or `MAX` of one as the dictionary's value
             // type, not the column's (`get_min_max_result_type`), so a statistic
@@ -70,7 +71,6 @@ pub(crate) fn table_statistics(
             statistics.min_value = bound(column.min.as_ref(), column.bounds_complete);
             statistics.max_value = bound(column.max.as_ref(), column.bounds_complete);
             statistics.sum_value = sum(column.sum, data_type);
-            statistics.byte_size = byte_size(data_type, rows, column.value_bytes);
             statistics
         })
         .collect();
@@ -99,36 +99,50 @@ fn sum(sum: Option<i128>, data_type: &DataType) -> Precision<ScalarValue> {
 }
 
 /// The Arrow bytes a scan emits of a column of `data_type` over `rows` rows,
-/// its values' text being `value_bytes` long: its width for every row of a
-/// fixed-width type, exact where the rows are; the text's length for a
-/// `Utf8View`, the bytes its views point at, and for a `Binary` a bound above
-/// its decoded bytes — `Inexact` both, a view's bytes living in a buffer the
-/// batches share (`docs/design/decisions.md`, "D46"); and `Absent` for every
-/// other type, which nothing here measures (`docs/design/decisions.md`,
-/// "D91").
+/// its values' text being `value_bytes` long (`docs/design/decisions.md`,
+/// "D91"):
+///
+/// - its width for every row of a fixed-width type, and a bit a row of a
+///   boolean, exact where the rows are;
+/// - the text's length for a `Utf8View`, the bytes its views point at, and for
+///   a `Binary` a bound above its decoded bytes, `Inexact` both, a view's
+///   bytes living in a buffer the batches share (`docs/design/decisions.md`,
+///   "D46");
+/// - for an enum's `Dictionary`, its keys' width a row and its values' text,
+///   which bounds the labels each batch's dictionary holds, `Inexact`;
+/// - and `Absent` for a nested type, whose text bounds nothing of its leaves'.
 pub(crate) fn byte_size(
     data_type: &DataType,
     rows: Precision<usize>,
     value_bytes: Option<u64>,
 ) -> Precision<usize> {
-    let width = match data_type {
-        DataType::FixedSizeBinary(width) => usize::try_from(*width).ok(),
-        _ => data_type.primitive_width(),
-    };
-    if let Some(width) = width {
-        return match rows {
-            Precision::Exact(rows) => {
-                rows.checked_mul(width).map_or(Precision::Absent, Precision::Exact)
-            }
-            Precision::Inexact(rows) => {
-                rows.checked_mul(width).map_or(Precision::Absent, Precision::Inexact)
-            }
-            Precision::Absent => Precision::Absent,
-        };
+    let text = value_bytes.and_then(|bytes| usize::try_from(bytes).ok());
+    match data_type {
+        DataType::Boolean => per_row(rows, |rows| Some(rows.div_ceil(8))),
+        DataType::FixedSizeBinary(width) => {
+            per_row(rows, |rows| rows.checked_mul(usize::try_from(*width).ok()?))
+        }
+        DataType::Utf8View | DataType::Binary => text.map_or(Precision::Absent, Precision::Inexact),
+        DataType::Dictionary(key, _) => {
+            let keys = rows.get_value().zip(key.primitive_width());
+            let keys = keys.and_then(|(rows, width)| rows.checked_mul(width));
+            keys.zip(text)
+                .and_then(|(keys, text)| keys.checked_add(text))
+                .map_or(Precision::Absent, Precision::Inexact)
+        }
+        _ => match data_type.primitive_width() {
+            Some(width) => per_row(rows, |rows| rows.checked_mul(width)),
+            None => Precision::Absent,
+        },
     }
-    match (data_type, value_bytes.and_then(|bytes| usize::try_from(bytes).ok())) {
-        (DataType::Utf8View | DataType::Binary, Some(bytes)) => Precision::Inexact(bytes),
-        _ => Precision::Absent,
+}
+
+/// `bytes` of `rows`, as exact as the rows are.
+fn per_row(rows: Precision<usize>, bytes: impl Fn(usize) -> Option<usize>) -> Precision<usize> {
+    match rows {
+        Precision::Exact(rows) => bytes(rows).map_or(Precision::Absent, Precision::Exact),
+        Precision::Inexact(rows) => bytes(rows).map_or(Precision::Absent, Precision::Inexact),
+        Precision::Absent => Precision::Absent,
     }
 }
 

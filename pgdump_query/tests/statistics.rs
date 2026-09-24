@@ -157,20 +157,11 @@ fn unscaled(value: &str, scale: u32) -> i128 {
     format!("{whole}{fraction}").parse().unwrap()
 }
 
-/// Whether the typed read emits a `declared` column as text or bytes, whose
-/// values' lengths the statistics sum: every fixture type bar the numbers, the
-/// booleans, the timestamps and the enum.
-fn measured(declared: &str) -> bool {
-    matches!(declared, "text" | "numeric" | "bytea")
-        || blank_padded(declared)
-        || declared.starts_with("character varying")
-}
-
 /// Every statistic of `block` against the file: the groups' extents and row
 /// counts, and per column its NULL counts, its sum wrapped at 128 bits and its
-/// values' text bytes where the column keeps them, that each bound is on the right side
-/// of every value in its group — an exact one being a value there, a float's
-/// in IEEE `totalOrder` as well, which tells its zeros apart — and that each
+/// values' text bytes, that each bound is on the right side of every value in
+/// its group — an exact one being a value there, a float's in IEEE
+/// `totalOrder` as well, which tells its zeros apart — and that each
 /// dictionary is exactly the group's distinct texts or absent past a cap.
 fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
     let stats = statistics(block);
@@ -214,14 +205,8 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
                 (None, None) => {}
                 (sums, scale) => panic!("{what}: sums {sums:?} for a column summed at {scale:?}"),
             }
-            match &column.value_bytes {
-                Some(bytes) => {
-                    assert!(measured(declared), "{what}: text bytes of a fixed-width column");
-                    let length = values.iter().map(|v| v.len() as u64).sum::<u64>();
-                    assert_eq!(bytes[k], length, "{what}: text bytes");
-                }
-                None => assert!(!measured(declared), "{what}: no text bytes"),
-            }
+            let length = values.iter().map(|v| v.len() as u64).sum::<u64>();
+            assert_eq!(column.value_bytes[k], length, "{what}: text bytes");
             // The fixture's columns keeping a second set are a bare `numeric`
             // and an enum, whose Arrow order is their text's.
             let sets =
