@@ -20,6 +20,10 @@ use common::{run, run_ok, sandboxed, stderr_of};
 
 const DUMP: &str = "16/statistics/default.sql";
 
+/// [`DUMP`]'s blocks: one per table `scripts/fixture_schema_statistics.sql`
+/// fills.
+const BLOCKS: usize = 8;
+
 /// `parse` under `extra` on a private copy, then `info --json` over the cache
 /// it wrote, and the dump's path for a further `info`.
 fn info_after(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, Value) {
@@ -77,7 +81,7 @@ fn array(value: &Value) -> &Vec<Value> {
 #[test]
 fn parse_gathers_every_table_by_default_at_a_mebibyte() {
     let blocks = blocks_after(&[]);
-    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks.len(), BLOCKS);
     for (table, block) in &blocks {
         let statistics = &block["statistics"];
         let size = statistics["group_size"].as_u64().unwrap();
@@ -127,15 +131,15 @@ fn a_selection_gathers_its_tables_and_columns_alone() {
     }
 }
 
-/// **A stated maximum re-reads the table too dense for it and says where it
+/// **A stated maximum re-reads the tables too dense for it and says where it
 /// still misses.** `ordered`'s thousand rows are one group at a mebibyte, so a
-/// maximum of a hundred is broken there; the block is read a second time at
-/// the finer size its own group predicts, records the maximum it was sized
-/// under, and — its rows all lying inside one of those finer groups — says on
-/// stderr that it still holds more. Asking again re-reads nothing and says it
-/// again.
+/// maximum of a hundred is broken there, as it is by each `spans` partition's
+/// five hundred; each block is read a second time at the finer size its own
+/// group predicts, records the maximum it was sized under, and — its rows all
+/// lying inside one of those finer groups — says on stderr that it still holds
+/// more. Asking again re-reads nothing and says it again.
 #[test]
-fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
+fn a_stated_maximum_rereads_the_dense_tables_and_says_where_they_still_miss() {
     let (_dir, dump) = sandboxed(DUMP, "maximum.sql");
     let source = dump.to_str().unwrap();
     let flags = ["--row-group-min-rows", "8", "--row-group-max-rows", "100"];
@@ -148,8 +152,8 @@ fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
     };
 
     let stderr = parse(&flags);
-    assert!(stderr.contains("statistics back-fill started blocks=1"), "{stderr}");
-    assert!(stderr.contains("statistics back-fill complete blocks=1"), "{stderr}");
+    assert!(stderr.contains("statistics back-fill started blocks=4"), "{stderr}");
+    assert!(stderr.contains("statistics back-fill complete blocks=4"), "{stderr}");
     assert!(
         stderr.contains(
             "row groups still hold more rows than the stated maximum \
@@ -420,13 +424,13 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     );
 
     let (stdout, stderr) = parse(&["--row-group-size", "4096"]);
-    assert!(stderr.contains("statistics back-fill started blocks=3"), "{stderr}");
-    assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
+    assert!(stderr.contains(&format!("statistics back-fill started blocks={BLOCKS}")), "{stderr}");
+    assert!(stderr.contains(&format!("statistics back-fill complete blocks={BLOCKS}")), "{stderr}");
     let sizes: Vec<u64> = blocks_of(&info_json(&dump))
         .iter()
         .map(|(_, block)| block["statistics"]["group_size"].as_u64().unwrap())
         .collect();
-    assert_eq!(sizes, vec![4096; 3]);
+    assert_eq!(sizes, vec![4096; BLOCKS]);
 
     let (stdout_again, stderr) = parse(&[]);
     assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
@@ -434,7 +438,7 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     assert_ne!(stdout, stdout_again);
 
     let (_, stderr) = parse(&["--row-group-min-rows", "16"]);
-    assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
+    assert!(stderr.contains(&format!("statistics back-fill complete blocks={BLOCKS}")), "{stderr}");
     let (_, stderr) = parse(&["--row-group-min-rows", "16"]);
     assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
     let (_, stderr) = parse(&[]);

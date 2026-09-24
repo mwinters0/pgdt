@@ -31,6 +31,10 @@ use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
 /// than [`DICTIONARY_MAX_ENTRIES`].
 const SMALL_GROUP: u64 = 4096;
 
+/// The `default` flag set's blocks: one per table
+/// `scripts/fixture_schema_statistics.sql` fills.
+const BLOCKS: usize = 8;
+
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
     let group_size = Some(NonZeroU64::new(group_size).unwrap());
     StatisticsRequest { selection, group_size, min_rows: None, max_rows: None }
@@ -81,9 +85,23 @@ fn file_rows(dump: &Path, block: &CopyBlock) -> Vec<FileRow> {
     rows
 }
 
+/// Whether `declared` is blank-padded, its trailing blanks insignificant: a
+/// `character(n)`, or a bare `bpchar`.
+fn blank_padded(declared: &str) -> bool {
+    declared == "bpchar" || (declared.starts_with("character") && !declared.contains("varying"))
+}
+
+/// A field as the statistics of a `declared` column hold it: a blank-padded
+/// one without its trailing blanks, which PostgreSQL does not compare.
+fn held<'a>(declared: &str, value: &'a str) -> &'a str {
+    if blank_padded(declared) { value.trim_end_matches(' ') } else { value }
+}
+
 /// PostgreSQL's order for the fixture's value types, written independently of
 /// the library: integers and numerics by value with `NaN` above every number,
-/// floats the same with `-0` equal to `0`, and text by its bytes.
+/// floats the same with `-0` equal to `0`, `false` below `true`, and text —
+/// blank-padded or varying — by its bytes. A `timestamptz` is written in the
+/// dump's one zone at one width, so its text is in its order too.
 fn order(declared: &str, a: &str, b: &str) -> Ordering {
     let number = |v: &str| match v {
         "NaN" => f64::NAN,
@@ -92,7 +110,11 @@ fn order(declared: &str, a: &str, b: &str) -> Ordering {
         _ => v.parse::<f64>().unwrap(),
     };
     match declared {
-        "text" => a.as_bytes().cmp(b.as_bytes()),
+        "text" | "timestamp with time zone" => a.as_bytes().cmp(b.as_bytes()),
+        "boolean" => (a == "t").cmp(&(b == "t")),
+        _ if blank_padded(declared) || declared.starts_with("character varying") => {
+            a.as_bytes().cmp(b.as_bytes())
+        }
         _ => {
             let (x, y) = (number(a), number(b));
             match (x.is_nan(), y.is_nan()) {
@@ -137,12 +159,16 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let Some(column) = column else { continue };
             let declared = column.declared_type.as_deref().unwrap();
             let values: Vec<&str> = members.iter().filter_map(|r| r.fields[c].as_deref()).collect();
+            // A blank-padded column's own set, and its dictionary, hold a value
+            // without its padding; its Arrow set holds the text it emits.
+            let unpadded: Vec<&str> = values.iter().map(|v| held(declared, v)).collect();
             let what = format!("{label}: group {k}, column {c} ({declared})");
             assert_eq!(column.null_counts[k], (members.len() - values.len()) as u64, "{what}");
             // The fixture's one column keeping a second set is a bare
             // `numeric`, whose Arrow order is its text's.
-            let sets = [(declared, &column.bounds), ("text", &column.arrow_bounds)];
-            for (declared, bounds) in sets {
+            let sets =
+                [(declared, &column.bounds, &unpadded), ("text", &column.arrow_bounds, &values)];
+            for (declared, bounds, values) in sets {
                 let Some(bounds) = bounds else { continue };
                 match &bounds.groups[k] {
                     None => assert!(
@@ -155,7 +181,7 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
                             b.min.len() <= DICTIONARY_ENTRY_MAX_BYTES
                                 && b.max.len() <= DICTIONARY_ENTRY_MAX_BYTES
                         );
-                        for v in &values {
+                        for v in values.iter() {
                             assert_ne!(
                                 order(declared, &b.min, v),
                                 Ordering::Greater,
@@ -181,7 +207,7 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
                 }
             }
             if let Some(dictionary) = &column.dictionary {
-                let distinct: BTreeSet<&str> = values.iter().copied().collect();
+                let distinct: BTreeSet<&str> = unpadded.iter().copied().collect();
                 let fits = distinct.len() <= DICTIONARY_MAX_ENTRIES
                     && distinct.iter().all(|v| v.len() <= DICTIONARY_ENTRY_MAX_BYTES);
                 match &dictionary.groups[k] {
@@ -213,7 +239,7 @@ async fn every_statistic_describes_the_file() {
     for version in VERSIONS {
         let dump = statistics_fixture(version, "default");
         let index = gathered(&dump, &request(StatisticsSelection::All, SMALL_GROUP)).await;
-        assert_eq!(index.blocks().count(), 3);
+        assert_eq!(index.blocks().count(), BLOCKS);
         for block in index.blocks() {
             assert_describes_the_file(
                 &dump,
@@ -509,14 +535,14 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
     let wanted = request(StatisticsSelection::All, SMALL_GROUP);
     let ordered = || "public.ordered".to_string();
     let earlier = [
-        (StatisticsRequest::NONE, 3),
-        (StatisticsRequest::ALL, 3),
+        (StatisticsRequest::NONE, BLOCKS),
+        (StatisticsRequest::ALL, BLOCKS),
         (
             request(
                 StatisticsSelection::Only(vec![StatisticsTarget::Table(ordered())]),
                 SMALL_GROUP,
             ),
-            2,
+            BLOCKS - 1,
         ),
         (
             request(
@@ -526,7 +552,7 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
                 }]),
                 SMALL_GROUP,
             ),
-            3,
+            BLOCKS,
         ),
     ];
     for version in VERSIONS {
@@ -572,7 +598,7 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
     mapped_into_cache(&dump, &ScanOptions::default(), &one_column).await;
     let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::ALL).await;
-    assert_eq!((run.lacking_statistics, run.backfilled), (3, 3));
+    assert_eq!((run.lacking_statistics, run.backfilled), (BLOCKS, BLOCKS));
     let small = gathered(&dump_of(), &request(StatisticsSelection::All, SMALL_GROUP)).await;
     let default = gathered(&dump_of(), &StatisticsRequest::ALL).await;
     for table in ["public.long_value", "public.ordered", "public.specials"] {
@@ -792,7 +818,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let run = mapped_into_cache(&dump, &options, &only_id).await;
     assert_eq!(statistics(block(&run.index, "public.ordered")).sizing, density(0));
     let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
-    assert_eq!(run.backfilled, 3, "ordered lacks columns, the others everything");
+    assert_eq!(run.backfilled, BLOCKS, "ordered lacks columns, the others everything");
     assert_eq!(records(&run), [density(0), default, default], "ordered kept its record");
 
     let run = mapped_into_cache(&dump, &options, &with_min(ROW_GROUP_DEFAULT_MIN_ROWS)).await;
@@ -802,7 +828,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let coarse = long_value(&run);
 
     let run = mapped_into_cache(&dump, &options, &with_min(0)).await;
-    assert_eq!(run.backfilled, 3);
+    assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [density(0); 3]);
     assert!(long_value(&run).groups.len() > coarse.groups.len());
     for request in [StatisticsRequest::ALL, with_min(0)] {
@@ -814,12 +840,12 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let run = mapped_into_cache(&dump, &options, &at_default_size).await;
     assert_eq!(run.backfilled, 0, "every block is at the size stated, whatever sized it");
     let run = mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, 4096)).await;
-    assert_eq!(run.backfilled, 3);
+    assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [GroupSizing::Stated; 3]);
     let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
     assert_eq!(run.backfilled, 0, "an unstated minimum keeps a stated size");
     let run = mapped_into_cache(&dump, &options, &with_min(ROW_GROUP_DEFAULT_MIN_ROWS)).await;
-    assert_eq!(run.backfilled, 3);
+    assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [default; 3]);
     assert_eq!(long_value(&run), coarse, "re-read from the first row, as gathered cold");
 }

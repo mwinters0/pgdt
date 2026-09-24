@@ -13,9 +13,8 @@
 -- the server rendered.
 --
 -- **Not held yet**: a `numeric` `Infinity` (PostgreSQL 13 cannot), and a
--- `bytea`, `varchar` or `character` column carrying bounds, so
--- statistics_fixture.rs reaches none; add a column rather than reason about
--- bytes.
+-- `bytea` column carrying bounds, so statistics_fixture.rs reaches neither;
+-- add a column rather than reason about bytes.
 
 -- ---------------------------------------------------------------------
 -- Row order. 1000 rows, enough that a group stated at a few KiB holds more
@@ -136,3 +135,119 @@ INSERT INTO public.long_value VALUES
     (2, repeat('m', 300)),
     (3, 'n' || repeat('0123456789abcdef', 66000)),
     (4, 'z-short');
+
+-- ---------------------------------------------------------------------
+-- What the DataFusion provider's plan answers are checked against
+-- (docs/design/roadmap-P25-plan-answers.md, "Evidence"): each table below
+-- holds a shape one of those answers can get wrong with no error.
+-- ---------------------------------------------------------------------
+
+-- A table whose rows arrive as **several blocks of one table** under
+-- `--load-via-partition-root` (I2), and as one table per partition without
+-- it. Rows are routed in insertion order, and pg_dump writes the partitions in
+-- name order, so a column ascending here ascends across every block boundary;
+-- the harness asserts both on the bytes rather than trusting this.
+CREATE TABLE public.spans (
+    -- The partition key: constant in each block, ascending across them.
+    part integer,
+    -- Strictly ascending across every block.
+    id integer,
+    -- Strictly descending across every block.
+    reversed integer,
+    -- Ascending inside each block and restarting in the next: sorted in every
+    -- block, and not across a boundary.
+    local integer,
+    -- Ascending over its non-null values, with one NULL.
+    gappy integer,
+    -- Ascending bytewise across every block.
+    label text COLLATE "C",
+    -- Four values in every block.
+    colour text COLLATE "C",
+    -- Three values in each block, none shared between blocks: the table's
+    -- distinct set is the union, larger than any one block's.
+    tint text COLLATE "C",
+    -- Three hundred values, more than a dictionary holds in any block.
+    wide text COLLATE "C",
+    -- Two values in the first two blocks, five hundred in the third.
+    mixed text COLLATE "C",
+    -- Five values and NULLs.
+    small smallint,
+    flag boolean,
+    -- Three instants written from three offsets, two of them the same
+    -- instant: the dump renders both in its session's zone.
+    stamp timestamptz,
+    -- 'a' and 'a ' pad to one value.
+    padded character(4) COLLATE "C",
+    -- 'a' and 'a ' stay two texts, which PostgreSQL calls equal.
+    bare bpchar COLLATE "C",
+    -- Integers whose sum passes their own type's range: `i2` and `i4` fit
+    -- in the widened sum, `big` wraps it.
+    i2 smallint,
+    i4 integer,
+    big bigint,
+    ident oid,
+    amount numeric(12, 2),
+    -- Values whose sum passes what a `Decimal128` holds.
+    huge numeric(38, 0)
+) PARTITION BY LIST (part);
+CREATE TABLE public.spans_1 PARTITION OF public.spans FOR VALUES IN (1);
+CREATE TABLE public.spans_2 PARTITION OF public.spans FOR VALUES IN (2);
+CREATE TABLE public.spans_3 PARTITION OF public.spans FOR VALUES IN (3);
+INSERT INTO public.spans
+SELECT
+    (i - 1) / 500 + 1,
+    i,
+    1501 - i,
+    (i - 1) % 500,
+    CASE WHEN i = 700 THEN NULL ELSE i END,
+    'k' || lpad(i::text, 4, '0'),
+    (ARRAY['amber', 'blue', 'cyan', 'dusk'])[i % 4 + 1],
+    't' || ((i - 1) / 500 + 1) || '-' || i % 3,
+    'w' || lpad((i % 300)::text, 3, '0'),
+    CASE WHEN i > 1000 THEN 'm' || lpad(i::text, 4, '0') ELSE 'm' || i % 2 END,
+    CASE WHEN i % 11 = 0 THEN NULL ELSE (i % 5)::smallint END,
+    i % 2 = 0,
+    (ARRAY['2026-01-01 00:00:00+00', '2026-01-01 05:00:00+05',
+           '2026-07-01 12:00:00-07'])[i % 3 + 1]::timestamptz,
+    (ARRAY['a', 'a ', 'b'])[i % 3 + 1],
+    (ARRAY['a', 'a ', 'b'])[i % 3 + 1]::bpchar,
+    (30000 + i % 700)::smallint,
+    2000000000 - i,
+    9000000000000000000 - i,
+    (4000000000 + i)::oid,
+    (i * 1.25)::numeric(12, 2),
+    (9 * 10::numeric ^ 37 + i)::numeric(38, 0)
+FROM generate_series(1, 1500) AS i;
+
+-- Both zeros at a float column's extremes, in both orders of appearance.
+-- PostgreSQL calls them equal, so a bound gathered in its order keeps the one
+-- seen first; Arrow's `total_cmp` puts `-0` below `0`.
+CREATE TABLE public.zeros (
+    id integer,
+    -- The minimum is a zero, `0` seen first.
+    min_pos_first double precision,
+    -- The minimum is a zero, `-0` seen first.
+    min_neg_first double precision,
+    -- The maximum is a zero, `-0` seen first.
+    max_neg_first double precision,
+    -- The maximum is a zero, `0` seen first.
+    max_pos_first double precision,
+    r_min_pos_first real,
+    r_max_neg_first real
+);
+INSERT INTO public.zeros VALUES
+    (1, 0, '-0', -1, 0, 0, -1),
+    (2, '-0', 0, '-0', -1, '-0', '-0'),
+    (3, 1, 1, 0, '-0', 1, 0);
+
+-- A text minimum longer than a stored value may be, so its stored lower bound
+-- is a clipped prefix rather than a value the column holds.
+CREATE TABLE public.long_min (
+    id integer,
+    v text COLLATE "C",
+    vc varchar(400) COLLATE "C"
+);
+INSERT INTO public.long_min VALUES
+    (1, 'b-short', 'b-short'),
+    (2, repeat('a', 300), repeat('a', 300)),
+    (3, 'c-short', 'c-short');

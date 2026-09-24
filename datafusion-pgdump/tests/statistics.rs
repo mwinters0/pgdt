@@ -1,27 +1,56 @@
 //! The statistics the provider hands DataFusion, against the answers a scan
 //! gives (`docs/design/decisions.md`, "D89").
 //!
-//! **The oracle is the same query with the rule that reads statistics taken
-//! out.** DataFusion answers `COUNT(*)`, `COUNT(<column>)`, `MIN` and `MAX`
-//! from `Exact` statistics by replacing the aggregate with a literal, so a
-//! wrong `Exact` is a wrong answer with no error; a session whose physical
-//! optimizer does not carry `aggregate_statistics` reads every row instead,
-//! and the two must agree wherever reading the column answers at all. Where a
-//! typed read refuses (`KD8`), a count is still checked: read as text, no
-//! value refuses, and a `COUNT(<column>)` counts values without their meaning.
+//! **Each answer has its own oracle**, over the generated fixtures, and the
+//! plan shape it changes is asserted beside it:
+//!
+//! - **An aggregate answered from statistics** is the same query with the
+//!   rule that reads them taken out. DataFusion answers `COUNT(*)`,
+//!   `COUNT(<column>)`, `COUNT(DISTINCT <column>)`, `MIN`, `MAX` and `SUM`
+//!   from `Exact` statistics by replacing the aggregate with a literal, so a
+//!   wrong `Exact` is a wrong answer with no error; a session whose physical
+//!   optimizer does not carry `aggregate_statistics` reads every row instead,
+//!   and the two must agree wherever reading the column answers at all. Where
+//!   a typed read refuses (`KD8`), a count is still checked: read as text, no
+//!   value refuses, and a `COUNT(<column>)` counts values without their
+//!   meaning.
+//! - **An estimate** — a row count, a byte size — is checked as the bound it
+//!   claims to be: never below what the scan emits, over generated filters,
+//!   and equal to it wherever it says `Exact`.
+//! - **A declared ordering** has no blind session, since a wrong one changes
+//!   the plan rather than a literal: every partition's rows are checked
+//!   sorted under Arrow's own comparator, NULL placement included, and a sort
+//!   on the column is checked to be gone exactly where one is declared.
+//! - **A join's build side** is read off the plan, its answer off the blind
+//!   session.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arrow::array::RecordBatch;
+use arrow::array::{Array, ArrayRef, AsArray, RecordBatch};
 use arrow::datatypes::DataType;
+use arrow::row::{RowConverter, SortField};
+use arrow::util::display::{ArrayFormatter, FormatOptions};
 use arrow::util::pretty::pretty_format_batches;
+use datafusion::catalog::TableProvider;
+use datafusion::common::stats::Precision;
+use datafusion::common::{Column, ScalarValue, Statistics};
 use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::logical_expr::{BinaryExpr, Expr, Operator, TableProviderFilterPushDown};
+use datafusion::physical_expr::expressions::Column as ColumnExpr;
+use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
+use datafusion::physical_plan::metrics::MetricValue;
+use datafusion::physical_plan::statistics::{StatisticsArgs, StatisticsContext};
+use datafusion::physical_plan::{ExecutionPlan, displayable, execute_stream_partitioned};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
+use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable, register_dump};
+use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    Finding, LocalFileSource, ScanOptions, SchemaMode, StatisticsRequest, TableName, map_file,
+    Finding, LocalFileSource, NestedPlan, ScanOptions, SchemaMode, StatisticsRequest,
+    StatisticsSelection, TableName, map_file,
 };
 
 /// A sink for a registration whose findings this target is not about.
@@ -57,22 +86,59 @@ fn every_fixture() -> Vec<PathBuf> {
     found
 }
 
+/// Every `default.sql`, and every flag set of the `statistics` schema — the
+/// one whose tables are several blocks under `--load-via-partition-root`. What
+/// the estimate and ordering targets plan over: each executes every table,
+/// where the aggregate target plans over [`every_fixture`].
+fn planned_fixtures() -> Vec<PathBuf> {
+    every_fixture()
+        .into_iter()
+        .filter(|dump| {
+            dump.file_stem().is_some_and(|stem| stem == "default")
+                || dump.parent().is_some_and(|schema| schema.ends_with("statistics"))
+        })
+        .collect()
+}
+
 /// `fixture` copied into `dir` beside the complete cache a gathering parse
 /// leaves, so the committed tree is never written into and the map carries
 /// the statistics this target is about.
 async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
+    parsed_copy_gathering(fixture, dir, &StatisticsRequest::ALL).await
+}
+
+/// A group size several rows of every fixture table long, so a pushed filter
+/// keeps some of a block's groups and not others.
+const SMALL_GROUP: u64 = 1024;
+
+/// [`parsed_copy`], gathering every statistic at [`SMALL_GROUP`].
+async fn parsed_copy_in_small_groups(fixture: &Path, dir: &Path) -> PathBuf {
+    let request = StatisticsRequest {
+        selection: StatisticsSelection::All,
+        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
+        ..StatisticsRequest::ALL
+    };
+    parsed_copy_gathering(fixture, dir, &request).await
+}
+
+async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> PathBuf {
     let dir = tempfile::tempdir_in(dir).unwrap().keep();
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::ALL).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &cache, request).await.unwrap();
     copy
 }
 
 /// A session that reads the provider's statistics, and one that cannot.
 fn sessions() -> (SessionContext, SessionContext) {
-    let config = SessionConfig::new().with_target_partitions(2).with_batch_size(64);
+    sessions_at(2)
+}
+
+/// [`sessions`], planning `partitions` partitions to a scan.
+fn sessions_at(partitions: usize) -> (SessionContext, SessionContext) {
+    let config = SessionConfig::new().with_target_partitions(partitions).with_batch_size(64);
     let reading = SessionContext::new_with_config(config.clone());
     let state = reading.state();
     let all = state.physical_optimizers();
@@ -160,7 +226,8 @@ async fn agrees(
             "`{sql}` was answered from statistics and still refused: {}",
             rendered(&from_statistics)
         );
-        if !sql.starts_with("SELECT COUNT(") {
+        // A distinct count read as text counts spellings, not values.
+        if !sql.starts_with("SELECT COUNT(") || sql.starts_with("SELECT COUNT(DISTINCT") {
             return Answer::FromStatistics;
         }
         let text = text.unwrap_or_else(|| panic!("`{sql}` refused with no text session to count"));
@@ -171,12 +238,37 @@ async fn agrees(
         );
         return Answer::CountedAsText;
     }
+    // `KD42`: a float's bound gathered in PostgreSQL's order, handed over
+    // `Exact` as the other zero. Named rather than tolerated: the target
+    // asserts `public.zeros` reaches it, so the change closing it deletes this
+    // arm.
+    if answered && the_other_zero(&from_statistics, &from_rows) {
+        return Answer::OtherZero;
+    }
     assert_eq!(
         rendered(&from_statistics),
         rendered(&from_rows),
         "`{sql}` answered differently with the statistics than without them"
     );
     if answered { Answer::FromStatistics } else { Answer::FromRows }
+}
+
+/// Whether two one-value answers are a float's two zeros.
+fn the_other_zero(
+    a: &Result<Vec<RecordBatch>, String>,
+    b: &Result<Vec<RecordBatch>, String>,
+) -> bool {
+    let value = |answer: &Result<Vec<RecordBatch>, String>| {
+        let batches = answer.as_ref().ok()?;
+        let batch = batches.iter().find(|batch| batch.num_rows() > 0)?;
+        ScalarValue::try_from_array(batch.column(0), 0).ok()
+    };
+    let zero = |value: Option<ScalarValue>| match value? {
+        ScalarValue::Float64(Some(v)) if v == 0.0 => Some(v.is_sign_negative()),
+        ScalarValue::Float32(Some(v)) if v == 0.0 => Some(v.is_sign_negative()),
+        _ => None,
+    };
+    matches!((zero(value(a)), zero(value(b))), (Some(x), Some(y)) if x != y)
 }
 
 /// Where an aggregate's answer came from, and what it was checked against.
@@ -189,6 +281,8 @@ enum Answer {
     /// The statistics counted a column the typed read refuses, and the count
     /// read as text agreed.
     CountedAsText,
+    /// The statistics answered a float's extreme with the other zero (`KD42`).
+    OtherZero,
 }
 
 impl Answer {
@@ -205,6 +299,51 @@ struct Seen {
     null_count: bool,
     bound: bool,
     counted_as_text: bool,
+    other_zero: bool,
+}
+
+impl Seen {
+    fn or(self, other: Seen) -> Seen {
+        Seen {
+            count: self.count || other.count,
+            null_count: self.null_count || other.null_count,
+            bound: self.bound || other.bound,
+            counted_as_text: self.counted_as_text || other.counted_as_text,
+            other_zero: self.other_zero || other.other_zero,
+        }
+    }
+}
+
+/// `fixtures` grouped by major, each group checked by `check` on a thread of
+/// its own, so a sweep over six majors takes about one major's time. Each
+/// thread runs one current-thread runtime, as `#[tokio::test]` does, so the
+/// partitions of a query that refuses are read in one order and it refuses on
+/// the same row with the statistics as without them.
+fn per_major<T, F, Fut>(fixtures: Vec<PathBuf>, check: F) -> Vec<T>
+where
+    F: Fn(Vec<PathBuf>) -> Fut + Sync,
+    Fut: Future<Output = T>,
+    T: Send,
+{
+    let mut majors: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for fixture in fixtures {
+        let major = fixture.parent().and_then(Path::parent).unwrap().to_path_buf();
+        majors.entry(major).or_default().push(fixture);
+    }
+    let check = &check;
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = majors
+            .into_values()
+            .map(|group| {
+                scope.spawn(move || {
+                    let runtime =
+                        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    runtime.block_on(check(group))
+                })
+            })
+            .collect();
+        workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+    })
 }
 
 /// `dump` opened in `schema_mode` and registered in a reading and a blind
@@ -255,7 +394,18 @@ async fn every_aggregate(
             }
             for op in ["MIN", "MAX"] {
                 let sql = format!("SELECT {op}({column}) FROM {from}");
-                seen.bound |= agrees(reading, blind, Some(text), &sql).await.answered();
+                let answer = agrees(reading, blind, Some(text), &sql).await;
+                seen.bound |= answer.answered();
+                seen.other_zero |= answer == Answer::OtherZero;
+            }
+            // Asked of every column the rows can answer it for, statistics or
+            // none: a `SUM` is answered from an `Exact` sum, a distinct count
+            // from an `Exact` distinct count.
+            let sql = format!("SELECT COUNT(DISTINCT {column}) FROM {from}");
+            agrees(reading, blind, Some(text), &sql).await;
+            if field.data_type().is_numeric() {
+                let sql = format!("SELECT SUM({column}) FROM {from}");
+                agrees(reading, blind, Some(text), &sql).await;
             }
         }
     }
@@ -264,26 +414,32 @@ async fn every_aggregate(
 /// **Typed and as text**, as the provider's other targets are: the text pass
 /// is the typed one's oracle wherever a typed read refuses (`KD8`), and is
 /// itself read against the rows, bounds included (D89).
-#[tokio::test]
-async fn statistics_never_change_an_answer() {
-    let scratch = tempfile::tempdir().unwrap();
-    let mut typed = Seen::default();
-    let mut strings = Seen::default();
-    for fixture in every_fixture() {
-        let copy = parsed_copy(&fixture, scratch.path()).await;
-        let (text_dump, text_reading, text_blind, text_catalogs) =
-            opened(&copy, SchemaMode::Strings).await;
-        let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
-        every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut typed).await;
-        every_aggregate(
-            &text_dump,
-            (&text_reading, &text_blind),
-            &text_catalogs,
-            &text_blind,
-            &mut strings,
-        )
-        .await;
-    }
+#[test]
+fn statistics_never_change_an_answer() {
+    let seen = per_major(every_fixture(), |fixtures| async move {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut typed, mut strings) = (Seen::default(), Seen::default());
+        for fixture in fixtures {
+            let copy = parsed_copy(&fixture, scratch.path()).await;
+            let (text_dump, text_reading, text_blind, text_catalogs) =
+                opened(&copy, SchemaMode::Strings).await;
+            let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
+            every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut typed).await;
+            every_aggregate(
+                &text_dump,
+                (&text_reading, &text_blind),
+                &text_catalogs,
+                &text_blind,
+                &mut strings,
+            )
+            .await;
+        }
+        (typed, strings)
+    });
+    let (typed, strings) =
+        seen.into_iter().fold((Seen::default(), Seen::default()), |(typed, strings), (t, s)| {
+            (typed.or(t), strings.or(s))
+        });
     for (mode, seen) in [(SchemaMode::Typed, &typed), (SchemaMode::Strings, &strings)] {
         assert!(seen.count, "no `COUNT(*)` was answered from the statistics ({mode:?})");
         assert!(
@@ -296,6 +452,7 @@ async fn statistics_never_change_an_answer() {
         typed.counted_as_text,
         "no typed `COUNT(<column>)` over a refusing column was checked against the text"
     );
+    assert!(typed.other_zero, "`public.zeros` no longer reaches `KD42`: {typed:?}");
     assert!(!strings.counted_as_text, "a text read refused: {strings:?}");
 }
 
@@ -377,4 +534,518 @@ async fn a_fetched_or_filtered_plan_states_no_exact_statistic() {
             );
         }
     }
+}
+
+/// SplitMix64, seeded, so a failing filter is the same filter on every run.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+}
+
+/// Every batch of `plan`, partition by partition, or the error reading one
+/// raised.
+async fn partitions_of(
+    ctx: &SessionContext,
+    plan: Arc<dyn ExecutionPlan>,
+) -> datafusion::error::Result<Vec<Vec<RecordBatch>>> {
+    let mut partitions = Vec::new();
+    for mut stream in execute_stream_partitioned(plan, ctx.task_ctx())? {
+        let mut batches = Vec::new();
+        while let Some(batch) = stream.next().await {
+            batches.push(batch?);
+        }
+        partitions.push(batches);
+    }
+    Ok(partitions)
+}
+
+/// The columns of `table` a scan can read — every one but a column holding a
+/// value its Arrow type cannot (`KD8`), which fails the read of any plan
+/// projecting it — by index, in schema order.
+async fn readable_columns(ctx: &SessionContext, table: &PgDumpTable) -> Vec<usize> {
+    let state = ctx.state();
+    let mut readable = Vec::new();
+    for index in 0..table.schema().fields().len() {
+        let plan = table.scan(&state, Some(&vec![index]), &[], None).await.unwrap();
+        if partitions_of(ctx, plan).await.is_ok() {
+            readable.push(index);
+        }
+    }
+    readable
+}
+
+/// The bytes a column emits by the measure a byte-size statistic is checked
+/// against: its width for every row of a fixed-width type, and the length of
+/// every non-null value of a variable-width one — the values' own bytes, not
+/// the buffers holding them, a view's living in a buffer the batches share
+/// (`docs/design/decisions.md`, "D46"). `None` for a type with no measure
+/// here, where a stated byte size fails the check rather than passing it.
+fn emitted_bytes(array: &dyn Array) -> Option<usize> {
+    let data_type = array.data_type();
+    if let Some(width) = data_type.primitive_width() {
+        return Some(array.len() * width);
+    }
+    match data_type {
+        DataType::FixedSizeBinary(width) => Some(array.len() * *width as usize),
+        DataType::Utf8View => Some(array.as_string_view().iter().flatten().map(str::len).sum()),
+        DataType::Utf8 => Some(array.as_string::<i32>().iter().flatten().map(str::len).sum()),
+        DataType::BinaryView => {
+            Some(array.as_binary_view().iter().flatten().map(<[u8]>::len).sum())
+        }
+        DataType::Binary => Some(array.as_binary::<i32>().iter().flatten().map(<[u8]>::len).sum()),
+        _ => None,
+    }
+}
+
+/// A count a statistic states against the one the scan emitted: equal where
+/// it says `Exact`, never below where it says `Inexact` — a bound, not a
+/// guess.
+fn bounds(what: &str, stated: &Precision<usize>, emitted: Option<usize>) {
+    if matches!(stated, Precision::Absent) {
+        return;
+    }
+    let emitted = emitted.unwrap_or_else(|| panic!("{what}: stated {stated:?} with no measure"));
+    match stated {
+        Precision::Exact(stated) => assert_eq!(*stated, emitted, "{what}: an exact count"),
+        Precision::Inexact(stated) => {
+            assert!(*stated >= emitted, "{what}: {stated} is below the {emitted} the scan emits")
+        }
+        Precision::Absent => {}
+    }
+}
+
+/// `statistics` against the batches they describe: the rows, the total bytes
+/// and each column's bytes.
+fn check_estimates(what: &str, statistics: &Statistics, batches: &[RecordBatch]) {
+    let rows = batches.iter().map(RecordBatch::num_rows).sum();
+    bounds(&format!("{what}: rows"), &statistics.num_rows, Some(rows));
+    let columns = statistics.column_statistics.len();
+    let per_column: Vec<Option<usize>> = (0..columns)
+        .map(|i| batches.iter().map(|batch| emitted_bytes(batch.column(i).as_ref())).sum())
+        .collect();
+    let total = per_column.iter().copied().sum::<Option<usize>>();
+    bounds(&format!("{what}: total bytes"), &statistics.total_byte_size, total);
+    for (i, column) in statistics.column_statistics.iter().enumerate() {
+        bounds(&format!("{what}: column {i}'s bytes"), &column.byte_size, per_column[i]);
+    }
+}
+
+/// Where rows were taken out — by a filter or a fetch — no column statistic
+/// can be `Exact`: each describes the rows before.
+fn nothing_exact_per_column(what: &str, statistics: &Statistics) {
+    for column in &statistics.column_statistics {
+        let exact = matches!(column.null_count, Precision::Exact(_))
+            || matches!(column.min_value, Precision::Exact(_))
+            || matches!(column.max_value, Precision::Exact(_))
+            || matches!(column.sum_value, Precision::Exact(_))
+            || matches!(column.distinct_count, Precision::Exact(_))
+            || matches!(column.byte_size, Precision::Exact(_));
+        assert!(!exact, "{what}: a column statistic is exact past a filter or fetch: {column:?}");
+    }
+}
+
+fn column(name: &str) -> Expr {
+    Expr::Column(Column::new_unqualified(name))
+}
+
+fn binary(left: Expr, op: Operator, right: Expr) -> Expr {
+    Expr::BinaryExpr(BinaryExpr::new(Box::new(left), op, Box::new(right)))
+}
+
+/// Up to three of `array`'s distinct non-null values, first, middle and last
+/// in row order — a column's literals, drawn as `tests/pushdown.rs` draws
+/// them.
+fn literals(array: &ArrayRef) -> Vec<ScalarValue> {
+    let options = FormatOptions::default();
+    let formatter = ArrayFormatter::try_new(array.as_ref(), &options).unwrap();
+    let mut seen = BTreeMap::new();
+    for row in 0..array.len() {
+        if array.is_valid(row) {
+            seen.entry(formatter.value(row).to_string()).or_insert(row);
+        }
+    }
+    let mut distinct: Vec<usize> = seen.into_values().collect();
+    distinct.sort();
+    let mut picks = match distinct.len() {
+        0 => Vec::new(),
+        n => vec![distinct[0], distinct[n / 2], distinct[n - 1]],
+    };
+    picks.dedup();
+    picks.into_iter().map(|row| ScalarValue::try_from_array(array, row).unwrap()).collect()
+}
+
+const OPERATORS: [Operator; 6] =
+    [Operator::Eq, Operator::NotEq, Operator::Lt, Operator::LtEq, Operator::Gt, Operator::GtEq];
+
+/// Seeded trees over the terms a table pushes, as the library's
+/// `tests/pruning.rs` builds its own.
+fn random_tree(rng: &mut Rng, terms: &[Expr], depth: usize) -> Expr {
+    let child = |rng: &mut Rng| random_tree(rng, terms, depth - 1);
+    match if depth == 0 { 0 } else { rng.below(5) } {
+        0 | 1 => terms[rng.below(terms.len())].clone(),
+        2 => child(rng).and(child(rng)),
+        3 => child(rng).or(child(rng)),
+        _ => Expr::Not(Box::new(child(rng))),
+    }
+}
+
+/// Random trees per table, beside each pushed term alone.
+const TREES_PER_TABLE: usize = 12;
+
+/// What the estimate target compared, so a sweep that compared nothing fails.
+#[derive(Default, Debug)]
+struct Estimates {
+    filtered: usize,
+    /// Scans whose filter pruned a group, where a bound from the kept groups
+    /// differs from the table's.
+    pruning: usize,
+}
+
+/// **An estimate is never below what the scan emits, and an `Exact` one is
+/// what it emits**: every table of [`planned_fixtures`], gathered at
+/// [`SMALL_GROUP`], unfiltered, fetched, and under each term the provider
+/// pushes and seeded trees of them — for the whole node and for each
+/// partition, rows and bytes alike. Past a filter or a fetch no column
+/// statistic may be `Exact`.
+#[test]
+fn an_estimate_is_never_below_what_the_scan_emits() {
+    let seen = per_major(planned_fixtures(), estimates_over).into_iter().fold(
+        Estimates::default(),
+        |sum, seen| Estimates {
+            filtered: sum.filtered + seen.filtered,
+            pruning: sum.pruning + seen.pruning,
+        },
+    );
+    assert!(seen.filtered > 20_000, "{seen:?}");
+    assert!(seen.pruning > seen.filtered / 5, "{seen:?}");
+}
+
+/// [`an_estimate_is_never_below_what_the_scan_emits`] over one major's
+/// `fixtures`, its seed the major's own.
+async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
+    let scratch = tempfile::tempdir().unwrap();
+    let major = fixtures[0].parent().and_then(Path::parent).and_then(Path::file_name);
+    let major: u64 = major.unwrap().to_str().unwrap().parse().unwrap();
+    let mut rng = Rng(0x5eed_2501 + major);
+    let mut seen = Estimates::default();
+    for fixture in fixtures {
+        let copy = parsed_copy_in_small_groups(&fixture, scratch.path()).await;
+        let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+        let (ctx, _blind) = sessions_at(3);
+        let state = ctx.state();
+        for name in dump.tables() {
+            let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
+            let what = format!("{} in {}", name.qualified(), fixture.display());
+            let projection = readable_columns(&ctx, &table).await;
+            if projection.is_empty() {
+                continue;
+            }
+            let unfiltered = table.scan(&state, Some(&projection), &[], None).await.unwrap();
+            let whole = partitions_of(&ctx, Arc::clone(&unfiltered)).await.unwrap();
+            let all: Vec<RecordBatch> = whole.iter().flatten().cloned().collect();
+            let table_rows = all.iter().map(RecordBatch::num_rows).sum::<usize>();
+            let schema = unfiltered.schema();
+            let resolved = table.resolved_schema();
+            let mut terms = Vec::new();
+            for (at, &index) in projection.iter().enumerate() {
+                let field = schema.field(at);
+                terms.push(column(field.name()).is_null());
+                terms.push(column(field.name()).is_not_null());
+                if resolved.plans[index] != NestedPlan::Scalar {
+                    continue;
+                }
+                let values =
+                    all.iter().map(|batch| Arc::clone(batch.column(at))).collect::<Vec<_>>();
+                let Some(values) = (!values.is_empty()).then(|| {
+                    arrow::compute::concat(&values.iter().map(AsRef::as_ref).collect::<Vec<_>>())
+                        .unwrap()
+                }) else {
+                    continue;
+                };
+                for value in literals(&values) {
+                    for op in OPERATORS {
+                        terms.push(binary(
+                            column(field.name()),
+                            op,
+                            Expr::Literal(value.clone(), None),
+                        ));
+                    }
+                }
+            }
+            terms.retain(|term| {
+                table.supports_filters_pushdown(&[term]).unwrap()[0]
+                    == TableProviderFilterPushDown::Exact
+            });
+            let mut filters: Vec<Option<Expr>> = vec![None];
+            filters.extend(terms.iter().cloned().map(Some));
+            if !terms.is_empty() {
+                filters
+                    .extend((0..TREES_PER_TABLE).map(|_| Some(random_tree(&mut rng, &terms, 3))));
+            }
+            for filter in filters {
+                let pushed = filter.iter().cloned().collect::<Vec<_>>();
+                for limit in [None, Some(7)] {
+                    let what = match &filter {
+                        Some(filter) => format!("{what} under {filter}, fetch {limit:?}"),
+                        None => format!("{what}, fetch {limit:?}"),
+                    };
+                    let plan = table.scan(&state, Some(&projection), &pushed, limit).await.unwrap();
+                    let partitions = partitions_of(&ctx, Arc::clone(&plan)).await.unwrap();
+                    let statistics = StatisticsContext::new()
+                        .compute(plan.as_ref(), &StatisticsArgs::new())
+                        .unwrap();
+                    match limit {
+                        // A fetch is applied above the partitions, which may
+                        // emit more than it keeps.
+                        Some(limit) => {
+                            let rows = partitions.iter().flatten().map(RecordBatch::num_rows);
+                            let kept = rows.sum::<usize>().min(limit);
+                            bounds(&format!("{what}: rows"), &statistics.num_rows, Some(kept));
+                        }
+                        None => {
+                            let batches: Vec<RecordBatch> =
+                                partitions.iter().flatten().cloned().collect();
+                            check_estimates(&what, &statistics, &batches);
+                            for (i, partition) in partitions.iter().enumerate() {
+                                let args = StatisticsArgs::new().with_partition(Some(i));
+                                let statistics =
+                                    StatisticsContext::new().compute(plan.as_ref(), &args).unwrap();
+                                let what = format!("{what}, partition {i}");
+                                check_estimates(&what, &statistics, partition);
+                            }
+                        }
+                    }
+                    // A fetch the table's rows fit under takes nothing out.
+                    let fetch_cuts = limit.is_some_and(|limit| table_rows > limit);
+                    if filter.is_some() || fetch_cuts {
+                        nothing_exact_per_column(&what, &statistics);
+                    }
+                    if filter.is_some() && limit.is_none() {
+                        seen.filtered += 1;
+                        let metrics = plan.metrics().unwrap_or_default().aggregate_by_name();
+                        let pruned = metrics.iter().any(|metric| {
+                            matches!(
+                                metric.value(),
+                                MetricValue::PruningMetrics { name, pruning_metrics }
+                                    if name == "row_groups_pruned_statistics"
+                                        && pruning_metrics.pruned() > 0
+                            )
+                        });
+                        seen.pruning += usize::from(pruned);
+                    }
+                }
+            }
+        }
+    }
+    seen
+}
+
+/// The partition counts the ordering target plans each table at. `public.spans`
+/// is three blocks under `--load-via-partition-root`, and a partition crossing
+/// a boundary between them is where a declared ordering needs its proof; a
+/// count can cut every partition at a boundary, so several are run and the
+/// target asserts one of them, past a single partition, crosses — the proof
+/// exercised rather than skipped.
+const ORDERING_PARTITIONS: [usize; 4] = [1, 2, 3, 5];
+
+/// Whether `plan`, or anything under it, is a sort.
+fn sorts(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    plan.name() == "SortExec" || plan.children().into_iter().any(sorts)
+}
+
+/// **A declared ordering holds in every partition, and drops exactly the sorts
+/// it satisfies.** Every table of [`planned_fixtures`] at each of
+/// [`ORDERING_PARTITIONS`]: each ordering the scan declares is checked over
+/// each partition's rows under Arrow's row comparator, which places NULLs as
+/// the ordering says; and each readable scalar column's `ORDER BY`, ascending
+/// and descending as SQL defaults them, plans a sort exactly where the scan
+/// declares no ordering satisfying it.
+#[test]
+fn a_declared_ordering_holds_in_every_partition_and_drops_the_sort() {
+    let mut crossings: BTreeMap<usize, bool> = BTreeMap::new();
+    for crossed in per_major(planned_fixtures(), orderings_over) {
+        for (partitions, crossed) in crossed {
+            *crossings.entry(partitions).or_default() |= crossed;
+        }
+    }
+    assert!(
+        crossings.iter().any(|(&partitions, &crossed)| partitions > 1 && crossed),
+        "no partition of `public.spans` cut among several crossed a block boundary: \
+         {crossings:?}"
+    );
+}
+
+/// [`a_declared_ordering_holds_in_every_partition_and_drops_the_sort`] over one
+/// major's `fixtures`: at each partition count, whether a partition of
+/// `public.spans` crossed a block boundary.
+async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut crossings = BTreeMap::new();
+    for fixture in fixtures {
+        let copy = parsed_copy(&fixture, scratch.path()).await;
+        let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+        for partitions in ORDERING_PARTITIONS {
+            let (ctx, blind) = sessions_at(partitions);
+            let catalogs = register_in((&ctx, &blind), &dump);
+            let state = ctx.state();
+            for name in dump.tables() {
+                let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
+                let what = format!("{} in {} at {partitions}", name.qualified(), fixture.display());
+                let projection = readable_columns(&ctx, &table).await;
+                if projection.is_empty() {
+                    continue;
+                }
+                let plan = table.scan(&state, Some(&projection), &[], None).await.unwrap();
+                let schema = plan.schema();
+                let read = partitions_of(&ctx, Arc::clone(&plan)).await.unwrap();
+                if let Ok(part) = schema.index_of("part")
+                    && fixture.file_stem().is_some_and(|stem| stem == "load-via-partition-root")
+                    && name.table == "spans"
+                {
+                    let crossed = read.iter().any(|batches| {
+                        let parts: BTreeSet<String> = batches
+                            .iter()
+                            .flat_map(|batch| {
+                                let formatter = ArrayFormatter::try_new(
+                                    batch.column(part).as_ref(),
+                                    &FormatOptions::default(),
+                                )
+                                .unwrap();
+                                (0..batch.num_rows())
+                                    .map(|row| formatter.value(row).to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect();
+                        parts.len() > 1
+                    });
+                    *crossings.entry(partitions).or_insert(false) |= crossed;
+                }
+                let equivalences = plan.properties().equivalence_properties();
+                for ordering in equivalences.oeq_class().iter() {
+                    for (i, batches) in read.iter().enumerate() {
+                        let fields = ordering
+                            .iter()
+                            .map(|sort| {
+                                SortField::new_with_options(
+                                    sort.expr.data_type(&schema).unwrap(),
+                                    sort.options,
+                                )
+                            })
+                            .collect();
+                        let converter = RowConverter::new(fields).unwrap();
+                        let mut previous = None;
+                        for batch in batches {
+                            let columns = ordering
+                                .iter()
+                                .map(|sort| {
+                                    sort.expr
+                                        .evaluate(batch)
+                                        .unwrap()
+                                        .into_array(batch.num_rows())
+                                        .unwrap()
+                                })
+                                .collect::<Vec<_>>();
+                            let rows = converter.convert_columns(&columns).unwrap();
+                            for row in rows.iter() {
+                                if let Some(previous) = &previous {
+                                    assert!(
+                                        *previous <= row.owned(),
+                                        "{what}: partition {i} is out of the declared {ordering}"
+                                    );
+                                }
+                                previous = Some(row.owned());
+                            }
+                        }
+                    }
+                }
+                let catalog = catalogs
+                    .iter()
+                    .find(|(database, _)| *database == name.database)
+                    .unwrap()
+                    .1
+                    .clone();
+                let from = from(&catalog, name);
+                let resolved = table.resolved_schema();
+                for (at, &index) in projection.iter().enumerate() {
+                    if resolved.plans[index] != NestedPlan::Scalar {
+                        continue;
+                    }
+                    let field = schema.field(at);
+                    let quoted_column = quoted(field.name());
+                    for (direction, descending, nulls_first) in
+                        [("ASC", false, false), ("DESC", true, true)]
+                    {
+                        let sql = format!(
+                            "SELECT {quoted_column} FROM {from} ORDER BY {quoted_column} {direction}"
+                        );
+                        let sorted =
+                            ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
+                        let declared = equivalences.oeq_class().iter().any(|ordering| {
+                            let first = ordering.first();
+                            first.options.descending == descending
+                                && first.options.nulls_first == nulls_first
+                                && first
+                                    .expr
+                                    .downcast_ref::<ColumnExpr>()
+                                    .is_some_and(|c| c.name() == field.name())
+                        });
+                        assert_eq!(
+                            !sorts(&sorted),
+                            declared,
+                            "{what}: `{sql}` sorts where the scan declares {:?}",
+                            equivalences.oeq_class()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    crossings
+}
+
+/// Which table the build side of `plan`'s one hash join reads, by a column
+/// only it projects, and the join's mode.
+fn build_side(plan: &Arc<dyn ExecutionPlan>, marker: &str) -> Option<(bool, PartitionMode)> {
+    if let Some(join) = plan.downcast_ref::<HashJoinExec>() {
+        let left = join.left().schema();
+        return Some((left.index_of(marker).is_ok(), *join.partition_mode()));
+    }
+    plan.children().into_iter().find_map(|child| build_side(child, marker))
+}
+
+/// **Rows alone choose a join's build side today**, the scan stating no byte
+/// size: `public.long_value`, four rows each carrying up to a mebibyte, is the
+/// smaller side by rows and is collected whole to build — the shape a byte
+/// size would move, the wide side then being the larger. Its answer is the
+/// blind session's.
+#[tokio::test]
+async fn a_join_builds_the_side_its_statistics_call_smaller() {
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/statistics/default.sql");
+    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let (reading, blind) = sessions();
+    register_in((&reading, &blind), &dump);
+    let sql = "SELECT o.id, length(l.v) AS v_length FROM \"dump\".public.ordered AS o \
+               JOIN \"dump\".public.long_value AS l ON o.id = l.id ORDER BY o.id";
+    agrees(&reading, &blind, None, sql).await;
+    let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
+    let shape = build_side(&plan, "v");
+    assert_eq!(
+        shape,
+        Some((true, PartitionMode::CollectLeft)),
+        "{}",
+        displayable(plan.as_ref()).indent(false)
+    );
 }

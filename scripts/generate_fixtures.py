@@ -167,11 +167,14 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "load-via-partition-root": ["--load-via-partition-root"],
     },
     # The column shapes per-row-group statistics are tested against
-    # (fixture_schema_statistics.sql). Only `default`: every flag set above
-    # varies what `pg_dump` writes around a `COPY` block, and this schema's
-    # subject is what is inside one.
+    # (fixture_schema_statistics.sql). Every other flag set above varies what
+    # `pg_dump` writes around a `COPY` block, and this schema's subject is what
+    # is inside one; `--load-via-partition-root` is the exception, being what
+    # makes one table's rows several blocks, which a table's statistics are
+    # combined across (I2).
     "statistics": {
         "default": [],
+        "load-via-partition-root": ["--load-via-partition-root"],
     },
 }
 

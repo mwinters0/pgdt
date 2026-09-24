@@ -2,14 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict R8aysiQMHk62rldjHNagN9rOEIg0oeb5tHNSQtJkfWGHkuXOmwisUZmSdWuydtn
+\restrict 4NHa4gFhJtjUCFhzBs5ugGZvMDrKVXsaFmNyXM9IdIftTN5YdFgRvQcPVJKN2hK
 
--- Dumped from database version 15.19 (Debian 15.19-1.pgdg13+2)
--- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg13+2)
+-- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
+-- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -1282,7 +1283,9 @@ COPY public.ordered (id, reversed, stepped, unsorted, constant, all_null, gappy,
 -- Data for Name: spans_1; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.spans_1 (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
+-- load via partition root public.spans
+
+COPY public.spans (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
 1	1	1500	0	1	k0001	blue	t1-1	w001	m1	1	f	2026-01-01 00:00:00+00	a   	a 	30001	1999999999	8999999999999999999	4000000001	1.25	90000000000000000000000000000000000001
 1	2	1499	1	2	k0002	cyan	t1-2	w002	m0	2	t	2026-07-01 19:00:00+00	b   	b	30002	1999999998	8999999999999999998	4000000002	2.50	90000000000000000000000000000000000002
 1	3	1498	2	3	k0003	dusk	t1-0	w003	m1	3	f	2026-01-01 00:00:00+00	a   	a	30003	1999999997	8999999999999999997	4000000003	3.75	90000000000000000000000000000000000003
@@ -1790,7 +1793,9 @@ COPY public.spans_1 (part, id, reversed, local, gappy, label, colour, tint, wide
 -- Data for Name: spans_2; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.spans_2 (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
+-- load via partition root public.spans
+
+COPY public.spans (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
 2	501	1000	0	501	k0501	blue	t2-0	w201	m1	1	f	2026-01-01 00:00:00+00	a   	a	30501	1999999499	8999999999999999499	4000000501	626.25	90000000000000000000000000000000000501
 2	502	999	1	502	k0502	cyan	t2-1	w202	m0	2	t	2026-01-01 00:00:00+00	a   	a 	30502	1999999498	8999999999999999498	4000000502	627.50	90000000000000000000000000000000000502
 2	503	998	2	503	k0503	dusk	t2-2	w203	m1	3	f	2026-07-01 19:00:00+00	b   	b	30503	1999999497	8999999999999999497	4000000503	628.75	90000000000000000000000000000000000503
@@ -2298,7 +2303,9 @@ COPY public.spans_2 (part, id, reversed, local, gappy, label, colour, tint, wide
 -- Data for Name: spans_3; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.spans_3 (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
+-- load via partition root public.spans
+
+COPY public.spans (part, id, reversed, local, gappy, label, colour, tint, wide, mixed, small, flag, stamp, padded, bare, i2, i4, big, ident, amount, huge) FROM stdin;
 3	1001	500	0	1001	k1001	blue	t3-2	w101	m1001	\N	f	2026-07-01 19:00:00+00	b   	b	30301	1999998999	8999999999999998999	4000001001	1251.25	90000000000000000000000000000000001001
 3	1002	499	1	1002	k1002	cyan	t3-0	w102	m1002	2	t	2026-01-01 00:00:00+00	a   	a	30302	1999998998	8999999999999998998	4000001002	1252.50	90000000000000000000000000000000001002
 3	1003	498	2	1003	k1003	dusk	t3-1	w103	m1003	3	f	2026-01-01 00:00:00+00	a   	a 	30303	1999998997	8999999999999998997	4000001003	1253.75	90000000000000000000000000000000001003
@@ -2832,5 +2839,5 @@ COPY public.zeros (id, min_pos_first, min_neg_first, max_neg_first, max_pos_firs
 -- PostgreSQL database dump complete
 --
 
-\unrestrict R8aysiQMHk62rldjHNagN9rOEIg0oeb5tHNSQtJkfWGHkuXOmwisUZmSdWuydtn
+\unrestrict 4NHa4gFhJtjUCFhzBs5ugGZvMDrKVXsaFmNyXM9IdIftTN5YdFgRvQcPVJKN2hK
 
