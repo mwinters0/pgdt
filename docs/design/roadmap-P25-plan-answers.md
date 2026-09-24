@@ -41,17 +41,23 @@ priced by what it lets DataFusion answer or stops it answering wrongly:
   bare `numeric` is emitted as text, and a column holding a value its Arrow
   type cannot represent (`KD8`) has none, a sum being unable to leave that
   value out the way a bound can.
-- **A per-group Arrow byte size** for variable-width columns — one running sum
-  of the decoded length per group, beside the NULL count, the gatherer already
-  decoding every field. A fixed-width column needs none: rows times width is
-  `Exact` over an unfiltered scan, as DataFusion 55's Parquet source hands it.
-  A variable-width size is `Inexact` always, a view's bytes living in the
-  shared read buffer ("D46"), and under a filter both are bounded by the kept
-  groups as the rows are. What reads it: the join build-side swap, which
-  compares bytes before rows when both sides carry them; the collect-left
-  threshold, which reads bytes before rows, so a small row count no longer
-  collects a wide table; and projection and filter scaling. Untracked columns
-  stay `Absent`, and so does `total_byte_size` where any projected column is.
+- **A per-group text byte size for every tracked column**, whatever the typed
+  read emits it as — one running sum of the decoded length per group, beside
+  the NULL count, the gatherer already decoding every field. It is a property
+  of the text, so a `:strings` read, where every column is `Utf8View`, sizes
+  every column it projects from it. In the typed read a fixed-width column
+  needs none: rows times width is `Exact` over an unfiltered scan, as
+  DataFusion 55's Parquet source hands it, and a boolean is the same rule at a
+  bit a row. An enum is its keys' width a row plus its labels' text bytes,
+  `Inexact`. A text or `bytea` size is `Inexact` always, a view's bytes living
+  in the shared read buffer ("D46"). A nested column stays `Absent`, its text
+  being no bound on its leaves' bytes. Under a filter every size is bounded by
+  the kept groups as the rows are. What reads it: the join build-side swap,
+  which compares bytes before rows when both sides carry them; the
+  collect-left threshold, which reads bytes before rows, so a small row count
+  no longer collects a wide table; and projection and filter scaling.
+  Untracked columns stay `Absent`, and so does `total_byte_size` where any
+  projected column is.
 
 **Provider answers this phase makes from what the map already holds**:
 
@@ -166,6 +172,8 @@ twice rather than once per gathered field. In order:
    (`KD42`), which lets a float column declare an ordering.
 6. Second format bump: the per-group sum and the per-group byte size — one
    mechanism, a running sum per group beside the NULL count.
+7. Third format bump, admitted after 6 landed: the text byte size kept for
+   every tracked column, and a size for the typed read's booleans and enums.
 
 **What `pgdt info` shows**: `--json`, which promises every group's
 statistics, exports the three stored fields this phase adds — the lower

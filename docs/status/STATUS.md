@@ -83,6 +83,7 @@ Spec: [`../design/roadmap-P25-plan-answers.md`](../design/roadmap-P25-plan-answe
 - [x] **25.4** A declared output ordering per qualifying column — every block sorted the same way in the set Arrow orders by, no NULL in any group, every block boundary a partition crosses proved in order from adjacent groups' bounds at plan time — floats excepted. [Notes](../design/roadmap-P25.4-declared-ordering-notes.md).
 - [x] **25.5** First `CACHE_FORMAT_VERSION` bump: a lower bound's exactness recorded beside `max_exact`, so a text `MIN` answers from statistics (`KD39`), and the zero's sign kept as `total_cmp` would at a float column's extremes and in its recorded order (`KD42`), which admits floats to 25.4's ordering; `info --json` exports the flag. [Notes](../design/roadmap-P25.5-exact-bounds-notes.md).
 - [x] **25.6** Second `CACHE_FORMAT_VERSION` bump: a per-group sum for `int2`/`int4`/`int8` and `oid`, wrapped as DataFusion's `SUM` wraps, and for a typmodded `numeric` where its `Decimal128` overflow is reproduced value for value; a per-group Arrow byte size for variable-width columns, fixed-width sizes derived from rows; `info --json` exports both. [Notes](../design/roadmap-P25.6-sums-and-byte-sizes-notes.md).
+- [ ] **25.7** Third `CACHE_FORMAT_VERSION` bump: `value_bytes` kept for every tracked column, not only those the typed read emits as `Utf8View` or `Binary`, so a `:strings` scan states the bytes of every column it projects; the typed read sizing a boolean at `rows.div_ceil(8)`, `Exact` unfiltered, and an enum at four bytes a row plus its text bytes, `Inexact`, a nested column staying `Absent`; the harness's `emitted_bytes` measuring both; "D91" amended.
 
 ## Not started
 
@@ -113,15 +114,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **Text bytes are gathered only for a column the typed read emits as text or
-  `bytea` (25.6).** The spec's "per-group Arrow byte size for variable-width
-  columns" reads as the typed schema's, and that is what landed; but under a
-  `:strings` registration every column is `Utf8View`, so there an integer,
-  timestamp or boolean column states no byte size, and any scan projecting
-  one states no total — a `:strings` join is weighed by rows, as before the
-  slice. Made this way because it is the spec's wording and the smaller
-  statistic. Reconsidering means gathering `value_bytes` for every tracked
-  column, one `u64` a group more per column — as large as its NULL counts —
-  so a `:strings` scan states the bytes of every column it projects; the
-  typed read would change nothing, and the cache format would bump again.
