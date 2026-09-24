@@ -66,3 +66,8 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| `M142` | | Type and comparison defects: a checked `jsonb` exponent; a quoted SQL-only spelling not taken for the built-in; an unqualified collation a declared one could shadow read as not bytewise, `SET search_path` unread filed as a `KD`; a depth bound on the domain walks | | [2026-09-24](../status/history/2026-09-24.md), "Repoint findings for the maintainer" |
+| `M143` | | A quoted and an unquoted type name normalized alike on both sides of a lookup, closing `KD4` | | [2026-09-24](../status/history/2026-09-24.md), "Repoint findings for the maintainer" |
+| `M144` | | Tests asserting what they claim: `EVERY_OUTCOME` tied to `ColumnResolution` by a test macro; the stated-maximum test exempting an unpaired last group, `KD43`'s example pinned | | [2026-09-24](../status/history/2026-09-24.md), "Repoint findings for the maintainer" |
+| `M145` | | The provider's catalog built at construction, a refused table reported and not listed, closing the lazy build's race; a column's stored groups checked in `table_summary`; `SHOW ALL`'s `pgdump.memory` text | | [2026-09-24](../status/history/2026-09-24.md), "Repoint findings for the maintainer" |
+| `M146` | | A query's mapping pass saying what lowered its count; a signal after the mapping pass or during the listing exiting 128+signal (D26) | | [2026-09-24](../status/history/2026-09-24.md), "Repoint findings for the maintainer" |
