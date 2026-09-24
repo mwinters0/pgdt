@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD44 -->
-**`KD1`–`KD44` are allocated, and nothing at or below `KD44` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD45 -->
+**`KD1`–`KD45` are allocated, and nothing at or below `KD45` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -259,13 +259,16 @@ than reading as a phase nobody has sliced.
   of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
 
 - **KD39** — a `MIN` never answers from the DataFusion provider's statistics
-  for a text-ordered column, and neither extreme does for an enum: a stored
-  lower bound does not say whether it is the value it came from, only the
-  upper one does, and an enum's column is emitted `Dictionary`, whose
-  `MIN`/`MAX` DataFusion types as the value type. Those queries read every
-  row. **(c) unowned**; promoted by a user for whom `MIN` over text is the
-  query that matters, the fix being a flag beside `max_exact` and a
+  for a text-ordered column: a stored lower bound does not say whether it is
+  the value it came from, only the upper one does, so the query reads every
+  row. **(b) owned by P25**, slice `25.5`: a flag beside `max_exact` and a
   `CACHE_FORMAT_VERSION` bump. Detail: `datafusion-pgdump/src/statistics.rs`.
+- **KD45** — neither extreme of an enum column answers from the DataFusion
+  provider's statistics: the column is emitted `Dictionary`, whose `MIN`/`MAX`
+  DataFusion types as the value type and orders by label text, where the
+  stored bounds are in declaration order. **(b) owned by P27**, whose dynamic
+  filters compare an enum in that same label order. Detail:
+  `datafusion-pgdump/src/statistics.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
   collation (I32), and nothing reads it: every text column with no `COLLATE`
@@ -286,9 +289,10 @@ than reading as a phase nobody has sliced.
 - **KD42** — a float column holding both `-0` and `0` at an extreme can be
   handed to DataFusion an `Exact` `MIN` or `MAX` of the other zero: its bound
   is gathered in PostgreSQL's order, where the two tie, and DataFusion's
-  aggregate orders by `total_cmp`. A wrong answer with no error. **(c)
-  unowned**; promoted by a float column seen to hold both zeros at an extreme.
-  Detail: `datafusion-pgdump/src/statistics.rs`.
+  aggregate orders by `total_cmp`. A wrong answer with no error, and a float
+  block's recorded order is not one a declared ordering could promise.
+  **(b) owned by P25**, slice `25.5`, which gathers the sign. Detail:
+  `datafusion-pgdump/src/statistics.rs`.
 
 - **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the

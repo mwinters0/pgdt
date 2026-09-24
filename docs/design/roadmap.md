@@ -16,9 +16,12 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P25 — plan answers from the map's statistics | **Current** | [`roadmap-P25-plan-answers.md`](roadmap-P25-plan-answers.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P27 — DataFusion's dynamic filters | Sketched; not grilled | this file, below |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
+| P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
@@ -42,7 +45,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P24`** — nothing at or below it
+centering"). **Phase numbering continues from `P27`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -553,6 +556,36 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
+## P27 — DataFusion's dynamic filters
+
+**A hash join's build side and a TopK's heap each publish a filter DataFusion
+55 pushes into the probe-side scan at run time, and `PgDumpExec` accepts
+none**, so a selective join reads all of its probe table and an `ORDER BY …
+LIMIT` reads every group — though the statistics already held would rule most
+of them out. Filed by P25's grilling, which kept to answers settled at plan
+time; sketched to corner-avoidance depth, and after P25. What it starts from:
+
+- **The leaf's hook is `handle_child_pushdown_result`**, in the `Post` filter
+  pushdown phase; the default `gather_filters_for_pushdown` serves a leaf.
+  Declining is harmless — the join and the TopK still filter themselves.
+- **Neither filter is final when the scan is planned.** A join's is completed
+  before its probe side is first polled, not when `execute` is called; a
+  TopK's tightens while the scan streams. So consuming either re-prunes the
+  remaining groups as the replay streams — DataFusion's Parquet reader does
+  it between row groups on each change — where the replay prunes today only
+  in its plan (`prune::prune_block`).
+- **A dynamic filter is a physical expression**: per-key `min`/`max` bounds and
+  an `IN` list or hash lookup from a join, a lexicographic threshold from a
+  TopK. No converter back to a logical `Expr` exists upstream, so either
+  `PruningPredicateBuilder` is run over a `PruningStatistics` of our groups, or
+  the snapshot is matched into the library's tree, anything unmatched kept.
+- **An enum is compared in label order by DataFusion**, where its stored
+  bounds are in declaration order, so a dynamic filter over one prunes nothing
+  until bounds are kept in that order — which also lets its `MIN`/`MAX` answer
+  from statistics (`KD45`, owned here).
+- **`decisions.md`'s "D53" — the closed operator set — is reconsidered here**,
+  since what a dynamic filter holds is DataFusion's choice, not ours.
+
 ## P22 — The third tunable
 
 **One number fans out into four consumers and has to be right for all of
@@ -667,6 +700,26 @@ What it inherits:
   default. A cold-NVMe figure of the default `parse` is this phase's first
   evidence, before D10 is re-read. The `INSERT` path meets the same condition
   at any statistics setting (`KD9`).
+
+## P26 — Statistics refused on their cost, reconsidered
+
+**Statistics a gather could keep in the pass it already runs, refused because
+of what keeping them costs** — CPU, memory under the statistics account
+([`decisions.md`](decisions.md), "D85", "D86") or cache volume — reconsidered
+together, against what each would let a query skip or answer. Filed by P25's
+grilling, which kept to what is cheap; sketched to corner-avoidance depth. What
+it starts from:
+
+- **A per-group bloom filter**, for equality and `IN` on an unsorted column of
+  many distinct values — the one shape measured to prune nothing today
+  ([`measurements.md`](measurements.md), `statistics-pruning`, the `v_smallint`
+  row), and the membership a hash join's dynamic filter would test.
+- **A per-block distinct-count sketch**, refused as a gathered count by "D79";
+  P25 derives an exact count from complete dictionaries instead, so what is
+  left is the estimate for columns whose dictionaries overflow.
+- **Every other refusal the register grounds in gathering cost** — "D76"'s
+  clipped head in place of a key for a bytewise value is one — swept from
+  `decisions.md` when this phase is grilled.
 
 ## P15 — gzip input
 
@@ -1069,12 +1122,6 @@ which is what makes the difference worth minding at the moment one is found.
   `pgdt query`'s merge; and whether `pgdump_query` re-exports `bytes::Bytes`,
   which `ByteRangeSource::read_range` names in its signature so that an
   embedder implementing a source must depend on `bytes` in step with us.
-
-- **Declared output ordering from recorded sortedness, for DataFusion.** A
-  block's statistics record whether its values are sorted, which a provider
-  could declare as a partition's output ordering and so let DataFusion drop a
-  sort. It holds per block and so per partition only, and only under the
-  ordering DataFusion applies to the column's Arrow type.
 
 - **Attach-time parse in `datafusion-cli-pgdump`.** Building a missing cache
   from inside the DataFusion binary instead of refusing and naming `pgdt parse`.
