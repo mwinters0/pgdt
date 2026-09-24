@@ -345,7 +345,8 @@ The first row is past the first LF at or after `start`; the piece runs to the fi
 `limit`, so a cut at a row's first byte leaves it to the earlier piece. The scanner is never started
 mid-row, since a value can end in `\.` (I7 covers line starts). The first piece reaches back over
 the header, as a pruned block's run of group 0 does. Sub-streams are contiguous byte-balanced runs
-in file order, so concatenating them *is* the serial replay.
+in file order, so concatenating them *is* the serial replay. Rejected: cutting at block boundaries,
+sparing a declared ordering its proof across them (`summary::partition_orders`) at every table's balance.
 
 ### D52 The worker is fused, and the earliest failing piece is the error
 A piece reads its range and parses each read in `spawn_blocking`; `scan_piece` does no I/O.

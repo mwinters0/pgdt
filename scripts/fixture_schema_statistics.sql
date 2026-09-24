@@ -251,3 +251,17 @@ INSERT INTO public.long_min VALUES
     (1, 'b-short', 'b-short'),
     (2, repeat('a', 300), repeat('a', 300)),
     (3, 'c-short', 'c-short');
+
+-- An enum whose labels' text order is the reverse of their declared order.
+-- Arrow orders an enum, which it reads as a dictionary, by label text, so
+-- `m` is ascending there and descending in PostgreSQL's order: the column a
+-- declared ordering over an enum is read against.
+CREATE TYPE public.mood AS ENUM ('sad', 'ok', 'happy');
+CREATE TABLE public.moods (
+    id integer,
+    -- 'happy' < 'ok' < 'sad' bytewise, three rows each.
+    m public.mood
+);
+INSERT INTO public.moods
+SELECT i, (ARRAY['happy', 'ok', 'sad']::public.mood[])[(i - 1) / 3 + 1]
+FROM generate_series(1, 9) AS i;

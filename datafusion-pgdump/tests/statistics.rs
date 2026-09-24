@@ -39,6 +39,7 @@ use datafusion::common::stats::Precision;
 use datafusion::common::{Column, ScalarValue, Statistics};
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{BinaryExpr, Expr, Operator, TableProviderFilterPushDown};
+use datafusion::physical_expr::LexOrdering;
 use datafusion::physical_expr::expressions::Column as ColumnExpr;
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::metrics::MetricValue;
@@ -946,9 +947,12 @@ fn sorts(plan: &Arc<dyn ExecutionPlan>) -> bool {
 /// it satisfies.** Every table of [`planned_fixtures`] at each of
 /// [`ORDERING_PARTITIONS`]: each ordering the scan declares is checked over
 /// each partition's rows under Arrow's row comparator, which places NULLs as
-/// the ordering says; and each readable scalar column's `ORDER BY`, ascending
-/// and descending as SQL defaults them, plans a sort exactly where the scan
-/// declares no ordering satisfying it.
+/// the ordering says; each readable scalar column's `ORDER BY`, ascending and
+/// descending under both NULL placements, plans a sort exactly where the scan
+/// declares no ordering satisfying it; and where a partition of
+/// `public.spans` crosses a block boundary, the proof is checked to have
+/// declared what is ordered across it and nothing that is not
+/// ([`crossing_proved`]).
 #[test]
 fn a_declared_ordering_holds_in_every_partition_and_drops_the_sort() {
     let mut crossings: BTreeMap<usize, bool> = BTreeMap::new();
@@ -987,6 +991,10 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                 let plan = table.scan(&state, Some(&projection), &[], None).await.unwrap();
                 let schema = plan.schema();
                 let read = partitions_of(&ctx, Arc::clone(&plan)).await.unwrap();
+                let equivalences = plan.properties().equivalence_properties();
+                if name.table == "moods" {
+                    enum_proved(&what, equivalences.oeq_class().iter());
+                }
                 if let Ok(part) = schema.index_of("part")
                     && fixture.file_stem().is_some_and(|stem| stem == "load-via-partition-root")
                     && name.table == "spans"
@@ -1008,8 +1016,10 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                         parts.len() > 1
                     });
                     *crossings.entry(partitions).or_insert(false) |= crossed;
+                    if crossed {
+                        crossing_proved(&what, equivalences.oeq_class().iter());
+                    }
                 }
-                let equivalences = plan.properties().equivalence_properties();
                 for ordering in equivalences.oeq_class().iter() {
                     for (i, batches) in read.iter().enumerate() {
                         let fields = ordering
@@ -1061,9 +1071,12 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                     }
                     let field = schema.field(at);
                     let quoted_column = quoted(field.name());
-                    for (direction, descending, nulls_first) in
-                        [("ASC", false, false), ("DESC", true, true)]
-                    {
+                    for (direction, descending, nulls_first) in [
+                        ("ASC", false, false),
+                        ("DESC", true, true),
+                        ("ASC NULLS FIRST", false, true),
+                        ("DESC NULLS LAST", true, false),
+                    ] {
                         let sql = format!(
                             "SELECT {quoted_column} FROM {from} ORDER BY {quoted_column} {direction}"
                         );
@@ -1090,6 +1103,52 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
         }
     }
     crossings
+}
+
+/// **The boundary proof, both ways**, over `public.spans` read as three
+/// blocks with a partition crossing a boundary between them: every column
+/// ordered across the blocks is declared in its direction, and `local`, which
+/// restarts in each block, and `gappy`, which holds a NULL, are not.
+fn crossing_proved<'a>(what: &str, orderings: impl Iterator<Item = &'a LexOrdering>) {
+    let declared: BTreeSet<(String, bool)> = orderings
+        .filter_map(|ordering| {
+            let first = ordering.first();
+            let column = first.expr.downcast_ref::<ColumnExpr>()?;
+            Some((column.name().to_string(), first.options.descending))
+        })
+        .collect();
+    for (column, descending) in [
+        ("part", false),
+        ("id", false),
+        ("reversed", true),
+        ("label", false),
+        ("i4", true),
+        ("ident", false),
+    ] {
+        assert!(
+            declared.contains(&(column.to_string(), descending)),
+            "{what}: `{column}` is ordered across every block and was not declared so: \
+             {declared:?}"
+        );
+    }
+    for column in ["local", "gappy"] {
+        assert!(
+            !declared.iter().any(|(name, _)| name == column),
+            "{what}: `{column}` was declared ordered across a boundary: {declared:?}"
+        );
+    }
+}
+
+/// `public.moods.m`, an enum ascending by label text and descending in its
+/// declared order, is declared ascending: the order Arrow sorts a dictionary
+/// by, which the partition check above then reads it in.
+fn enum_proved<'a>(what: &str, mut orderings: impl Iterator<Item = &'a LexOrdering>) {
+    let declared = orderings.any(|ordering| {
+        let first = ordering.first();
+        !first.options.descending
+            && first.expr.downcast_ref::<ColumnExpr>().is_some_and(|column| column.name() == "m")
+    });
+    assert!(declared, "{what}: the enum `m` is not declared ascending");
 }
 
 /// Which table the build side of `plan`'s one hash join reads, by a column

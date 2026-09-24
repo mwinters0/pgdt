@@ -24,7 +24,7 @@ use crate::exec::{PgDumpExec, ScanMetrics};
 use crate::pushdown::translate;
 use crate::report::Reporting;
 use crate::settings::PgDumpSettings;
-use crate::statistics::table_statistics;
+use crate::statistics::{output_orderings, table_statistics};
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
 /// from the map and the DDL alone (`pgdump_query::table_schema`), so asking for
@@ -138,7 +138,9 @@ impl TableProvider for PgDumpTable {
     /// an unprojected column is never decoded, and `filters` are the ones
     /// [`Self::supports_filters_pushdown`] answered `Exact`, evaluated by the
     /// library as one conjunction. `limit` is left to the plan, which stops
-    /// pulling once it is met, after the filter.
+    /// pulling once it is met, after the filter. A column the map proves every
+    /// partition emits in order is declared that ordering
+    /// ([`output_orderings`]), so a sort it satisfies is not planned.
     ///
     /// **What the plan settled is reported here**, to the sink the table was
     /// registered with ([`PgDumpTable::report`]), and what statistics pruned
@@ -224,7 +226,8 @@ impl TableProvider for PgDumpTable {
             };
             statistics
         };
-        let inner = StreamingTableExec::try_new(schema, streams, None, [], false, limit)?;
+        let orderings = output_orderings(&schema, partitions.orders());
+        let inner = StreamingTableExec::try_new(schema, streams, None, orderings, false, limit)?;
         Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics)))
     }
 }

@@ -1,6 +1,7 @@
 //! The map's statistics as DataFusion's, so `COUNT(*)`, `COUNT(<column>)`,
 //! `COUNT(DISTINCT <column>)`, `MIN` and `MAX` can be answered without
-//! reading a row (`docs/design/decisions.md`, "D89").
+//! reading a row (`docs/design/decisions.md`, "D89"), and a sort the scan's
+//! recorded order already satisfies is not planned ([`output_orderings`]).
 //!
 //! **`Exact` is a promise, and a wrong one is a wrong answer with no error**:
 //! DataFusion's `AggregateStatistics` rule replaces the aggregate with the
@@ -16,10 +17,15 @@
 //! column answers here and refuses when read (`docs/design/decisions.md`,
 //! "D89").
 
-use arrow::datatypes::DataType;
+use std::sync::Arc;
+
+use arrow::compute::SortOptions;
+use arrow::datatypes::{DataType, Schema};
 use datafusion::common::stats::Precision;
 use datafusion::common::{ColumnStatistics, ScalarValue, Statistics};
-use pgdump_query::{ComparisonSemantics, DumpIndex, ResolvedSchema, TableName};
+use datafusion::physical_expr::expressions::Column;
+use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
+use pgdump_query::{ComparisonSemantics, DumpIndex, ResolvedSchema, Sortedness, TableName};
 
 /// What the dump's map says about `table`, in the schema `resolved` states and
 /// in DataFusion's own comparison semantics — the order the emitted values
@@ -113,4 +119,31 @@ fn bound(bound: Option<&pgdump_query::Bound>, complete: bool) -> Precision<Scala
         return Precision::Absent;
     }
     if complete && bound.exact { Precision::Exact(value) } else { Precision::Inexact(value) }
+}
+
+/// The orderings a scan declares, from the order the library proved each
+/// projected column's partitions emit it in (`TablePartitions::orders`), so
+/// a sort DataFusion would otherwise plan over the scan is dropped.
+///
+/// **Each proved column is its own ordering, with its NULLs where SQL puts
+/// them by default** — last ascending, first descending. A proved column
+/// holds none, so either placement is true of it; but DataFusion keeps one
+/// order per expression and matches a nullable column's placement exactly,
+/// so only one can be declared, and it is the one an unqualified `ORDER BY`
+/// asks for.
+pub(crate) fn output_orderings(schema: &Schema, orders: &[Sortedness]) -> Vec<LexOrdering> {
+    orders
+        .iter()
+        .enumerate()
+        .filter_map(|(i, order)| {
+            let descending = match order {
+                Sortedness::Ascending => false,
+                Sortedness::Descending => true,
+                Sortedness::Unsorted => return None,
+            };
+            let column = Arc::new(Column::new(schema.field(i).name(), i));
+            let options = SortOptions { descending, nulls_first: descending };
+            LexOrdering::new([PhysicalSortExpr::new(column, options)])
+        })
+        .collect()
 }

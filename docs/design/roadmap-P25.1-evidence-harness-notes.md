@@ -14,8 +14,8 @@ major.
   `COPY public.spans` blocks. Its `id`, `reversed`, `label` and `part` stay
   sorted across the block boundaries. `local` is sorted inside each block and
   not across them. `gappy` holds one NULL. Without the flag the same rows are
-  the three tables `spans_1`–`spans_3`. So the `default` flag set now has
-  eight blocks, and the tests that counted three read a `BLOCKS` constant.
+  the three tables `spans_1`–`spans_3`. So the `default` flag set has one
+  block per table, and the tests that counted three read a `BLOCKS` constant.
 - **Four targets, one per kind of answer.** Each later slice extends the one
   its answer belongs to:
   - `statistics_never_change_an_answer` now also asks `COUNT(DISTINCT c)` of

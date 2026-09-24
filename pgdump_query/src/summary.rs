@@ -1,6 +1,8 @@
 //! What a complete map's statistics say about a whole table: its rows, and
 //! per column its NULLs, its extremes in one comparison semantics, and its
-//! distinct values where the dictionaries hold them all.
+//! distinct values where the dictionaries hold them all; and the order a
+//! replay's partitions emit a column in, where the map proves one
+//! ([`partition_orders`]).
 //!
 //! [`crate::prune`] reads the same stored sets per group to skip one; this
 //! folds every group of every block of a table into one answer, for an
@@ -12,17 +14,18 @@
 //! caller estimating does not care by how much, and a partial extreme is
 //! still a bound on the whole table.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
 use crate::gather::{clips, declared_columns, dictionary_holds_field_text, stored_resolution};
-use crate::index::{DumpIndex, TableName};
+use crate::index::{CopyBlock, DumpIndex, TableName};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
+use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
-use crate::statistics::{Bounds, ColumnDictionary};
+use crate::statistics::{Bounds, ColumnDictionary, ColumnStatistics, Sortedness};
 
 /// What a table's stored statistics amount to, one entry per column of the
 /// schema it was summarized against.
@@ -140,9 +143,7 @@ pub fn table_summary(
             // The bounds, the row order and the dictionary are believed only
             // under the DDL they were gathered under; the NULL counts above
             // are read off the text and are believed regardless (D78).
-            let def = declared.and_then(|columns| columns.iter().find(|d| &d.name == name));
-            let believed = column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
-                && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref());
+            let believed = believed(column, declared, name);
             let dictionary = column
                 .dictionary
                 .as_ref()
@@ -291,4 +292,124 @@ impl<'a> Accumulator<'a> {
             distinct: self.distinct.map(|distinct| distinct.len() as u64),
         }
     }
+}
+
+/// Whether `column`'s bounds, row order and dictionary were gathered under the
+/// declared type and `COLLATE` clause `declared` still gives column `name`: the
+/// only DDL they are believed under (`docs/design/decisions.md`, "D78").
+fn believed(column: &ColumnStatistics, declared: Option<&[ColumnDef]>, name: &str) -> bool {
+    let def = declared.and_then(|columns| columns.iter().find(|d| d.name == name));
+    column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
+        && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
+}
+
+/// **The order every partition of a replay emits each column of `resolved`
+/// in, under Arrow's comparator** — the order DataFusion sorts by — or
+/// [`Sortedness::Unsorted`] where the map proves none. `matches` are the
+/// table's blocks, statistics included, and `runs` each partition's blocks by
+/// header offset, in the order it replays them; a block may repeat, once per
+/// piece of it.
+///
+/// A column is proved `Ascending` or `Descending` only where all three hold:
+///
+/// - **Every block holding a row recorded that order**, in the stored set
+///   keyed by the kind Arrow orders the column by and under the DDL it was
+///   gathered under, as [`table_summary`] reads its bounds.
+/// - **No group of any block holds a NULL.** A block's row order skips its
+///   NULLs, and an ordering says where they fall.
+/// - **Each boundary a partition crosses is in that order**: ascending, the
+///   upper bound of the earlier block's last group holding a row is at most
+///   the lower bound of the later block's first. A sorted block's extremes
+///   are in those groups, and a clipped lower bound or a successor for an
+///   upper one still bounds. Blocks the plan pruned whole, or that hold no
+///   row, are not between the two.
+///
+/// A float column is never proved, its order being recorded as PostgreSQL's
+/// rather than `total_cmp`'s (`KD42`). Partitions are not cut at block
+/// boundaries to spare the third condition (`docs/design/decisions.md`,
+/// "D51").
+pub(crate) fn partition_orders(
+    matches: &[CopyBlock],
+    metadata: Option<&DumpMetadata>,
+    resolved: &ResolvedSchema,
+    runs: &[Vec<u64>],
+) -> Vec<Sortedness> {
+    (0..resolved.schema.fields().len())
+        .map(|i| column_order(matches, metadata, resolved, i, runs).unwrap_or(Sortedness::Unsorted))
+        .collect()
+}
+
+/// [`partition_orders`] for column `i`, `None` wherever it proves nothing.
+fn column_order(
+    matches: &[CopyBlock],
+    metadata: Option<&DumpMetadata>,
+    resolved: &ResolvedSchema,
+    i: usize,
+    runs: &[Vec<u64>],
+) -> Option<Sortedness> {
+    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::Arrow)?;
+    if matches!(kind, CompareKind::Float32 | CompareKind::Float64) {
+        return None;
+    }
+    let name = resolved.schema.field(i).name();
+    let mut order = None;
+    // Each block's first and last group holding a row, by header offset. A
+    // block holding no row has none, and orders nothing.
+    let mut edges: HashMap<u64, (&Bounds, &Bounds)> = HashMap::new();
+    for block in matches {
+        let statistics = block.statistics.as_deref()?;
+        if statistics.columns.len() != block.header.columns.len() {
+            return None;
+        }
+        let c = block.header.columns.iter().position(|column| column == name)?;
+        let column = statistics.columns[c].as_ref()?;
+        if column.null_counts.len() != statistics.groups.len()
+            || column.null_counts.iter().any(|&nulls| nulls > 0)
+        {
+            return None;
+        }
+        let declared =
+            declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
+        if !believed(column, declared, name) {
+            return None;
+        }
+        let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
+        let stored = column.bounds_in(bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?)?;
+        if stored.groups.len() != statistics.groups.len() {
+            return None;
+        }
+        let mut holding = statistics
+            .groups
+            .iter()
+            .zip(&stored.groups)
+            .filter(|(group, _)| group.rows > 0)
+            .map(|(_, bounds)| bounds.as_ref());
+        let Some(first) = holding.next() else { continue };
+        let last = holding.next_back().unwrap_or(first);
+        match (stored.sortedness, order) {
+            (Sortedness::Unsorted, _) => return None,
+            (recorded, None) => order = Some(recorded),
+            (recorded, Some(held)) if recorded != held => return None,
+            _ => {}
+        }
+        edges.insert(block.header_offset, (first?, last?));
+    }
+    let order = order?;
+    for run in runs {
+        let mut offsets = run.clone();
+        offsets.dedup();
+        let blocks: Vec<_> = offsets.iter().filter_map(|offset| edges.get(offset)).collect();
+        for pair in blocks.windows(2) {
+            let ((_, earlier), (later, _)) = (pair[0], pair[1]);
+            let (high, low) = match order {
+                Sortedness::Descending => (&later.max, &earlier.min),
+                _ => (&earlier.max, &later.min),
+            };
+            let (high, low) = (ValueKey::of(&kind, high)?, ValueKey::of(&kind, low)?);
+            if high.compare(&low) == std::cmp::Ordering::Greater {
+                return None;
+            }
+        }
+    }
+    Some(order)
 }

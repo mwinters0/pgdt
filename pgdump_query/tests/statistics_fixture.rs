@@ -372,3 +372,22 @@ fn a_text_minimum_is_longer_than_a_stored_value() {
         }
     }
 }
+
+/// `moods.m` ascends in its labels' text, which is the order Arrow sorts an
+/// enum by, and descends in the order its type declares them, with no NULL.
+#[test]
+fn an_enum_ascends_by_label_text_against_its_declared_order() {
+    const DECLARED: [&str; 3] = ["sad", "ok", "happy"];
+    for version in VERSIONS {
+        let block = Block::read(version, "public.moods");
+        let values = block.column("m");
+        assert!(values.iter().all(Option::is_some), "m holds no NULL on {version}");
+        let labels = values.into_iter().flatten().collect::<Vec<_>>();
+        assert!(labels.iter().collect::<BTreeSet<_>>().len() > 1, "m varies on {version}");
+        let bytewise = order_flags(&labels, |a, b| a.as_bytes().cmp(b.as_bytes()));
+        assert_eq!(bytewise, (true, false), "m ascends by label text on {version}");
+        let position = |label: &&str| DECLARED.iter().position(|d| d == label).unwrap();
+        let declared = order_flags(&labels, |a, b| position(a).cmp(&position(b)));
+        assert_eq!(declared, (false, true), "m descends in declared order on {version}");
+    }
+}

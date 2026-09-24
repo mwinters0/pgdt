@@ -22,7 +22,7 @@ const DUMP: &str = "16/statistics/default.sql";
 
 /// [`DUMP`]'s blocks: one per table `scripts/fixture_schema_statistics.sql`
 /// fills.
-const BLOCKS: usize = 8;
+const BLOCKS: usize = 9;
 
 /// `parse` under `extra` on a private copy, then `info --json` over the cache
 /// it wrote, and the dump's path for a further `info`.

@@ -33,7 +33,7 @@ const SMALL_GROUP: u64 = 4096;
 
 /// The `default` flag set's blocks: one per table
 /// `scripts/fixture_schema_statistics.sql` fills.
-const BLOCKS: usize = 8;
+const BLOCKS: usize = 9;
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
     let group_size = Some(NonZeroU64::new(group_size).unwrap());
@@ -101,7 +101,8 @@ fn held<'a>(declared: &str, value: &'a str) -> &'a str {
 /// the library: integers and numerics by value with `NaN` above every number,
 /// floats the same with `-0` equal to `0`, `false` below `true`, and text —
 /// blank-padded or varying — by its bytes. A `timestamptz` is written in the
-/// dump's one zone at one width, so its text is in its order too.
+/// dump's one zone at one width, so its text is in its order too. The enum
+/// `public.mood` by its labels' declared positions.
 fn order(declared: &str, a: &str, b: &str) -> Ordering {
     let number = |v: &str| match v {
         "NaN" => f64::NAN,
@@ -109,8 +110,10 @@ fn order(declared: &str, a: &str, b: &str) -> Ordering {
         "-Infinity" => f64::NEG_INFINITY,
         _ => v.parse::<f64>().unwrap(),
     };
+    let mood = |v: &str| ["sad", "ok", "happy"].iter().position(|label| *label == v).unwrap();
     match declared {
         "text" | "timestamp with time zone" => a.as_bytes().cmp(b.as_bytes()),
+        "public.mood" => mood(a).cmp(&mood(b)),
         "boolean" => (a == "t").cmp(&(b == "t")),
         _ if blank_padded(declared) || declared.starts_with("character varying") => {
             a.as_bytes().cmp(b.as_bytes())
@@ -164,8 +167,8 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let unpadded: Vec<&str> = values.iter().map(|v| held(declared, v)).collect();
             let what = format!("{label}: group {k}, column {c} ({declared})");
             assert_eq!(column.null_counts[k], (members.len() - values.len()) as u64, "{what}");
-            // The fixture's one column keeping a second set is a bare
-            // `numeric`, whose Arrow order is its text's.
+            // The fixture's columns keeping a second set are a bare `numeric`
+            // and an enum, whose Arrow order is their text's.
             let sets =
                 [(declared, &column.bounds, &unpadded), ("text", &column.arrow_bounds, &values)];
             for (declared, bounds, values) in sets {
@@ -300,6 +303,13 @@ async fn sortedness_is_the_blocks_row_order() {
             assert_eq!(sortedness(specials, column), Some(expected), "{column} on {version}");
         }
         assert_eq!(sortedness(block(&index, "public.long_value"), "v"), Some(Ascending));
+
+        // An enum descends in its declared order and ascends in Arrow's, its
+        // labels' text.
+        let moods = block(&index, "public.moods");
+        let m = statistics(moods).columns[1].as_ref().unwrap();
+        assert_eq!(m.bounds.as_ref().map(|b| b.sortedness), Some(Descending), "m on {version}");
+        assert_eq!(m.arrow_bounds.as_ref().map(|b| b.sortedness), Some(Ascending), "{version}");
     }
 }
 

@@ -82,9 +82,10 @@ use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
 };
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, StatisticsAccount, StatisticsBackfill,
-    StatisticsHeld, StatisticsRequest, Term,
+    BlockGathered, BlockObserver, BlockStatistics, Sortedness, StatisticsAccount,
+    StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
+use crate::summary::partition_orders;
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -3934,6 +3935,7 @@ pub struct TablePartitions {
     plan: Arc<ReplayPlan>,
     groups: Vec<Vec<Segment>>,
     plan_notes: Vec<PlanNote>,
+    orders: Vec<Sortedness>,
     table: String,
 }
 
@@ -3964,7 +3966,19 @@ impl TablePartitions {
             scan_options,
             query_options,
         )?;
-        Ok(Self { source, watch, plan, groups, plan_notes, table: table.qualified() })
+        let runs: Vec<Vec<u64>> = groups
+            .iter()
+            .map(|segments| segments.iter().map(|segment| segment.block.header_offset).collect())
+            .collect();
+        let resolved = plan
+            .blocks
+            .values()
+            .next()
+            .map(|planned| &planned.resolved)
+            .cloned()
+            .unwrap_or_default();
+        let orders = partition_orders(&matches, index.metadata.as_ref(), &resolved, &runs);
+        Ok(Self { source, watch, plan, groups, plan_notes, orders, table: table.qualified() })
     }
 
     /// How many sub-streams the plan cut: at least one, and never more than
@@ -3999,6 +4013,17 @@ impl TablePartitions {
     /// the table's rows.
     pub fn kept_rows(&self) -> u64 {
         self.plan.kept_rows
+    }
+
+    /// **The order every partition emits each column in**, parallel to
+    /// [`Self::resolved_schema`]'s fields: `Ascending` or `Descending` where
+    /// the map's statistics prove that each partition's rows come out in that
+    /// order under Arrow's comparator, with no NULL among them, and
+    /// `Unsorted` wherever they do not — which says nothing about the rows,
+    /// only about the proof. Settled with the plan, reading nothing
+    /// (`summary::partition_orders`).
+    pub fn orders(&self) -> &[Sortedness] {
+        &self.orders
     }
 
     /// A fresh stream over partition `partition`, cutting batches at
