@@ -219,7 +219,9 @@ pub fn table_summary(
 /// One column's extremes while the blocks are walked, each as the stored text
 /// and its key, so two blocks' bounds are compared exactly as the kind that
 /// stored them orders ([`ValueKey::stored_order`]); and the union of its
-/// dictionaries, borrowed from the map, while every group so far has kept one.
+/// dictionaries, borrowed from the map, while every group so far has kept one
+/// — billed to nothing, since it holds at most a slot per entry the map
+/// already keeps, and only while one table is summarized.
 struct Accumulator<'a> {
     /// The kind bounds are read by, or `None` where this semantics believes
     /// none for the column.

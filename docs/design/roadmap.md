@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P25 — plan answers from the map's statistics | **Current** | [`roadmap-P25-plan-answers.md`](roadmap-P25-plan-answers.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P25 — plan answers from the map's statistics | **Complete** | [`roadmap-P25-plan-answers.md`](roadmap-P25-plan-answers.md); [notes](roadmap-P25-plan-answers-notes.md) |
 | P27 — DataFusion's dynamic filters | Sketched; not grilled | this file, below |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |

@@ -73,24 +73,14 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
-## P25 progress
-
-Spec: [`../design/roadmap-P25-plan-answers.md`](../design/roadmap-P25-plan-answers.md).
-
-- [x] **25.1** The evidence harness, no product code: `datafusion-pgdump`'s statistics targets extended with an oracle per answer — a session without `aggregate_statistics` for an aggregate, a bound never below what the scan emits for an estimate, each partition's rows read sorted under Arrow's comparator for a declared ordering, and the plan shape each answer changes — over the generated `statistics` fixtures, extended across every routine version with the shapes the spec's "Evidence" names. [Notes](../design/roadmap-P25.1-evidence-harness-notes.md).
-- [x] **25.2** A pushed filter's `num_rows` bounded by the rows of the groups pruning kept plus every block it could not consult, `Inexact`, with no selectivity guessed on top; the library exposing the kept rows beside its plan notes; "D89" amended. [Notes](../design/roadmap-P25.2-filtered-row-bound-notes.md).
-- [x] **25.3** An `Exact` `distinct_count` where every group of every block carries a complete dictionary, `Absent` elsewhere, for every kind whose distinct entry text is a distinct emitted value — `character(n)` and bare `bpchar` excluded; the `timestamptz` invariant it rests on filed in `postgres-invariants.md`; its reasoning beside "D89". [Notes](../design/roadmap-P25.3-distinct-count-notes.md).
-- [x] **25.4** A declared output ordering per qualifying column — every block sorted the same way in the set Arrow orders by, no NULL in any group, every block boundary a partition crosses proved in order from adjacent groups' bounds at plan time — floats excepted. [Notes](../design/roadmap-P25.4-declared-ordering-notes.md).
-- [x] **25.5** First `CACHE_FORMAT_VERSION` bump: a lower bound's exactness recorded beside `max_exact`, so a text `MIN` answers from statistics (`KD39`), and the zero's sign kept as `total_cmp` would at a float column's extremes and in its recorded order (`KD42`), which admits floats to 25.4's ordering; `info --json` exports the flag. [Notes](../design/roadmap-P25.5-exact-bounds-notes.md).
-- [x] **25.6** Second `CACHE_FORMAT_VERSION` bump: a per-group sum for `int2`/`int4`/`int8` and `oid`, wrapped as DataFusion's `SUM` wraps, and for a typmodded `numeric` where its `Decimal128` overflow is reproduced value for value; a per-group Arrow byte size for variable-width columns, fixed-width sizes derived from rows; `info --json` exports both. [Notes](../design/roadmap-P25.6-sums-and-byte-sizes-notes.md).
-- [x] **25.7** Third `CACHE_FORMAT_VERSION` bump: `value_bytes` kept for every tracked column, not only those the typed read emits as `Utf8View` or `Binary`, so a `:strings` scan states the bytes of every column it projects; the typed read sizing a boolean at `rows.div_ceil(8)`, `Exact` unfiltered, and an enum at four bytes a row plus its text bytes, `Inexact`, a nested column staying `Absent`; the harness's `emitted_bytes` measuring both; "D91" amended. [Notes](../design/roadmap-P25.7-every-column-sized-notes.md).
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P25 is open**, its checklist above. A dump is readable
+- **No phase is open.** P25 is complete, its notes in
+  [`../design/roadmap-P25-plan-answers-notes.md`](../design/roadmap-P25-plan-answers-notes.md)
+  until the keystone that strikes it. A dump is readable
   over HTTP, plain and `.xz`, with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
