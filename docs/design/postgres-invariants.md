@@ -1668,19 +1668,19 @@ CREATE TABLE s.t (
 **Scope limit.** Nothing here is reachable from a dump of a database whose type
 names are all ordinary identifiers, which is every fixture and the koji sample.
 It bears on the input contract (`roadmap.md`, "The input contract is valid
-PostgreSQL"), and on what this build does with such a file — deficiency `KD4`
-(`decisions.md`, "Type resolution and decoders").
+PostgreSQL"), and on the one spelling a type's name is compared in
+(`decisions.md`, "D36").
 
 **Verified against:** v16.15, live, `pg_dump 16.14`. Not re-checked on other
 majors: `fmtId()` and the quoting rule are not version-varying, and the
 `Typename` grammar this interacts with is identical across v13-v18 (I28).
 
 **Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
-keyword-stripping helpers bail on a trailing `"`. Deficiency `KD4` rests on
-the second half of the claim: because
-`pg_dump` quotes the name in the *declaration* while `parse_ident` dequotes it
-in `TypeDef.name`, the two never compare equal and the column degrades to
-`Unknown` instead of being misread.
+keyword-stripping helpers bail on a trailing `"`. `preamble.rs`'s statement
+grammar — `extract_type_words`, `matching_paren`, `split_top_level_commas` —
+steps over a quoted name whole, and `parse_type_name` keeps a definition's
+name in the spelling `pgtype.rs`'s `find_type` compares a declaration in, so
+the quoted declaration finds its definition.
 
 **Re-verify:**
 

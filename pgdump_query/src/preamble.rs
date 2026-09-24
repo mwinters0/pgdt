@@ -107,9 +107,10 @@ impl DatabaseMetadata {
 /// the `collversion` that would be needed to (I42).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollationDef {
-    /// Schema-qualified name, verbatim as the DDL wrote it
-    /// (`public.c_collation`) — the same spelling a column's `COLLATE` clause
-    /// uses, which is how [`crate::pgtype::comparison_for`] joins the two.
+    /// Schema-qualified name, in the canonical spelling a type's name is kept
+    /// in (`public.c_collation`, `public."CI"`) — which
+    /// [`crate::pgtype::comparison_for`] reads back as the server reads a
+    /// column's `COLLATE` clause, which is how it joins the two.
     pub name: String,
     /// `false` only where the statement carried `deterministic = false`.
     ///
@@ -161,7 +162,12 @@ impl ColumnDef {
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeDef {
-    /// Schema-qualified name, as it appears in a column's declared type.
+    /// Schema-qualified name, as SQL spells it. The preamble keeps the
+    /// canonical spelling — each part bare where it is a plain lower-case
+    /// identifier and quoted elsewhere (I29) — and `crate::pgtype` compares
+    /// the canonical spellings of both sides of a lookup, so `PUBLIC."Mood"`
+    /// finds a definition of `"public"."Mood"`, and `public.Mood` — which is
+    /// `public.mood` — does not.
     pub name: String,
     pub kind: TypeKind,
 }
@@ -272,6 +278,56 @@ pub(crate) fn parse_qualified_name(s: &str) -> Option<(String, usize)> {
     Some((name, cur.pos()))
 }
 
+/// Parse a (possibly schema-qualified) type name from the start of `s` into
+/// its **canonical spelling**, returning it and how many bytes of `s` it
+/// consumed — what [`TypeDef::name`] holds, and what every lookup of a type by
+/// name compares ([`canonical_type_name`]).
+///
+/// Each part is read as the server reads it — an unquoted identifier folded to
+/// lower case, a quoted one taken verbatim (I29) — and written back bare where
+/// it is a plain lower-case identifier, quoted with `""` doubled everywhere
+/// else. So `public."Mood"`, `PUBLIC."Mood"` and `"public"."Mood"` agree while
+/// `public.Mood` is `public.mood`, and no two distinct names share a spelling:
+/// a bare part holds no `.` or `"`. It is `fmtId()`'s spelling but for a
+/// keyword, which `pg_dump` quotes and this leaves bare.
+pub(crate) fn parse_type_name(s: &str) -> Option<(String, usize)> {
+    fn push_part(out: &mut String, part: &str) {
+        let bytes = part.as_bytes();
+        let plain = bytes.first().is_some_and(|b| b.is_ascii_lowercase() || *b == b'_')
+            && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_');
+        if plain {
+            out.push_str(part);
+        } else {
+            out.push('"');
+            out.push_str(&part.replace('"', "\"\""));
+            out.push('"');
+        }
+    }
+    let mut cur = Cursor::new(s.as_bytes());
+    cur.skip_spaces();
+    let mut name = String::new();
+    push_part(&mut name, &cur.parse_ident()?);
+    let before_dot = cur.pos();
+    cur.skip_spaces();
+    if cur.eat_byte(b'.') {
+        cur.skip_spaces();
+        name.push('.');
+        push_part(&mut name, &cur.parse_ident()?);
+        return Some((name, cur.pos()));
+    }
+    Some((name, before_dot))
+}
+
+/// `reference` — a declared type, a domain's base, a multirange companion's
+/// name — in [`parse_type_name`]'s canonical spelling, or `None` where it is
+/// not one type name alone (`integer[]`, `double precision`, text the
+/// identifier grammar does not accept). Applied to both sides of a lookup, so
+/// two spellings of one name find each other and nothing else does.
+pub(crate) fn canonical_type_name(reference: &str) -> Option<String> {
+    let (name, consumed) = parse_type_name(reference)?;
+    reference[consumed..].trim().is_empty().then_some(name)
+}
+
 /// Skip over the single-quoted string literal starting at `open_idx`,
 /// returning the index just past its closing quote — or `bytes.len()` for an
 /// unterminated one, which lets a caller's scan terminate rather than loop.
@@ -367,8 +423,8 @@ fn extract_collation(rest: &str) -> Option<String> {
 }
 
 /// Find the index of `bytes[open_idx..]`'s matching `)`, respecting
-/// single-quoted strings so a literal like `'has,comma'` or, hypothetically,
-/// `')'` inside a string never confuses the depth count.
+/// single-quoted strings and double-quoted identifiers, so a literal like
+/// `')'` or a name like `s."a)"` (I29) never confuses the depth count.
 fn matching_paren(bytes: &[u8], open_idx: usize) -> Option<usize> {
     debug_assert_eq!(bytes.get(open_idx), Some(&b'('));
     let mut depth: i32 = 0;
@@ -377,6 +433,10 @@ fn matching_paren(bytes: &[u8], open_idx: usize) -> Option<usize> {
         match bytes[i] {
             b'\'' => {
                 i = skip_quoted(bytes, i);
+                continue;
+            }
+            b'"' => {
+                i = skip_double_quoted(bytes, i);
                 continue;
             }
             b'(' => depth += 1,
@@ -393,8 +453,9 @@ fn matching_paren(bytes: &[u8], open_idx: usize) -> Option<usize> {
     None
 }
 
-/// Split `s` on top-level commas — not ones nested inside parens or a
-/// single-quoted string — trimming and dropping empty fragments.
+/// Split `s` on top-level commas — not ones nested inside parens, a
+/// single-quoted string or a double-quoted identifier — trimming and dropping
+/// empty fragments.
 fn split_top_level_commas(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut parts = Vec::new();
@@ -405,6 +466,10 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
         match bytes[i] {
             b'\'' => {
                 i = skip_quoted(bytes, i);
+                continue;
+            }
+            b'"' => {
+                i = skip_double_quoted(bytes, i);
                 continue;
             }
             b'(' => depth += 1,
@@ -448,8 +513,9 @@ fn parse_string_literal(s: &str) -> Option<String> {
 /// definition is `<type words...> [constraint...]`, and `pg_dump` never puts
 /// a space inside a type's own parenthesized modifier (`numeric(38,10)`,
 /// `character varying(16)`), so whitespace-splitting the tail after the name
-/// and stopping at the first of these is enough to isolate it — no need to
-/// parse constraint syntax at all.
+/// — outside a quoted identifier, whose spaces are its own (I29) — and
+/// stopping at the first of these is enough to isolate it — no need to parse
+/// constraint syntax at all.
 const STOP_WORDS: &[&str] = &[
     "NOT",
     "DEFAULT",
@@ -464,29 +530,54 @@ const STOP_WORDS: &[&str] = &[
 
 /// Strip `/* ... */` block comments — the literal shape `pg_dump` writes a
 /// `--binary-upgrade`-recreated dropped column's placeholder type in
-/// (`INTEGER /* dummy */`, I5; `fixtures/*/edge_cases/binary-upgrade.sql`).
-/// Assumes no nesting, which matches every comment `pg_dump` emits.
+/// (`INTEGER /* dummy */`, I5; `fixtures/*/edge_cases/binary-upgrade.sql`) —
+/// stepping over string literals and quoted identifiers, inside which `/*`
+/// is text (I29). Assumes no nesting, which matches every comment `pg_dump`
+/// emits.
 fn strip_block_comments(s: &str) -> String {
+    let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(start) = rest.find("/*") {
-        out.push_str(&rest[..start]);
-        match rest[start..].find("*/") {
-            Some(end) => rest = &rest[start + end + 2..],
-            None => {
-                rest = "";
-                break;
+    let (mut copied, mut i) = (0usize, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => i = skip_quoted(bytes, i),
+            b'"' => i = skip_double_quoted(bytes, i),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                out.push_str(&s[copied..i]);
+                i = s[i + 2..].find("*/").map_or(bytes.len(), |end| i + 2 + end + 2);
+                copied = i;
             }
+            _ => i += 1,
         }
     }
-    out.push_str(rest);
+    out.push_str(&s[copied..]);
     out
+}
+
+/// The whitespace-separated words of `s`, a quoted identifier being one word
+/// with whatever it holds — spaces and all (I29).
+fn type_tokens(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i = if bytes[i] == b'"' { skip_double_quoted(bytes, i) } else { i + 1 };
+        }
+        tokens.push(&s[start..i]);
+    }
+    tokens
 }
 
 fn extract_type_words(rest: &str) -> String {
     let rest = strip_block_comments(rest);
     let mut words = Vec::new();
-    for tok in rest.split_whitespace() {
+    for tok in type_tokens(&rest) {
         if STOP_WORDS.iter().any(|kw| tok.eq_ignore_ascii_case(kw)) {
             break;
         }
@@ -537,7 +628,7 @@ fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
 
 /// `CREATE DOMAIN <name> AS <basetype> [COLLATE ...] [constraints...];`
 fn parse_create_domain(rest: &str) -> Option<TypeDef> {
-    let (name, consumed) = parse_qualified_name(rest)?;
+    let (name, consumed) = parse_type_name(rest)?;
     let after_as = strip_kw(rest[consumed..].trim_start(), "AS")?;
     let base_type = extract_type_words(after_as);
     if base_type.is_empty() {
@@ -579,7 +670,7 @@ fn parse_create_extension(rest: &str) -> Option<Extension> {
 /// where under-claiming costs an unprinted note rather than a wrong row
 /// set.
 fn parse_create_collation(rest: &str) -> Option<CollationDef> {
-    let (name, consumed) = parse_qualified_name(rest)?;
+    let (name, consumed) = parse_type_name(rest)?;
     let after = rest[consumed..].trim_start();
     let mut deterministic = true;
     if after.starts_with('(') {
@@ -600,7 +691,7 @@ fn parse_create_collation(rest: &str) -> Option<CollationDef> {
 /// [`TypeKind`]'s variants — [`TypeKind::Domain`] comes from
 /// [`parse_create_domain`] instead.
 fn parse_create_type(rest: &str) -> Option<TypeDef> {
-    let (name, consumed) = parse_qualified_name(rest)?;
+    let (name, consumed) = parse_type_name(rest)?;
     let after = rest[consumed..].trim_start();
 
     if after.is_empty() || after.starts_with(';') {
@@ -628,7 +719,7 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
             if k.eq_ignore_ascii_case("subtype") {
                 subtype = Some(v);
             } else if k.eq_ignore_ascii_case("multirange_type_name") {
-                multirange_type_name = Some(v);
+                multirange_type_name = Some(canonical_type_name(&v).unwrap_or(v));
             } else if k.eq_ignore_ascii_case("canonical") {
                 canonical = Some(v);
             }
@@ -670,7 +761,7 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
 /// since that module has no already-open `TypeDef` to fold into the way
 /// [`fold_alter_type_add_value`] does for [`dump_metadata_from_spans`].
 pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
-    let (name, consumed) = parse_qualified_name(rest)?;
+    let (name, consumed) = parse_type_name(rest)?;
     let after = &rest[consumed..];
     let idx = find_ci(after, "ADD VALUE")?;
     let label = parse_string_literal(after[idx + "ADD VALUE".len()..].trim_start())?;
@@ -2055,5 +2146,114 @@ mod tests {
         let (roles, tablespaces) = refs_of("CREATE TABLE public.t (id integer);");
         assert!(roles.is_empty());
         assert!(tablespaces.is_empty());
+    }
+
+    /// A type name is kept in one spelling however the DDL wrote it: each part
+    /// read as the server reads it — an unquoted one folded, a quoted one
+    /// verbatim — and quoted back only where it is not a plain lower-case
+    /// identifier (I29). Text that is not one name has no spelling.
+    #[test]
+    fn a_type_name_has_one_canonical_spelling() {
+        for (reference, canonical) in [
+            ("public.mood", "public.mood"),
+            ("PUBLIC.Mood", "public.mood"),
+            (r#""public"."mood""#, "public.mood"),
+            (r#"public."Mood""#, r#"public."Mood""#),
+            (r#"s."x ARRAY""#, r#"s."x ARRAY""#),
+            (r#"s."a""b""#, r#"s."a""b""#),
+            (r#"s."a.b""#, r#"s."a.b""#),
+            ("s.x$1", r#"s."x$1""#),
+            ("s . t ", "s.t"),
+            ("mood", "mood"),
+        ] {
+            assert_eq!(canonical_type_name(reference).as_deref(), Some(canonical), "{reference}");
+            assert_eq!(canonical_type_name(canonical).as_deref(), Some(canonical), "{canonical}");
+        }
+        for reference in ["integer[]", "double precision", r#"s."a"[]"#, "numeric(10,2)", "s."] {
+            assert_eq!(canonical_type_name(reference), None, "{reference}");
+        }
+    }
+
+    /// I29's own dump, and the four characters a name may hold that the
+    /// statement grammar also uses — a paren, a comma, a run of spaces and a
+    /// comment opener — plus a constraint keyword: each declaration is kept
+    /// whole, its definition under the one spelling a lookup compares.
+    #[test]
+    fn a_type_name_needing_quotes_survives_the_statement_grammar() {
+        for (statement, name) in [
+            (r#"CREATE DOMAIN s."d[3]" AS integer;"#, r#"s."d[3]""#),
+            (r#"CREATE DOMAIN s."my type" AS integer;"#, r#"s."my type""#),
+            (r#"CREATE TYPE s."weird[]" AS ENUM ('a', 'b');"#, r#"s."weird[]""#),
+            (r#"CREATE DOMAIN s."x ARRAY" AS integer;"#, r#"s."x ARRAY""#),
+            (r#"CREATE DOMAIN s."Mood" AS integer;"#, r#"s."Mood""#),
+            (r#"CREATE DOMAIN S.Mood AS integer;"#, "s.mood"),
+        ] {
+            assert_eq!(parse_type(&[statement]).name, name, "{statement}");
+        }
+        let (_, columns) = parse_table(&[
+            "CREATE TABLE s.t (",
+            r#"    a s."weird[]","#,
+            r#"    b s."my type","#,
+            r#"    c s."x ARRAY","#,
+            r#"    d s."d[3]","#,
+            r#"    e s."weird[]"[],"#,
+            r#"    f s."my type"[],"#,
+            r#"    g s."x ARRAY"[],"#,
+            r#"    h s."a)" NOT NULL,"#,
+            r#"    i s."a,b" DEFAULT 'x',"#,
+            r#"    j s."two  spaces","#,
+            r#"    k s."a NOT b","#,
+            r#"    l s."a/*b*/c" /* dummy */"#,
+            ");",
+        ]);
+        let declared: Vec<&str> = columns.iter().map(|c| c.declared_type.as_str()).collect();
+        assert_eq!(
+            declared,
+            [
+                r#"s."weird[]""#,
+                r#"s."my type""#,
+                r#"s."x ARRAY""#,
+                r#"s."d[3]""#,
+                r#"s."weird[]"[]"#,
+                r#"s."my type"[]"#,
+                r#"s."x ARRAY"[]"#,
+                r#"s."a)""#,
+                r#"s."a,b""#,
+                r#"s."two  spaces""#,
+                r#"s."a NOT b""#,
+                r#"s."a/*b*/c""#,
+            ]
+        );
+        let composite = parse_type(&[r#"CREATE TYPE s.c AS (x s."a,b", y s."p(q)");"#]);
+        assert_eq!(
+            composite.kind,
+            TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("x", r#"s."a,b""#),
+                    ColumnDef::new("y", r#"s."p(q)""#),
+                ])
+            }
+        );
+        let range = parse_type(&[
+            r#"CREATE TYPE s."R" AS RANGE (subtype = integer, multirange_type_name = S."R_multi");"#,
+        ]);
+        assert_eq!(range.name, r#"s."R""#);
+        assert!(matches!(
+            range.kind,
+            TypeKind::Range { multirange_type_name: Some(ref m), .. } if m == r#"s."R_multi""#
+        ));
+    }
+
+    /// A collation's name is kept as a type's is, so a quoted one — `pg_dump`
+    /// quotes any name that is not a plain lower-case identifier — reads back
+    /// as the name the column's `COLLATE` clause states (I42).
+    #[test]
+    fn a_quoted_collation_name_keeps_its_case() {
+        let Some(StatementShape::Collation(def)) = classify_statement(
+            r#"CREATE COLLATION public."CI" (provider = icu, deterministic = false, locale = 'und-u-ks-level2');"#,
+        ) else {
+            panic!("not a collation");
+        };
+        assert_eq!(def, CollationDef { name: r#"public."CI""#.to_string(), deterministic: false });
     }
 }

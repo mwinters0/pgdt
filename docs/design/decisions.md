@@ -254,7 +254,8 @@ Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `r
 name (I11); a composite's field list is all-or-nothing, `record_out` being positional (I23); a
 `--create` dump's pre-`\connect` segment is not a database (I9). L1 stores text, never a conclusion:
 declared types and collation clauses are verbatim, `None` collation is "no clause" (I37), and
-`CollationDef` keeps only `deterministic` (I42).
+`CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
+both sides of a lookup compared in it (I29). Rejected: its parts dequoted, `"a.b".c` being `a."b.c"`.
 
 ## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
 ### D37 The bar: the dump alone determines the value
@@ -289,7 +290,7 @@ keeping the octet key for one that is, a per-literal switch bought for range pru
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided on
 `domain_terminal`'s result by `resolve_array` and `array_comparison`. All `Typename` spellings collapse to element plus one level (I21, I28);
 normalizing on parse would edit the user's DDL. A walk spends a visit per definition, the list's
-length bounding an acyclic one (I24), so a cycle answers `Unknown`: `KD3`, `KD4`.
+length bounding an acyclic one (I24), so a cycle answers `Unknown`: `KD3`.
 
 ### D42 `interval` is the struct; special values are decode failures
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and

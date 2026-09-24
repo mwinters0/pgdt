@@ -68,11 +68,6 @@ than reading as a phase nobody has sliced.
   or scientific data, for whom a string is the wrong answer. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
-  type, never a wrong one. **(c) unowned**; promoted by a dump whose type names
-  are not ordinary identifiers, which neither any fixture nor koji is. Detail:
-  `pgdump_query/src/pgtype.rs`.
-
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
   wherever the save throttle's gate does not close it — which is every
   `--dtcache none` scan, since a no-op save leaves nothing to amortize.

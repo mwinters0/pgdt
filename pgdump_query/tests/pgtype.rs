@@ -418,6 +418,60 @@ async fn the_canonical_extension_names_land_on_the_columns_that_claim_them() {
     }
 }
 
+/// I29's own dump, as `pg_dump 16.14` wrote it: every type name needs quoting,
+/// and each column resolves to the type it names, the arrays included — the
+/// definition and the declaration compared in one spelling.
+#[tokio::test]
+async fn a_type_name_needing_quotes_resolves_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("quoted.sql");
+    std::fs::write(
+        &path,
+        [
+            "CREATE SCHEMA s;",
+            r#"CREATE DOMAIN s."d[3]" AS integer;"#,
+            r#"CREATE DOMAIN s."my type" AS integer;"#,
+            r#"CREATE TYPE s."weird[]" AS ENUM ("#,
+            "    'a',",
+            "    'b'",
+            ");",
+            r#"CREATE DOMAIN s."x ARRAY" AS integer;"#,
+            "CREATE TABLE s.t (",
+            r#"    a s."weird[]","#,
+            r#"    b s."my type","#,
+            r#"    c s."x ARRAY","#,
+            r#"    d s."d[3]","#,
+            r#"    e s."weird[]"[],"#,
+            r#"    f s."my type"[],"#,
+            r#"    g s."x ARRAY"[]"#,
+            ");",
+            "COPY s.t (a, b, c, d, e, f, g) FROM stdin;",
+            "a\t1\t2\t3\t{b}\t{4}\t{5}",
+            "\\.",
+            "",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let meta = metadata(&path).await;
+    let resolved = resolve_table(&meta, "s.t");
+    assert!(resolved.columns.iter().all(|r| *r == ColumnResolution::Mapped), "{resolved:?}");
+    let label = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+    let types: Vec<&DataType> = resolved.schema.fields().iter().map(|f| f.data_type()).collect();
+    assert_eq!(
+        types,
+        [
+            &label,
+            &DataType::Int32,
+            &DataType::Int32,
+            &DataType::Int32,
+            &list_of(label.clone()),
+            &list_of(DataType::Int32),
+            &list_of(DataType::Int32),
+        ]
+    );
+}
+
 /// Real-shape smoke test for `resolve_columns` against genuine multi-database
 /// `DumpMetadata` (as opposed to `resolve.rs`'s hand-built
 /// `database_selects_by_attributed_name_not_by_first_match`, which proves

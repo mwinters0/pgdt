@@ -1044,19 +1044,6 @@ which is what makes the difference worth minding at the moment one is found.
   what makes it a variant rather than a rework. Not to be confused with
   `--format`, which names the archive container and is P8 Track B.
 
-- **A real type-name tokenizer, shared by the preamble grammar and `pgtype`.**
-  Today `preamble::extract_type_words` captures a declared type as
-  whitespace-delimited words and `parse_ident` dequotes an identifier, so a
-  type name needing quotes (I29) is stored dequoted in `TypeDef.name` while the
-  declaration that uses it keeps its quotes — the two never compare equal, and
-  the column degrades to `Unknown` (deficiency `KD4`). A tokenizer
-  that understands quoted identifiers would let the name and the declaration
-  agree, and would also let `array_element` decide quoting deliberately rather
-  than by the accident that its strip helpers bail on a trailing `"`. Strictly
-  additive: it only ever promotes a column that is `Utf8View` today. Not
-  scheduled because no `pg_dump` of a database with ordinary type names reaches
-  it, and it is the input contract rather than the output that makes it wanted.
-
 - **Caller-supplied type mapping.** Let a caller override the
   PostgreSQL-type→Arrow-type resolution: per column, per declared type, or
   wholesale. Two uses, and the second is the important one. It lets a caller who

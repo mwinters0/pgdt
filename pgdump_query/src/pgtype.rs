@@ -14,7 +14,7 @@ use arrow::datatypes::{DataType, Field, Fields};
 use arrow_schema::extension::{Json, Uuid};
 
 use crate::copy::Cursor;
-use crate::preamble::{CollationDef, TypeDef, TypeKind};
+use crate::preamble::{CollationDef, TypeDef, TypeKind, canonical_type_name};
 use crate::statistics::BoundsSet;
 
 /// The outcome of mapping one declared type string, mirroring
@@ -1000,9 +1000,14 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
 /// the string. It says whether a name is schema-qualified; a built-in's is read
 /// by [`builtin_name`]. Only `numeric` and `float` read the typmod's *value*;
 /// every other mapping below is `Microsecond`-precision or otherwise
-/// typmod-independent.
+/// typmod-independent. A `(` inside a quoted name is the name's (I29).
 pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
-    match s.find('(') {
+    let mut quoted = false;
+    let open = s.bytes().position(|b| {
+        quoted ^= b == b'"';
+        b == b'(' && !quoted
+    });
+    match open {
         Some(i) if s.ends_with(')') => (s[..i].trim_end(), Some(&s[i + 1..s.len() - 1])),
         _ => (s, None),
     }
@@ -1322,8 +1327,7 @@ pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExten
         // A domain is the only user-defined kind that can reach a built-in;
         // an enum, composite, range or opaque base type maps to a type no
         // canonical extension names.
-        let TypeKind::Domain { base_type, .. } = &types.iter().find(|t| t.name == base)?.kind
-        else {
+        let TypeKind::Domain { base_type, .. } = &find_type(base, types)?.kind else {
             return None;
         };
         declared = base_type.trim();
@@ -1447,6 +1451,25 @@ fn range_struct(bound: DataType) -> DataType {
     ]))
 }
 
+/// The definition `reference` names — a declared type, a domain's base —
+/// found by comparing both sides in their canonical spelling, so a quoted and
+/// an unquoted spelling of one name agree and the server's case folding is
+/// applied to each (I29). `None` for a reference that is not one type name.
+fn find_type<'a>(reference: &str, types: &'a [TypeDef]) -> Option<&'a TypeDef> {
+    let key = canonical_type_name(reference)?;
+    types.iter().find(|t| canonical_type_name(&t.name).is_some_and(|name| name == key))
+}
+
+/// The range whose `multirange_type_name` is `reference`, compared as
+/// [`find_type`] compares — the only trace a multirange companion has (I10).
+fn companion_range<'a>(reference: &str, types: &'a [TypeDef]) -> Option<&'a TypeDef> {
+    let key = canonical_type_name(reference)?;
+    types.iter().find(|t| {
+        matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. }
+            if canonical_type_name(n).is_some_and(|name| name == key))
+    })
+}
+
 /// How many more `CREATE TYPE`/`CREATE DOMAIN` definitions one path of a
 /// recursive type walk may visit — [`resolve_declared_type`]'s and
 /// [`comparison_for`]'s, through domains, composites, ranges and array
@@ -1486,22 +1509,19 @@ fn resolve_nested(declared: &str, types: &[TypeDef], visits: Visits) -> (DataTyp
     }
 }
 
-/// The user-defined half: look `name` up in `types` (already schema-qualified,
-/// matching how [`crate::preamble::TypeDef::name`] is stored) and resolve by
-/// kind. A domain recurses on its base type — legal to nest (a domain over a
-/// domain) — and every visit is spent from `visits`, which bounds a cycle.
+/// The user-defined half: look the schema-qualified `name` up in `types`
+/// through [`find_type`] and resolve by kind. A domain recurses on its base
+/// type — legal to nest (a domain over a domain) — and every visit is spent
+/// from `visits`, which bounds a cycle.
 fn resolve_user_type(name: &str, types: &[TypeDef], visits: Visits) -> TypeOutcome {
     let Some(visits) = visits.spend() else { return TypeOutcome::Unknown };
-    let Some(def) = types.iter().find(|t| t.name == name) else {
+    let Some(def) = find_type(name, types) else {
         // Not a type of its own — but it might be a range's auto-created
         // multirange companion, which `pg_dump` emits no `CREATE TYPE` for
         // (I10). Its only trace is the `multirange_type_name` parameter
         // inside the range's own DDL, which is also where the companion's
         // bound type comes from.
-        let companion_of = types.iter().find(|t| {
-            matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
-        });
-        return match companion_of.map(|t| &t.kind) {
+        return match companion_range(name, types).map(|t| &t.kind) {
             Some(TypeKind::Range { subtype, .. }) => {
                 let (bound, plan) = range_bound(subtype.as_deref(), types, visits);
                 TypeOutcome::Mapped(list_of(range_struct(bound)), NestedPlan::Multirange(plan))
@@ -1588,7 +1608,7 @@ fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
     let terminal = domain_terminal(element, types);
     let opaque = terminal.eq_ignore_ascii_case("box")
         || matches!(
-            types.iter().find(|t| t.name == terminal).map(|t| &t.kind),
+            find_type(terminal, types).map(|t| &t.kind),
             Some(TypeKind::Base | TypeKind::Shell)
         );
     if opaque {
@@ -1628,19 +1648,10 @@ fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
 /// legally contain `[`, `]`, a space or the `ARRAY` keyword, and `pg_dump`
 /// writes it quoted wherever it appears — so a column of `s."x ARRAY"` ends in
 /// a `"` and both strip helpers bail, while `s."x ARRAY"[]` sheds the bound
-/// outside the quotes and answers the name with its quotes intact. The quotes
-/// are what keep the production unambiguous, and stripping a suffix without
-/// checking for a closing quote first is exactly what would break that. What
-/// such a name *does* cost is a weaker type, never a wrong one: `TypeDef.name`
-/// holds it dequoted while the declaration keeps its quotes, so the lookup
-/// misses and the column resolves `Unknown`.
-///
-/// Deficiency register: `deficiency: KD4` — a type name that needs quoting
-/// therefore resolves `Unknown` (I29). No spelling is misread and every value
-/// still decodes as the text the file holds, so what is lost is strength, not
-/// correctness, and it is unreachable from a dump whose type names are
-/// ordinary identifiers. **(c) unowned.** Closing it means a real type-name
-/// tokenizer, which is strictly additive and not this function's.
+/// outside the quotes and answers the name with its quotes intact, which
+/// [`find_type`] then finds. The quotes are what keep the production
+/// unambiguous, and stripping a suffix without checking for a closing quote
+/// first is exactly what would break that.
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
     // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at
@@ -1707,7 +1718,7 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
     let mut name = name.trim();
     for _ in 0..=types.len() {
-        match types.iter().find(|t| t.name == name).map(|t| &t.kind) {
+        match find_type(name, types).map(|t| &t.kind) {
             Some(TypeKind::Domain { base_type, .. }) => name = base_type.trim(),
             _ => break,
         }
@@ -1766,7 +1777,7 @@ fn array_comparison(
     let terminal = domain_terminal(element, types);
     let opaque = terminal.eq_ignore_ascii_case("box")
         || matches!(
-            types.iter().find(|t| t.name == terminal).map(|t| &t.kind),
+            find_type(terminal, types).map(|t| &t.kind),
             Some(TypeKind::Base | TypeKind::Shell)
         );
     let child = if opaque || array_element(terminal).is_some() {
@@ -1957,11 +1968,8 @@ fn comparison_user_type(
     // companion, which `pg_dump` emits no `CREATE TYPE` for (I10). The
     // companion is found through the range whose DDL names it, exactly as
     // `resolve_user_type` finds it.
-    let Some(def) = types.iter().find(|t| t.name == name) else {
-        let companion_of = types.iter().find(|t| {
-            matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
-        });
-        return match companion_of {
+    let Some(def) = find_type(name, types) else {
+        return match companion_range(name, types) {
             // A multirange over a range that canonicalizes is unanswerable
             // for the same reason the range is, and names the *range* type:
             // the companion has no DDL of its own to name (I10).
@@ -3621,5 +3629,102 @@ mod tests {
             panic!("int2vector[] compares structurally")
         };
         assert_eq!(outer, NestedCompare::Array(Box::new(NestedCompare::Int2Vector)));
+    }
+
+    /// A type name needing quotes resolves as an ordinary one does (I29): the
+    /// definition and the declaration are compared in one spelling, so every
+    /// column of I29's own dump finds its type, and case decides which of two
+    /// names differing only in it a spelling means.
+    #[test]
+    fn a_quoted_type_name_resolves_as_an_ordinary_one() {
+        let enum_type = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        let types = [
+            ty(r#"s."d[3]""#, TypeKind::domain("integer")),
+            ty(r#"s."my type""#, TypeKind::domain("integer")),
+            ty(r#"s."weird[]""#, TypeKind::Enum { labels: vec!["a".into(), "b".into()] }),
+            ty(r#"s."x ARRAY""#, TypeKind::domain("integer")),
+            ty(r#"s."Mood""#, TypeKind::domain("uuid")),
+            ty("s.mood", TypeKind::domain("text")),
+            // Written by hand, in a spelling other than the canonical one.
+            ty(r#""s"."hand""#, TypeKind::domain("boolean")),
+        ];
+        let int = TypeOutcome::Mapped(DataType::Int32, NestedPlan::Scalar);
+        let int_list = TypeOutcome::Mapped(
+            list_of(DataType::Int32),
+            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+        );
+        for (declared, outcome) in [
+            (r#"s."weird[]""#, TypeOutcome::Mapped(enum_type.clone(), NestedPlan::Scalar)),
+            (r#"s."my type""#, int.clone()),
+            (r#"s."x ARRAY""#, int.clone()),
+            (r#"s."d[3]""#, int.clone()),
+            (
+                r#"s."weird[]"[]"#,
+                TypeOutcome::Mapped(
+                    list_of(enum_type),
+                    NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+                ),
+            ),
+            (r#"s."my type"[]"#, int_list.clone()),
+            (r#"s."x ARRAY"[]"#, int_list),
+            (r#"S."Mood""#, TypeOutcome::Mapped(DataType::FixedSizeBinary(16), NestedPlan::Scalar)),
+            ("s.Mood", TypeOutcome::Mapped(DataType::Utf8View, NestedPlan::Scalar)),
+            ("s.hand", TypeOutcome::Mapped(DataType::Boolean, NestedPlan::Scalar)),
+            (r#"s."MOOD""#, TypeOutcome::Unknown),
+        ] {
+            assert_eq!(resolve_declared_type(declared, &types), outcome, "{declared}");
+        }
+        assert_eq!(comparison_for(r#"s."x ARRAY""#, None, &types, &[]), agrees(CompareKind::Int));
+        assert_eq!(extension_for(r#"s."Mood""#, &types), Some(CanonicalExtension::Uuid));
+        assert_eq!(extension_for("s.mood", &types), None);
+
+        // A multirange companion is found through its range under any spelling.
+        let ranges = [ty(
+            r#"s."R""#,
+            TypeKind::Range {
+                subtype: Some("integer".into()),
+                multirange_type_name: Some(r#"s."R_multi""#.into()),
+                canonical: None,
+            },
+        )];
+        assert!(matches!(
+            resolve_declared_type(r#""s"."R_multi""#, &ranges),
+            TypeOutcome::Mapped(_, NestedPlan::Multirange(_))
+        ));
+    }
+
+    /// Two spellings of one name are one definition, so a chain written with
+    /// both reaches its base; a cycle only case could make — a domain over
+    /// its own name spelled unquoted — is no cycle, the unquoted spelling
+    /// naming another type.
+    #[test]
+    fn spellings_of_one_name_are_one_definition() {
+        let types = [
+            ty(r#"public."D""#, TypeKind::domain("public.d")),
+            ty("public.d", TypeKind::domain(r#""public"."E""#)),
+            ty(r#"public."E""#, TypeKind::domain("uuid")),
+        ];
+        let uuid = TypeOutcome::Mapped(DataType::FixedSizeBinary(16), NestedPlan::Scalar);
+        assert_eq!(resolve_declared_type(r#"public."D""#, &types), uuid);
+        assert_eq!(resolve_declared_type("PUBLIC.D", &types), uuid);
+        assert_eq!(comparison_for(r#"public."D""#, None, &types, &[]), agrees(CompareKind::Uuid));
+    }
+
+    /// A collation a dump declares under a quoted name is found by the
+    /// clause that states it, so its non-determinism is announced rather
+    /// than read as another non-bytewise order (I42) — and a declared
+    /// `public."C"` keeps an unqualified `"C"` from being called bytewise.
+    #[test]
+    fn a_quoted_collation_name_is_found_by_its_clause() {
+        let declared = [CollationDef { name: r#"public."CI""#.to_string(), deterministic: false }];
+        assert_eq!(
+            comparison_for("text", Some(r#"public."CI""#), &[], &declared),
+            ComparisonPlan::diverging(
+                CompareKind::Text,
+                ComparisonDivergence::NonDeterministicCollation
+            )
+        );
+        let c = [CollationDef { name: r#"public."C""#.to_string(), deterministic: true }];
+        assert_ne!(comparison_for("text", Some(r#""C""#), &[], &c), agrees(CompareKind::Text));
     }
 }
