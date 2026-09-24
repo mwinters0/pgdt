@@ -1977,6 +1977,8 @@ struct ReplayPlan {
     stops: BTreeMap<u64, SortedStop>,
     /// What pruning skipped, where any block's statistics were consulted.
     pruned: Option<PlanNote>,
+    /// At least the rows the replay can emit ([`Pruned::rows`]).
+    kept_rows: u64,
 }
 
 impl ReplayPlan {
@@ -1992,9 +1994,19 @@ impl ReplayPlan {
     ) -> Result<Self> {
         let table = TableColumns::settle(matches, metadata.as_ref())?;
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
-        let Pruned { kept, stops, note: pruned } =
+        let Pruned { kept, stops, note: pruned, rows: kept_rows } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
-        Ok(Self { scan_options, query_options, metadata, table, blocks, kept, stops, pruned })
+        Ok(Self {
+            scan_options,
+            query_options,
+            metadata,
+            table,
+            blocks,
+            kept,
+            stops,
+            pruned,
+            kept_rows,
+        })
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -2014,11 +2026,15 @@ impl ReplayPlan {
 }
 
 /// What [`prune_blocks`] settles for a [`ReplayPlan`].
-#[derive(Default)]
 struct Pruned {
     kept: BTreeMap<u64, Vec<Range<u64>>>,
     stops: BTreeMap<u64, SortedStop>,
     note: Option<PlanNote>,
+    /// The rows of every group pruning kept, plus the `row_count` of every
+    /// block it did not consult: never fewer than the replay emits, and
+    /// nothing guessed below that — where a sorted block stops is found only
+    /// as its rows are read.
+    rows: u64,
 }
 
 /// Settle which row groups of `matches` the query's filter skips
@@ -2036,17 +2052,19 @@ fn prune_blocks(
     metadata: Option<&DumpMetadata>,
 ) -> Pruned {
     let (mut kept, mut stops) = (BTreeMap::new(), BTreeMap::new());
-    if !query_options.use_statistics {
-        return Pruned::default();
-    }
+    let mut rows = 0;
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
-        let Some(planned) = blocks.get(&block.header_offset) else { continue };
-        if !planned.filter.reads_fields() {
+        let pruning = blocks
+            .get(&block.header_offset)
+            .filter(|planned| query_options.use_statistics && planned.filter.reads_fields())
+            .and_then(|planned| prune_block(block, &planned.filter, metadata));
+        let Some(pruning) = pruning else {
+            rows += block.row_count;
             continue;
-        }
-        let Some(pruning) = prune_block(block, &planned.filter, metadata) else { continue };
+        };
         consulted = true;
+        rows += pruning.kept_rows;
         groups += pruning.groups;
         skipped_groups += pruning.skipped_groups;
         skipped_bytes += pruning.skipped_bytes;
@@ -2062,7 +2080,7 @@ fn prune_blocks(
         kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
         levers: Vec::new(),
     });
-    Pruned { kept, stops, note }
+    Pruned { kept, stops, note, rows }
 }
 
 /// One block's schema, filter and projection, resolved against a query —
@@ -3969,6 +3987,18 @@ impl TablePartitions {
     /// What the plan settled before any row is read ([`TableStream::plan_notes`]).
     pub fn plan_notes(&self) -> &[PlanNote] {
         &self.plan_notes
+    }
+
+    /// **Never fewer rows than the plan's partitions emit together**, settled
+    /// with the plan and reading nothing: the rows of every row group the
+    /// filter's pruning kept ([`crate::statistics::RowGroup::rows`]), plus
+    /// every row of each block it did not consult — one without statistics,
+    /// or a query that turned them off or whose filter reads no field. It is
+    /// a bound and not a count, since a kept group's rows may fail the filter
+    /// and a block sorted past its bound stops early; with no filter it is
+    /// the table's rows.
+    pub fn kept_rows(&self) -> u64 {
+        self.plan.kept_rows
     }
 
     /// A fresh stream over partition `partition`, cutting batches at

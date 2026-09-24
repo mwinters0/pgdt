@@ -601,6 +601,66 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
     }
 }
 
+/// **A plan's row bound is the rows of the groups its pruning kept**: under
+/// `id >= 990` over `ordered`, the block's rows less those of every group
+/// whose maximum is below the bound — never fewer than the replay emits, and
+/// the whole block's where statistics are turned off or nothing is filtered.
+#[tokio::test]
+async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
+    use pgdump_query::cache::{SourceWatch, StrictIdentity};
+    use pgdump_query::{ByteRangeSource, TablePartitions};
+
+    for version in VERSIONS {
+        let (_dir, dump, index) =
+            gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
+        let block = index.blocks_for("public.ordered").next().unwrap();
+        let statistics = block.statistics.as_deref().unwrap();
+        let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        let below: u64 = id
+            .groups
+            .iter()
+            .zip(&statistics.groups)
+            .filter(|(bounds, _)| {
+                bounds.as_ref().is_some_and(|b| b.max.parse::<i64>().unwrap() < 990)
+            })
+            .map(|(_, group)| group.rows)
+            .sum();
+        assert!(below > 0, "pg_dump {version}: no row below the bound");
+
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+        let watch =
+            Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
+        let table = index.tables().into_iter().find(|t| t.qualified() == "public.ordered").unwrap();
+        let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
+        for (options, expected) in [
+            (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below),
+            (with(filter.clone(), false, SPLIT_JOBS), block.row_count),
+            (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count),
+        ] {
+            let what = format!("pg_dump {version} under {:?}", options.filter);
+            let plan = TablePartitions::plan(
+                Arc::clone(&source),
+                &index,
+                Arc::clone(&watch),
+                &table,
+                ScanOptions::default(),
+                options,
+            )
+            .await
+            .unwrap();
+            assert_eq!(plan.kept_rows(), expected, "{what}");
+            let mut emitted = 0;
+            for partition in 0..plan.len() {
+                let mut stream = plan.stream(partition, 1024);
+                while let Some(batch) = stream.next().await {
+                    emitted += batch.unwrap().num_rows() as u64;
+                }
+            }
+            assert!(plan.kept_rows() >= emitted, "{what}: {emitted} emitted");
+        }
+    }
+}
+
 /// **Text on the database's collation is bounded bytewise, and only Arrow's
 /// semantics reads the bounds**: `default_text` holds `a…` then `Z…`, so
 /// under `>= 'a'` every group holding only `Z…` rows is skipped there, while

@@ -492,13 +492,13 @@ is itself non-monotone in the container limit, being `margin_allowance(allowance
 sizing an attribution input by row width. Evidence: `statistics-gathering`.
 
 ### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
-`TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec`
-*holds* one instead of parenting it: a parent's child can be replaced under it. Rows are `Exact` off block
-counts; a bound where every group of every block contributed and the stored text is the value, `Inexact`
-where it still bounds, all `Inexact` under a pushed filter or a fetch below the exact row count, as in v55's
-file sources. It answers over a value its Arrow type cannot hold (`KD8`) that a read refuses, as D54 does.
-Rejected: `Absent` for a partial bound, giving up cardinality; withholding NULL counts where a bound fails
-to decode, buying only that refusal. Code: `datafusion-pgdump/src/{exec,statistics}.rs`, `summary.rs`. Evidence: `tests/statistics.rs`.
+`TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec` *holds* one instead of
+parenting it: a parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block
+contributed and the stored text is the value, `Inexact` where it still bounds; all `Inexact` under a fetch below the exact rows or a
+pushed filter, whose rows are the kept groups' plus each unconsulted block's. It answers over a value its Arrow type cannot hold
+(`KD8`) that a read refuses, as D54 does. Rejected: `Absent` for a partial bound, giving up cardinality; NULL counts withheld where
+a bound fails to decode, buying only that refusal; under a filter, v55's whole-table rows or a guessed selectivity, wrong where a
+bound is not. Code: `datafusion-pgdump/src/{exec,statistics,table}.rs`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

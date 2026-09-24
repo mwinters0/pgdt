@@ -710,6 +710,9 @@ struct Estimates {
     /// Scans whose filter pruned a group, where a bound from the kept groups
     /// differs from the table's.
     pruning: usize,
+    /// Scans whose filter's row bound fell below the table's rows — each one
+    /// a scan that pruned.
+    tightened: usize,
 }
 
 /// **An estimate is never below what the scan emits, and an `Exact` one is
@@ -717,7 +720,8 @@ struct Estimates {
 /// [`SMALL_GROUP`], unfiltered, fetched, and under each term the provider
 /// pushes and seeded trees of them — for the whole node and for each
 /// partition, rows and bytes alike. Past a filter or a fetch no column
-/// statistic may be `Exact`.
+/// statistic may be `Exact`, and a filter's row bound falls below the table's
+/// rows only where its pruning skipped a group.
 #[test]
 fn an_estimate_is_never_below_what_the_scan_emits() {
     let seen = per_major(planned_fixtures(), estimates_over).into_iter().fold(
@@ -725,10 +729,12 @@ fn an_estimate_is_never_below_what_the_scan_emits() {
         |sum, seen| Estimates {
             filtered: sum.filtered + seen.filtered,
             pruning: sum.pruning + seen.pruning,
+            tightened: sum.tightened + seen.tightened,
         },
     );
     assert!(seen.filtered > 20_000, "{seen:?}");
     assert!(seen.pruning > seen.filtered / 5, "{seen:?}");
+    assert!(seen.tightened > seen.pruning * 9 / 10, "{seen:?}");
 }
 
 /// [`an_estimate_is_never_below_what_the_scan_emits`] over one major's
@@ -843,6 +849,11 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
                             )
                         });
                         seen.pruning += usize::from(pruned);
+                        let bound = statistics.num_rows.get_value().copied();
+                        if bound.is_some_and(|bound| bound < table_rows) {
+                            assert!(pruned, "{what}: a bound below the table's with no pruning");
+                            seen.tightened += 1;
+                        }
                     }
                 }
             }
@@ -1046,6 +1057,33 @@ async fn a_join_builds_the_side_its_statistics_call_smaller() {
         shape,
         Some((true, PartitionMode::CollectLeft)),
         "{}",
+        displayable(plan.as_ref()).indent(false)
+    );
+}
+
+/// **A pushed filter's row bound moves a join's build side**: `ordered`
+/// joined to itself, the right side under `reversed <= 10`, which the small
+/// groups prune to the last few, so the filtered side's bound is below the
+/// unfiltered side's exact rows and it is swapped in to build. Stated as the
+/// whole table's rows, the two sides tie and the left, as written, builds.
+/// Its answer is the blind session's.
+#[tokio::test]
+async fn a_filtered_side_s_bound_moves_a_join_s_build_side() {
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/statistics/default.sql");
+    let copy = parsed_copy_in_small_groups(&fixture, scratch.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let (reading, blind) = sessions();
+    register_in((&reading, &blind), &dump);
+    let sql = "SELECT a.unsorted, b.stepped FROM \"dump\".public.ordered AS a \
+               JOIN \"dump\".public.ordered AS b ON a.id = b.id \
+               WHERE b.reversed <= 10 ORDER BY a.unsorted";
+    agrees(&reading, &blind, None, sql).await;
+    let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
+    let shape = build_side(&plan, "stepped");
+    assert!(
+        matches!(shape, Some((true, _))),
+        "{shape:?}\n{}",
         displayable(plan.as_ref()).indent(false)
     );
 }

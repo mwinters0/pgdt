@@ -43,6 +43,10 @@ pub(crate) struct BlockPruning {
     pub(crate) skipped_groups: u64,
     /// The row bytes of the skipped groups ([`crate::statistics::RowGroup::bytes`]).
     pub(crate) skipped_bytes: u64,
+    /// The rows of the kept groups ([`crate::statistics::RowGroup::rows`]):
+    /// every row a replay of the block can emit, and more wherever a kept
+    /// group's rows fail the filter or a [`SortedStop`] ends the read.
+    pub(crate) kept_rows: u64,
     /// Where the block's row order ends its reading early, if anywhere.
     pub(crate) stop: Option<SortedStop>,
 }
@@ -145,6 +149,7 @@ pub(crate) fn prune_block(
         groups: statistics.groups.len() as u64,
         skipped_groups: 0,
         skipped_bytes: 0,
+        kept_rows: 0,
         stop: (!terms.is_empty()).then_some(SortedStop { terms }),
     };
     for (index, group) in statistics.groups.iter().enumerate() {
@@ -153,6 +158,7 @@ pub(crate) fn prune_block(
             pruning.skipped_bytes += group.bytes;
             continue;
         }
+        pruning.kept_rows += group.rows;
         let k = index as u64;
         let start = block.data_offset + k * n - 1;
         let end =

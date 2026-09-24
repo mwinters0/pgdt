@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
+use datafusion::common::stats::Precision;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
@@ -210,10 +211,19 @@ impl TableProvider for PgDumpTable {
             .project(projection);
         // A pushed-down filter takes rows out, so the table's counts and
         // extremes stop describing what the node emits and are handed over as
-        // estimates — the rule DataFusion's own file sources follow
-        // (`FileScanConfig::statistics`, v55). `limit` is the plan node's, and
-        // is applied there.
-        let statistics = if filters.is_empty() { statistics } else { statistics.to_inexact() };
+        // estimates, and its rows are bounded by what pruning kept, with no
+        // selectivity guessed below that (`docs/design/decisions.md`, "D89").
+        // `limit` is the plan node's, and is applied there.
+        let statistics = if filters.is_empty() {
+            statistics
+        } else {
+            let mut statistics = statistics.to_inexact();
+            statistics.num_rows = match usize::try_from(partitions.kept_rows()) {
+                Ok(rows) => Precision::Inexact(rows),
+                Err(_) => Precision::Absent,
+            };
+            statistics
+        };
         let inner = StreamingTableExec::try_new(schema, streams, None, [], false, limit)?;
         Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics)))
     }
