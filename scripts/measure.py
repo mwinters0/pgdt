@@ -6104,10 +6104,10 @@ def _substream_note() -> str:
     """
     head = (
         "**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the "
-        "table states per cell rather than footnotes once.** `plan_partitions` caps a "
-        "query's sub-stream count at the read-buffer budget divided by what one sub-stream "
-        "costs to read plus what its held batch pins "
-        '(`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget '
+        "table states per cell rather than footnotes once.** `plan_partitions` solves a "
+        "query's sub-stream count against the read-buffer budget, each sub-stream costing "
+        "its read plus a batch span narrowed toward the chunk size before the count is cut "
+        '(`docs/design/decisions.md`, "D4", "D84") — a budget '
         "the *harness* chose, not a ceiling the library ships. "
     )
     if not QUERY_SUBSTREAM_CAP:
@@ -7660,8 +7660,9 @@ def run_statistics_gathering(session: Session) -> str:
         f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the default's "
         "base size, gathered exactly where a flagless `parse` coarsens wide rows — "
         f"**in a {STATISTICS_MEMORY} container**, against the register's "
-        f"{session.cfg.memory}: nothing bills what statistics hold, so the limit is chosen "
-        "generously and the resident column says what it left. Resident is recorded, not "
+        f"{session.cfg.memory}: statistics are billed against the limit's margin "
+        '(`docs/design/decisions.md`, "D85"), so the limit is chosen generously that none '
+        "declines, and the resident column says what it left. Resident is recorded, not "
         "attributed.\n\nPer-rep readings (s; peak RSS):\n"
         + "\n".join(per_rep)
         + "\n"

@@ -39,7 +39,9 @@
 //! **A block whose gathering passes the pass's statistics allowance declines**
 //! ([`Gatherer::decline`]): it frees what it holds, reads its remaining rows
 //! for the census alone, and answers [`BlockGathered::Declined`] with the
-//! allowance, which the map records (`docs/design/decisions.md`, "D85").
+//! allowance, which the map records (`docs/design/decisions.md`, "D85"). The
+//! close [`Gatherer::finish`] makes is kept even where it passes the
+//! allowance; the next block declines at its first charge.
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -379,8 +381,10 @@ impl Gatherer {
     /// difference alone.
     ///
     /// **A block past its cap merges as the groups close**, wherever their
-    /// count is even and so every pair is whole, `next` halving with them —
-    /// so a row longer than many groups never lists more than the cap allows.
+    /// count is past the cap and even and so every pair is whole, `next`
+    /// halving with them — so a long row lists at most one group past the
+    /// cap, except while a piece this block made is alive, when nothing merges
+    /// before [`Gatherer::fit_cap`].
     fn close_through(&mut self, end: u64, next: u64) {
         if self.uncharged != 0 {
             self.charge_held();
@@ -734,9 +738,9 @@ impl BlockObserver for Gatherer {
 ///
 /// Reading the upper middle group rather than the nearest-rank `⌈G/2⌉`-th is
 /// what makes the predicate **monotone in size**: a merged group falls short
-/// only where both its parts did, so at most `⌈S/2⌉` of the `⌈G/2⌉` groups
-/// left fall short where `S ≤ ⌊G/2⌋` did — which is the same predicate again,
-/// and an odd short tail cannot push the fraction past half.
+/// only where both its parts did, so of `S ≤ ⌊G/2⌋` short groups at most
+/// `⌊S/2⌋` pairs fall short, plus a short odd tail — within `⌊⌈G/2⌉/2⌋` at
+/// every `G` (by cases on `G` mod 4), the same predicate at the coarser size.
 /// `the_density_predicate_is_monotone_in_size` holds it.
 ///
 /// **`max_rows` stops the merging first**, wherever the next size would put

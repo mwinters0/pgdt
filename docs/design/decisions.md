@@ -31,7 +31,7 @@ A read-buffer budget is a number an operator cannot size a container from, so th
 resident and `Parallelism::within` carves it — reserve off the top, `margin_allowance` on the count
 — with `discover_in` calling the same function, so provenance still never enters `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
-allowance whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
+allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
 giving statistics what it leaves. Code: `io.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
@@ -260,7 +260,8 @@ declared types and collation clauses are verbatim, `None` collation is "no claus
 ### D37 The bar: the dump alone determines the value
 A declared type maps to a real Arrow type only if its text round-trips consulting nothing outside
 the file; otherwise `Utf8View` with a note naming the kind of unknown. Misreading is unrecoverable,
-not recognizing is not; `money` fails it (`KD13`). Every field is nullable regardless of DDL.
+not recognizing is not; `money` fails it (`KD13`). Every column is nullable regardless of DDL; a
+range's three flags are not.
 
 ### D38 The ADBC driver's shipped release is a floor, swept from the catalog
 Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never
@@ -269,7 +270,7 @@ rule by themselves, and only what they cannot say gets a `Disposition` with a st
 citation. `floor_mapping.py` compares value space (`Utf8View` is `string`) and reports an unknown
 arm, never guessing. Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
-### D39 `NestedPlan` travels beside the `DataType`, with one producer
+### D39 `NestedPlan` travels beside the `DataType`, built with it
 An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `List<Struct>`);
 every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
@@ -330,7 +331,8 @@ readers the announced one seats. Reopens: a floored span measurably slower than 
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
 spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
 map. A cancelled mapping pass fails a query rather than shortening it (I1). Cached replay and the
-cold interior split share `worker_count` and `cut` and differ only in what they cut.
+cold interior split share `worker_count` and `cut`, and differ in what they cut and in the replay
+charging each sub-stream its batch span (D84).
 
 ### D49 One target per query, and the early stop is conservative
 Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`; `target_settled`
@@ -373,7 +375,7 @@ holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a t
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —
 one value's other spellings, field and literal alike, and `jsonb` (its canonical form is untypeable) — are
-listed on `accepted_form` alone; `boolean` deliberately not. A literal finer than the column's scale is
+listed on `accepted_form`; `boolean` deliberately not. A literal finer than the column's scale is
 refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
@@ -393,10 +395,10 @@ conditional, so L4) and per column from `column_divergences` in a query's semant
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
-`refuse_where_structure` refuses any `--filter` term that does not tokenize to one leaf, so a string
-both flags accept means one thing. A keyword needs whitespace or a paren on both sides and `NOT`
-after `is` stays in the term. A term splits at the earliest operator outside quotes, longest first;
-quotes are stripped in `--filter` and nowhere else. Rejected: `&&`/`||`; backslash escaping.
+`refuse_where_structure` refuses any `--filter` term that tokenizes to more than one leaf, so a string
+both flags accept means one thing. A keyword needs whitespace, a paren or the string's end on both sides
+and `NOT` after `is` stays in the term. A term splits at the earliest operator outside quotes, longest
+first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.
 
 ### D88 A pushed filter is `Exact` where the plan resolves it; a literal is the renderer's text
 `supports_filters_pushdown` asks `table_schema` to resolve the translated term in Arrow semantics,
@@ -475,13 +477,13 @@ monotone under the cap; the cap yielding to a stated maximum block by block, a p
 leader's split would decide; a floor under the coarsening, a constant nothing prices. Code: `Gatherer::fit_cap`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
-`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, a count fixed
-before a byte is read; a cache's are known first, the loading pass's `held` (a replay's segments drop them). The CLI's
-is `--memory`, else the limit, else half of `MemAvailable` (RT8), an embedder stating none declining nothing (D1). A
-declined piece declines its block, dense group indices expressing no gap, and the account sees a window's pieces, so a
-decline deliberately differs serial and parallel. Rejected: a constant bound, an OOM on a wide table; coarsening to
-fit, a cache depending on its container; retrying every run; skipping the piece; MEMORY_RESERVE again, which carves the
-cap not this ceiling. Reopens: what the check costs, and what declining saves. Code: `Gatherer::decline`.
+`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, a count fixed before a
+byte is read; a cache's are known first, the loading pass's `held`, a replay's segments dropping them. The CLI's is `--memory`,
+else the limit, else half of `MemAvailable` (RT8), an embedder stating none declines nothing (D1). A declined piece declines its
+block, dense group indices expressing no gap, and the account sees a window's pieces, so a decline differs serial and parallel,
+as meant. `finish`'s last close is kept even past it; the next block declines at its first charge. Rejected: a constant bound,
+an OOM on a wide table; coarsening to fit, a cache depending on its container; retrying every run; skipping the piece;
+MEMORY_RESERVE again, carving the cap, not this. Reopens: the check's cost, or declining's saving. Code: `Gatherer::decline`.
 
 ### D86 Statistics volume follows columns and groups, not row width
 Dictionary text is interned once per block and column, not per group, so an input of wide distinct text
@@ -515,10 +517,10 @@ and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summ
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
 lacks (D48), and `--preamble-only` hangs off `parse`. Rejected: a scanning fallback; `--no-scan`.
 
-### D62 The save throttle is a ratio, and one gate opens save and splice
+### D62 The save throttle is a ratio, and its gate opens splice too
 A save is skipped unless `K` times the last save's duration has elapsed, which bounds overhead in
 every regime with no constant to tune. The map is rebuilt at the gate's openings, not every
-`CopyEnd`; the third opener matches the queried header, a superset of `target_settled`. Rejected:
+`CopyEnd`; splice's third opener matches the queried header, a superset of save's, `target_settled`. Rejected:
 every N seconds or bytes; a disabled-cache floor. `KD5` remains. Evidence: `per-block-quadratic`.
 
 ### D63 The interrupt flag is read at both extremes; resume is the default

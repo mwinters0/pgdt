@@ -758,9 +758,10 @@ async fn map_forward(
             scanner = CopyScanner::resume(at, None);
             carry = ChunkCarry::new();
             read_pos = at;
-            // The three hints this loop announced still stand: `scan_region`
+            // The four hints this loop announced still stand: `scan_region`
             // restores `WaitPolicy::NeverWait` on its way out, announces the
-            // same `Parallelism`, and never touches the read size.
+            // same `Parallelism`, and never touches the read size or the
+            // cancellation token.
             continue;
         }
 
@@ -1811,9 +1812,11 @@ impl<'a> TableStream<'a> {
 ///
 /// `Typed` mode against metadata that has no *complete* entry for `database`
 /// is `Error::MetadataNotScanned` rather than a silent `NotDeclared`
-/// degradation. **No caller can trip that today**: every call site reads
-/// `index.metadata` after the mapping pass, which states a database's DDL at
-/// its first `COPY` block. The check is pinned by a unit test.
+/// degradation. **No map a mapping pass produced can trip it**: a block
+/// enters the map only past its database's first `COPY` header, where the
+/// pass marks that database's DDL complete. `table_schema` and
+/// `TablePartitions::plan` take a caller's `DumpIndex`, whose fields are
+/// public, so a hand-built one can. The check is pinned by a unit test.
 fn resolve_block(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,

@@ -363,9 +363,10 @@ pub(crate) trait BlockObserver: Send {
     fn observe_row(&mut self, offset: u64, raw: &[u8]);
 
     /// The block's statistics, or [`BlockGathered::Declined`] where the
-    /// allowance could not hold them. `end` is the terminator line's offset
-    /// relative to the block's first data byte — where the last row's line
-    /// ends.
+    /// allowance could not hold them before this call; the close it makes is
+    /// kept even past the allowance (`docs/design/decisions.md`, "D85"). `end`
+    /// is the terminator line's offset relative to the block's first data byte
+    /// — where the last row's line ends.
     fn finish(self: Box<Self>, end: u64) -> BlockGathered;
 
     /// An observer for a piece of this block: rows starting anywhere after the
@@ -729,12 +730,13 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 /// each open observer's growth until it passes [`STATISTICS_ACCOUNT_CHARGE_STEP`], a row's own
 /// decode scratch while a column observes it, a merge's scratch for the pair
 /// of groups it is merging, a finished block's rows per group while its size is
-/// chosen, and the observer's own allocation.
+/// chosen, what `finish` builds beside what it replaces — the block's column
+/// list, and a clipped group's bounds — and the observer's own allocation.
 ///
 /// **It is also the bound a decline reads** (`docs/design/decisions.md`,
 /// "D85"): where [`Self::allowance`] is stated and the terms pass it, the
-/// observer whose update saw that declines, so what the account sums is what
-/// the margin is left against.
+/// observer whose update saw that declines, bar the close `finish` makes, so
+/// what the account sums is what the margin is left against.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,

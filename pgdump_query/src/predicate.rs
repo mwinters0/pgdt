@@ -2009,9 +2009,11 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// It lives beside the grammar rather than beside [`CompareKind`] because it
 /// describes what [`order_key`] and [`equality_comparison`] accept, which is
 /// each type's `*_out` form, widened by an integer's sign and leading zeros,
-/// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement, and
-/// either `numeric` kind's leading or trailing point and leading zeros
-/// (`docs/design/decisions.md`, "D55").
+/// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement,
+/// either `numeric` kind's leading or trailing point and leading zeros, a
+/// network value's full-width or zero-padded netmask, an IPv6 address's
+/// uncompressed, zero-padded or upper-case groups, and a time's trailing
+/// fractional zeros (`docs/design/decisions.md`, "D55").
 /// `jsonb` needs the least here, its grammar being the whole of `jsonb_in`.
 ///
 /// Two arms answer with the kind's own payload, because there the payload
@@ -5519,13 +5521,16 @@ mod tests {
         /// operator on, so none of their ordering cells is asserted: `xml`, an enum with
         /// no labels, a user-defined base type with no operator class, a domain
         /// over a type the register has no comparison for, and the two nested
-        /// shapes that are refused for reasons of their own.
-        /// PostgreSQL orders all of them and this build does not.
+        /// shapes that are refused for reasons of their own. They are here
+        /// because the register refuses them, not because PostgreSQL orders
+        /// them: it orders the domain over `box` (by area), the nested array
+        /// and the multirange from v14, and refuses `xml` and the base type
+        /// itself (`E42883`).
         ///
-        /// **`json` is not here**, and the difference is the point: it *is*
-        /// compared, bytewise, and every cell of it is `E42883` because
-        /// PostgreSQL defines no comparison at all — so the walk skips it as
-        /// a server refusal rather than as a refusal of ours.
+        /// **`json` is not here**, and the difference is the point: this build
+        /// *does* compare it, bytewise, and every cell of it is `E42883`
+        /// because PostgreSQL defines no comparison at all — so the walk skips
+        /// it as a server refusal rather than as a refusal of ours.
         ///
         /// It is asserted as an exact set, so a type that quietly stops
         /// comparing fails here rather than passing as one more skip.

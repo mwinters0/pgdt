@@ -232,9 +232,10 @@ impl Discovered<'_> {
 
     /// Say what was stated or discovered, before a byte of the dump is read.
     ///
-    /// **The flags are named as flags here, and nowhere else.** Every other
-    /// status line names the arrangement in the library's own vocabulary
-    /// (`docs/design/decisions.md`, "D64"); this one reports what was *typed*.
+    /// **The flags are reported as typed here.** Every other status line names
+    /// the arrangement in the library's own vocabulary
+    /// (`docs/design/decisions.md`, "D64"), except that a stated `--memory` is
+    /// quoted beside the budget carved from it ([`Resolved::budget_display`]).
     fn announce(&self) {
         let jobs_flag = Self::flag_display(self.args.jobs.map(|j| j as u64));
         let memory_flag = Self::flag_display(self.args.memory);
@@ -483,12 +484,15 @@ impl Resolved {
     /// Say, once per scanning command and before the scan starts, what the
     /// source's recommendation and the allowance fitted to.
     ///
-    /// **The only line that can name a count the allowance lowered**, which is
-    /// why the report is two lines: neither number exists until the file has
-    /// been opened and asked ([`Discovered::announce`] carries the half that
-    /// does). A recommendation cut to fit otherwise surfaces as unexplained
-    /// slowness — with no limit found pgdt stays inside half of what the
-    /// kernel says is available (`RT8`)
+    /// **The line that names the count the allowance lowered** — a query's
+    /// mapping pass, carved around its cached statistics, prints its own count
+    /// bare on `scan started`, and a leader's shortfall is `scan arrangement`'s
+    /// `bound_by=` — which is why the report is two lines: neither number
+    /// exists until the file has been opened and asked
+    /// ([`Discovered::announce`] carries the half that does). A recommendation
+    /// cut to fit otherwise surfaces as unexplained slowness — with no limit
+    /// found pgdt stays inside half of what the kernel says is available
+    /// (`RT8`)
     /// (`docs/design/decisions.md`, "D64").
     fn announce(&self) {
         tracing::info!(
@@ -2264,7 +2268,7 @@ fn resolution_token(r: &ColumnResolution) -> &'static str {
 /// on its `columns:` summary line rather than on this one, and `--json`
 /// beside this string.
 ///
-/// The type and the plan come from one producer and cannot disagree; this
+/// The type and the plan are built together and cannot disagree; this
 /// being display code, a disagreeing pair falls back to plain `Display`
 /// rather than panicking.
 fn arrow_type_label(data_type: &DataType, plan: &NestedPlan) -> String {

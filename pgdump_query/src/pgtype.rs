@@ -24,8 +24,10 @@ pub enum TypeOutcome {
     /// The dump alone determines the value; this is the Arrow type it maps
     /// to (`Utf8View` included — `text` and `json` are mapped there, not
     /// merely defaulted), paired with the [`NestedPlan`] that says which
-    /// literal form fills it. This module is the pair's one producer
-    /// (`docs/design/decisions.md`, "D39").
+    /// literal form fills it. This module produces a declared type's pair;
+    /// `resolve` adds only the `Utf8View` fallback and a census's further
+    /// `List` levels, building each pair whole (`docs/design/decisions.md`,
+    /// "D39").
     Mapped(DataType, NestedPlan),
     /// A declared type string this build has no mapping for at all — neither
     /// a built-in, nor found in the database's `CREATE TYPE`/`DOMAIN` list,
