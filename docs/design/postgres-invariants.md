@@ -352,7 +352,10 @@ covered by `fixture_schema_types.sql`.
 What makes a built-in bare is visibility, not standardness: `pg_catalog` is
 on the search path implicitly whatever `search_path` is set to, so
 `format_type` qualifies nothing in it — including a type with no standard SQL
-spelling at all, which falls back to its bare `typname`.
+spelling at all, which falls back to its bare `typname`. It is searched
+*before* the explicit list unless the path names it (`namespace.c`'s header
+comment), so only a path naming `pg_catalog` after another schema lets a
+declared object shadow one of its names.
 `fixtures/<13–18>/types/default.sql` writes `t_int2vector`'s column as `v_vec
 int2vector` at all six majors. A declared name with no `.` in it is a
 `pg_catalog` name, whether or not the SQL standard has a word for the type.
@@ -370,7 +373,8 @@ the empty-`search_path` line.
 **Relied on by:** `decisions.md` ("Type resolution and decoders").
 **Re-verify:** `grep -n 'dumpSearchPath' -A45 src/bin/pg_dump/pg_dump.c`, and
 confirm fixtures still contain `set_config('search_path', '', false)`;
-`grep -n 'BPCHAROID' -A14 src/backend/utils/adt/format_type.c`, and
+`grep -n 'BPCHAROID' -A14 src/backend/utils/adt/format_type.c`;
+`grep -n 'implicitly-searched namespaces' -A14 src/backend/catalog/namespace.c`; and
 `cargo test -p pgdump_query --test pgtype`, which reads `t_type_spelling`.
 
 ---

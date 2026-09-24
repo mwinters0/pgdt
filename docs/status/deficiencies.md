@@ -89,8 +89,9 @@ than reading as a phase nobody has sliced.
 - **KD48** — a file's `SET search_path` is not read, so an unqualified name
   resolves as under the default path: a collation a declared one could shadow
   gets the weaker verdict, an unqualified user type resolves `Unknown`, and a
-  built-in's name keeps the built-in though a declared type could shadow it.
-  Only a hand-written file reaches it (I8). **(c) unowned**; promoted by such a
+  built-in's name keeps the built-in (D37) — shadowing either takes a path
+  naming `pg_catalog` after the declaring schema, which only a hand-written
+  file sets (I8). **(c) unowned**; promoted by such a
   file in hand, the fix being to model the path. Detail:
   `pgdump_query/src/pgtype.rs`.
 

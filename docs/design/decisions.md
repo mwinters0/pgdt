@@ -261,7 +261,9 @@ declared types and collation clauses are verbatim, `None` collation is "no claus
 A declared type maps to a real Arrow type only if its text round-trips consulting nothing outside
 the file; otherwise `Utf8View` with a note naming the kind of unknown. Misreading is unrecoverable,
 not recognizing is not; `money` fails it (`KD13`). Every column is nullable regardless of DDL; a
-range's three flags are not.
+range's three flags are not. Rejected: a bare built-in name `Unknown` where a declared type could
+shadow it — `pg_dump` writes built-ins bare under an emptied path (I8), so it would demote its own
+columns; a collation takes the weaker verdict because `pg_dump` qualifies every one (`KD48`).
 
 ### D38 The ADBC driver's shipped release is a floor, swept from the catalog
 Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never

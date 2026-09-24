@@ -901,17 +901,18 @@ fn collation_parts(reference: &str) -> Option<(Option<String>, String)> {
 /// direction of error this register must not make. An unqualified `"C"` is
 /// `pg_catalog`'s under the default search path, where `pg_catalog` is
 /// searched first — and not bytewise where `collations` declares one of that
-/// name elsewhere, which a path the file sets could put ahead of it.
+/// name elsewhere, which a path naming `pg_catalog` after its schema would
+/// put ahead of it (I8).
 ///
 /// Deficiency register: `deficiency: KD48` — a file's `SET search_path` is
 /// not read, so an unqualified name resolves as under the default path: a
 /// collation a declared one could shadow answers the weaker verdict here, and
 /// a type is looked up by its schema-qualified name alone, so an unqualified
 /// user type resolves `Unknown` and a built-in's name keeps the built-in
-/// though a declared type could shadow it. `pg_dump` qualifies every name
-/// outside `pg_catalog` and empties the path (I8), so only a hand-written file
-/// reaches it. **(c) unowned**; promoted by such a file in hand, the fix being
-/// to model the path the file sets.
+/// though a declared type could shadow it (D37). `pg_dump` qualifies every
+/// collation and every name outside `pg_catalog` and empties the path (I8),
+/// so only a hand-written file reaches it. **(c) unowned**; promoted by such
+/// a file in hand, the fix being to model the path the file sets.
 fn collation_is_bytewise(reference: &str, collations: &[CollationDef]) -> bool {
     let Some((schema, name)) = collation_parts(reference) else { return false };
     if name != "C" && name != "POSIX" {
@@ -3111,7 +3112,7 @@ mod tests {
             ComparisonPlan::diverging(K::Text, named)
         );
         // An unqualified `"C"` is the built-in unless the dump declares one of
-        // that name, which a search path it sets could put first (`KD48`):
+        // that name, which a path naming `pg_catalog` after it puts first (`KD48`):
         // then it is the weaker verdict, and never both branches at once.
         let c = ComparisonPlan::agrees(K::Text);
         assert_eq!(comparison_for("text", Some("\"C\""), &[], &declared), c);
