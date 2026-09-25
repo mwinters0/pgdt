@@ -22,6 +22,7 @@ use pgdump_query::{
     SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open,
     preamble_only, render_field_into,
 };
+use tracing::Instrument;
 
 mod alloc;
 mod info_statistics;
@@ -349,8 +350,7 @@ impl Discovered<'_> {
 struct QueryPasses {
     /// The mapping pass's, in [`ScanOptions::parallelism`]: its count and
     /// budget are on its own `scan started` line, printed only when it reads,
-    /// and a count its statistics lowered is said by
-    /// [`QueryPasses::announce`].
+    /// inside the span [`QueryPasses::mapping_span`] opens.
     mapping: Resolved,
     /// The replay's, in [`QueryOptions::parallelism`]: what `resolved the
     /// arrangement` announces and a plan note's origin clause quotes, the
@@ -372,23 +372,30 @@ impl QueryPasses {
         (jobs < asked).then_some((jobs, asked))
     }
 
-    /// Say what `resolved the arrangement` names — the replay's — and, where
-    /// the mapping pass runs fewer readers, what cut it, in the words a
-    /// leader's shortfall uses: `jobs=`, `asked=` and `bound_by=`, with the
-    /// bytes the statistics hold beside them (`docs/design/decisions.md`,
-    /// "D64", "D85"). Said before the file is read, it states what a mapping
-    /// pass runs under; a cache that already settles the table runs none.
-    fn announce(&self) {
-        self.replay.announce();
-        if let Some((jobs, asked)) = self.mapping_shortfall() {
-            tracing::info!(
-                jobs,
-                asked,
-                bound_by = "statistics",
-                held_bytes = self.held,
-                "mapping arrangement",
-            );
+    /// The span the mapping pass's own lines — `scan started`, `scan
+    /// arrangement`, `scan complete` — are said inside, so each carries what
+    /// the pass was carved around: `held_bytes`, and `replay_jobs`, the count
+    /// `resolved the arrangement` named, where the pass runs fewer. Its
+    /// presence is the cause, so no `bound_by=` rides it
+    /// (`docs/design/decisions.md`, "D64", "D85").
+    ///
+    /// **Opened whenever the cache holds statistics**, not only where they cut
+    /// the count: the pass's budget then differs from the replay's, stated
+    /// `--jobs` or not. It prefixes only what the pass emits, so a cache that
+    /// already settles the table, whose query maps nothing, prints none of it.
+    fn mapping_span(&self) -> tracing::Span {
+        if self.held == 0 {
+            return tracing::Span::none();
         }
+        let span = tracing::info_span!(
+            "mapping",
+            held_bytes = self.held,
+            replay_jobs = tracing::field::Empty,
+        );
+        if let Some((_, replay_jobs)) = self.mapping_shortfall() {
+            span.record("replay_jobs", replay_jobs);
+        }
+        span
     }
 }
 
@@ -523,7 +530,7 @@ impl Resolved {
     ///
     /// **The line that names the count the allowance lowered** — a query's
     /// mapping pass, carved around its cached statistics, says what cut its
-    /// count on `mapping arrangement` ([`QueryPasses::announce`]), and a
+    /// count on its own lines' span ([`QueryPasses::mapping_span`]), and a
     /// leader's shortfall is `scan arrangement`'s `bound_by=` — which is why
     /// the report is two lines: neither number
     /// exists until the file has been opened and asked
@@ -1934,7 +1941,8 @@ async fn main() -> Result<()> {
             stated.announce();
             let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
             let passes = stated.resolve_query(source.as_ref(), cached_statistics);
-            passes.announce();
+            passes.replay.announce();
+            let mapping_span = passes.mapping_span();
             let QueryPasses { mapping, replay, .. } = passes;
             // The refusals a query can raise that want more than the
             // library's own words: those about the source gain its name, and
@@ -1969,7 +1977,9 @@ async fn main() -> Result<()> {
             // is one sub-stream, so the serial path is reached through the
             // same call rather than branched to (D51). What `table_stream`
             // reports as its stream's first item, this reports from the
-            // `await`.
+            // `await`. The mapping pass runs inside that `await` and the
+            // replay after it, so only the pass's lines are said in
+            // `mapping_span`.
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
@@ -1977,6 +1987,7 @@ async fn main() -> Result<()> {
                 query_options,
                 mode,
             )
+            .instrument(mapping_span)
             .await
             .map_err(&report)?;
             // Known from the plan alone, before any block is read — unlike
@@ -3563,8 +3574,8 @@ mod tests {
             assert_eq!(passes.mapping.parallelism().jobs(), 7);
             assert_eq!(passes.replay.parallelism(), bare);
             assert_eq!(bare.jobs(), 9);
-            // What `mapping arrangement` says: seven of the nine, cut by the
-            // statistics; with none held the passes agree and it is silent.
+            // What the mapping span's `replay_jobs=` says: seven of the nine,
+            // cut by the statistics; with none held the passes agree.
             assert_eq!(passes.mapping_shortfall(), Some((7, 9)));
             assert_eq!(discovered.resolve_query(&reader, 0).mapping_shortfall(), None);
         }
@@ -3572,6 +3583,62 @@ mod tests {
         let typed = ParallelArgs { jobs: Some(9), memory: None };
         let passes = typed.discover_in(&limited).resolve_query(&reader, 2 * READER);
         assert_eq!(passes.mapping_shortfall(), None);
+    }
+
+    /// **What a mapping pass's line reads as, in the format `pgdt` installs**:
+    /// `held_bytes` wherever the cache holds statistics, `replay_jobs` only
+    /// where they cut the count, and no span at all where it holds none. The
+    /// binary's own test (`a_query_s_mapping_pass_says_what_it_was_carved_around`)
+    /// reaches this through the real `await` on a plain source, whose count
+    /// cannot fall; the cut count is reached here, under a runtime root's
+    /// limit.
+    #[test]
+    fn the_mapping_span_carries_the_holding_and_a_cut_count() {
+        #[derive(Clone, Default)]
+        struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Captured {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let rendered = |passes: &QueryPasses| -> String {
+            let captured = Captured::default();
+            let writer = captured.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .with_target(false)
+                .without_time()
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                passes.mapping_span().in_scope(|| tracing::info!(jobs = 7, "scan started"));
+            });
+            String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+        };
+
+        let reader = Recommends::reader(24, READER);
+        let limited = runtime_root("v2-limit");
+        let flagless = ParallelArgs { jobs: None, memory: None }.discover_in(&limited);
+        let cut = rendered(&flagless.resolve_query(&reader, 2 * READER));
+        let held = 2 * READER;
+        assert!(
+            cut.contains(&format!(
+                "mapping{{held_bytes={held} replay_jobs=9}}: scan started jobs=7"
+            )),
+            "{cut}"
+        );
+
+        let typed = ParallelArgs { jobs: Some(9), memory: None }.discover_in(&limited);
+        let uncut = rendered(&typed.resolve_query(&reader, held));
+        assert!(uncut.contains(&format!("mapping{{held_bytes={held}}}: scan started")), "{uncut}");
+
+        let none = rendered(&flagless.resolve_query(&reader, 0));
+        assert!(!none.contains("mapping"), "{none}");
+        assert!(none.contains("scan started"), "{none}");
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it

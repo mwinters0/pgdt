@@ -983,12 +983,13 @@ started`'s `jobs=` is the count `resolved the arrangement` announced — except
 on a `query` over a cache holding statistics, where `resolved the arrangement`
 names what the rows are read under and `scan started` names the mapping that
 comes first, which pays for those statistics and so may run fewer workers on a
-smaller budget. Where it runs fewer, a line beneath `resolved the arrangement`
-says so in the words below — `mapping arrangement jobs=7 asked=9
-bound_by="statistics" held_bytes=…`, the last being what the cache's
-statistics hold. It is said before the file is read, so it states what a
-mapping pass would run under; a query the cache already settles runs none and
-prints no `scan started`. Two things can still cut it: a compressed dump whose largest block the
+smaller budget. That mapping pass's own lines say so: each is prefixed
+`mapping{held_bytes=… replay_jobs=9}:`, `held_bytes` being what the cache's
+statistics hold and `replay_jobs` the count `resolved the arrangement` named,
+present only where the mapping pass runs fewer. A query the cache already
+settles runs no mapping pass and prints none of them. Mind the prefix when
+searching a log for `jobs=`: `replay_jobs=9` contains it. Two things can still
+cut the count: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
 whatever `--jobs` said**, and a budget too small for the readers asked for buys
 fewer of them. Either prints one line, once per scan:

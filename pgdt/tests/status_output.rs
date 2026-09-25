@@ -806,3 +806,72 @@ fn a_gathering_parse_is_not_corrected() {
         assert!(arrangement_lines(&stderr_of(&out)).is_empty(), "{leg}: {}", stderr_of(&out));
     }
 }
+
+/// **A query's mapping pass says what it was carved around, on its own lines
+/// and nowhere else.** Over a cache holding statistics, `scan started` and
+/// `scan complete` are said inside a `mapping` span carrying `held_bytes`, the
+/// heap those statistics hold, which `resolved the arrangement` — the
+/// replay's, carved around nothing — does not carry; a cache that already
+/// settles the table maps nothing and prints no such line. A plain source's
+/// count cannot fall, so no `replay_jobs=` rides it; the span's rendering with
+/// a cut count is `main.rs`'s
+/// `the_mapping_span_carries_the_holding_and_a_cut_count`.
+#[tokio::test]
+async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
+    let (_dir, dump) = common::sandboxed("16/edge_cases/default.sql", "dump.sql");
+    let cache_path = cache::colocated_path(&dump);
+    let out = run(&["parse", "--source", dump.to_str().unwrap()]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+
+    // The whole cache, statistics gathered by default: the query it settles
+    // runs no mapping pass, and nothing is said inside the span.
+    let query = || {
+        let out = run(&[
+            "query",
+            "--source",
+            dump.to_str().unwrap(),
+            "--table",
+            "public.generated_column",
+            "--no-columns",
+        ]);
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        stderr_of(&out)
+    };
+    let settled = query();
+    assert!(main_scan_lines(&settled).is_empty(), "{settled}");
+    assert!(!settled.contains("mapping{"), "{settled}");
+
+    // Cut back to its first two blocks, keeping their statistics, so the
+    // query's mapping pass reads on from there under what they hold.
+    let source = LocalFileSource::open(&dump).unwrap();
+    let cache::CacheStatus::Valid { index: full, .. } =
+        cache::load(&cache_path, &source).await.unwrap()
+    else {
+        panic!("the parse wrote a complete cache");
+    };
+    let frontier = full.blocks().nth(1).expect("the fixture has two blocks").end_offset;
+    let mut spans: Vec<Span> = full.spans.iter().filter(|s| s.start < frontier).cloned().collect();
+    spans.last_mut().unwrap().end = frontier;
+    spans.push(Span {
+        start: frontier,
+        end: std::fs::metadata(&dump).unwrap().len(),
+        database: None,
+        text: None,
+        toc: None,
+        toc_owned: false,
+        body: SpanBody::Unscanned,
+    });
+    let truncated = DumpIndex { spans, scanned_through: frontier, ..full };
+    let held = truncated.statistics_heap_bytes();
+    assert!(held > 0, "the kept blocks hold statistics");
+    cache::save(&cache_path, &source, &truncated).await.unwrap();
+
+    let stderr = query();
+    let main = main_scan_lines(&stderr);
+    assert!(main.len() >= 2, "the mapping pass ran: {stderr}");
+    for line in &main {
+        assert!(line.contains(&format!("mapping{{held_bytes={held}}}: scan ")), "{line}");
+    }
+    let resolved = stderr.lines().find(|l| l.contains("resolved the arrangement")).expect(&stderr);
+    assert!(!resolved.contains("mapping{"), "the replay's line is not the pass's: {resolved}");
+}
