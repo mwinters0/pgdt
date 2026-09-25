@@ -7,7 +7,9 @@ the decisions the code cannot explain are [`docs/design/decisions.md`](docs/desi
 ## Building and testing
 
 A Rust toolchain and `cargo test --workspace` are the whole story for the
-library and the CLI. The Python-side checks under `scripts/` — the fixture
+library and the CLI. `cargo nextest run --workspace`, the one `mise.toml` pins,
+runs the same tests a process each and several at once, and leaves the
+doctests to `cargo test --workspace --doc`. The Python-side checks under `scripts/` — the fixture
 generator, the oracles, the measurement harness — run under `uv`, from that
 directory. [`CLAUDE.md`](CLAUDE.md) lists every one of them with its purpose.
 

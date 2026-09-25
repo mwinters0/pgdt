@@ -102,3 +102,14 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`M154`'s cap is 12 threads, and nothing orders the longest test first.**
+  The row asked for a cap and named none. Legs at 24, 12 and 6
+  (`runs/m154-nextest-cap-20260925/summary.txt`) put the suite's wall at the
+  pruning sweep's one test plus when nextest reaches it, so 12 costs a few
+  percent over nextest's one-a-core default and 6 about a tenth; 12 is half
+  this machine's cores, a fixed number in `.config/nextest.toml` that another
+  machine inherits. An override giving that test `priority` would start it
+  first and let a lower cap cost nothing, at the price of a named test list
+  that decays as sweeps are added. Reconsidering moves the cap, or adds the
+  override, in that one file.

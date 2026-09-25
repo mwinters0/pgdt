@@ -9,7 +9,8 @@ decisions the code cannot explain, nothing more.
 ## Commands
 
 ```sh
-cargo check --workspace && cargo test --workspace && cargo clippy --workspace
+cargo check --workspace && cargo clippy --workspace
+cargo nextest run --workspace && cargo test --workspace --doc   # the suite; nextest pinned in mise.toml
 cargo fmt --check                                 # config: rustfmt.toml
 INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (no cargo-insta here)
 cargo run -p pgdt -- parse --source <file>      # binary is `pgdt`; scans ahead, resumes
