@@ -45,13 +45,16 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M141 are struck**, and nothing at or below `M141` is reused. That is a
+**M1–M150 are struck**, and nothing at or below `M150` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
-[`decisions.md`](decisions.md) for a mechanism,
+[`decisions.md`](decisions.md) for a mechanism, or the code's own comment where
+the call is local to one item,
 [`measurements.md`](measurements.md) for an apparatus change,
-[`postgres-invariants.md`](postgres-invariants.md) for an external fact,
+[`postgres-invariants.md`](postgres-invariants.md) and
+[`runtime-invariants.md`](runtime-invariants.md) for an external fact,
+[`../status/deficiencies.md`](../status/deficiencies.md) for a limit left open,
 [`../manual/`](../manual/) for a flag,
 [`decisions.md`](decisions.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
@@ -67,12 +70,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| `M142` | 2026-09-24 | Type and comparison defects: a checked `jsonb` exponent; a quoted SQL-only spelling not taken for the built-in; an unqualified collation a declared one could shadow read as not bytewise, `SET search_path` unread filed as `KD48`; a depth bound on the type walks | | [2026-09-24](../status/history/2026-09-24.md), "M142: type and comparison defects" |
-| `M143` | 2026-09-24 | A quoted and an unquoted type name normalized alike on both sides of a lookup, closing `KD4`; a collation's name kept the same way | | [2026-09-24](../status/history/2026-09-24.md), "M143: a quoted name finds its definition" |
-| `M144` | 2026-09-24 | Tests asserting what they claim: `EVERY_OUTCOME` tied to `ColumnResolution` by a test macro; the stated-maximum test exempting an unpaired last group, `KD43`'s example pinned | | [2026-09-24](../status/history/2026-09-24.md), "M144: tests asserting what they claim" |
-| `M145` | 2026-09-24 | The provider's catalog built at construction, a refused table reported and not listed, closing the lazy build's race; a column's stored groups checked in `table_summary`; `SHOW ALL`'s `pgdump.memory` text | | [2026-09-24](../status/history/2026-09-24.md), "M145: the provider's catalog is built whole" |
-| `M146` | 2026-09-24 | A query's mapping pass saying what lowered its count; a signal after the mapping pass or during the listing exiting 128+signal (D26) | | [2026-09-24](../status/history/2026-09-24.md), "M146: the mapping pass's count, and a late signal" |
-| `M147` | 2026-09-25 | A query's mapping pass carrying `held_bytes`, and `replay_jobs` where its count was cut, on a `mapping` span the CLI opens around the mapping await, in place of `mapping arrangement` | | [2026-09-25](../status/history/2026-09-25.md), "M147: the mapping pass's span" |
-| `M148` | 2026-09-25 | An interrupted `parse` re-raising its signal after the save, `128+n` as a namespace's init (RT19); the default action armed, in the handler, by a first signal or by the scan's return, so a second signal or one during the listing ends the process at once | | [2026-09-25](../status/history/2026-09-25.md), "M148: an interrupted parse dies by its signal" |
-| `M149` | 2026-09-25 | As its PID namespace's init, `pgdt` and `datafusion-cli-pgdump` ending on every signal whose default action ends them elsewhere, exiting `128+n` (RT19), `parse`'s guard keeping `SIGINT`/`SIGTERM` for its scan; pinned per binary under `unshare -Urpf` | | [2026-09-25](../status/history/2026-09-25.md), "M149: every signal ends an init" |
-| `M150` | 2026-09-25 | The namespace-init handlers and their `unshare` test helper in a `publish = false` workspace crate both binaries depend on, in place of `#[path]`; `ILL`/`TRAP`/`BUS`/`FPE`/`SEGV`/`SYS` left to the kernel's forced default as init | | [2026-09-25](../status/history/2026-09-25.md), "M150: the init handlers in a crate" |

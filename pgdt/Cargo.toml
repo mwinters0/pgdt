@@ -57,7 +57,8 @@ serde_json = "1.0.145"
 # interrupted run by its signal -- and a namespace init's `_exit` on the two it
 # catches (`docs/design/decisions.md`, "D26"). Its
 # registry is the one `tokio`'s `signal` already installs through, so these
-# and the stream that cancels the scan run side by side.
+# and the stream that cancels the scan run side by side. Rejected: `sigaction`
+# and `raise` by hand, `unsafe` of this binary's own reimplementing them.
 signal-hook = { version = "0.4.4", default-features = false }
 tikv-jemallocator = { version = "0.6.0", optional = true }
 # `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and
