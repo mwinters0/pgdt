@@ -6,3 +6,10 @@
 # cmake, so a checkout that builds this workspace declares it.
 cmake = "latest"
 uv = "latest"
+
+# Every per-round check once, logged under `runs/check/`; `--verify` reuses a
+# passing run of the same tree. `scripts/check.py` says what it runs and why.
+[tasks.check]
+description = "Run the per-round checks once and summarize them"
+dir = "{{config_root}}/scripts"
+run = "uv run check.py"

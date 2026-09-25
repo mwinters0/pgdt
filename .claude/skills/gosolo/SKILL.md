@@ -42,7 +42,7 @@ is unfinished.**
 
 **Override 2 — a split is a transition too, and `/gm` grills it whether or not
 the round filed an entry.** Commit the landed half if the checklist reflects the
-split, its box is ticked and all five checks pass, then dispatch a grillmaster
+split, its box is ticked and `mise run check` passes, then dispatch a grillmaster
 with the split appended to its prompt as an agenda item, stating the original
 slice, the earned `<N>.<M>.<K>` and the seam the subagent named. If no box was
 ticked at all, that is not a split but `gosub`'s ordinary unticked-box stop.

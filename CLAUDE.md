@@ -9,9 +9,10 @@ decisions the code cannot explain, nothing more.
 ## Commands
 
 ```sh
-cargo check --workspace && cargo clippy --workspace
-cargo nextest run --workspace && cargo test --workspace --doc   # the suite; nextest pinned in mise.toml
-cargo fmt --check                                 # config: rustfmt.toml
+mise run check [--verify]                         # every per-round check once; summary here, logs in runs/check/
+cargo check --workspace
+cargo nextest run -p <crate> [--test <target>] [<filter>]   # part of the suite; nextest pinned in mise.toml
+cargo fmt                                         # config: rustfmt.toml
 INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (no cargo-insta here)
 cargo run -p pgdt -- parse --source <file>      # binary is `pgdt`; scans ahead, resumes
 cargo run -p pgdt -- info --source <file> [--detail]   # never scans; reads the cache
@@ -24,7 +25,7 @@ cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation res
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
-cd scripts && uv run python -m unittest   # every script's own tests
+cd scripts && uv run python -m unittest test_<script>   # one script's own tests
 ```
 
 Every `scripts/*.py` has a `--help` and a `test_*.py`; the harness's own rules
