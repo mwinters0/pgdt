@@ -56,7 +56,8 @@ think to. **A slice that splits re-targets every entry pointing at it**;
 Three edits in one change, each of the first two lying without the third: the
 checklist **deleted** and its slice notes consolidated; the index row set to
 **`Complete`**; **every `(b)` entry the phase owned re-homed**, onto the phase
-that absorbs it or down to `(c) unowned`.
+that absorbs it or down to `(c) unowned`. It is checked by `mise run check`
+whole, never `--affected`.
 
 ## A slice that cannot be finished as specified
 

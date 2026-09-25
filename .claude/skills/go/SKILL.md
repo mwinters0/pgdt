@@ -74,10 +74,10 @@ in, clear its Blocks column, and write that entry.
 ## Before you finish
 
 Hunt every copy of any fact the change moved, by handle and by wording
-(`docs/process.md`, "Repointing": subtract as you add). Run `mise run check`
-once, as the last thing that touches the tree, and report its summary verbatim —
-it names every failing test, and the log it names answers anything more, so it
-is never piped or re-run to read it. A cap `repoint.py` names fails it and is
+(`docs/process.md`, "Repointing": subtract as you add). Run `mise run check
+--affected` once, as the last thing that touches the tree, and report its
+summary verbatim — it names every failing test, and the log it names answers
+anything more, so it is never piped or re-run to read it. A cap `repoint.py` names fails it and is
 this change's to fix; a red *meter* passes it and is not — a repoint is a round
 of its own — so report it and stop there. Then
 check the change carries everything the `process` skill lists: the notes doc, the `D<k>`

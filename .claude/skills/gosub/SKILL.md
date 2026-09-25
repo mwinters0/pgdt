@@ -39,10 +39,10 @@ Date is empty is what it picks up (`go`, "Pick the work").
 > verbatim; and the path of any detached job.
 
 **3. Verify independently.** The report is a claim, not evidence: run `mise run
-check --verify` and re-read the checklist and "Decisions worth another look".
-It reuses the round's run only where that run passed on exactly this tree, and
-runs every check otherwise, so the evidence is the log it names, never the
-report. Where the report and the tree disagree, the tree wins.
+check --verify --affected` and re-read the checklist and "Decisions worth
+another look". It reuses the round's run only where that run passed on exactly
+this tree, and runs the checks otherwise, so the evidence is the log it names,
+never the report. Where the report and the tree disagree, the tree wins.
 
 **4. Commit, if the round is clean** — box ticked, `mise run check` passing
 (a red repoint meter passes it: a stop condition, not a defect of the round),

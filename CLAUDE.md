@@ -9,7 +9,7 @@ decisions the code cannot explain, nothing more.
 ## Commands
 
 ```sh
-mise run check [--verify]                         # every per-round check once; summary here, logs in runs/check/
+mise run check [--affected] [--verify]            # the round's checks once; summary here, logs in runs/check/
 cargo check --workspace
 cargo nextest run -p <crate> [--test <target>] [<filter>]   # part of the suite; nextest pinned in mise.toml
 cargo fmt                                         # config: rustfmt.toml

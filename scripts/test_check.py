@@ -364,7 +364,7 @@ class RunAndVerify(unittest.TestCase):
             flag.unlink()
             out = io.StringIO()
             check.verify(repo, flaky, out)
-            self.assertIn("did not pass; running every check", out.getvalue())
+            self.assertIn("did not pass; running the checks", out.getvalue())
 
     def test_a_tree_that_moves_during_the_run_verifies_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -380,7 +380,7 @@ class RunAndVerify(unittest.TestCase):
             write(repo, "a.txt", "a\n")
             before = io.StringIO()
             check.verify(repo, edits, before)
-            self.assertIn("did not pass; running every check", before.getvalue())
+            self.assertIn("did not pass; running the checks", before.getvalue())
 
     def test_the_real_checks_are_the_rounds_six_commands(self):
         self.assertEqual(
@@ -389,6 +389,213 @@ class RunAndVerify(unittest.TestCase):
         )
         for c in check.CHECKS:
             self.assertTrue((check.REPO / c.cwd).is_dir(), c.cwd)
+
+    def test_a_note_is_printed_and_kept_in_the_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            out = io.StringIO()
+            check.run(repo, PASSING, out, note="affected: why")
+            self.assertEqual(out.getvalue().splitlines()[1], "affected: why")
+            (run_dir,) = (repo / check.RUNS).iterdir()
+            self.assertEqual((run_dir / "summary.txt").read_text(), out.getvalue())
+
+    def test_an_affected_verify_reuses_a_whole_run_of_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            check.run(repo, PASSING, io.StringIO())
+            out = io.StringIO()
+            self.assertEqual(check.verify(repo, PASSING[1:], out, also=(PASSING,)), 0)
+            self.assertTrue(out.getvalue().startswith("check: reusing "))
+            self.assertEqual(len(list((repo / check.RUNS).iterdir())), 1)
+
+
+class Literals(unittest.TestCase):
+    def test_strings_are_read_past_comments_chars_and_lifetimes(self):
+        src = (
+            '// "docs/a.md"\n/* "x/y" /* nested */ "z" */\n'
+            "fn f<'a>() { let c = '\"'; let e = '\\''; }\n"
+            'let s = "../fixtures/{m}"; let r = r#"raw/"path"#; let b = b"by\\"te";\n'
+            '/// let d = "../scripts";\n'
+        )
+        self.assertEqual(
+            check.string_literals(src), ["../fixtures/{m}", 'raw/"path', 'by\\"te', "../scripts"]
+        )
+
+    def test_a_literal_names_a_path_from_the_package_and_from_its_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            write(repo, "p/tests/common/mod.rs", 'f("../fixtures/{x}/y"); g("a b/c"); h("")')
+            self.assertEqual(
+                check.read_prefixes(repo, "p", "p/tests/common/mod.rs"),
+                {"fixtures", "p/tests/fixtures"},
+            )
+
+    def test_modules_are_followed_from_a_test_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            write(repo, "p/tests/t.rs", "mod common;\nmod inline { }\n")
+            write(repo, "p/tests/common/mod.rs", "pub mod oracle;\n")
+            write(repo, "p/tests/common/oracle.rs", "")
+            self.assertEqual(
+                check.module_files(repo, "p/tests/t.rs"),
+                ["p/tests/t.rs", "p/tests/common/mod.rs", "p/tests/common/oracle.rs"],
+            )
+
+
+WORKSPACE = {
+    "Cargo.toml": '[workspace]\nresolver = "2"\nmembers = ["base", "app"]\n',
+    "base/Cargo.toml": '[package]\nname = "base"\nversion = "0.1.0"\nedition = "2021"\n',
+    "base/src/lib.rs": "pub fn f() {}\n",
+    "base/tests/t.rs": "mod common;\n#[test]\nfn t() { common::p(); }\n",
+    "base/tests/common/mod.rs": 'pub fn p() -> &\'static str { "../fixtures" }\n',
+    "base/tests/data/x.sql": "",
+    "app/Cargo.toml": (
+        '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[dependencies]\nbase = { path = "../base" }\n'
+    ),
+    "app/src/main.rs": 'fn main() { let _ = "../base/tests/data/x.sql"; }\n',
+    "app/tests/cli.rs": '// "../docs"\n#[test]\nfn t() {}\n',
+    "fixtures/a.sql": "",
+    "docs/d.md": "",
+}
+
+
+def argv_of(plan: check.Plan) -> dict[str, list[str]]:
+    return {c.name: list(c.argv) for c in plan.checks}
+
+
+class Affected(unittest.TestCase):
+    """What `--affected` runs, over a two-package workspace `cargo metadata` reads."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.repo = Path(cls.tmp.name)
+        for rel, text in WORKSPACE.items():
+            write(cls.repo, rel, text)
+        cls.packages = check.workspace(cls.repo)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def plan(self, *changed: str) -> check.Plan:
+        return check.plan_changes(self.repo, changed, lambda _: self.packages)
+
+    def test_metadata_reads_the_targets_and_the_member_dependencies(self):
+        by = {p.name: p for p in self.packages}
+        self.assertEqual(by["app"].deps, {"base"})
+        self.assertEqual(
+            sorted(t.binary_id for t in by["base"].targets), ["base", "base::t"]
+        )
+        self.assertEqual(
+            sorted(t.binary_id for t in by["app"].targets), ["app::bin/app", "app::cli"]
+        )
+        (t,) = [t for t in by["base"].targets if t.kind == "test"]
+        self.assertEqual(t.sources, ("base/tests/t.rs", "base/tests/common/mod.rs"))
+
+    def test_a_markdown_file_is_read_only_by_a_literal_naming_it(self):
+        self.assertFalse(check.reads("p/tests/data", "p/tests/data/README.md"))
+        self.assertTrue(check.reads("p/README.md", "p/README.md"))
+        self.assertTrue(check.reads("p/tests/data", "p/tests/data/x.sql"))
+
+    def test_only_paths_no_test_reads_run_no_cargo_and_read_no_metadata(self):
+        def refuse(_):
+            raise AssertionError("cargo metadata was read")
+
+        plan = check.plan_changes(self.repo, ["docs/d.md", "app/README.md", ".claude/x"], refuse)
+        self.assertEqual([c.name for c in plan.checks], ["unittest", "repoint"])
+        self.assertIn("none read by a test", plan.note)
+
+    def test_a_library_change_runs_its_dependents(self):
+        argv = argv_of(self.plan("base/src/lib.rs"))
+        self.assertEqual(argv["nextest"][4:], ["-p", "app", "-p", "base"])
+        self.assertEqual(argv["clippy"], ["cargo", "clippy", "--all-targets", "-p", "app", "-p", "base"])
+        # `app` has no library, so no doctests.
+        self.assertEqual(argv["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"])
+
+    def test_a_test_change_runs_its_own_package_only(self):
+        argv = argv_of(self.plan("base/tests/t.rs"))
+        self.assertEqual(argv["nextest"], ["cargo", "nextest", "run", "--no-fail-fast", "-p", "base"])
+
+    def test_a_read_path_runs_its_readers_and_lints_nothing(self):
+        plan = self.plan("fixtures/a.sql")
+        self.assertEqual([c.name for c in plan.checks], ["nextest", "unittest", "repoint"])
+        self.assertEqual(
+            argv_of(plan)["nextest"],
+            ["cargo", "nextest", "run", "--no-fail-fast", "-p", "base", "-E", "binary_id(=base::t)"],
+        )
+
+    def test_another_package_reading_a_path_runs_beside_it(self):
+        argv = argv_of(self.plan("base/tests/data/x.sql"))
+        self.assertEqual(
+            argv["nextest"][-2:], ["-E", "package(=base) | binary_id(=app::bin/app)"]
+        )
+        self.assertEqual(argv["clippy"][-2:], ["-p", "base"])
+
+    def test_a_path_in_no_crate_and_read_by_nothing_runs_everything(self):
+        for path in ("Cargo.toml", "vendor/x/src/lib.rs"):
+            plan = self.plan("base/src/lib.rs", path)
+            self.assertEqual(plan.checks, check.CHECKS)
+            self.assertIn(path, plan.note)
+
+    def test_the_change_is_the_stamped_tree_against_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            plan = check.plan_affected(repo, check.tree_stamp(repo), check.head_tree(repo)[1])
+            self.assertIn("nothing changed", plan.note)
+            write(repo, "docs/new.md", "x\n")
+            write(repo, "a.txt", "edited\n")
+            tree = check.tree_stamp(repo)
+            self.assertEqual(
+                check.changed_paths(repo, check.head_tree(repo)[1], tree), ["a.txt", "docs/new.md"]
+            )
+            self.assertEqual(check.plan_affected(repo, tree, None).checks, check.CHECKS)
+
+
+class RealWorkspace(unittest.TestCase):
+    """The classification holds of this repository's own tests."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.packages = check.workspace(check.REPO)
+        cls.prefixes = {
+            t.binary_id: set().union(*(check.read_prefixes(check.REPO, p.dir, s) for s in t.sources))
+            for p in cls.packages
+            for t in p.targets
+        }
+
+    def test_no_rust_target_reads_a_path_no_test_reads(self):
+        tracked = git(check.REPO, "ls-files").splitlines()
+        untested = [p for p in tracked if check.UNTESTED_RE.search(p)]
+        self.assertTrue(untested)
+        for bid, prefixes in self.prefixes.items():
+            read = [p for p in untested if any(check.reads(x, p) for x in prefixes)]
+            self.assertEqual(read, [], bid)
+            whole = [x for x in prefixes if x in (".", "docs", ".claude")]
+            self.assertEqual(whole, [], bid)
+
+    def test_a_script_module_a_rust_test_runs_is_one_the_scripts_check_runs(self):
+        named = {
+            lit
+            for p in self.packages
+            for t in p.targets
+            for s in t.sources
+            for lit in check.string_literals((check.REPO / s).read_text(encoding="utf-8"))
+            if lit.startswith("test_") and lit.isidentifier()
+        }
+        self.assertIn("test_measure", named)
+        for module in named:
+            self.assertTrue((check.REPO / "scripts" / f"{module}.py").is_file(), module)
+
+    def test_a_fixture_reaches_the_sweeps_and_a_binary_change_its_package(self):
+        load = lambda _: self.packages  # noqa: E731
+        fixture = check.plan_changes(check.REPO, ["fixtures/16/statistics/default.sql"], load)
+        nextest = argv_of(fixture)["nextest"]
+        self.assertIn("binary_id(=pgdump_query::pruning)", nextest[-1])
+        self.assertIn("binary_id(=datafusion-pgdump::pushdown)", nextest[-1])
+        plan = check.plan_changes(check.REPO, ["pgdt/src/main.rs"], load)
+        self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "pgdt"])
 
 
 if __name__ == "__main__":
