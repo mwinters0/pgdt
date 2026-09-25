@@ -37,15 +37,15 @@ Date is empty is what it picks up (`go`, "Pick the work").
 > entries you added to STATUS's "Decisions worth another look", quoted in full;
 > any split and the `<N>.<M>.<K>` it earned; the verbatim result lines from
 > `cargo test --workspace`, `cargo clippy --workspace --all-targets`, `cargo
-> fmt --check` and `cd scripts && uv run repoint.py`; and the path of any
-> detached job.
+> fmt --check`, `cd scripts && uv run python -m unittest` and `uv run
+> repoint.py`; and the path of any detached job.
 
-**3. Verify independently.** The report is a claim, not evidence: run the four
+**3. Verify independently.** The report is a claim, not evidence: run the five
 checks yourself and re-read the checklist and "Decisions worth another look".
 Where the report and the tree disagree, the tree wins.
 
-**4. Commit, if the round is clean** — box ticked, the cargo checks passing,
-`repoint.py` green on its caps (its meter is a stop condition, not a defect of
+**4. Commit, if the round is clean** — box ticked, the cargo checks and the
+scripts' tests passing, `repoint.py` green on its caps (its meter is a stop condition, not a defect of
 the round), tree actually changed. Subject `<N>.<M> <slice title>`, body two or three sentences on
 what landed and any call the notes doc flags, then `Co-Authored-By: Claude Opus 5
 <noreply@anthropic.com>`. **An out-of-band round is clean on a different signal**:
@@ -88,7 +88,8 @@ Any one ends the loop. Report it plainly; do not work around it.
 - **The slice's box is still unticked**, including after a split that earned an
   `<N>.<M>.<K>`, or an out-of-band row whose Date is still empty — except a round
   that handed off a long job, unticked *by design* and ticked by step 5 below.
-- **`cargo test`, `clippy`, or `fmt --check` fails**, whatever the report said.
+- **`cargo test`, `clippy`, `fmt --check` or the scripts' `unittest` fails**,
+  whatever the report said.
 - **Nothing is left to take**: an open phase with no unticked slice — a phase
   boundary is always a stop — or, with none open, no row whose Date is empty.
 - **The tree did not change**, or the round ticked nothing and filled no Date.
@@ -143,7 +144,7 @@ never a fork:
 > row requires. Invoke the `process` skill first and follow it — the notes doc,
 > STATUS and any figure's consumers are part of finishing it. Do not commit.
 > Report: whether you ticked the box and what remains if not; any new "Decisions
-> worth another look" entries, quoted in full; and the four checks' verbatim
+> worth another look" entries, quoted in full; and the five checks' verbatim
 > result lines.
 
 **6. Resume at step 3 of "One round"** — verify, commit, decide, every stop
