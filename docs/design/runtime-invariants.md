@@ -14,7 +14,8 @@ kill under an orchestrator, or a scan that took a fifth of the machine it was
 given. The trigger to walk this file is therefore four-sided, and each side has
 its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
 toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
-release** — the host's or the figures' image's (`RT10` only) — and an
+release** — the host's or the figures' image's (`RT10` only) — a **bash
+release** (`RT20`), and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -37,7 +38,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
 crate is xz-only on purpose, and generalizing it was rejected").
 
-**`RT1`–`RT18` are allocated**, and nothing at or below `RT18` is reused.
+**`RT1`–`RT20` are allocated**, and nothing at or below `RT20` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -974,3 +975,76 @@ silently.
 cargo test -p pgdt --test remote every_ranged_get_after_the_probe_pins_the_object
 cargo test -p pgdt --test remote an_object_rewritten_under_a_read_is_refused_by_the_server
 ```
+
+## RT19 — a PID namespace's init is not killed by a signal it sends itself under the default action
+
+**Claim.** A process that is its PID namespace's init — PID 1 in a container,
+as `exec` in the container's command makes `pgdt` — discards a signal sent from
+inside its namespace, `raise` from itself included, whose disposition is
+`SIG_DFL`: `SIGINT` and `SIGTERM` do not end it. A handler it installs still
+runs, and a signal sent from the host still reaches that handler.
+
+**Proof.** Linux v7.1, `kernel/fork.c`: the child reaper of a new namespace
+gets `p->signal->flags |= SIGNAL_UNKILLABLE`; `kernel/signal.c`,
+`sig_task_ignored`, returns true for `SIGNAL_UNKILLABLE && handler == SIG_DFL
+&& !(force && sig_kernel_only(sig))`, and `force` is set only for a sender in
+an ancestor namespace. Observed: `pgdt parse` as PID 1, whose re-raise was
+discarded and whose `signal-hook` fallback then `abort`ed, exited 139.
+
+**Scope limit.** `SIGKILL` and `SIGSTOP` from an ancestor namespace are not
+claimed; nothing here sends them. A fault (`SIGSEGV`) is forced and does end
+init, which is how the observed 139 came about.
+
+**Verified against:** Linux 7.1.4 (source read; observed under nerdctl with
+`debian:stable-slim`).
+
+**Relied on by:** [`decisions.md`](decisions.md), "D26" — an interrupted
+`parse` that is its namespace's init exits `128 + n` rather than re-raising.
+
+**Re-verify:**
+
+```sh
+docker run --rm debian:stable-slim sh -c 'exec perl -e "kill INT => \$\$; sleep 1; exit 7"'; echo $?
+docker run --rm debian:stable-slim sh -c 'perl -e "kill INT => \$\$; sleep 1; exit 7"; echo $?'
+```
+
+The first must print `7` (PID 1 survives its own `SIGINT`), the second `130`.
+
+## RT20 — bash runs a script on past a child that caught `SIGINT`, and stops past one `SIGINT` killed
+
+**Claim.** When bash receives `SIGINT` while waiting on a foreground child —
+Ctrl-C at a terminal, delivered to the whole process group — it acts on the
+signal only if the child **died of** `SIGINT`; a child that exits, even with
+`130`, is taken to have handled it, and the script continues with its next
+command.
+
+**Proof.** bash 5.3, `jobs.c`, `waitchld`: `child_caught_sigint` is set when
+`wait_sigint_received && (WIFSIGNALED (status) == 0 || WTERMSIG (status) !=
+SIGINT)` and cleared only for a child with `WTERMSIG (status) == SIGINT`;
+`wait_sigint_cleanup` then kills the shell with `SIGINT` only where it is
+clear. Observed, below.
+
+**Scope limit.** Other shells are not claimed; this is bash's documented
+"wait and cooperative exit". A script that traps `SIGINT` itself is not
+claimed either.
+
+**Verified against:** bash 5.3.15 (source read; observed on this machine).
+
+**Relied on by:** [`decisions.md`](decisions.md), "D26" — `parse` re-raises
+rather than exiting `128 + n`, so `pgdt parse …; pgdt query …` stops at the
+Ctrl-C instead of querying a partial cache.
+
+**Re-verify:**
+
+```sh
+python3 - <<'PY'
+import os, signal, subprocess, time
+for child in ['trap "exit 130" INT; sleep 5', 'sleep 5']:
+    p = subprocess.Popen(['bash', '-c', f"sh -c '{child}'; echo continued"],
+                         process_group=0, stdout=subprocess.PIPE, text=True)
+    time.sleep(1); os.killpg(p.pid, signal.SIGINT)
+    print(repr(child), '->', p.communicate()[0].strip() or 'stopped')
+PY
+```
+
+The trapping child must print `continued`, the killed one `stopped`.

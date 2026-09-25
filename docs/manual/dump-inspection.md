@@ -52,8 +52,10 @@ straight-through one produce the same index, byte for byte.
 
 **Ctrl-C stops it cleanly.** On `SIGINT` (Ctrl-C) or `SIGTERM` (`docker stop`,
 `kill`), `parse` stops at the next block or chunk boundary, writes everything
-it has scanned to the cache, says where it stopped, and exits 130 or 143 so a
-script can tell an interrupt from a failure:
+it has scanned to the cache, says where it stopped, and then ends by that same
+signal — which a shell reports as 130 or 143, and which stops a script that
+called it, as Ctrl-C stops any other command there. Run as a container's init
+process, which no signal it sends itself can end, it exits 130 or 143 instead:
 
 ```
 $ pgdt parse --source koji.dump
@@ -66,8 +68,8 @@ An interrupt that arrives before the first banking says so instead — `nothing
 was scanned or written`, and the re-run it suggests starts from the beginning
 rather than continuing. No cache file is left behind in that case, so nothing
 is named. One that arrives after the scan has finished — while the listing
-prints — finds nothing to stop: the listing and the cache are whole, and the
-exit is still 130 or 143.
+prints — finds nothing to stop: the cache is whole, and the process ends at
+once, cutting the listing short; `pgdt info` prints it from the cache.
 
 A clean stop loses whatever the scan has done since it last banked, which is
 the block it was reading plus any that finished in the moment before the

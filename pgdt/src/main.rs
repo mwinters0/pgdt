@@ -654,7 +654,8 @@ enum Command {
     /// that as it goes unless told `--dtcache none`). Resumes from a matching cache rather than
     /// restarting, and banks its progress at `COPY` block boundaries as it
     /// goes — including on Ctrl-C, which saves what has been scanned and
-    /// exits 130 — so an interrupted scan is not wasted work. Remove the
+    /// then ends the process by that signal — so an interrupted scan is not
+    /// wasted work. Remove the
     /// cache file to force a scan from byte 0.
     Parse {
         /// The dump to scan: a path, or an `http://` or `https://` URL a
@@ -1566,55 +1567,112 @@ fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<Stri
 /// `pgdt parse` saves what it has instead of throwing it away
 /// (`docs/design/decisions.md`, "D63"). The guard is **cooperative**: the
 /// signal sets a flag the mapping loop reads once per chunk, and the loop
-/// persists the index it owns before returning. A **second** signal, of either
-/// kind, exits immediately, so a save that wedges cannot hold the process.
+/// persists the index it owns before returning.
 ///
-/// Returns the cell the exit code is read from: `0` until a signal lands,
-/// then that signal's number. **It is written by the signal handler itself**,
-/// not by the task that cancels: the handlers outlive the scan, and the task
-/// runs only when this thread awaits, so a signal landing past the last await
-/// — the listing — would otherwise be swallowed and the run exit `0`
-/// (`docs/design/decisions.md`, "D26").
-fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<Arc<AtomicUsize>> {
+/// Three actions run **in the handler itself**, in this order, for each
+/// signal: its number is stored in the returned [`InterruptGuard::signalled`];
+/// if [`InterruptGuard::armed`] is set, the signal's default action ends the
+/// process; then `armed` is set. So a **second** signal, of either kind, ends
+/// the process at once — `cache::save` writes synchronously on this thread, so
+/// nothing a task does could cut a wedged save short — and so does any signal
+/// once the caller arms the guard as the scan returns: the cache is saved by
+/// then, and a listing blocked on a pipe nobody drains cannot hold the
+/// process. Only the cancellation is left to a `tokio` task, the one action
+/// that is not async-signal-safe (`docs/design/decisions.md`, "D26").
+///
+/// The number is stored **before** `armed` is read, and the caller sets
+/// `armed` before reading the number, so a signal racing the arming is either
+/// ended by its handler or seen by the caller's check.
+///
+/// As a PID namespace's init — `pgdt` `exec`'d in a container — the kernel
+/// discards a signal the process sends itself under its default action, so
+/// there the handler `_exit`s with `128 + n` instead, as [`die_by`] does.
+fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<InterruptGuard> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let signalled = Arc::new(AtomicUsize::new(0));
-    // Whether either task has already asked the scan to stop — the task's own
-    // record, `signalled` being set before any task runs.
-    let asked = Arc::new(AtomicBool::new(false));
+    let guard = InterruptGuard {
+        signalled: Arc::new(AtomicUsize::new(0)),
+        armed: Arc::new(AtomicBool::new(false)),
+    };
     for kind in [SignalKind::interrupt(), SignalKind::terminate()] {
         let number = kind.as_raw_value();
-        signal_hook::flag::register_usize(number, Arc::clone(&signalled), number as usize)
-            .with_context(|| format!("installing handler for {number}"))?;
-        let mut stream =
-            signal(kind).with_context(|| format!("installing handler for {number}"))?;
-        let (cancel, asked) = (Arc::clone(&cancel), Arc::clone(&asked));
+        let installing = || format!("installing handler for {number}");
+        signal_hook::flag::register_usize(number, Arc::clone(&guard.signalled), number as usize)
+            .with_context(installing)?;
+        let armed = Arc::clone(&guard.armed);
+        if namespace_init() {
+            signal_hook::flag::register_conditional_shutdown(number, 128 + number, armed)
+        } else {
+            signal_hook::flag::register_conditional_default(number, armed)
+        }
+        .with_context(installing)?;
+        signal_hook::flag::register(number, Arc::clone(&guard.armed)).with_context(installing)?;
+        let mut stream = signal(kind).with_context(installing)?;
+        let cancel = Arc::clone(&cancel);
         tokio::spawn(async move {
             while stream.recv().await.is_some() {
-                let already = asked.swap(true, Ordering::SeqCst);
                 cancel.cancel();
-                if already {
-                    std::process::exit(128 + number);
-                }
             }
         });
     }
-    Ok(signalled)
+    Ok(guard)
 }
 
-/// Exit by the signal `signalled` records, if one has landed: `128 + n`, so a
-/// script can tell an interrupt from a failure. An `interrupted` run always
-/// exits, `SIGINT`'s code standing in for a number nothing recorded.
-/// `std::process::exit` runs no destructors, so the instrument is asked here
-/// rather than left to `main`'s guard.
-fn exit_if_signalled(signalled: &AtomicUsize, interrupted: bool) {
-    let number = match signalled.load(Ordering::SeqCst) {
-        0 if interrupted => tokio::signal::unix::SignalKind::interrupt().as_raw_value(),
-        0 => return,
-        n => n as i32,
-    };
+/// What [`install_interrupt_guard`]'s handlers write: the last signal's
+/// number, `0` until one lands, and whether the next one ends the process.
+struct InterruptGuard {
+    signalled: Arc<AtomicUsize>,
+    armed: Arc<AtomicBool>,
+}
+
+impl InterruptGuard {
+    /// Arm the guard, so any later signal ends the process in its handler,
+    /// and end it now by a signal that landed before.
+    fn arm(&self) {
+        self.armed.store(true, Ordering::SeqCst);
+        match self.signalled.load(Ordering::SeqCst) {
+            0 => {}
+            n => die_by(n as i32),
+        }
+    }
+
+    /// End the process by the signal that interrupted the run — `SIGINT`
+    /// standing in for a number nothing recorded, which a run cancelled only
+    /// by a handler cannot be.
+    fn die_interrupted(&self) -> ! {
+        match self.signalled.load(Ordering::SeqCst) {
+            0 => die_by(tokio::signal::unix::SignalKind::interrupt().as_raw_value()),
+            n => die_by(n as i32),
+        }
+    }
+}
+
+/// End the process by `signal`'s default action rather than by `exit(128 +
+/// n)`: a shell reports the two alike, but a calling script stops only past a
+/// child a signal killed (`docs/design/runtime-invariants.md`, "RT20").
+/// Nothing runs destructors past this, so the instrument is asked here rather
+/// than left to `main`'s guard, and stdout is flushed.
+///
+/// **Not as a PID namespace's init**, which the kernel shields from a signal
+/// it raises at itself under the default action: the raise would be dropped
+/// and `emulate_default_handler` fall back to `abort`. There it exits `128 +
+/// n`, which is what a container runtime reports for the signal either way.
+fn die_by(signal: i32) -> ! {
+    use std::io::Write as _;
+
     introspect::report();
-    std::process::exit(128 + number);
+    let _ = std::io::stdout().flush();
+    if !namespace_init() {
+        let _ = signal_hook::low_level::emulate_default_handler(signal);
+    }
+    std::process::exit(128 + signal);
+}
+
+/// Whether this process is its PID namespace's init, which the kernel never
+/// lets its own signals kill under their default action
+/// (`docs/design/runtime-invariants.md`, "RT19").
+fn namespace_init() -> bool {
+    std::process::id() == 1
 }
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
@@ -1748,7 +1806,7 @@ async fn main() -> Result<()> {
             }
             let size = source.size().await?;
             let cancel = Arc::new(Cancellation::new());
-            let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
+            let guard = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
@@ -1791,8 +1849,13 @@ async fn main() -> Result<()> {
                     );
                     eprintln!("re-run `pgdt parse --source {origin}` to continue");
                 }
-                exit_if_signalled(&signalled, true);
+                guard.die_interrupted();
             }
+            // The run completed and its cache is saved: from here a signal
+            // ends the process in its handler, and one that landed past the
+            // mapping pass's last check ends it now, ahead of a listing it
+            // would cut short (`docs/design/decisions.md`, "D26").
+            guard.arm();
             // The listing describes the file's state after this run, not
             // this invocation's diff, so the one line that *is* about the
             // invocation goes above it.
@@ -1806,11 +1869,6 @@ async fn main() -> Result<()> {
             print_index(&run.index, None, false, false, true);
             println!();
             println!("wrote cache to {}", path.display());
-            // A signal past the mapping pass's last check, or during the
-            // listing, found a run that completed: what it printed is true,
-            // and the exit code is still the signal's
-            // (`docs/design/decisions.md`, "D26").
-            exit_if_signalled(&signalled, false);
         }
         Command::Info { source: file, dtcache, detail, map, json, identity } => {
             if json && (detail || map) {

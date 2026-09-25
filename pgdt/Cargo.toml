@@ -48,11 +48,12 @@ mimalloc = { version = "0.1.50", optional = true }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
-# `flag` alone: an interrupt's number is stored by the handler itself, beside
-# the `tokio` stream that cancels the scan, so a signal landing where nothing
-# awaits -- the listing -- is still owed its exit code
-# (`docs/design/decisions.md`, "D26"). Its registry is the one `tokio`'s
-# `signal` already installs through, so the two actions run side by side.
+# No default features: `flag` and `low_level` are what `parse`'s handlers are
+# built from -- the signal's number stored, the default action run on a
+# second signal or one during the listing, and the re-raise that ends an
+# interrupted run by its signal (`docs/design/decisions.md`, "D26"). Its
+# registry is the one `tokio`'s `signal` already installs through, so these
+# and the stream that cancels the scan run side by side.
 signal-hook = { version = "0.4.4", default-features = false }
 tikv-jemallocator = { version = "0.6.0", optional = true }
 # `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and

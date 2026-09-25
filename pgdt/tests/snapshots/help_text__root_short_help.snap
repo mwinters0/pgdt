@@ -11,8 +11,9 @@ Commands:
          was asked (`pgdt info` reports from the cache this leaves; a `query` maps only what its
          table needs, but persists that as it goes unless told `--dtcache none`). Resumes from a
          matching cache rather than restarting, and banks its progress at `COPY` block boundaries as
-         it goes — including on Ctrl-C, which saves what has been scanned and exits 130 — so an
-         interrupted scan is not wasted work. Remove the cache file to force a scan from byte 0
+         it goes — including on Ctrl-C, which saves what has been scanned and then ends the process
+         by that signal — so an interrupted scan is not wasted work. Remove the cache file to force
+         a scan from byte 0
   info   Report what a dump's cache holds. **`info` never scans** — it reads the cache `pgdt parse`
          wrote and errors if there is not one, rather than starting an hours-long scan on your
          behalf (`docs/design/decisions.md`, "D61"). A cache from an unfinished scan is reported for

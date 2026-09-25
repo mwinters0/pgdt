@@ -611,9 +611,14 @@ fn an_interrupt_during_a_remote_read_is_answered_at_once_and_exits_by_signal() {
     let out = child.wait_with_output().expect("pgdt exits");
     assert!(signalled.elapsed() < STALL, "the interrupt waited the request out");
 
-    // 130 is SIGINT's, which is what a script reads to tell an interrupt from a
-    // failure.
-    assert_eq!(out.status.code(), Some(130), "{}", String::from_utf8_lossy(&out.stderr));
+    // Ended by SIGINT itself, which a shell reports as 130 and which is what
+    // stops a calling script (`docs/design/decisions.md`, "D26").
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&out.status),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let err = String::from_utf8_lossy(&out.stderr);
     // The words a *local* interrupt uses: the dropped read is the interrupt
     // arriving by another door, not a failure of its own

@@ -741,18 +741,21 @@ async fn a_later_databases_blocks_report_metadata_not_scanned() {
     }
 }
 
-/// **A signal that lands during the listing is still owed its exit code**
-/// (`docs/design/decisions.md`, "D26"). The handlers outlive the scan, and
-/// the listing awaits nothing, so the task that cancels never runs there: only
-/// a number the handler itself records can reach the exit.
+/// **A signal that lands during the listing ends the process by that signal,
+/// in its handler** (`docs/design/decisions.md`, "D26"). The cache is saved
+/// before the listing prints, so there is nothing left to stop, and the
+/// listing awaits nothing, so no task could answer it there.
 ///
-/// Deterministic without timing: the dump lists far more than a pipe holds,
-/// so once its first byte has been read the process is inside the listing,
-/// blocked on a write, when the signal is sent.
+/// Deterministic without timing: the dump lists far more than a pipe holds and
+/// nothing drains it past the first byte, so the process is blocked on a write
+/// inside the listing when the signal is sent. Under a handler that only
+/// recorded the signal, that write would hold the process until the deadline.
 #[test]
-fn a_signal_during_the_listing_exits_by_signal() {
+fn a_signal_during_the_listing_ends_the_process_by_that_signal() {
     use std::fmt::Write as _;
     use std::io::Read as _;
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::time::{Duration, Instant};
 
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("many_tables.sql");
@@ -767,7 +770,7 @@ fn a_signal_during_the_listing_exits_by_signal() {
         .args(["parse", "--source", dump.to_str().unwrap()])
         .current_dir(dir.path())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .expect("the pgdt binary runs");
     let mut stdout = child.stdout.take().unwrap();
@@ -780,14 +783,27 @@ fn a_signal_during_the_listing_exits_by_signal() {
             .expect("`kill` runs")
             .success()
     );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("a listing nobody drains held the process past the signal");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let mut rest = Vec::new();
     stdout.read_to_end(&mut rest).unwrap();
-    let out = child.wait_with_output().expect("pgdt exits");
-    let listing = String::from_utf8(rest).unwrap();
+    let listing = String::from_utf8_lossy(&rest);
 
-    // The run completed before the signal: what it printed is the whole
-    // listing, and 130 is what says a signal arrived.
-    assert!(listing.contains("public.table_3999"), "{listing}");
-    assert!(listing.contains("wrote cache to"), "{listing}");
-    assert_eq!(out.status.code(), Some(130), "{}", stderr_of(&out));
+    // Killed by the signal, not exiting with 130: a shell reports the two
+    // alike, and only the first stops a calling script.
+    assert_eq!(status.signal(), Some(2), "{status:?}");
+    assert!(!listing.contains("wrote cache to"), "the listing was cut short: {listing}");
+    // And what it cut short was only the listing: the cache is whole.
+    let info = run(&["info", "--source", dump.to_str().unwrap()]);
+    assert!(info.status.success(), "{}", stderr_of(&info));
+    assert!(stdout_of(&info).starts_with("Scan completion: 100%"), "{}", stdout_of(&info));
 }
