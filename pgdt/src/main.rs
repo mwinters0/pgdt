@@ -24,9 +24,12 @@ use pgdump_query::{
 };
 use tracing::Instrument;
 
+use crate::namespace_init::{InitShutdown, namespace_init};
+
 mod alloc;
 mod info_statistics;
 mod introspect;
+mod namespace_init;
 mod where_expr;
 
 #[derive(Parser)]
@@ -1585,16 +1588,21 @@ fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<Stri
 /// ended by its handler or seen by the caller's check.
 ///
 /// As a PID namespace's init — `pgdt` `exec`'d in a container — the kernel
-/// discards a signal the process sends itself under its default action, so
-/// there the handler `_exit`s with `128 + n` instead, as [`die_by`] does.
-fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<InterruptGuard> {
+/// discards any signal left at its default action, so there the handler
+/// `_exit`s with `128 + n` instead, as [`die_by`] does, and `init`'s own
+/// handlers on both signals are released to these.
+fn install_interrupt_guard(
+    cancel: Arc<Cancellation>,
+    init: &mut InitShutdown,
+) -> Result<InterruptGuard> {
     use tokio::signal::unix::{SignalKind, signal};
 
     let guard = InterruptGuard {
         signalled: Arc::new(AtomicUsize::new(0)),
         armed: Arc::new(AtomicBool::new(false)),
     };
-    for kind in [SignalKind::interrupt(), SignalKind::terminate()] {
+    let kinds = [SignalKind::interrupt(), SignalKind::terminate()];
+    for kind in kinds {
         let number = kind.as_raw_value();
         let installing = || format!("installing handler for {number}");
         signal_hook::flag::register_usize(number, Arc::clone(&guard.signalled), number as usize)
@@ -1615,6 +1623,7 @@ fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<InterruptGuard> 
             }
         });
     }
+    init.release(&kinds.map(|kind| kind.as_raw_value()));
     Ok(guard)
 }
 
@@ -1666,13 +1675,6 @@ fn die_by(signal: i32) -> ! {
         let _ = signal_hook::low_level::emulate_default_handler(signal);
     }
     std::process::exit(128 + signal);
-}
-
-/// Whether this process is its PID namespace's init, which the kernel never
-/// lets its own signals kill under their default action
-/// (`docs/design/runtime-invariants.md`, "RT19").
-fn namespace_init() -> bool {
-    std::process::id() == 1
 }
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
@@ -1750,6 +1752,10 @@ async fn main() -> Result<()> {
     // the process held to the file `PGDT_INTROSPECT_OUT` names, on the way
     // out (`src/introspect.rs`).
     let _instrument = introspect::at_exit();
+    // As its PID namespace's init alone, an exit on every signal that ends
+    // `pgdt` elsewhere; `parse`'s guard takes `SIGINT` and `SIGTERM` over
+    // (`docs/design/decisions.md`, "D26").
+    let mut init = InitShutdown::install(&[]).context("installing the init's signal handlers")?;
     init_status_output();
     let cli = Cli::parse();
     match cli.command {
@@ -1806,7 +1812,7 @@ async fn main() -> Result<()> {
             }
             let size = source.size().await?;
             let cancel = Arc::new(Cancellation::new());
-            let guard = install_interrupt_guard(Arc::clone(&cancel))?;
+            let guard = install_interrupt_guard(Arc::clone(&cancel), &mut init)?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)

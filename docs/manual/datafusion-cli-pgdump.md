@@ -21,6 +21,12 @@ parse` command that would build it. So `pgdt parse` first, once per dump; see
 [dump inspection](dump-inspection.md). The cache is looked for where `pgdt`
 writes it — beside a local dump, and in the working directory for a URL.
 
+**Run as a container's init process** — `docker run image
+datafusion-cli-pgdump …` makes it one — it exits 128 plus the number of any
+signal that would end it elsewhere, which an init otherwise ignores, so Ctrl-C
+and `docker stop` end it. In the REPL, Ctrl-C is left to `datafusion-cli`,
+which cancels the statement running rather than the session.
+
 ## `--dump`: a dump as catalogs
 
 ```sh

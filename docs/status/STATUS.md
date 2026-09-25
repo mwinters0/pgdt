@@ -103,3 +103,20 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+
+- **`M149`'s init handlers are one file both binaries compile**,
+  `pgdt/src/namespace_init.rs`, which `datafusion-cli-pgdump` includes by
+  `#[path]` (and its test the helper `pgdt/tests/common/namespace_init.rs`
+  likewise). A signal disposition is the binary's to choose, never an
+  embedder's, as the allocator is (D13), so the library was not the home, and
+  a copy per binary would let the signal list drift. Reconsidering means a
+  small workspace crate both binaries depend on, or a default-off feature of
+  `pgdump_query`; either moves the file and nothing it does.
+- **`M149` leaves `SIGILL`, `SIGFPE` and `SIGSEGV` unhandled as init**, where
+  the row says every signal that ends the binaries elsewhere. `signal-hook`
+  refuses a handler on them (`FORBIDDEN`), and M148 rejected an `unsafe`
+  `sigaction` in `pgdt`; a fault's own is forced and ends an init anyway
+  (RT19), so what goes unanswered is only one sent by hand, `kill -SEGV`. The
+  realtime signals are handled, their default being to terminate.
+  Reconsidering means `signal_hook_registry::register_unchecked`, `unsafe`,
+  on those three.

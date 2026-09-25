@@ -1599,9 +1599,11 @@ dependencies = [
  "datafusion-pgdump",
  "dirs",
  "env_logger",
+ "libc",
  "mimalloc",
  "pgdump_query",
  "regex",
+ "signal-hook",
  "tempfile",
  "tokio",
 ]

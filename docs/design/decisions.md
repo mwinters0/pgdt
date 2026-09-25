@@ -184,11 +184,11 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 ### D26 Cancellation is per chunk or leader window, honoured by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a
 partial result. The preamble scan ignores the flag, a stop there reading as the first `COPY` header and caching as
-complete. `Cancellation` carries a signal beside the polled bit, so a reader waiting on a request drops it rather than
-polling past a retry schedule (tests pin the drop). **The shape follows the command, not the provider or the moment**:
-`query` errors; `parse` interrupts, at byte 0 too, then dies by the signal (init exits 128+n, RT19), and once saved a
-second one, or one during the listing, ends it in the handler. Rejected: polling alone; keying on what this run banked
-(the exit code a race); `exit(128+n)` elsewhere, which a calling script runs past; needing an init `docker run` omits.
+complete. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
+the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and once saved a second one, or
+one in the listing, ends it in the handler. As init (RT19) both binaries exit 128+n on every signal ending them elsewhere
+but what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying on what was banked (the exit
+code a race); `exit(128+n)` elsewhere (RT20); needing an init `docker run` omits; as init, INT and TERM alone.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with

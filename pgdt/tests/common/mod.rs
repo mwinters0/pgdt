@@ -16,6 +16,10 @@ use std::process::{Command, Output};
 /// another one.
 pub mod oracle;
 
+/// A binary run as its PID namespace's init, which `datafusion-cli-pgdump`'s
+/// tests include by path.
+pub mod namespace_init;
+
 /// The built `pgdt` binary, ready to take arguments. Cargo hands us the exact
 /// path, so this never resolves through `PATH` and never runs a stale install.
 pub fn pgdt() -> Command {

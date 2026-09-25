@@ -24,7 +24,7 @@ mimalloc = ["dep:mimalloc"]
 # only the gate stays black-box (`docs/design/roadmap.md`, "Attribution is
 # introspective; only the gate is blind"). It never times anything, and
 # `pgdt --version` names it so the harness cannot publish a figure taken on it.
-introspect = ["dep:libc", "pgdump_query/introspect"]
+introspect = ["pgdump_query/introspect"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -38,9 +38,11 @@ arrow = { version = "59.2.0", default-features = false }
 # reviewable at all.
 clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 futures = "0.3.34"
-# `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
-# second one writes into. Nothing in a default build links it.
-libc = { version = "0.2.189", optional = true }
+# The signal numbers `src/namespace_init.rs` handles, `SIGRTMIN()` and
+# `SIGRTMAX()` among them, which `signal-hook` does not re-export; and, in an
+# `introspect` build, `mallinfo2`, `malloc_info` and the `open_memstream` the
+# second one writes into.
+libc = "0.2.189"
 mimalloc = { version = "0.1.50", optional = true }
 # `http` on: the remote source is the CLI's, and the oracle tests that judge it
 # live in this crate, so `cargo test --workspace` runs them unconditionally
@@ -51,7 +53,9 @@ serde_json = "1.0.145"
 # No default features: `flag` and `low_level` are what `parse`'s handlers are
 # built from -- the signal's number stored, the default action run on a
 # second signal or one during the listing, and the re-raise that ends an
-# interrupted run by its signal (`docs/design/decisions.md`, "D26"). Its
+# interrupted run by its signal -- and a namespace init's `_exit` on every
+# signal that ends the process elsewhere (`src/namespace_init.rs`,
+# `docs/design/decisions.md`, "D26"). Its
 # registry is the one `tokio`'s `signal` already installs through, so these
 # and the stream that cancels the scan run side by side.
 signal-hook = { version = "0.4.4", default-features = false }

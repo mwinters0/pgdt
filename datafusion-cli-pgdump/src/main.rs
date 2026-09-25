@@ -27,6 +27,10 @@
 
 // pgdump: the registrations.
 mod pgdump;
+// pgdump: `pgdt`'s own, shared by path; `release` is `pgdt`'s alone.
+#[allow(dead_code)]
+#[path = "../../pgdt/src/namespace_init.rs"]
+mod namespace_init;
 
 use std::collections::HashMap;
 use std::env;
@@ -209,6 +213,8 @@ pub async fn main() -> ExitCode {
 async fn main_inner() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
+    // pgdump: as a PID namespace's init, end on the signals that end it elsewhere.
+    pgdump::end_as_namespace_init(args.repl_mode())?;
 
     if !args.quiet {
         println!("DataFusion CLI v{DATAFUSION_CLI_VERSION}");

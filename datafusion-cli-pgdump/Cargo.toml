@@ -31,6 +31,11 @@ env_logger = "0.11"
 mimalloc = { version = "0.1", default-features = false }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 regex = "1.12"
+# `pgdt/src/namespace_init.rs`, included by path, and at `pgdt`'s versions:
+# as a PID namespace's init, an `_exit` on every signal that ends the process
+# elsewhere (`docs/design/decisions.md`, "D26"). Ours, not upstream's.
+libc = "0.2.189"
+signal-hook = { version = "0.4.4", default-features = false }
 tokio = { version = "1.52", features = ["macros", "rt", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]

@@ -54,8 +54,7 @@ straight-through one produce the same index, byte for byte.
 `kill`), `parse` stops at the next block or chunk boundary, writes everything
 it has scanned to the cache, says where it stopped, and then ends by that same
 signal — which a shell reports as 130 or 143, and which stops a script that
-called it, as Ctrl-C stops any other command there. Run as a container's init
-process, which no signal it sends itself can end, it exits 130 or 143 instead:
+called it, as Ctrl-C stops any other command there:
 
 ```
 $ pgdt parse --source koji.dump
@@ -70,6 +69,13 @@ rather than continuing. No cache file is left behind in that case, so nothing
 is named. One that arrives after the scan has finished — while the listing
 prints — finds nothing to stop: the cache is whole, and the process ends at
 once, cutting the listing short; `pgdt info` prints it from the cache.
+
+**Run as a container's init process** — `docker run image pgdt …` makes it
+one — no signal but `SIGKILL` can end `pgdt` unhandled, so an interrupted
+`parse` exits 130 or 143 instead of dying by the signal, and every command,
+`parse` before its scan included, exits 128 plus the number of any signal that
+would end it elsewhere: `docker stop`'s `SIGTERM` and Ctrl-\'s `SIGQUIT` among
+them.
 
 A clean stop loses whatever the scan has done since it last banked, which is
 the block it was reading plus any that finished in the moment before the

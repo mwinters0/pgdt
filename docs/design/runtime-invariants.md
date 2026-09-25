@@ -1002,8 +1002,11 @@ init, which is how the observed 139 came about.
 **Verified against:** Linux 7.1.4 (source read; observed under nerdctl with
 `debian:stable-slim`, and under `unshare -Urpf` signalled from the host).
 
-**Relied on by:** [`decisions.md`](decisions.md), "D26" — an interrupted
-`parse` that is its namespace's init exits `128 + n` rather than re-raising.
+**Relied on by:** [`decisions.md`](decisions.md), "D26" — as its
+namespace's init, each binary handles every signal that ends it elsewhere by
+exiting `128 + n` (`pgdt/src/namespace_init.rs`), and an interrupted `parse`
+exits `128 + n` rather than re-raising. `pgdt/tests/namespace_init.rs` and
+`datafusion-cli-pgdump/tests/namespace_init.rs` pin both under `unshare`.
 
 **Re-verify:**
 
