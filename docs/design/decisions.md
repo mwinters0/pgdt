@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D91 -->
+<!-- decision-watermark: D92 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -588,3 +588,11 @@ finest closable unit, the join is existence rather than branch coverage, and an 
 values are unit tests; blind at `v_box_domain_array` (I22), pinned directly. A shape under test is
 asserted (`is_seekable()`, a stated `--jobs`), never assumed. No test races a signal: `CancelsPast`
 trips the flag at an offset, and koji covers the real scale.
+
+### D92 The test build optimizes: the workspace at `opt-level = 1`, its dependencies at `2`
+The fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone leaves most of
+their cost, and `dev` keeps debug assertions and overflow checks at any level. `release`, `bench`
+and `profiling` do not inherit `dev`, so no figure moves. Rejected: tests under `--release`, which
+drops both checks; moving a sweep out of the default suite (`pruning.rs`'s own refusal). Reopens: an
+edit-to-test rebuild costing more than the sweeps save. Code: `Cargo.toml`. Evidence:
+`docs/status/history/2026-09-25.md`, "M152: the test build optimizes".

@@ -18,6 +18,14 @@ exclude = ["vendor/xz-seek"]
 version = "0.1.0"
 edition = "2024"
 
+# The test build optimizes; debug assertions and overflow checks stay on
+# (`docs/design/decisions.md`, "D92").
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
 # The profiling build. A sampling profile is how this project attributes scan
 # cost per function rather than per subtraction (`docs/design/decisions.md`,
 # "D25"), and
