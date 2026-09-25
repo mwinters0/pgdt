@@ -36,7 +36,7 @@ use arrow::util::display::{ArrayFormatter, FormatOptions};
 use arrow::util::pretty::pretty_format_batches;
 use datafusion::catalog::TableProvider;
 use datafusion::common::stats::Precision;
-use datafusion::common::{Column, ScalarValue, Statistics};
+use datafusion::common::{Column, DataFusionError, ScalarValue, Statistics};
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{BinaryExpr, Expr, Operator, TableProviderFilterPushDown};
 use datafusion::physical_expr::LexOrdering;
@@ -185,17 +185,50 @@ fn register_in(
     databases.into_iter().zip(catalogs).collect()
 }
 
-async fn rows(ctx: &SessionContext, sql: &str) -> Result<Vec<RecordBatch>, String> {
-    match ctx.sql(sql).await {
-        Ok(frame) => frame.collect().await.map_err(|e| e.to_string()),
-        Err(err) => Err(err.to_string()),
+/// What refused a query. A value its column's type cannot hold (`KD8`) is
+/// named by its table, column and type alone: no query promises which of its
+/// partitions' refusals it reports (`docs/design/decisions.md`, "D52"), so
+/// the row offset and the value are load's to choose. Anything else keeps its
+/// whole text.
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    Unreadable { table: String, column: String, declared_type: String },
+    Other(String),
+}
+
+impl Refusal {
+    fn of(err: &DataFusionError) -> Refusal {
+        let mut cause: Option<&dyn std::error::Error> = Some(err);
+        while let Some(err) = cause {
+            if let Some(pgdump_query::Error::FieldDecode { table, column, declared_type, .. }) =
+                err.downcast_ref()
+            {
+                return Refusal::Unreadable {
+                    table: table.clone(),
+                    column: column.clone(),
+                    declared_type: declared_type.clone(),
+                };
+            }
+            cause = err.source();
+        }
+        Refusal::Other(err.to_string())
     }
 }
 
-fn rendered(batches: &Result<Vec<RecordBatch>, String>) -> String {
+async fn rows(ctx: &SessionContext, sql: &str) -> Result<Vec<RecordBatch>, Refusal> {
+    match ctx.sql(sql).await {
+        Ok(frame) => frame.collect().await.map_err(|err| Refusal::of(&err)),
+        Err(err) => Err(Refusal::of(&err)),
+    }
+}
+
+fn rendered(batches: &Result<Vec<RecordBatch>, Refusal>) -> String {
     match batches {
         Ok(batches) => pretty_format_batches(batches).unwrap().to_string(),
-        Err(err) => format!("refused: {err}"),
+        Err(Refusal::Unreadable { table, column, declared_type }) => {
+            format!("refused: {table}.{column} holds a value `{declared_type}` cannot")
+        }
+        Err(Refusal::Other(err)) => format!("refused: {err}"),
     }
 }
 
@@ -220,7 +253,7 @@ async fn agrees(
     // type cannot represent (`KD8`) refuses when it is read, and the map
     // answers over it without reading it — the trade a pruned replay already
     // makes (`docs/design/decisions.md`, "D54").
-    let unreadable = matches!(&from_rows, Err(err) if err.contains("does not parse as its mapped"));
+    let unreadable = matches!(&from_rows, Err(Refusal::Unreadable { .. }));
     if unreadable && answered {
         assert!(
             from_statistics.is_ok(),
@@ -299,9 +332,7 @@ impl Seen {
 
 /// `fixtures` grouped by major, each group checked by `check` on a thread of
 /// its own, so a sweep over six majors takes about one major's time. Each
-/// thread runs one current-thread runtime, as `#[tokio::test]` does, so the
-/// partitions of a query that refuses are read in one order and it refuses on
-/// the same row with the statistics as without them.
+/// thread runs one current-thread runtime, as `#[tokio::test]` does.
 fn per_major<T, F, Fut>(fixtures: Vec<PathBuf>, check: F) -> Vec<T>
 where
     F: Fn(Vec<PathBuf>) -> Fut + Sync,
