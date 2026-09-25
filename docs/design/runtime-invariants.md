@@ -976,27 +976,31 @@ cargo test -p pgdt --test remote every_ranged_get_after_the_probe_pins_the_objec
 cargo test -p pgdt --test remote an_object_rewritten_under_a_read_is_refused_by_the_server
 ```
 
-## RT19 — a PID namespace's init is not killed by a signal it sends itself under the default action
+## RT19 — a PID namespace's init is not killed by `SIGINT` or `SIGTERM` under the default action, whoever sends it
 
 **Claim.** A process that is its PID namespace's init — PID 1 in a container,
-as `exec` in the container's command makes `pgdt` — discards a signal sent from
-inside its namespace, `raise` from itself included, whose disposition is
-`SIG_DFL`: `SIGINT` and `SIGTERM` do not end it. A handler it installs still
-runs, and a signal sent from the host still reaches that handler.
+as `exec` in the container's command makes `pgdt` — discards any signal but
+`SIGKILL` and `SIGSTOP` whose disposition is `SIG_DFL`, **whoever sends it**:
+`raise` from itself, a process in its namespace, and the host (`docker stop`,
+a terminal's Ctrl-C) alike. `SIGINT` and `SIGTERM` do not end it; a handler it
+installs still runs. It is init exactly when `getpid()` returns 1.
 
-**Proof.** Linux v7.1, `kernel/fork.c`: the child reaper of a new namespace
-gets `p->signal->flags |= SIGNAL_UNKILLABLE`; `kernel/signal.c`,
+**Proof.** Linux v7.1, `kernel/fork.c`, `copy_process`: `is_child_reaper(pid)`
+— number 1 at the new task's own namespace level, the number `getpid()`
+returns — sets `p->signal->flags |= SIGNAL_UNKILLABLE`; `kernel/signal.c`,
 `sig_task_ignored`, returns true for `SIGNAL_UNKILLABLE && handler == SIG_DFL
-&& !(force && sig_kernel_only(sig))`, and `force` is set only for a sender in
-an ancestor namespace. Observed: `pgdt parse` as PID 1, whose re-raise was
-discarded and whose `signal-hook` fallback then `abort`ed, exited 139.
+&& !(force && sig_kernel_only(sig))`, `force` being set only for a sender in
+an ancestor namespace and `sig_kernel_only` true only of `SIGKILL`/`SIGSTOP`.
+Observed: `pgdt parse` as PID 1, whose re-raise was discarded and whose
+`signal-hook` fallback then `abort`ed, exited 139; a host-sent `SIGTERM` or
+`SIGINT` to a default-action init left it to exit 7.
 
-**Scope limit.** `SIGKILL` and `SIGSTOP` from an ancestor namespace are not
-claimed; nothing here sends them. A fault (`SIGSEGV`) is forced and does end
+**Scope limit.** `SIGKILL` and `SIGSTOP` from an ancestor namespace do end it
+— `docker stop`'s timeout is one. A fault (`SIGSEGV`) is forced and does end
 init, which is how the observed 139 came about.
 
 **Verified against:** Linux 7.1.4 (source read; observed under nerdctl with
-`debian:stable-slim`).
+`debian:stable-slim`, and under `unshare -Urpf` signalled from the host).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D26" — an interrupted
 `parse` that is its namespace's init exits `128 + n` rather than re-raising.
@@ -1006,9 +1010,12 @@ init, which is how the observed 139 came about.
 ```sh
 docker run --rm debian:stable-slim sh -c 'exec perl -e "kill INT => \$\$; sleep 1; exit 7"'; echo $?
 docker run --rm debian:stable-slim sh -c 'perl -e "kill INT => \$\$; sleep 1; exit 7"; echo $?'
+unshare -Urpf perl -e 'sleep 2; exit 7' & u=$!; sleep 0.5; kill -TERM $(cat /proc/$u/task/*/children); wait $u; echo $?
 ```
 
-The first must print `7` (PID 1 survives its own `SIGINT`), the second `130`.
+The first must print `7` (PID 1 survives its own `SIGINT`), the second `130`,
+the third `7` (PID 1 survives the host's `SIGTERM`; run it from a script, an
+interactive shell's job control aside).
 
 ## RT20 — bash runs a script on past a child that caught `SIGINT`, and stops past one `SIGINT` killed
 

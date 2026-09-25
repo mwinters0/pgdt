@@ -103,13 +103,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`M148` exits `128 + n` where `pgdt` is its PID namespace's init**, rather
-  than dying by the signal as the row admitted. The kernel drops a signal init
-  sends itself under the default action (RT19), so the re-raise did nothing
-  and `signal-hook`'s `abort` fallback ended the koji recipe's `exec`'d
-  `pgdt` with 139; `namespace_init` in `pgdt/src/main.rs` switches the
-  handler to `register_conditional_shutdown` and the re-raise to `exit`, which
-  keeps the recipe's documented `130`. Reconsidering means choosing instead to
-  require an init (`docker run --init`) in the recipe and drop the branch, or
-  to key it on something other than `getpid() == 1`; the branch has no test,
-  the suite running no container.
