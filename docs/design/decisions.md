@@ -361,6 +361,7 @@ speculative splitting; cross-block pipelining. Pieces drain in file order so the
 names the same byte. `close_copy_block` has one body and two callers, or a parallel cache stops
 matching a serial one's. A failure only reading finds is the lowest-indexed failed sub-stream's,
 after the rows before it; a resolution refusal comes from the plan (D54).
+Across a DataFusion query's partitions the first refusal wins, each true; rejected: ordering them.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed
