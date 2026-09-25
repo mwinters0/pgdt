@@ -996,16 +996,20 @@ Observed: `pgdt parse` as PID 1, whose re-raise was discarded and whose
 `SIGINT` to a default-action init left it to exit 7.
 
 **Scope limit.** `SIGKILL` and `SIGSTOP` from an ancestor namespace do end it
-— `docker stop`'s timeout is one. A fault (`SIGSEGV`) is forced and does end
-init, which is how the observed 139 came about.
+— `docker stop`'s timeout is one. A fault's signal (`SIGILL`, `SIGTRAP`,
+`SIGBUS`, `SIGFPE`, `SIGSEGV`, `SIGSYS`) is forced, and under `SIG_DFL` does end
+init: `force_sig_info_to_task` clears `SIGNAL_UNKILLABLE` whenever the
+disposition it delivers under is the default. That is how the observed 139
+came about. The same signal *sent* to init is discarded like any other.
 
 **Verified against:** Linux 7.1.4 (source read; observed under nerdctl with
 `debian:stable-slim`, and under `unshare -Urpf` signalled from the host).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D26" — as its
 namespace's init, each binary handles every signal that ends it elsewhere by
-exiting `128 + n` (`pgdt/src/namespace_init.rs`), and an interrupted `parse`
-exits `128 + n` rather than re-raising. `pgdt/tests/namespace_init.rs` and
+exiting `128 + n` but a fault's, which it leaves to the forced default
+(`namespace-init/src/lib.rs`), and an interrupted `parse` exits `128 + n`
+rather than re-raising. `pgdt/tests/namespace_init.rs` and
 `datafusion-cli-pgdump/tests/namespace_init.rs` pin both under `unshare`.
 
 **Re-verify:**

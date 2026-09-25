@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["pgdump_query", "pgdt", "datafusion-pgdump", "datafusion-cli-pgdump"]
+members = [
+    "pgdump_query",
+    "pgdt",
+    "datafusion-pgdump",
+    "datafusion-cli-pgdump",
+    "namespace-init",
+]
 # vendor/xz-seek is a frozen, read-only copy of an unpublished crate
 # (docs/design/decisions.md, "The compressed source") -- excluded from the
 # workspace, so it stays out of the shared lockfile and member list, but named

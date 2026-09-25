@@ -13,8 +13,7 @@
 //! loudly** — Ubuntu's AppArmor default from 23.10 — rather than skipping
 //! them (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
 //!
-//! Shared by path with `datafusion-cli-pgdump`'s tests, as the module it
-//! pins is shared with that binary.
+//! Behind `test-support`, which each binary's `[dev-dependencies]` enables.
 
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};

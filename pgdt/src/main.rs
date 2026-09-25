@@ -10,6 +10,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
+use namespace_init::{InitShutdown, namespace_init};
 use pgdump_query::cache::{
     CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, StrictIdentity,
 };
@@ -24,12 +25,9 @@ use pgdump_query::{
 };
 use tracing::Instrument;
 
-use crate::namespace_init::{InitShutdown, namespace_init};
-
 mod alloc;
 mod info_statistics;
 mod introspect;
-mod namespace_init;
 mod where_expr;
 
 #[derive(Parser)]
@@ -1752,9 +1750,9 @@ async fn main() -> Result<()> {
     // the process held to the file `PGDT_INTROSPECT_OUT` names, on the way
     // out (`src/introspect.rs`).
     let _instrument = introspect::at_exit();
-    // As its PID namespace's init alone, an exit on every signal that ends
-    // `pgdt` elsewhere; `parse`'s guard takes `SIGINT` and `SIGTERM` over
-    // (`docs/design/decisions.md`, "D26").
+    // As its PID namespace's init alone, an exit on every signal but a fault
+    // that ends `pgdt` elsewhere; `parse`'s guard takes `SIGINT` and `SIGTERM`
+    // over (`docs/design/decisions.md`, "D26").
     let mut init = InitShutdown::install(&[]).context("installing the init's signal handlers")?;
     init_status_output();
     let cli = Cli::parse();

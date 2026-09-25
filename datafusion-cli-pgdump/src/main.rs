@@ -27,10 +27,6 @@
 
 // pgdump: the registrations.
 mod pgdump;
-// pgdump: `pgdt`'s own, shared by path; `release` is `pgdt`'s alone.
-#[allow(dead_code)]
-#[path = "../../pgdt/src/namespace_init.rs"]
-mod namespace_init;
 
 use std::collections::HashMap;
 use std::env;

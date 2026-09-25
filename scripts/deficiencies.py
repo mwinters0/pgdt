@@ -158,6 +158,7 @@ CODE_ROOTS = (
     REPO / "pgdt" / "src",
     REPO / "datafusion-pgdump" / "src",
     REPO / "datafusion-cli-pgdump" / "src",
+    REPO / "namespace-init" / "src",
 )
 
 SECTION_HEADING = "# Known deficiencies"

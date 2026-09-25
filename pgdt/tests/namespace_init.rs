@@ -12,8 +12,8 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::time::{Duration, Instant};
 
 use common::fixture;
-use common::namespace_init::{NamespaceInit, as_namespace_init};
 use common::oracle::Oracle;
+use namespace_init::unshare::{NamespaceInit, as_namespace_init};
 
 /// Long enough that a stall ending by itself would be unmistakable.
 const STALL: Duration = Duration::from_secs(60);

@@ -3,15 +3,12 @@
 //! REPL, which upstream's `ctrl_c` answers there (`docs/design/decisions.md`,
 //! "D26"; `docs/design/runtime-invariants.md`, "RT19").
 
-#[path = "../../pgdt/tests/common/namespace_init.rs"]
-mod namespace_init;
-
 use std::net::TcpListener;
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use namespace_init::{NamespaceInit, as_namespace_init};
+use namespace_init::unshare::{NamespaceInit, as_namespace_init};
 
 /// **`-c` ends on `SIGINT`, and the REPL on `SIGTERM`**, each held at a
 /// `--dump` whose origin accepts the connection and never answers. The

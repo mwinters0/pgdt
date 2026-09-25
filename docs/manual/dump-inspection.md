@@ -71,11 +71,12 @@ prints — finds nothing to stop: the cache is whole, and the process ends at
 once, cutting the listing short; `pgdt info` prints it from the cache.
 
 **Run as a container's init process** — `docker run image pgdt …` makes it
-one — no signal but `SIGKILL` can end `pgdt` unhandled, so an interrupted
+one — no signal sent to `pgdt` but `SIGKILL` can end it unhandled, so an interrupted
 `parse` exits 130 or 143 instead of dying by the signal, and every command,
 `parse` before its scan included, exits 128 plus the number of any signal that
 would end it elsewhere: `docker stop`'s `SIGTERM` and Ctrl-\'s `SIGQUIT` among
-them.
+them. A crash's signal — `SIGSEGV`, `SIGBUS` and the like — still ends it as a
+crash; sent by hand, it is ignored.
 
 A clean stop loses whatever the scan has done since it last banked, which is
 the block it was reading plus any that finished in the moment before the

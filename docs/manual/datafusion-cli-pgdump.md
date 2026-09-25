@@ -24,7 +24,8 @@ writes it — beside a local dump, and in the working directory for a URL.
 **Run as a container's init process** — `docker run image
 datafusion-cli-pgdump …` makes it one — it exits 128 plus the number of any
 signal that would end it elsewhere, which an init otherwise ignores, so Ctrl-C
-and `docker stop` end it. In the REPL, Ctrl-C is left to `datafusion-cli`,
+and `docker stop` end it. A crash's signal — `SIGSEGV`, `SIGBUS` and the like —
+still ends it as a crash; sent by hand, it is ignored. In the REPL, Ctrl-C is left to `datafusion-cli`,
 which cancels the statement running rather than the session.
 
 ## `--dump`: a dump as catalogs

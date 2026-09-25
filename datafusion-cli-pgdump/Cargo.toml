@@ -29,16 +29,17 @@ env_logger = "0.11"
 # binary's choice (`docs/design/decisions.md`, "D13"), and this binary is
 # `datafusion-cli`'s.
 mimalloc = { version = "0.1", default-features = false }
+# As a PID namespace's init, an `_exit` on every signal that ends the process
+# elsewhere, bar a fault (`docs/design/decisions.md`, "D26"). Ours, not
+# upstream's.
+namespace-init = { path = "../namespace-init" }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 regex = "1.12"
-# `pgdt/src/namespace_init.rs`, included by path, and at `pgdt`'s versions:
-# as a PID namespace's init, an `_exit` on every signal that ends the process
-# elsewhere (`docs/design/decisions.md`, "D26"). Ours, not upstream's.
-libc = "0.2.189"
-signal-hook = { version = "0.4.4", default-features = false }
 tokio = { version = "1.52", features = ["macros", "rt", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
+# `tests/namespace_init.rs` runs the binary as a PID namespace's init.
+namespace-init = { path = "../namespace-init", features = ["test-support"] }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 tempfile = "3.27.0"
 tokio = { version = "1.52", features = ["macros", "rt"] }

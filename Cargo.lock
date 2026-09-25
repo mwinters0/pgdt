@@ -1599,11 +1599,10 @@ dependencies = [
  "datafusion-pgdump",
  "dirs",
  "env_logger",
- "libc",
  "mimalloc",
+ "namespace-init",
  "pgdump_query",
  "regex",
- "signal-hook",
  "tempfile",
  "tokio",
 ]
@@ -3308,6 +3307,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "namespace-init"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "signal-hook",
+]
+
+[[package]]
 name = "nibble_vec"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3601,6 +3608,7 @@ dependencies = [
  "insta",
  "libc",
  "mimalloc",
+ "namespace-init",
  "pgdump_query",
  "serde",
  "serde_json",

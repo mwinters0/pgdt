@@ -6,7 +6,6 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use crate::namespace_init::InitShutdown;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider, TableProviderFactory};
 use datafusion::error::{DataFusionError, Result};
@@ -16,16 +15,17 @@ use datafusion_pgdump::{
     PGDUMP_FILE_TYPE, PgDump, PgDumpOptions, PgDumpTableFactory, register_dump,
     register_table_factory,
 };
+use namespace_init::InitShutdown;
 use pgdump_query::{
     ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, SchemaMode, Severity,
 };
 
-/// As its PID namespace's init, end on every signal that ends this binary
-/// anywhere else, exiting `128 + n` (`docs/design/decisions.md`, "D26") —
+/// As its PID namespace's init, end on every signal but a fault that ends this
+/// binary anywhere else, exiting `128 + n` (`docs/design/decisions.md`, "D26") —
 /// but `SIGINT` in the REPL, whose `ctrl_c` cancels a statement rather than
 /// the session, and which every action registered on it would run beside.
 pub fn end_as_namespace_init(repl: bool) -> Result<()> {
-    let caught: &[libc::c_int] = if repl { &[libc::SIGINT] } else { &[] };
+    let caught: &[namespace_init::c_int] = if repl { &[namespace_init::SIGINT] } else { &[] };
     InitShutdown::install(caught)?;
     Ok(())
 }

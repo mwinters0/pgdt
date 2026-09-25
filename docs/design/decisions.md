@@ -187,8 +187,8 @@ partial result. The preamble scan ignores the flag, a stop there reading as the 
 complete. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
 the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and once saved a second one, or
 one in the listing, ends it in the handler. As init (RT19) both binaries exit 128+n on every signal ending them elsewhere
-but what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying on what was banked (the exit
-code a race); `exit(128+n)` elsewhere (RT20); needing an init `docker run` omits; as init, INT and TERM alone.
+but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
+on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
