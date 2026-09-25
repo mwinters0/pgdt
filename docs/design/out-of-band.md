@@ -70,4 +70,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| `M151` | | `oracle_register.py` reads the comparison walk where it now lives, `comparison_walk` behind `comparison_for`'s visit bound, so `test_oracle_register`'s committed-tree cases pass again | | [2026-09-25](../status/history/2026-09-25.md), "M151: the oracle register lost its anchor" |
+| `M151` | 2026-09-25 | `oracle_register.py` reads the comparison walk where it now lives, `comparison_walk` behind `comparison_for`'s visit bound, so `test_oracle_register`'s committed-tree cases pass again | | [2026-09-25](../status/history/2026-09-25.md), "M151: the oracle register lost its anchor" |

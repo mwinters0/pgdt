@@ -34,8 +34,9 @@ reads its markers in. Three functions are read:
   Range` and `Base | Shell` are each one arm because each is one decision;
   rustc's exhaustiveness is what makes a *new* kind choose, and a kind that
   joins an existing arm has joined an answer that already has evidence.
-* `comparison_for` -- its two branches that are not a match arm at all, the
-  array shape and the built-in name nothing recognises, plus
+* `comparison_walk`, the walk `comparison_for` enters under its visit bound --
+  its two branches that are not a match arm at all, the array shape and the
+  built-in name nothing recognises, plus
   `comparison_user_type`'s early return for a type absent from the dump's
   `CREATE TYPE` list (I10's multirange companion arrives there). Those three
   are named here rather than parsed, and the parse asserts the anchors they
@@ -79,7 +80,7 @@ bytewise, so `datcollate` is read out of each major's `meta.tsv` and a `C` or
 initdb'd under `C` would invert the `default` group's meaning and this join
 would go on passing while meaning the opposite thing.
 
-**A case is placed by re-walking `comparison_for`'s three steps** -- array,
+**A case is placed by re-walking `comparison_walk`'s three steps** -- array,
 then schema-qualified, then the built-in table. That is a second statement of
 the walk and it is deliberately the *only* thing this module restates: it
 decides which arm a case belongs to, never what the arm answers. The kinds it
@@ -168,7 +169,7 @@ class Arm:
 
 #: The five branches of the walk that are not match arms. They are named here
 #: because there is nothing to enumerate: each is an `if`/`else` in
-#: `comparison_for` or `comparison_user_type`, and `parse_register` checks the
+#: `comparison_walk` or `comparison_user_type`, and `parse_register` checks the
 #: anchor each hangs off rather than trusting this list to stay true.
 #:
 #: **The two range arms are one arm each, not one per name**, which is the
@@ -178,9 +179,9 @@ class Arm:
 #: varying` is from `text`. Which names reach them *is* read out of that table,
 #: so a name added there without a case does not quietly join a covered arm.
 STRUCTURAL_ARMS = (
-    Arm("array", "comparison_for", "structural"),
-    Arm("builtin/range", "comparison_for", "structural"),
-    Arm("builtin/multirange", "comparison_for", "structural"),
+    Arm("array", "comparison_walk", "structural"),
+    Arm("builtin/range", "comparison_walk", "structural"),
+    Arm("builtin/multirange", "comparison_walk", "structural"),
     Arm("builtin/unrecognised", "builtin_scalar", "structural"),
     Arm("user/absent", "comparison_user_type", "structural"),
 )
@@ -246,8 +247,8 @@ BYTEWISE_COLLATIONS = {"C", "POSIX", "C.UTF-8", "C.utf8"}
 ANCHORS = {
     "builtin_scalar": ("fn builtin_scalar(", ("_ => return None,",)),
     "comparison_user_type": ("fn comparison_user_type(", ("let Some(def) =",)),
-    "comparison_for": (
-        "pub fn comparison_for(",
+    "comparison_walk": (
+        "fn comparison_walk(",
         ("array_element(declared).is_some()", "builtin_range_subtype("),
     ),
     "builtin_range_subtype": ("fn builtin_range_subtype(", ("_ => return None,",)),
@@ -502,7 +503,7 @@ def arm_for(
     schema: dict[str, Declared],
     companions: set[str],
 ) -> tuple[str | None, str]:
-    """Which arm a declared type reaches, and why — `comparison_for`'s three
+    """Which arm a declared type reaches, and why — `comparison_walk`'s three
     steps in order. `None` is a type the walk places nowhere useful, which is
     the second direction's failure."""
     declared = declared.strip()

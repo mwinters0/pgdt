@@ -35,8 +35,9 @@ COLLATION_KEYS = [arm.key for arm in orr.COLLATION_ARMS]
 
 #: A register with one of everything: two names sharing a built-in arm, the
 #: unrecognised fallthrough, a guarded arm, a two-kind arm, the two branches
-#: that are not match arms at all, and one built-in arm that branches on the
-#: column's collation where the other does not.
+#: that are not match arms at all — in the walk behind `comparison_for`'s
+#: bound, not in `comparison_for` itself — and one built-in arm that branches on
+#: the column's collation where the other does not.
 REGISTER_RS = """
 fn collated_text(
     collation: Option<&str>,
@@ -96,6 +97,10 @@ fn comparison_user_type(name: &str, types: &[TypeDef]) -> ComparisonPlan {
 }
 
 pub fn comparison_for(declared: &str, types: &[TypeDef]) -> ComparisonPlan {
+    comparison_walk(declared, types, Visits::over(types))
+}
+
+fn comparison_walk(declared: &str, types: &[TypeDef], visits: Visits) -> ComparisonPlan {
     let declared = declared.trim();
     if array_element(declared).is_some() {
         return ComparisonPlan::Refused;
@@ -181,6 +186,21 @@ class ParsingTheRegister(unittest.TestCase):
     def test_a_missing_anchor_is_a_problem(self):
         parsed = self.parse(REGISTER_RS.replace("_ => return None,", "_ => None,"))
         self.assertTrue(any("return None" in p for p in parsed.problems))
+
+    def test_the_walk_s_anchors_are_read_from_the_walk_not_its_entry(self):
+        # `comparison_for` only enters the walk under its visit bound, so an
+        # anchor left there and lost from `comparison_walk` is still a problem.
+        walk = REGISTER_RS.index("fn comparison_walk(")
+        for anchor in ("array_element(declared).is_some()", "builtin_range_subtype("):
+            entry, body = REGISTER_RS[:walk], REGISTER_RS[walk:]
+            moved = entry.replace(
+                "comparison_walk(declared", f"{anchor} comparison_walk(declared"
+            ) + body.replace(anchor, "moved_elsewhere(")
+            parsed = self.parse(moved)
+            self.assertTrue(
+                any("comparison_walk" in p and anchor in p for p in parsed.problems),
+                parsed.problems,
+            )
 
     def test_a_guard_this_check_cannot_read_is_refused(self):
         parsed = self.parse(
