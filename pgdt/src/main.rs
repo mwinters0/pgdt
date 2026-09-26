@@ -1235,13 +1235,7 @@ fn split_filter_op(spec: &str) -> FilterSplit<'_> {
                 i += 1;
             }
             None => {
-                if let Some((symbol, op)) = FILTER_OPS
-                    .into_iter()
-                    .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))
-                {
-                    return FilterSplit::Op(&spec[..i], op, &spec[i + symbol.len()..]);
-                }
-                if let Some((len, op)) = distinct_from_at(bytes, i) {
+                if let Some((len, op)) = filter_op_at(bytes, i) {
                     return FilterSplit::Op(&spec[..i], op, &spec[i + len..]);
                 }
                 i += 1;
@@ -1254,6 +1248,21 @@ fn split_filter_op(spec: &str) -> FilterSplit<'_> {
         Some(q) => FilterSplit::UnbalancedQuote(q as char),
         None => FilterSplit::NoOperator,
     }
+}
+
+/// The operator starting at byte `i` of the term `bytes`, and how many bytes
+/// it runs for: the longest punctuation spelling there, else a worded one.
+///
+/// `bytes` must start where the term does, since [`distinct_from_at`] reads
+/// the term's start as no boundary. [`split_filter_op`] and `--where`'s
+/// tokenizer both ask here, so the tokenizer knows where a term's value
+/// begins by the rule that splits it.
+pub(crate) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
+    FILTER_OPS
+        .into_iter()
+        .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))
+        .map(|(symbol, op)| (symbol.len(), op))
+        .or_else(|| distinct_from_at(bytes, i))
 }
 
 /// What [`split_filter_op`] found. `NoOperator` is the `IS NULL` forms' cue,
@@ -4004,8 +4013,8 @@ mod tests {
         assert_eq!(ok(r#"note="it's""#).2, Some("it's".into()));
     }
 
-    /// A quote that does not open the part is ordinary data to this parser;
-    /// `--where`'s tokenizer is another matter (KD49).
+    /// A quote that does not open the value is ordinary data, to this parser
+    /// and to `--where`'s tokenizer alike.
     #[test]
     fn a_quote_inside_an_unquoted_value_is_data() {
         assert_eq!(ok("note=don't").2, Some("don't".into()));

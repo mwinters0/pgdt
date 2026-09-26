@@ -453,7 +453,10 @@ pgdt query --source dump.sql --table public.widgets --where 'not name=alpha'
 override that. The keywords are case-insensitive, and they are only keywords
 as whole words outside quotes — `--where 'tag=and'` is still an equality
 against `and`, the `=` before it joining it to the term, and so is
-`--where 'tag="and"'`.
+`--where 'tag="and"'`. On the value side a quote only quotes where it opens
+the value, exactly as in a `--filter` term, so an apostrophe inside an
+unquoted value is just a character:
+`--where "note=don't and x=1"` is `note=don't` and `x=1`.
 
 **A value that holds a paren must be quoted**, because a bare `(` groups:
 
@@ -472,6 +475,7 @@ and something else under `--where`:
 ```sh
 --filter 'note=a or b'      # refused: OR is a reserved spelling
 --filter "note='a or b'"    # the equality against `a or b`
+--filter "note=don't or b"  # refused: a quote inside the value does not quote
 --where  'note=a or b'      # `note=a` and then a leaf `b`, which is not a term
 --filter "span='[1,10)'"    # a range literal: its `)` is a paren, so quote it
 --filter "v='(1,a)'"        # and so is a composite literal's

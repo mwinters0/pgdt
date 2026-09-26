@@ -304,13 +304,6 @@ than reading as a phase nobody has sliced.
   P23**, which sets it from those readings and runs the blind gate an
   attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
 
-- **KD49** — `--where`'s tokenizer opens a quoted region at a quote inside an
-  unquoted value, which the term grammar reads as data, so
-  `--where "note=don't and x=1"` is one equality rather than a conjunction,
-  and `--filter` accepts the same string though it holds an unquoted `and`.
-  **(c) unowned**; promoted by a query over an apostrophe answering a
-  conjunction as one term. Detail: `pgdt/src/where_expr.rs`.
-
 - **KD50** — a flagless run on a host stating no limit, cut to half of
   `MemAvailable`, prints its budget as "what this source asks for" and its
   count as "lowered … by the allocation", beside a first line saying nothing

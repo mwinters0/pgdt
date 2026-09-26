@@ -172,27 +172,41 @@ fn keyword_at(bytes: &[u8], i: usize) -> Option<(usize, Token<'static>)> {
     None
 }
 
+/// Which part of a term the tokenizer is in, which decides whether a quote
+/// opens a region there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// Before the term's operator, where `split_filter_op` skips every quoted
+    /// region while it looks for one.
+    Column,
+    /// Past the operator, with nothing but whitespace since: a quote here
+    /// opens the value, as `dequote` reads it.
+    ValueStart,
+    /// Inside a value that did not open with a quote, or after the quoted
+    /// region it opened with: a quote here is data.
+    Value,
+}
+
 /// Split `spec` into parens, keywords and leaves.
 ///
-/// **Quoted regions are skipped whole**, with a doubled quote an escaped one
-/// — the same scan `split_filter_op` makes: a paren or the word `and` inside
-/// a quoted value is data. A quote that never closes swallows the rest of the
+/// **A quote opens a region exactly where the term grammar reads one**:
+/// anywhere before a term's operator, which `split_filter_op` scans past
+/// quoted regions to find, and at the start of its value, which `dequote`
+/// strips — nowhere else, a quote inside an unquoted value being data there.
+/// So `--where "note=don't and x=1"` is a conjunction and a paren or the word
+/// `and` inside a quoted value is data. A region is skipped whole, a doubled
+/// quote an escaped one, and one that never closes swallows the rest of the
 /// string into one leaf.
 ///
-/// Deficiency register: `deficiency: KD49` — a quote opens a region wherever
-/// it stands here, where the term grammar reads one inside an unquoted value
-/// as data, so `--where "note=don't and x=1"` is one leaf, an equality against
-/// `don't and x=1` rather than a conjunction, and `--filter` accepts the same
-/// string though it holds an unquoted `and`; `parse_filter` refuses an
-/// unclosed quote only where it opens a part or stands before the operator.
-/// **(c) unowned**; closing it means a quote opening a region here only where
-/// the term grammar would read it as one.
+/// The operator is found by `split_filter_op`'s own rule
+/// ([`crate::filter_op_at`]), asked of the pending leaf from its start.
 fn tokenize(spec: &str) -> Vec<Token<'_>> {
     let bytes = spec.as_bytes();
     let mut tokens = Vec::new();
     // The byte the pending leaf starts at, set at its first non-whitespace
     // byte so that a leaf never opens on the space before it.
     let mut leaf: Option<usize> = None;
+    let mut part = Part::Column;
     let mut quote: Option<u8> = None;
     let mut i = 0;
     while i < bytes.len() {
@@ -207,27 +221,43 @@ fn tokenize(spec: &str) -> Vec<Token<'_>> {
                 }
             }
             Some(_) => i += 1,
-            None if b == b'\'' || b == b'"' => {
+            None if (b == b'\'' || b == b'"') && part != Part::Value => {
                 leaf.get_or_insert(i);
                 quote = Some(b);
+                if part == Part::ValueStart {
+                    part = Part::Value;
+                }
                 i += 1;
             }
             None if b == b'(' || b == b')' => {
                 flush(&mut tokens, spec, leaf.take(), i);
+                part = Part::Column;
                 tokens.push(if b == b'(' { Token::Open } else { Token::Close });
                 i += 1;
             }
             None => {
                 if let Some((len, keyword)) = keyword_at(bytes, i) {
                     flush(&mut tokens, spec, leaf.take(), i);
+                    part = Part::Column;
                     tokens.push(keyword);
                     i += len;
-                } else {
-                    if !b.is_ascii_whitespace() {
-                        leaf.get_or_insert(i);
-                    }
-                    i += 1;
+                    continue;
                 }
+                if b.is_ascii_whitespace() {
+                    i += 1;
+                    continue;
+                }
+                let start = *leaf.get_or_insert(i);
+                if part == Part::Column {
+                    if let Some((len, _)) = crate::filter_op_at(&bytes[start..], i - start) {
+                        part = Part::ValueStart;
+                        i += len;
+                        continue;
+                    }
+                } else {
+                    part = Part::Value;
+                }
+                i += 1;
             }
         }
     }
@@ -479,6 +509,45 @@ mod tests {
         assert_eq!(ok("\"a and b\"=x"), "a and b=x");
     }
 
+    /// **A quote inside an unquoted value is data**, as the term grammar reads
+    /// it, so the keyword after it is structure: an apostrophe in a value no
+    /// longer swallows the rest of the expression into one equality.
+    #[test]
+    fn a_quote_inside_an_unquoted_value_is_data() {
+        assert_eq!(ok("note=don't and x=1"), "and(note=don't, x=1)");
+        assert_eq!(ok("note=a\"b or x=1"), "or(note=a\"b, x=1)");
+        assert_eq!(ok("v is distinct from don't or x=1"), "or(v IS DISTINCT FROM don't, x=1)");
+        assert_eq!(
+            ok("note=it''s and x=1"),
+            "and(note=it''s, x=1)",
+            "no doubling outside a region"
+        );
+        // What looked like a quoted `and` is two leaves, the second's quote
+        // unclosed — refused, never a value nobody wrote.
+        assert!(err("note=x'a and b'").contains("unbalanced"), "{}", err("note=x'a and b'"));
+    }
+
+    /// A quote opens a region at the start of a value, after any whitespace,
+    /// and the region's end hands back to the unquoted value.
+    #[test]
+    fn a_quote_opening_a_value_is_a_region() {
+        assert_eq!(ok("note = 'a and b' and x=1"), "and(note=a and b, x=1)");
+        assert_eq!(ok("note>='it''s' or x=1"), "or(note>=it's, x=1)");
+        assert_eq!(ok("v is not distinct from 'a or b'"), "v IS NOT DISTINCT FROM a or b");
+        // Text after the closing quote is the value's, and its quote is data
+        // there, so the leaf ends at the keyword and is refused whole.
+        assert!(err("name='x'y' and b=1").contains("unbalanced"), "{}", err("name='x'y' and b=1"));
+    }
+
+    /// **Before the operator a quote opens a region wherever it stands**,
+    /// since that is where `split_filter_op` skips one while looking for the
+    /// operator — so a leaf's column side reads here as the split reads it.
+    #[test]
+    fn the_column_side_reads_a_quote_where_the_split_does() {
+        assert_eq!(ok("a'b and c'=1"), "a'b and c'=1");
+        assert!(err("don't is null or x=1").contains("unbalanced"));
+    }
+
     /// The leaf `b` reaches `parse_filter`, which refuses it, and the message
     /// says which term — the hazard the flag split exists for.
     #[test]
@@ -541,7 +610,7 @@ mod tests {
         assert!(message.contains("`AND`"), "{message}");
         assert!(message.contains("quote the part that holds it"), "{message}");
         assert!(message.contains("--where"), "{message}");
-        for spec in ["a=1 or b=2", "not a=1", "v=(1,a)", "a=1)"] {
+        for spec in ["a=1 or b=2", "not a=1", "v=(1,a)", "a=1)", "note=don't and x=1"] {
             assert!(refused(spec).is_some(), "`{spec}` should be refused");
         }
     }
