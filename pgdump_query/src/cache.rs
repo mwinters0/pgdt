@@ -710,7 +710,7 @@ pub enum CacheLoad {
 /// without the cache's claim — an embedder's, or `pgdt` under
 /// `--overwrite-unusable-cache` after recognition refused the claim — would
 /// otherwise be handed offsets another file's seek table produced
-/// ([`Unusable::CompressionContradicted`]).
+/// ([`Unusable::CompressionContradicted`]; `docs/design/decisions.md`, "D20").
 pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
     let file = match read_cache_file(path)? {
         Ok(file) => file,

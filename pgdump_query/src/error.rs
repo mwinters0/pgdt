@@ -284,7 +284,8 @@ pub enum Unusable {
 
 impl Unusable {
     /// Whether `crate::cache::CacheMode::with_overwrite_unusable` may replace a cache
-    /// found in this state: every one that is recognisably a pgdt cache.
+    /// found in this state: every one that is recognisably a pgdt cache, a
+    /// damaged one of this build's header included (`docs/design/decisions.md`, "D20").
     pub fn overwritable(&self) -> bool {
         !matches!(self, Unusable::NotACache)
     }

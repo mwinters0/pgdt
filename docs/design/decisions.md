@@ -132,13 +132,13 @@ only where the count fell short too, which `ParallelismBudgetLimited` names. Reo
 which naming the columns lacking a statistic would answer.
 
 ### D20 The library never replaces cache data automatically
-A cache that is not ours, damaged, another build's, or another file's (stored size, or a compression layer
-the source contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it
-before a byte is read, at every scan entry point and after `cache::claim`, and the CLI names every way out.
-`--overwrite-unusable-cache` (`with_overwrite_unusable`) starts cold over one recognisably ours, for a file
-replaced under a stable name; foreign bytes never, a header read first telling them apart. Rejected: a cold
-start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy an embedder cannot
-override). A block no longer ending where the map says is `CachedBlockChanged`, never re-mapped unasked.
+A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
+contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before a byte
+is read, at every scan entry point and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
+starts cold over one recognisably ours, by a header read first, for a file replaced under a stable name; foreign
+bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy
+an embedder cannot override); refusing a damaged one of ours (nothing readable lost, an unbumped version its likely
+cause); `load` checking size alone (a claimless open gets another file's map). A moved block is `CachedBlockChanged`.
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
 `stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and

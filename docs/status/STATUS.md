@@ -102,22 +102,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A damaged cache of this build's format may be overwritten.** `M159`'s row
-  names another file's size and another build's format as replaceable under
-  `--overwrite-unusable-cache` and foreign bytes as never; a file with this
-  build's header whose rest does not decode was named by neither. It is
-  treated as ours (`Unusable::Unreadable` is `overwritable`), the header being
-  what "ours" is tested by, and a save renaming a whole file over the cache, so
-  only an outside hand leaves one cut short. Reconsidering makes it one arm of
-  `Unusable::overwritable` and one case in `pgdump_query/tests/cache.rs`,
-  "an_unusable_cache_is_refused_unless_it_may_be_replaced".
-- **The flag covers a contradicted compression claim, through a new check in
-  `cache::load`.** A same-size file whose compression layer contradicts the
-  cache is another file's by D20's own words, and without this a replaced
-  file whose compression changed would be refused under the flag too. Covering
-  it meant `load` comparing the cached seek table with the source's
-  (`Unusable::CompressionContradicted`) on every load, which also refuses a
-  source an embedder opened without the claim, one that was handed the old
-  map before. Reconsidering drops that comparison and leaves recognition's
-  refusal, which the flag then cannot lift.
