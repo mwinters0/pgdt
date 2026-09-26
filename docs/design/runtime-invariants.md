@@ -896,7 +896,9 @@ oracle's `without_last_modified` knob).
 
 **Relied on by:** `io::weak_identity` ([`decisions.md`](decisions.md), "D21") —
 it reads the epoch as absence, so a server that says nothing is treated as
-silent rather than as claiming a date.
+silent rather than as claiming a date; `RemoteObject::precondition` pins no read
+by it, and a run over a server stating no strong tag either is refused unless
+`none` (`RemoteObject::unpinned`).
 
 **Re-verify:**
 

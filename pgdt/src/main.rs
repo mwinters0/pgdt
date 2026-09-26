@@ -607,6 +607,9 @@ struct IdentityArgs {
     /// this says**, because bytes moving underneath a read that has already
     /// returned some of them cannot produce a right answer; `none` is the only
     /// way to turn that into a warning, and it turns off everything else too.
+    /// So a source nothing can check while it is read — a server stating
+    /// neither a strong entity tag nor a `Last-Modified` — is refused unless
+    /// this says `none`.
     ///
     /// It asks one question of every command, and needs a source to ask it
     /// of, so stating it without `--source` — `info` answering from the cache
@@ -648,31 +651,10 @@ struct OverwriteArgs {
     overwrite_unusable_cache: bool,
 }
 
-/// A `--strict-identity` selection. `none` is exclusive: it turns every term
-/// off, the in-flight check included, so naming it beside another term is a
-/// contradiction rather than an override.
+/// A `--strict-identity` selection, in the library's one grammar
+/// (`StrictIdentity`'s `FromStr`).
 fn parse_strict_identity(text: &str) -> std::result::Result<StrictIdentity, String> {
-    let mut time = false;
-    let mut location = false;
-    let mut none = false;
-    for term in text.split(',') {
-        match term.trim() {
-            "time" => time = true,
-            "location" => location = true,
-            "none" => none = true,
-            "" => return Err("an empty term; write `time`, `location` or `none`".into()),
-            other => {
-                return Err(format!("`{other}` is not one of `time`, `location` and `none`"));
-            }
-        }
-    }
-    match (none, time || location) {
-        (true, true) => {
-            Err("`none` turns every term off, so it cannot be combined with one".into())
-        }
-        (true, false) => Ok(StrictIdentity::NONE),
-        (false, _) => Ok(StrictIdentity::binding(time, location)),
-    }
+    text.parse()
 }
 
 #[derive(Subcommand)]
@@ -1425,6 +1407,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
     use pgdump_query::Error as Lib;
     match err {
         Lib::SourceChangedWhileRead { .. }
+        | Lib::SourceUncheckable { .. }
         | Lib::CacheUnusable { .. }
         | Lib::StrictIdentityUnmet { .. }
         | Lib::CachedBlockChanged { .. } => true,

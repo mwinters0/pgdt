@@ -175,6 +175,17 @@ struct Args {
         value_parser(pgdump::DumpArg::parse)
     )]
     dumps: Vec<pgdump::DumpArg>,
+
+    // pgdump: `--strict-identity`, `pgdt`'s grammar and default.
+    #[clap(
+        long = "strict-identity",
+        value_name = "TERMS",
+        require_equals = true,
+        num_args = 0..=1,
+        default_missing_value = "time,location",
+        help = pgdump::STRICT_IDENTITY_HELP
+    )]
+    strict_identity: Option<pgdump_query::cache::StrictIdentity>,
 }
 
 impl Args {
@@ -291,7 +302,8 @@ async fn main_inner() -> Result<()> {
     );
 
     // pgdump: `STORED AS PGDUMP`, then every `--dump`.
-    pgdump::register(&ctx, &args.dumps, args.quiet).await?;
+    let strict = args.strict_identity.unwrap_or_default();
+    pgdump::register(&ctx, &args.dumps, strict, args.quiet).await?;
 
     let mut print_options = PrintOptions {
         format: args.format,

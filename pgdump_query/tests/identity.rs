@@ -819,3 +819,67 @@ async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
         "the times differ, got {status:?}"
     );
 }
+
+/// A source nothing can check while it is read — as a remote object is whose
+/// server states no usable validator: its bytes are a real file's, and it says
+/// why no change could be seen. `reads` counts what the run took of it.
+struct Unpinnable {
+    inner: LocalFileSource,
+    reads: AtomicUsize,
+}
+
+impl ByteRangeSource for Unpinnable {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.inner.read_range(offset, len)
+    }
+
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        self.inner.size()
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+
+    fn in_flight_unchecked(&self) -> Option<String> {
+        Some("nothing pins it".to_string())
+    }
+}
+
+/// **A run binding the in-flight identity over a source nothing can check is
+/// refused before it reads**, under every selection but `none`, which maps it
+/// as any other (`docs/design/decisions.md`, "D21").
+#[tokio::test]
+async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
+    let (_dir, dump) = sandboxed();
+    let source = Unpinnable { inner: LocalFileSource::open(&dump).unwrap(), reads: 0.into() };
+    for strict in [
+        StrictIdentity::ADVISORY,
+        StrictIdentity::binding(true, false),
+        StrictIdentity::binding(false, true),
+    ] {
+        let refused = map_file(
+            &source,
+            &ScanOptions::default(),
+            &CacheMode::DISABLED.with_strict_identity(strict),
+            &StatisticsRequest::NONE,
+        )
+        .await
+        .unwrap_err();
+        let Error::SourceUncheckable { why } = &refused else {
+            panic!("{strict:?} binds the in-flight check, got {refused:?}")
+        };
+        assert_eq!(why, "nothing pins it");
+        assert!(refused.to_string().contains("--strict-identity=none"), "{refused}");
+    }
+    assert_eq!(source.reads.load(Ordering::Relaxed), 0, "refused before a byte was read");
+
+    let path = cache::colocated_path(&dump);
+    mapped(&source, &path, StrictIdentity::NONE).await.unwrap();
+    assert!(matches!(cache::load(&path, &source).await.unwrap(), CacheStatus::Valid { .. }));
+}

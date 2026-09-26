@@ -124,7 +124,8 @@ Options:
           **A source that changes while it is being read is an error whatever this says**, because
           bytes moving underneath a read that has already returned some of them cannot produce a
           right answer; `none` is the only way to turn that into a warning, and it turns off
-          everything else too.
+          everything else too. So a source nothing can check while it is read — a server stating
+          neither a strong entity tag nor a `Last-Modified` — is refused unless this says `none`.
           
           It asks one question of every command, and needs a source to ask it of, so stating it
           without `--source` — `info` answering from the cache alone, whose identity is not

@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD50 -->
+rather than being deleted. <!-- deficiency-watermark: KD51 -->
 **`KD1`–`KD50` are allocated, and nothing at or below `KD50` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -309,3 +309,8 @@ than reading as a phase nobody has sliced.
   count as "lowered … by the allocation", beside a first line saying nothing
   enforces a limit. **(c) unowned**; promoted by a status line read as the
   source's request where it was the machine's. Detail: `pgdt/src/main.rs`.
+
+- **KD51** — a remote `.xz` with no cached seek table, from a server stating
+  no usable validator, is walked before its run is refused as one nothing can
+  check. **(c) unowned**; promoted by a user who meets it on a dump of many
+  streams. Detail: `pgdump_query/src/io.rs`.

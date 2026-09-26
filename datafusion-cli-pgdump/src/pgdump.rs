@@ -16,6 +16,7 @@ use datafusion_pgdump::{
     register_table_factory,
 };
 use namespace_init::InitShutdown;
+use pgdump_query::cache::StrictIdentity;
 use pgdump_query::{
     ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, SchemaMode, Severity,
 };
@@ -34,6 +35,13 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
     refused for one of several. :strings reads every column as its text. Repeatable";
+
+pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
+    does, for every --dump and every STORED AS PGDUMP: `time` refuses a cache whose recorded \
+    modification signal the dump no longer states, `location` one written for another URL, the \
+    bare flag both. A dump changing under a scan fails it whatever this says, so a server \
+    stating neither a strong entity tag nor a Last-Modified is refused; `none` turns every \
+    check off and reads it anyway";
 
 /// One `--dump [NAME=]SOURCE[:strings]`.
 ///
@@ -176,13 +184,18 @@ impl TableProviderFactory for FoldingFactory {
 /// Make `STORED AS PGDUMP` available in `ctx`, then open and register each
 /// of `dumps`; a dump that cannot be opened or named ends the run, before any
 /// SQL is read.
-pub async fn register(ctx: &SessionContext, dumps: &[DumpArg], quiet: bool) -> Result<()> {
+pub async fn register(
+    ctx: &SessionContext,
+    dumps: &[DumpArg],
+    strict_identity: StrictIdentity,
+    quiet: bool,
+) -> Result<()> {
     let stderr = Arc::new(StderrSink::new(quiet));
     let sink: Arc<dyn DiagnosticSink> = Arc::clone(&stderr) as _;
     register_table_factory(ctx, Arc::clone(&sink));
     // The provider's factory, replaced by the same one ending each statement.
     let factory = FoldingFactory {
-        inner: PgDumpTableFactory::new(Arc::clone(&sink)),
+        inner: PgDumpTableFactory::new(Arc::clone(&sink)).with_strict_identity(strict_identity),
         sink: Arc::clone(&stderr),
     };
     ctx.state_ref()
@@ -190,7 +203,11 @@ pub async fn register(ctx: &SessionContext, dumps: &[DumpArg], quiet: bool) -> R
         .table_factories_mut()
         .insert(PGDUMP_FILE_TYPE.to_string(), Arc::new(factory));
     for dump in dumps {
-        let options = PgDumpOptions { schema_mode: dump.schema_mode, ..PgDumpOptions::default() };
+        let options = PgDumpOptions {
+            schema_mode: dump.schema_mode,
+            strict_identity,
+            ..PgDumpOptions::default()
+        };
         let opened = PgDump::open(&dump.source, options).await.map_err(external)?;
         register_dump(ctx, dump.name.as_deref(), &opened, Arc::clone(&sink)).map_err(external)?;
         stderr.fold(opened.origin());

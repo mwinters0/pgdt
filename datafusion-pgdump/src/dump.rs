@@ -24,6 +24,13 @@ pub struct PgDumpOptions {
     /// Typed columns, or every column as text — the escape hatch from a wrong
     /// type mapping, per dump.
     pub schema_mode: SchemaMode,
+    /// Which identity signals bind, as `pgdt --strict-identity` states them:
+    /// between runs, what the cache is checked against at open; during one,
+    /// whether a file changing under a scan fails it, and so whether a source
+    /// nothing can check during a scan opens at all. The default is
+    /// [`StrictIdentity::ADVISORY`], and [`StrictIdentity::NONE`] the only
+    /// way to read an unpinnable remote dump.
+    pub strict_identity: StrictIdentity,
 }
 
 /// A dump and the complete map of it its cache holds, opened once and shared
@@ -74,7 +81,8 @@ impl PgDump {
         let origin = Origin::resolve(location)?;
         #[cfg(not(feature = "http"))]
         let origin = Origin::local(location);
-        let mode = CacheMode::resolve(&origin, options.cache_path.as_deref());
+        let mode = CacheMode::resolve(&origin, options.cache_path.as_deref())
+            .with_strict_identity(options.strict_identity);
         let CacheMode::Enabled { path, .. } = &mode else {
             return Err(Error::CacheNotComplete {
                 parse: parse_command(location, options.cache_path.as_deref()),
@@ -105,9 +113,12 @@ impl PgDump {
         };
         // The baseline every scan's end checks the file against, taken before
         // the map it is about to trust is read.
-        let watch = Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await?);
+        let watch = Arc::new(SourceWatch::open(source.as_ref(), options.strict_identity).await?);
         let index = match cache::load(path, source.as_ref()).await? {
             CacheStatus::Valid { mut index, weak, origin: matched, .. } => {
+                if let Some(refusal) = mode.strict_identity_refusal(&weak, &matched) {
+                    return Err(refusal.into());
+                }
                 index.diagnostics.extend(cache::advisory_identity_diagnostics(&weak, &matched));
                 index
             }

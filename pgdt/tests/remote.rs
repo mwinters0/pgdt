@@ -504,6 +504,7 @@ fn a_cache_recorded_against_another_object_names_the_url_that_refused_it() {
 async fn every_ranged_get_after_the_probe_pins_the_object() {
     let oracle = serving_dump();
     let source = source_of(&oracle.url()).await;
+    assert_eq!(source.in_flight_unchecked(), None, "a strong tag pins every read");
     source.read_range(0, 32).await.unwrap();
     source.read_range(64, 32).await.unwrap();
 
@@ -553,6 +554,7 @@ async fn a_server_stating_a_weak_entity_tag_is_pinned_by_its_modification_time()
     // refused on the first read after the probe, the object unchanged.
     let oracle = Oracle::serving(dump_bytes()).with_weak_etag().start();
     let source = source_of(&oracle.url()).await;
+    assert_eq!(source.in_flight_unchecked(), None, "`Last-Modified` pins every read");
     assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
     let requests = oracle.requests();
     assert_eq!(requests[1].header("if-match"), None, "{requests:?}");
@@ -573,6 +575,8 @@ async fn a_server_stating_a_weak_entity_tag_is_pinned_by_its_modification_time()
 async fn a_weak_entity_tag_with_no_modification_time_is_read_unpinned() {
     let oracle = Oracle::serving(dump_bytes()).with_weak_etag().without_last_modified().start();
     let source = source_of(&oracle.url()).await;
+    let why = source.in_flight_unchecked().expect("nothing pins a read, so nothing checks one");
+    assert!(why.contains("only a weak entity tag"), "{why}");
     assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
     for request in &oracle.requests() {
         assert_eq!(request.header("if-match"), None, "{request:?}");
@@ -587,11 +591,48 @@ async fn a_server_that_states_neither_validator_is_read_unpinned() {
     // confirm nothing has changed since 1970 would refuse every read.
     let oracle = Oracle::serving(dump_bytes()).without_etag().without_last_modified().start();
     let source = source_of(&oracle.url()).await;
+    let why = source.in_flight_unchecked().expect("nothing pins a read, so nothing checks one");
+    assert!(why.contains("neither an entity tag nor a `Last-Modified`"), "{why}");
     assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
     for request in &oracle.requests() {
         assert_eq!(request.header("if-match"), None, "{request:?}");
         assert_eq!(request.header("if-unmodified-since"), None, "{request:?}");
     }
+}
+
+/// **A run nothing could check during it is refused unless `none` is
+/// stated**, on every command that reads the dump and under every other
+/// selection — before it reads, so nothing is saved — and `none` reads it,
+/// as it reads a pinned one through a rewrite
+/// (`docs/design/decisions.md`, "D21").
+#[test]
+fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
+    let unpinnable = || Oracle::serving(dump_bytes()).without_etag().without_last_modified();
+    let oracle = unpinnable().start();
+    let url = oracle.url();
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["parse", "--source", &url],
+        vec!["parse", "--source", &url, "--strict-identity=time"],
+        vec!["parse", "--source", &url, "--strict-identity"],
+        vec!["query", "--source", &url, "--table", "public.widgets", "--dtcache", "none"],
+    ] {
+        let refused = run_in(&dir, &args);
+        let said = stderr_of(&refused);
+        assert!(!refused.status.success(), "{args:?}: {said}");
+        assert!(
+            said.contains(&format!("{url}: nothing can tell whether the dump changes")),
+            "{said}"
+        );
+        assert!(said.contains("neither an entity tag nor a `Last-Modified`"), "{said}");
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "no cache was written");
+
+    run_ok_in(&dir, &["parse", "--source", &url, "--strict-identity=none"]);
+
+    let oracle = Oracle::serving(dump_bytes()).with_weak_etag().without_last_modified().start();
+    let refused = run_in(&dir, &["parse", "--source", &oracle.url()]);
+    assert!(stderr_of(&refused).contains("only a weak entity tag"), "{}", stderr_of(&refused));
 }
 
 #[test]

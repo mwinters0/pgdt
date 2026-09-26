@@ -18,8 +18,8 @@ use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump}
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ComparisonSemantics, Finding, LocalFileSource, QueryOptions, ScanOptions, SchemaMode,
-    StatisticsRequest, TableName, map_file, table_stream,
+    ComparisonSemantics, DiagnosticKind, Finding, LocalFileSource, QueryOptions, ScanOptions,
+    SchemaMode, StatisticsRequest, TableName, map_file, table_stream,
 };
 
 /// A sink for a registration whose findings this target is not about.
@@ -266,6 +266,30 @@ async fn only_a_complete_cache_opens() {
     // Nothing was written by the refusals.
     assert_eq!(std::fs::read(pgdump_query::cache::colocated_path(&copy)).unwrap(), before);
     assert!(!elsewhere.exists());
+}
+
+/// **The strictness a caller states is the one the open checks the cache
+/// under**, as `pgdt --strict-identity` states it: a dump touched since its
+/// parse opens with a warning by default and is refused where `time` binds.
+#[tokio::test]
+async fn a_stated_strictness_binds_the_cache_s_identity_at_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/edge_cases/default.sql");
+    let copy = parsed_copy(&fixture, dir.path()).await;
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
+    let location = copy.to_str().unwrap();
+
+    let advisory = PgDump::open(location, PgDumpOptions::default()).await.unwrap();
+    assert!(
+        advisory.diagnostics().iter().any(|d| d.kind == DiagnosticKind::CacheMtimeChanged),
+        "{:?}",
+        advisory.diagnostics()
+    );
+    let strict =
+        PgDumpOptions { strict_identity: "time".parse().unwrap(), ..PgDumpOptions::default() };
+    let refused = PgDump::open(location, strict).await.unwrap_err();
+    assert!(refused.to_string().contains("`--strict-identity=time`"), "{refused}");
 }
 
 /// **Projection is the library's, `COUNT(*)` is the empty projection, and a

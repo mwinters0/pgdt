@@ -93,6 +93,19 @@ pub enum Error {
         "the dump changed while it was being read — {differences} — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway"
     )]
     SourceChangedWhileRead { differences: String },
+    /// A run that binds the in-flight identity — every
+    /// `crate::cache::StrictIdentity` but `NONE` — over a source nothing can
+    /// check during it: a remote server stating neither a strong entity tag
+    /// nor a `Last-Modified`, so no read can be pinned and the source's size
+    /// and modification time are the probe's. Raised by
+    /// `crate::cache::SourceWatch::open`, before anything is read, since the
+    /// promise [`Error::SourceChangedWhileRead`] makes would otherwise be
+    /// stated and not kept (`docs/design/decisions.md`, "D21"). `why` is the
+    /// source's own sentence ([`crate::ByteRangeSource::in_flight_unchecked`]).
+    #[error(
+        "nothing can tell whether the dump changes while it is being read — {why} — so the run was refused before reading it; pass `--strict-identity=none` to read it anyway"
+    )]
+    SourceUncheckable { why: String },
     /// A weak identity signal the caller asked to *bind* does not hold, or
     /// cannot be had at all. Raised by `crate::cache::CacheMode::load` under
     /// `crate::cache::StrictIdentity::time` or `location`, where an advisory

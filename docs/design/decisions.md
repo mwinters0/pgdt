@@ -146,8 +146,8 @@ signal accessors, so two kinds compare rather than refuse. **Two questions, spli
 source was fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term alone, a missing time included.
 During one the cadence follows the cost of asking: `SourceWatch` re-reads the open descriptor at the save's cadence (D62), at run end and before a
 failure is reported (`attribute`: a short read or bytes that do not parse is often the change itself), aborting without saving or removing, where a
-server compares every ranged GET against the probe's validators — `Last-Modified` in place of a weak tag, which `If-Match` compares strongly — and
-one stating neither usable is read unpinned. Rejected: a check per chunk, narrowing without closing the window rows reach a caller in before the abort.
+server compares every ranged GET against the probe's validators (`Last-Modified` for a weak tag, `If-Match` comparing strongly); a source nothing can
+check (`in_flight_unchecked`) is refused unless `NONE`. Rejected: a check per chunk (rows still reach a caller first); an unpinned run warned of.
 
 ### D87 A remote cache is named from the URL, and the origin it records is advisory
 Default `./<last URL segment>.dtcache`; no last segment is refused by name. Another origin is a diagnostic,

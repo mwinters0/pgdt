@@ -306,8 +306,14 @@ request: each ranged GET names the version the run opened on — its `ETag`, or
 its `Last-Modified` where it sent no tag or only a weak one (`W/"…"`, which a
 server will not match a version against) — so an object rewritten mid-scan is
 refused on the first read after it happens rather than at the next save. A
-server that sends neither, or a weak tag alone, is read unpinned, there being
-nothing to name, and such a run has no in-flight check at all.
+server that sends neither, or a weak tag alone, gives nothing to name, so no
+check could see a change: such a run is refused before it reads anything, and
+`--strict-identity=none` reads it anyway, with no in-flight check at all.
+
+```
+$ pgdt parse --source https://example.org/mydump.sql
+Error: https://example.org/mydump.sql: nothing can tell whether the dump changes while it is being read — the server states neither an entity tag nor a `Last-Modified`, so no read can be pinned to the version this run opened on — so the run was refused before reading it; pass `--strict-identity=none` to read it anyway
+```
 
 ```
 $ pgdt parse --source mydump.sql

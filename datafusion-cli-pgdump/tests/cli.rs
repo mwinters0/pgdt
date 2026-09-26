@@ -198,3 +198,32 @@ async fn a_dump_with_no_cache_names_the_parse() {
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains(&format!("pgdt parse --source {}", bare.display())), "{said}");
 }
+
+/// **`--strict-identity` is `pgdt`'s, and binds every registration**: a dump
+/// touched since its parse opens with a warning unless `time` is stated, and
+/// then neither `--dump` nor `STORED AS PGDUMP` opens it.
+#[tokio::test]
+async fn strict_identity_binds_both_registrations() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
+    let dump = copy.to_str().unwrap();
+    let catalog = format!("shop={dump}");
+
+    let out = run(&["-q", "--dump", &catalog, "-c", "SELECT 1"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let out = run(&["-q", "--strict-identity=time", "--dump", &catalog, "-c", "SELECT 1"]);
+    assert!(!out.status.success());
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(said.contains("`--strict-identity=time`"), "{said}");
+
+    let create = format!(
+        "CREATE EXTERNAL TABLE ev STORED AS PGDUMP LOCATION '{dump}' \
+         OPTIONS ('pgdump.table' 'events')"
+    );
+    let out = run(&["-q", "--strict-identity", "-c", &create]);
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(said.contains("`--strict-identity=time`"), "{said}");
+}

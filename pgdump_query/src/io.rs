@@ -231,6 +231,21 @@ pub trait ByteRangeSource: Send + Sync {
     /// read taken before the watch opens — an origin probe, a cache claim —
     /// has never heard it.
     fn hint_in_flight_identity(&self, _binds: bool) {}
+    /// Why nothing during a run can tell this source changed under it, or
+    /// `None` where something can — asked by `crate::cache::SourceWatch::open`,
+    /// which refuses a run binding the in-flight identity over a source
+    /// answering `Some` before it reads anything
+    /// (`docs/design/decisions.md`, "D21").
+    ///
+    /// **The default is `None`: the watch's own re-read is the check**, which
+    /// holds wherever [`ByteRangeSource::size`] and
+    /// [`ByteRangeSource::modified`] answer live. A source whose two answers
+    /// are frozen at open, and that cannot have its reads compared some other
+    /// way, is the one that must say otherwise — the sentence it returns is
+    /// the refusal's reason, naming what is missing rather than the source.
+    fn in_flight_unchecked(&self) -> Option<String> {
+        None
+    }
     /// Compare the integrity check of every byte this source has already
     /// handed out and not yet compared — called once as a run's reading ends,
     /// before the run reports success (`crate::cache::SourceWatch::finish`).
@@ -3781,6 +3796,11 @@ impl ByteRangeSource for FetchedXzSource {
         self.source.hint_in_flight_identity(binds);
     }
 
+    /// The transport's: what pins a fetch is what checks a decoded block.
+    fn in_flight_unchecked(&self) -> Option<String> {
+        self.source.in_flight_unchecked()
+    }
+
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
         Some((*self.table).clone())
     }
@@ -4302,7 +4322,9 @@ impl RemoteObject {
     /// absence is not sent — `object_store` substitutes the epoch for a
     /// response that carries none (`docs/design/runtime-invariants.md`,
     /// "RT16"), and asking a server to confirm that nothing has changed since
-    /// 1970 refuses every read. With neither usable the read goes unpinned.
+    /// 1970 refuses every read. With neither usable the read goes unpinned,
+    /// which a run binding the in-flight identity refuses before it reads
+    /// ([`RemoteObject::unpinned`]).
     fn precondition(&self) -> object_store::GetOptions {
         let mut options = object_store::GetOptions::default();
         let Some(meta) = self.meta.get() else { return options };
@@ -4319,6 +4341,27 @@ impl RemoteObject {
             }
         }
         options
+    }
+
+    /// Why [`RemoteObject::precondition`] pins nothing, or `None` where it
+    /// pins a read — read off the precondition itself, so the rule stays
+    /// stated once. A source over this object freezes its size and
+    /// modification time at the probe, so where nothing is pinned nothing in
+    /// the run can see a rewrite ([`ByteRangeSource::in_flight_unchecked`]).
+    fn unpinned(&self) -> Option<String> {
+        let pinned = self.precondition();
+        if pinned.if_match.is_some() || pinned.if_unmodified_since.is_some() {
+            return None;
+        }
+        let tag = self.meta.get().and_then(|meta| meta.e_tag.as_deref());
+        Some(match tag {
+            Some(_) => "the server states only a weak entity tag and no `Last-Modified`, so no \
+                        read can be pinned to the version this run opened on"
+                .to_string(),
+            None => "the server states neither an entity tag nor a `Last-Modified`, so no read \
+                     can be pinned to the version this run opened on"
+                .to_string(),
+        })
     }
 
     /// The object a request addresses: the store's own base URL with nothing
@@ -4584,6 +4627,13 @@ impl ByteRangeSource for RemoteSource {
     fn hint_in_flight_identity(&self, binds: bool) {
         self.precondition.store(binds, Ordering::Relaxed);
     }
+
+    /// Whatever the precondition cannot pin, since this source's size and
+    /// modification time are the probe's and the watch would compare the
+    /// probe with itself.
+    fn in_flight_unchecked(&self) -> Option<String> {
+        self.object.unpinned()
+    }
 }
 
 /// Open `origin`, which must name a remote object, as a [`ByteRangeSource`].
@@ -4598,6 +4648,14 @@ impl ByteRangeSource for RemoteSource {
 /// Where the cache holds the seek table there is no walk at all; where
 /// it does not, the walk is announced before it is paid for
 /// ([`announce_remote_walk`]).
+///
+/// Deficiency register: `deficiency: KD51` — a run that
+/// `crate::cache::SourceWatch::open` will refuse for a server nothing can pin
+/// ([`ByteRangeSource::in_flight_unchecked`]) pays that walk first, the watch
+/// opening only over the source this returns. Refusing here would need the
+/// strictness passed to every open for the sake of one pairing — an uncached
+/// `.xz` from a server stating no usable validator. **(c) unowned**; promoted
+/// by a user who meets it on a dump of many streams.
 #[cfg(feature = "http")]
 pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     let Location::Remote(object) = &origin.location else {

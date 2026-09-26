@@ -406,7 +406,9 @@ impl StrictIdentity {
     }
 
     /// Whether a source that changes under an in-flight read aborts the run
-    /// rather than merely warning ([`SourceWatch`]).
+    /// rather than merely warning ([`SourceWatch`]) — and so whether a source
+    /// nothing can check during a run is refused before it reads
+    /// ([`SourceWatch::open`]).
     pub fn in_flight(self) -> bool {
         self.in_flight
     }
@@ -415,6 +417,39 @@ impl StrictIdentity {
 impl Default for StrictIdentity {
     fn default() -> Self {
         Self::ADVISORY
+    }
+}
+
+/// A selection as every front end writes it — `time`, `location`, both
+/// comma-separated, or `none` — so `pgdt --strict-identity` and the DataFusion
+/// provider's option read one grammar. `none` is exclusive: it turns every
+/// term off, the in-flight check included, so naming it beside another term
+/// is a contradiction rather than an override.
+impl std::str::FromStr for StrictIdentity {
+    type Err = String;
+
+    fn from_str(text: &str) -> std::result::Result<Self, String> {
+        let mut time = false;
+        let mut location = false;
+        let mut none = false;
+        for term in text.split(',') {
+            match term.trim() {
+                "time" => time = true,
+                "location" => location = true,
+                "none" => none = true,
+                "" => return Err("an empty term; write `time`, `location` or `none`".into()),
+                other => {
+                    return Err(format!("`{other}` is not one of `time`, `location` and `none`"));
+                }
+            }
+        }
+        match (none, time || location) {
+            (true, true) => {
+                Err("`none` turns every term off, so it cannot be combined with one".into())
+            }
+            (true, false) => Ok(Self::NONE),
+            (false, _) => Ok(Self::binding(time, location)),
+        }
     }
 }
 
@@ -455,8 +490,18 @@ impl SourceWatch {
     /// `--strict-identity=none` has to reach both
     /// (`docs/design/decisions.md`, "D21",
     /// [`ByteRangeSource::hint_in_flight_identity`]).
+    ///
+    /// **A binding run over a source nothing can check is refused here**,
+    /// before it reads ([`Error::SourceUncheckable`],
+    /// [`ByteRangeSource::in_flight_unchecked`]); under `NONE` it opens as any
+    /// other, there being no check to turn off.
     pub async fn open(source: &dyn ByteRangeSource, strict: StrictIdentity) -> Result<Self> {
         source.hint_in_flight_identity(strict.in_flight());
+        if strict.in_flight()
+            && let Some(why) = source.in_flight_unchecked()
+        {
+            return Err(Error::SourceUncheckable { why });
+        }
         Ok(Self { baseline: SourceIdentity::observe(source).await?, strict })
     }
 

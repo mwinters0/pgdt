@@ -15,6 +15,7 @@ use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions}
 use datafusion::common::{DataFusionError, Result, plan_err};
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
+use pgdump_query::cache::StrictIdentity;
 use pgdump_query::{DiagnosticSink, SchemaMode};
 
 use crate::budget::ScanBudget;
@@ -124,8 +125,13 @@ impl ExtensionOptions for PgDumpTableOptions {
 ///
 /// **The table's columns are the dump's**, so a statement declaring columns,
 /// partition columns or an order is refused rather than believed.
+///
+/// **Every dump it opens is opened under one [`StrictIdentity`]**, the
+/// factory's rather than the statement's: which identity signals bind is the
+/// session's answer, as `pgdt --strict-identity` is the run's.
 pub struct PgDumpTableFactory {
     sink: Arc<dyn DiagnosticSink>,
+    strict_identity: StrictIdentity,
 }
 
 impl std::fmt::Debug for PgDumpTableFactory {
@@ -135,8 +141,14 @@ impl std::fmt::Debug for PgDumpTableFactory {
 }
 
 impl PgDumpTableFactory {
+    /// A factory opening every dump at [`StrictIdentity::ADVISORY`].
     pub fn new(sink: Arc<dyn DiagnosticSink>) -> Self {
-        Self { sink }
+        Self { sink, strict_identity: StrictIdentity::ADVISORY }
+    }
+
+    /// Open every dump under `strict` instead ([`PgDumpOptions::strict_identity`]).
+    pub fn with_strict_identity(self, strict: StrictIdentity) -> Self {
+        Self { strict_identity: strict, ..self }
     }
 }
 
@@ -163,7 +175,11 @@ impl TableProviderFactory for PgDumpTableFactory {
         let Some(table) = options.table.as_deref() else {
             return plan_err!("a PGDUMP table needs OPTIONS ('pgdump.table' '<name>')");
         };
-        let open = PgDumpOptions { schema_mode: options.schema_mode, ..PgDumpOptions::default() };
+        let open = PgDumpOptions {
+            schema_mode: options.schema_mode,
+            strict_identity: self.strict_identity,
+            ..PgDumpOptions::default()
+        };
         let dump = PgDump::open(location, open).await.map_err(external)?;
         dump.bill(&ScanBudget::of(state));
         dump.report(self.sink.as_ref());

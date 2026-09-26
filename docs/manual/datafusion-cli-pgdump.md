@@ -72,6 +72,18 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 A name that matches more than one table is refused, naming them. The table's
 columns are the dump's, so the statement declares none.
 
+## `--strict-identity`: when a moved file should stop the session
+
+`pgdt`'s flag, with its terms and its default, for every `--dump` and every
+`STORED AS PGDUMP` statement of the session: `time` refuses a cache written
+against another modification time or entity tag, `location` one written for a
+dump fetched from elsewhere, the bare flag both, and `none` turns every check
+off. **A dump changing under a scan fails that scan whatever it says**, so a
+server stating neither a strong entity tag nor a `Last-Modified`, which no
+check can see change, is refused unless it says `none`. See
+[dump inspection](dump-inspection.md), "`--strict-identity`: when a moved file
+should stop the run".
+
 ## What it says on stderr
 
 Attaching a dump prints a line for every column you should know about, each
