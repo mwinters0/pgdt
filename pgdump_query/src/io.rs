@@ -4113,6 +4113,14 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 /// claim the file contradicts is [`Recognized::Mismatch`] rather than a silent
 /// fallback. [`KnownCompression::Unknown`] is the no-knowledge case and always
 /// yields a source.
+///
+/// **An uncached `.xz` is opened on the calling task**, its footer walk
+/// included: only a first open reaches the walk, before anything else is
+/// scheduled, and it says `seek table build started` and `… complete` around
+/// itself (`pgdt/tests/status_output.rs`), so the wait does not read as a
+/// hang. An embedder opening one inside a busy runtime would want it on a
+/// blocking thread; the DataFusion provider never walks, reading the table
+/// its complete cache holds.
 pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     // The kind is settled before the probe, so an origin this cannot open is
     // refused without a round trip being spent on it. The match has a second

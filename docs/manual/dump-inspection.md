@@ -316,6 +316,12 @@ of it is written down; the cache already on disk describes the file as it was
 and is left exactly as it is. Re-run once the file has settled, or pass
 `--strict-identity=none` to get a warning instead of a stop.
 
+**Rows already printed are not taken back.** `pgdt query` writes rows as it
+reads them, so a query that stops this way may have printed some rows read
+from the changed file first; the non-zero exit status and the error are what
+say the output cannot be trusted, and a pipeline should check them before
+using any of it.
+
 A dump replaced by *rename* — the usual way a pipeline publishes a new one — is
 not this case: pgdt goes on reading the file it opened, finishes the run it
 started, and the new file is picked up by the next one.
