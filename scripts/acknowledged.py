@@ -163,4 +163,30 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show --format= -U0 bb0909b -- scripts/measure.py  # read every hunk",
     ),
+    Acknowledged(
+        commit="9d885cb",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "the repoint rewrote two comments in `preamble.rs`, whose `\"/*\"` "
+            "beside code defeats the syntactic oracle, so the claim is made by hand"
+        ),
+        verified=(
+            "git show --format= -U0 9d885cb -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
+    Acknowledged(
+        commit="9d885cb",
+        figures=("predicate-terms", "statistics-gathering", "statistics-pruning"),
+        why=(
+            "the repoint's one non-comment line in `predicate.rs` is `accepted_form`'s "
+            "`cidr` sentence, read only to word a literal that failed to decode"
+        ),
+        verified=(
+            "git show --format= -U0 9d885cb -- pgdump_query/src/predicate.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # the cidr sentence alone"
+        ),
+    ),
 )
