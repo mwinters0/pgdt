@@ -525,6 +525,10 @@ async fn preamble_only_watched(
         }
         base_index.spans.extend(spans);
         attach_text(source, &mut base_index.spans).await?;
+        // Before the save, which records the preamble as complete, so a later
+        // run never re-reads bytes that failed their own check
+        // (`crate::cache::SourceWatch::finish`).
+        watch.finish(source).await?;
         cache.save(watch, source, &base_index).await?;
     }
     // A preamble-only run over a complete cache saves nothing, so this is

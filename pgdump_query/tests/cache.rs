@@ -12,7 +12,7 @@ use pgdump_query::cache::{
 };
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
-    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Origin,
+    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Origin, Parallelism,
     QueryOptions, Recognized, ScanOptions, StatisticsRequest, XzSource, build_index, cache,
     check_tiling, map_file, open_local, preamble_only, table_stream,
 };
@@ -1068,4 +1068,44 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
             assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: still untouched");
         }
     }
+}
+
+/// **A query succeeds only once the block it stopped inside has passed its
+/// check.** A warm query over a single-block `.xz` under a budget too small
+/// for the block reads its table's rows out of the block's middle, so no read
+/// reaches the block's end, where `xz_seek` compares the check; the run's end
+/// compares it instead (`SourceWatch::finish`). The map comes from the intact
+/// file, and only the stored check is then changed, so every row is right and
+/// the stream still ends in the check's failure.
+#[tokio::test]
+async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
+    let compressed = xz_compress_single_block(&edge_cases());
+    let dir = tempfile::tempdir().unwrap();
+    let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
+    let intact = XzSource::open(compressed.path()).unwrap();
+    map_file(&intact, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
+    let table = intact.seek_table().unwrap();
+    drop(intact);
+
+    let block = &table.blocks[0];
+    let at = usize::try_from(block.compressed_offset + block.total_size() - 1).unwrap();
+    let mut bytes = std::fs::read(compressed.path()).unwrap();
+    bytes[at] ^= 0xFF;
+    std::fs::write(compressed.path(), bytes).unwrap();
+
+    let xz = XzSource::open(compressed.path()).unwrap();
+    let options = QueryOptions {
+        parallelism: Parallelism::Serial { memory_bytes: Some(table.max_block_uncompressed() - 1) },
+        ..Default::default()
+    };
+    let items: Vec<_> =
+        table_stream(&xz, "public.widgets", ScanOptions::default(), options, None, mode)
+            .collect()
+            .await;
+    let (last, rows) = items.split_last().expect("the stream yields");
+    assert!(rows.iter().all(Result::is_ok) && !rows.is_empty(), "{items:?}");
+    assert!(
+        matches!(last, Err(Error::Xz(xz_seek::Error::BlockCheckFailed { .. }))),
+        "the run must end on the block's check: {last:?}"
+    );
 }

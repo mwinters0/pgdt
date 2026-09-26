@@ -437,7 +437,9 @@ impl Default for StrictIdentity {
 /// cache, or a warm query answered wholly from the cache — is checked as its
 /// reading ends: once, or once per sub-stream of a partitioned replay. Writing the rule as uniform would be false.
 /// **A run that fails is checked before its failure is reported**
-/// ([`Self::attribute`]), since that failure is often the change itself.
+/// ([`Self::attribute`]), since that failure is often the change itself, and
+/// **one that ends has its source compare the checks it still owes first**
+/// ([`Self::finish`]).
 #[derive(Debug)]
 pub struct SourceWatch {
     baseline: SourceIdentity,
@@ -472,6 +474,18 @@ impl SourceWatch {
         }
         tracing::warn!(differences, "source changed while it was being read");
         Ok(())
+    }
+
+    /// The run's last word before it reports success: the source compares
+    /// every check its handed-out bytes still owe
+    /// ([`ByteRangeSource::complete_reads`]), then [`Self::check`]. A check
+    /// that fails is attributed like any failure ([`Self::attribute`]), a
+    /// rewritten block failing its own check being as often the change as a
+    /// short read is.
+    pub async fn finish(&self, source: &dyn ByteRangeSource) -> Result<()> {
+        let completed = source.complete_reads().await;
+        self.attribute(source, completed).await?;
+        self.check(source).await
     }
 
     /// `result`, re-checked where it failed. A read or a decode is often the

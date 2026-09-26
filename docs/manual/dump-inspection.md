@@ -652,7 +652,11 @@ not leave room for all of that is read
 through the streaming decoder instead. That is still correct and still complete; what
 it costs is that reading *backwards* means decoding forward from the start of
 the block again, which `query` does routinely and `parse` does once, at the end
-of a scan, to collect the schema text it saves.
+of a scan, to collect the schema text it saves. A run that stops partway into a
+block — a `query` whose table ends there — also decodes the rest of that block
+before it finishes, because the block's integrity check covers all of it: a
+damaged block fails the run with a non-zero exit, even where the rows read out
+of it are already printed.
 
 Whether that happens is a question about *your* allowance rather than about the
 file alone: a 24 MiB-block file needs about 106 MiB of read buffers, and one

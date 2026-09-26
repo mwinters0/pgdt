@@ -231,6 +231,25 @@ pub trait ByteRangeSource: Send + Sync {
     /// read taken before the watch opens — an origin probe, a cache claim —
     /// has never heard it.
     fn hint_in_flight_identity(&self, _binds: bool) {}
+    /// Compare the integrity check of every byte this source has already
+    /// handed out and not yet compared — called once as a run's reading ends,
+    /// before the run reports success (`crate::cache::SourceWatch::finish`).
+    ///
+    /// **It exists because a check can trail its bytes.** A compressed block
+    /// read in pieces carries one check over the whole block, so the bytes a
+    /// read returned out of a block it stopped inside are compared only when
+    /// the block is finished; a run whose last read stopped inside one would
+    /// otherwise succeed on bytes that fail their own check. Finishing it
+    /// decodes the rest of that block, CPU and no further read of the file
+    /// beyond the block's own extent.
+    ///
+    /// **The default does nothing**, right for a source whose bytes carry no
+    /// check of their own or whose every read compares before it returns. It
+    /// is not a mid-run call: finishing a block a forward scan sits inside
+    /// makes the scan's next read start that block again.
+    fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Where a source was fetched from and which version of it is being read:
@@ -2536,7 +2555,9 @@ impl XzBudget {
 ///
 /// `Verify::Full` is `xz_seek::Builder::new`'s own default, so nothing here has
 /// to ask for it; a whole-block decode compares the check before it returns,
-/// and the piecewise arm compares it when it leaves the block.
+/// and the piecewise arm compares it when it leaves the block, or as the run
+/// ends for the block a read left it inside
+/// ([`ByteRangeSource::complete_reads`]).
 pub struct XzSource {
     path: PathBuf,
     /// The file, read positionally and never seeked: `stat` and every decode
@@ -2834,9 +2855,10 @@ impl XzSource {
 /// (`docs/design/decisions.md`, "D15").
 ///
 /// **Leaving a block completes it**, which is where its check is compared —
-/// `xz_seek::Verify::Full`'s seek-away escape, now a call we make. A block
-/// still live when the source drops is not completed, which is that same
-/// guarantee: dropping a handle part-way compares nothing.
+/// `xz_seek::Verify::Full`'s seek-away escape, now a call we make — and the
+/// block a run's last read stopped inside is left as that run's reading ends
+/// ([`ByteRangeSource::complete_reads`]). Dropping a handle part-way compares
+/// nothing, so a handle is dropped uncompleted only where its read failed.
 struct LiveBlock {
     /// Which block the handle is decoding.
     index: usize,
@@ -3180,6 +3202,24 @@ impl ByteRangeSource for XzSource {
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         self.budget.block_worker_memory()
     }
+
+    /// Leave the live piecewise block, if a read left one seated, comparing
+    /// its check ([`LiveBlock`]). The whole-block arm compares before a read
+    /// returns, so this is the only block whose bytes can have gone out
+    /// unverified — seated by the piecewise arm, and still seated where a
+    /// raised budget moved later reads to the block arm.
+    fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.file);
+            let live = Arc::clone(&self.live);
+            tokio::task::spawn_blocking(move || {
+                let leaving = live.lock().unwrap_or_else(|e| e.into_inner()).take();
+                leaving.map_or(Ok(()), |leaving| leaving.leave(&file))
+            })
+            .await
+            .map_err(Error::from)?
+        })
+    }
 }
 
 /// Build an `.xz` file's seek table by driving `xz_seek`'s footer walk over an
@@ -3269,10 +3309,10 @@ pub async fn walk_seek_table(
 ///   so that a block a scan sits inside is decoded once (D15,
 ///   [`HeldBlock`]).
 ///
-/// **Leaving a block completes it**, which is what compares its check. Reading
-/// a few kilobytes out of a large block therefore pays a decode of the rest —
-/// today's guarantee on the path this replaces, carried over rather than a new
-/// cost.
+/// **Leaving a block completes it**, which is what compares its check, and a
+/// run's end leaves the block its last read stopped inside
+/// ([`ByteRangeSource::complete_reads`]). Reading a few kilobytes out of a
+/// large block therefore pays a decode of the rest.
 pub struct FetchedXzSource {
     /// The compressed bytes' transport: every fetch this source makes goes
     /// through it, so a cancellation, an identity precondition or a network
@@ -3486,11 +3526,7 @@ impl FetchedXzSource {
                     // across a boundary would be one window more than
                     // `decode_bytes` counts (D15). The drain is a decode, so
                     // it goes off the runtime like every other one.
-                    if let Some(leaving) = held.take() {
-                        tokio::task::spawn_blocking(move || leaving.leave())
-                            .await
-                            .map_err(Error::from)??;
-                    }
+                    Self::leave(held.take()).await?;
                     let window = self.window(&task).await?;
                     self.decodes.begun();
                     Seat { window, live: None }
@@ -3520,13 +3556,29 @@ impl FetchedXzSource {
         // read would have to reason about. The local arm clears its live handle
         // on a decode error and leaves it seated on a short read, that handle
         // being a position a later read may continue from where a window is not.
-        *self.held.lock().unwrap_or_else(|e| e.into_inner()) = held;
+        //
+        // A concurrent read that began a block of its own may have put it back
+        // since, and whichever is displaced here is completed rather than
+        // dropped: its bytes are already out, and it is the only place their
+        // check is left to be compared.
+        let displaced =
+            std::mem::replace(&mut *self.held.lock().unwrap_or_else(|e| e.into_inner()), held);
+        Self::leave(displaced).await?;
         Ok(Bytes::from_owner(out).slice(..len))
     }
 
     /// The retained block, taken out of its slot.
     fn take_held(&self) -> Option<HeldBlock> {
         self.held.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// Leave `held`, if there is a block, comparing its check — a decode, so
+    /// off the runtime like every other one.
+    async fn leave(held: Option<HeldBlock>) -> Result<()> {
+        let Some(leaving) = held else {
+            return Ok(());
+        };
+        tokio::task::spawn_blocking(move || leaving.leave()).await.map_err(Error::from)?
     }
 
     /// How many block decodes this source's piecewise arm has begun.
@@ -3650,12 +3702,12 @@ impl ByteRangeSource for FetchedXzSource {
                     // decoded from, so a block the piecewise arm left behind
                     // would be one window more than `decode_bytes` counts —
                     // and a budget raised mid-run is what reaches here with
-                    // one retained (`docs/design/decisions.md`, "D15"). The
-                    // handle is dropped rather than completed, which is
-                    // `xz_seek::Verify::Full`'s own sentence; the local arm
-                    // leaves its live handle seated in the same case
-                    // ([`LiveBlock`]), holding no window beside it.
-                    drop(self.take_held());
+                    // one retained (`docs/design/decisions.md`, "D15"). It is
+                    // completed on the way out, its bytes having gone out
+                    // before their check; the local arm leaves its live
+                    // handle seated in the same case ([`LiveBlock`]), holding
+                    // no window beside it, for the run's end to complete.
+                    Self::leave(self.take_held()).await?;
                     self.read_by_blocks(offset, len, &cache).await
                 }
                 None => self.read_in_pieces(offset, len).await,
@@ -3771,6 +3823,13 @@ impl ByteRangeSource for FetchedXzSource {
     /// not reach it.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         self.budget.block_worker_memory()
+    }
+
+    /// Leave the retained block, if a piecewise read left one, comparing its
+    /// check out of the window held beside it — so no fetch
+    /// ([`ByteRangeSource::complete_reads`], as the local twin does).
+    fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { Self::leave(self.take_held()).await })
     }
 }
 
@@ -5976,6 +6035,85 @@ mod tests {
         source.read_range(4096, 100).await.unwrap();
         let live = source.live.lock().unwrap();
         assert_eq!(live.as_ref().expect("a handle").index, 1);
+    }
+
+    /// Flip the last byte of block `index`'s stored check, leaving its payload
+    /// — and so every byte it decodes to — as it was. The check is the last
+    /// field of a block's padded extent, so that byte is always the check's.
+    fn corrupt_check(path: &Path, index: usize) {
+        let table = XzSource::open(path).unwrap().seek_table().unwrap();
+        let block = &table.blocks[index];
+        let at = usize::try_from(block.compressed_offset + block.total_size() - 1).unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        bytes[at] ^= 0xFF;
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// Whether `result` is a block failing its own check.
+    fn check_failed<T: std::fmt::Debug>(result: Result<T>) -> bool {
+        matches!(result, Err(Error::Xz(xz_seek::Error::BlockCheckFailed { .. })))
+    }
+
+    /// **A block a read stopped inside owes its check until the run ends.**
+    /// The bytes out of it go out before the check can be compared, since the
+    /// check covers the whole block, and `complete_reads` is what compares it —
+    /// on both piecewise arms, and on none where nothing was left inside a
+    /// block.
+    #[tokio::test]
+    async fn a_block_a_read_stopped_inside_is_compared_when_reads_complete() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        corrupt_check(compressed.path(), 1);
+
+        let local = XzSource::open(compressed.path()).unwrap();
+        local.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        let (fetched, _) = fetched_xz(compressed.path()).await;
+        fetched.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        let sources: [&dyn ByteRangeSource; 2] = [&local, &fetched];
+        for source in sources {
+            // Inside the corrupted block and short of its end: the bytes are
+            // right, the check not yet compared.
+            let got = source.read_range(4096, 100).await.unwrap();
+            assert_eq!(&got[..], &payload[4096..4196]);
+            assert!(check_failed(source.complete_reads().await));
+            // Nothing is left owing, and a read after it begins the block again.
+            source.complete_reads().await.unwrap();
+            assert_eq!(&source.read_range(4196, 100).await.unwrap()[..], &payload[4196..4296]);
+            assert!(check_failed(source.complete_reads().await));
+
+            // Read to its end, the block compares on the read itself, which is
+            // `xz_seek`'s own rule and leaves nothing owing.
+            assert!(check_failed(source.read_range(4096, 4096).await));
+            source.complete_reads().await.unwrap();
+            // An intact block completes as cleanly.
+            source.read_range(100, 100).await.unwrap();
+            source.complete_reads().await.unwrap();
+        }
+    }
+
+    /// **A raised budget does not leave the piecewise block unverified.** The
+    /// fetched arm cannot keep a window beside the block arm's slots, so it
+    /// completes the block there; the local arm leaves its handle seated, for
+    /// the run's end to complete.
+    #[tokio::test]
+    async fn a_block_left_behind_by_a_raised_budget_is_still_compared() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        corrupt_check(compressed.path(), 1);
+
+        let (fetched, _) = fetched_xz(compressed.path()).await;
+        fetched.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        fetched.read_range(4096, 100).await.unwrap();
+        fetched.hint_parallelism(Parallelism::default());
+        assert!(fetched.budget.block_path().is_some());
+        assert!(check_failed(fetched.read_range(0, 100).await));
+
+        let local = XzSource::open(compressed.path()).unwrap();
+        local.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        local.read_range(4096, 100).await.unwrap();
+        local.hint_parallelism(Parallelism::default());
+        assert_eq!(&local.read_range(0, 100).await.unwrap()[..], &payload[..100]);
+        assert!(check_failed(local.complete_reads().await));
     }
 
     /// The non-seekable shape: one stream, one block, produced by a bare `xz`

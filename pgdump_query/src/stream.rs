@@ -1209,13 +1209,18 @@ async fn map_file_watched(
     )
     .await?;
     let mut declined_statistics = 0;
-    if !backfill.interrupted {
+    if backfill.interrupted {
+        watch.check(source).await?;
+    } else {
+        // Before the save, so a complete map is never written from bytes that
+        // fail their own check ([`SourceWatch::finish`]); an interrupted run
+        // leaves the block it stopped inside for the resume to re-read.
+        watch.finish(source).await?;
         cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics =
             report_statistics_declines(statistics, scan_options.statistics_allowance_bytes, &index);
     }
-    watch.check(source).await?;
     Ok(MapRun {
         index,
         resumed_from,
@@ -3836,7 +3841,7 @@ pub fn table_stream<'a>(
         }
         // The run's last word: the rows are out, so what this recovers is a
         // failure naming the cause in place of a silent wrong answer.
-        watch.check(source).await?;
+        watch.finish(source).await?;
     };
 
     shared.into_stream(Box::pin(inner))
@@ -3910,7 +3915,7 @@ pub async fn table_stream_partitions<'a>(
                 while let Some(batch) = rows.next().await {
                     yield watch.attribute(source, batch).await?;
                 }
-                watch.check(source).await?;
+                watch.finish(source).await?;
             };
             shared.into_stream(Box::pin(inner))
         })
@@ -4134,7 +4139,7 @@ impl TablePartitions {
                 yield watch.attribute(source.as_ref(), batch).await?;
             }
             drop(rows);
-            watch.check(source.as_ref()).await?;
+            watch.finish(source.as_ref()).await?;
         };
         shared.into_stream(Box::pin(inner))
     }
