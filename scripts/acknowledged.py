@@ -189,4 +189,17 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # the cidr sentence alone"
         ),
     ),
+    Acknowledged(
+        commit="86b921d",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "the repoint rewrote comments in `preamble.rs` alone, whose `\"/*\"` "
+            "beside code defeats the syntactic oracle, so the claim is made by hand"
+        ),
+        verified=(
+            "git show --format= -U0 86b921d -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
 )
