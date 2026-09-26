@@ -235,7 +235,15 @@ impl StatisticsRequest {
     /// re-reading it at [`BlockStatistics::predicted_group_size`]. Once that
     /// re-read has happened the block is finer than the size a gather starts
     /// from, so it is never re-read for that maximum again however its rows
-    /// cluster — the second read is the last one.
+    /// cluster.
+    ///
+    /// **So a run reads a block at most twice for a maximum, and a block it
+    /// mapped itself once.** A block gathered under another sizing is resized
+    /// first, which this answers from its first row at the default size, and
+    /// only the groups that read leaves are asked whether they break the
+    /// maximum. Rejected: predicting the finer size from the groups another
+    /// sizing left, which saves that first read by guessing where the read
+    /// would have measured.
     pub fn backfill(
         &self,
         block: &CopyBlock,

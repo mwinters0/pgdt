@@ -473,10 +473,10 @@ hold more. It wins wherever it and `--row-group-min-rows` cannot both be met,
 and it lifts the 4,096-group ceiling as well — you asked for the groups, so
 nothing quietly takes them away, and a table dense enough to need many of them
 costs the memory and the cache space they take. A table too dense to meet it at
-a mebibyte a group is read a **second time**, once the rest of the file is
-scanned, at the finer size its own groups predict; if its rows cluster so that
-even that misses, the run keeps what the second read gave rather than reading a
-third time, and every run under that maximum says so on stderr:
+a mebibyte a group is read **again**, once the rest of the file is scanned, at
+the finer size its own groups predict; if its rows cluster so that even that
+misses, the run keeps what that read gave rather than reading it once more, and
+every run under that maximum says so on stderr:
 
 ```
 2026-07-23T15:10:09.570016894Z  INFO row groups still hold more rows than the stated maximum table="events" group_size=262144 max_rows=3000
@@ -498,7 +498,9 @@ build keeps for a column, at a group size other than a
 block at a time, banking each as it goes, so an interrupted re-read continues
 where it stopped. A block this run scanned is re-read too where it is too
 dense for a stated maximum (above), that being the one thing a single read
-cannot deliver. A re-read keeps every column the block already had, and a
+cannot deliver. A block an earlier run gathered under other bounds can be read
+twice in one run for that reason: first at a mebibyte a group, as a table is
+gathered cold, then at the finer size that read's groups predict. A re-read keeps every column the block already had, and a
 group size and bounds left unstated keep the size a block was gathered at, so
 a flagless `parse` over a cache gathered at 65536 re-reads nothing. It prints
 its count to stderr:

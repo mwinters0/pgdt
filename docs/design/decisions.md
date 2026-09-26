@@ -241,9 +241,9 @@ untaken until the `INSERT` row reader exists (`KD9`).
 streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
 byte range, no piece knowing a global row index. A back-fill keeps a block's columns, and its size
-unless a stated bound it did not record moves it, a maximum it breaks re-reading it once. Rejected:
-`SparseRowIndex`; padded `character` bounds and entries, keyed alike but past the cap; a back-fill
-narrowed, dropping only re-read blocks' columns.
+unless a stated bound it did not record moves it, a maximum it breaks re-reading it at the size its
+groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries, keyed alike but
+past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and

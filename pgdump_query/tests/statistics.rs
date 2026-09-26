@@ -10,13 +10,17 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::num::NonZeroU64;
 use std::path::Path;
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
+use bytes::Bytes;
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    BLOCK_MAX_ROW_GROUPS, BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET,
+    BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, CopyBlock, DEFAULT_MEMORY_BUDGET,
     DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
     MapRun, Parallelism, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions,
     Sortedness, StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
@@ -642,6 +646,60 @@ async fn mapped_into_cache(
     run
 }
 
+/// A local file that records the offset of every read it answers — so a test
+/// can count how often one block was read, a serial re-read of a block
+/// starting at its `data_offset` and nothing else starting there once the
+/// map is complete.
+struct RecordingSource {
+    inner: LocalFileSource,
+    offsets: Mutex<Vec<u64>>,
+}
+
+impl RecordingSource {
+    fn open(dump: &Path) -> Self {
+        Self { inner: LocalFileSource::open(dump).unwrap(), offsets: Mutex::default() }
+    }
+
+    /// How many reads started at `block`'s first row.
+    fn reads_of(&self, block: &CopyBlock) -> usize {
+        self.offsets.lock().unwrap().iter().filter(|&&at| at == block.data_offset).count()
+    }
+}
+
+impl ByteRangeSource for RecordingSource {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = pgdump_query::Result<Bytes>> + Send + '_>> {
+        self.offsets.lock().unwrap().push(offset);
+        self.inner.read_range(offset, len)
+    }
+
+    fn size(&self) -> Pin<Box<dyn Future<Output = pgdump_query::Result<u64>> + Send + '_>> {
+        self.inner.size()
+    }
+
+    fn modified(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdump_query::Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+}
+
+/// [`mapped_into_cache`] through a [`RecordingSource`], serially, and the
+/// source, to count what the run read.
+async fn mapped_recording(
+    dump: &Path,
+    statistics: &StatisticsRequest,
+) -> (MapRun, RecordingSource) {
+    let source = RecordingSource::open(dump);
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
+    let run = map_file(&source, &ScanOptions::default(), &mode, statistics).await.unwrap();
+    assert!(!run.interrupted);
+    (run, source)
+}
+
 /// **A block mapped without the statistics asked for is re-read for them, into
 /// exactly what one gathering pass stores**: from no statistics, from the
 /// default size re-asked at a stated one, from a table selection and from a
@@ -998,15 +1056,19 @@ fn dense_and_clustered(dir: &Path) -> std::path::PathBuf {
     dump
 }
 
-/// **A block whose groups break a stated maximum is re-read once, at the size
-/// its own rows per group predict, and never again**: no merge makes a block
-/// finer, so the maximum is reachable only by reading the block a second time,
-/// and what that read gives is what the block keeps. `dense` meets the maximum
+/// **A block whose groups break a stated maximum is re-read at the size its
+/// own rows per group predict, and never again**: no merge makes a block
+/// finer, so the maximum is reachable only by reading the block again, and
+/// what that read gives is what the block keeps. `dense` meets the maximum
 /// there; `clustered`, whose rows all start in one stretch, does not, and is
-/// left as it is rather than read a third time. Asking again re-reads neither,
-/// and a split scan gathers what the serial one does.
+/// left as it is rather than read once more. **The reads are counted**: a
+/// block an earlier, flagless run gathered is read twice in the run stating
+/// the maximum — at the default size, its sizing being another request's,
+/// then at the size those groups predict — and a block the run maps itself
+/// once. Asking again reads neither, and a split scan gathers what the serial
+/// one does.
 #[tokio::test]
-async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predicts() {
+async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     const MAX_ROWS: u64 = 3_000;
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
@@ -1025,8 +1087,11 @@ async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predict
         assert!(densest_group(held) > MAX_ROWS, "{table}: {}", densest_group(held));
     }
 
-    let run = mapped_into_cache(&dump, &options, &bounded).await;
+    let (run, source) = mapped_recording(&dump, &bounded).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (2, 2), "both lacked the maximum");
+    for table in tables {
+        assert_eq!(source.reads_of(block(&run.index, table)), 2, "{table}: default, then finer");
+    }
     let dense = statistics(block(&run.index, "public.dense")).clone();
     let clustered = statistics(block(&run.index, "public.clustered")).clone();
     for (table, held) in tables.iter().zip([&dense, &clustered]) {
@@ -1036,12 +1101,27 @@ async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predict
     assert!(densest_group(&dense) <= MAX_ROWS, "dense: {}", densest_group(&dense));
     assert!(densest_group(&clustered) > MAX_ROWS, "clustered keeps what the re-read gave");
 
-    // The second read is the last one, for the block that met the maximum and
+    // The last read is the last one, for the block that met the maximum and
     // for the block that did not.
-    let run = mapped_into_cache(&dump, &options, &bounded).await;
+    let (run, source) = mapped_recording(&dump, &bounded).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (0, 0));
+    for table in tables {
+        assert_eq!(source.reads_of(block(&run.index, table)), 0, "{table}");
+    }
     assert_eq!(statistics(block(&run.index, "public.dense")), &dense);
     assert_eq!(statistics(block(&run.index, "public.clustered")), &clustered);
+
+    // A block the run maps itself was gathered under the maximum already, so
+    // the finer size is its only re-read, and gathers what the two reads did.
+    let cold = tempfile::tempdir().unwrap();
+    let cold_dump = cold.path().join("dense.sql");
+    std::fs::copy(&dump, &cold_dump).unwrap();
+    let (run, source) = mapped_recording(&cold_dump, &bounded).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (2, 2), "both broke it once mapped");
+    for (table, held) in tables.iter().zip([&dense, &clustered]) {
+        assert_eq!(source.reads_of(block(&run.index, table)), 1, "{table}: the finer size only");
+        assert_eq!(statistics(block(&run.index, table)), held, "{table}: cold");
+    }
 
     // What the re-read gathered is what gathering exactly at that size
     // gathers, and what a split scan gathers.
