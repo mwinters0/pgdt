@@ -93,8 +93,13 @@ Eighteen standing rules for reading anything below:
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
   the figures here are `cargo build --release` (no `--target`) run under
-  `postgres:16` (Debian bookworm), whose **glibc 2.36 malloc is part of the
-  apparatus** and should be named when a figure moves. **musl is not measured
+  `postgres:16`, whose **glibc malloc is part of the apparatus** and should be
+  named when a figure moves. **The tag is not pinned and no figure records
+  the glibc it ran under**, and the tag has moved: it is Debian trixie with
+  glibc 2.41 wherever it was pulled after 2026-08-13, and a binary built on a
+  newer host starts in it only while it links no newer symbol version
+  ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md)).
+  **musl is not measured
   and is in no recipe.** Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
   Which allocator the shipped binary links against, and what the two
@@ -109,7 +114,10 @@ Eighteen standing rules for reading anything below:
   does not hold, so it runs in an image of the build host's distribution
   (`measure.Config.dfcli_image`). Its
   figures are therefore never differenced against a `pgdt` one; each states
-  its binary and image in its own table.
+  its binary and image in its own table. *Rejected:* building it in a
+  toolchain container of the register's image's distribution, which keeps one
+  image by adding a second compiler to the apparatus, for figures in which the
+  image's `malloc` times nothing.
 
   **The apparatus stops at which allocator, and does not pin how many arenas it
   keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. The term it would
@@ -315,7 +323,11 @@ Eighteen standing rules for reading anything below:
   its marker would report the figure stale against the very change that lands
   it. Commit the apparatus, then take the readings from that commit. A figure
   that declares nothing came from the sweep, so the datum is present only where
-  it differs.
+  it differs. *Rejected:* a marker naming "the commit that introduces me",
+  found by `git log -S`, and anchoring a figure to its declared paths' contents
+  instead of a commit — each saves one commit by making every reader of a
+  figure's base (`--stale`, the acknowledgements, `--verify-additive`) depend on
+  a lookup an amend breaks, or on machinery rebuilt without commits.
 
   *Rejected: a fourth case, admitting a partial sitting whose figures form a
   **closed** sharing closure* — relaxing the rule saves a sweep of a quiet
@@ -1013,8 +1025,8 @@ own high-water for free, and
 a sampler that missed the peak is the failure mode `rss_wrapper`'s own docstring
 describes for `/proc` polling.
 
-**Verified on the apparatus's own libc** — glibc 2.36 in `postgres:16`, which
-is what every figure here was taken under:
+**Verified on the apparatus's own libc**, in `postgres:16` ("The apparatus"
+says which glibc that tag holds):
 
 - `mallinfo2` **sums all arenas**, not just the main one. Its `arena` matched
   `malloc_info`'s total `system type="current"` exactly across nine heaps.

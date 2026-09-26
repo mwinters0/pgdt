@@ -119,7 +119,11 @@ unclustered key, a small build table, and an unsorted column for the TopK.
 of it in `test_measure.py`; the figures, `dynamic-filter-join` and
 `dynamic-filter-topk`, sit in a `measurements.md` section beside "What
 row-group statistics buy a query". Until this phase no figure times a
-DataFusion query.
+DataFusion query. **Both run serial**, at the register's one worker, where a
+filter's bytes not read show undiluted; so the byte cut (below) is held to a
+test rather than a figure — its claim is balance, which a test reads directly,
+and a parallel timing taken now would be re-taken three slices later, a
+difference across unrelated work ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md)).
 
 ## Slices
 
@@ -137,7 +141,8 @@ path on its own**, so each slice's mistakes show in the next one's checks:
 3. **The library trait and re-pruning between groups**, with the early stop
    at a dynamic bound and the new metrics — a rework of the replay loop.
 4. **The byte cut at the first poll** — a rework of `TablePartitions`'
-   planning.
+   planning, with a test that a selective join on a clustered key leaves its
+   sub-streams byte-balanced over the groups the dynamic filter keeps.
 5. **Row-level evaluation**, the figures re-taken; they decide whether it
    ships on, and what they say is filed against "D53"'s **Reopens**.
 

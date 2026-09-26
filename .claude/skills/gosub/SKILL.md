@@ -52,6 +52,11 @@ what landed and any call the notes doc flags, then `Co-Authored-By: Claude Opus 
 it ticks no box, its ledger row's Date filling in instead, so read the row, check
 the Blocks column was cleared and the history entry it points at exists, and
 subject the commit `<M<k>> <what changed>` with that entry named in the body.
+**So is an instrument round**: its box stays unticked because its readings must be
+taken from a commit (`docs/design/measurements.md`, "A figure may be published
+outside the sweep"), so check its checklist entry says only they remain and its
+notes doc names the command, and subject it `<N>.<M> <slice title>: the
+instrument`; the next round, on the same slice, takes them.
 Commit even when a stop condition fired for some *other* reason; the one
 exception is that you **never commit a round that failed verification or left its
 box unticked**.

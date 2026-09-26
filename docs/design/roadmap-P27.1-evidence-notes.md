@@ -61,10 +61,8 @@ sweep"). No figure was taken.
   its label order, so `ORDER BY m LIMIT` is a plain limit.
 - **`datafusion-cli-pgdump` does not run in `postgres:16`** built on this
   machine: it links `libm` symbols at `GLIBC_2.43`/`2.44` against the image's
-  2.41, so its legs run in `archlinux:base`. The image the register names is
-  Debian trixie, glibc 2.41, where
-  [`measurements.md`](measurements.md), "The apparatus" still says bookworm and
-  2.36; that line is the register's, not this slice's.
+  2.41, so its legs run in `archlinux:base`
+  ([`measurements.md`](measurements.md), "The apparatus").
 
 ## Tests
 

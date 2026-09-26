@@ -53,6 +53,13 @@ a rework of something already tested — that is the seam: split it per
 `docs/process.md`'s "Slice numbering", land the half you are confident in, and
 leave the rest as an earned `<N>.<M>.<K>`.
 
+**A slice that builds an instrument stops before its readings**: a figure is
+taken from a commit, never from a tree carrying its own uncommitted apparatus
+(`docs/design/measurements.md`, "A figure may be published outside the sweep").
+Land the instrument, leave the box unticked with the checklist entry saying only
+the readings remain, name their command in the notes doc, and stop; the next
+round takes them, handing off per `gosub` if they run long.
+
 An out-of-band round finishes differently — no notes doc and no spec row, the
 ledger line pointing at a history entry that *is* the notes. Fill the row's Date
 in, clear its Blocks column, and write that entry.
