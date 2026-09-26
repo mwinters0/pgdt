@@ -14,7 +14,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
     PgDump, PgDumpOptions, RefusedTable, register_dump, register_table_factory,
 };
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{CacheMode, StrictIdentity};
 use pgdump_query::{
     ColumnNote, ComparisonNote, Diagnostic, DiagnosticSink, Finding, LocalFileSource, ScanOptions,
     SchemaMode, Severity, StatisticsRequest, map_file,
@@ -190,7 +190,11 @@ async fn a_pgdump_external_table_answers_as_its_catalog_table() {
     let location = copy.to_str().unwrap();
     let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(2));
-    register_table_factory(&ctx, Arc::clone(&heard) as Arc<dyn DiagnosticSink>);
+    register_table_factory(
+        &ctx,
+        Arc::clone(&heard) as Arc<dyn DiagnosticSink>,
+        StrictIdentity::ADVISORY,
+    );
     rows(
         &ctx,
         &format!(
@@ -244,7 +248,7 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
     let copy = parsed_copy(&fixture("edge_cases", "default"), dir.path()).await;
     let location = copy.to_str().unwrap();
     let ctx = SessionContext::new();
-    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}));
+    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY);
     let create = |name: &str, columns: &str, options: &str| {
         format!(
             "CREATE EXTERNAL TABLE {name} {columns} STORED AS PGDUMP LOCATION '{location}' \
@@ -275,4 +279,43 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
     ))
     .await;
     assert!(err.contains(&format!("pgdt parse --source {}", bare.display())), "{err}");
+}
+
+/// **A statement's `pgdump.strict_identity` is its dump's, the session's the
+/// default**: over a dump touched since its parse, a session binding `time`
+/// refuses a statement stating nothing and opens one stating `none`, and an
+/// advisory session opens a statement stating nothing and refuses one stating
+/// `time`. A value outside the grammar is refused, naming it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_statement_s_strictness_overrides_the_session_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases", "default"), dir.path()).await;
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
+    let location = copy.to_str().unwrap();
+    let create = |name: &str, strict: Option<&str>| {
+        let strict = strict.map_or(String::new(), |s| format!(", 'pgdump.strict_identity' '{s}'"));
+        format!(
+            "CREATE EXTERNAL TABLE {name} STORED AS PGDUMP LOCATION '{location}' \
+             OPTIONS ('pgdump.table' 'events'{strict})"
+        )
+    };
+    let session = |strict| {
+        let ctx = SessionContext::new();
+        register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), strict);
+        ctx
+    };
+
+    let strict = session(StrictIdentity::binding(true, false));
+    let err = rows(&strict, &create("a", None)).await.unwrap_err();
+    assert!(err.contains("`--strict-identity=time`"), "{err}");
+    rows(&strict, &create("b", Some("none"))).await.unwrap();
+    assert!(!rows(&strict, "SELECT * FROM b").await.unwrap().is_empty());
+
+    let advisory = session(StrictIdentity::ADVISORY);
+    rows(&advisory, &create("c", None)).await.unwrap();
+    let err = rows(&advisory, &create("d", Some("time"))).await.unwrap_err();
+    assert!(err.contains("`--strict-identity=time`"), "{err}");
+    let err = rows(&advisory, &create("e", Some("tiem"))).await.unwrap_err();
+    assert!(err.contains("pgdump.strict_identity `tiem`"), "{err}");
 }

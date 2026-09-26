@@ -199,9 +199,10 @@ async fn a_dump_with_no_cache_names_the_parse() {
     assert!(said.contains(&format!("pgdt parse --source {}", bare.display())), "{said}");
 }
 
-/// **`--strict-identity` is `pgdt`'s, and binds every registration**: a dump
-/// touched since its parse opens with a warning unless `time` is stated, and
-/// then neither `--dump` nor `STORED AS PGDUMP` opens it.
+/// **`--strict-identity` is `pgdt`'s, and binds every registration stating
+/// none of its own**: a dump touched since its parse opens with a warning
+/// unless `time` is stated, and then neither `--dump` nor `STORED AS PGDUMP`
+/// opens it.
 #[tokio::test]
 async fn strict_identity_binds_both_registrations() {
     let dir = tempfile::tempdir().unwrap();
@@ -226,4 +227,48 @@ async fn strict_identity_binds_both_registrations() {
     let out = run(&["-q", "--strict-identity", "-c", &create]);
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains("`--strict-identity=time`"), "{said}");
+}
+
+/// **A dump's own strictness overrides the session's**, from either front
+/// door: `--dump …:strict-identity=` and `pgdump.strict_identity` open a
+/// touched dump under `none` where the session binds `time`, and refuse it
+/// under `time` where the session is advisory.
+#[tokio::test]
+async fn a_dump_s_own_strictness_overrides_the_session_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
+    let dump = copy.to_str().unwrap();
+    let count = "SELECT count(*) AS n FROM shop.logs.events";
+    let refused = |out: &Output| {
+        let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+        assert!(said.contains("`--strict-identity=time`"), "{said}");
+    };
+
+    let loose = format!("shop={dump}:strict-identity=none");
+    let out = run(&["-q", "--strict-identity=time", "--dump", &loose, "-c", count]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), "n\n3");
+    let out = run(&["-q", "--dump", &format!("shop={dump}:strict-identity=time"), "-c", count]);
+    assert!(!out.status.success());
+    refused(&out);
+
+    let create = |strict: &str| {
+        format!(
+            "CREATE EXTERNAL TABLE ev STORED AS PGDUMP LOCATION '{dump}' \
+             OPTIONS ('pgdump.table' 'events', 'pgdump.strict_identity' '{strict}')"
+        )
+    };
+    let out = run(&[
+        "-q",
+        "--strict-identity",
+        "-c",
+        &create("none"),
+        "-c",
+        "SELECT count(*) AS n FROM ev",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("n\n3"), "{}", text(&out.stdout));
+    refused(&run(&["-q", "-c", &create("time")]));
 }

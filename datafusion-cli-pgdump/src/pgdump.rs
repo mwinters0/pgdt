@@ -34,34 +34,58 @@ pub fn end_as_namespace_init(repl: bool) -> Result<()> {
 pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per database it holds, \
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
-    refused for one of several. :strings reads every column as its text. Repeatable";
+    refused for one of several. :strings reads every column as its text, and \
+    :strict-identity=TERMS states this dump's strictness where --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
-    does, for every --dump and every STORED AS PGDUMP: `time` refuses a cache whose recorded \
-    modification signal the dump no longer states, `location` one written for another URL, the \
-    bare flag both. A dump changing under a scan fails it whatever this says, so a server \
+    does, for every --dump and STORED AS PGDUMP that states none of its own: `time` refuses a \
+    cache whose recorded modification signal the dump no longer states, `location` one written \
+    for another URL, the bare flag both. A dump changing under a scan fails it whatever this says, so a server \
     stating neither a strong entity tag nor a Last-Modified is refused; `none` turns every \
     check off and reads it anyway";
 
-/// One `--dump [NAME=]SOURCE[:strings]`.
+/// One `--dump [NAME=]SOURCE[:strings][:strict-identity=TERMS]`.
 ///
 /// **`NAME=` is recognised only where what precedes the first `=` could not
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
-/// `./a=b.sql`.
+/// `./a=b.sql`. **The suffixes are stripped from the right, in either order**,
+/// each at most once: TERMS hold `,` and never `:`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
     pub source: String,
     pub schema_mode: SchemaMode,
+    /// This dump's strictness, where `--strict-identity` gives the default.
+    pub strict_identity: Option<StrictIdentity>,
 }
 
 impl DumpArg {
     pub fn parse(arg: &str) -> Result<Self, String> {
-        let (arg, schema_mode) = match arg.strip_suffix(":strings") {
-            Some(rest) => (rest, SchemaMode::Strings),
-            None => (arg, SchemaMode::Typed),
-        };
+        const STRICT: &str = ":strict-identity=";
+        let mut arg = arg;
+        let mut strings = false;
+        let mut strict_identity = None;
+        loop {
+            if let Some(rest) = arg.strip_suffix(":strings") {
+                if std::mem::replace(&mut strings, true) {
+                    return Err("--dump states :strings twice".to_string());
+                }
+                arg = rest;
+            } else if let Some((rest, terms)) =
+                arg.rsplit_once(STRICT).filter(|(_, terms)| !terms.contains(':'))
+            {
+                let strict =
+                    terms.parse().map_err(|why| format!("--dump {STRICT}{terms}: {why}"))?;
+                if strict_identity.replace(strict).is_some() {
+                    return Err(format!("--dump states {STRICT} twice"));
+                }
+                arg = rest;
+            } else {
+                break;
+            }
+        }
+        let schema_mode = if strings { SchemaMode::Strings } else { SchemaMode::Typed };
         let (name, source) = match arg.split_once('=') {
             Some((name, source)) if !name.is_empty() && !name.contains(['/', '\\', '.', ':']) => {
                 (Some(name.to_string()), source)
@@ -71,7 +95,7 @@ impl DumpArg {
         if source.is_empty() {
             return Err("--dump names no source".to_string());
         }
-        Ok(Self { name, source: source.to_string(), schema_mode })
+        Ok(Self { name, source: source.to_string(), schema_mode, strict_identity })
     }
 }
 
@@ -183,7 +207,8 @@ impl TableProviderFactory for FoldingFactory {
 
 /// Make `STORED AS PGDUMP` available in `ctx`, then open and register each
 /// of `dumps`; a dump that cannot be opened or named ends the run, before any
-/// SQL is read.
+/// SQL is read. `strict_identity` is the session's, which a dump or a
+/// statement stating its own overrides.
 pub async fn register(
     ctx: &SessionContext,
     dumps: &[DumpArg],
@@ -192,7 +217,7 @@ pub async fn register(
 ) -> Result<()> {
     let stderr = Arc::new(StderrSink::new(quiet));
     let sink: Arc<dyn DiagnosticSink> = Arc::clone(&stderr) as _;
-    register_table_factory(ctx, Arc::clone(&sink));
+    register_table_factory(ctx, Arc::clone(&sink), strict_identity);
     // The provider's factory, replaced by the same one ending each statement.
     let factory = FoldingFactory {
         inner: PgDumpTableFactory::new(Arc::clone(&sink)).with_strict_identity(strict_identity),
@@ -205,7 +230,7 @@ pub async fn register(
     for dump in dumps {
         let options = PgDumpOptions {
             schema_mode: dump.schema_mode,
-            strict_identity,
+            strict_identity: dump.strict_identity.unwrap_or(strict_identity),
             ..PgDumpOptions::default()
         };
         let opened = PgDump::open(&dump.source, options).await.map_err(external)?;
@@ -226,7 +251,12 @@ mod tests {
     use super::*;
 
     fn dump(name: Option<&str>, source: &str, schema_mode: SchemaMode) -> DumpArg {
-        DumpArg { name: name.map(str::to_string), source: source.to_string(), schema_mode }
+        DumpArg {
+            name: name.map(str::to_string),
+            source: source.to_string(),
+            schema_mode,
+            strict_identity: None,
+        }
     }
 
     fn parsed(arg: &str) -> DumpArg {
@@ -252,6 +282,45 @@ mod tests {
         assert_eq!(parsed("dir/a=b.sql"), dump(None, "dir/a=b.sql", SchemaMode::Typed));
         assert!(DumpArg::parse("koji=").is_err());
         assert!(DumpArg::parse(":strings").is_err());
+    }
+
+    /// **`:strict-identity=TERMS` is this dump's strictness**, in `pgdt`'s
+    /// grammar, beside `:strings` in either order and each at most once; a
+    /// `:` after it is the source's, not a term.
+    #[test]
+    fn a_dump_states_its_own_strictness_as_a_suffix() {
+        let strict = |arg: &str| DumpArg::parse(arg).unwrap().strict_identity;
+        assert_eq!(strict("koji.dump"), None);
+        assert_eq!(strict("k=koji.dump:strict-identity=none"), Some(StrictIdentity::NONE));
+        let time = Some(StrictIdentity::binding(true, false));
+        for arg in
+            ["koji.dump:strings:strict-identity=time", "koji.dump:strict-identity=time:strings"]
+        {
+            let parsed = parsed(arg);
+            assert_eq!(
+                (parsed.source.as_str(), parsed.schema_mode, parsed.strict_identity),
+                ("koji.dump", SchemaMode::Strings, time),
+                "{arg}"
+            );
+        }
+        assert_eq!(
+            strict("https://h/koji.dump:strict-identity=time,location"),
+            Some(StrictIdentity::binding(true, true))
+        );
+        let odd = parsed("d/a:strict-identity=time:b.sql");
+        assert_eq!(
+            (odd.source.as_str(), odd.strict_identity),
+            ("d/a:strict-identity=time:b.sql", None)
+        );
+        for refused in [
+            "koji.dump:strict-identity=tiem",
+            "koji.dump:strict-identity=none,time",
+            "koji.dump:strict-identity=",
+            "koji.dump:strict-identity=time:strict-identity=none",
+            "koji.dump:strings:strings",
+        ] {
+            assert!(DumpArg::parse(refused).is_err(), "{refused}");
+        }
     }
 
     /// A finding named as the provider names one: its subject, then its own

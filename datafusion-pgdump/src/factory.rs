@@ -46,6 +46,9 @@ pub struct PgDumpTableOptions {
     /// `pgdump.schema_mode`: `typed`, the default, or `strings`, every column
     /// as the file's text — the escape hatch from a wrong type mapping.
     pub schema_mode: SchemaMode,
+    /// `pgdump.strict_identity`: which identity signals bind for this dump,
+    /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
+    pub strict_identity: Option<StrictIdentity>,
 }
 
 impl ConfigExtension for PgDumpTableOptions {
@@ -84,10 +87,15 @@ impl ExtensionOptions for PgDumpTableOptions {
                     }
                 }
             }
+            "strict_identity" => match value.parse() {
+                Ok(strict) => self.strict_identity = Some(strict),
+                Err(why) => return plan_err!("pgdump.strict_identity `{value}`: {why}"),
+            },
             _ => {
                 return plan_err!(
                     "`{key}` is not a PGDUMP option — the options are pgdump.table, \
-                     pgdump.schema, pgdump.database and pgdump.schema_mode"
+                     pgdump.schema, pgdump.database, pgdump.schema_mode and \
+                     pgdump.strict_identity"
                 );
             }
         }
@@ -113,8 +121,26 @@ impl ExtensionOptions for PgDumpTableOptions {
                 Some(mode.to_string()),
                 "`typed`, or `strings` for every column as the file's text.",
             ),
+            entry(
+                "strict_identity",
+                self.strict_identity.and_then(spelled),
+                "`time`, `location`, both, or `none`; unset, the session's.",
+            ),
         ]
     }
+}
+
+/// `strict` as [`StrictIdentity`]'s grammar writes it, which has no word for
+/// [`StrictIdentity::ADVISORY`]: that is what leaving the option unset reads.
+fn spelled(strict: StrictIdentity) -> Option<String> {
+    let terms = match (strict.in_flight(), strict.time(), strict.location()) {
+        (false, ..) => "none",
+        (true, true, true) => "time,location",
+        (true, true, false) => "time",
+        (true, false, true) => "location",
+        (true, false, false) => return None,
+    };
+    Some(terms.to_string())
 }
 
 /// Builds a [`crate::PgDumpTable`] for `CREATE EXTERNAL TABLE … STORED AS
@@ -126,9 +152,14 @@ impl ExtensionOptions for PgDumpTableOptions {
 /// **The table's columns are the dump's**, so a statement declaring columns,
 /// partition columns or an order is refused rather than believed.
 ///
-/// **Every dump it opens is opened under one [`StrictIdentity`]**, the
-/// factory's rather than the statement's: which identity signals bind is the
-/// session's answer, as `pgdt --strict-identity` is the run's.
+/// **A dump is opened under the [`StrictIdentity`] its statement states**,
+/// `pgdump.strict_identity`, and the factory's where it states none: which
+/// signals a source can state is a fact about that source, so one unpinnable
+/// remote dump read under `none` leaves every other dump of the session its
+/// in-flight check. *Rejected: `SET pgdump.strict_identity`*, a setting that
+/// would bind once, at `CREATE` — the source every scan of the dump shares is
+/// watched from its open — where every other `pgdump.` setting binds at each
+/// scan's plan.
 pub struct PgDumpTableFactory {
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
@@ -141,12 +172,14 @@ impl std::fmt::Debug for PgDumpTableFactory {
 }
 
 impl PgDumpTableFactory {
-    /// A factory opening every dump at [`StrictIdentity::ADVISORY`].
+    /// A factory opening a dump that states no strictness at
+    /// [`StrictIdentity::ADVISORY`].
     pub fn new(sink: Arc<dyn DiagnosticSink>) -> Self {
         Self { sink, strict_identity: StrictIdentity::ADVISORY }
     }
 
-    /// Open every dump under `strict` instead ([`PgDumpOptions::strict_identity`]).
+    /// Open a dump that states no strictness under `strict` instead
+    /// ([`PgDumpOptions::strict_identity`]).
     pub fn with_strict_identity(self, strict: StrictIdentity) -> Self {
         Self { strict_identity: strict, ..self }
     }
@@ -177,7 +210,7 @@ impl TableProviderFactory for PgDumpTableFactory {
         };
         let open = PgDumpOptions {
             schema_mode: options.schema_mode,
-            strict_identity: self.strict_identity,
+            strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
             ..PgDumpOptions::default()
         };
         let dump = PgDump::open(location, open).await.map_err(external)?;
@@ -192,18 +225,24 @@ impl TableProviderFactory for PgDumpTableFactory {
 }
 
 /// Let `ctx` run `CREATE EXTERNAL TABLE … STORED AS PGDUMP`, reporting what
-/// each registration finds to `sink`: the factory keyed [`PGDUMP_FILE_TYPE`],
-/// the [`PgDumpTableOptions`] extension, and the session's [`crate::ScanBudget`]
-/// and [`crate::PgDumpSettings`] installed as [`crate::register_dump`] installs
-/// them, so every table the statement registers draws on the one budget and
-/// `SET pgdump.…` reaches every scan.
-pub fn register_table_factory(ctx: &SessionContext, sink: Arc<dyn DiagnosticSink>) {
+/// each registration finds to `sink` and opening a dump whose statement states
+/// no `pgdump.strict_identity` under `strict_identity`, the session's: the
+/// factory keyed [`PGDUMP_FILE_TYPE`], the [`PgDumpTableOptions`] extension,
+/// and the session's [`crate::ScanBudget`] and [`crate::PgDumpSettings`]
+/// installed as [`crate::register_dump`] installs them, so every table the
+/// statement registers draws on the one budget and `SET pgdump.…` reaches
+/// every scan.
+pub fn register_table_factory(
+    ctx: &SessionContext,
+    sink: Arc<dyn DiagnosticSink>,
+    strict_identity: StrictIdentity,
+) {
     ctx.register_table_options_extension(PgDumpTableOptions::default());
     session_budget(ctx);
-    ctx.state_ref()
-        .write()
-        .table_factories_mut()
-        .insert(PGDUMP_FILE_TYPE.to_string(), Arc::new(PgDumpTableFactory::new(sink)));
+    ctx.state_ref().write().table_factories_mut().insert(
+        PGDUMP_FILE_TYPE.to_string(),
+        Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),
+    );
 }
 
 fn external(err: crate::Error) -> DataFusionError {

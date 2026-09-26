@@ -170,13 +170,14 @@ struct Args {
     // pgdump: `--dump`.
     #[clap(
         long = "dump",
-        value_name = "[NAME=]SOURCE[:strings]",
+        value_name = "[NAME=]SOURCE[:strings][:strict-identity=TERMS]",
         help = pgdump::DUMP_HELP,
         value_parser(pgdump::DumpArg::parse)
     )]
     dumps: Vec<pgdump::DumpArg>,
 
-    // pgdump: `--strict-identity`, `pgdt`'s grammar and default.
+    // pgdump: `--strict-identity`, `pgdt`'s grammar and default, each dump's
+    // unless it states its own.
     #[clap(
         long = "strict-identity",
         value_name = "TERMS",
