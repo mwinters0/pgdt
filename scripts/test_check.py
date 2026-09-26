@@ -366,6 +366,34 @@ class RunAndVerify(unittest.TestCase):
             check.verify(repo, flaky, out)
             self.assertIn("did not pass; running the checks", out.getvalue())
 
+    def test_a_later_failure_of_another_list_is_the_verdict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            flag = repo / "runs" / "fail"
+            flaky = stand_in("flaky", f"import pathlib,sys; sys.exit(pathlib.Path({str(flag)!r}).exists())")
+            whole = (flaky, *PASSING)
+            self.assertEqual(check.run(repo, whole, io.StringIO()), 0)
+            flag.parent.mkdir(exist_ok=True)
+            flag.write_text("")
+            self.assertEqual(check.run(repo, (flaky,), io.StringIO()), 1)
+            flag.unlink()
+            out = io.StringIO()
+            self.assertEqual(check.verify(repo, whole, out), 0)
+            self.assertIn("did not pass; running the checks", out.getvalue())
+            self.assertEqual(len(list((repo / check.RUNS).iterdir())), 3)
+
+    def test_a_later_pass_of_another_list_leaves_the_earlier_pass_reusable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            first = io.StringIO()
+            check.run(repo, PASSING, first)
+            check.run(repo, PASSING[:1], io.StringIO())
+            out = io.StringIO()
+            self.assertEqual(check.verify(repo, PASSING, out), 0)
+            self.assertTrue(out.getvalue().startswith("check: reusing "))
+            self.assertTrue(out.getvalue().endswith(first.getvalue()))
+            self.assertEqual(len(list((repo / check.RUNS).iterdir())), 2)
+
     def test_a_tree_that_moves_during_the_run_verifies_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = repo_with_runs_ignored(tmp)

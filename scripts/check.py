@@ -23,9 +23,11 @@ between is reported and the run verifies neither.
 **`--verify` reuses a passing run of this tree** instead of re-running it, so
 a second reader of a round's result -- the orchestrator that did not do the
 work -- checks the evidence rather than paying for it again. Only a run of
-this same list of commands counts, and of those only the tree's newest, so a
-failure is never hidden behind an earlier pass of the list; an `--affected`
-verify counts a run of every check too. With no such run it runs the checks.
+this same list of commands is reused, the newest of them, and only while no
+run of the tree since, of any list, failed: a failure is never hidden behind
+an earlier pass, a flaky test failing an `--affected` run included. An
+`--affected` verify reuses a run of every check too. With no such run it
+runs the checks.
 
 **A red repoint meter is not a failure.** It says the record has outgrown its
 last blind read and a repoint is due, which is a round of its own
@@ -701,27 +703,25 @@ def run(
     return 0 if record["passed"] else 1
 
 
-def newest_run_of(
-    repo: Path, tree: str, checks: Sequence[Check], also: Sequence[Sequence[Check]] = ()
-) -> dict | None:
-    """The newest recorded run over this tree of these checks, or of a list in
-    `also`, passed or not."""
+def runs_of(repo: Path, tree: str) -> list[dict]:
+    """Every recorded run over this tree, of any list of checks, passed or not,
+    oldest first."""
     root = repo / RUNS
     if not root.is_dir():
-        return None
-    wanted = [[c.key() for c in cs] for cs in (checks, *also)]
-    newest = None
+        return []
+    found = []
     for run_dir in root.iterdir():
         try:
             record = json.loads((run_dir / "record.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        ran = [[c["name"], c["argv"], c["cwd"]] for c in record.get("checks", [])]
-        if record.get("tree") != tree or ran not in wanted:
-            continue
-        if newest is None or record.get("epoch", 0) > newest.get("epoch", 0):
-            newest = record
-    return newest
+        if record.get("tree") == tree:
+            found.append(record)
+    return sorted(found, key=lambda r: r.get("epoch", 0))
+
+
+def _ran(record: dict) -> list:
+    return [[c["name"], c["argv"], c["cwd"]] for c in record.get("checks", [])]
 
 
 def verify(
@@ -732,16 +732,24 @@ def verify(
     tree: str | None = None,
     also: Sequence[Sequence[Check]] = (),
 ) -> int:
-    """Reuse the newest run of this tree if it passed, else `run`; a run of a
-    list in `also` -- the whole list, for an `--affected` verify -- counts too."""
+    """Reuse the newest run of `checks` over this tree -- or of a list in
+    `also`, the whole list for an `--affected` verify -- if it passed and no
+    later run of the tree, of any list, failed; else `run`."""
     tree = tree or tree_stamp(repo)
-    record = newest_run_of(repo, tree, checks, also)
-    if record is None or not record.get("passed"):
-        why = "no run of this tree" if record is None else f"{record['dir']} did not pass"
-        print(f"check: {why}; running the checks", file=out, flush=True)
+    wanted = [[c.key() for c in cs] for cs in (checks, *also)]
+    runs = runs_of(repo, tree)
+    ours = [i for i, r in enumerate(runs) if _ran(r) in wanted]
+    if not ours:
+        print("check: no run of this tree; running the checks", file=out, flush=True)
         return run(repo, checks, out, note, tree)
+    since = runs[ours[-1] :]
+    failed = next((r for r in reversed(since) if not r.get("passed")), None)
+    if failed is not None:
+        print(f"check: {failed['dir']} did not pass; running the checks", file=out, flush=True)
+        return run(repo, checks, out, note, tree)
+    record = since[0]
     print(
-        f"check: reusing {record['dir']} ({record['started']}), the newest run of this tree",
+        f"check: reusing {record['dir']} ({record['started']}), the newest such run of this tree",
         file=out,
     )
     print((repo / record["dir"] / "summary.txt").read_text(encoding="utf-8"), end="", file=out)
@@ -755,7 +763,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="reuse the newest run of this tree if it passed; run the checks otherwise",
+        help="reuse this tree's passing run unless a later run of it failed; run the checks otherwise",
     )
     parser.add_argument(
         "--affected",
