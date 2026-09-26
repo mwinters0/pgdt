@@ -822,8 +822,8 @@ async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
 
 /// A weak entity tag states equivalent content rather than the same bytes, so
 /// **it gives way to `Last-Modified` wherever either side states one**, and
-/// decides only where neither does — there comparing weakly, a `W/` set aside
-/// (`SourceIdentity::weak_against`).
+/// counts only where neither does — there showing a change, a `W/` set aside,
+/// and never confirming one (`SourceIdentity::weak_against`).
 #[tokio::test]
 async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
     let (_dir, dump) = sandboxed();
@@ -865,17 +865,70 @@ async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
     );
 
     mapped(&weak("W/\"abc\"", None), &path, StrictIdentity::ADVISORY).await.unwrap();
-    assert_eq!(weak_of(weak("W/\"abc\"", None)).await, WeakIdentity::Agrees);
-    assert_eq!(
-        weak_of(weak("\"abc\"", None)).await,
-        WeakIdentity::Agrees,
-        "weak comparison sets a `W/` aside"
-    );
     assert_eq!(
         weak_of(weak("W/\"def\"", None)).await,
         WeakIdentity::TagDiffers { cached: "W/\"abc\"".to_string(), live: "W/\"def\"".to_string() },
-        "with no `Last-Modified` on either side, the weak tag decides"
+        "with no `Last-Modified` on either side, a weak tag that differs shows a change"
     );
+}
+
+/// A weak entity tag **can show a change and never confirm one**: tags equal
+/// once a `W/` is set aside, where either is weak and neither side states a
+/// `Last-Modified`, are `Unconfirmed` — refused under `time`, naming the weak
+/// tag, and silent under the default (`SourceIdentity::weak_against`).
+#[tokio::test]
+async fn an_equal_weak_entity_tag_confirms_nothing() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let origin = "https://one.example/koji.dump";
+    let tagged = |tag: &str| {
+        let mut source = Fetched::new(&dump, origin, Some(tag));
+        source.modified = None;
+        source
+    };
+    let weak_of = |source: Fetched| {
+        let path = path.clone();
+        async move {
+            match cache::load(&path, &source).await.unwrap() {
+                CacheStatus::Valid { weak, .. } => weak,
+                other => panic!("a weak tag never invalidates the cache, got {other:?}"),
+            }
+        }
+    };
+    let time = StrictIdentity::binding(true, false);
+
+    mapped(&tagged("W/\"abc\""), &path, StrictIdentity::ADVISORY).await.unwrap();
+    for live in ["W/\"abc\"", "\"abc\""] {
+        let weak = weak_of(tagged(live)).await;
+        assert_eq!(
+            weak,
+            WeakIdentity::Unconfirmed { cached: "W/\"abc\"".to_string(), live: live.to_string() },
+            "an equal tag where the cache's is weak"
+        );
+        assert_eq!(
+            cache::advisory_identity_diagnostics(&weak, &OriginMatch::Agrees).count(),
+            0,
+            "silent under the default: nothing shows a change"
+        );
+        let err = mapped(&tagged(live), &path, time).await.unwrap_err();
+        let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
+            panic!("`time` wants a guarantee a weak tag cannot give, got {err:?}")
+        };
+        assert_eq!(*term, "time");
+        assert!(unmet.contains("the cache recorded only the weak entity tag W/\"abc\""), "{unmet}");
+    }
+
+    // The live side weak and the cache's strong: the weak one named is the
+    // source's, and the cache is not called silent.
+    let strong = tempfile::tempdir().unwrap();
+    let path = strong.path().join("strong.dtcache");
+    mapped(&tagged("\"abc\""), &path, StrictIdentity::ADVISORY).await.unwrap();
+    let err = mapped(&tagged("W/\"abc\""), &path, time).await.unwrap_err();
+    let Error::StrictIdentityUnmet { unmet, .. } = &err else {
+        panic!("`time` refuses a live weak tag too, got {err:?}")
+    };
+    assert!(unmet.contains("the source reports only the weak entity tag W/\"abc\""), "{unmet}");
+    assert!(unmet.contains("\"abc\" the cache recorded"), "{unmet}");
 }
 
 /// A source nothing can check while it is read — as a remote object is whose

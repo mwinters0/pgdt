@@ -192,9 +192,14 @@ impl SourceIdentity {
     /// one states only equivalent content (RFC 9110, §8.8.1), which is not
     /// what a map of byte offsets needs, so it cannot outrank a moved
     /// `Last-Modified` — the reason [`crate::io`] pins no read by it either —
-    /// and decides only where neither side states one. There it compares as
-    /// RFC 9110, §8.8.3.2 compares a weak validator: the opaque tags, with
-    /// either side's `W/` set aside.
+    /// and decides only where neither side states one. **There it can show a
+    /// change and never confirm one**: opaque tags that differ, with either
+    /// side's `W/` set aside, are [`WeakIdentity::TagDiffers`], and equal ones
+    /// are [`WeakIdentity::Unconfirmed`] — the same reason RFC 9110, §13.1.5
+    /// forbids a weak tag in `If-Range`. Rejected: comparing them weakly
+    /// (§8.8.3.2) and agreeing, which answers equivalence where the map asks
+    /// for bytes; exact equality, `W/` being the tag's strength and not part
+    /// of it.
     fn weak_against(&self, live: &Self) -> WeakIdentity {
         let tags = self.etag().zip(live.etag());
         if let Some((cached, live)) = tags.filter(|(c, l)| !is_weak_tag(c) && !is_weak_tag(l)) {
@@ -206,7 +211,14 @@ impl SourceIdentity {
             (None, None) => match tags {
                 Some((cached, live)) => {
                     let opaque = |tag: &'_ str| tag.strip_prefix("W/").unwrap_or(tag).to_owned();
-                    tag_against(cached, live, opaque(cached) == opaque(live))
+                    if opaque(cached) == opaque(live) {
+                        WeakIdentity::Unconfirmed {
+                            cached: cached.to_string(),
+                            live: live.to_string(),
+                        }
+                    } else {
+                        tag_against(cached, live, false)
+                    }
                 }
                 None => WeakIdentity::Absent { cached: None, live: None },
             },
@@ -302,10 +314,11 @@ impl OriginMatch {
 /// What the weak half of identity said when a cache was checked against the
 /// live source it was written for (`docs/design/decisions.md`, "D21").
 ///
-/// **Four states rather than a `bool`, because [`StrictIdentity::time`]
-/// refuses on three of them.** A source that offers no modification signal at
+/// **Five states rather than a `bool`, because [`StrictIdentity::time`]
+/// refuses on four of them.** A source that offers no modification signal at
 /// all and a cache that recorded none agree on nothing: they are silent, and
-/// silence is exactly what a caller asking for a guarantee is refused on.
+/// silence is exactly what a caller asking for a guarantee is refused on. A
+/// weak entity tag that agrees is the same want of a guarantee, spoken.
 ///
 /// **Each state carries what was compared**, so the refusal built from it
 /// states the evidence and not only the verdict.
@@ -327,6 +340,15 @@ pub enum WeakIdentity {
     /// at least one of the two is `None`. Whatever the other side offered
     /// travels all the same, so a refusal can name which one is silent.
     Absent { cached: Option<SystemTime>, live: Option<SystemTime> },
+    /// Neither side states a `Last-Modified`, and the entity tags are equal
+    /// once a `W/` is set aside but at least one is weak: a weak tag promises
+    /// equivalent content, not the bytes a map of offsets describes, so it
+    /// confirms nothing ([`SourceIdentity::weak_against`]). **Silent by
+    /// default, as `Absent` is** — an advisory warning reports evidence of a
+    /// change, and there is none — and refused under [`StrictIdentity::time`],
+    /// naming the weak tag. Both tags travel, so a source stating a strong one
+    /// is not called silent.
+    Unconfirmed { cached: String, live: String },
 }
 
 impl WeakIdentity {
@@ -359,6 +381,26 @@ impl WeakIdentity {
                 ),
                 _ => "neither it nor the source carries a modification time to compare".to_string(),
             }),
+            WeakIdentity::Unconfirmed { cached, live } => {
+                let which = match (is_weak_tag(cached), is_weak_tag(live)) {
+                    (true, true) => format!(
+                        "the cache recorded only the weak entity tag {cached} and the source reports \
+                         only {live}"
+                    ),
+                    (true, false) => format!(
+                        "the cache recorded only the weak entity tag {cached} to compare with the \
+                         source's {live}"
+                    ),
+                    _ => format!(
+                        "the source reports only the weak entity tag {live} to compare with the \
+                         {cached} the cache recorded"
+                    ),
+                };
+                Some(format!(
+                    "{which}, and no modification time — a weak tag promises equivalent content, \
+                     not the same bytes, so it cannot confirm the source is unchanged"
+                ))
+            }
         }
     }
 }
@@ -699,7 +741,9 @@ pub fn advisory_identity_diagnostics(
     origin: &OriginMatch,
 ) -> impl Iterator<Item = Diagnostic> {
     let moved = match weak {
-        WeakIdentity::Agrees | WeakIdentity::Absent { .. } => None,
+        WeakIdentity::Agrees | WeakIdentity::Absent { .. } | WeakIdentity::Unconfirmed { .. } => {
+            None
+        }
         WeakIdentity::Differs { .. } => Some(Diagnostic::cache_mtime_changed()),
         WeakIdentity::TagDiffers { .. } => Some(Diagnostic::cache_entity_tag_changed()),
     };

@@ -276,7 +276,10 @@ pgdt query --source mydump.sql --table public.widgets --strict-identity=time
   rather than the same bytes) only where neither side has a `Last-Modified`. A
   cache written against a different signal stops the run instead of reporting
   it — and so does a source that has none to offer at all, since the honest
-  answer there is that it cannot give the guarantee you asked for.
+  answer there is that it cannot give the guarantee you asked for. A weak tag
+  can show a change and never confirm there was none, so tags that match where
+  either is weak stop the run too, where without the flag they are not
+  mentioned.
 - **`location`** binds where a source was fetched from — the URL a remote cache
   records. A local file was not fetched from anywhere and records no origin, so
   two local runs always agree and this binds nothing there.
