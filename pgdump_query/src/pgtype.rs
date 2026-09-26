@@ -585,7 +585,10 @@ impl Discrete {
     /// a bound here has no successor, and the canonical function raises
     /// `integer`, `bigint` or `date out of range` on it (I46). A leaf is read
     /// as `i64` whatever the column's width, so the width is stated here
-    /// rather than found in the key.
+    /// rather than found in the key — and a bound past the width itself,
+    /// `int4range '[1,3000000000)'`, is read as written where no successor is
+    /// taken, ordering as `order_key`'s widening does, where `int4in` refuses
+    /// it.
     ///
     /// A date's is `5874897-12-31` as days since 1970, the day before
     /// `IS_VALID_DATE`'s exclusive `DATE_END_JULIAN`.
