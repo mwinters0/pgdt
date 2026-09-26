@@ -102,13 +102,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An unpinned remote run is said in the manual, not at run time.** `M166`'s
-  row asks that a weak tag with no `Last-Modified` be "read unpinned and said
-  so"; the round said so where the case of a server stating neither validator
-  already is — [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
-  "`--strict-identity`: when a moved file should stop the run" — and prints
-  nothing, since that case prints nothing either and `ByteRangeSource` answers
-  nothing a run could print it from. Reconsidering means one status line for
-  every remote run with no in-flight check, both cases alike, through a new
-  answer on the trait.
