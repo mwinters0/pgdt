@@ -482,35 +482,63 @@ impl Default for StrictIdentity {
 }
 
 /// A selection as every front end writes it — `time`, `location`, both
-/// comma-separated, or `none` — so `pgdt --strict-identity` and the DataFusion
-/// provider's option read one grammar. `none` is exclusive: it turns every
-/// term off, the in-flight check included, so naming it beside another term
-/// is a contradiction rather than an override.
+/// comma-separated, `advisory` or `none` — so `pgdt --strict-identity` and the
+/// DataFusion provider's option read one grammar. `advisory` is
+/// [`StrictIdentity::ADVISORY`] and `none` [`StrictIdentity::NONE`], and each
+/// is exclusive: it says what every term is, so naming it beside another is a
+/// contradiction rather than an override.
+///
+/// **The default has a word** because a dump's own selection replaces its
+/// session's rather than adding to it: without one, a dump under a stricter
+/// session loosens only to `none`, off its in-flight check. *Rejected: a word
+/// only where a dump overrides a session*, which would split this grammar
+/// between front ends; *`default`*, which in a per-dump value reads as the
+/// session's.
 impl std::str::FromStr for StrictIdentity {
     type Err = String;
 
     fn from_str(text: &str) -> std::result::Result<Self, String> {
+        const TERMS: &str = "`time`, `location`, `advisory` and `none`";
         let mut time = false;
         let mut location = false;
-        let mut none = false;
+        let mut whole = None;
         for term in text.split(',') {
             match term.trim() {
                 "time" => time = true,
                 "location" => location = true,
-                "none" => none = true,
-                "" => return Err("an empty term; write `time`, `location` or `none`".into()),
-                other => {
-                    return Err(format!("`{other}` is not one of `time`, `location` and `none`"));
+                word @ ("advisory" | "none") => {
+                    if whole.replace(word).is_some_and(|earlier| earlier != word) {
+                        return Err("`advisory` and `none` each say what every term is, so they \
+                                    cannot be combined"
+                            .into());
+                    }
                 }
+                "" => return Err(format!("an empty term; write one of {TERMS}")),
+                other => return Err(format!("`{other}` is not one of {TERMS}")),
             }
         }
-        match (none, time || location) {
-            (true, true) => {
-                Err("`none` turns every term off, so it cannot be combined with one".into())
+        match (whole, time || location) {
+            (Some(word), true) => {
+                Err(format!("`{word}` says what every term is, so it cannot be combined with one"))
             }
-            (true, false) => Ok(Self::NONE),
-            (false, _) => Ok(Self::binding(time, location)),
+            (Some("none"), false) => Ok(Self::NONE),
+            (Some(_), false) => Ok(Self::ADVISORY),
+            (None, _) => Ok(Self::binding(time, location)),
         }
+    }
+}
+
+/// The selection as [`FromStr`](std::str::FromStr) reads it, so what a front
+/// end shows back is what it would take.
+impl std::fmt::Display for StrictIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match (self.in_flight, self.time, self.location) {
+            (false, ..) => "none",
+            (true, true, true) => "time,location",
+            (true, true, false) => "time",
+            (true, false, true) => "location",
+            (true, false, false) => "advisory",
+        })
     }
 }
 

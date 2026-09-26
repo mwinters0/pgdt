@@ -283,8 +283,13 @@ pgdt query --source mydump.sql --table public.widgets --strict-identity=time
 - **`location`** binds where a source was fetched from — the URL a remote cache
   records. A local file was not fetched from anywhere and records no origin, so
   two local runs always agree and this binds nothing there.
+- **`advisory`** is the default, stated: nothing binds between runs and the
+  check below stays on — the same as leaving the flag off.
 - **`none`** binds nothing at all, and is the only way to turn off the check
   below.
+
+`advisory` and `none` each stand alone, so naming either beside another term
+is refused.
 
 The flag asks the same question of all three commands, so `info` stops too
 rather than reporting, and the refusal reads the same on each: the dump you

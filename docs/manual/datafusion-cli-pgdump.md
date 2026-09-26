@@ -83,7 +83,10 @@ columns are the dump's, so the statement declares none.
 with `:strict-identity=TERMS` or `pgdump.strict_identity`, above: `time`
 refuses a cache written against another modification time or entity tag,
 `location` one written for a dump fetched from elsewhere, the bare flag both,
-and `none` turns every check off. **A dump changing under a scan fails that scan whatever it says**, so a
+`advisory` is the default and `none` turns every check off. A dump's own
+terms replace the session's rather than adding to them, so `advisory` is how
+one dump under `--strict-identity=time` stops binding the time and keeps the
+check below. **A dump changing under a scan fails that scan whatever it says**, so a
 server stating neither a strong entity tag nor a `Last-Modified`, which no
 check can see change, is refused unless it says `none` — which one such dump
 can say for itself, leaving every other dump its check. See

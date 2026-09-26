@@ -593,10 +593,11 @@ fn parse_memory(text: &str) -> std::result::Result<u64, String> {
 #[derive(Args)]
 struct IdentityArgs {
     /// Which weak signs of a source's identity must hold, as a comma-separated
-    /// selection of `time`, `location` and `none`; the flag alone is
-    /// `time,location`. Left unstated, they are advisory: a dump that was
-    /// moved, copied or touched since it was parsed is read with a warning,
-    /// because data moves and none of these signals proves the bytes changed.
+    /// selection of `time` and `location`, or `advisory` or `none` alone; the
+    /// flag alone is `time,location`. Left unstated, or stated `advisory`,
+    /// they are advisory: a dump that was moved, copied or touched since it
+    /// was parsed is read with a warning, because data moves and none of these
+    /// signals proves the bytes changed.
     /// `time` binds the modification signal — an mtime, or a server's
     /// `Last-Modified` and `ETag` — so a cache written against another one, or
     /// a source that offers none at all, stops the run instead.
@@ -3056,10 +3057,11 @@ mod tests {
     use std::sync::Arc;
 
     /// The `--strict-identity` grammar, both ways: what a selection binds, and
-    /// that `none` is exclusive rather than an override — naming it beside a
-    /// term is a contradiction, and a contradiction is refused rather than
-    /// resolved (`docs/design/decisions.md`, "D60" is the precedent for
-    /// refusing at the flag).
+    /// that `advisory` and `none` are exclusive rather than overrides — naming
+    /// either beside another term is a contradiction, and a contradiction is
+    /// refused rather than resolved (`docs/design/decisions.md`, "D60" is the
+    /// precedent for refusing at the flag). Every selection reads back as it
+    /// is written.
     #[test]
     fn the_strict_identity_selection_is_read_and_its_contradictions_refused() {
         let binds = |text: &str| parse_strict_identity(text).unwrap();
@@ -3068,15 +3070,23 @@ mod tests {
         assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
         assert_eq!(binds("location, time"), StrictIdentity::binding(true, true));
         assert_eq!(binds("none"), StrictIdentity::NONE);
+        assert_eq!(binds("advisory"), StrictIdentity::ADVISORY);
         // The in-flight check is on under every selection but `none`.
         assert!(binds("time").in_flight() && binds("location").in_flight());
+        assert!(binds("advisory").in_flight());
         assert!(!binds("none").in_flight());
+        for text in ["time", "location", "time,location", "advisory", "none"] {
+            assert_eq!(binds(text).to_string(), text, "a selection reads back as written");
+        }
         // What the bare flag means, spelled as clap substitutes it (the test
         // below reads the attribute).
         assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
 
         assert!(parse_strict_identity("none,time").is_err(), "`none` is exclusive");
-        assert!(parse_strict_identity("path").is_err(), "an unknown term names the three");
+        assert!(parse_strict_identity("advisory,time").is_err(), "`advisory` is exclusive");
+        assert!(parse_strict_identity("advisory,none").is_err(), "and so is the pair");
+        let unknown = parse_strict_identity("path").unwrap_err();
+        assert!(unknown.contains("`advisory`"), "an unknown term names the four: {unknown}");
         assert!(parse_strict_identity("time,").is_err(), "an empty term is not silence");
         assert!(parse_strict_identity("").is_err());
     }

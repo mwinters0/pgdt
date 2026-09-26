@@ -45,14 +45,15 @@ Options:
                                    `--detail`/`--map`, which format detail this already carries in
                                    full
       --strict-identity[=<TERMS>]  Which weak signs of a source's identity must hold, as a
-                                   comma-separated selection of `time`, `location` and `none`; the
-                                   flag alone is `time,location`. Left unstated, they are advisory:
-                                   a dump that was moved, copied or touched since it was parsed is
-                                   read with a warning, because data moves and none of these signals
-                                   proves the bytes changed. `time` binds the modification signal —
-                                   an mtime, or a server's `Last-Modified` and `ETag` — so a cache
-                                   written against another one, or a source that offers none at all,
-                                   stops the run instead. `location` binds the origin a remote cache
+                                   comma-separated selection of `time` and `location`, or `advisory`
+                                   or `none` alone; the flag alone is `time,location`. Left
+                                   unstated, or stated `advisory`, they are advisory: a dump that
+                                   was moved, copied or touched since it was parsed is read with a
+                                   warning, because data moves and none of these signals proves the
+                                   bytes changed. `time` binds the modification signal — an mtime,
+                                   or a server's `Last-Modified` and `ETag` — so a cache written
+                                   against another one, or a source that offers none at all, stops
+                                   the run instead. `location` binds the origin a remote cache
                                    records, which a local file was not fetched from, so it binds
                                    nothing there
   -h, --help                       Print help (see more with '--help')

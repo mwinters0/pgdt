@@ -123,24 +123,11 @@ impl ExtensionOptions for PgDumpTableOptions {
             ),
             entry(
                 "strict_identity",
-                self.strict_identity.and_then(spelled),
-                "`time`, `location`, both, or `none`; unset, the session's.",
+                self.strict_identity.map(|strict| strict.to_string()),
+                "`time`, `location`, both, `advisory` or `none`; unset, the session's.",
             ),
         ]
     }
-}
-
-/// `strict` as [`StrictIdentity`]'s grammar writes it, which has no word for
-/// [`StrictIdentity::ADVISORY`]: that is what leaving the option unset reads.
-fn spelled(strict: StrictIdentity) -> Option<String> {
-    let terms = match (strict.in_flight(), strict.time(), strict.location()) {
-        (false, ..) => "none",
-        (true, true, true) => "time,location",
-        (true, true, false) => "time",
-        (true, false, true) => "location",
-        (true, false, false) => return None,
-    };
-    Some(terms.to_string())
 }
 
 /// Builds a [`crate::PgDumpTable`] for `CREATE EXTERNAL TABLE … STORED AS

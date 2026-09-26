@@ -42,7 +42,8 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict
     cache whose recorded modification signal the dump no longer states, `location` one written \
     for another URL, the bare flag both. A dump changing under a scan fails it whatever this says, so a server \
     stating neither a strong entity tag nor a Last-Modified is refused; `none` turns every \
-    check off and reads it anyway";
+    check off and reads it anyway, and `advisory` is the default, which a dump under a stricter \
+    session states to keep that check";
 
 /// One `--dump [NAME=]SOURCE[:strings][:strict-identity=TERMS]`.
 ///
@@ -286,12 +287,14 @@ mod tests {
 
     /// **`:strict-identity=TERMS` is this dump's strictness**, in `pgdt`'s
     /// grammar, beside `:strings` in either order and each at most once; a
-    /// `:` after it is the source's, not a term.
+    /// `:` after it is the source's, not a term. `advisory` is the default
+    /// stated, so a dump can loosen a stricter session's selection to it.
     #[test]
     fn a_dump_states_its_own_strictness_as_a_suffix() {
         let strict = |arg: &str| DumpArg::parse(arg).unwrap().strict_identity;
         assert_eq!(strict("koji.dump"), None);
         assert_eq!(strict("k=koji.dump:strict-identity=none"), Some(StrictIdentity::NONE));
+        assert_eq!(strict("koji.dump:strict-identity=advisory"), Some(StrictIdentity::ADVISORY));
         let time = Some(StrictIdentity::binding(true, false));
         for arg in
             ["koji.dump:strings:strict-identity=time", "koji.dump:strict-identity=time:strings"]
@@ -315,6 +318,7 @@ mod tests {
         for refused in [
             "koji.dump:strict-identity=tiem",
             "koji.dump:strict-identity=none,time",
+            "koji.dump:strict-identity=advisory,location",
             "koji.dump:strict-identity=",
             "koji.dump:strict-identity=time:strict-identity=none",
             "koji.dump:strings:strings",

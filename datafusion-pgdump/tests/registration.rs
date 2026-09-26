@@ -283,7 +283,8 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
 
 /// **A statement's `pgdump.strict_identity` is its dump's, the session's the
 /// default**: over a dump touched since its parse, a session binding `time`
-/// refuses a statement stating nothing and opens one stating `none`, and an
+/// refuses a statement stating nothing and opens one stating `advisory` or
+/// `none`, and an
 /// advisory session opens a statement stating nothing and refuses one stating
 /// `time`. A value outside the grammar is refused, naming it.
 #[tokio::test(flavor = "multi_thread")]
@@ -311,6 +312,8 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     assert!(err.contains("`--strict-identity=time`"), "{err}");
     rows(&strict, &create("b", Some("none"))).await.unwrap();
     assert!(!rows(&strict, "SELECT * FROM b").await.unwrap().is_empty());
+    rows(&strict, &create("b2", Some("advisory"))).await.unwrap();
+    assert!(!rows(&strict, "SELECT * FROM b2").await.unwrap().is_empty());
 
     let advisory = session(StrictIdentity::ADVISORY);
     rows(&advisory, &create("c", None)).await.unwrap();

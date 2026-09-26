@@ -231,8 +231,8 @@ async fn strict_identity_binds_both_registrations() {
 
 /// **A dump's own strictness overrides the session's**, from either front
 /// door: `--dump …:strict-identity=` and `pgdump.strict_identity` open a
-/// touched dump under `none` where the session binds `time`, and refuse it
-/// under `time` where the session is advisory.
+/// touched dump under `none` or `advisory` where the session binds `time`, and
+/// refuse it under `time` where the session is advisory.
 #[tokio::test]
 async fn a_dump_s_own_strictness_overrides_the_session_s() {
     let dir = tempfile::tempdir().unwrap();
@@ -246,10 +246,12 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
         assert!(said.contains("`--strict-identity=time`"), "{said}");
     };
 
-    let loose = format!("shop={dump}:strict-identity=none");
-    let out = run(&["-q", "--strict-identity=time", "--dump", &loose, "-c", count]);
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(text(&out.stdout).trim(), "n\n3");
+    for loose in ["none", "advisory"] {
+        let loose = format!("shop={dump}:strict-identity={loose}");
+        let out = run(&["-q", "--strict-identity=time", "--dump", &loose, "-c", count]);
+        assert!(out.status.success(), "{loose}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout).trim(), "n\n3");
+    }
     let out = run(&["-q", "--dump", &format!("shop={dump}:strict-identity=time"), "-c", count]);
     assert!(!out.status.success());
     refused(&out);
@@ -265,6 +267,16 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
         "--strict-identity",
         "-c",
         &create("none"),
+        "-c",
+        "SELECT count(*) AS n FROM ev",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("n\n3"), "{}", text(&out.stdout));
+    let out = run(&[
+        "-q",
+        "--strict-identity",
+        "-c",
+        &create("advisory"),
         "-c",
         "SELECT count(*) AS n FROM ev",
     ]);
