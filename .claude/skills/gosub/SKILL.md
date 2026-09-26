@@ -92,7 +92,8 @@ Any one ends the loop. Report it plainly; do not work around it.
 - **A new "Decisions worth another look" entry that step 5 did not settle.**
 - **The slice's box is still unticked**, including after a split that earned an
   `<N>.<M>.<K>`, or an out-of-band row whose Date is still empty — except a round
-  that handed off a long job, unticked *by design* and ticked by step 5 below.
+  that handed off a long job, unticked *by design* and ticked by step 5 below,
+  and an instrument round, committed by step 4 and finished by the next.
 - **`mise run check` fails**, whatever the report said.
 - **Nothing is left to take**: an open phase with no unticked slice — a phase
   boundary is always a stop — or, with none open, no row whose Date is empty.
