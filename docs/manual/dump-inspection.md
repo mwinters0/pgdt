@@ -514,7 +514,7 @@ none`, left out of a selection, without the least and greatest values this
 build keeps for a column, at a group size other than a
 `--row-group-size` stated now, or under bounds other than a
 `--row-group-min-rows` or `--row-group-max-rows` stated now — one `COPY`
-block at a time, banking each as it goes, so an interrupted re-read continues
+block at a time, banking them as it goes, so an interrupted re-read continues
 where it stopped. A block this run scanned is re-read too where it is too
 dense for a stated maximum (above), that being the one thing a single read
 cannot deliver. A block an earlier run gathered under other bounds can be read
@@ -755,14 +755,15 @@ measured, a single worker already reads such a dump at the speed the disk
 delivers the bytes, and we have no measurement of several workers doing better
 on one. State `--jobs` if you want workers on one anyway — from a RAM disk or a
 page cache the file is already sitting in, where the disk is not the cost, a
-few of them are worth about 40%. An `.xz` dump takes the CPUs this process was
+few of them are worth about 40%. An `.xz` dump on disk takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
 decompression is the part of the work that more cores finish sooner, from four
 of them up: two workers read a compressed dump no faster than one — and fewer
 still where the file itself has fewer blocks than that:
 pgdt splits a compressed file at its block boundaries, so a file with six
 blocks reads with at most six workers however wide the machine — and with
-fewer on a machine narrower than that, the count being the smaller of the two. **How many of those workers actually read is then bounded by
+fewer on a machine narrower than that, the count being the smaller of the two.
+An `.xz` dump read over HTTP takes one worker. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about
 106 MiB once the pool's four slots are counted, so a read-buffer budget of
 64 MiB delivers one worker whatever `--jobs` says, reading through the
@@ -1244,7 +1245,8 @@ are six different messages because they mean six different things:
 | `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
 
 **Only the first sends you straight to `pgdt parse`.** `parse` and `query`
-refuse every other one too, before reading the dump, rather than scanning and
+refuse every other one too, before reading more of the dump than its first
+bytes, rather than scanning and
 writing over what they found: each is almost always a wrong path or a file that
 changed, and a cache that does not describe this file is a valid index for
 *some* file. So the last four name three ways out — **remove it, name a
@@ -1313,6 +1315,8 @@ lists all of it, in file order, instead of just the tables:
 ```
 $ pgdt info --source mydump.sql --map
 Scan completion: 100% (48213911 bytes)
+
+...
 
 [0, 35) framing
 [35, 622) SCHEMA public

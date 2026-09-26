@@ -718,8 +718,8 @@ shape executes** moves no reading, and whether a shape passes a flag is a grep
 over `_script` rather than a judgement. It says the changed code did not
 *run* — not that it runs identically — so an entry using it names the command
 shapes and, where a shape reaches part of the change, says which part and how
-often. The worked case is the `--filter` term grammar: it lives in `main.rs`,
-which five figures declare, and no command shape passes `--filter` at all.
+often. The grep is over what runs, not over flag names: no command shape passes
+`--filter`, yet every `--where` leaf is read by its term grammar in `main.rs`.
 
 **Comment-only is the third, and the harness decides it rather than being
 told.** A diff whose every hunk falls inside a `//`, `///`, `//!`, `#`, a

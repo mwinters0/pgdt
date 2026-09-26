@@ -511,8 +511,8 @@ SQL function cannot take one (I11's `LANGUAGE internal` recipe is what it
 takes).
 
 **Consequence for `crate::pgtype`.** `TypeKind::Range` carries the companion
-name so a column declared with it resolves to `DeferredKind::Range` instead
-of `Unknown`. The six built-in multirange names are recognized in the
+name so a column declared with it resolves to a multirange — a list of the
+range's struct — instead of `Unknown`. The six built-in multirange names are recognized in the
 built-in table alongside the six built-in range names, since like them they
 appear bare and never reach the user-defined lookup (I8). The range grammar
 tolerates a multi-line body and a multi-word subtype value.

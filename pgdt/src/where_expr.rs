@@ -191,8 +191,10 @@ enum Part {
 ///
 /// **A quote opens a region exactly where the term grammar reads one**:
 /// anywhere before a term's operator, which `split_filter_op` scans past
-/// quoted regions to find, and at the start of its value, which `dequote`
-/// strips — nowhere else, a quote inside an unquoted value being data there.
+/// quoted regions to find, and at the start of its value past ASCII
+/// whitespace, which `dequote` strips — nowhere else, a quote inside an
+/// unquoted value being data there. A value opened past other Unicode
+/// whitespace, which `filter_part` trims, is refused here rather than read.
 /// So `--where "note=don't and x=1"` is a conjunction and a paren or the word
 /// `and` inside a quoted value is data. A region is skipped whole, a doubled
 /// quote an escaped one, and one that never closes swallows the rest of the

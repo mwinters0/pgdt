@@ -233,8 +233,8 @@ impl Sizing {
 
 struct Gatherer {
     group_size: u64,
-    /// The most groups a block holds, `None` for an exact size and for a
-    /// piece, which never merges.
+    /// The most groups a block holds, `None` under a stated size or maximum
+    /// and for a piece, which never merges.
     cap: Option<usize>,
     /// The fewest rows the finished block's median group is merged *towards*,
     /// `None` for an exact size and for a piece, which is never finished. Not
@@ -331,7 +331,7 @@ impl Gatherer {
     ///
     /// deficiency: KD33 — the account this tests is cumulative, and nothing
     /// releases `Term::Retained` while the pass gathers forward (the back-fill
-    /// does, replacing a block's statistics, `crate::stream::map_forward`), so
+    /// does, replacing a block's statistics, `crate::stream::backfill_statistics`), so
     /// once a long dump's retained statistics reach the allowance every block
     /// from there on declines on its first charge update. Statistics are then a *prefix* of
     /// the file rather than a sample of it, and a query prunes nothing over
@@ -421,7 +421,8 @@ impl Gatherer {
         self.charge_held();
     }
 
-    /// The cap this block merges past now: none for a piece or an exact size,
+    /// The cap this block merges past now: none for a piece or under a stated
+    /// size or maximum,
     /// and none while a piece it made is alive.
     fn merging_cap(&self) -> Option<usize> {
         let alive = self.pieces.get().is_some_and(|pieces| Arc::strong_count(pieces) > 1);
@@ -1798,7 +1799,8 @@ fn successor(c: char) -> Option<char> {
 const BYTEA_CAP_BYTES: usize = (DICTIONARY_ENTRY_MAX_BYTES - 2) / 2;
 
 /// A rendered `bytea` above the value: its prefix with trailing `0xFF` bytes
-/// dropped and the last byte incremented. `None` when every byte is `0xFF`.
+/// dropped and the last byte incremented. `None` when every byte of that
+/// prefix is `0xFF`.
 fn bytea_upper(text: &str) -> Option<String> {
     let mut bytes = decode_bytea(text)?;
     bytes.truncate(BYTEA_CAP_BYTES);

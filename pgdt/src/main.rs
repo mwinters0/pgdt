@@ -642,7 +642,7 @@ struct OverwriteArgs {
     /// Start cold over a cache that cannot be used and replace it, rather
     /// than refusing: one written for a file of another size or compression,
     /// by another pgdt build, or cut short. Left unstated, each of those stops
-    /// the run before the dump is read, since it is almost always the wrong
+    /// the run before the dump is read past its first bytes, since it is almost always the wrong
     /// path or a file that changed — this is for a source whose file is
     /// replaced under the same name. A file that is not a pgdt cache is never
     /// overwritten. It governs only the cache found at the start: a dump that
@@ -872,8 +872,8 @@ enum Command {
         /// filter's value is read with the column's own decoder, so a value
         /// that is not of that type is refused by name rather than matching
         /// nothing. The four ordering operators are additionally refused on a
-        /// column whose type did not resolve or that is nested; `=`/`!=`
-        /// compare such a column as text.
+        /// column whose type did not resolve, where `=`/`!=` compare as text;
+        /// a nested column compares by its structure under both.
         ///
         /// Spaces around the operator are not data: `name = alpha` asks for
         /// `alpha`. Quote either side — `'` and `"` both work — to say
@@ -883,8 +883,9 @@ enum Command {
         /// for: `"a=b"=x`.
         ///
         /// A term is never read as an expression — but nor may it hold what
-        /// `--where` would read as one. An unquoted `AND`, `OR` or `NOT` as a
-        /// word, or a paren, is refused rather than taken literally, so no string means
+        /// `--where` would read as one. An unquoted `AND`, `OR` or `NOT` with
+        /// whitespace, a paren or an end on both sides, `IS NOT` excepted, or a
+        /// paren, is refused rather than taken literally, so no string means
         /// one thing here and another under `--where`; quote the part that
         /// holds it, or use `--where`.
         #[arg(long)]
@@ -1290,8 +1291,9 @@ fn dequote(part: &str) -> Option<Result<String, char>> {
 /// One side of a filter term as the [`Predicate`] should carry it: whitespace
 /// outside the quotes trimmed off, and a quoted part taken exactly as written.
 /// `what` names the side for the error message. Trimming is `str::trim`,
-/// Unicode's whitespace; the worded operators, the `IS NULL` forms and the
-/// keyword boundaries separate words by ASCII whitespace alone.
+/// Unicode's whitespace; the worded operators and the keyword boundaries
+/// separate words by ASCII whitespace alone, and the `IS NULL` forms are the
+/// literal suffixes `strip_ci_suffix` matches.
 fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     let part = part.trim();
     match dequote(part) {
@@ -1562,6 +1564,13 @@ fn announce_early_stops(streams: &[pgdump_query::TableStream<'_>]) {
 
 /// Case-insensitive suffix strip, for matching `IS NULL`/`IS NOT NULL` at
 /// the end of a `--filter` argument regardless of how the user cased it.
+///
+/// Deficiency register: `deficiency: KD52` — the suffix is matched as
+/// written, one space between its words and no boundary before `is`, so
+/// `x is  null` is refused as a term with no operator and `xis null` is read
+/// as `x IS NULL`, under `--filter` and every `--where` leaf alike. **(c)
+/// unowned**; closing it means the worded operators' own word boundaries
+/// here.
 fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
     let split = s.len().checked_sub(suffix.len())?;
     let (head, tail) = s.split_at(split);
@@ -2293,7 +2302,8 @@ async fn open_for_scan(
 /// because the fact the user needs to know differs. Each ends as the scanning
 /// commands' refusals do, in `OVERWRITE_WAYS_OUT`, and then names the `parse`
 /// those ways out enable; a file that is not a pgdt cache names neither, no
-/// scan being allowed to write over it (`docs/design/decisions.md`, "D20").
+/// scan being allowed to write over it (`docs/design/decisions.md`, "D20"),
+/// and a missing one names only the `parse` that builds it.
 ///
 /// **One match, two renderings**, so a new [`Unusable`] variant has to answer
 /// both. `source` is `None` in cache-only mode, which states the fault and

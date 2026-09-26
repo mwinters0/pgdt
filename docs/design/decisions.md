@@ -133,8 +133,8 @@ which naming the columns lacking a statistic would answer.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
-contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before a byte
-is read, at every scan entry point and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
+contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before the dump
+is read past its magic, at every scan entry point and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
 starts cold over one recognisably ours, by a header read first, for a file replaced under a stable name; foreign
 bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy
 an embedder cannot override); refusing a damaged one of ours (nothing readable lost, an unbumped version its likely
@@ -143,7 +143,7 @@ cause); `load` checking size alone (a claimless open gets another file's map). A
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
 `stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and `SourceIdentity`'s variants are read through
 signal accessors, so two kinds compare rather than refuse. **Two questions, split by tense.** Between runs a weak signal — modification, and where a
-source was fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term alone, a missing time included.
+source was fetched from — is advisory, its warning reported and never persisted, and binds under its own `StrictIdentity` term alone, a missing time included.
 During one the cadence follows the cost of asking: `SourceWatch` re-reads the open descriptor at the save's cadence (D62), at run end and before a
 failure is reported (`attribute`: a short read or bytes that do not parse is often the change itself), aborting without saving or removing, where a
 server compares every ranged GET against the probe's validators (`Last-Modified` for a weak tag, `If-Match` comparing strongly); a source nothing can
@@ -254,7 +254,7 @@ gating on a full scan left early blocks uncensused. Evidence: `census-brace-free
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on
 name (I11); a composite's field list is all-or-nothing, `record_out` being positional (I23); a
 `--create` dump's pre-`\connect` segment is not a database (I9). L1 stores text, never a conclusion:
-declared types and collation clauses are verbatim, `None` collation is "no clause" (I37), and
+a declared type is its words, comments and spacing dropped, a collation clause verbatim, `None` collation is "no clause" (I37), and
 `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
 both sides of a lookup compared in it (I29). Rejected: its parts dequoted, `"a.b".c` being `a."b.c"`.
 
@@ -288,10 +288,10 @@ ordered as DataFusion does — a `TODO` there; for `macaddr`, refusing a literal
 keeping the octet key for one that is, a per-literal switch bought for range pruning.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
-An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided on
+An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View` (`KD3`), decided on
 `domain_terminal`'s result by `resolve_array` and `array_comparison`. All `Typename` spellings collapse to element plus one level (I21, I28);
 normalizing on parse would edit the user's DDL. A walk spends a visit per definition, the list's
-length bounding an acyclic one (I24), so a cycle answers `Unknown`: `KD3`.
+length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 
 ### D42 `interval` is the struct; special values are decode failures
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
@@ -326,7 +326,7 @@ Rejected: compacting views past a selectivity threshold. Evidence: `parallel-pea
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored at the caller's
 announced `ScanOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
-retained unit does not — and writes it onto the sub-streams. A plain source stays on `DEFAULT_MEMORY_BUDGET` whatever
+retained unit does not — and writes it onto the sub-streams. A plain source stays at most `DEFAULT_MEMORY_BUDGET` whatever
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
@@ -429,7 +429,7 @@ over the opposite operator. Reopens: a filter shape a reading shows common. Code
 `text`, `character` and `bytea` order by a clipped head (`gather::Clipped`), not an `OrderKey`: a
 key copies the whole value, and a row may run to `--max-line-bytes`. Values agreeing on the head
 share every byte a stored bound reads, so bounds stay valid and only row order is lost (`Unsorted`),
-as for a decoded-kind value past the cap. A truncated text `max` replaces its last character by the
+where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its last character by the
 next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte
 successor for text, which can end mid-character. Evidence: `gather.rs`'s
 `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.

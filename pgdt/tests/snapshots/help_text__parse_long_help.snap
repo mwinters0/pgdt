@@ -110,11 +110,11 @@ Options:
       --overwrite-unusable-cache
           Start cold over a cache that cannot be used and replace it, rather than refusing: one
           written for a file of another size or compression, by another pgdt build, or cut short.
-          Left unstated, each of those stops the run before the dump is read, since it is almost
-          always the wrong path or a file that changed — this is for a source whose file is replaced
-          under the same name. A file that is not a pgdt cache is never overwritten. It governs only
-          the cache found at the start: a dump that changes while it is being read still stops the
-          run (`--strict-identity`)
+          Left unstated, each of those stops the run before the dump is read past its first bytes,
+          since it is almost always the wrong path or a file that changed — this is for a source
+          whose file is replaced under the same name. A file that is not a pgdt cache is never
+          overwritten. It governs only the cache found at the start: a dump that changes while it is
+          being read still stops the run (`--strict-identity`)
 
       --jobs <N>
           How many workers pgdt may ask for. Left unstated, the file decides: a plain dump reads

@@ -38,10 +38,11 @@ pub struct PgDumpOptions {
 ///
 /// **It never maps and never writes.** The map is the one `pgdt parse` left,
 /// loaded whole at open and believed only where it reaches the end of the file
-/// and its identity checks pass as they do for any load. A cache recording
-/// another file's stored size is the library's refusal; anything else short
-/// of a complete map of this file — compression details the file contradicts
-/// included — is an error naming the `pgdt parse` that would build it.
+/// and its identity checks pass as they do for any load. A cache that cannot
+/// be used — another file's, another build's, damaged, or contradicting the
+/// file's compression — is the library's own refusal; one short of a complete
+/// map of this file, or none named, is an error naming the `pgdt parse` that
+/// would build it.
 ///
 /// **The map is resident for as long as the dump is registered**, because
 /// DataFusion asks for a table's schema and statistics while it plans, and

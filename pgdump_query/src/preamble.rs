@@ -13,7 +13,7 @@
 //! (`docs/design/decisions.md`, "D34").
 //!
 //! It stores what the dump said, never what we concluded: declared types are
-//! kept as strings exactly as written (`character varying(16)`, not a parsed
+//! kept as the words written (`character varying(16)`, not a parsed
 //! `(base, typmod)` pair), L1 being unable to hold an L2 conclusion
 //! (`docs/design/decisions.md`, "D74"). Resolving those strings into Arrow
 //! types is [`crate::pgtype`]'s job.
@@ -55,7 +55,7 @@ pub struct DatabaseMetadata {
     /// [`crate::index::scan_preamble`] prepass produces, neither ever leaving
     /// a segment half-read. The *first* database's metadata is present after
     /// any scan that persists a cache (the preamble prepass,
-    /// `docs/design/decisions.md`, "D36") and every later `\connect`ed
+    /// `docs/design/decisions.md`, "D30") and every later `\connect`ed
     /// database's once the mapping pass reaches its first `COPY` block, so a
     /// caller walking `DumpIndex::metadata` checks this per database rather
     /// than assuming the whole list is complete.
@@ -134,8 +134,8 @@ pub struct Extension {
 /// One column of a `CREATE TABLE`, as the DDL wrote it.
 ///
 /// Every field is the dump's own text, never a conclusion (see the module
-/// docs): `declared_type` is the literal type string (`character
-/// varying(16)`), and `collation` the `COLLATE` clause's reference exactly as
+/// docs): `declared_type` is the type's words as written (`character
+/// varying(16)`), comments and spacing dropped, and `collation` the `COLLATE` clause's reference exactly as
 /// written — `pg_catalog."C"`, schema-qualified and quoted the way `pg_dump`
 /// writes it (I37).
 ///
@@ -1030,9 +1030,9 @@ impl StatementScan {
     }
 
     /// Feed one more physical line, joined to what came before with `\n`
-    /// exactly as [`push_stmt_line`] joins them — including *not* joining
-    /// before the first one, which is what keeps a trailing `-- comment`
-    /// open at the end of a buffer.
+    /// exactly as [`push_stmt_line`] joins them — only between lines, so a
+    /// trailing `-- comment` stays open at the end of a buffer, no `\n`
+    /// having followed it.
     pub(crate) fn feed_line(&mut self, line: &[u8]) {
         if self.len != 0 {
             self.feed(b"\n");
@@ -1147,10 +1147,12 @@ impl StatementScan {
             // (`measurements.md`, `scan-throughput-warm` and
             // `scan-throughput-nvme`). Two cuts against the remainder are
             // known: no `INSERT` statement's end depends on `depth`, so a
-            // run-only scan would skip this pass. **(b) owned by P8**, whose
-            // row reader is the caller that can say the count is dead weight;
-            // it is not a licence to drop `depth`, which `statement_complete`
-            // and `in_open_quote` are wrappers over.
+            // run-only scan would skip this pass; and `insert_run_line`
+            // (`map.rs`) feeds the `INSERT INTO <table>` prefix it has just
+            // matched, whose scan state is provably unchanged, so those bytes
+            // are crossed twice. **(b) owned by P8**, whose row reader is the
+            // caller that can say the count is dead weight; it is not a
+            // licence to drop `depth`, which `statement_complete` reads.
             let rest = &bytes[i..];
             let stop = memchr::memchr3(b'\'', b'"', b'-', rest).unwrap_or(rest.len());
             let plain = &rest[..stop];

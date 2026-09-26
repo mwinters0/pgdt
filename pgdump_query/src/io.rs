@@ -159,8 +159,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// ([`Parallelism::discover_for`], where the two meet).
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
-    /// caller on [`DEFAULT_MEMORY_BUDGET`] where nothing was discovered and on
-    /// the discovered allowance where something was. It is what keeps "no
+    /// caller on [`DEFAULT_MEMORY_BUDGET`], capped at the discovered allowance
+    /// where one was found. It is what keeps "no
     /// limit found" from meaning "serial", that constant affording no
     /// block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
@@ -1877,9 +1877,9 @@ impl BufferPool {
     /// read loop takes is the announced length. It does take one other length
     /// — `crate::map::attach_text`'s run read, which is bounded by the spans
     /// it is filling rather than by the hint — and this rule is exactly what
-    /// drops that buffer instead of pooling it. The one two-unit source is
-    /// [`XzSource`], which
-    /// takes a second pool rather than a second hint
+    /// drops that buffer instead of pooling it. The two-unit sources are the
+    /// `.xz` ones, [`XzSource`] and `FetchedXzSource`, whose `XzBudget` takes
+    /// a second pool rather than a second hint
     /// (`docs/design/decisions.md`, "D17").
     fn keeps(&self, len: usize) -> bool {
         len <= self.slot_bytes()
@@ -3845,9 +3845,9 @@ impl ByteRangeSource for FetchedXzSource {
     /// What a reader of *this file* holds, which the transport does not change
     /// — the same shape [`XzSource::default_worker_memory`] answers, with the
     /// compressed window folded into the decoder term. It is a recommendation
-    /// about memory rather than about concurrency, so D7's silence on the
-    /// plain remote source — which has no block structure to charge for — does
-    /// not reach it.
+    /// about memory rather than about concurrency, so D2's one worker for a
+    /// fetched source does not reach it, nor the plain remote source's
+    /// silence, which has no block structure to charge for.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         self.budget.block_worker_memory()
     }
@@ -5085,7 +5085,8 @@ mod tests {
         pool.set_limits(unit, POOL_DEPTH);
         assert_eq!(pool.slots(), 1);
 
-        // The default, and what all three shipped read loops state.
+        // The default, and what every shipped read loop but the leader's
+        // fused worker states.
         assert_eq!(pool.policy(), WaitPolicy::NeverWait);
         let held: Vec<_> = (0..3).map(|_| pool.obtain(unit)).collect();
         assert_eq!(held.len(), 3);

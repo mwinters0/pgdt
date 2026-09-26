@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD51 -->
-**`KD1`–`KD50` are allocated, and nothing at or below `KD50` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD52 -->
+**`KD1`–`KD52` are allocated, and nothing at or below `KD52` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -244,7 +244,8 @@ than reading as a phase nobody has sliced.
 
 - **KD37** — a cancelled read the leader dispatched inside the statistics
   back-fill propagates instead of banking: a source answering a cancellation by
-  failing its read ends a `parse` as `Error::ScanCancelled` with nothing saved,
+  failing its read ends a `parse` as `Error::ScanCancelled`, saving nothing since
+  the throttle's last save,
   where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
   unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
   its map reached EOF, the fix being the arm the mapping pass already carries.
@@ -314,3 +315,8 @@ than reading as a phase nobody has sliced.
   no usable validator, is walked before its run is refused as one nothing can
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
   streams. Detail: `pgdump_query/src/io.rs`.
+
+- **KD52** — a `--filter` term or `--where` leaf ending `is null` or `is not
+  null` is matched as that literal suffix, so `xis null` asks for `x IS NULL`
+  and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
+  either. Detail: `pgdt/src/main.rs`.

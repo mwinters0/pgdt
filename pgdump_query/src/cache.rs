@@ -280,7 +280,7 @@ fn tag_against(cached: &str, live: &str, matched: bool) -> WeakIdentity {
 /// (`docs/design/decisions.md`, "D87").
 ///
 /// **Advisory by default and only two states**, where the modification signal
-/// has four: an absent origin is not silence, it is the positive statement
+/// has five: an absent origin is not silence, it is the positive statement
 /// that a source was not fetched from anywhere, so two of them agree and
 /// [`StrictIdentity::location`] binds nothing on a local file (D87).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -845,9 +845,10 @@ pub enum CacheStatus {
 /// (`docs/design/decisions.md`, "D22").
 ///
 /// `Disabled` is a statement about the *caller*, with no [`CacheStatus`] to
-/// correspond to; the other three are that status carried across unchanged.
-/// `Valid` and `Incomplete` are one variant here, because a caller holding a
-/// live source builds forward from either — see [`CacheMode::load`].
+/// correspond to; the other three carry that status across, `Missing` and
+/// `Unusable` unchanged and `Valid` and `Incomplete` as the one `Index`,
+/// because a caller holding a live source builds forward from either — see
+/// [`CacheMode::load`].
 ///
 /// *Rejected:* an accessor collapsing the reasons back to `Option` for the
 /// callers that do not care. It rebuilds the collapse under a shorter name at
@@ -1074,8 +1075,8 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     let total_size = file.total_size;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
-    // with none. Both file-level figures are pure functions of the spans, so
-    // they are recomputed on load rather than persisted
+    // with none. Both file-level figures are pure functions of the spans and
+    // the persisted size, so they are recomputed on load rather than persisted
     // (`crate::diagnostic`, "Not persisted").
     index.diagnostics = tiling_diagnostics(&index.spans, total_size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));

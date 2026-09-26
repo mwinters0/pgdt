@@ -110,8 +110,9 @@ pub enum Error {
     /// cannot be had at all. Raised by `crate::cache::CacheMode::load` under
     /// `crate::cache::StrictIdentity::time` or `location`, where an advisory
     /// diagnostic would otherwise be. Under `time` a missing modification
-    /// signal fails too, silence being what strict identity exists to refuse;
-    /// under `location` two sources fetched from nowhere agree.
+    /// signal fails too, silence being what strict identity exists to refuse,
+    /// and so do equal entity tags either of which is weak, which confirm
+    /// nothing; under `location` two sources fetched from nowhere agree.
     ///
     /// `term` is which selector was not met — `time` or `location` — and
     /// `unmet` names what was compared, not only the verdict, so the refusal

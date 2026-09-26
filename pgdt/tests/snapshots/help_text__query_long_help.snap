@@ -31,7 +31,8 @@ Options:
           Every operator but the two NULL tests compares **typed**: the filter's value is read with
           the column's own decoder, so a value that is not of that type is refused by name rather
           than matching nothing. The four ordering operators are additionally refused on a column
-          whose type did not resolve or that is nested; `=`/`!=` compare such a column as text.
+          whose type did not resolve, where `=`/`!=` compare as text; a nested column compares by
+          its structure under both.
           
           Spaces around the operator are not data: `name = alpha` asks for `alpha`. Quote either
           side — `'` and `"` both work — to say otherwise: `name = " x"` keeps the leading space,
@@ -39,9 +40,10 @@ Options:
           side too, which is how a column named `a=b` is asked for: `"a=b"=x`.
           
           A term is never read as an expression — but nor may it hold what `--where` would read as
-          one. An unquoted `AND`, `OR` or `NOT` as a word, or a paren, is refused rather than taken
-          literally, so no string means one thing here and another under `--where`; quote the part
-          that holds it, or use `--where`.
+          one. An unquoted `AND`, `OR` or `NOT` with whitespace, a paren or an end on both sides,
+          `IS NOT` excepted, or a paren, is refused rather than taken literally, so no string means
+          one thing here and another under `--where`; quote the part that holds it, or use
+          `--where`.
 
       --where <EXPR>
           Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and parens, with `NOT`
@@ -134,11 +136,11 @@ Options:
       --overwrite-unusable-cache
           Start cold over a cache that cannot be used and replace it, rather than refusing: one
           written for a file of another size or compression, by another pgdt build, or cut short.
-          Left unstated, each of those stops the run before the dump is read, since it is almost
-          always the wrong path or a file that changed — this is for a source whose file is replaced
-          under the same name. A file that is not a pgdt cache is never overwritten. It governs only
-          the cache found at the start: a dump that changes while it is being read still stops the
-          run (`--strict-identity`)
+          Left unstated, each of those stops the run before the dump is read past its first bytes,
+          since it is almost always the wrong path or a file that changed — this is for a source
+          whose file is replaced under the same name. A file that is not a pgdt cache is never
+          overwritten. It governs only the cache found at the start: a dump that changes while it is
+          being read still stops the run (`--strict-identity`)
 
       --jobs <N>
           How many workers pgdt may ask for. Left unstated, the file decides: a plain dump reads

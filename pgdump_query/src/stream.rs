@@ -1296,7 +1296,7 @@ struct BackfillRun {
 /// dropped read this pass makes itself ([`observe_rows`]), and not of one the
 /// leader dispatched: [`reread_block`]'s `leader::scan_region` propagates, so a
 /// source that answers a cancellation by failing its read ends a `parse` as
-/// `Error::ScanCancelled` with nothing banked, where the same Ctrl-C during the
+/// `Error::ScanCancelled`, banking nothing since the throttle's last save, where the same Ctrl-C during the
 /// mapping pass is an interrupted run ([`cancelled_read`],
 /// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`] already
 /// carries for the pass's own leader reads, here as well. **(c) unowned**;
@@ -2871,7 +2871,8 @@ pub struct EarlyStop {
     /// row — the bound never passed, or passed only there — which saved
     /// nothing.
     ///
-    /// **Measured from the end of the stopping row to the piece's limit**, or
+    /// **Measured from the end of the stopping row to the piece's limit, that
+    /// byte included**, or
     /// to the block's `\.` where the piece runs to it. A piece owns the row
     /// straddling its limit, whose rest past the limit is not counted, so this
     /// is short of the unread bytes by at most that one row's tail per piece

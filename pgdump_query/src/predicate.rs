@@ -421,7 +421,9 @@ fn arrow_divergences(
             vec![column(ComparisonDivergence::NestedArrowOrder)]
         }
         // A mapped scalar with no comparison, which no declared type reaches
-        // today: DataFusion compares its text, which is what this says.
+        // today: DataFusion compares its text, as the note's `=` clause says;
+        // its ordering clause is PostgreSQL semantics', DataFusion ordering
+        // that text bytewise.
         ComparisonPlan::Refused => vec![column(ComparisonDivergence::UnmodelledType)],
     }
 }
@@ -1758,7 +1760,7 @@ fn canonical_multirange(
             out.push(current);
             continue;
         };
-        // The server's own order. The middle test needs the sort:
+        // The server's own order. The first test needs the sort:
         // `range_adjacent_internal` answers true for "either meets the
         // other", and only sorting rules out the second direction.
         if ranges_adjacent(last, &current, discrete) {
@@ -4042,8 +4044,8 @@ mod tests {
     /// this build answers: a nested column refused every Arrow term still
     /// reports DataFusion's order of it, and each position inside it its own
     /// divergence under its path — `numeric[]` its element's text, `text[]`
-    /// its element's collation, `real[]` its element's unnormalized zero; an
-    /// enum reports its label text; a float column reports nothing in either.
+    /// its element's collation, `real[]` its element's unnormalized zero; a
+    /// float column reports nothing in either.
     /// A column that fell back to text reports nothing in Arrow's semantics,
     /// its column note being the finding. One schema, so the order of the
     /// report is the columns'.
@@ -4352,8 +4354,9 @@ mod tests {
         assert_eq!(other.divergence, ComparisonDivergence::AsText);
         assert!(other.message().contains("no comparison"), "{}", other.message());
 
-        // Types that share `Utf8View` with the rows above and say nothing:
-        // a bare `numeric`, an enum, and the three the text-held row lost.
+        // Types that say nothing: a bare `numeric` and the three the
+        // text-held row lost, sharing `Utf8View` with the rows above, and an
+        // enum, emitted as a dictionary.
         assert_eq!(note("numeric", DataType::Utf8View, "10"), None);
         for (declared, literal) in [
             ("time with time zone", "00:00:00+00"),
@@ -5019,7 +5022,7 @@ mod tests {
         );
     }
 
-    /// A divergence is operator-conditional, and three of the six reach
+    /// A divergence is operator-conditional, and a collation's reaches
     /// ordering alone: a libc collation is deterministic, so `texteq` is a
     /// byte comparison whatever the collation is.
     #[test]
@@ -5618,12 +5621,14 @@ mod tests {
         /// Each entry's column also has to *announce* its divergence through
         /// [`ComparisonDivergence`], **under this operator**, which is
         /// asserted alongside — so an exception cannot be claimed for a
-        /// column the register tells the user it is confident about. **Two
-        /// of its populations are one
-        /// statement asked at two depths** — a collation the file does not
-        /// carry (I32), reached once through a column and once through a
-        /// string inside a document:
+        /// column the register tells the user it is confident about. **Three
+        /// of its populations are one statement asked at three depths** — a
+        /// collation the file does not carry (I32), reached through a column,
+        /// through an array's element and through a string inside a document:
         ///
+        /// - **A `text[]` element**, ordered by `varstr_cmp` under the
+        ///   database's collation exactly as a `text` value is, one level
+        ///   down.
         /// - **A `jsonb` string leaf.** `compareJsonbScalarValue` passes
         ///   `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf is ordered by
         ///   the database's collation, which a plain dump does not record
@@ -5631,8 +5636,8 @@ mod tests {
         ///   container's size, storage order, the raw-scalar wrapper — is
         ///   asserted rather than excepted, which is what makes this list two
         ///   entries rather than the arm.
-        /// - **`box`'s area equality**, which is the third population and the
-        ///   only one this build could close by writing code. `box_eq`
+        /// - **`box`'s area equality**, the population apart and the only
+        ///   one this build could close by writing code. `box_eq`
         ///   compares the two rectangles' *areas*, so the server calls
         ///   `(1,1),(0,0)` and `(3,3),(2,2)` equal where a byte comparison
         ///   does not — and `box` has no comparison in the register, so the

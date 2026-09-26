@@ -537,8 +537,8 @@ where the work in front of you would not require them.
   serialized `DumpIndex`, so
   archive-derived indexes and entry-relative offsets are a later variant rather
   than a breaking change. A cache whose version or kind is not recognised is
-  treated as absent, which the "never required for correctness" rule makes
-  safe.
+  refused as another build's until `--overwrite-unusable-cache` or a deletion
+  replaces it (`decisions.md`, "D20" and "D22").
 - **`ResumeToken` exposes no fields, ever.** Its contents today include a
   file offset, and a raw file offset is meaningless inside a compressed
   archive entry. Opaque now means the representation can change
@@ -910,7 +910,7 @@ which is what makes the difference worth minding at the moment one is found.
   ([2026-09-11](../status/history/2026-09-11.md), "`19.16` lands: 384 MiB").
   **It timed an arrangement that no longer ships**: there a one-reader block path
   held about 63 MiB, its budget leaving the block pool two slots, where the
-  shipped charge makes it hold about 111 MiB ([`measurements.md`](measurements.md),
+  shipped charge counts all four ([`measurements.md`](measurements.md),
   "What a scan holds above the budget it was given"), and no reading times the
   shipped arrangement. One file, one limit and a probe rather than a figure; what
   is left is whether a count-tracking floor would put a third reader inside
