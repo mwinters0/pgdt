@@ -77,7 +77,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic-filters.md).
 
-- [ ] **27.1** The evidence, no product code: the flags-on-against-off result-equality harness over every filter shape the spec's "Evidence" names, an aggregate's included; `measure.py` timing `datafusion-cli-pgdump`, and `dynamic-filter-join`, `dynamic-filter-topk` and the costing input taken on today's code
+- [ ] **27.1** The evidence, no product code: the flags-on-against-off result-equality harness over every filter shape the spec's "Evidence" names, an aggregate's included; `measure.py` timing `datafusion-cli-pgdump`, and `dynamic-filter-join`, `dynamic-filter-topk` and the costing input taken on today's code — the harness is landed, and the instrument waits in `measure.UNTAKEN` with the `dynfilter` input's generator, the costing input a row of `dynamic-filter-join`; the readings remain, taken from the commit that lands it and folded into `measurements.md`; [notes](../design/roadmap-P27.1-evidence-notes.md)
 - [ ] **27.2** Receiving and translating: `PgDumpExec` holds every pushed dynamic filter from any producer, visits it in `apply_expressions`, resets it in `reset_state` and prints it in EXPLAIN; the physical-to-library translator, with a generated check that it only loosens; nothing pruned yet
 - [ ] **27.3** The library's dynamic-filter trait on the partitioned replay: re-pruning between groups on a moved generation, the early stop at a dynamic bound, and the scan's new metrics
 - [ ] **27.4** The byte cut made once at the first poll, over the groups the static and dynamic filters keep, planning staying at `scan()`
@@ -112,3 +112,22 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`datafusion-cli-pgdump`'s figures run in `archlinux:base`, not the
+  register's `postgres:16`** (`measure.Config.dfcli_image`). Built on this
+  host it links `libm` symbols the image's glibc lacks, so it does not start
+  there; the host distribution's image was pulled and named as the default,
+  since the binary allocates with its own `mimalloc` and the image's `malloc`,
+  the reason the image is apparatus, times nothing in it. Each table says so,
+  and `measurements.md`, "The apparatus" says the figures are never
+  differenced against a `pgdt` one. Reconsidering means building the binary
+  against the register's image instead — in a toolchain container of its
+  distribution, as the allocator legs build in their own target directories
+  — which keeps one image and adds a second compiler to the apparatus.
+- **Both dynamic-filter figures run at `target_partitions = 1`**, the
+  register's `SWEEP_JOBS`, so slice 27.4's byte cut, whose subject is balance
+  across partitions, moves nothing they time. Stating 1 follows the apparatus
+  rule every shape but a declared axis obeys, and a serial scan is where a
+  filter's bytes-not-read shows undiluted. Reconsidering means a parallel leg
+  for the join figure, declared as an axis like the `parallel-*` families, if
+  27.4 is to be priced rather than only checked.

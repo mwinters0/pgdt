@@ -505,18 +505,15 @@ class StatisticsFigures(unittest.TestCase):
         self.assertEqual(a.replace(none_flags, every_flags), b)
 
     def test_the_exemption_admits_the_gathering_request_and_nothing_else(self):
-        # Outside the two families a `parse` stating `GATHER_STATISTICS` is
+        # Outside the three families a `parse` stating `GATHER_STATISTICS` is
         # still one that gathers, and is reported.
         script = f"time /pgdt parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             reported = measure.statistics_flag_problems()
+        families = (measure.STATISTICS_FAMILY, measure.PRUNING_FAMILY, measure.DYNFILTER_FAMILY)
         self.assertEqual(
             sorted(reported),
-            sorted(
-                c
-                for c in measure.command_shapes()
-                if not c.startswith((measure.STATISTICS_FAMILY, measure.PRUNING_FAMILY))
-            ),
+            sorted(c for c in measure.command_shapes() if not c.startswith(families)),
         )
 
     def test_the_pruning_builder_is_untimed_and_states_the_request(self):
@@ -705,6 +702,165 @@ class StatisticsFigures(unittest.TestCase):
             with self.subTest(said=said):
                 got = self._refused(**{"unnarrowed-uncarried": said})
                 self.assertIn("a cache without statistics returned", got)
+
+
+class DynamicFilterFigures(unittest.TestCase):
+    """`dynamic-filter-join` and `dynamic-filter-topk`: the register's first
+    figures timing `datafusion-cli-pgdump`, the second timed program.
+
+    Each way a leg can depart from what its table says is held here, because
+    each produces a plausible table of something else: a run inheriting
+    DataFusion's `target_partitions` while the untimed builder's `--jobs 1`
+    satisfies the worker-count check, two legs differing by more than the
+    producer's flag, an image or allocator the prose does not name, and legs
+    answering differently under the timer."""
+
+    SHAPES = measure.dynfilter_shapes()
+
+    def test_both_wait_untaken_and_borrow_nothing(self):
+        for fid in ("dynamic-filter-join", "dynamic-filter-topk"):
+            with self.subTest(figure=fid):
+                fig = measure.SELECTABLE_BY_ID[fid]
+                self.assertIn(fig, measure.UNTAKEN)
+                self.assertEqual(fig.shares, ())
+                self.assertEqual(measure.entangled_with(fid), [])
+                self.assertEqual(fig.warm_inputs, ("dynfilter",))
+                self.assertIsNone(fig.memory)
+
+    def test_every_leg_runs_the_second_program_under_its_producers_flag(self):
+        for figure, flag in measure.DYNFILTER_FLAGS.items():
+            for command in measure.dynfilter_shapes(figure):
+                with self.subTest(command=command):
+                    script = measure._script(command)
+                    leg = command.rpartition("-")[2]
+                    self.assertIn(f"{flag}={measure.DYNFILTER_LEGS[leg]} {measure.DFCLI} ", script)
+                    self.assertEqual(script.count("time "), 1)
+                    self.assertEqual(script.count(f"{measure.DFCLI} "), 1)
+                    for other in set(measure.DYNFILTER_FLAGS.values()) - {flag}:
+                        self.assertNotIn(other, script)
+
+    def test_the_two_legs_of_a_row_differ_by_the_flag_alone(self):
+        for figure, queries in measure.DYNFILTER_QUERIES.items():
+            flag = measure.DYNFILTER_FLAGS[figure]
+            for name in queries:
+                with self.subTest(figure=figure, query=name):
+                    off, on = (
+                        measure._script(f"{measure.DYNFILTER_FAMILY}{figure}-{name}-{leg}")
+                        for leg in measure.DYNFILTER_LEGS
+                    )
+                    self.assertEqual(off.replace(f"{flag}=false", f"{flag}=true"), on)
+
+    def test_the_builder_is_untimed_and_writes_where_dump_looks(self):
+        # `--dump` reads the cache beside the dump, and `datafusion-cli-pgdump`
+        # takes no cache path; the builder gathers what the scan prunes by.
+        for command in self.SHAPES:
+            with self.subTest(command=command):
+                builder, _, timed = measure._script(command).partition(" && ")
+                self.assertTrue(builder.startswith("/pgdt parse --source /dump.sql "))
+                self.assertIn("--dtcache /dump.sql.dtcache ", builder)
+                self.assertIn(measure.GATHER_STATISTICS, builder)
+                self.assertTrue(timed.startswith("time "))
+                self.assertIn(f"--dump {measure.DFCLI_CATALOG}=/dump.sql ", timed)
+
+    def test_every_run_of_the_second_program_states_its_partitions(self):
+        for command in self.SHAPES:
+            with self.subTest(command=command):
+                self.assertEqual(
+                    measure._dfcli_partitions(measure._script(command)),
+                    {str(measure.SWEEP_JOBS)},
+                )
+        self.assertEqual(measure.worker_count_problems(), [])
+        self.assertEqual(measure.pinned_count_problems(), [])
+
+    def test_a_run_inheriting_its_partitions_is_reported_though_the_builder_states_jobs(self):
+        script = (
+            "/pgdt parse --source /dump.sql --jobs 1 >/dev/null && "
+            f"time {measure.DFCLI} --dump b=/dump.sql -c 'SELECT 1'"
+        )
+        with unittest.mock.patch.object(measure, "_script", lambda c: script):
+            self.assertEqual(sorted(measure.worker_count_problems()), sorted(
+                c for c in measure.command_shapes()
+                if c != "dd" and not c.startswith(measure.RESERVE_FLAGLESS)
+            ))
+        stated = script.replace("time ", f"time {measure.DFCLI_PARTITIONS}=4 ")
+        with unittest.mock.patch.object(measure, "_script", lambda c: stated):
+            got = measure.pinned_count_problems()
+        self.assertTrue(any(f"{measure.DFCLI_PARTITIONS}=4" in line for line in got), got)
+
+    def test_the_sql_survives_the_shells_quoting(self):
+        # The query is single-quoted into `bash -c`.
+        for queries in measure.DYNFILTER_QUERIES.values():
+            for sql, _ in queries.values():
+                with self.subTest(sql=sql):
+                    self.assertNotIn("'", sql)
+
+    def test_the_queries_name_the_generators_tables_and_columns(self):
+        import generate_dynamic_filter_bench as gen
+
+        tables = {t.removeprefix("public.") for t, _ in gen.BUILD_TABLES}
+        columns = {name for name, _ in (*measure.perf.COLUMNS, *gen.COLUMNS)}
+        joins = measure.DYNFILTER_QUERIES["join"]
+        for name, (sql, _) in joins.items():
+            with self.subTest(query=name):
+                table = sql.split(f"JOIN {measure.DFCLI_CATALOG}.public.")[1].split(" ")[0]
+                probe_key = sql.rsplit(" = ", 1)[0].rsplit("p.", 1)[1]
+                self.assertIn(table, tables)
+                self.assertIn(probe_key, columns)
+        topk = measure.DYNFILTER_QUERIES["topk"]["unsorted"][0]
+        self.assertIn(f"ORDER BY p.{gen.COLUMNS[0][0]} ", topk)
+
+    def test_the_second_program_and_its_image_are_what_the_table_says(self):
+        # The table names `mimalloc` and the image; both are facts about the
+        # binary and the config, held here rather than trusted.
+        main = (measure.REPO / "datafusion-cli-pgdump/src/main.rs").read_text()
+        self.assertIn("static GLOBAL: MiMalloc = MiMalloc;", main)
+        self.assertNotEqual(measure.Config().dfcli_image, measure.Config().image)
+        self.assertEqual(measure.DFCLI_RELEASE_BIN.name, measure.DFCLI.lstrip("/"))
+
+    def test_a_dry_run_builds_nothing_and_names_the_binary(self):
+        said = []
+        with unittest.mock.patch.object(measure, "_DFCLI_BUILT", False), \
+                unittest.mock.patch.object(measure, "run") as ran:
+            got = measure.ensure_dfcli_binary(measure.Config(dry_run=True), said.append)
+        self.assertEqual(got, measure.DFCLI_RELEASE_BIN)
+        ran.assert_not_called()
+        self.assertTrue(any("would build" in line for line in said), said)
+
+    def _reported(self, figure, **override):
+        good = {
+            f"{name}-{leg}": {"result_rows": "1", "result_digest": f"h-{name}"}
+            for name in measure.DYNFILTER_QUERIES[figure]
+            for leg in measure.DYNFILTER_LEGS
+        }
+        good.update(override)
+        return good
+
+    def test_legs_answering_alike_pass(self):
+        for figure in measure.DYNFILTER_QUERIES:
+            with self.subTest(figure=figure):
+                self.assertEqual(measure.dynfilter_problems(figure, self._reported(figure)), [])
+
+    def test_legs_answering_differently_are_refused(self):
+        got = measure.dynfilter_problems(
+            "join", self._reported("join", **{"costing-on": {"result_rows": "1", "result_digest": "x"}})
+        )
+        self.assertEqual(len(got), 1, got)
+        self.assertTrue(got[0].startswith("costing: "), got)
+        got = measure.dynfilter_problems("topk", self._reported("topk", **{"unsorted-off": {}}))
+        self.assertEqual(len(got), 1, got)
+
+    def test_an_empty_answer_is_refused(self):
+        empty = {"result_rows": "0", "result_digest": "e"}
+        got = measure.dynfilter_problems(
+            "join", self._reported("join", **{"clustered-off": empty, "clustered-on": empty})
+        )
+        self.assertEqual(got, ["clustered: the query returned no row"])
+
+    def test_the_answer_is_read_off_the_legs_own_lines(self):
+        got = measure.parse_reported(
+            "result_rows=1\nresult_first=100\nresult_digest=" + "a" * 64 + "\n"
+        )
+        self.assertEqual(got, {"result_rows": "1", "result_first": "100", "result_digest": "a" * 64})
 
 
 class Allocator(unittest.TestCase):

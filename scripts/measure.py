@@ -49,7 +49,11 @@ does with it.
 The harness builds it (an *example* target, so `target/release/pgdt` is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
-declares.
+declares. The dynamic-filter figures time a **second program**,
+`datafusion-cli-pgdump`, with `pgdt` beside it building the cache it reads:
+it states its worker count as its session's `target_partitions`, runs in an
+image of its own because it cannot run in the register's, and allocates with
+its own `mimalloc` — each held by a test and said in its tables.
 
 One binary this cannot build for itself, by design: the **census-off** binary is
 `map::census_row`'s body preceded by a bare `return;` -- a source patch no
@@ -142,6 +146,9 @@ MIB = 1024**2
 #: back: the harness may claim to have built `cfg.bin_pgdt` only when the two
 #: are the same file.
 CARGO_RELEASE_BIN = REPO / "target/release/pgdt"
+#: The path `cargo build --release -p datafusion-cli-pgdump` writes: the second
+#: timed program's, beside `pgdt` rather than over it (`ensure_dfcli_binary`).
+DFCLI_RELEASE_BIN = REPO / "target/release/datafusion-cli-pgdump"
 
 
 # --------------------------------------------------------------------------
@@ -192,6 +199,15 @@ class Config:
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
     bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
+    # **The image the second program runs in**, where it cannot run in
+    # `image`: built on this host, `datafusion-cli-pgdump` links `libm` symbol
+    # versions newer than the register's image's glibc holds, which `pgdt`
+    # does not, so its legs run in an image of the build host's own
+    # distribution instead. Its allocator is its
+    # own `mimalloc` in either (`datafusion-cli-pgdump/src/main.rs`), so the
+    # image's `malloc`, which is why `image` is part of the apparatus, times
+    # nothing there; the departure is stated in each such figure's table.
+    dfcli_image: str = _env("PGDT_MEASURE_DFCLI_IMAGE", "archlinux:base")
     bin_nocensus: Path = Path(
         _env("PGDT_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdt-nocensus"))
     )
@@ -1299,6 +1315,14 @@ INPUTS: dict[str, InputSpec] = {
     "pruning": InputSpec(
         "pruning", "generate_pruning_bench.py", ("--seed", "42", "--size-mb", "@SIZE_MB@")
     ),
+    # The dynamic-filter figures' input: the control's rows, same seed and
+    # draws, with two join keys appended, and three small build tables
+    # (`generate_dynamic_filter_bench.py`).
+    "dynfilter": InputSpec(
+        "dynfilter",
+        "generate_dynamic_filter_bench.py",
+        ("--seed", "42", "--size-mb", "@SIZE_MB@"),
+    ),
 }
 for _n in (500, 1000, 2000, 4000):
     INPUTS[f"blocks{_n}"] = InputSpec(
@@ -1823,7 +1847,7 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdt" | "nocensus" | "before" | "none" (dd)
+    binary: str  # "pgdt" | "nocensus" | "dfcli" | … | "none" (dd); `Session.binary_path`
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -2180,7 +2204,7 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 SWEEP_JOBS = 1
 
 #: **Every `pgdt parse` this harness runs gathers no statistics**, outside the
-#: two figures whose subject is the gathering (`GATHER_STATISTICS`). `parse`
+#: figures whose subject is the gathering or what it buys (`GATHER_STATISTICS`). `parse`
 #: gathers per-row-group statistics by default, reading every value of every
 #: column, so a shape that inherited the default would re-time what its figure
 #: measures the day the default moved — the failure `SWEEP_JOBS` is stated
@@ -2193,9 +2217,10 @@ NO_STATISTICS = "--statistics none"
 #: held to the library's by a test.
 ROW_GROUP_SIZE = 1 << 20
 
-#: **What the two statistics figures state instead, where they gather.**
-#: Their subject is the gathering the rule above keeps out of every other
-#: figure, so they are its one exemption, and they state the request rather
+#: **What the statistics figures state instead, where they gather**, and the
+#: dynamic-filter figures' untimed builder with them. Their subject is the
+#: gathering the rule above keeps out of every other figure, or what it buys a
+#: query, so they are its one exemption, and they state the request rather
 #: than inherit it for the rule's own reason: the selection and the group size
 #: are both defaults that can move, and a shape inheriting either would re-time
 #: its figure the day one did. The size stated is the default's base size, and a
@@ -2270,6 +2295,83 @@ PRUNING_LEGS = ("none", "all")
 #: proves the cache carried nothing to consult, which `--statistics none` would
 #: print whatever the cache held.
 PRUNING_UNCARRIED = "uncarried"
+
+#: The second timed program: `datafusion-cli-pgdump`, mounted beside `/pgdt`,
+#: which builds the cache it reads (`ensure_dfcli_binary`).
+DFCLI = "/datafusion-cli-pgdump"
+#: The catalog `--dump` registers the input under: a generated dump names no
+#: database, so one is given.
+DFCLI_CATALOG = "bench"
+#: **The worker count, stated as `datafusion-cli` takes it**: the session's
+#: `target_partitions`, which is what the provider plans a scan's partitions
+#: against, set from the environment `ConfigOptions::from_env` reads. Stated at
+#: `SWEEP_JOBS` on every run of the binary, for that constant's reason, and
+#: held there by `worker_count_problems` and `pinned_count_problems`.
+DFCLI_PARTITIONS = "DATAFUSION_EXECUTION_TARGET_PARTITIONS"
+#: `dynamic-filter-join` and `dynamic-filter-topk`'s shapes,
+#: `<family><figure>-<query>-<leg>`: one untimed `pgdt parse` stating
+#: `GATHER_STATISTICS` writes the cache where `--dump` looks for it, beside
+#: the dump, and the timed `datafusion-cli-pgdump -c` runs one query with its
+#: producer's dynamic filter off or on. What the query returned is hashed
+#: outside the timer, so the two legs are held to one answer.
+#:
+#: **The figure's producer flag is the only lever**
+#: (`docs/design/roadmap-P27-dynamic-filters.md`, "Evidence"): one binary,
+#: DataFusion's own switch off against on, so the `on` leg is DataFusion's own
+#: filtering over whatever the scan does with the filter it is handed.
+DYNFILTER_FAMILY = "dfcli-dynamic-filter-"
+#: Each figure's queries, in its table's row order: the SQL and what the row
+#: calls it. **Every join counts one payload column over the probe's rows it
+#: matched**, so a row the filter would drop is one whose `v_text` need not be
+#: decoded, and the output is one line however many rows matched. The build
+#: side is the small table, which is what the planner collects from the
+#: provider's row counts (`generate_dynamic_filter_bench.py`):
+#:
+#: - **`clustered`** joins the ascending `id` against a run of consecutive ids:
+#:   the bounds rule out every group but the run's, where group pruning pays.
+#: - **`unclustered`** joins `u_key`, a bijection of `id`, against as many
+#:   scattered values: no group's bounds narrow anything, and only a row-level
+#:   check drops a row.
+#: - **`costing`** joins `bucket` against every value it holds, the largest
+#:   `IN` list a join publishes: the filter rejects no row, and what checking
+#:   it costs is pure overhead.
+#:
+#: **The TopK orders by the unsorted `u_key`**, projecting a payload column
+#: beside it; `u_key` has no ties, so the answer is one answer.
+DYNFILTER_QUERIES: dict[str, dict[str, tuple[str, str]]] = {
+    "join": {
+        "clustered": (
+            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"JOIN {DFCLI_CATALOG}.public.near b ON p.id = b.k",
+            "A selective join on the clustered `id`",
+        ),
+        "unclustered": (
+            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"JOIN {DFCLI_CATALOG}.public.scattered b ON p.u_key = b.k",
+            "A selective join on the unclustered `u_key`",
+        ),
+        "costing": (
+            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"JOIN {DFCLI_CATALOG}.public.every b ON p.bucket = b.k",
+            "A join on `bucket` rejecting no row",
+        ),
+    },
+    "topk": {
+        "unsorted": (
+            f"SELECT p.u_key, p.v_text FROM {DFCLI_CATALOG}.public.perf p "
+            "ORDER BY p.u_key LIMIT 10",
+            "`ORDER BY` the unsorted `u_key`, `LIMIT 10`",
+        ),
+    },
+}
+#: The producer flag each figure's legs state, as `ConfigOptions::from_env`
+#: reads `optimizer.enable_{join,topk}_dynamic_filter_pushdown`.
+DYNFILTER_FLAGS = {
+    "join": "DATAFUSION_OPTIMIZER_ENABLE_JOIN_DYNAMIC_FILTER_PUSHDOWN",
+    "topk": "DATAFUSION_OPTIMIZER_ENABLE_TOPK_DYNAMIC_FILTER_PUSHDOWN",
+}
+#: The legs, in the table's column order, and the flag's value in each.
+DYNFILTER_LEGS = {"off": "false", "on": "true"}
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3228,6 +3330,28 @@ def _script(command: str) -> str:
             f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
             f"--schema-mode typed --where '{expr}' --statistics {used} {j} >/dev/null"
         )
+    if command.startswith(DYNFILTER_FAMILY):
+        # `dynamic-filter-join` and `-topk`. The builder is outside the timer,
+        # as `statistics-pruning`'s is, and writes the cache beside the dump,
+        # where `--dump` looks — the root of the container's own layer, since
+        # the dump is mounted read-only. The answer is read back outside the
+        # timer too, as `key=value` lines `parse_reported` takes.
+        figure, _, rest = command.removeprefix(DYNFILTER_FAMILY).partition("-")
+        name, _, leg = rest.rpartition("-")
+        if name not in DYNFILTER_QUERIES.get(figure, {}) or leg not in DYNFILTER_LEGS:
+            raise ValueError(f"unknown command shape {command!r}")
+        sql = DYNFILTER_QUERIES[figure][name][0]
+        return (
+            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
+            f"{GATHER_STATISTICS} >/dev/null && "
+            f"time {DFCLI_PARTITIONS}={SWEEP_JOBS} "
+            f"{DYNFILTER_FLAGS[figure]}={DYNFILTER_LEGS[leg]} "
+            f"{DFCLI} --dump {DFCLI_CATALOG}=/dump.sql --format csv -q -c '{sql}' "
+            ">/tmp/result.csv && "
+            "echo result_rows=$(($(wc -l </tmp/result.csv) - 1)) && "
+            "echo result_first=$(sed -n 2p /tmp/result.csv | cut -d, -f1) && "
+            "echo result_digest=$(sha256sum </tmp/result.csv | cut -d' ' -f1)"
+        )
     if command.startswith("parse-chunk-"):
         # The read chunk, the one lever of the three I/O defaults that is a
         # value rather than a scheme. `parse` rather than `query`: this is
@@ -3351,6 +3475,18 @@ def _script(command: str) -> str:
     raise ValueError(f"unknown command shape {command!r}")
 
 
+def dynfilter_shapes(figure: str | None = None) -> tuple[str, ...]:
+    """The dynamic-filter figures' command shapes, or one figure's, in its
+    table's order: each query, off then on."""
+    return tuple(
+        f"{DYNFILTER_FAMILY}{fig}-{name}-{leg}"
+        for fig, queries in DYNFILTER_QUERIES.items()
+        if figure in (None, fig)
+        for name in queries
+        for leg in DYNFILTER_LEGS
+    )
+
+
 def command_shapes() -> tuple[str, ...]:
     """Every command shape `_script` builds, enumerated.
 
@@ -3378,6 +3514,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{STATISTICS_FAMILY}{leg}-rss" for leg, _ in STATISTICS_LEGS),
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
+        *dynfilter_shapes(),
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
@@ -3430,8 +3567,31 @@ def worker_count_problems() -> list[str]:
         for command in command_shapes()
         if command not in _NO_WORKERS
         and not command.startswith(_NO_FLAGS)
-        and not _WORKER_COUNT.search(_script(command))
+        and (
+            not _WORKER_COUNT.search(_script(command))
+            or _dfcli_partitions(_script(command)) == set()
+        )
     ]
+
+
+#: The partition count a run of `DFCLI` states: its session's
+#: `target_partitions`, from the environment in front of it.
+_DFCLI_PARTITIONS = re.compile(rf"\b{DFCLI_PARTITIONS}=(\d+) (?:\S+=\S+ )*{re.escape(DFCLI)} ")
+
+
+def _dfcli_partitions(script: str) -> set[str] | None:
+    """The partition counts every run of `DFCLI` in `script` states, `set()`
+    where one of them states none, or `None` for a script that runs none.
+
+    **A run of the second program is held to its own count**, because the
+    shapes that run it run `pgdt` too: the untimed builder's `--jobs` would
+    otherwise satisfy `_WORKER_COUNT` for a timed run that inherits
+    DataFusion's `target_partitions`, which defaults to the core count."""
+    runs = script.count(f"{DFCLI} ")
+    if not runs:
+        return None
+    stated = _DFCLI_PARTITIONS.findall(script)
+    return set(stated) if len(stated) == runs else set()
 
 
 #: One `pgdt parse` invocation inside a command shape's script, up to the next
@@ -3447,10 +3607,12 @@ def statistics_flag_problems() -> list[str]:
     gathering default rather than the scan its figure names. `--preamble-only`
     stops before any row and refuses the flag, so it is exempt.
 
-    **The two statistics families may state `GATHER_STATISTICS` instead**, and
-    only that: their subject is the gathering, and a `parse` of theirs that
-    inherits the request is reported exactly as anyone else's is."""
-    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY)
+    **The families whose subject is the gathering or what it buys may state
+    `GATHER_STATISTICS` instead**, and only that — the two statistics
+    figures', and the dynamic-filter figures', whose scans prune by what the
+    untimed builder gathered — and a `parse` of theirs that inherits the
+    request is reported exactly as anyone else's is."""
+    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY, DYNFILTER_FAMILY)
     return [
         command
         for command in command_shapes()
@@ -3515,6 +3677,12 @@ def pinned_count_problems() -> list[str]:
         stated = set(_WORKER_COUNT.findall(_script(command)))
         if stated != {f"--jobs {SWEEP_JOBS}"}:
             bad.append(f"{command} states {', '.join(sorted(stated)) or 'nothing'}")
+        partitions = _dfcli_partitions(_script(command))
+        if partitions is not None and partitions != {str(SWEEP_JOBS)}:
+            bad.append(
+                f"{command} states {DFCLI_PARTITIONS}="
+                f"{', '.join(sorted(partitions)) or 'nothing'}"
+            )
     return bad
 
 
@@ -3675,6 +3843,8 @@ class Session:
             return self.cfg.bin_nocensus
         if which == "xzdecode":
             return ensure_xz_decode_binary(self.cfg, self.log)
+        if which == "dfcli":
+            return ensure_dfcli_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         if which == "introspect":
@@ -3750,7 +3920,16 @@ class Session:
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
         mounts = [f"{dump}:/dump.sql:ro"]
-        if spec.binary != "none":
+        image = self.cfg.image
+        if spec.binary == "dfcli":
+            # The second program, and `pgdt` beside it to build the cache it
+            # reads, in the image it can run in (`Config.dfcli_image`).
+            mounts[:0] = [
+                f"{self.cfg.bin_pgdt}:/pgdt:ro",
+                f"{self.binary_path(spec.binary)}:{DFCLI}:ro",
+            ]
+            image = self.cfg.dfcli_image
+        elif spec.binary != "none":
             mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdt:ro")
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
@@ -3789,7 +3968,7 @@ class Session:
         # `_script` so that what a figure records as its shape is exactly what
         # was measured, and so the oracle covers every shape by construction
         # rather than by thirty branches remembering to carry it.
-        argv += [self.cfg.image, "bash", "-c", _script(spec.command) + OOM_ORACLE]
+        argv += [image, "bash", "-c", _script(spec.command) + OOM_ORACLE]
 
         # Whether the cache is dropped is the regime's own declaration, not a
         # prefix on its name: the name and the staging area are two facts, and
@@ -3821,6 +4000,15 @@ class Session:
                 if spec.command.startswith("decode-")
                 else {}
             )
+            if spec.command.startswith(DYNFILTER_FAMILY):
+                # A stand-in answer, one per query and alike in both legs,
+                # which the table refuses to render otherwise.
+                query = spec.command.rpartition("-")[0]
+                self._last_stdout = {
+                    "result_rows": "1",
+                    "result_first": "100",
+                    "result_digest": hashlib.sha256(query.encode()).hexdigest(),
+                }
             if spec.command.startswith(PRUNING_FAMILY):
                 # A stand-in of what the query's own notes say, for the same
                 # reason: the pruning table divides by them and refuses a
@@ -4424,6 +4612,32 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return out
 
 
+#: Whether this process has already built the second timed program, per
+#: process for `_PGDT_BUILT`'s reason.
+_DFCLI_BUILT = False
+
+
+def ensure_dfcli_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """`datafusion-cli-pgdump`, built before its first reading rather than
+    found, once per process, for `ensure_pgdt_binary`'s reason.
+
+    **Its own package, so `target/release/pgdt` is untouched** — the reason
+    `ensure_xz_decode_binary` builds an example target. It is timed in place:
+    the path is the build's own, so nothing can stand between the build and
+    the file mounted."""
+    global _DFCLI_BUILT
+    if _DFCLI_BUILT:
+        return DFCLI_RELEASE_BIN
+    if cfg.dry_run:
+        log(f"  [dry-run] would build {DFCLI_RELEASE_BIN}")
+        _DFCLI_BUILT = True
+        return DFCLI_RELEASE_BIN
+    log(f"  building {DFCLI_RELEASE_BIN}")
+    run(["cargo", "build", "--release", "-p", "datafusion-cli-pgdump"], cwd=REPO)
+    _DFCLI_BUILT = True
+    return DFCLI_RELEASE_BIN
+
+
 #: The three legs of the `allocator` figure, in the order the table carries
 #: them. `system` is the feature-free build -- the platform allocator, glibc's
 #: `malloc` on the recorded apparatus -- and is spelled the way the binary
@@ -4825,6 +5039,11 @@ GEN_SHAPES = (
 )
 #: The pruning input's generator, and the perf generator whose rows it writes.
 GEN_PRUNING = ("scripts/generate_pruning_bench.py", *GEN_PERF)
+#: The dynamic-filter input's generator, and the perf generator likewise.
+GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
+#: The second timed program: the provider it reads the dump through, and the
+#: binary around it.
+DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
 #: `statistics.rs` are the gathering; `pgtype.rs`, `resolve.rs` and
 #: `predicate.rs` are the comparison a bound is keyed and ordered under.
@@ -7832,6 +8051,117 @@ def run_statistics_pruning(session: Session) -> str:
     )
 
 
+# -- what DataFusion's dynamic filters buy a query -------------------------
+
+
+def _dynfilter_specs(figure: str) -> list[RunSpec]:
+    return [
+        RunSpec("dfcli", "dynfilter", command, "warm", command.removeprefix(DYNFILTER_FAMILY))
+        for command in dynfilter_shapes(figure)
+    ]
+
+
+def dynfilter_problems(figure: str, reported: Mapping[str, Mapping[str, str]]) -> list[str]:
+    """Why a dynamic-filter sitting's legs do not price what it claims, keyed
+    by `<query>-<leg>`.
+
+    **The two legs of a row must return one answer**, byte for byte: they
+    differ by a flag the spec says changes no row, so a difference is the
+    phase's correctness check failing under the timer, and a table beside it
+    would price a wrong answer. An answer with no row proves nothing either
+    way."""
+    bad = []
+    for name in DYNFILTER_QUERIES[figure]:
+        off, on = (reported.get(f"{name}-{leg}", {}) for leg in DYNFILTER_LEGS)
+        if not off.get("result_digest") or off.get("result_digest") != on.get("result_digest"):
+            bad.append(f"{name}: the two legs answered differently, or not at all")
+        elif int(off.get("result_rows", "0")) == 0:
+            bad.append(f"{name}: the query returned no row")
+    return bad
+
+
+def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
+    """One dynamic-filter figure: each of `kind`'s queries, the producer's flag
+    off and on, warm, and the `dd` floor."""
+    specs = _dynfilter_specs(kind)
+    session.sweep(figure, specs, session.cfg.reps(6))
+    floor = RunSpec("none", "dynfilter", "dd", "warm", "dd floor dynfilter")
+    session.sweep(figure, [floor], session.cfg.reps(3))
+    prefix = f"{DYNFILTER_FAMILY}{kind}-"
+    reported = {
+        spec.command.removeprefix(prefix): session.reported.get(spec.key(figure), {})
+        for spec in specs
+    }
+    problems = dynfilter_problems(kind, reported)
+    if problems:
+        raise RuntimeError(f"{figure} does not price one answer: " + "; ".join(problems))
+    rows, per_rep = [], []
+    for name, (sql, label) in DYNFILTER_QUERIES[kind].items():
+        walls = {
+            leg: session.get(
+                figure, RunSpec("dfcli", "dynfilter", f"{prefix}{name}-{leg}", "warm", "")
+            )
+            for leg in DYNFILTER_LEGS
+        }
+        answer = reported[f"{name}-on"]
+        answered = (
+            f"{int(answer['result_first']):,}" if kind == "join" else answer["result_rows"]
+        )
+        rows.append(
+            [
+                f"{label}: `{sql.removeprefix('SELECT ')}`",
+                fmt_median_spread(walls["off"]),
+                fmt_median_spread(walls["on"]),
+                fmt_delta(median(walls["off"]), median(walls["on"])),
+                answered,
+            ]
+        )
+        for leg in DYNFILTER_LEGS:
+            per_rep.append(f"- {label}, flag {leg}: {fmt_readings(walls[leg])}")
+    per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
+    flag = DYNFILTER_FLAGS[kind]
+    table = md_table(
+        [
+            "Query",
+            "Filter off",
+            "Filter on",
+            "Δ",
+            "Rows the join matched" if kind == "join" else "Rows returned",
+        ],
+        rows,
+    )
+    profile = session.stager.profile("dynfilter")
+    return (
+        table
+        + f"\n\nOne file — the control's rows with `u_key` and `bucket` appended, and three "
+        f"small build tables, {profile['rows']:,} rows in all — queried warm by "
+        f"`datafusion-cli-pgdump -c` at `{DFCLI_PARTITIONS}={SWEEP_JOBS}`, against a cache one "
+        f"untimed `pgdt parse` stating `{GATHER_STATISTICS}` wrote in the same container, so "
+        "the two legs of a row differ by the producer's flag alone and answer alike, "
+        f"byte for byte: `{flag}` is `false` off and `true` on, and the on leg's filter is "
+        "whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own "
+        "`mimalloc`, in the "
+        f"`{session.cfg.dfcli_image}` image rather than `{session.cfg.image}`, whose glibc "
+        "is older than the one it was linked against. `dd` → `/dev/null` on the same file: "
+        f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
+def run_dynamic_filter_join(session: Session) -> str:
+    """A selective join on a clustered key and on an unclustered one, and a
+    join whose filter rejects nothing, each with DataFusion's join dynamic
+    filter off and on."""
+    return _run_dynfilter(session, "dynamic-filter-join", "join")
+
+
+def run_dynamic_filter_topk(session: Session) -> str:
+    """An `ORDER BY … LIMIT` over an unsorted column, with DataFusion's TopK
+    dynamic filter off and on."""
+    return _run_dynfilter(session, "dynamic-filter-topk", "topk")
+
+
 # --------------------------------------------------------------------------
 # The register. Order is run order: a figure that shares a reading comes after
 # the figure that takes it.
@@ -8345,7 +8675,54 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # Everything the timed query reads through — the provider and the binary,
+    # the replay, the cache, the pruning plan, the filter, the typed decode —
+    # plus the gathering, which decides what the untimed builder leaves the
+    # scan to prune with. Both wait here for the commit that lands them
+    # (P27's first slice), since a sitting from a tree carrying its own
+    # uncommitted apparatus has no commit to name.
+    Figure(
+        id="dynamic-filter-join",
+        section="What DataFusion's dynamic filters buy a query",
+        table_label="A join's filter, over its probe table",
+        stage="warm",
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *CACHE,
+            *STATISTICS,
+            "pgdump_query/src/prune.rs",
+            *NESTED,
+            *DECODE,
+            *DATAFUSION,
+            *GEN_DYNFILTER,
+        ),
+        warm_inputs=("dynfilter",),
+        run=run_dynamic_filter_join,
+    ),
+    Figure(
+        id="dynamic-filter-topk",
+        section="What DataFusion's dynamic filters buy a query",
+        table_label="A TopK's filter, over the table it sorts",
+        stage="warm",
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *CACHE,
+            *STATISTICS,
+            "pgdump_query/src/prune.rs",
+            *NESTED,
+            *DECODE,
+            *DATAFUSION,
+            *GEN_DYNFILTER,
+        ),
+        warm_inputs=("dynfilter",),
+        run=run_dynamic_filter_topk,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -10902,7 +11279,8 @@ def cmd_check(doc: Path) -> int:
         print(
             "Command shapes inheriting a worker count — a shape that states none measures\n"
             "whatever the CLI's `--jobs` happens to default to on the day, which has already\n"
-            f"moved twice. State `--jobs {SWEEP_JOBS}`:"
+            f"moved twice. State `--jobs {SWEEP_JOBS}`, and `{DFCLI_PARTITIONS}={SWEEP_JOBS}` "
+            f"on every run of `{DFCLI.lstrip('/')}`:"
         )
         for command in unpinned:
             print(f"  {command}")
@@ -10922,7 +11300,8 @@ def cmd_check(doc: Path) -> int:
             f"or `--workers` for the\ndecode instrument, `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is, or\n`--jobs {RESERVE_JOBS}` for "
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
-            "declaration, and `dd` is not a run of ours.\n"
+            "declaration, and `dd` is not a run of ours. Every run of "
+            f"`{DFCLI.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"
         )
     if gathering:
         print(

@@ -1,0 +1,104 @@
+# P27.1 — The evidence: notes
+
+What the rest of this slice, and the slices after, inherit. The spec is
+[`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
+"Evidence". **The harness and the instrument landed; the readings did not**: a
+figure published outside a sweep names the commit it was taken at, and a
+sitting run from a tree carrying its own uncommitted apparatus has none
+([`measurements.md`](measurements.md), "A figure may be published outside the
+sweep"). No figure was taken.
+
+## What exists
+
+- **`datafusion-pgdump/tests/dynamic_filters.rs`** runs 27 queries over every
+  major's `statistics` fixtures, both flag sets, gathered at 1 KiB groups, in
+  three sessions per join mode — the three producer flags off, on, and on with
+  each table under a test-only `Recording` node — and holds all three to one
+  answer as a multiset. The join modes are the planner's choice and every hash
+  join `Partitioned` (both single-partition thresholds `0`).
+- **`Recording` is the scan's position in the plan without a consumer**: it
+  holds whatever the `Post` phase pushes to it, answers `No`, visits it in
+  `apply_expressions` and filters nothing. Each query asserts the shape its
+  filter took after the query ran — bounds, an `IN` list, `hash_lookup`, the
+  partitioned `CASE`, `struct(…) IN`, a null-equal join's `IS NULL`, a TopK's
+  or an aggregate's threshold, and a TopK's `false`. So the harness cannot
+  pass by exercising nothing, which on today's code it otherwise would.
+- **`dynamic-filter-join` and `dynamic-filter-topk` wait in
+  `measure.UNTAKEN`**, standing in no sharing edge. Each leg runs an untimed
+  `pgdt parse` stating `GATHER_STATISTICS` into `/dump.sql.dtcache`, where
+  `--dump` looks, then times `datafusion-cli-pgdump -c` with its producer's
+  flag `false` or `true` and `target_partitions` at `SWEEP_JOBS`, and hashes
+  the answer outside the timer; `dynfilter_problems` refuses a sitting whose
+  legs answered differently or not at all.
+- **The input is `dynfilter`** (`scripts/generate_dynamic_filter_bench.py`):
+  the control's rows with `u_key` and `bucket` appended, and three build
+  tables written after the probe — `near`, 100 consecutive ids at the middle;
+  `scattered`, the `u_key`s of 100 ids spread over the table; `every`, all 150
+  buckets. The join rows are the clustered, unclustered and costing inputs the
+  spec names; the TopK orders by `u_key`.
+- **The second program is held to its own worker count**:
+  `worker_count_problems` and `pinned_count_problems` read
+  `DATAFUSION_EXECUTION_TARGET_PARTITIONS` off every run of it, since the
+  builder's `--jobs 1` would otherwise satisfy the check for a run inheriting
+  the core count.
+
+## What the harness showed of DataFusion 55.1
+
+- **On today's code a join computes no filter at all**: the probe subtree holds
+  no node whose `apply_expressions` visits it, so `plan_contains_expression_id`
+  is false. The figures' join "on" leg is therefore today's plan with the flag
+  merely set; a TopK and an aggregate maintain theirs regardless.
+- **A float join's bounds and a TopK's threshold order `NaN` above `inf` and
+  `-0` below `0`** — `f8 >= -0 AND f8 <= NaN`, `f8 < NaN` — Arrow's total
+  order, which the translator must keep rather than read as IEEE comparison.
+- **A TopK whose heap no row can enter publishes `false`**, not a threshold:
+  `ORDER BY gappy NULLS FIRST LIMIT 9` over 142 NULLs. Translated, that rules
+  out every group left, the cheapest early stop there is.
+- **The partitioned `CASE` ends `ELSE false`**, and a null-equal join wraps
+  it: `k IS NULL OR CASE …`. A build side of one partition publishes no `CASE`
+  even under `Partitioned`.
+- **An enum declared sorted plans no TopK ascending**: the provider declares
+  its label order, so `ORDER BY m LIMIT` is a plain limit.
+- **`datafusion-cli-pgdump` does not run in `postgres:16`** built on this
+  machine: it links `libm` symbols at `GLIBC_2.43`/`2.44` against the image's
+  2.41, so its legs run in `archlinux:base`. The image the register names is
+  Debian trixie, glibc 2.41, where
+  [`measurements.md`](measurements.md), "The apparatus" still says bookworm and
+  2.36; that line is the register's, not this slice's.
+
+## Tests
+
+- `datafusion-pgdump/tests/dynamic_filters.rs`: the answer check above, and
+  `the_costing_input_is_the_largest_in_list_a_join_publishes`, holding the
+  generator's `BUCKETS` to DataFusion's
+  `hash_join_inlist_pushdown_max_distinct_values`.
+- `scripts/test_measure.py`'s `DynamicFilterFigures`: the legs differ by the
+  flag alone, the builder is untimed and writes where `--dump` looks, every run
+  of the second program states its partitions and one inheriting them is
+  reported, the SQL survives the shell's quoting and names the generator's
+  columns, the table's `mimalloc` and image are true, and each refusal fires.
+- `scripts/test_generate_dynamic_filter_bench.py`: the probe is the control's
+  rows with the keys appended, all DDL precedes the data, `u_key` is a
+  bijection, every bucket is in every 150 rows, and each selective join matches
+  exactly 100 probe rows.
+- A `--dry-run` and a 0.25 GiB two-rep sitting of both rendered; the second
+  found the reported key a digit kept `parse_reported` from reading.
+
+## For the rest of this slice
+
+- **Take the readings from the commit**: `cd scripts && uv run measure.py
+  --figure dynamic-filter-join --figure dynamic-filter-topk`. It generates the
+  3.00 GiB `dynfilter` input on its first run and builds
+  `datafusion-cli-pgdump`; each rep runs a gathering `parse` before its timer.
+  Then move both into `measure.FIGURES`, paste the tables under "What
+  DataFusion's dynamic filters buy a query" beside "What row-group statistics
+  buy a query", and tick the box.
+
+## For 27.2
+
+- **The harness's "on" session is the plain provider**, so it starts testing
+  `PgDumpExec` the moment the scan holds a filter; `Recording` wraps the scan
+  and keeps the filter from reaching it, so it stays a record of the shapes,
+  or goes once EXPLAIN prints them.
+- **Every shape the translator meets is in the recorded displays above**,
+  `hash_lookup` and `struct(…) IN` included, which it answers `true`.

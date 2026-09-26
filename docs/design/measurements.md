@@ -102,6 +102,15 @@ Eighteen standing rules for reading anything below:
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
 
+  **The second timed program departs from both, and its tables say so.**
+  `datafusion-cli-pgdump`, which the dynamic-filter figures time, allocates
+  with `datafusion-cli`'s own `mimalloc`, and built on a host whose glibc is
+  newer than the register's image's it links `libm` symbol versions that image
+  does not hold, so it runs in an image of the build host's distribution
+  (`measure.Config.dfcli_image`). Its
+  figures are therefore never differenced against a `pgdt` one; each states
+  its binary and image in its own table.
+
   **The apparatus stops at which allocator, and does not pin how many arenas it
   keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. The term it would
   control is real: a probe — not a figure — on two builds older than the
@@ -158,10 +167,12 @@ Eighteen standing rules for reading anything below:
   `uv run measure.py --check` fails a shape whose `parse` omits it, and the
   profile, heaptrack and koji recipes state it too; `--preamble-only` reads no
   row and states none. What gathering costs, and what it buys a query, are the
-  two figures whose subject it is — `statistics-gathering` and
-  `statistics-pruning` — and they are the one exemption: a `parse` of theirs
-  that gathers states `measure.GATHER_STATISTICS`, the request and the group
-  size alike, and `--check` holds them to that rather than to nothing.
+  figures whose subject it is — `statistics-gathering` and
+  `statistics-pruning`, and the dynamic-filter figures, whose untimed builder
+  leaves the statistics their scans prune by — and they are the one
+  exemption: a `parse` of theirs that gathers states
+  `measure.GATHER_STATISTICS`, the request and the group size alike, and
+  `--check` holds them to that rather than to nothing.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the
