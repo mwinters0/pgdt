@@ -102,12 +102,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`STORED AS PGDUMP` takes its strictness from its factory, not the
-  statement** (`M168`). `PgDumpTableFactory::with_strict_identity` is what
-  `datafusion-cli-pgdump --strict-identity` sets, so one flag governs every
-  `--dump` and every statement of a session, and a statement has no
-  `pgdump.strict_identity` option. Made so because which identity signals bind
-  is a session's answer as `--strict-identity` is a `pgdt` run's, and a key
-  would be a second place to state it. Reconsidering adds that key to
-  `PgDumpTableOptions`, overriding the factory's for one table.
