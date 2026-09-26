@@ -51,7 +51,8 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
 /// **The refusal set is the tokenizer's, not a copy of it**
 /// (`docs/design/decisions.md`, "D60"): a term is accepted only where
 /// [`tokenize`] gives back a single [`Token::Leaf`], or nothing at all, which
-/// makes the refused set *exactly* the disagreeing set by construction.
+/// makes every disagreeing string refused by construction, with some that
+/// would not disagree — a lone `)`, `and` or `or` — refused beside them.
 ///
 /// **The check is on the `--filter` path alone.** A `--where` leaf is what
 /// came *out* of this tokenizer, and its edges met a boundary there as they
@@ -176,7 +177,16 @@ fn keyword_at(bytes: &[u8], i: usize) -> Option<(usize, Token<'static>)> {
 /// **Quoted regions are skipped whole**, with a doubled quote an escaped one
 /// — the same scan `split_filter_op` makes: a paren or the word `and` inside
 /// a quoted value is data. A quote that never closes swallows the rest of the
-/// string into one leaf, where `parse_filter` refuses it.
+/// string into one leaf.
+///
+/// Deficiency register: `deficiency: KD49` — a quote opens a region wherever
+/// it stands here, where the term grammar reads one inside an unquoted value
+/// as data, so `--where "note=don't and x=1"` is one leaf, an equality against
+/// `don't and x=1` rather than a conjunction, and `--filter` accepts the same
+/// string though it holds an unquoted `and`; `parse_filter` refuses an
+/// unclosed quote only where it opens a part or stands before the operator.
+/// **(c) unowned**; closing it means a quote opening a region here only where
+/// the term grammar would read it as one.
 fn tokenize(spec: &str) -> Vec<Token<'_>> {
     let bytes = spec.as_bytes();
     let mut tokens = Vec::new();

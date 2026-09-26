@@ -333,7 +333,8 @@ pub(crate) fn canonical_type_name(reference: &str) -> Option<String> {
 /// unterminated one, which lets a caller's scan terminate rather than loop.
 ///
 /// One implementation of the quoting rule, `''` being an escaped quote rather
-/// than the end of the string, for both scanners below.
+/// than the end of the string, for every scanner below that steps over a
+/// literal.
 fn skip_quoted(bytes: &[u8], open_idx: usize) -> usize {
     debug_assert_eq!(bytes.get(open_idx), Some(&b'\''));
     let mut i = open_idx + 1;
@@ -1752,7 +1753,7 @@ mod tests {
 
     #[test]
     fn connect_starts_a_new_named_database_and_drops_the_preconnect_segment() {
-        // `CREATE DATABASE koji ...;` isn't one of `classify`'s three shapes
+        // `CREATE DATABASE koji ...;` isn't one of `classify`'s four shapes
         // (I5: it never carries a real table or type), so it's `Unparsed`
         // like any other statement this module doesn't model.
         let meta = dump_metadata_from_spans(&[

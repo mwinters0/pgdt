@@ -451,8 +451,9 @@ pgdt query --source dump.sql --table public.widgets --where 'not name=alpha'
 
 `NOT` binds tighter than `AND`, which binds tighter than `OR`; parens
 override that. The keywords are case-insensitive, and they are only keywords
-outside quotes — `--where 'tag=and'` is still an equality against `and`, and
-so is `--where 'tag="and"'`.
+as whole words outside quotes — `--where 'tag=and'` is still an equality
+against `and`, the `=` before it joining it to the term, and so is
+`--where 'tag="and"'`.
 
 **A value that holds a paren must be quoted**, because a bare `(` groups:
 
@@ -464,7 +465,7 @@ so is `--where 'tag="and"'`.
 Given both flags, the expression and every `--filter` term must all hold.
 
 **A `--filter` term is never read as an expression — and may not hold one
-either.** A term carrying an unquoted `AND`, `OR`, `NOT` or paren is refused
+either.** A term carrying an unquoted `AND`, `OR` or `NOT` as a word, or a paren, is refused
 rather than taken literally, so no string can mean one thing under `--filter`
 and something else under `--where`:
 
@@ -530,7 +531,7 @@ pgdt query --source dump.sql --table pg_index --filter 'indkey=1 2 3'
 It compares element by element, exactly as an array does — so `2` is *less
 than* `10`, where the two strings sort the other way round.
 
-**A range is five fields**, and `pgdt info` prints them as `Range<T>` because
+**A range is five fields**, and `pgdt info --detail` prints them as `Range<T>` because
 they are the same five for every range column in every dump:
 
 | Field | Type | Meaning |

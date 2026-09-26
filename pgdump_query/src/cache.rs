@@ -427,8 +427,8 @@ impl Default for StrictIdentity {
 /// **The cadence follows the cost of asking.** Locally the check rides the
 /// cache save, which is already throttled (`docs/design/decisions.md`, "D62"),
 /// so nothing is added to the read loop; a run that never saves — a disabled
-/// cache, or a warm query answered wholly from the cache — is checked once,
-/// when it finishes. Writing the rule as uniform would be false.
+/// cache, or a warm query answered wholly from the cache — is checked as its
+/// reading ends: once, or once per sub-stream of a partitioned replay. Writing the rule as uniform would be false.
 #[derive(Debug)]
 pub struct SourceWatch {
     baseline: SourceIdentity,
@@ -579,9 +579,9 @@ pub struct CacheEnvelope {
 /// modification signal that moved, an origin that is not this run's, or both.
 ///
 /// **Recomputed on every load and never persisted**, exactly as the coverage
-/// diagnostics are (see the module docs). A caller that binds either term is
+/// diagnostics are (see the module docs). A caller a term it binds fails is
 /// refused by [`CacheMode::strict_identity_refusal`] instead and never reaches
-/// here.
+/// here; one whose bound terms hold still hears of those it left unbound.
 ///
 /// Public for that method's reason, and it is the same caller: one that
 /// *reports* what a cache holds reads the full [`CacheStatus`] through
@@ -1251,8 +1251,8 @@ impl CacheMode {
                 save(path, source, index).await
             }
             // **No check here**: a disabled cache writes nothing, so there is
-            // no save for one to ride, and this run's one check is the one its
-            // entry point makes when it finishes ([`SourceWatch`]).
+            // no save for one to ride, and this run's checks are the ones its
+            // readers make as they end ([`SourceWatch`]).
             CacheMode::Disabled { .. } => Ok(()),
             CacheMode::Offline(_) => {
                 Err(Error::CacheModeMismatch("cache-only mode never has a fresh scan to persist"))

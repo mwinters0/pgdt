@@ -39,15 +39,15 @@ Options:
           side too, which is how a column named `a=b` is asked for: `"a=b"=x`.
           
           A term is never read as an expression — but nor may it hold what `--where` would read as
-          one. An unquoted `AND`, `OR`, `NOT` or paren is refused rather than taken literally, so no
-          string means one thing here and another under `--where`; quote the part that holds it, or
-          use `--where`.
+          one. An unquoted `AND`, `OR` or `NOT` as a word, or a paren, is refused rather than taken
+          literally, so no string means one thing here and another under `--where`; quote the part
+          that holds it, or use `--where`.
 
       --where <EXPR>
           Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and parens, with `NOT`
           binding tighter than `AND` and `AND` tighter than `OR`. The keywords are case-insensitive
-          and are recognised only outside quotes, so `--where 'tag=and'` is still an equality
-          against `and`.
+          and are recognised only as whole words outside quotes, so `--where 'tag=and'` is still an
+          equality against `and`.
           
           Anything that is not a paren or a keyword is a term, read by exactly the grammar
           `--filter` reads — so `--where 'note=a and b'` is `note=a` AND the term `b`, which has no

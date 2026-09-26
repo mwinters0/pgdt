@@ -23,7 +23,7 @@
 //! ever point inside already-mapped territory. A [`CacheMode::Enabled`] cache
 //! is persisted where the map advances: completed blocks whose save has earned
 //! its cost ([`SaveThrottle`]), the block that settles the query, and every
-//! exit but an error. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
+//! exit past the first read but an error. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
 //! that, [`table_stream`] runs [`crate::index::scan_preamble`] once (skipped
@@ -1763,7 +1763,8 @@ impl<'a> TableStream<'a> {
     /// channel beside `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes`
     /// (L2) and [`Self::comparison_notes`] (L4).
     ///
-    /// **Settled before any block is read**, from the map alone. A
+    /// **Settled before any block is read**, from the map and the source's own
+    /// advice. A
     /// [`table_stream_partitions`] sub-stream holds them when it is handed
     /// back; [`table_stream`]'s serial replay, which plans no partitions and
     /// so never notes a budget, holds its pruning note once its first item is
@@ -4495,8 +4496,9 @@ mod tests {
     }
 
     /// A `last_cost` big enough to overflow `Duration * u32` saturates instead
-    /// of panicking. Unreachable in practice — it takes a save of over seven
-    /// years — but the multiplication is on the hot path of every block.
+    /// of panicking. Unreachable in practice — it takes a save costing a
+    /// twentieth of `Duration::MAX` — but the multiplication is on the hot
+    /// path of every block.
     #[test]
     fn an_absurd_save_cost_saturates_rather_than_panicking() {
         assert!(!SaveThrottle::due_after(Duration::MAX / 2, Duration::MAX));
@@ -4506,7 +4508,7 @@ mod tests {
     /// [`resolve_block`] refuses `Typed` resolution against metadata with no
     /// complete entry for the block's database, which every call site
     /// satisfies by construction — so `Error::MetadataNotScanned` is
-    /// unreachable through every public entry point, and this is what stands
+    /// unreachable but through a hand-built `DumpIndex`, and this is what stands
     /// between a future reordering and a silently wrongly-typed row.
     #[test]
     fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
@@ -4676,7 +4678,7 @@ mod tests {
             assert_eq!(flat, vec![0, 10, 20, 30, 40], "streams {streams}");
         }
 
-        // One piece carrying most of the bytes gets a group of its own.
+        // One piece carrying most of the bytes: two groups, two pieces each.
         let lopsided = vec![piece(0, 1), piece(1, 2), piece(2, 1002), piece(1002, 1003)];
         let groups = distribute(lopsided, 2);
         assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);

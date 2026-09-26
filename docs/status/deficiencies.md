@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD48 -->
-**`KD1`–`KD48` are allocated, and nothing at or below `KD48` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD50 -->
+**`KD1`–`KD50` are allocated, and nothing at or below `KD50` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -309,3 +309,16 @@ than reading as a phase nobody has sliced.
   fixed before statistics existed and has not been read since. **(b) owned by
   P23**, which sets it from those readings and runs the blind gate an
   attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
+
+- **KD49** — `--where`'s tokenizer opens a quoted region at a quote inside an
+  unquoted value, which the term grammar reads as data, so
+  `--where "note=don't and x=1"` is one equality rather than a conjunction,
+  and `--filter` accepts the same string though it holds an unquoted `and`.
+  **(c) unowned**; promoted by a query over an apostrophe answering a
+  conjunction as one term. Detail: `pgdt/src/where_expr.rs`.
+
+- **KD50** — a flagless run on a host stating no limit, cut to half of
+  `MemAvailable`, prints its budget as "what this source asks for" and its
+  count as "lowered … by the allocation", beside a first line saying nothing
+  enforces a limit. **(c) unowned**; promoted by a status line read as the
+  source's request where it was the machine's. Detail: `pgdt/src/main.rs`.

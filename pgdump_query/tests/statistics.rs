@@ -1370,7 +1370,7 @@ fn long_block(dir: &Path) -> std::path::PathBuf {
 /// **A block whose statistics the allowance cannot hold declines, the scan
 /// finishes, and the map records the allowance it declined under**
 /// (`docs/design/decisions.md`, "D85"): a second run at the same allowance
-/// re-reads nothing and says so again, and one under a larger allowance
+/// re-reads nothing and says so again, and one stating no allowance
 /// re-reads the block into exactly what an unbounded pass gathers, clearing
 /// the record. Serial and at four workers, which declines the same way.
 ///
@@ -1422,7 +1422,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert_eq!(again.declined_statistics, 1, "{at}");
         assert_eq!(block(&again.index, "public.t").statistics_declined, Some(allowance), "{at}");
 
-        // A larger allowance re-reads it, into what the unbounded pass gave.
+        // No allowance re-reads it, into what the unbounded pass gave.
         let roomy = ScanOptions { statistics_allowance_bytes: None, ..tight.clone() };
         let wider = map_file(&source, &roomy, &mode, &wanted).await.unwrap();
         assert_eq!((wider.lacking_statistics, wider.backfilled), (1, 1), "{at}");

@@ -699,8 +699,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
     let (_xz_dir, compressed) = seekable_xz();
     let dir = tempfile::tempdir().unwrap();
 
-    // 400 bytes is below the fixture's 512-byte block unit, so the block path
-    // is declined and the source advises one partition over the whole file —
+    // 400 bytes is below the reserve and carves to a budget of 0, below the
+    // fixture's 512-byte block unit, so the block path is declined and the source advises one partition over the whole file —
     // the same arrangement `parallelism.rs` asserts the `query` decline in.
     let out = run(&[
         "parse",

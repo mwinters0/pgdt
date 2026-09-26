@@ -32,8 +32,8 @@ pub fn end_as_namespace_init(repl: bool) -> Result<()> {
 
 pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per database it holds, \
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
-    name; NAME= names the catalog of a dump that names no database. :strings reads every column \
-    as its text. Repeatable";
+    name, unless NAME= is given; NAME= is required for a dump that names no database, and \
+    refused for one of several. :strings reads every column as its text. Repeatable";
 
 /// One `--dump [NAME=]SOURCE[:strings]`.
 ///

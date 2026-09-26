@@ -74,7 +74,7 @@ pub enum Error {
     #[error("{why}; the provider reads only a complete cache — run `{parse}` to build it")]
     CacheNotComplete { parse: String, why: String },
     /// A catalog name is needed and nothing supplies one, or one was supplied
-    /// where the file already names every database.
+    /// for a file of several databases, where it could name none of them.
     #[error("{0}")]
     CatalogName(String),
     /// The table asked for is not in the dump, or its name alone matches more

@@ -5,8 +5,10 @@
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
 //! under, counts, and bounds as unescaped field text — what `pg_dump` wrote, a
-//! `character`'s without its trailing blanks, where the value fits [`DICTIONARY_ENTRY_MAX_BYTES`], and a prefix or a successor of it
-//! where it does not ([`Bounds::min_exact`], [`Bounds::max_exact`]). Which
+//! `character`'s without its trailing blanks, where the value fits
+//! [`DICTIONARY_ENTRY_MAX_BYTES`]; where it does not, a bytewise-ordered
+//! column's bound is a prefix or a successor of it ([`Bounds::min_exact`],
+//! [`Bounds::max_exact`]) and any other column's group keeps none. Which
 //! column gets which statistic, and how a value is ordered, is decided above
 //! this layer by whatever implements [`BlockObserver`]; the mapping pass hands
 //! it every row and stays type-blind.
@@ -355,7 +357,9 @@ pub enum StatisticsTarget {
 /// **A block the leader splits is observed piece by piece**: each piece's rows
 /// go to an observer [`Self::piece`] made, and the pieces are handed back in
 /// file order to [`Self::absorb`], after which the block's observer answers
-/// what it would have had it been handed every row itself.
+/// what it would have had it been handed every row itself — bar a decline,
+/// which a piece's charge alongside its neighbours' can reach where one
+/// observer's would not (`docs/design/decisions.md`, "D85").
 pub(crate) trait BlockObserver: Send {
     /// One row, `offset` being where its first byte sits relative to the
     /// block's first data byte, and `raw` the still-escaped line without its

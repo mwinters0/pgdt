@@ -7,8 +7,8 @@
 //! the binary can say is that the flag reaches the evaluator, that `OR` and
 //! `NOT` change which rows come back, that `--where` and `--filter` compose,
 //! and that no string means one thing under one flag and something else under
-//! the other — a string that reads as structure is refused by both, and
-//! quoting is the remedy under both.
+//! the other — a `--filter` term `--where` would read as structure is
+//! refused, and quoting is the remedy under both.
 
 use std::process::{Command, Output};
 

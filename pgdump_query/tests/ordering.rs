@@ -58,11 +58,9 @@ async fn kept_ids(table: &str, filters: Vec<Predicate>) -> Vec<Option<String>> {
 }
 
 /// A spread of the register's agreeing rows, each through its own decoder
-/// against the fixture's own values, and each a case a *text* comparison
-/// would get wrong: the negative integer and the negative decimal both sort
-/// last as text, `NaN` is PostgreSQL's largest float rather than an
-/// incomparable one, a `uuid` compares as its 16 bytes rather than as its
-/// hyphenated spelling, and `24:00:00` is a real boundary value.
+/// against the fixture's own values: a negative integer and a negative
+/// decimal, `NaN` as PostgreSQL's largest float rather than an incomparable
+/// one, a `uuid` as its 16 bytes, and `24:00:00`, a real boundary value.
 #[tokio::test]
 async fn each_agreeing_type_orders_by_its_own_decoder() {
     assert_eq!(
@@ -158,10 +156,10 @@ async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
 
 /// A bare `numeric` orders by decimal value, against the fixture's own
 /// column. `t_numeric.v_untyped` holds `NaN`, `0`, `100.00` and `12345.6789`,
-/// and the three assertions below are each a case a bytewise comparison of
-/// this row would get wrong: `100.00` sorts *below* `9` as text,
-/// `100.00` and `100` are one value written two ways, and `NaN` is the
-/// largest value rather than a letter.
+/// and the first two assertions below are each a case a bytewise comparison
+/// of this row would get wrong: `100.00` sorts *below* `9` as text, and
+/// `100.00` and `100` are one value written two ways. The third pins `NaN`
+/// as the largest value.
 #[tokio::test]
 async fn a_bare_numeric_orders_by_decimal_value() {
     assert_eq!(
@@ -209,8 +207,8 @@ async fn an_enum_orders_by_declaration_order() {
 
 /// An `interval` orders by the span PostgreSQL computes, so `1 mon`,
 /// `30 days` and `720:00:00` are one bound written three ways — the property
-/// that makes bytewise wrong here in *both* directions, since the three
-/// spellings keep three different row sets as text. `t_interval` holds
+/// that makes bytewise wrong here, since as text the three spellings do not
+/// keep one row set. `t_interval` holds
 /// `1 year 2 mons 3 days 04:05:06` (423 days and change), `-1 days`,
 /// `00:00:00` and `01:30:00`.
 #[tokio::test]
@@ -227,8 +225,8 @@ async fn an_interval_orders_by_span_whatever_the_bound_is_spelled() {
             "bound spelled {bound}"
         );
     }
-    // `01:30:00` is the fixture's `1.5 hours` as the dump writes it, and it
-    // is below 60 days where its text is above.
+    // `01:30:00` is the fixture's `1.5 hours` as the dump writes it; the
+    // value whose text sorts the other way is the 423-day one.
     assert_eq!(
         kept(
             "public.t_interval",
@@ -518,13 +516,13 @@ async fn a_multirange_is_compared_after_its_members_are_normalized() {
 /// (I45): the elements up to the shorter array's length, then the element
 /// count, then the dimension count, then the dimensions and lower bounds.
 ///
-/// Each assertion is a case a bytewise comparison of the `array_out` text
-/// gets wrong. `t_array` row 1 holds `{}` and row 2 `{1,2,3}`: `{}` sorts
-/// below on element count where the *text* `{}` sorts above it (`}` is
-/// `0x7D`). Row 1's `{NULL}` outranks row 2's `{1,NULL,3}` because a NULL
-/// element is above every value, where the word `NULL` sorts among the
-/// letters. And an enum element is ordered by its declaration position, so
-/// row 1's leading `sad` is below `ok`.
+/// The first and third assertions are each a case a bytewise comparison of
+/// the `array_out` text gets wrong. `t_array` row 1 holds `{}` and row 2
+/// `{1,2,3}`: `{}` sorts below on element count where the *text* `{}` sorts
+/// above it (`}` is `0x7D`). An enum element is ordered by its declaration
+/// position, so row 1's leading `sad` is below `ok`. The second pins that
+/// row 1's `{NULL}` outranks row 2's `{1,NULL,3}`, a NULL element being above
+/// every value.
 #[tokio::test]
 async fn an_array_orders_element_wise_then_by_shape() {
     assert_eq!(
@@ -1029,9 +1027,10 @@ async fn a_collated_column_is_judged_by_its_clause() {
 
 /// The eight reachable columns hold one alphabet, so the note is the only
 /// thing that separates them: every one answers bytewise, including the four
-/// the note says PostgreSQL would order differently. `_x` surviving `> B` is
-/// the divergence made concrete — underscore is above `B` in ASCII and is
-/// ignored at glibc's primary level, where the server ranks it below. `v_nd`
+/// the note says PostgreSQL would order differently. `a` and `ax` surviving
+/// `> B` are the divergence made concrete — lower case is above `B` in ASCII,
+/// where glibc's primary level ranks `a` below it; `_x` survives under both,
+/// its underscore ignored there. `v_nd`
 /// is bytewise here too, and its ICU collation would order it differently
 /// again; the register says so and does not act on it.
 #[tokio::test]

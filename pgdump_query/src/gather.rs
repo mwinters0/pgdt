@@ -15,7 +15,9 @@
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
-//! ([`Gatherer::join`]). Two things cross a join: the group a cut falls
+//! ([`Gatherer::join`]), unless the block declines, which a stated allowance
+//! decides over every piece charging at once (`docs/design/decisions.md`,
+//! "D85"). Two things cross a join: the group a cut falls
 //! inside, which a piece holds open rather than closing ([`Gatherer::head`]),
 //! and each ordered column's first value, which the rows before the piece
 //! place their last value against ([`RowOrder`]).
@@ -2816,8 +2818,8 @@ mod tests {
 
     /// **A block whose statistics pass the pass's allowance declines**: it
     /// answers the allowance rather than statistics, frees what it had
-    /// gathered — the account is empty after it, and never reached what the
-    /// whole block holds — and the scan reads on
+    /// gathered — the account is empty after it, and never reached the peak
+    /// an unbounded pass over the block reaches — and the scan reads on
     /// (`docs/design/decisions.md`, "D85").
     ///
     /// **Not vacuous**: the same block, the same rows and an allowance that

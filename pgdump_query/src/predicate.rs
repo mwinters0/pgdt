@@ -21,12 +21,13 @@ use crate::{Error, Result};
 /// own [`ComparisonPlan`]: the four ordering operators decode both sides and
 /// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
 /// that gives the server's answer for that column ([`equality_comparison`]).
-/// A nested column with a plan is compared structurally under every operator.
+/// A nested column with a plan is compared structurally under every operator,
+/// and a query's Arrow semantics refuses one under every operator instead.
 /// Where the register has no plan for a column — it did not resolve, one of
 /// its nested positions is not compared, or this build orders its type not at
 /// all — `Eq`/`Ne` compare the canonical `*_out` text the file holds and the
-/// ordering operators are refused, where a query's Arrow semantics orders
-/// them bytewise instead.
+/// ordering operators are refused, where a query's Arrow semantics orders a
+/// scalar one bytewise instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -52,8 +53,8 @@ pub enum PredicateOp {
 
 impl PredicateOp {
     /// Whether this operator compares by the column's own order rather than
-    /// as text — the four that need a `Mapped` column the register gives an
-    /// order.
+    /// as text — the four that need, in PostgreSQL's semantics, a `Mapped`
+    /// column the register gives an order.
     pub fn is_ordering(self) -> bool {
         matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
     }
@@ -81,7 +82,8 @@ impl PredicateOp {
 /// its root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
 /// matched against the queried table's column names, the `COPY` header's
 /// list. `value` is `None` for `IsNull`/`IsNotNull`, which need no
-/// comparison value; it is always `Some` for every other operator.
+/// comparison value; both parsers give one for every other operator, and a
+/// `None` there is read as the empty value.
 ///
 /// `value` is read with the column's own decoder wherever the register gives
 /// the column a comparison, whatever the operator, once when the block's schema
@@ -1602,7 +1604,9 @@ fn range_key(
 /// `None` is the server's `22000` — a lower bound above its upper, a *semantic*
 /// refusal the container grammar cannot see (I44), so it is raised here where
 /// the bounds have been decoded — or a discrete bound whose successor
-/// overflows its subtype.
+/// overflows `i64`. Only an `int8range`'s can: every integer bound is read as
+/// `i64` (see `order_key`), so an `int4range` or `daterange` bound at its
+/// subtype's maximum takes a successor the server would refuse.
 fn make_range(
     lower: RangeBoundKey,
     upper: RangeBoundKey,
@@ -1917,8 +1921,8 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
     use CompareKind as K;
     let rendered = match kind {
         // Both sides per row. `order_key` reads a special value on the way,
-        // so `NaN = NaN` and `Infinity = Infinity` come out of the same rank
-        // rule the ordering operators use (I34).
+        // so `NaN = NaN` and `Infinity = Infinity` come out of the same order
+        // the ordering operators use (I33, I34).
         K::Float32
         | K::Float64
         | K::Numeric { .. }
@@ -2013,8 +2017,8 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement,
 /// either `numeric` kind's leading or trailing point and leading zeros, a
 /// network value's full-width or zero-padded netmask, an IPv6 address's
-/// uncompressed, zero-padded or upper-case groups, and a time's trailing
-/// fractional zeros (`docs/design/decisions.md`, "D55").
+/// uncompressed, zero-padded or upper-case groups, a `cidr` written with no
+/// netmask, and a time's trailing fractional zeros (`docs/design/decisions.md`, "D55").
 /// `jsonb` needs the least here, its grammar being the whole of `jsonb_in`.
 ///
 /// Two arms answer with the kind's own payload, because there the payload
@@ -2073,7 +2077,8 @@ fn accepted_form(kind: &CompareKind) -> String {
             "as a full IPv4 or IPv6 address, optionally followed by `/bits`".into()
         }
         K::Network { cidr: true } => {
-            "as a full IPv4 or IPv6 address followed by `/bits`, with no bit set below the netmask"
+            "as a full IPv4 or IPv6 address, optionally followed by `/bits`, with no bit set below \
+             the netmask"
                 .into()
         }
         K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs".into(),
@@ -2392,7 +2397,8 @@ pub(crate) fn resolve_term(
         }
         plan = None;
     } else if let Some(ComparisonPlan::Unanswerable(reason)) = plan {
-        // The one refusal that does not end by offering `=`/`!=`: the file
+        // The one refusal in PostgreSQL's semantics that does not end by
+        // offering `=`/`!=`: the file
         // says the server's equality is not a comparison of the text it
         // holds, so the fall-through below would be a wrong answer rather
         // than a weaker one. The two NULL tests have already returned.
@@ -4267,7 +4273,8 @@ mod tests {
 
     /// A range type declaring a `canonical` function refuses **every**
     /// comparing operator, `=` and `!=` included, through an error of its own
-    /// — the one refusal that cannot end by offering the text comparison,
+    /// — in PostgreSQL's semantics the one refusal that cannot end by
+    /// offering the text comparison,
     /// that comparison being what the file says is not the server's.
     ///
     /// The two NULL tests still answer: they read no value and consult no
@@ -4376,8 +4383,8 @@ mod tests {
         assert!(holds("true", PredicateOp::Gt, "1"));
         assert!(holds("1", PredicateOp::Gt, r#""a""#));
         assert!(holds("false", PredicateOp::Lt, "true"));
-        // A bytewise comparison of the same text gets that third one
-        // backwards: `{` is below `n`.
+        // A bytewise comparison of the same text gets the first one
+        // backwards, `1` being below `n`, and this one right: `{` is above.
         assert!(holds(r#"{"a": 1}"#, PredicateOp::Gt, "null"));
     }
 
@@ -4612,7 +4619,7 @@ mod tests {
             assert!(holds(spelling, PredicateOp::Ge, "1 mon"), "{spelling}");
             assert!(holds(spelling, PredicateOp::Le, "1 mon"), "{spelling}");
         }
-        // `-1 days` is below `00:00:00`, which bytewise it is not.
+        // `-1 days` is below `00:00:00`.
         assert!(holds("-1 days", PredicateOp::Lt, "00:00:00"));
         // The full `interval_out` form, with a year part and a time tail.
         let full = "1 year 2 mons 3 days 04:05:06";

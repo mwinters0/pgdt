@@ -26,8 +26,8 @@ Options:
       --where <EXPR>               Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT`
                                    and parens, with `NOT` binding tighter than `AND` and `AND`
                                    tighter than `OR`. The keywords are case-insensitive and are
-                                   recognised only outside quotes, so `--where 'tag=and'` is still
-                                   an equality against `and`
+                                   recognised only as whole words outside quotes, so `--where
+                                   'tag=and'` is still an equality against `and`
       --column <NAME>              Materialize only this column, repeatable — the output carries the
                                    columns in the order the flags give them, which need not be the
                                    file's. A name the table does not carry is an error, and so is a

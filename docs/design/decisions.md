@@ -10,8 +10,8 @@ rules, the line cap included, are `docs/process.md`, "The decision register".
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
-`Parallelism::default()` is `Serial`; `discover_in` is opt-in and its one caller is the CLI, run on
-purpose. Rejected: `default_workers` read in the library, so silence means concurrency.
+`Parallelism::default()` is `Serial`; discovery is opt-in, asked for by the CLI and by the DataFusion
+provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers` read in the library, so silence means concurrency.
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 On every real device a serial plain scan is device-bound, and each partition reads a chunk-sized
@@ -185,7 +185,7 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a
 partial result. The preamble scan ignores the flag, a stop there reading as the first `COPY` header and caching as
 complete. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
-the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and once saved a second one, or
+the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or
 one in the listing, ends it in the handler. As init (RT19) both binaries exit 128+n on every signal ending them elsewhere
 but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
 on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
@@ -400,7 +400,7 @@ conditional, so L4) and per column from `column_divergences` in a query's semant
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
-`refuse_where_structure` refuses any `--filter` term that tokenizes to more than one leaf, so a string
+`refuse_where_structure` refuses any `--filter` term that tokenizes to anything but one leaf, so a string
 both flags accept means one thing. A keyword needs whitespace, a paren or the string's end on both sides
 and `NOT` after `is` stays in the term. A term splits at the earliest operator outside quotes, longest
 first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.

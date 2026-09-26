@@ -916,7 +916,7 @@ binary using it declares for itself.
 `rt-multi-thread`, and its `tokio` feature adds only `dep:tokio` and
 `dep:tracing`; `src/client/retry.rs` and `src/client/get.rs` await
 `tokio::time::sleep` and the response body directly, with no spawn. Observed:
-every assertion in `pgdt/tests/remote.rs` runs under `#[tokio::test]`, whose
+every async assertion in `pgdt/tests/remote.rs` runs under `#[tokio::test]`, whose
 flavour is `current_thread`.
 
 **Scope limit.** Multipart upload and the `list` path are not claimed; this

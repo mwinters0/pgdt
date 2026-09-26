@@ -121,14 +121,14 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     assert_eq!(budget.drawn(), 0);
 }
 
-/// **`SET pgdump.memory = 0` returns to the allowance the budget discovered**,
+/// **`SET pgdump.memory = 0` returns to the budget's own allowance**,
 /// as `target_partitions = 0` returns to the machine's parallelism: a plan
 /// seated by a stated allowance is followed by one floored under the budget's
 /// own, and the setting reads as unstated again. `RESET` still reaches none
 /// of it, which is why `0` is the way back; `pgdt --memory 0` stays refused
 /// (`pgdt/tests/parallelism.rs`), absence being how a flag asks.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_zero_allowance_returns_to_the_discovered_one() {
+async fn a_zero_allowance_returns_to_the_budgets_own() {
     let dir = tempfile::tempdir().unwrap();
     let copy = parsed_copy(dir.path()).await;
     let plans = Arc::new(Plans::default());

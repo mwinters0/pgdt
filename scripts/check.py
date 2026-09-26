@@ -7,8 +7,9 @@ the scripts' own `unittest` and `repoint.py` -- and a session reading their raw
 output pipes it through `grep` and `head` to find the lines that matter, then
 re-runs the suite when the pipe cut what it needed. This runs each command
 once, writes its whole output to a log under `runs/check/`, and prints a
-summary of fixed shape: one line a check carrying the tool's own result line,
-and beneath a failing check the lines naming what failed. Everything else is in
+summary of fixed shape: one line a check carrying its result -- the tool's own
+result line where it prints one, a count read from its output where it does
+not -- and beneath a failing check the lines naming what failed. Everything else is in
 the log the summary names, so nothing needs a second run to be read.
 
 **The run is stamped with the tree it tested**: a git tree id covering every
@@ -21,10 +22,10 @@ between is reported and the run verifies neither.
 
 **`--verify` reuses a passing run of this tree** instead of re-running it, so
 a second reader of a round's result -- the orchestrator that did not do the
-work -- checks the evidence rather than paying for it again. Only the newest
-run of the tree counts, so a failure is never hidden behind an earlier pass,
-and only a run of this same list of commands. With no such run it runs the
-checks.
+work -- checks the evidence rather than paying for it again. Only a run of
+this same list of commands counts, and of those only the tree's newest, so a
+failure is never hidden behind an earlier pass of the list; an `--affected`
+verify counts a run of every check too. With no such run it runs the checks.
 
 **A red repoint meter is not a failure.** It says the record has outgrown its
 last blind read and a repoint is due, which is a round of its own
@@ -37,24 +38,27 @@ warnings, and a warning left for the next round is one nobody fixes.
 **`--affected` runs the cargo checks the change can reach**, the change being
 every path whose content differs between `HEAD`'s tree and the stamped one.
 The scripts' `unittest` and `repoint.py` always run, being cheap and the ones
-that read the docs. Each changed path is classified in this order:
+that read the docs. A changed path runs the targets reading it, and what the
+first of the other three rules it meets gives it:
 
 - **Read by a test target** -- a string literal in one of its sources, taken
   relative to its package and to its file, names the path or a directory
-  above it -- runs that target (`binary_id` in nextest's terms). A test's
-  working directory is its package's, and a literal is truncated at the first
-  `{`, so `format!("../fixtures/{major}")` reads all of `fixtures/`.
+  above it -- runs that target (`binary_id` in nextest's terms), in any
+  package. A test's working directory is its package's, and a literal is
+  truncated at the first `{`, so `format!("../fixtures/{major}")` reads all
+  of `fixtures/`.
 - **Inside a workspace member** runs that package whole; outside its
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
-  transitively, too. Those packages are the ones formatted, linted and
-  doc-tested.
+  transitively, too. Those packages are the ones formatted and linted, and
+  doc-tested where they have a library, as is a library whose own tests read
+  a changed path.
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
   names such a path or reads `docs/` or `.claude/` whole, a Markdown file in
   a data directory documenting it; the one Rust test reaching one does so
   through a `test_*` module the scripts' `unittest` runs already, and the
   other scripts Rust tests run read none (`test_check` pins the first two).
-- **Anything else** -- the workspace manifest, the lockfile, `vendor/`, a
-  tool's config -- runs every check, as without the flag.
+- **Anything else no test reads** -- the workspace manifest, the lockfile,
+  `vendor/`, a tool's config -- runs every check, as without the flag.
 
 A change touching only the third kind runs no cargo at all, not even
 `cargo metadata`. A phase wrap runs every check
@@ -297,9 +301,10 @@ def head_tree(repo: Path) -> tuple[str | None, str | None]:
         return None, None
 
 
-#: Paths no Rust target reads (`test_check` asserts it of the real tree).
+#: Paths taken as read by no Rust target: `test_check` asserts that no literal
+#: names one, nor the repository, `docs/` or `.claude/` whole.
 UNTESTED_RE = re.compile(r"^(docs/|\.claude/)|\.md$")
-#: The directories of a package whose change reaches no other package.
+#: The directories of a package whose change runs none of its dependents.
 PACKAGE_LOCAL = ("tests/", "benches/", "examples/")
 #: Cargo target kinds a library's tests run under, in nextest's binary id.
 LIB_KINDS = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"}
@@ -331,7 +336,9 @@ _MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
 
 
 def module_files(repo: Path, root: str) -> list[str]:
-    """`root` and every file its `mod name;` declarations reach, repo-relative."""
+    """`root` and every file its `mod name;` lines reach at the conventional
+    paths, repo-relative; a `#[path]`, an attribute on the same line and a
+    declaration inside an inline module are not followed."""
     out: list[str] = []
     pending = [(root, True)]
     while pending:
@@ -355,8 +362,8 @@ _PLAIN_STRING_RE = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
 
 
 def string_literals(src: str) -> list[str]:
-    """The string literals in Rust source, doc comments' included (doctests
-    are code), ordinary comments' not."""
+    """The string literals in Rust source, line doc comments' included
+    (doctests are code), block and ordinary comments' not."""
     out: list[str] = []
     i, n = 0, len(src)
     while i < n:
@@ -469,7 +476,7 @@ def workspace(repo: Path) -> list[Package]:
 
 
 #: Binaries a note names one by one; past it, it counts them by package, and
-#: nextest's argument in the log names each.
+#: nextest's argument in the run's `record.json` names each.
 NOTE_BINARIES = 6
 
 

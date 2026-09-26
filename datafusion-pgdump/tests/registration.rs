@@ -2,7 +2,8 @@
 //!
 //! **A registration's findings are the library's own, named.** Each finding a
 //! sink hears is one the library produced — a `Diagnostic`, a `ColumnNote` or
-//! a `ComparisonNote`, recovered through `as_any` — with the dump or the table
+//! a `ComparisonNote`, recovered through `as_any` — or the provider's
+//! `RefusedTable` for a table whose plan refuses, with the dump or the table
 //! it is about in front of its sentence.
 
 use std::path::{Path, PathBuf};

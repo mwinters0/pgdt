@@ -189,9 +189,10 @@ impl ParallelArgs {
     /// same reason `ParallelArgs::resolve_in` takes one.
     fn discover_in<'a>(&'a self, root: &'a Path) -> Discovered<'a> {
         // **Read even where `--memory` was stated**: the mode is a
-        // fact about the run, not the flag. Both status lines state this read
-        // — `memory.high` is writable by whoever set it, so a second walk
-        // could answer differently.
+        // fact about the run, not the flag. The first status line states this
+        // read, and the second too where no `--memory` is stated —
+        // `memory.high` is writable by whoever set it, so a second walk could
+        // answer differently.
         //
         // Deficiency register: `deficiency: KD29` — a flagless read-buffer
         // budget is not taken from this read: each `Discovered::resolve` calls
@@ -365,9 +366,10 @@ struct QueryPasses {
 impl QueryPasses {
     /// The mapping pass's count and the replay's, where the statistics the
     /// mapping pass holds cut the first below the second. The two passes are
-    /// carved from one allowance and differ only in `held`, so a lower count
-    /// has that one cause; a stated `--jobs` is never lowered, and only its
-    /// budget can differ.
+    /// carved from one allowance and differ in `held`, and, with no `--memory`,
+    /// in what each pass's own read of the limit and of `MemAvailable` returns
+    /// (KD29's walk); a stated `--jobs` is never lowered, and
+    /// only its budget can differ.
     fn mapping_shortfall(&self) -> Option<(usize, usize)> {
         let (jobs, asked) = (self.mapping.parallelism().jobs(), self.replay.parallelism().jobs());
         (jobs < asked).then_some((jobs, asked))
@@ -381,7 +383,7 @@ impl QueryPasses {
     /// (`docs/design/decisions.md`, "D64", "D85").
     ///
     /// **Opened whenever the cache holds statistics**, not only where they cut
-    /// the count: the pass's budget then differs from the replay's, stated
+    /// the count: the pass's budget can then differ from the replay's, stated
     /// `--jobs` or not. It prefixes only what the pass emits, so a cache that
     /// already settles the table, whose query maps nothing, prints none of it.
     fn mapping_span(&self) -> tracing::Span {
@@ -466,11 +468,19 @@ impl Resolved {
     /// beside the budget exactly as a discovered limit is rather than being
     /// abbreviated to `(stated)`.
     ///
-    /// Four spellings, for the four ways to arrive at a number: the flag; a
-    /// discovered limit, named by the file that stated it (`memory.high`
-    /// throttles where `memory.max` kills, and either may be an ancestor's);
-    /// the source's own recommendation; and the library's constant, which is
-    /// what "no limit found" leaves a source that recommends nothing.
+    /// Four spellings: the flag; a discovered limit, named by the file that
+    /// stated it (`memory.high` throttles where `memory.max` kills, and either
+    /// may be an ancestor's); the source's own recommendation; and the
+    /// library's constant, which is what "no limit found" leaves a source that
+    /// recommends nothing.
+    ///
+    /// Deficiency register: `deficiency: KD50` — there is a fifth way to a
+    /// number, half of `MemAvailable` on a host stating no limit, and it is
+    /// spelled as the source's recommendation: a source asking for 24 readers,
+    /// cut to 4, prints a budget "what this source asks for" and a count
+    /// "lowered … by the allocation" beside a first line saying nothing
+    /// enforces one. **(c) unowned**; closing it means a spelling of its own,
+    /// on this line and on [`Resolved::jobs_display`]'s.
     fn budget_display(&self) -> String {
         let bytes = self.parallelism.memory_bytes().unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
         if let Some(allowance) = self.allowance_stated {
@@ -655,7 +665,8 @@ enum Command {
     /// that as it goes unless told `--dtcache none`). Resumes from a matching cache rather than
     /// restarting, and banks its progress at `COPY` block boundaries as it
     /// goes — including on Ctrl-C, which saves what has been scanned and
-    /// then ends the process by that signal — so an interrupted scan is not
+    /// then ends the process by that signal, or with status 128+n as a
+    /// container's init — so an interrupted scan is not
     /// wasted work. Remove the
     /// cache file to force a scan from byte 0.
     Parse {
@@ -869,8 +880,8 @@ enum Command {
         /// for: `"a=b"=x`.
         ///
         /// A term is never read as an expression — but nor may it hold what
-        /// `--where` would read as one. An unquoted `AND`, `OR`, `NOT` or
-        /// paren is refused rather than taken literally, so no string means
+        /// `--where` would read as one. An unquoted `AND`, `OR` or `NOT` as a
+        /// word, or a paren, is refused rather than taken literally, so no string means
         /// one thing here and another under `--where`; quote the part that
         /// holds it, or use `--where`.
         #[arg(long)]
@@ -878,8 +889,8 @@ enum Command {
         /// Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and
         /// parens, with `NOT` binding tighter than `AND` and `AND` tighter
         /// than `OR`. The keywords are case-insensitive and are recognised
-        /// only outside quotes, so `--where 'tag=and'` is still an equality
-        /// against `and`.
+        /// only as whole words outside quotes, so `--where 'tag=and'` is still
+        /// an equality against `and`.
         ///
         /// Anything that is not a paren or a keyword is a term, read by
         /// exactly the grammar `--filter` reads — so `--where 'note=a and b'`
@@ -1264,9 +1275,9 @@ fn dequote(part: &str) -> Option<Result<String, char>> {
 
 /// One side of a filter term as the [`Predicate`] should carry it: whitespace
 /// outside the quotes trimmed off, and a quoted part taken exactly as written.
-/// `what` names the side for the error message. Trimming is `str::trim`, the
-/// same definition the `IS NULL` forms use, so the parser holds one notion of
-/// whitespace.
+/// `what` names the side for the error message. Trimming is `str::trim`,
+/// Unicode's whitespace; the worded operators, the `IS NULL` forms and the
+/// keyword boundaries separate words by ASCII whitespace alone.
 fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     let part = part.trim();
     match dequote(part) {
@@ -3998,8 +4009,8 @@ mod tests {
         assert_eq!(ok(r#"note="it's""#).2, Some("it's".into()));
     }
 
-    /// A quote that does not open the part is ordinary data — nothing scans
-    /// for quotes inside an unquoted value.
+    /// A quote that does not open the part is ordinary data to this parser;
+    /// `--where`'s tokenizer is another matter (KD49).
     #[test]
     fn a_quote_inside_an_unquoted_value_is_data() {
         assert_eq!(ok("note=don't").2, Some("don't".into()));

@@ -360,9 +360,9 @@ pub enum ComparisonDivergence {
     /// (I32). Held apart from [`Self::UnknownCollation`] because the column
     /// states nothing and could not: `jsonb` is not collatable.
     JsonbStringCollation,
-    /// A column whose declared type resolved, is not nested, and has no
-    /// comparison in this register at all — `box`, `money`, `xml`, a
-    /// user-defined base type. An ordering operator is *refused* on such a
+    /// A column whose declared type is not nested and has no comparison in
+    /// this register at all — `box`, `money`, `xml`, a user-defined base type,
+    /// each of which resolves to text as `UnknownType` or `OpaqueBaseType`. An ordering operator is *refused* on such a
     /// column ([`ComparisonPlan::Refused`]); `=`/`!=` are not, because the
     /// text a dump holds is canonical `*_out` form and a byte comparison over
     /// it is right for most of these types. This says it is not right for all
@@ -1706,8 +1706,9 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 
 /// Walk a chain of domains to the type name it bottoms out at — the declared
 /// spelling of the first non-domain it reaches, or of `name` itself when that
-/// is not a domain. The terminal is returned as the DDL spelled it; each of
-/// its two readers normalizes what it needs to.
+/// is not a domain. The terminal is returned as the DDL spelled it, and its
+/// two readers compare it to `box` ignoring case only, the bare name being the
+/// spelling `pg_dump` writes a built-in in (I8, I29).
 ///
 /// [`resolve_array`] and [`array_comparison`] test this terminal rather than
 /// the declared spelling (I22, I26; `docs/design/decisions.md`, "D41").
@@ -3536,8 +3537,9 @@ mod tests {
             let ComparisonPlan::Nested(tree) = plan else { panic!("{declared}: not nested") };
             assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
             // The three refused for a reason of *this build's* announce
-            // nothing: PostgreSQL orders an array of arrays through
-            // `array_ops` and compares `box[]` element-wise.
+            // nothing: PostgreSQL compares `box[]` element-wise, and this
+            // build knows neither `public.gtype`'s order nor, here,
+            // `public.intarr`.
             let expected: Vec<_> = announces
                 .then(|| (path.to_string(), at.to_string(), ComparisonDivergence::AsText))
                 .into_iter()

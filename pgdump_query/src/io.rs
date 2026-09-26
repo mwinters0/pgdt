@@ -107,8 +107,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// and what one of those readers costs it resident.
     ///
     /// **Advisory, and the caller never learns what is underneath**: a local
-    /// file answers "anywhere, one buffer each" and a compressed one "at these
-    /// block boundaries, a block each".
+    /// file answers "anywhere, a few chunk buffers each" and a compressed one
+    /// "at these block boundaries, a block each".
     ///
     /// **The default declines to advise**: one partition, at no stated cost.
     /// It answers where and at what cost, never whether — the caller decides
@@ -620,8 +620,9 @@ impl Partitioning {
     /// retention list is shared and is [`WorkerMemory`]'s second term.
     ///
     /// **The decoder's own retention is a declared number rather than a
-    /// guess**: `xz_seek::Layout::decode_footprint()` is the same whatever
-    /// range is read, so the source charges it once at construction. The table
+    /// guess**, the same whatever range is read and so charged once at
+    /// construction: `xz_seek::Layout::decode_footprint()` for a local file,
+    /// the decoder's bytes and the widest compressed window for a fetched one. The table
     /// records only the first block's dictionary per stream, so it is an
     /// estimate and not a ceiling; what cannot understate is the layout's
     /// `memlimit`, compared against each block's own declared dictionary
@@ -1579,9 +1580,10 @@ struct BufferPool {
     /// Signalled whenever a charged buffer comes back, which is the only event
     /// that can let a waiting acquisition through.
     returned: Condvar,
-    /// What this pool may hold in free buffers at once, in bytes:
-    /// [`DEFAULT_MEMORY_BUDGET`] until a caller states one through
-    /// [`ByteRangeSource::hint_parallelism`].
+    /// What this pool may hold in free buffers at once, in bytes: for a chunk
+    /// pool [`DEFAULT_MEMORY_BUDGET`] until a caller states one through
+    /// [`ByteRangeSource::hint_parallelism`], for a block pool what its
+    /// source's chunk pool leaves of that (`XzBudget::apportion`).
     ///
     /// **The pool is bounded in bytes because a block pool cannot be bounded
     /// in slots** ([`POOL_DEPTH`] slots of a decoded xz block can be the whole
@@ -2431,11 +2433,13 @@ impl XzBudget {
     /// charge — the per-reader charge and the retention list shared beside
     /// it, as one shape.
     ///
-    /// **It is the one composition site**, keeping the recommendation
-    /// ([`ByteRangeSource::default_worker_memory`]), the gate
-    /// ([`BlockCache::affordable`]) and the advice
-    /// ([`Partitioning::worker_memory`]) from being three statements of one
-    /// cost ([`XzBudget::charged_chunk_bytes`]).
+    /// It composes the recommendation's shape
+    /// ([`ByteRangeSource::default_worker_memory`]); the gate
+    /// ([`BlockCache::affordable`]) reads [`BlockCache::worker_memory`] itself
+    /// and the advice ([`xz_partition_advice`]) builds the same shape from
+    /// [`BlockCache::reader_bytes`], which
+    /// `the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge`
+    /// holds alike.
     fn block_worker_memory(&self) -> Option<WorkerMemory> {
         let cache = self.blocks.as_ref()?;
         Some(cache.worker_memory(self.charged_chunk_bytes(), self.decode_bytes))
@@ -2513,9 +2517,9 @@ impl XzBudget {
 /// [`ByteRangeSource::stored_size`]/[`ByteRangeSource::modified`], and every
 /// decode reads its compressed bytes through `pread`, so the handle is shared
 /// by everything and disturbs nothing. It is what `xz_seek` pulls from —
-/// `std::fs::File` is a `CompressedSource` — which is the whole difference
-/// between this source and [`FetchedXzSource`], whose bytes have to be fetched
-/// into a window first (`docs/design/decisions.md`, "D15").
+/// `std::fs::File` is a `CompressedSource` — which is where this source and
+/// [`FetchedXzSource`] part, whose bytes have to be fetched into a window
+/// first (`docs/design/decisions.md`, "D15").
 ///
 /// **Two arms, and the budget picks between them**, as the fetched source's do:
 ///
@@ -2548,7 +2552,7 @@ pub struct XzSource {
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
     table: Arc<xz_seek::SeekTable>,
     /// The live piecewise decode, or `None` where no read has taken that arm
-    /// yet. Behind a `Mutex` because a handle goes forward only and one
+    /// yet or its last decode failed. Behind a `Mutex` because a handle goes forward only and one
     /// position cannot serve two readers — which is why that arm advises a
     /// single partition ([`xz_partition_advice`]).
     live: Arc<Mutex<Option<LiveBlock>>>,
@@ -3242,8 +3246,9 @@ pub async fn walk_seek_table(
 /// have to be **fetched** rather than pulled
 /// (`docs/design/decisions.md`, "D14" and "D18").
 ///
-/// **The difference from [`XzSource`] is the transport and nothing else.**
-/// There the crate holds a `std::fs::File` and reads through it as it decodes;
+/// **The difference from [`XzSource`] starts at the transport**, and what
+/// follows from it — the worker count, the wait policy, the decoder's charge,
+/// the state a failed read leaves — is stated where each lives. There the crate holds a `std::fs::File` and reads through it as it decodes;
 /// here nothing can `await` inside a decode, so this source fetches a block's
 /// whole compressed extent first — `xz_seek::BlockTask::compressed_range`
 /// states it before the fetch — wraps it in an `xz_seek::Window` and decodes
@@ -3281,8 +3286,9 @@ pub struct FetchedXzSource {
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
     table: Arc<xz_seek::SeekTable>,
     /// The block the piecewise arm is reading — its fetched window and its
-    /// live handle — or `None` where that arm has not run or its last read
-    /// failed ([`HeldBlock`]). Behind a `Mutex` because the handle goes
+    /// live handle — or `None` where that arm has not run, its last read
+    /// failed, a block-arm read has run since, or a piecewise read has it
+    /// ([`HeldBlock`]). Behind a `Mutex` because the handle goes
     /// forward only and one position cannot serve two readers, which is why
     /// that arm advises a single partition ([`xz_partition_advice`]).
     held: Mutex<Option<HeldBlock>>,
@@ -4004,8 +4010,8 @@ impl std::fmt::Display for Origin {
     }
 }
 
-/// One `stat` and one short read, on a blocking thread as every other local
-/// read in this module is.
+/// One `stat` and one short read, on a blocking thread as a local source's
+/// reads are; opening an `.xz` source, its footer walk included, is not.
 async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<OriginProbe> {
@@ -5305,7 +5311,8 @@ mod tests {
         let table = four_block_table();
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
         // The two terms a decline does not save, held at zero so that this
-        // test is about the block slots alone; the test above is where they
+        // test is about the block slots alone; its last assertion and
+        // `a_block_too_large_to_hold_refuses_the_block_path` are where they
         // bind.
         let unit = cache.unit as u64;
         let retained = POOL_DEPTH as u64 - 1;
@@ -6045,7 +6052,8 @@ mod tests {
     /// A genuinely `.xz`-compressed file is recognised whatever it is named
     /// (`docs/design/decisions.md`, "D14"): the temp file `xz_compress`
     /// returns carries no `.xz` suffix, and `open_local` still hands back a
-    /// source whose `seek_table()` answers `Some`, which only `XzSource` does.
+    /// source whose `seek_table()` answers `Some`, which of what `open_local`
+    /// returns only `XzSource` does.
     #[tokio::test]
     async fn open_local_recognizes_xz_content_with_no_xz_name() {
         let payload = xz_test_payload();
@@ -6113,8 +6121,8 @@ mod tests {
     // fetched (`docs/design/decisions.md`, "D14", "D15" and "D18").
     //
     // The transport here is a local file, which is exactly the point: the
-    // window-fed path has no local twin to disagree with, so putting a file
-    // through it is what makes a divergence surface as a disagreement between
+    // window-fed path and its local twin, `XzSource`, then read one file, so
+    // putting a file through it is what makes a divergence surface as a disagreement between
     // two read paths over one byte stream rather than between two sources.
     // -----------------------------------------------------------------------
 
@@ -6214,9 +6222,8 @@ mod tests {
 
     /// The piecewise arm: a budget too small to hold a decoded block reads the
     /// same bytes out of the same windows, through `xz_seek::BlockRead` rather
-    /// than into a pooled slot (D15). The two arms are asserted against each
-    /// other rather than against a constant, which is what makes a divergence
-    /// visible as one.
+    /// than into a pooled slot (D15), each read asserted against the plaintext
+    /// the file was compressed from.
     #[tokio::test]
     async fn a_budget_too_small_for_a_block_reads_the_same_bytes_in_pieces() {
         let payload = xz_test_payload();

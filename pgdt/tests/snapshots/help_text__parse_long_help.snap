@@ -6,8 +6,9 @@ Scan a dump file and build the structure cache — the only command that scans a
 (`pgdt info` reports from the cache this leaves; a `query` maps only what its table needs, but
 persists that as it goes unless told `--dtcache none`). Resumes from a matching cache rather than
 restarting, and banks its progress at `COPY` block boundaries as it goes — including on Ctrl-C,
-which saves what has been scanned and then ends the process by that signal — so an interrupted scan
-is not wasted work. Remove the cache file to force a scan from byte 0
+which saves what has been scanned and then ends the process by that signal, or with status 128+n as
+a container's init — so an interrupted scan is not wasted work. Remove the cache file to force a
+scan from byte 0
 
 Usage: pgdt parse [OPTIONS] --source <SOURCE>
 

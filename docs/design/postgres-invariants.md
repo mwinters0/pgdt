@@ -408,7 +408,7 @@ source alone.
 **Consequence for `crate::preamble`.** The version headers describe the
 whole `pg_dump` invocation, not the database whose segment happens to
 contain them positionally. A `--create` dump's pre-`\connect` segment is
-otherwise pure `CREATE DATABASE` noise (see `PreambleBuilder`'s docs) and is
+otherwise pure `CREATE DATABASE` noise (see `dump_metadata_from_spans`) and is
 discarded, so the headers are carried forward onto the database the first
 `\connect` switches into. Every `\connect` gets that carry-over, not just the
 first.
@@ -416,14 +416,14 @@ first.
 `pg_dumpall` emits two segment shapes, and the header order differs between
 them. `dumpDatabases()` passes `--create` to its `pg_dump` child for ordinary
 databases — those segments print their version headers *ahead of* their own
-`\connect`, which puts the lines in `PreambleBuilder::feed_line` while
-`current` is still the previous database's finished (`preamble_complete`)
-segment, so they are staged in `PreambleBuilder::pending_headers` and consumed
+`\connect`, which puts the lines in `dump_metadata_from_spans`'s
+`VersionHeader` arm while `current` is still the previous database's finished
+(`preamble_complete`) segment, so they are staged in `pending_headers` and consumed
 on that segment's own `\connect`. For `postgres` and `template1` it passes
 **no** `--create` and writes `\connect <db>` itself, under the comment "Since
 pg_dump won't emit a `\connect` command, we must"; those segments print
 `\connect` *first*, so their headers arrive into a segment that is already
-`current` and not yet `preamble_complete` — `feed_line`'s ordinary path, not
+`current` and not yet `preamble_complete` — that arm's ordinary path, not
 the staging one. Both databases are always dumped, so every real `pg_dumpall`
 file contains both shapes; a hand-built concatenation of `--create` outputs
 produces only the first.
@@ -591,11 +591,10 @@ through a real `COPY` block. `pg_dump` writes the completed `mybase` body's
 parameters in its own order — `INTERNALLENGTH` first, then
 `INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE`.
 
-**Consequence for `crate::preamble` / `crate::pgtype`.** One name can own two
-`TypeDef` entries, so `resolve_user_type`'s first-match lookup returns the
-`Shell` entry for a completed base type — harmless while `Base` and `Shell`
-share the `OpaqueBaseType` outcome, and a first-match lookup over a list that
-is not unique by name.
+**Consequence for `crate::preamble` / `crate::pgtype`.** One name is declared
+twice, so `record_type` keeps one `TypeDef` per name: a definition replaces the
+entry in place and a `Shell` never replaces one, and `resolve_user_type` finds
+the completed base type rather than its shell.
 
 **Verified against:** v18.6 source (`dumpShellType()`, `dumpUndefinedType()`,
 `DefineType()`); probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`
