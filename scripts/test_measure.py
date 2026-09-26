@@ -727,6 +727,14 @@ class DynamicFilterFigures(unittest.TestCase):
                 self.assertEqual(fig.warm_inputs, ("dynfilter",))
                 self.assertIsNone(fig.memory)
 
+    def test_a_join_reports_the_rows_it_matched(self):
+        # The table's last column is `result_first`, the answer's first cell;
+        # `count(p.v_text)` there would drop the matched rows whose payload is
+        # NULL and report fewer than the join matched.
+        for name, (sql, _) in measure.DYNFILTER_QUERIES["join"].items():
+            with self.subTest(query=name):
+                self.assertTrue(sql.startswith("SELECT count(*), count(p.v_text) FROM "))
+
     def test_every_leg_runs_the_second_program_under_its_producers_flag(self):
         for figure, flag in measure.DYNFILTER_FLAGS.items():
             for command in measure.dynfilter_shapes(figure):

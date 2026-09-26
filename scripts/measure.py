@@ -2336,22 +2336,27 @@ DYNFILTER_FAMILY = "dfcli-dynamic-filter-"
 #:   `IN` list a join publishes: the filter rejects no row, and what checking
 #:   it costs is pure overhead.
 #:
+#: **A join answers `count(*)` first, and `count(p.v_text)` beside it**: the
+#: first is the rows it matched, which its table reports; the second keeps the
+#: payload decoded, what row-level evaluation exists to skip, and is not that
+#: count, `v_text` being nullable.
+#:
 #: **The TopK orders by the unsorted `u_key`**, projecting a payload column
 #: beside it; `u_key` has no ties, so the answer is one answer.
 DYNFILTER_QUERIES: dict[str, dict[str, tuple[str, str]]] = {
     "join": {
         "clustered": (
-            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"SELECT count(*), count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
             f"JOIN {DFCLI_CATALOG}.public.near b ON p.id = b.k",
             "A selective join on the clustered `id`",
         ),
         "unclustered": (
-            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"SELECT count(*), count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
             f"JOIN {DFCLI_CATALOG}.public.scattered b ON p.u_key = b.k",
             "A selective join on the unclustered `u_key`",
         ),
         "costing": (
-            f"SELECT count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
+            f"SELECT count(*), count(p.v_text) FROM {DFCLI_CATALOG}.public.perf p "
             f"JOIN {DFCLI_CATALOG}.public.every b ON p.bucket = b.k",
             "A join on `bucket` rejecting no row",
         ),
