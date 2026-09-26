@@ -102,14 +102,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **No dump can be looser than its session and keep its in-flight check.**
-  `M170`'s per-dump strictness reads `StrictIdentity`'s `FromStr`, whose
-  grammar is `time`, `location`, both, or `none`, and has no spelling for
-  `ADVISORY` — `pgdt` reaches it by omitting the flag, and an empty value is
-  refused. So under `--strict-identity=time` a dump can state `location`,
-  `time` or `none`, but not "nothing weak binds, in-flight still checked";
-  the workaround is the inverse, an advisory session with the strict dumps
-  naming `time`. Built as the row reads rather than widening the grammar
-  `pgdt` shares. Reconsidering means a word for it (`advisory`, say) in
-  `FromStr`, which `pgdt --strict-identity=advisory` would then accept too.
