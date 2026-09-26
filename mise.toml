@@ -1,6 +1,5 @@
 [tools]
-# `cargo nextest run` runs the suite (`CLAUDE.md`, "Commands"); its thread cap
-# is `.config/nextest.toml`'s.
+# `cargo nextest run` runs the suite (`CLAUDE.md`, "Commands"), one test a CPU.
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 # `aws-lc-sys`, under `object_store`'s `http` feature, is a C build driven by
 # cmake, so a checkout that builds this workspace declares it.
