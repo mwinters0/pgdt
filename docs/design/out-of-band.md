@@ -70,3 +70,8 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| `M159` | | D20's title and `CLAUDE.md`'s standing rule say what D20's body and the code do: a cache recording another file's stored size is refused, and one that is unreadable or another build's starts cold and is overwritten by the next save | | [2026-09-26](../status/history/2026-09-26.md), "The repoint's open calls" |
+| `M160` | | `open_local` opens an `.xz` source — `XzSource::open`'s footer walk, and `with_table`'s `stat` — on a blocking thread, as a local source's reads already are | | [2026-09-26](../status/history/2026-09-26.md), "The repoint's open calls" |
+| `M161` | | A discrete range literal whose bound's successor leaves its subtype — an `int4range` bound at `int4`'s maximum, a `daterange` one at `date`'s — is refused as the server's canonical function refuses it, not only an `int8range`'s | | [2026-09-26](../status/history/2026-09-26.md), "The repoint's open calls" |
+| `M162` | | `check.py --verify` never reuses a passing run of a tree whose newest run, of any command list, failed | | [2026-09-26](../status/history/2026-09-26.md), "The repoint's open calls" |
+| `M163` | | How many times a run under a stated `--row-group-max-rows` re-reads a block it finds past it, settled from `stream.rs` and pinned, and `STATUS.md`'s "re-reads a block once" and `pgdump_query/tests/statistics.rs`'s doc made to say it | | [2026-09-26](../status/history/2026-09-26.md), "The repoint's open calls" |
