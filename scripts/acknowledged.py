@@ -226,4 +226,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show --format= -U0 2f94f14 -- scripts/measure.py  # the three query strings and a comment",
     ),
+    Acknowledged(
+        commit="b326165",
+        figures=("session-drift",),
+        why=(
+            "27.1's fold-in moved the two dynamic-filter figures from `UNTAKEN` "
+            "into `FIGURES`; no shape, input, regime or gate moved"
+        ),
+        verified="git show --format= -U0 b326165 -- scripts/measure.py  # the registry move alone",
+    ),
 )
