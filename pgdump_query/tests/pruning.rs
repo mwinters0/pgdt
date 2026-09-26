@@ -378,7 +378,9 @@ async fn check(
 /// as much: its floors are what make it the check, and every later change to
 /// replay is what it exists to catch. Refused: lowering [`TREES_PER_TABLE`],
 /// [`LITERALS_PER_OPERATOR`] or the singles' share, and `#[ignore]` or an
-/// environment switch leaving only the hand-written tests on by default.
+/// environment switch leaving only the hand-written tests on by default. Its
+/// cost follows the statistics fixtures, each check re-reading its table, and
+/// not the code under test (`runs/m153-bisect-20260925/summary.txt`).
 #[test]
 fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
     let mut fixtures = all_fixtures();

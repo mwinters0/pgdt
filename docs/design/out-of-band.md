@@ -45,7 +45,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M150 are struck**, and nothing at or below `M150` is reused. That is a
+**M1–M158 are struck**, and nothing at or below `M158` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -70,11 +70,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| `M151` | 2026-09-25 | `oracle_register.py` reads the comparison walk where it now lives, `comparison_walk` behind `comparison_for`'s visit bound, so `test_oracle_register`'s committed-tree cases pass again | | [2026-09-25](../status/history/2026-09-25.md), "M151: the oracle register lost its anchor" |
-| `M152` | 2026-09-25 | The `dev` profile optimizes, the workspace at `opt-level = 1` and its dependencies at `2`, so the fixture sweeps stop running unoptimized; `release` and every figure untouched (D92) | | [2026-09-25](../status/history/2026-09-25.md), "M152: the test build optimizes" |
-| `M153` | 2026-09-25 | The fixture sweeps' several-fold slowdown between 2026-09-22 and 2026-09-25, bisected under `M152`'s profile, is a test cost: `25.1`'s statistics fixtures; the code's own share is a few percent, at plan time, and no product regression | | [2026-09-25](../status/history/2026-09-25.md), "M153: the sweeps' slowdown is the fixtures" |
-| `M154` | 2026-09-25 | `cargo-nextest`, pinned in `mise.toml`, runs the suite: test binaries in parallel under a capped thread count, doctests by `cargo test --doc` | | [2026-09-25](../status/history/2026-09-25.md), "M154: nextest runs the suite" |
-| `M155` | 2026-09-25 | `scripts/check.py`, with a `mise run check` task, runs each per-round check once, logs it whole under `runs/check/`, prints a fixed short summary and stamps the tree it tested; `--verify` reuses a passing run on an unchanged tree; `CLAUDE.md` and the skills name only it | | [2026-09-25](../status/history/2026-09-25.md), "M155: one command runs the round's checks" |
-| `M156` | 2026-09-25 | `check.py --affected` runs no cargo on a change touching only paths no test reads, and otherwise the changed crates, their dependents and the tests reading a changed path; a phase wrap runs the whole suite | | [2026-09-25](../status/history/2026-09-25.md), "M156: a change runs the checks it reaches" |
-| `M157` | 2026-09-25 | `statistics.rs`'s `agrees` compares two refusals by table, column and kind, not row offset or value, so `statistics_never_change_an_answer` holds under load; `per_major`'s doc comment claims no read order. Runs before `M154` | | [2026-09-25](../status/history/2026-09-25.md), "M157: a refusal compared by what refused" |
-| `M158` | 2026-09-25 | `.config/nextest.toml` is deleted, so `cargo nextest run` runs one test a CPU, and `mise.toml`'s nextest comment stops naming a cap | | [2026-09-25](../status/history/2026-09-25.md), "M154: nextest runs the suite" |
