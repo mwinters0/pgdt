@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use pgdump_query::cache::{self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity};
+use pgdump_query::cache::{
+    self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity, Unusable,
+};
 use pgdump_query::{
     ByteRangeSource, Diagnostic, DumpIndex, Origin, Recognized, SchemaMode, TableName,
 };
@@ -84,22 +86,21 @@ impl PgDump {
             parse: parse_command(location, options.cache_path.as_deref()),
             why,
         };
+        // An unusable cache is the scans' own refusal, word for word: this
+        // provider never writes, so nothing here may overwrite one, and the
+        // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
+        let unusable =
+            |unusable| pgdump_query::Error::CacheUnusable { path: path.clone(), unusable };
         // The claim first, as `pgdt` opens: it spares a compressed file's
-        // footer walk, and refuses a cache for another file before one.
+        // footer walk, and refuses an unusable cache before one.
         let known = match cache::claim(path, &origin).await? {
             CacheClaim::Settles { compression, .. } => compression,
-            CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
-                return Err(mode.source_mismatch(cached_stored_size, live_stored_size).into());
-            }
+            CacheClaim::Unusable(why) => return Err(unusable(why).into()),
         };
         let source = match pgdump_query::open(&origin, known).await? {
             Recognized::Source(source) => source,
             Recognized::Mismatch => {
-                return Err(incomplete(format!(
-                    "the cache at {} records compression details the file contradicts, so it \
-                     was written for another file",
-                    path.display()
-                )));
+                return Err(unusable(Unusable::CompressionContradicted).into());
             }
         };
         // The baseline every scan's end checks the file against, taken before
@@ -120,18 +121,7 @@ impl PgDump {
             CacheStatus::Missing => {
                 return Err(incomplete(format!("there is no cache at {}", path.display())));
             }
-            CacheStatus::Unreadable => {
-                return Err(incomplete(format!("{} is not a pgdt cache", path.display())));
-            }
-            CacheStatus::UnsupportedVersion => {
-                return Err(incomplete(format!(
-                    "the cache at {} was written by another build",
-                    path.display()
-                )));
-            }
-            CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
-                return Err(mode.source_mismatch(cached_stored_size, live_stored_size).into());
-            }
+            CacheStatus::Unusable(why) => return Err(unusable(why).into()),
         };
         let tables = index.tables();
         let statistics_bytes = index.statistics_heap_bytes();

@@ -181,7 +181,8 @@ or pointed `--dtcache` at another file's cache — pgdt says so rather than
 quietly working around it. All three commands refuse, `parse` included: a
 cache that does not describe this file describes some *other* file, and
 scanning would write over it. Delete it, or point `--dtcache` somewhere else,
-and `parse` builds a fresh one.
+and `parse` builds a fresh one — or, where the file really is replaced under
+the same name, pass `--overwrite-unusable-cache` (below).
 
 ### Reading a dump over HTTP
 
@@ -1205,29 +1206,32 @@ group's own values are shown here; `--json` carries every one of them.
 
 ### When `info` says it cannot answer
 
-`info` exits non-zero rather than scanning. Five things can go wrong, and they
-are five different messages because they mean five different things:
+`info` exits non-zero rather than scanning. Six things can go wrong, and they
+are six different messages because they mean six different things:
 
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdt cache` | Something else is at that path — or a cache from a pgdt build whose format changed, which usually reads this way rather than as the next row. Check `--dtcache`. |
-| `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens; nothing is migrated. |
+| `… is not a pgdt cache` | Something else is at that path. Check `--dtcache`. |
+| `… is cut short or damaged` | A pgdt cache, but not all of it is there. |
+| `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens after an upgrade; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
 | `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
 
-**The first three send you straight to `pgdt parse`; the last two do not.** The
-split is whether the file at the cache path is worth keeping. For the first
-three it is not — there is no cache there, or what is there is not one, or it is
-one this build cannot read — so `parse` simply scans over it.
+**Only the first sends you straight to `pgdt parse`.** `parse` and `query`
+refuse every other one too, before reading the dump, rather than scanning and
+writing over what they found: each is almost always a wrong path or a file that
+changed, and a cache that does not describe this file is a valid index for
+*some* file. So the last four name three ways out — **remove it, name a
+different cache path, or pass `--overwrite-unusable-cache`** — and `parse`
+builds a fresh one once you have taken any of them.
 
-The last two say one thing two ways: *this cache was written from a different
-file*. It is not "your cache went missing", it is "your file is not the file you
-parsed". `parse` refuses both rather than scanning and writing over what it
-found, because a cache that does not describe this file is a valid index for
-*some* file. So both messages name the only two ways out — **remove it, or name
-a different cache path** — and `parse` builds a fresh one once you have taken
-either. There is no flag that overrides this.
+`--overwrite-unusable-cache`, on `parse` and `query`, starts cold over such a
+cache and replaces it. It is for a dump whose file is replaced under the same
+name — a nightly export at a stable URL — where a refusal each time would be
+noise. It never replaces something that is not a pgdt cache, which could be
+anything, the dump itself included; and it governs only the cache found at the
+start, a dump that changes while it is being read still stopping the run.
 
 `--dtcache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be

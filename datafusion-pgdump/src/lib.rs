@@ -63,14 +63,13 @@ pub use table::PgDumpTable;
 /// What opening or registering a dump can refuse.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// The library's own refusal: a source it cannot read, a cache for
-    /// another file, a table whose blocks disagree.
+    /// The library's own refusal: a source it cannot read, a cache it cannot
+    /// use, a table whose blocks disagree.
     #[error(transparent)]
     Library(#[from] pgdump_query::Error),
-    /// The cache this provider reads does not cover the whole file, is not
-    /// there to read, or was written by another build or with compression
-    /// details the file contradicts. The provider never maps, so the remedy
-    /// is the parse named.
+    /// The cache this provider reads does not cover the whole file, or is not
+    /// there to read. The provider never maps, so the remedy is the parse
+    /// named.
     #[error("{why}; the provider reads only a complete cache — run `{parse}` to build it")]
     CacheNotComplete { parse: String, why: String },
     /// A catalog name is needed and nothing supplies one, or one was supplied

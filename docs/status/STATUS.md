@@ -29,7 +29,7 @@ quotes a number: every figure is in
 | Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), and a typed column cannot hold a special value (`KD8`) | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
-| Best-effort structural cache with source-identity checking and cache-only inspection | working; the library never replaces a cache recording another file's size, and one it cannot read starts cold; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" |
+| Best-effort structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed, decoded and compared structurally; two shapes stay text (`KD3`) and an array inside a composite is decided optimistically (`KD2`) | `nested.rs`, `pgtype.rs`; D39, D41, D45, D58 |
 | Array shape census | recorded by every mapping pass and read back before a query's first batch | `map.rs`; D35, D43 |
 | CLI `pgdt parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdt/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
@@ -102,3 +102,22 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A damaged cache of this build's format may be overwritten.** `M159`'s row
+  names another file's size and another build's format as replaceable under
+  `--overwrite-unusable-cache` and foreign bytes as never; a file with this
+  build's header whose rest does not decode was named by neither. It is
+  treated as ours (`Unusable::Unreadable` is `overwritable`), the header being
+  what "ours" is tested by, and a save renaming a whole file over the cache, so
+  only an outside hand leaves one cut short. Reconsidering makes it one arm of
+  `Unusable::overwritable` and one case in `pgdump_query/tests/cache.rs`,
+  "an_unusable_cache_is_refused_unless_it_may_be_replaced".
+- **The flag covers a contradicted compression claim, through a new check in
+  `cache::load`.** A same-size file whose compression layer contradicts the
+  cache is another file's by D20's own words, and without this a replaced
+  file whose compression changed would be refused under the flag too. Covering
+  it meant `load` comparing the cached seek table with the source's
+  (`Unusable::CompressionContradicted`) on every load, which also refuses a
+  source an embedder opened without the claim, one that was handed the old
+  map before. Reconsidering drops that comparison and leaves recognition's
+  refusal, which the flag then cannot lift.

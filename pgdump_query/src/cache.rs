@@ -2,18 +2,15 @@
 //! dump file by default or at an explicit path
 //! (`docs/design/decisions.md`, "The compressed source and the cache").
 //!
-//! Reading is best-effort — the cache is never required for correctness, so
-//! a missing, foreign or unrecognised-version file just means "scan instead,"
-//! never a hard error. Which of the three it was is still reported, as far as
-//! the decode can tell them apart (`KD30`) — see
-//! [`CacheStatus`], and [`CacheLoad`] for the same statuses reaching a caller
-//! that holds a live source — because `pgdt info` has no "scan instead" to
-//! fall back on and has to say what went wrong.
-//!
-//! **The size-mismatched file is the exception.** A cache whose recorded
-//! stored size is not this source's describes some *other* file, so the four
-//! scan entry points refuse ([`Error::CacheSourceMismatch`]) rather than
-//! starting cold (`docs/design/decisions.md`, "D20"). Writing is not
+//! **A cache that cannot be used is refused, not scanned over**
+//! (`docs/design/decisions.md`, "D20"): one that is another file's, another
+//! build's, or damaged is almost always a user's accident — the wrong path, or
+//! a file that changed — so the four scan entry points answer
+//! [`Error::CacheUnusable`] before a byte of the dump is read, naming which of
+//! those it is ([`Unusable`]). [`CacheMode::with_overwrite_unusable`] opts into
+//! starting cold and replacing it instead, for a source whose file is replaced
+//! under a stable name; a file that is not a pgdt cache at all is refused
+//! whatever is asked. Only a missing cache starts cold unasked. Writing is not
 //! best-effort either: [`save`] propagates I/O failures rather than silently
 //! degrading every future run of the same command back to a full scan.
 //!
@@ -44,7 +41,7 @@
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, ErrorKind, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -53,6 +50,7 @@ use bincode::error::{DecodeError, EncodeError};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::Diagnostic;
+pub use crate::error::{OVERWRITE_WAYS_OUT, Unusable};
 use crate::index::{
     DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
@@ -63,7 +61,7 @@ use crate::{Error, Result};
 
 /// **Bump whenever a persisted field is added, removed or reshaped.** A cache
 /// written under a different version is unusable
-/// ([`CacheStatus::UnsupportedVersion`]) rather than partially trusted
+/// ([`Unusable::UnsupportedVersion`]) rather than partially trusted
 /// (`docs/design/roadmap.md`, "Four decisions that keep later phases
 /// additive"); pre-1.0 a bump is free, nothing migrates (`CLAUDE.md`,
 /// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
@@ -73,7 +71,16 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub(crate) const CACHE_FORMAT_VERSION: u32 = 28;
+pub const CACHE_FORMAT_VERSION: u32 = 29;
+
+/// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
+/// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read
+/// before the rest is decoded, and neither is ever reshaped**, so any build
+/// tells a file that is not a pgdt cache ([`Unusable::NotACache`]) from
+/// another build's ([`Unusable::UnsupportedVersion`]) — the difference between
+/// a file no scan may overwrite and one `--overwrite-unusable-cache` may
+/// ([`CacheMode::with_overwrite_unusable`]).
+const CACHE_MAGIC: [u8; 8] = *b"pgdtcach";
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.
@@ -537,11 +544,11 @@ impl CompressionShape {
     }
 }
 
-/// What a cache file holds. [`CacheFileRef`] is what a save encodes, the same
-/// fields in this order, so the two change together.
+/// What a cache file holds after [`CACHE_MAGIC`] and its version.
+/// [`CacheFileRef`] is what a save encodes, the same fields in this order, so
+/// the two change together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheFile {
-    format_version: u32,
     container_kind: ContainerKind,
     compression: Option<CompressionIndex>,
     identity: SourceIdentity,
@@ -612,36 +619,15 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 /// What [`load`] found at a cache path, once checked against the live
 /// source's identity — see the module docs.
 ///
-/// The four unusable outcomes are named separately and stay named all the way
-/// to the caller: [`CacheMode::load`] carries each one across as a
-/// [`CacheLoad`] variant rather than answering `None`
-/// (`docs/design/decisions.md`, "D22").
+/// Each unusable outcome is named and stays named all the way to the caller:
+/// [`CacheMode::load`] carries it across as [`CacheLoad::Unusable`] rather
+/// than answering `None` (`docs/design/decisions.md`, "D22").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
     /// Nothing at this path.
     Missing,
-    /// Something is at this path, but it does not decode as a cache at all —
-    /// foreign bytes, or a file cut short.
-    Unreadable,
-    /// A cache whose `format_version` or `container_kind` this build does not
-    /// recognise, where the rest of the file still decodes; nothing migrates
-    /// (`docs/design/roadmap.md`, "Pre-1.0").
-    ///
-    /// Deficiency register: `deficiency: KD30` — the whole [`CacheFile`] is
-    /// decoded before its version is read, so a cache from a build whose
-    /// persisted shape changed — the change that bumps `CACHE_FORMAT_VERSION` —
-    /// almost always fails to decode and is [`CacheStatus::Unreadable`], which
-    /// `pgdt info` words as not a pgdt cache at all; an unknown `ContainerKind`
-    /// cannot decode at all. **(c) unowned**; promoted by a user sent to check a
-    /// path that holds an old cache, the fix being the version read ahead of
-    /// the rest.
-    UnsupportedVersion,
-    /// A readable cache whose recorded *stored* size disagrees with the live
-    /// source's, so every byte offset in it could be wrong — the staleness
-    /// check reads [`ByteRangeSource::stored_size`], not the addressable
-    /// length (`docs/design/decisions.md`, "D21"). Both stored sizes are
-    /// carried: they are the evidence a reporting caller states.
-    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+    /// Something is at this path that cannot be used, and why.
+    Unusable(Unusable),
     /// A usable cache whose `index.scanned_through` reaches the file's
     /// recorded size — the whole file is mapped. `weak` is what the source's
     /// current modification signal says against the one recorded at save time
@@ -688,15 +674,14 @@ pub enum CacheStatus {
 /// (`docs/design/decisions.md`, "D22").
 ///
 /// `Disabled` is a statement about the *caller*, with no [`CacheStatus`] to
-/// correspond to; the other five are that status carried across unchanged, so
-/// a caller answers six outcomes. `Valid` and `Incomplete` are one variant
-/// here, because a caller holding a live source builds forward from either —
-/// see [`CacheMode::load`].
+/// correspond to; the other three are that status carried across unchanged.
+/// `Valid` and `Incomplete` are one variant here, because a caller holding a
+/// live source builds forward from either — see [`CacheMode::load`].
 ///
-/// *Rejected:* an accessor collapsing the four reasons back to `Option` for
-/// the callers that do not care. It rebuilds the collapse under a shorter
-/// name at exactly the sites that must not have it, and the callers that
-/// genuinely do not care are tests, which can say so in a `let … else`.
+/// *Rejected:* an accessor collapsing the reasons back to `Option` for the
+/// callers that do not care. It rebuilds the collapse under a shorter name at
+/// exactly the sites that must not have it, and the callers that genuinely do
+/// not care are tests, which can say so in a `let … else`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheLoad {
     /// A usable index — a [`CacheStatus::Valid`] or
@@ -706,27 +691,26 @@ pub enum CacheLoad {
     /// [`CacheMode::Disabled`]: no path was consulted, and whatever sits at
     /// the location this mode would otherwise have resolved is untouched.
     Disabled,
-    /// [`CacheStatus::Missing`] — nothing at the cache path.
+    /// [`CacheStatus::Missing`] — nothing at the cache path, the one outcome
+    /// every scan entry point starts cold on unasked.
     Missing,
-    /// [`CacheStatus::Unreadable`] — foreign bytes, or a file cut short.
-    Unreadable,
-    /// [`CacheStatus::UnsupportedVersion`] — another build's envelope.
-    UnsupportedVersion,
-    /// [`CacheStatus::SourceChanged`] — the cache records a stored size the
-    /// live source does not have, so every byte offset in it could be wrong.
-    /// Both numbers travel as the evidence for the claim.
-    ///
-    /// **The four scan entry points refuse on this one**, where they start
-    /// cold on the other three (`docs/design/decisions.md`, "D20"). The two
-    /// sizes are what [`CacheMode::source_mismatch`] turns into
-    /// [`Error::CacheSourceMismatch`].
-    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+    /// [`CacheStatus::Unusable`]. **The four scan entry points refuse on it**
+    /// before a byte of the dump is read, unless the mode may overwrite it —
+    /// [`CacheMode::refusal`] is that decision, in one place
+    /// (`docs/design/decisions.md`, "D20").
+    Unusable(Unusable),
 }
 
 /// Load a cache from `path` and validate it against `source`'s current
 /// identity. See [`CacheStatus`] and the module docs for what "validate"
 /// means. A hard I/O error reading `path` (anything but "not found") still
-/// propagates — only the cache's own *content* is best-effort.
+/// propagates; what the file *holds* is answered as a status.
+///
+/// **The compression layer is compared as well as the size**: a source opened
+/// without the cache's claim — an embedder's, or `pgdt` under
+/// `--overwrite-unusable-cache` after recognition refused the claim — would
+/// otherwise be handed offsets another file's seek table produced
+/// ([`Unusable::CompressionContradicted`]).
 pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
     let file = match read_cache_file(path)? {
         Ok(file) => file,
@@ -735,56 +719,75 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
     let live = SourceIdentity::observe(source).await?;
     let (cached_stored_size, live_stored_size) = (file.identity.stored_size(), live.stored_size());
     if cached_stored_size != live_stored_size {
-        return Ok(CacheStatus::SourceChanged { cached_stored_size, live_stored_size });
+        return Ok(CacheStatus::Unusable(Unusable::SourceChanged {
+            cached_stored_size,
+            live_stored_size,
+        }));
+    }
+    let cached_table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
+    if cached_table != source.seek_table().as_ref() {
+        return Ok(CacheStatus::Unusable(Unusable::CompressionContradicted));
     }
     let weak = file.identity.weak_against(&live);
     let origin = file.identity.origin_against(&live);
     Ok(status_from_file(file, weak, origin))
 }
 
-/// Read and envelope-check the cache at `path`, shared by [`load`] and
-/// [`load_offline`]. `Err(status)` is one of the three unusable outcomes that
-/// need no live source to reach; only a stored-size mismatch does, and that
-/// is [`load`]'s alone.
+/// Read and header-check the cache at `path`, shared by [`load`],
+/// [`load_offline`] and [`claim`]. `Err(status)` is an outcome that needs no
+/// live source to reach; the two that compare against one are [`load`]'s.
 ///
-/// The file is decoded through a buffered reader, never read whole first
-/// (`docs/design/decisions.md`, "D78"). A file that ends early is
-/// [`CacheStatus::Unreadable`], as any other undecodable content is; an I/O
-/// failure reading it is still an error.
+/// **The header is read before anything is decoded** ([`CACHE_MAGIC`]), so
+/// another build's cache is told from foreign bytes whatever its shape; the
+/// rest is decoded through a buffered reader, never read whole first
+/// (`docs/design/decisions.md`, "D78"). A file ending before its magic
+/// ends is not a pgdt cache; one ending after it is [`Unusable::Unreadable`],
+/// as any other undecodable content is; an I/O failure reading it is still an
+/// error.
 fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
-    let reader = match File::open(path) {
+    let unusable = |why| Ok(Err(CacheStatus::Unusable(why)));
+    let mut reader = match File::open(path) {
         Ok(file) => BufReader::new(file),
         Err(e) if e.kind() == ErrorKind::NotFound => {
             return Ok(Err(CacheStatus::Missing));
         }
         Err(e) => return Err(Error::Io(e)),
     };
-    let file: CacheFile =
-        match bincode::serde::decode_from_reader(reader, bincode::config::standard()) {
-            Ok(file) => file,
-            Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
-                return Err(Error::Io(inner));
-            }
-            Err(_) => return Ok(Err(CacheStatus::Unreadable)),
-        };
-    if file.format_version != CACHE_FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
-        return Ok(Err(CacheStatus::UnsupportedVersion));
+    let mut magic = [0u8; CACHE_MAGIC.len()];
+    match reader.read_exact(&mut magic) {
+        Ok(()) if magic == CACHE_MAGIC => {}
+        Ok(()) => return unusable(Unusable::NotACache),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::NotACache),
+        Err(e) => return Err(Error::Io(e)),
     }
-    Ok(Ok(file))
+    let mut version = [0u8; 4];
+    match reader.read_exact(&mut version) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::Unreadable),
+        Err(e) => return Err(Error::Io(e)),
+    }
+    let found = u32::from_le_bytes(version);
+    if found != CACHE_FORMAT_VERSION {
+        return unusable(Unusable::UnsupportedVersion { found });
+    }
+    match bincode::serde::decode_from_reader(reader, bincode::config::standard()) {
+        Ok(file) => Ok(Ok(file)),
+        Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
+            Err(Error::Io(inner))
+        }
+        Err(_) => unusable(Unusable::Unreadable),
+    }
 }
 
 /// What the cache at a path settles about a dump file **before any source
 /// exists** — [`claim`]'s answer (`docs/design/decisions.md`, "D18").
 ///
 /// Two outcomes. What a caller does with a cache this early is decide which
-/// source to build, except for the one unusable outcome that makes the
-/// building pointless: a cache recorded against a file of another stored size
-/// is refused by every scan entry point ([`Error::CacheSourceMismatch`]), so
-/// opening the source first buys nothing and, for a many-streams `.xz`, costs
-/// a stream-footer walk. The other unusable outcomes stay collapsed into
-/// [`KnownCompression::Unknown`] and no statistics — no cache, foreign bytes,
-/// a version this build does not read — since nothing downstream refuses on those and
-/// [`load`] states the reason a moment later.
+/// source to build, except where the cache is unusable, which every scan
+/// entry point refuses unless told it may overwrite it
+/// ([`CacheMode::refusal`]): opening the source first buys nothing and, for a
+/// many-streams `.xz`, costs a stream-footer walk. A missing cache settles
+/// [`KnownCompression::Unknown`] and no statistics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheClaim {
     /// What the cache settles short of a refusal.
@@ -798,11 +801,11 @@ pub enum CacheClaim {
         /// as held (`docs/design/decisions.md`, "D85").
         statistics_heap_bytes: u64,
     },
-    /// The cache records a stored size this file does not have, so it
-    /// describes some *other* file. The same condition [`load`] answers
-    /// [`CacheStatus::SourceChanged`] with, and the same two numbers, reached
-    /// without opening anything.
-    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+    /// The cache cannot be used, for the reason [`load`] would answer a
+    /// moment later — a stored size compared against the origin's probe rather
+    /// than a source, and never [`Unusable::CompressionContradicted`], which
+    /// needs the file's own bytes.
+    Unusable(Unusable),
 }
 
 /// What the cache at `cache_path` settles about `origin`, answered **before
@@ -824,11 +827,15 @@ pub enum CacheClaim {
 /// many-thousand-entry seek table twice on the usable path to spare a walk on
 /// the path that is about to fail.
 pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
-    let Ok(file) = read_cache_file(cache_path)? else {
-        return Ok(CacheClaim::Settles {
-            compression: KnownCompression::Unknown,
-            statistics_heap_bytes: 0,
-        });
+    let file = match read_cache_file(cache_path)? {
+        Ok(file) => file,
+        Err(CacheStatus::Unusable(why)) => return Ok(CacheClaim::Unusable(why)),
+        Err(_) => {
+            return Ok(CacheClaim::Settles {
+                compression: KnownCompression::Unknown,
+                statistics_heap_bytes: 0,
+            });
+        }
     };
     let stored_size = file.identity.stored_size();
     // The index is decoded only to be sized and dropped, its statistics freed
@@ -845,10 +852,10 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
         });
     };
     if stored_size != live.stored_size() {
-        return Ok(CacheClaim::SourceChanged {
+        return Ok(CacheClaim::Unusable(Unusable::SourceChanged {
             cached_stored_size: stored_size,
             live_stored_size: live.stored_size(),
-        });
+        }));
     }
     let compression = match compression {
         Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
@@ -886,7 +893,7 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 }
 
 /// Shared by [`load`] and [`load_offline`] once a `CacheFile` has passed its
-/// format/container/(when live) stored-size checks: `Valid` when the index's
+/// header and (when live) stored-size and compression checks: `Valid` when the index's
 /// own `scanned_through` reaches the file's recorded addressable length,
 /// `Incomplete` otherwise, with the index's unpersisted diagnostics
 /// recomputed either way. Reads [`CacheFile::total_size`] rather than
@@ -907,7 +914,8 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);
     let envelope = CacheEnvelope {
-        format_version: file.format_version,
+        // Only a file whose header states this build's version is decoded.
+        format_version: CACHE_FORMAT_VERSION,
         container_kind: file.container_kind,
         seek_table: file.compression,
         identity: file.identity,
@@ -924,7 +932,6 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 /// `CacheFile` encodes to and [`read_cache_file`] decodes.
 #[derive(Serialize)]
 struct CacheFileRef<'a> {
-    format_version: u32,
     container_kind: ContainerKind,
     compression: Option<CompressionIndex>,
     identity: SourceIdentity,
@@ -955,7 +962,6 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
     let identity = SourceIdentity::observe(source).await?;
     let total_size = source.size().await?;
     let file = CacheFileRef {
-        format_version: CACHE_FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
         compression: source.seek_table().map(CompressionIndex::Xz),
         identity,
@@ -963,6 +969,8 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
         index,
     };
     write_beside(path, |writer| {
+        writer.write_all(&CACHE_MAGIC)?;
+        writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
         bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
             .map(drop)
             .map_err(|e| match e {
@@ -1011,13 +1019,16 @@ fn beside(path: &Path) -> PathBuf {
 /// How a caller wants the structure cache handled for one operation, and
 /// which identity signals bind while it does. Constructed via
 /// [`CacheMode::resolve`], [`CacheMode::enabled`] or [`CacheMode::DISABLED`],
-/// each of which leaves [`StrictIdentity::ADVISORY`];
-/// [`CacheMode::with_strict_identity`] is what states anything else.
+/// each of which leaves [`StrictIdentity::ADVISORY`] and refuses an unusable
+/// cache; [`CacheMode::with_strict_identity`] and
+/// [`CacheMode::with_overwrite_unusable`] are what state anything else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheMode {
     /// Read/write the cache at this path (the colocated default, or an
-    /// explicit path).
-    Enabled { path: PathBuf, strict: StrictIdentity },
+    /// explicit path). `overwrite_unusable` is whether a scan starts cold
+    /// over a cache it cannot use and replaces it rather than refusing
+    /// ([`CacheMode::refusal`]).
+    Enabled { path: PathBuf, strict: StrictIdentity, overwrite_unusable: bool },
     /// The caller explicitly opted out: any existing file at what would
     /// otherwise be the resolved location is ignored, and a fresh scan is
     /// not persisted. **It still carries a strictness**, because a run that
@@ -1041,7 +1052,11 @@ impl CacheMode {
 
     /// The cache at `path`, at the default strictness.
     pub fn enabled(path: impl Into<PathBuf>) -> CacheMode {
-        CacheMode::Enabled { path: path.into(), strict: StrictIdentity::ADVISORY }
+        CacheMode::Enabled {
+            path: path.into(),
+            strict: StrictIdentity::ADVISORY,
+            overwrite_unusable: false,
+        }
     }
 
     /// Resolve a `--dtcache`-style argument against the source it is for:
@@ -1077,9 +1092,26 @@ impl CacheMode {
     /// source to compare against and is returned unchanged.
     pub fn with_strict_identity(self, strict: StrictIdentity) -> CacheMode {
         match self {
-            CacheMode::Enabled { path, .. } => CacheMode::Enabled { path, strict },
+            CacheMode::Enabled { path, overwrite_unusable, .. } => {
+                CacheMode::Enabled { path, strict, overwrite_unusable }
+            }
             CacheMode::Disabled { .. } => CacheMode::Disabled { strict },
             CacheMode::Offline(path) => CacheMode::Offline(path),
+        }
+    }
+
+    /// State whether a scan may start cold over a cache it cannot use and
+    /// replace it — `pgdt --overwrite-unusable-cache`, for a source whose file
+    /// is replaced under a stable name. A file that is not a pgdt cache is
+    /// refused all the same ([`Unusable::overwritable`]). Only
+    /// [`CacheMode::Enabled`] has a cache to replace; the others are returned
+    /// unchanged.
+    pub fn with_overwrite_unusable(self, overwrite_unusable: bool) -> CacheMode {
+        match self {
+            CacheMode::Enabled { path, strict, .. } => {
+                CacheMode::Enabled { path, strict, overwrite_unusable }
+            }
+            other => other,
         }
     }
 
@@ -1118,19 +1150,17 @@ impl CacheMode {
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead
     /// *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`], as
-    /// `pgdt info` does. Neither the four unusable statuses nor the caller's
-    /// own opt-out is collapsed: each arrives as its own variant, and such a
-    /// caller asks [`CacheMode::strict_identity_refusal`] for the check this
-    /// method makes inline.
+    /// `pgdt info` does. Neither an unusable cache's reason nor the caller's
+    /// own opt-out is collapsed, and such a caller asks
+    /// [`CacheMode::strict_identity_refusal`] for the check this method makes
+    /// inline. An unusable cache is answered, not refused, here: whether to
+    /// refuse is [`CacheMode::refusal`]'s, asked by the caller that would
+    /// scan.
     pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
         match self {
             CacheMode::Enabled { path, .. } => Ok(match load(path, source).await? {
                 CacheStatus::Missing => CacheLoad::Missing,
-                CacheStatus::Unreadable => CacheLoad::Unreadable,
-                CacheStatus::UnsupportedVersion => CacheLoad::UnsupportedVersion,
-                CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
-                    CacheLoad::SourceChanged { cached_stored_size, live_stored_size }
-                }
+                CacheStatus::Unusable(why) => CacheLoad::Unusable(why),
                 CacheStatus::Valid { mut index, weak, origin, .. }
                 | CacheStatus::Incomplete { mut index, weak, origin, .. } => {
                     if let Some(refusal) = self.strict_identity_refusal(&weak, &origin) {
@@ -1166,7 +1196,7 @@ impl CacheMode {
         weak: &WeakIdentity,
         origin: &OriginMatch,
     ) -> Option<Error> {
-        let CacheMode::Enabled { path, strict } = self else { return None };
+        let CacheMode::Enabled { path, strict, .. } = self else { return None };
         // One selector at a time, in the order they are written: a run that
         // bound both and fails both is told about the modification signal
         // first, there being no second sentence to print after a refusal.
@@ -1179,23 +1209,26 @@ impl CacheMode {
         })
     }
 
-    /// The refusal a scan entry point answers [`CacheLoad::SourceChanged`]
-    /// with: this mode's path, plus the two stored sizes the load already
-    /// compared (`docs/design/decisions.md`, "D20"). The path lives here
-    /// rather than on `CacheLoad` because [`CacheMode::Disabled`] has none.
+    /// What a scan entry point does about a cache it cannot use: the
+    /// refusal, or `None` where this mode may start cold and replace it at
+    /// its first save (`docs/design/decisions.md`, "D20"). One decision for
+    /// every caller — the four scan entry points on [`CacheLoad::Unusable`],
+    /// and one pre-empting them on [`CacheClaim::Unusable`] or on recognition
+    /// refusing the cache's claim — so a refusal is word for word the one it
+    /// pre-empts. The path lives here rather than on [`Unusable`] because
+    /// [`CacheMode::Disabled`] has none.
     ///
-    /// Only [`CacheMode::Enabled`] can reach it; `Disabled` and `Offline`
-    /// answer the caller-contract error.
-    pub fn source_mismatch(&self, cached_stored_size: u64, live_stored_size: u64) -> Error {
+    /// Only [`CacheMode::Enabled`] finds a cache to refuse; `Disabled` and
+    /// `Offline` answer the caller-contract error.
+    pub fn refusal(&self, unusable: &Unusable) -> Option<Error> {
         match self {
-            CacheMode::Enabled { path, .. } => Error::CacheSourceMismatch {
-                path: path.clone(),
-                cached_stored_size,
-                live_stored_size,
-            },
-            CacheMode::Disabled { .. } | CacheMode::Offline(_) => Error::CacheModeMismatch(
-                "a source mismatch is only reachable from CacheMode::Enabled",
-            ),
+            CacheMode::Enabled { overwrite_unusable: true, .. } if unusable.overwritable() => None,
+            CacheMode::Enabled { path, .. } => {
+                Some(Error::CacheUnusable { path: path.clone(), unusable: unusable.clone() })
+            }
+            CacheMode::Disabled { .. } | CacheMode::Offline(_) => Some(Error::CacheModeMismatch(
+                "an unusable cache is only reachable from CacheMode::Enabled",
+            )),
         }
     }
 
@@ -1213,10 +1246,7 @@ impl CacheMode {
             CacheMode::Offline(path) => {
                 let mut status = load_offline(path).await?;
                 match &mut status {
-                    CacheStatus::Missing
-                    | CacheStatus::Unreadable
-                    | CacheStatus::UnsupportedVersion
-                    | CacheStatus::SourceChanged { .. } => {}
+                    CacheStatus::Missing | CacheStatus::Unusable(_) => {}
                     CacheStatus::Valid { index, .. } | CacheStatus::Incomplete { index, .. } => {
                         index.diagnostics.push(Diagnostic::cache_offline());
                     }
@@ -1301,8 +1331,9 @@ mod tests {
     /// exactly what the owned [`CacheFile`] encodes to in one buffer, for a
     /// plain source and for a compressed one carrying its seek table, with
     /// statistics gathered — and reads back through the reader as the index it
-    /// wrote. The same file cut short reads as [`CacheStatus::Unreadable`],
-    /// never as an I/O error.
+    /// wrote. The same file cut short reads as [`Unusable::Unreadable`] —
+    /// ours, so overwritable — never as an I/O error, and cut inside its magic
+    /// as not a pgdt cache.
     #[tokio::test]
     async fn a_save_writes_the_bytes_the_whole_file_encodes_to() {
         let dir = tempfile::tempdir().unwrap();
@@ -1343,7 +1374,6 @@ mod tests {
             let path = dir.path().join(format!("{name}.dtcache"));
             save(&path, source, &run.index).await.unwrap();
             let whole = CacheFile {
-                format_version: CACHE_FORMAT_VERSION,
                 container_kind: ContainerKind::Plain,
                 compression: source.seek_table().map(CompressionIndex::Xz),
                 identity: SourceIdentity::observe(source).await.unwrap(),
@@ -1351,9 +1381,14 @@ mod tests {
                 index: run.index.clone(),
             };
             let bytes = std::fs::read(&path).unwrap();
+            let header = [&CACHE_MAGIC[..], &CACHE_FORMAT_VERSION.to_le_bytes()].concat();
             assert_eq!(
                 bytes,
-                bincode::serde::encode_to_vec(&whole, bincode::config::standard()).unwrap(),
+                [
+                    header.clone(),
+                    bincode::serde::encode_to_vec(&whole, bincode::config::standard()).unwrap()
+                ]
+                .concat(),
                 "{name}: the streamed save's bytes"
             );
             let Ok(Ok(read)) = read_cache_file(&path) else {
@@ -1362,15 +1397,30 @@ mod tests {
             // Diagnostics are not persisted, so the index is compared by its
             // encoding: what reads back encodes to what was written.
             assert_eq!(
-                bincode::serde::encode_to_vec(&read, bincode::config::standard()).unwrap(),
+                [
+                    header,
+                    bincode::serde::encode_to_vec(&read, bincode::config::standard()).unwrap()
+                ]
+                .concat(),
                 bytes,
                 "{name}: the file read back"
             );
 
             std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
             assert!(
-                matches!(read_cache_file(&path), Ok(Err(CacheStatus::Unreadable))),
+                matches!(
+                    read_cache_file(&path),
+                    Ok(Err(CacheStatus::Unusable(Unusable::Unreadable)))
+                ),
                 "{name}: a cache cut short is unreadable, not an I/O failure"
+            );
+            std::fs::write(&path, &bytes[..CACHE_MAGIC.len() - 1]).unwrap();
+            assert!(
+                matches!(
+                    read_cache_file(&path),
+                    Ok(Err(CacheStatus::Unusable(Unusable::NotACache)))
+                ),
+                "{name}: a file cut inside the magic never said it was a pgdt cache"
             );
         }
     }

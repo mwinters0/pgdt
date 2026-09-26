@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use pgdump_query::cache::{CACHE_FORMAT_VERSION, OVERWRITE_WAYS_OUT};
 use pgdump_query::{
     DumpIndex, DumpMetadata, LocalFileSource, ScanOptions, Span, SpanBody, build_index, cache,
 };
@@ -164,17 +165,49 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
     assert_ne!(std::fs::read(&cache_path).unwrap(), before);
 }
 
-/// **The two ways out are worded once, and every refusal says both.** A cache
-/// that describes another file reaches the user from three places — the
-/// library error `parse` and `query` surface, and the CLI sentences `info`
-/// prints for the size mismatch and all three print for a contradicted
-/// compression claim, the last held by `tests/xz_source.rs` — and there is no
-/// third way out, no `--force` and no
-/// `CacheMode` variant meaning "replace regardless"
-/// (`docs/design/decisions.md`, "D20"). A refusal that named only one
-/// of them would read as a tool with no recourse; one that named a way out the
-/// others do not is the drift this test exists to catch, the wording living in
-/// two crates.
+/// **Or the caller says it may be replaced**: under
+/// `--overwrite-unusable-cache` both commands that scan start cold over a
+/// cache written for another file and replace it with one of this file,
+/// which `info` then reads (`docs/design/decisions.md`, "D20").
+#[tokio::test]
+async fn the_scanning_commands_replace_an_unusable_cache_when_told_to() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let source = dump.to_str().unwrap();
+    for command in [
+        vec!["parse", "--source", source, "--overwrite-unusable-cache"],
+        vec![
+            "query",
+            "--source",
+            source,
+            "--table",
+            "t_numeric",
+            "--schema-mode",
+            "strings",
+            "--overwrite-unusable-cache",
+        ],
+    ] {
+        assert!(run(&["parse", "--source", source]).status.success());
+        let mut bytes = std::fs::read(&dump).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(&dump, &bytes).unwrap();
+        assert!(!run(&["info", "--source", source]).status.success());
+
+        let out = run(&command);
+        assert!(out.status.success(), "{}: {}", command[0], stderr_of(&out));
+        let out = run(&["info", "--source", source]);
+        assert!(out.status.success(), "{}: {}", command[0], stderr_of(&out));
+    }
+}
+
+/// **The ways out are worded once, and every refusal says all three.** A cache
+/// that describes another file reaches the user from two places — the library
+/// error `parse` and `query` surface, and the sentence `info` prints — for the
+/// size mismatch here and for a contradicted compression claim in
+/// `tests/xz_source.rs`, and each names removing it, naming another path and
+/// `--overwrite-unusable-cache` (`docs/design/decisions.md`, "D20"). A refusal
+/// that named fewer would read as a tool with less recourse than it has; one
+/// that named a way out the others do not is the drift this test exists to
+/// catch, the wording living in two crates.
 ///
 /// `info`'s is the arm that must name the ways out **and** `pgdt parse`, in
 /// that order: `parse` refuses this same condition, so a reader sent straight
@@ -197,18 +230,19 @@ async fn refusals_name_both_ways_out() {
         let out = run(&args);
         assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
         let err = stderr_of(&out);
-        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
+        assert!(err.contains(OVERWRITE_WAYS_OUT), "{}: {err}", args[0]);
     }
 
     let err = stderr_of(&run(&["info", "--source", source]));
-    let ways_out = err.find("remove it, or name a different cache path").unwrap();
-    let parse_hint = err.find("run `pgdt parse").expect("the remedy still ends at `parse`");
+    let ways_out = err.find(OVERWRITE_WAYS_OUT).unwrap();
+    let parse_hint = err.find("`pgdt parse --source").expect("the remedy still ends at `parse`");
     assert!(ways_out < parse_hint, "the ways out come before the command they enable: {err}");
 }
 
 /// Foreign bytes and a cache from another build are told apart too — the path
 /// is wrong in the first case and right in the second, which is different
-/// advice.
+/// advice — and `parse` refuses to write over the foreign bytes, which no flag
+/// changes.
 #[tokio::test]
 async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
@@ -218,10 +252,17 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
     let out = run(&["info", "--source", dump.to_str().unwrap()]);
     assert!(!out.status.success());
     assert!(stderr_of(&out).contains("is not a pgdt cache"), "{}", stderr_of(&out));
+    for flags in [&[][..], &["--overwrite-unusable-cache"]] {
+        let out = run(&[&["parse", "--source", dump.to_str().unwrap()], flags].concat());
+        assert!(!out.status.success(), "{flags:?}: {}", stdout_of(&out));
+        assert!(stderr_of(&out).contains("is not a pgdt cache"), "{}", stderr_of(&out));
+        assert_eq!(std::fs::read(&cache_path).unwrap(), b"not a cache at all");
+    }
 
+    std::fs::remove_file(&cache_path).unwrap();
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
     let mut bytes = std::fs::read(&cache_path).unwrap();
-    bytes[0] = bytes[0].wrapping_add(1);
+    bytes[8..12].copy_from_slice(&(CACHE_FORMAT_VERSION + 1).to_le_bytes());
     std::fs::write(&cache_path, &bytes).unwrap();
 
     let out = run(&["info", "--source", dump.to_str().unwrap()]);

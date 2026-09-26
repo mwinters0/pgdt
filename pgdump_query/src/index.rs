@@ -478,19 +478,14 @@ pub async fn preamble_only(
     let watch = SourceWatch::open(source, cache.strict_identity()).await?;
     let mut base_index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Four reasons to start cold: there is no map to build forward from
-        // and nothing at that path is worth keeping. Spelled out rather than
-        // wildcarded so a reason added later has to be answered here
-        // (`docs/design/decisions.md`, "D22").
-        CacheLoad::Disabled
-        | CacheLoad::Missing
-        | CacheLoad::Unreadable
-        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
-        // The fifth is a refusal, before a byte of the dump is read: this
-        // cache describes another file, and scanning would overwrite it.
-        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
-            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
-        }
+        // Nothing to build forward from, and nothing at the path to keep.
+        CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
+        // Refused before a byte of the dump is read, unless the caller said
+        // this cache may be replaced (`docs/design/decisions.md`, "D20").
+        CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
+            Some(refusal) => return Err(refusal),
+            None => DumpIndex::default(),
+        },
     };
     let known = base_index
         .metadata

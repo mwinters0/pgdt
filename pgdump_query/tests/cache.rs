@@ -1,13 +1,14 @@
-//! On-disk structure cache: round-tripping, the "unusable cache is treated
-//! as absent" contract (`docs/design/decisions.md`, "D20") requires, and the
-//! source-identity check (`docs/design/decisions.md`, "D21") adds on top.
+//! On-disk structure cache: round-tripping, the refusal of a cache that cannot
+//! be used and the opt-in replacing it (`docs/design/decisions.md`, "D20"),
+//! and the source-identity check (`docs/design/decisions.md`, "D21") on top.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use futures::StreamExt;
 use pgdump_query::cache::{
-    CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch, StrictIdentity, WeakIdentity,
+    CACHE_FORMAT_VERSION, CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch,
+    StrictIdentity, Unusable, WeakIdentity,
 };
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
@@ -33,11 +34,11 @@ fn colocated_path_appends_the_cache_suffix() {
     );
 }
 
-/// The four unusable outcomes are told apart, not collapsed: each is a
-/// different sentence `pgdt info` has to print, even though every one of them
-/// ends in `pgdt parse` (`docs/design/decisions.md`, "D22").
-/// `SourceChanged` has its own test below, since producing it needs a second
-/// file.
+/// The unusable outcomes are told apart, not collapsed: each is a different
+/// sentence `pgdt info` has to print (`docs/design/decisions.md`, "D22"), and
+/// only one of them is never overwritten. `SourceChanged` and
+/// `CompressionContradicted` have their own tests below, since producing
+/// either needs a second file.
 #[tokio::test]
 async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     let dir = tempfile::tempdir().unwrap();
@@ -48,13 +49,39 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
 
     let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
-    assert_eq!(cache::load(&foreign, &source).await.unwrap(), CacheStatus::Unreadable);
+    assert_eq!(
+        cache::load(&foreign, &source).await.unwrap(),
+        CacheStatus::Unusable(Unusable::NotACache)
+    );
+    assert!(!Unusable::NotACache.overwritable());
+
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let damaged = dir.path().join("damaged.dtcache");
+    cache::save(&damaged, &source, &index).await.unwrap();
+    let mut bytes = std::fs::read(&damaged).unwrap();
+    bytes.truncate(bytes.len() / 2);
+    std::fs::write(&damaged, &bytes).unwrap();
+    assert_eq!(
+        cache::load(&damaged, &source).await.unwrap(),
+        CacheStatus::Unusable(Unusable::Unreadable)
+    );
+    assert!(Unusable::Unreadable.overwritable());
 }
 
-/// A cache whose envelope decodes but whose `format_version` is not this
-/// build's is `UnsupportedVersion`, not `Unreadable` — different advice: the
-/// path is right, the build that wrote it was not. Produced by corrupting the
-/// version field in place, which is the first thing the envelope encodes.
+/// Rewrite the version the header of the cache at `path` states, leaving the
+/// rest as it was — what a build of another format would find.
+fn restamp(path: &Path, version: u32) {
+    let mut bytes = std::fs::read(path).unwrap();
+    bytes[8..12].copy_from_slice(&version.to_le_bytes());
+    std::fs::write(path, &bytes).unwrap();
+}
+
+/// A cache whose header states another format version is
+/// `UnsupportedVersion`, not foreign bytes — different advice: the path is
+/// right, the build that wrote it was not, and it may be overwritten. **The
+/// version is read before anything else is decoded**, so it holds whatever
+/// the rest is: here the rest is cut to nothing, the shape a build whose
+/// persisted fields changed presents to this one.
 #[tokio::test]
 async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let dir = tempfile::tempdir().unwrap();
@@ -63,13 +90,15 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &source, &index).await.unwrap();
 
-    let mut bytes = std::fs::read(&path).unwrap();
-    // bincode's standard config writes a `u32` as a varint; a small value is
-    // one byte, so bumping it keeps the rest of the envelope decodable.
-    bytes[0] = bytes[0].wrapping_add(1);
-    std::fs::write(&path, &bytes).unwrap();
+    restamp(&path, CACHE_FORMAT_VERSION - 1);
+    let other_build =
+        CacheStatus::Unusable(Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION - 1 });
+    assert_eq!(cache::load(&path, &source).await.unwrap(), other_build);
 
-    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::UnsupportedVersion);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.truncate(12);
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(cache::load(&path, &source).await.unwrap(), other_build);
 }
 
 /// A saved index round-trips exactly. `DumpIndex::metadata` is populated by
@@ -203,16 +232,16 @@ async fn size_mismatch_invalidates_the_cache() {
 
     assert_eq!(
         cache::load(&path, &grown_source).await.unwrap(),
-        CacheStatus::SourceChanged {
+        CacheStatus::Unusable(Unusable::SourceChanged {
             cached_stored_size: source.stored_size().await.unwrap(),
             live_stored_size: grown_source.stored_size().await.unwrap(),
-        }
+        })
     );
 }
 
-/// `CacheMode::load` carries all four unusable statuses across as their own
-/// [`CacheLoad`] variants rather than answering "no index" for each
-/// (`docs/design/decisions.md`, "D22"). It is the same four
+/// `CacheMode::load` carries each unusable status across with its reason
+/// rather than answering "no index" for each
+/// (`docs/design/decisions.md`, "D22"). It is the same ones
 /// `an_unusable_cache_says_which_kind_of_unusable_it_is` and
 /// `size_mismatch_invalidates_the_cache` put to `cache::load`; what this pins
 /// is that the reason survives the trip to a caller that holds a live source
@@ -228,16 +257,17 @@ async fn cache_mode_load_names_each_unusable_status() {
 
     let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
-    assert_eq!(CacheMode::enabled(foreign).load(&source).await.unwrap(), CacheLoad::Unreadable);
+    assert_eq!(
+        CacheMode::enabled(foreign).load(&source).await.unwrap(),
+        CacheLoad::Unusable(Unusable::NotACache)
+    );
 
     let stale = dir.path().join("stale.dtcache");
     cache::save(&stale, &source, &index).await.unwrap();
-    let mut bytes = std::fs::read(&stale).unwrap();
-    bytes[0] = bytes[0].wrapping_add(1);
-    std::fs::write(&stale, &bytes).unwrap();
+    restamp(&stale, CACHE_FORMAT_VERSION + 1);
     assert_eq!(
         CacheMode::enabled(stale).load(&source).await.unwrap(),
-        CacheLoad::UnsupportedVersion
+        CacheLoad::Unusable(Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 })
     );
 
     let path = dir.path().join("edge_cases.sql.dtcache");
@@ -249,10 +279,10 @@ async fn cache_mode_load_names_each_unusable_status() {
     let grown_source = LocalFileSource::open(&grown).unwrap();
     assert_eq!(
         CacheMode::enabled(path).load(&grown_source).await.unwrap(),
-        CacheLoad::SourceChanged {
+        CacheLoad::Unusable(Unusable::SourceChanged {
             cached_stored_size: source.stored_size().await.unwrap(),
             live_stored_size: grown_source.stored_size().await.unwrap(),
-        },
+        }),
         "the two sizes are the evidence a caller states the mismatch with"
     );
 }
@@ -261,8 +291,8 @@ async fn cache_mode_load_names_each_unusable_status() {
 /// entry points refuse a cache that records another file's stored size —
 /// naming the path, what the cache expected and what the source is — rather
 /// than starting cold and overwriting it at their first save
-/// (`docs/design/decisions.md`, "D20"). The other three unusable
-/// statuses still start cold; this is the one that is an error.
+/// (`docs/design/decisions.md`, "D20"); every other unusable status is
+/// refused the same way (`an_unusable_cache_is_refused_unless_it_may_be_replaced`).
 ///
 /// **Three of the four are exercised here** — `map_file`, `preamble_only` and
 /// `table_stream`. `table_stream_partitions` reaches the same refusal through
@@ -292,10 +322,9 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     assert_ne!(live_stored_size, cached_stored_size);
 
     let expected = |what: &str, e: Error| match e {
-        Error::CacheSourceMismatch {
+        Error::CacheUnusable {
             path: named,
-            cached_stored_size: cached,
-            live_stored_size: live,
+            unusable: Unusable::SourceChanged { cached_stored_size: cached, live_stored_size: live },
         } => {
             assert_eq!(named, path, "{what}: the refusal names the cache it refused");
             assert_eq!(cached, cached_stored_size, "{what}: what the cache was written for");
@@ -867,12 +896,12 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
     assert_eq!(claimed, loaded);
 }
 
-/// Every unusable outcome but one collapses to "nothing is known": there is no
-/// cache, it is foreign bytes, or there is no file to compare it against.
-/// `load` is what reports *why* a moment later, unchanged. The exception —
-/// a cache recorded against a file of another stored size — is the test below.
+/// A claim settles "nothing is known" where there is no cache, or no file to
+/// compare it against; an unusable cache is answered with its reason instead,
+/// the one `load` would report a moment later — here foreign bytes, and in
+/// the test below a cache recorded against a file of another stored size.
 #[tokio::test]
-async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
+async fn a_claim_is_unknown_wherever_nothing_is_cached_to_compare() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("nothing.dtcache");
     assert_eq!(
@@ -884,7 +913,7 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     std::fs::write(&foreign, b"not a cache at all").unwrap();
     assert_eq!(
         cache::claim(&foreign, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Settles { compression: KnownCompression::Unknown, statistics_heap_bytes: 0 }
+        CacheClaim::Unusable(Unusable::NotACache)
     );
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
@@ -923,10 +952,10 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     // to: same content, different stored size.
     assert_eq!(
         cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::SourceChanged {
+        CacheClaim::Unusable(Unusable::SourceChanged {
             cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
             live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
-        },
+        }),
         "a cache of the compressed file must not be believed about the plain one"
     );
 
@@ -935,9 +964,108 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     assert_eq!(
         cache::load(&path, &plain).await.unwrap(),
-        CacheStatus::SourceChanged {
+        CacheStatus::Unusable(Unusable::SourceChanged {
             cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
             live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
-        }
+        })
     );
+}
+
+/// A source opened without the cache's claim is compared against the
+/// compression layer the cache records, so a cache for another file of the
+/// same stored size is not believed (`docs/design/decisions.md`, "D18"). The
+/// two files here are one file's bytes read two ways — as `.xz`, and as plain
+/// — so the stored size cannot tell them apart and only the layer can, in
+/// either direction.
+#[tokio::test]
+async fn a_load_refuses_a_cache_whose_compression_layer_is_not_the_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    let compressed = xz_compress(&edge_cases());
+    let xz = XzSource::open(compressed.path()).unwrap();
+    let as_plain = LocalFileSource::open(compressed.path()).unwrap();
+    assert_eq!(xz.stored_size().await.unwrap(), as_plain.stored_size().await.unwrap());
+
+    let index = pgdump_query::DumpIndex::default();
+    for (saved_by, loaded_by) in
+        [(&xz as &dyn ByteRangeSource, &as_plain as &dyn ByteRangeSource), (&as_plain, &xz)]
+    {
+        let path = dir.path().join("layer.dtcache");
+        cache::save(&path, saved_by, &index).await.unwrap();
+        assert!(matches!(
+            cache::load(&path, saved_by).await.unwrap(),
+            CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. }
+        ));
+        assert_eq!(
+            cache::load(&path, loaded_by).await.unwrap(),
+            CacheStatus::Unusable(Unusable::CompressionContradicted)
+        );
+    }
+}
+
+/// **Every unusable cache is refused, and one recognisably ours may be
+/// replaced when the caller says so** (`docs/design/decisions.md`, "D20").
+/// Each reason is put to `map_file` twice: under the default mode it refuses
+/// naming the reason and leaves the file byte for byte, and under
+/// `with_overwrite_unusable` it starts cold and saves a cache that describes
+/// this source. A file that is not a pgdt cache is refused under both.
+#[tokio::test]
+async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
+    let (dir, dump) = sandboxed();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let path = cache::colocated_path(&dump);
+    let options = ScanOptions::default();
+    let statistics = StatisticsRequest::default();
+    map_file(&source, &options, &CacheMode::enabled(path.clone()), &statistics).await.unwrap();
+    let good = std::fs::read(&path).unwrap();
+
+    let other = dir.path().join("other.sql");
+    std::fs::write(&other, b"-- a dump of another size\n").unwrap();
+    let other_source = LocalFileSource::open(&other).unwrap();
+    let other_path = dir.path().join("other.dtcache");
+    cache::save(&other_path, &other_source, &pgdump_query::DumpIndex::default()).await.unwrap();
+
+    let mut other_build = good.clone();
+    other_build[8..12].copy_from_slice(&(CACHE_FORMAT_VERSION + 1).to_le_bytes());
+    let cases: [(&[u8], Unusable); 4] = [
+        (b"not a cache at all", Unusable::NotACache),
+        (&good[..good.len() / 2], Unusable::Unreadable),
+        (&other_build, Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 }),
+        (
+            &std::fs::read(&other_path).unwrap(),
+            Unusable::SourceChanged {
+                cached_stored_size: std::fs::metadata(&other).unwrap().len(),
+                live_stored_size: source.stored_size().await.unwrap(),
+            },
+        ),
+    ];
+    for (bytes, why) in cases {
+        std::fs::write(&path, bytes).unwrap();
+        let refused = map_file(&source, &options, &CacheMode::enabled(path.clone()), &statistics)
+            .await
+            .unwrap_err();
+        match refused {
+            Error::CacheUnusable { path: named, unusable } => {
+                assert_eq!(named, path);
+                assert_eq!(unusable, why);
+            }
+            other => panic!("{why:?}: expected the cache refused, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: the refused file is untouched");
+
+        let replacing = CacheMode::enabled(path.clone()).with_overwrite_unusable(true);
+        let run = map_file(&source, &options, &replacing, &statistics).await;
+        if why.overwritable() {
+            run.unwrap();
+            assert!(
+                matches!(cache::load(&path, &source).await.unwrap(), CacheStatus::Valid { .. }),
+                "{why:?}: replaced by a cache of this source"
+            );
+        } else {
+            assert!(
+                matches!(&run, Err(Error::CacheUnusable { unusable: Unusable::NotACache, .. })),
+                "{why:?}: never overwritten, whatever is asked: {run:?}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: still untouched");
+        }
+    }
 }

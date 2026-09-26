@@ -211,12 +211,6 @@ than reading as a phase nobody has sliced.
   seen to move inside a run, or by discovery that can take a limit already
   read. Detail: `pgdt/src/main.rs`.
 
-- **KD30** — a cache from a build whose persisted shape changed is decoded
-  whole before its version is read, so it almost always reads as not a pgdt
-  cache rather than as another build's, and `info` sends the user to check the
-  path. **(c) unowned**; promoted by a user misled by it, the fix being the
-  version read first. Detail: `pgdump_query/src/cache.rs`.
-
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
   empty and `truncated` however short it is. **(c) unowned**; promoted by a

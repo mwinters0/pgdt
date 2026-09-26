@@ -23,6 +23,7 @@ use std::process::Command;
 
 mod common;
 use common::{run, stderr_of, stdout_of};
+use pgdump_query::cache::OVERWRITE_WAYS_OUT;
 
 /// The hand-written dump these fixtures derive from —
 /// `pgdump_query/tests/data/edge_cases.sql`, not the generated `fixtures/`
@@ -355,13 +356,12 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 ///
 /// `parse` refuses it exactly as the other two do rather than deleting the
 /// cache and rescanning: the deletion and the overwrite are the same act one
-/// step apart, and the library replaces neither on its own
+/// step apart, and the library replaces neither unasked
 /// (`docs/design/decisions.md`, "D20").
 ///
-/// The sentence is this condition's own, rather than `Unreadable`'s —
-/// "… is not a pgdt cache — check the path, or run `pgdt parse`" — since that
-/// advice does not fit `parse`, the command that just refused, or a path that
-/// *does* hold a pgdt cache, just for some other file.
+/// The sentence is this condition's own, rather than foreign bytes' — "… is
+/// not a pgdt cache — check the path" — since the path *does* hold a pgdt
+/// cache, just for some other file, and so may be replaced.
 #[test]
 fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     let (_dir, path) = seekable_xz();
@@ -379,7 +379,7 @@ fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
         assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
         let err = stderr_of(&out);
         assert!(err.contains("was written for another file"), "{}: {err}", args[0]);
-        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
+        assert!(err.contains(OVERWRITE_WAYS_OUT), "{}: {err}", args[0]);
         assert!(
             !err.contains("is not a pgdt cache"),
             "{}: a cache for another file is still a pgdt cache: {err}",
@@ -390,29 +390,37 @@ fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     assert_eq!(std::fs::read(&cache).unwrap(), before, "the refused cache is untouched");
 }
 
-/// The way out is the user's, not the tool's: remove the cache that does not
-/// describe this file and `parse` scans it as a cold file would. There is no
-/// override flag, which is what keeps the refusal from being set once in a
-/// script and never reconsidered (`docs/design/decisions.md`, "D20").
+/// The ways out are the user's, not the tool's: remove the cache that does
+/// not describe this file, or tell `parse` it may replace it, and it scans the
+/// file as a cold file would (`docs/design/decisions.md`, "D20"). The second
+/// opens the file claiming nothing, and the scan's own load then meets the
+/// same contradiction and starts cold rather than believing the old map.
 #[test]
-fn parse_scans_once_the_refused_cache_is_removed() {
-    let (_dir, path) = seekable_xz();
-    parse(&path);
-    let cache = PathBuf::from(format!("{}.dtcache", path.display()));
-    let before = std::fs::read(&cache).unwrap();
-    overwrite_with_plain_bytes_of_the_same_length(&path);
-    std::fs::remove_file(&cache).unwrap();
+fn parse_scans_once_the_refused_cache_is_removed_or_may_be_replaced() {
+    for replace in [false, true] {
+        let (_dir, path) = seekable_xz();
+        parse(&path);
+        let cache = PathBuf::from(format!("{}.dtcache", path.display()));
+        let before = std::fs::read(&cache).unwrap();
+        overwrite_with_plain_bytes_of_the_same_length(&path);
+        let mut args = vec!["parse", "--source", path.to_str().unwrap()];
+        if replace {
+            args.push("--overwrite-unusable-cache");
+        } else {
+            std::fs::remove_file(&cache).unwrap();
+        }
 
-    let out = run(&["parse", "--source", path.to_str().unwrap()]);
-    assert!(out.status.success(), "{}", stderr_of(&out));
-    assert_ne!(
-        std::fs::read(&cache).unwrap(),
-        before,
-        "the cache describes the file that is there"
-    );
+        let out = run(&args);
+        assert!(out.status.success(), "{replace}: {}", stderr_of(&out));
+        assert_ne!(
+            std::fs::read(&cache).unwrap(),
+            before,
+            "{replace}: the cache describes the file that is there"
+        );
 
-    let info = run(&["info", "--source", path.to_str().unwrap()]);
-    assert!(info.status.success(), "{}", stderr_of(&info));
+        let info = run(&["info", "--source", path.to_str().unwrap()]);
+        assert!(info.status.success(), "{replace}: {}", stderr_of(&info));
+    }
 }
 
 /// **The sibling refusal is free too.** A cache recorded against a file of
@@ -429,7 +437,7 @@ fn parse_scans_once_the_refused_cache_is_removed() {
 /// The two are told apart in the output, which no timing assertion could do.
 ///
 /// Each command keeps the sentence it had: the library's own error for the two
-/// that scan, and for `info` the one that names the two ways out ahead of
+/// that scan, and for `info` the one that names the ways out ahead of
 /// `pgdt parse` (`docs/design/decisions.md`, "D20").
 #[test]
 fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
@@ -449,7 +457,7 @@ fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
         let out = run(&args);
         assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
         let err = stderr_of(&out);
-        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
+        assert!(err.contains(OVERWRITE_WAYS_OUT), "{}: {err}", args[0]);
         assert!(
             !err.contains("xz error:"),
             "{}: the file must not be opened to reach this refusal: {err}",

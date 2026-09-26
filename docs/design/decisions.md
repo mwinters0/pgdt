@@ -132,13 +132,13 @@ only where the count fell short too, which `ParallelismBudgetLimited` names. Reo
 which naming the columns lacking a statistic would answer.
 
 ### D20 The library never replaces cache data automatically
-A cache recording another file's stored size is refused before a byte is read: at every scan entry
-point as `Error::CacheSourceMismatch`, in `cache::claim` as `CacheClaim::SourceChanged`; the other
-unusable statuses start cold. Rejected: a `--force` override (set once in a script, never
-reconsidered); the guard inside `cache::save` (policy an embedder cannot override). The CLI words
-both refusals with one tail. A back-fill meeting a block that no longer ends where the map says is
-`CachedBlockChanged`: stored, its statistics contradict the offsets beside them; skipped, the
-back-fill goes on for a file it knows was rewritten; re-mapped, cache data is replaced unasked.
+A cache that is not ours, damaged, another build's, or another file's (stored size, or a compression layer
+the source contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it
+before a byte is read, at every scan entry point and after `cache::claim`, and the CLI names every way out.
+`--overwrite-unusable-cache` (`with_overwrite_unusable`) starts cold over one recognisably ours, for a file
+replaced under a stable name; foreign bytes never, a header read first telling them apart. Rejected: a cold
+start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy an embedder cannot
+override). A block no longer ending where the map says is `CachedBlockChanged`, never re-mapped unasked.
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
 `stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and
@@ -164,8 +164,9 @@ no partial map to keep, a dropped stream is its whole cancellation, no `ScanOpti
 falling back to a cold query's early-stopping map, which brings each of those back. Code: `datafusion-pgdump/src/dump.rs`.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
-`Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;
-every entry point spells the outcomes out. Bump on any persisted reshape, record it nowhere.
+`Incomplete` is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
+`Unusable` carries its reason to every caller. Bump on any persisted reshape, record it nowhere: an older
+cache is then refused until replaced by the flag or deleted (D20), which is what a user hears of first.
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural

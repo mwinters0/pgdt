@@ -64,21 +64,17 @@ pub enum Error {
     CacheDisabled { operation: &'static str },
     #[error("cache mode mismatch: {0}")]
     CacheModeMismatch(&'static str),
-    /// A scan was asked to build forward from a cache that does not describe
-    /// the source it was handed, so it refuses rather than scanning and
-    /// overwriting it (`docs/design/decisions.md`, "D20"). Raised by
-    /// the four scan entry points — `crate::map_file`,
-    /// `crate::table_stream`, `crate::table_stream_partitions` and
-    /// `crate::index::preamble_only` — before any byte
-    /// of the dump is read, from
-    /// [`crate::cache::CacheLoad::SourceChanged`]'s two sizes plus the path
-    /// the mode resolved. It is the one unusable cache outcome that is an
-    /// error rather than a cold start.
-    #[error(
-        "the cache at {} was written for a source of {cached_stored_size} byte(s), but this source is {live_stored_size} byte(s), so scanning would overwrite a cache for another file — remove it, or name a different cache path",
-        path.display()
-    )]
-    CacheSourceMismatch { path: PathBuf, cached_stored_size: u64, live_stored_size: u64 },
+    /// A scan was asked to build forward from a cache it cannot use — one
+    /// that is not a pgdt cache, is damaged, is another build's, or describes
+    /// another file — so it refuses rather than starting cold and overwriting
+    /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
+    /// points — `crate::map_file`, `crate::table_stream`,
+    /// `crate::table_stream_partitions` and `crate::index::preamble_only` —
+    /// before any byte of the dump is read, and by a caller pre-empting them,
+    /// all through `crate::cache::CacheMode::refusal`, which answers none
+    /// where the mode may overwrite the cache instead.
+    #[error("{}", cache_unusable(path, unusable))]
+    CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the
     /// run has already read is suspect and a map or row set built from them
     /// could mix two versions of the file. Raised by
@@ -121,7 +117,7 @@ pub enum Error {
     /// (`docs/design/decisions.md`, "D20").
     ///
     /// `path` is the cache the map was loaded from, named as
-    /// [`Error::CacheSourceMismatch`] names it, so a caller whose cache is not
+    /// [`Error::CacheUnusable`] names it, so a caller whose cache is not
     /// beside the dump knows which file to remove. `crate::map_file`'s
     /// back-fill always has one; the per-block entry point is handed a map
     /// with no cache attached, and leaves it `None`.
@@ -249,4 +245,85 @@ fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
             "the COPY block the map records at offset {header_offset} no longer ends where that map says, so the file changed since it was scanned"
         ),
     }
+}
+
+/// Why a cache at a path cannot be used — carried whole by `crate::cache::CacheStatus`,
+/// `CacheLoad`, `CacheClaim` and [`Error::CacheUnusable`], so a caller
+/// that reports it and one that refuses on it name the same reason
+/// (`docs/design/decisions.md`, "D22").
+///
+/// **Every reason but one is recognisably ours**, and those are what
+/// `crate::cache::CacheMode::with_overwrite_unusable` may replace; a file that is not a
+/// pgdt cache is refused whatever is asked ([`Unusable::overwritable`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unusable {
+    /// The file does not open with the cache header's magic: something else is at this
+    /// path. **Never overwritten.**
+    NotACache,
+    /// This build's header, over a rest that does not decode — a file cut
+    /// short or damaged.
+    Unreadable,
+    /// Another build's cache: `found` is the format version its header
+    /// states, where this build reads `crate::cache::CACHE_FORMAT_VERSION`; nothing
+    /// migrates (`docs/design/roadmap.md`, "Pre-1.0").
+    UnsupportedVersion { found: u32 },
+    /// A readable cache whose recorded *stored* size disagrees with the live
+    /// source's, so every byte offset in it could be wrong — the staleness
+    /// check reads `crate::ByteRangeSource::stored_size`, not the addressable
+    /// length (`docs/design/decisions.md`, "D21"). Both stored sizes are
+    /// carried: they are the evidence a refusal states.
+    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+    /// A cache whose compression layer is not the live source's — one says
+    /// `.xz` and the other not, or the two seek tables differ — at the same
+    /// stored size, so it was written for another file
+    /// (`docs/design/decisions.md`, "D18"). Recognition reaches it first
+    /// (`crate::Recognized::Mismatch`) wherever the cache's claim was handed
+    /// to it; `crate::cache::load` answers it for a source opened without one.
+    CompressionContradicted,
+}
+
+impl Unusable {
+    /// Whether `crate::cache::CacheMode::with_overwrite_unusable` may replace a cache
+    /// found in this state: every one that is recognisably a pgdt cache.
+    pub fn overwritable(&self) -> bool {
+        !matches!(self, Unusable::NotACache)
+    }
+}
+
+/// What a user can do about a cache that is recognisably ours and cannot be
+/// used, in the words every such refusal ends with — the library's
+/// [`Error::CacheUnusable`] and the sentences `pgdt info` prints
+/// (`docs/design/decisions.md`, "D20").
+pub const OVERWRITE_WAYS_OUT: &str = " — remove it, name a different cache path, or pass \
+     `--overwrite-unusable-cache` to have a scan replace it";
+
+/// What a scan refusing an unusable cache says: which way it cannot be used,
+/// then what the user can do. **A cache recognisably ours names three ways
+/// out, and a file that is not one two**, the flag never replacing it
+/// (`crate::cache::Unusable::overwritable`).
+fn cache_unusable(path: &Path, unusable: &Unusable) -> String {
+    let path = path.display();
+    let found = match unusable {
+        Unusable::NotACache => {
+            return format!(
+                "{path} is not a pgdt cache, and no scan writes over a file it did not write — \
+                 check the path, or name a different cache path"
+            );
+        }
+        Unusable::Unreadable => format!("the cache at {path} is cut short or damaged"),
+        Unusable::UnsupportedVersion { found } => {
+            format!(
+                "the cache at {path} was written by a different pgdt build (cache format {found})"
+            )
+        }
+        Unusable::SourceChanged { cached_stored_size, live_stored_size } => format!(
+            "the cache at {path} was written for a source of {cached_stored_size} byte(s), but \
+             this source is {live_stored_size} byte(s), so it describes another file"
+        ),
+        Unusable::CompressionContradicted => format!(
+            "the cache at {path} records compression details this source contradicts, so it was \
+             written for another file"
+        ),
+    };
+    format!("{found}{}", OVERWRITE_WAYS_OUT)
 }

@@ -12,7 +12,8 @@ use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use namespace_init::{InitShutdown, namespace_init};
 use pgdump_query::cache::{
-    CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, StrictIdentity,
+    CACHE_FORMAT_VERSION, CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape,
+    OVERWRITE_WAYS_OUT, StrictIdentity, Unusable,
 };
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
@@ -630,6 +631,23 @@ impl IdentityArgs {
     }
 }
 
+/// Whether a scan may replace a cache it cannot use, shared by the two
+/// commands that scan (`docs/design/decisions.md`, "D20").
+#[derive(Args)]
+struct OverwriteArgs {
+    /// Start cold over a cache that cannot be used and replace it, rather
+    /// than refusing: one written for a file of another size or compression,
+    /// by another pgdt build, or cut short. Left unstated, each of those stops
+    /// the run before the dump is read, since it is almost always the wrong
+    /// path or a file that changed — this is for a source whose file is
+    /// replaced under the same name. A file that is not a pgdt cache is never
+    /// overwritten. It governs only the cache found at the start: a dump that
+    /// changes while it is being read still stops the run
+    /// (`--strict-identity`).
+    #[arg(long)]
+    overwrite_unusable_cache: bool,
+}
+
 /// A `--strict-identity` selection. `none` is exclusive: it turns every term
 /// off, the in-flight check included, so naming it beside another term is a
 /// contradiction rather than an override.
@@ -782,6 +800,8 @@ enum Command {
         row_group_max_rows: Option<u64>,
         #[command(flatten)]
         identity: IdentityArgs,
+        #[command(flatten)]
+        overwrite: OverwriteArgs,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -961,6 +981,8 @@ enum Command {
         statistics: QueryStatistics,
         #[command(flatten)]
         identity: IdentityArgs,
+        #[command(flatten)]
+        overwrite: OverwriteArgs,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -1368,7 +1390,8 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
 ///
 /// Four refusals fire *because the source moved*, and the library raises each
 /// wherever its check is cheapest: in flight, from the cache machinery when a
-/// cache was written for another file or a bound weak signal does not hold,
+/// cache cannot be used — written for another file, or damaged or another
+/// build's, which is said with the same name — or a bound weak signal does not hold,
 /// and from the back-fill when a block no longer ends where the map says
 /// (`docs/design/decisions.md`, "D20", "D21"). None of those places has a name
 /// for what was being read, and the user typed one.
@@ -1393,7 +1416,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
     use pgdump_query::Error as Lib;
     match err {
         Lib::SourceChangedWhileRead { .. }
-        | Lib::CacheSourceMismatch { .. }
+        | Lib::CacheUnusable { .. }
         | Lib::StrictIdentityUnmet { .. }
         | Lib::CachedBlockChanged { .. } => true,
         // A caller's map short of the file's end names neither. `pgdt` hands
@@ -1779,6 +1802,7 @@ async fn main() -> Result<()> {
             row_group_min_rows,
             row_group_max_rows,
             identity,
+            overwrite,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
@@ -1793,14 +1817,15 @@ async fn main() -> Result<()> {
             // won't be allowed to persist.
             let origin = Origin::resolve(&file)?;
             let mode = CacheMode::resolve(&origin, dtcache.as_deref())
-                .with_strict_identity(identity.resolve());
+                .with_strict_identity(identity.resolve())
+                .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
             let path = mode
                 .require_enabled("parse")
                 .context("`--dtcache none` cannot be combined with `parse`")?
                 .to_path_buf();
-            // A cache written for another file is refused here as it is by
-            // `info` and `query`, having read no more than the file's leading
-            // bytes
+            // A cache that cannot be used is refused here as it is by `info`
+            // and `query`, having read no more than the file's leading bytes,
+            // unless `--overwrite-unusable-cache` says it may be replaced
             // (`docs/design/decisions.md`, "D20"). The flags and the limit
             // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
@@ -1917,18 +1942,17 @@ async fn main() -> Result<()> {
                     )
                 })?
                 .to_path_buf();
-            // A cache that does not describe this file leaves `info` nothing
-            // to report from, and it says so having read no more than the
-            // file's leading bytes. This
-            // condition keeps `info`'s own sentence, which names the two ways
-            // out ahead of the command they enable.
+            // A cache `info` cannot use leaves it nothing to report from, and
+            // it says so having read no more than the file's leading bytes, in
+            // its own sentence: it never writes, so what it names is the
+            // `parse` the ways out enable.
             let source = match open_with_cache(&origin, &mode).await? {
                 Opened::Source { source, .. } => source,
-                Opened::SourceChanged { cached_stored_size, live_stored_size } => {
-                    let changed =
-                        CacheStatus::SourceChanged { cached_stored_size, live_stored_size };
-                    anyhow::bail!(unusable_cache_message(&changed, &path, Some(&origin)))
-                }
+                Opened::Unusable(why) => anyhow::bail!(unusable_cache_message(
+                    &CacheStatus::Unusable(why),
+                    &path,
+                    Some(&origin)
+                )),
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
             let (mut index, weak, cache_origin, total_size, compression, envelope) = match status {
@@ -1979,12 +2003,14 @@ async fn main() -> Result<()> {
             max_line_bytes,
             statistics,
             identity,
+            overwrite,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
             let origin = Origin::resolve(&file)?;
             let mode = CacheMode::resolve(&origin, dtcache.as_deref())
-                .with_strict_identity(identity.resolve());
+                .with_strict_identity(identity.resolve())
+                .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
@@ -2199,22 +2225,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// What [`open_with_cache`] found: the source to read, or the one refusal the
-/// cache path settles on its own, before anything is opened. **The second
-/// variant is not a refusal this helper can write**: a contradicted
-/// compression claim reaches all three commands in one sentence, a stored-size
-/// mismatch does not — `parse` and `query` surface
-/// `Error::CacheSourceMismatch` and `info` prints the sentence naming the two
-/// ways out (`docs/design/decisions.md`, "D20").
+/// What [`open_with_cache`] found: the source to read, or why the cache at
+/// the mode's path cannot be used, settled before a stream-footer walk.
+/// **What to do about the second is the caller's**: `parse` and `query` ask
+/// `CacheMode::refusal`, and `info`, which never writes, prints its own
+/// sentence (`docs/design/decisions.md`, "D20").
 enum Opened {
     /// The source, ready to read, and the heap the cache's statistics will
     /// hold once a scan loads them (`CacheClaim::Settles`).
     Source { source: Arc<dyn pgdump_query::ByteRangeSource>, cached_statistics: u64 },
-    /// The cache at this mode's path records a stored size the file does not
-    /// have, so it describes another file — the condition, and the two
-    /// numbers, `cache::load` would answer [`CacheStatus::SourceChanged`]
-    /// with once a source existed.
-    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+    /// The reason `cache::load` would answer once a source existed — or, for
+    /// a compression claim recognition refused, the reason it answers for a
+    /// source opened without one.
+    Unusable(Unusable),
 }
 
 /// Open `file`, handing recognition whatever the cache at `cache` says about
@@ -2223,11 +2246,10 @@ enum Opened {
 /// footers (`docs/design/decisions.md`, "D18"). `--dtcache none` claims
 /// nothing; cache-only mode never reaches here at all, having no live source.
 ///
-/// Both "written for another file" conditions stop here rather than at each of
-/// the three call sites — a contradicted claim as a bail, a stored-size
-/// mismatch as an [`Opened`] variant — so an `.xz` source never walks its
-/// stream footers to reach a refusal the cache path alone settles. The
-/// comparison itself stays in `cache::claim` (D20).
+/// An unusable cache stops here rather than at each of the three call sites,
+/// so an `.xz` source never walks its stream footers to reach a refusal the
+/// cache path alone settles. The comparisons stay in `cache::claim` and in
+/// recognition (D20).
 async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
     let claimed_by = match cache {
         CacheMode::Enabled { path, .. } => Some(path.as_path()),
@@ -2238,124 +2260,98 @@ async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
             CacheClaim::Settles { compression, statistics_heap_bytes } => {
                 (compression, statistics_heap_bytes)
             }
-            CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
-                return Ok(Opened::SourceChanged { cached_stored_size, live_stored_size });
-            }
+            CacheClaim::Unusable(why) => return Ok(Opened::Unusable(why)),
         },
         None => (KnownCompression::Unknown, 0),
     };
     match open(origin, known).await? {
         Recognized::Source(source) => Ok(Opened::Source { source, cached_statistics }),
-        Recognized::Mismatch => {
-            let path =
-                claimed_by.expect("`KnownCompression::Unknown` claims nothing to contradict");
-            anyhow::bail!(cache_written_for_another_file(path, origin))
-        }
+        Recognized::Mismatch => Ok(Opened::Unusable(Unusable::CompressionContradicted)),
     }
 }
 
-/// [`open_with_cache`] for the two commands that scan, raising
-/// `Error::CacheSourceMismatch` from `CacheMode::source_mismatch` — the same
-/// constructor the four scan entry points use, so this refusal is
-/// word-for-word the one it pre-empts. The library still refuses on its own:
-/// this spares the walk, it does not replace the guarantee
-/// (`docs/design/decisions.md`, "D20"). Beside the source it answers the heap
-/// the cache's statistics will hold, which [`Discovered::resolve`] carves the
-/// workers around.
+/// [`open_with_cache`] for the two commands that scan: an unusable cache is
+/// `CacheMode::refusal`'s to decide — the one decision the four scan entry
+/// points make, so this refusal is word for word the one it pre-empts, and the
+/// library still refuses on its own: this spares the walk, it does not replace
+/// the guarantee (`docs/design/decisions.md`, "D20"). Under
+/// `--overwrite-unusable-cache` the source is opened claiming nothing, and the
+/// scan's own load meets the same reason and starts cold. Beside the source it
+/// answers the heap the cache's statistics will hold, which
+/// [`Discovered::resolve`] carves the workers around — none, for a cache about
+/// to be replaced.
 async fn open_for_scan(
     origin: &Origin,
     cache: &CacheMode,
 ) -> Result<(Arc<dyn pgdump_query::ByteRangeSource>, u64)> {
     match open_with_cache(origin, cache).await? {
         Opened::Source { source, cached_statistics } => Ok((source, cached_statistics)),
-        Opened::SourceChanged { cached_stored_size, live_stored_size } => Err(naming_the_source(
-            cache.source_mismatch(cached_stored_size, live_stored_size),
-            origin,
-        )),
+        Opened::Unusable(why) => match cache.refusal(&why) {
+            Some(refusal) => Err(naming_the_source(refusal, origin)),
+            None => match open(origin, KnownCompression::Unknown).await? {
+                Recognized::Source(source) => Ok((source, 0)),
+                Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
+            },
+        },
     }
 }
 
-/// The sentence all three commands print when recognition finds that the
-/// cache at `path` records compression details the file at `source`
-/// contradicts.
+/// The sentence `pgdt info` prints for a cache it cannot use — one per cause,
+/// because the fact the user needs to know differs. Each ends as the scanning
+/// commands' refusals do, in `OVERWRITE_WAYS_OUT`, and then names the `parse`
+/// those ways out enable; a file that is not a pgdt cache names neither, no
+/// scan being allowed to write over it (`docs/design/decisions.md`, "D20").
 ///
-/// Not one of [`unusable_cache_message`]'s: that function matches on
-/// [`CacheStatus`], and recognition catches this before a source exists so
-/// `load` never sees it. The sentence is its own rather than `Unreadable`'s —
-/// "check the path, or run `pgdt parse`" is advice `parse` cannot take, being
-/// the command that just refused. The tail is [`TWO_WAYS_OUT`]
-/// (`docs/design/decisions.md`, "D20").
-fn cache_written_for_another_file(path: &Path, source: &Origin) -> String {
-    format!(
-        "the cache at {} records compression details that {source} contradicts, so it was written \
-         for another file{TWO_WAYS_OUT}",
-        path.display(),
-    )
-}
-
-/// What a caller does about a cache that describes a different file, in the
-/// words both refusals use. There is no third way — no `--force`, no
-/// `CacheMode` variant meaning "replace regardless"
-/// (`docs/design/decisions.md`, "D20").
-/// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for the
-/// size-mismatch condition; `refusals_name_both_ways_out`
-/// (`tests/partial_reporting.rs`) holds the size-mismatch refusals to one
-/// wording, and `every_command_refuses_a_cache_that_does_not_describe_the_file`
-/// (`tests/xz_source.rs`) a contradicted compression claim's.
-const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
-
-/// The sentence `pgdt info` prints for a cache it cannot use — four causes,
-/// four sentences, because the fact the user needs to know differs. `parse`
-/// scans over `Missing`, `Unreadable` and `UnsupportedVersion` and refuses
-/// `SourceChanged`, so that arm names [`TWO_WAYS_OUT`] before it names the
-/// command (`docs/design/decisions.md`, "D20").
-///
-/// **One match, two renderings**, so a new [`CacheStatus`] variant has to
-/// answer both.
-/// `source` is `None` in cache-only mode, which states the fault and stops; it
-/// cannot reach [`CacheStatus::SourceChanged`] at all, there being no live
-/// file to compare against — what its `CacheOffline` diagnostic warns about.
+/// **One match, two renderings**, so a new [`Unusable`] variant has to answer
+/// both. `source` is `None` in cache-only mode, which states the fault and
+/// stops; it cannot reach [`Unusable::SourceChanged`] or
+/// [`Unusable::CompressionContradicted`] at all, there being no live file to
+/// compare against — what its `CacheOffline` diagnostic warns about.
 ///
 /// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
 /// stays exhaustive: a usable status reaching here is a caller bug.
 fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Origin>) -> String {
-    // Each arm supplies its own connective and tail, because "no cache at X"
-    // and "X is not a pgdt cache" do not join to the same sentence.
-    let remedy = |lead: &str, tail: &str| match source {
-        Some(s) => format!(" — {lead}run `pgdt parse --source {s}`{tail}"),
-        None => String::new(),
-    };
-    match status {
+    let shown = path.display();
+    let live = || source.expect("cache-only mode has no live source to compare against");
+    let found = match status {
         CacheStatus::Missing => {
-            format!("no cache at {}{}", path.display(), remedy("", " first"))
+            return match source {
+                Some(s) => format!("no cache at {shown} — run `pgdt parse --source {s}` first"),
+                None => format!("no cache at {shown}"),
+            };
         }
-        CacheStatus::Unreadable => {
-            format!("{} is not a pgdt cache{}", path.display(), remedy("check the path, or ", ""))
+        CacheStatus::Unusable(Unusable::NotACache) => {
+            return format!("{shown} is not a pgdt cache — check the path");
         }
-        CacheStatus::UnsupportedVersion => format!(
-            "the cache at {} was written by a different pgdt build and cannot be read{}",
-            path.display(),
-            remedy("", "")
+        CacheStatus::Unusable(Unusable::Unreadable) => {
+            format!("the cache at {shown} is cut short or damaged and cannot be read")
+        }
+        CacheStatus::Unusable(Unusable::UnsupportedVersion { found }) => format!(
+            "the cache at {shown} was written by a different pgdt build (cache format {found}, \
+             where this build reads {CACHE_FORMAT_VERSION}) and cannot be read"
         ),
-        CacheStatus::SourceChanged {
+        CacheStatus::Unusable(Unusable::SourceChanged {
             cached_stored_size: cached_size,
             live_stored_size: live_size,
-        } => {
-            let source = source.expect("cache-only mode has no live source to compare against");
-            // The one arm whose remedy is not `pgdt parse` on its own:
-            // `parse` refuses this very condition, so the two ways out come
-            // first and `parse` then works
-            // (`docs/design/decisions.md`, "D20").
-            format!(
-                "{source} has changed since it was parsed ({live_size} bytes now, {cached_size} \
-                 when the cache at {} was written), so every offset in the cache could be \
-                 wrong{TWO_WAYS_OUT}, then run `pgdt parse --source {source}`",
-                path.display()
-            )
-        }
+        }) => format!(
+            "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when the \
+             cache at {shown} was written), so every offset in the cache could be wrong",
+            live()
+        ),
+        CacheStatus::Unusable(Unusable::CompressionContradicted) => format!(
+            "the cache at {shown} records compression details that {} contradicts, so it was \
+             written for another file",
+            live()
+        ),
         CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
             unreachable!("a usable cache is reported, not refused")
         }
+    };
+    match source {
+        Some(s) => format!(
+            "{found}{OVERWRITE_WAYS_OUT}; `pgdt parse --source {s}` then builds a fresh one"
+        ),
+        None => found,
     }
 }
 
@@ -3114,10 +3110,9 @@ mod tests {
         // The cache names itself; what it cannot name is the dump it was
         // checked against, which is the whole point where the path was
         // derived from a URL.
-        let said = named(pgdump_query::Error::CacheSourceMismatch {
+        let said = named(pgdump_query::Error::CacheUnusable {
             path: PathBuf::from("koji.dump.dtcache"),
-            cached_stored_size: 10,
-            live_stored_size: 11,
+            unusable: Unusable::SourceChanged { cached_stored_size: 10, live_stored_size: 11 },
         });
         assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
         assert!(said.contains("koji.dump.dtcache"), "the cache is still named: {said}");

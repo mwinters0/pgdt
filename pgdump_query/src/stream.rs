@@ -1057,17 +1057,14 @@ pub async fn map_file(
     let watch = SourceWatch::open(source, cache.strict_identity()).await?;
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Four reasons to start cold, spelled out rather than wildcarded
-        // (`docs/design/decisions.md`, "D22").
-        CacheLoad::Disabled
-        | CacheLoad::Missing
-        | CacheLoad::Unreadable
-        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
-        // The fifth is a refusal, before a byte of the dump is read: this
-        // cache describes another file.
-        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
-            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
-        }
+        // Nothing to build forward from, and nothing at the path to keep.
+        CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
+        // Refused before a byte of the dump is read, unless the caller said
+        // this cache may be replaced (`docs/design/decisions.md`, "D20").
+        CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
+            Some(refusal) => return Err(refusal),
+            None => DumpIndex::default(),
+        },
     };
     let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance_bytes));
     let loaded = index.statistics_heap_bytes();
@@ -1135,7 +1132,7 @@ pub async fn map_file(
             // describing zero bytes — or strip an existing empty one of the
             // identity diagnostics `carried` has already drained — and either
             // can then refuse the resume it invited through
-            // `Error::CacheSourceMismatch`. The source is asked directly,
+            // `Error::CacheUnusable`. The source is asked directly,
             // there being no save left to ride ([`crate::cache::SourceWatch`]).
             Err(e) if cancelled_read(&e, scan_options) => {
                 watch.check(source).await?;
@@ -2469,17 +2466,14 @@ async fn map_for_query(
 
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Four reasons to start cold, spelled out rather than wildcarded
-        // (`docs/design/decisions.md`, "D22").
-        CacheLoad::Disabled
-        | CacheLoad::Missing
-        | CacheLoad::Unreadable
-        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
-        // The fifth is a refusal, before a byte of the dump is read: this
-        // cache describes another file.
-        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
-            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
-        }
+        // Nothing to build forward from, and nothing at the path to keep.
+        CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
+        // Refused before a byte of the dump is read, unless the caller said
+        // this cache may be replaced (`docs/design/decisions.md`, "D20").
+        CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
+            Some(refusal) => return Err(refusal),
+            None => DumpIndex::default(),
+        },
     };
     // The one statistics term a query has: it keeps no account, so nothing else
     // says what the cache handed it.
