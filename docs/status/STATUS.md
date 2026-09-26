@@ -102,3 +102,12 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A weak entity tag compares weakly where it decides a cache's identity**
+  (`M169`, `SourceIdentity::weak_against` in `pgdump_query/src/cache.rs`).
+  The row fixed the order — strong tag, `Last-Modified`, weak tag — and not
+  the comparison in the last tier; RFC 9110, §8.8.3.2's weak comparison was
+  taken, so a cached `"abc"` against a live `W/"abc"`, neither side stating a
+  `Last-Modified`, agrees rather than warning (or refusing under
+  `--strict-identity=time`). Reconsidering means exact string equality: one
+  line, and that pairing of the test's reads `TagDiffers`.

@@ -55,7 +55,7 @@ use crate::index::{
     DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
 use crate::instrument::StatisticsScope;
-use crate::io::{ByteRangeSource, KnownCompression, Origin};
+use crate::io::{ByteRangeSource, KnownCompression, Origin, is_weak_tag};
 use crate::map::{DataBlock, SpanBody};
 use crate::{Error, Result};
 
@@ -184,23 +184,32 @@ impl SourceIdentity {
     /// keeps what was compared**, so a caller refusing on it states what it
     /// saw rather than only that it looked.
     ///
-    /// **The strongest signal both sides carry decides it.** An entity tag is
-    /// the server's own statement about which version of the object this is,
-    /// so where both sides have one it settles the question and a
-    /// `Last-Modified` disagreeing with it is not consulted; where either
-    /// side has none, the modification time is what is left
-    /// (`docs/design/decisions.md`, "D21").
+    /// **The strongest signal both sides carry decides it: a strong entity
+    /// tag, then `Last-Modified`, then a weak tag.** A strong tag is the
+    /// server's statement that these are the same bytes, so where both sides
+    /// have one it settles the question and a `Last-Modified` disagreeing
+    /// with it is not consulted (`docs/design/decisions.md`, "D21"). A weak
+    /// one states only equivalent content (RFC 9110, §8.8.1), which is not
+    /// what a map of byte offsets needs, so it cannot outrank a moved
+    /// `Last-Modified` — the reason [`crate::io`] pins no read by it either —
+    /// and decides only where neither side states one. There it compares as
+    /// RFC 9110, §8.8.3.2 compares a weak validator: the opaque tags, with
+    /// either side's `W/` set aside.
     fn weak_against(&self, live: &Self) -> WeakIdentity {
-        if let (Some(cached), Some(live)) = (self.etag(), live.etag()) {
-            return if cached == live {
-                WeakIdentity::Agrees
-            } else {
-                WeakIdentity::TagDiffers { cached: cached.to_string(), live: live.to_string() }
-            };
+        let tags = self.etag().zip(live.etag());
+        if let Some((cached, live)) = tags.filter(|(c, l)| !is_weak_tag(c) && !is_weak_tag(l)) {
+            return tag_against(cached, live, cached == live);
         }
         match (self.modified(), live.modified()) {
             (Some(cached), Some(live)) if cached == live => WeakIdentity::Agrees,
             (Some(cached), Some(live)) => WeakIdentity::Differs { cached, live },
+            (None, None) => match tags {
+                Some((cached, live)) => {
+                    let opaque = |tag: &'_ str| tag.strip_prefix("W/").unwrap_or(tag).to_owned();
+                    tag_against(cached, live, opaque(cached) == opaque(live))
+                }
+                None => WeakIdentity::Absent { cached: None, live: None },
+            },
             (cached, live) => WeakIdentity::Absent { cached, live },
         }
     }
@@ -241,6 +250,16 @@ impl SourceIdentity {
             said.push("it is no longer the same origin".to_string());
         }
         said.join(" and ")
+    }
+}
+
+/// A tag comparison's answer, `matched` being whichever comparison the
+/// tags' strength called for ([`SourceIdentity::weak_against`]).
+fn tag_against(cached: &str, live: &str, matched: bool) -> WeakIdentity {
+    if matched {
+        WeakIdentity::Agrees
+    } else {
+        WeakIdentity::TagDiffers { cached: cached.to_string(), live: live.to_string() }
     }
 }
 
@@ -294,11 +313,11 @@ impl OriginMatch {
 pub enum WeakIdentity {
     /// The cache's recorded modification signal is the source's.
     Agrees,
-    /// Both sides carry an entity tag and the two differ — the server's own
-    /// statement that this is a different version of the object, which
-    /// outranks whatever `Last-Modified` says
-    /// (`docs/design/decisions.md`, "D21"). Advisory by
-    /// default, exactly as [`WeakIdentity::Differs`] is.
+    /// The entity tags differ — both strong, the server's own statement that
+    /// this is a different version of the object, which outranks whatever
+    /// `Last-Modified` says (`docs/design/decisions.md`, "D21"); or either
+    /// weak where neither side states a `Last-Modified`. Advisory by default,
+    /// exactly as [`WeakIdentity::Differs`] is.
     TagDiffers { cached: String, live: String },
     /// They differ — advisory by default
     /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]) — with the

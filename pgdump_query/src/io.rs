@@ -291,10 +291,17 @@ impl RemoteIdentity {
     }
 
     /// The server's entity tag for this version of the object, `None` where
-    /// it sent none. Opaque: it is compared, never parsed.
+    /// it sent none. Opaque but for a weak tag's `W/`: it is compared, never
+    /// otherwise parsed.
     pub fn etag(&self) -> Option<&str> {
         self.etag.as_deref()
     }
+}
+
+/// Whether an entity tag is weak: `W/`, case-sensitively, before the quoted
+/// tag (RFC 9110, §8.8.3). `object_store` hands the header over verbatim.
+pub(crate) fn is_weak_tag(tag: &str) -> bool {
+    tag.starts_with("W/")
 }
 
 /// Whether a read loop's acquisitions may be made to **wait** for a pooled
@@ -4399,13 +4406,6 @@ impl RemoteObject {
         let _ = self.meta.set(meta);
         Ok(OriginProbe { stored_size, modified, leading: leading.to_vec() })
     }
-}
-
-/// Whether an entity tag is weak: `W/`, case-sensitively, before the quoted
-/// tag (RFC 9110, §8.8.3). `object_store` hands the header over verbatim.
-#[cfg(feature = "http")]
-fn is_weak_tag(tag: &str) -> bool {
-    tag.starts_with("W/")
 }
 
 /// What a server's `Last-Modified` is worth as a weak identity: the time it

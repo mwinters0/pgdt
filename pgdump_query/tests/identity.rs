@@ -764,7 +764,7 @@ async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
     );
 }
 
-/// The entity tag is the stronger of the two modification signals, so where
+/// A strong entity tag is the strongest of the modification signals, so where
 /// both sides carry one it settles the question — here saying the object
 /// changed while the modification time says it did not
 /// (`docs/design/decisions.md`, "D21").
@@ -817,6 +817,64 @@ async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
     assert!(
         matches!(status, CacheStatus::Valid { weak: WeakIdentity::Differs { .. }, .. }),
         "the times differ, got {status:?}"
+    );
+}
+
+/// A weak entity tag states equivalent content rather than the same bytes, so
+/// **it gives way to `Last-Modified` wherever either side states one**, and
+/// decides only where neither does — there comparing weakly, a `W/` set aside
+/// (`SourceIdentity::weak_against`).
+#[tokio::test]
+async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let origin = "https://one.example/koji.dump";
+    let weak = |tag: &str, modified: Option<SystemTime>| {
+        let mut source = Fetched::new(&dump, origin, Some(tag));
+        source.modified = modified;
+        source
+    };
+    let then = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_764_800));
+    let later = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_768_400));
+    let weak_of = |source: Fetched| {
+        let path = path.clone();
+        async move {
+            match cache::load(&path, &source).await.unwrap() {
+                CacheStatus::Valid { weak, .. } => weak,
+                other => panic!("a weak difference never invalidates the cache, got {other:?}"),
+            }
+        }
+    };
+
+    mapped(&weak("W/\"abc\"", then), &path, StrictIdentity::ADVISORY).await.unwrap();
+    assert_eq!(
+        weak_of(weak("W/\"def\"", then)).await,
+        WeakIdentity::Agrees,
+        "the `Last-Modified`s agree, and a weak tag does not outrank them"
+    );
+    assert!(
+        matches!(weak_of(weak("W/\"abc\"", later)).await, WeakIdentity::Differs { .. }),
+        "a moved `Last-Modified` is not answered by a weak tag that agrees"
+    );
+    assert!(
+        matches!(
+            weak_of(weak("W/\"abc\"", None)).await,
+            WeakIdentity::Absent { cached: Some(_), live: None }
+        ),
+        "one side stating a `Last-Modified` leaves the weak tag undeciding"
+    );
+
+    mapped(&weak("W/\"abc\"", None), &path, StrictIdentity::ADVISORY).await.unwrap();
+    assert_eq!(weak_of(weak("W/\"abc\"", None)).await, WeakIdentity::Agrees);
+    assert_eq!(
+        weak_of(weak("\"abc\"", None)).await,
+        WeakIdentity::Agrees,
+        "weak comparison sets a `W/` aside"
+    );
+    assert_eq!(
+        weak_of(weak("W/\"def\"", None)).await,
+        WeakIdentity::TagDiffers { cached: "W/\"abc\"".to_string(), live: "W/\"def\"".to_string() },
+        "with no `Last-Modified` on either side, the weak tag decides"
     );
 }
 

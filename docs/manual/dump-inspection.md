@@ -270,11 +270,13 @@ pgdt query --source mydump.sql --table public.widgets --strict-identity=time
 ```
 
 - **`time`** binds the modification signal: a local file's modification time,
-  and for a URL the server's `Last-Modified` and its `ETag`, the tag deciding
-  it wherever both the cache and the server have one. A cache written against a
-  different signal stops the run instead of reporting it — and so does a source
-  that has none to offer at all, since the honest answer there is that it
-  cannot give the guarantee you asked for.
+  and for a URL the server's `Last-Modified` and its `ETag`: a strong tag
+  decides it wherever both the cache and the server have one, then
+  `Last-Modified`, and a weak tag (`W/"…"`, which promises equivalent content
+  rather than the same bytes) only where neither side has a `Last-Modified`. A
+  cache written against a different signal stops the run instead of reporting
+  it — and so does a source that has none to offer at all, since the honest
+  answer there is that it cannot give the guarantee you asked for.
 - **`location`** binds where a source was fetched from — the URL a remote cache
   records. A local file was not fetched from anywhere and records no origin, so
   two local runs always agree and this binds nothing there.
