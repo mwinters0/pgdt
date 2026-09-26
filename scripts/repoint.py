@@ -53,10 +53,10 @@ REGISTER_LINES = 600
 ENTRY_LINES = 7
 #: The one statement of this is `docs/status/history/README.md`; this is that
 #: number, held only for entries dated after the day the cap was adopted. Raised
-#: from 120 on 2026-09-18 (`docs/status/history/2026-09-18.md`) and to 250 on
-#: 2026-09-22, by the maintainer, a day's file being open to its own sessions to
-#: condense.
-HISTORY_LINES = 250
+#: from 120 on 2026-09-18 (`docs/status/history/2026-09-18.md`), to 250 on
+#: 2026-09-22 and to 350 on 2026-09-26, by the maintainer, a day's file being
+#: open to its own sessions to condense.
+HISTORY_LINES = 350
 HISTORY_CAP_FROM = "2026-09-13"
 #: Orientation is what the read-triggers pull into context, so these are the
 #: caps that decide what a session costs before it has done anything.
