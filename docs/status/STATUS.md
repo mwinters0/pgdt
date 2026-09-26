@@ -73,12 +73,22 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
+## P27 progress
+
+Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic-filters.md).
+
+- [ ] **27.1** The evidence, no product code: the flags-on-against-off result-equality harness over every filter shape the spec's "Evidence" names, an aggregate's included; `measure.py` timing `datafusion-cli-pgdump`, and `dynamic-filter-join`, `dynamic-filter-topk` and the costing input taken on today's code
+- [ ] **27.2** Receiving and translating: `PgDumpExec` holds every pushed dynamic filter from any producer, visits it in `apply_expressions`, resets it in `reset_state` and prints it in EXPLAIN; the physical-to-library translator, with a generated check that it only loosens; nothing pruned yet
+- [ ] **27.3** The library's dynamic-filter trait on the partitioned replay: re-pruning between groups on a moved generation, the early stop at a dynamic bound, and the scan's new metrics
+- [ ] **27.4** The byte cut made once at the first poll, over the groups the static and dynamic filters keep, planning staying at `scan()`
+- [ ] **27.5** Row-level evaluation before decode, the figures re-taken to decide its default, what they say filed against "D53"'s **Reopens**
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable
+- **P27 is open**, its checklist above. A dump is readable
   over HTTP, plain and `.xz`, with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -88,7 +98,7 @@ instrument can see").
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Nine phases remain sketched — P27, P22, P21, P23, P26, P15, P18, P8, P24,
+  Eight phases remain sketched — P22, P21, P23, P26, P15, P18, P8, P24,
   in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as

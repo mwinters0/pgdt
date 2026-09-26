@@ -645,8 +645,8 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
             );
         }
     }
-    // An enum is emitted `Dictionary`, whose `MIN` and `MAX` DataFusion types
-    // as the value type (`KD45`); its `COUNT(DISTINCT)` is an `Int64` and
+    // An enum's `MIN` and `MAX` are not handed over (`KD45`); its
+    // `COUNT(DISTINCT)` is an `Int64` and
     // counts labels, so it answers. So does an `interval`, a
     // `MonthDayNano` distinct wherever its text is.
     let (_dump, reading, blind, _) = opened(&types, SchemaMode::Typed).await;

@@ -258,10 +258,9 @@ than reading as a phase nobody has sliced.
   of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
 
 - **KD45** — neither extreme of an enum column answers from the DataFusion
-  provider's statistics: the column is emitted `Dictionary`, whose `MIN`/`MAX`
-  DataFusion types as the value type and orders by label text, where the
-  stored bounds are in declaration order. **(b) owned by P27**, whose dynamic
-  filters compare an enum in that same label order. Detail:
+  provider's statistics, though the bounds its summary reads are in label
+  order, the order DataFusion compares the emitted `Dictionary` in, and are
+  already of the column's own type. **(b) owned by `M173`**. Detail:
   `datafusion-pgdump/src/statistics.rs`.
 
 - **KD46** — a block holding one distinct value records `Ascending`, so a

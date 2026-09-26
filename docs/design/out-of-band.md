@@ -73,3 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M173 | | An enum's `MIN`/`MAX` handed over as `Dictionary` scalars off the label-order bounds, closing `KD45` | | [2026-09-26](../status/history/2026-09-26.md) |

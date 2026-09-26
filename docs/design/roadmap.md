@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P27 — DataFusion's dynamic filters | Sketched; not grilled | this file, below |
+| P27 — DataFusion's dynamic filters | **Current** | [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -558,38 +558,6 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
-
-## P27 — DataFusion's dynamic filters
-
-**A hash join's build side and a TopK's heap each publish a filter DataFusion
-55 pushes into the probe-side scan at run time, and `PgDumpExec` accepts
-none**, so a selective join reads all of its probe table and an `ORDER BY …
-LIMIT` reads every group — though the statistics already held would rule most
-of them out. It needs no new statistic, but moves pruning from the plan into
-the replay's stream; sketched to corner-avoidance depth. What it starts from:
-
-- **The leaf's hook is `handle_child_pushdown_result`**, in the `Post` filter
-  pushdown phase; the default `gather_filters_for_pushdown` serves a leaf.
-  Declining is harmless — the join and the TopK still filter themselves.
-- **Neither filter is final when the scan is planned.** A join's is completed
-  before its probe side is first polled, not when `execute` is called; a
-  TopK's tightens while the scan streams. So consuming either re-prunes the
-  remaining groups as the replay streams — DataFusion's Parquet reader does
-  it between row groups on each change — where the replay prunes today only
-  in its plan (`prune::prune_block`).
-- **A dynamic filter is a physical expression**: per-key `min`/`max` bounds and
-  an `IN` list or hash lookup from a join, a lexicographic threshold from a
-  TopK. No converter back to a logical `Expr` exists upstream, so either
-  `PruningPredicateBuilder` is run over a `PruningStatistics` of our groups, or
-  the snapshot is matched into the library's tree, anything unmatched kept.
-- **An enum is compared in label order by DataFusion**, where its stored
-  bounds are in declaration order, so a dynamic filter over one prunes nothing
-  until bounds are kept in that order — which also lets its `MIN`/`MAX` answer
-  from statistics (`KD45`, owned here). A declared ordering over one is
-  already in label order, the set Arrow orders a `Dictionary` by
-  (`summary::partition_orders`).
-- **`decisions.md`'s "D53" — the closed operator set — is reconsidered here**,
-  since what a dynamic filter holds is DataFusion's choice, not ours.
 
 ## P22 — The third tunable
 

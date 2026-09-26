@@ -1,17 +1,22 @@
-# pgdump_query / pgdt
+# `pgdump_query` / Postgres Dump Tool
 
 Inspect Postgres dumps, query them like they're parquet, and export results.
 
 Available as:
 - A Rust library: `pgdump_query`
-- A CLI: `pgdt`, aka "Postgres Dump Tool"
-    - Generates metadata and statistics (cached as `*.dtcache`)
-    - Supports queries with SQL-like `WHERE` syntax (no joins)
+- A CLI: `pgdt`
+    - Parses metadata and statistics from your dump (cached as `.dtcache`)
+    - Supports simple single-table queries with SQL-like `WHERE` syntax
 - A DataFusion catalog and `TableProvider`: `datafusion-pgdump`
 - A DataFusion SQL shell: `datafusion-cli-pgdump`
+    - Full SQL support (see: [`datafusion-cli`](https://datafusion.apache.org/user-guide/cli/usage.html)
+    - Export to Parquet, etc
 
-Quickstart:
+_Mostly written by LLMs, reviewed by human wetware._
 
+## Quickstart
+
+**`pgdt`:**
 ```bash
 # Parse a dump (builds a cache)
 pgdt parse --source=f00.xz
@@ -21,14 +26,40 @@ pgdt info --details --source=f00.xz
 
 # Run a query.  Look ma, no daemons!
 pgdt query --where='foo.bar = baz' --source=f00.xz
-
-# Use DuckDB to convert the TSV output to parquet
-pgdt query ... \
-  | duckdb -c "COPY (SELECT * FROM read_csv('/dev/stdin', delim='\t', header=true, auto_detect=true)) TO 'output.parquet' (FORMAT PARQUET)"
 ```
 
-_Mostly written by LLMs, reviewed through human wetware._
+**`datafusion-cli-pgdump`:**
+```bash
+# Parse a dump (builds f00.dtcache)
+pgdt parse --source=f00.xz
 
+# Then query it as catalog `f00`
+datafusion-cli-pgdump --dump f00=f00.xz
+```
+
+See the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
+
+```sql
+SHOW TABLEs;
+
+-- Export some hive-partitioned Parquet
+COPY (
+  SELECT
+    *,
+    date_part('year', event_ts)  AS year,
+    date_part('month', event_ts) AS month
+  FROM f00.public.events
+)
+TO '/tmp/events_parquet'
+STORED AS PARQUET
+PARTITIONED BY (year, month)
+OPTIONS (
+  'format.writer_version' '2.0',
+  'compression' 'zstd(3)'
+);
+
+INSERT INTO ...; -- Unsupported!
+```
 
 ## Roadmap / Status
 **Early development**, pre-1.0, with no compatibility guarantees yet. Two things set the direction:

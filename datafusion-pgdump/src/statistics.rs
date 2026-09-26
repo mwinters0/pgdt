@@ -56,15 +56,13 @@ pub(crate) fn table_statistics(
                 .and_then(|distinct| usize::try_from(distinct).ok())
                 .map_or(Precision::Absent, Precision::Exact);
             statistics.byte_size = byte_size(data_type, rows, column.value_bytes);
-            // deficiency: KD45 — an enum is emitted `Dictionary`, and
-            // DataFusion types a `MIN` or `MAX` of one as the dictionary's value
-            // type, not the column's (`get_min_max_result_type`), so a statistic
-            // in the column's own type would be a literal of the wrong type in
-            // a plan that no longer checks its schema; and it orders the labels
-            // as text, where the stored bounds are in declaration order, so no
-            // bound here is DataFusion's extreme. **(b) owned by P27**, whose
-            // dynamic filters compare an enum in that label order too; the fix
-            // is bounds kept in it, handed over in the value type.
+            // deficiency: KD45 — an enum is emitted `Dictionary`, and no
+            // extreme of one is handed over, though the summary's bounds for it
+            // are the label-order set, the order DataFusion compares it in, and
+            // `bound` makes them scalars of the column's own type, which every
+            // reader of a column's `min_value` in 55 accepts — a `Utf8` would
+            // not meet the `Dictionary` null filter estimation fills a missing
+            // end with, so closing this is removing the return below.
             if matches!(data_type, DataType::Dictionary(..)) {
                 return statistics;
             }

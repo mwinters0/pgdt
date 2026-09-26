@@ -366,8 +366,8 @@ Across a DataFusion query's partitions the first refusal wins, each true; reject
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed
-No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or
-column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
+No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or column-to-column. `IS [NOT] DISTINCT FROM`
+is what three-valued logic forces. Reopens: a set-membership term, should a dynamic filter's `IN`, evaluated per row as `Or`, be read to cost.
 
 ### D54 One tree, no planner, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first
