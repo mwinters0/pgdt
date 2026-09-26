@@ -112,11 +112,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A scan prints its dynamic filters under `dynamic_filter=`, not Parquet's
-  `predicate=`** (27.2). The spec asks for them printed "as Parquet does";
-  each is rendered as DataFusion renders one, `DynamicFilter [ … ]`, but under
-  a key of its own, because the static filter this scan answers is the
-  logical plan's to print and not the node's, so `predicate=` would read as
-  everything the scan applies. Reconsidering renames the key in `exec.rs`'s
-  `fmt_as` and in `tests/dynamic_filters.rs`, its only reader.
