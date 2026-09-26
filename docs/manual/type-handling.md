@@ -640,6 +640,11 @@ that the range is half-open, and it collapses a range holding nothing to
 --filter "span='(1,2)'"    # matches rows holding `empty`: no integer is between
 ```
 
+A literal whose bound has no next value — `'[1,2147483647]'` for an
+`int4range`, `'(5874897-12-31,)'` for a `daterange` — is refused before any
+row is read, as PostgreSQL refuses it with "integer out of range" or "date out
+of range".
+
 `numrange`, `tsrange`, `tstzrange` and any range type you defined yourself
 without a `canonical` parameter do **not** get that shift — PostgreSQL only
 rewrites a range whose type declares a canonical function — so there `[1,10)`

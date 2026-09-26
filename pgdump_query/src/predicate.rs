@@ -9,8 +9,8 @@ use crate::decode;
 use crate::diagnostic::{Finding, Severity};
 use crate::nested;
 use crate::pgtype::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, NestedCompare,
-    NestedPlan, UnanswerableReason, arrow_position_divergences,
+    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
+    NestedCompare, NestedPlan, UnanswerableReason, arrow_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
@@ -1575,7 +1575,7 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
 fn range_key(
     bound: &NestedCompare,
     literal: &nested::RangeLiteral,
-    discrete: bool,
+    discrete: Option<Discrete>,
     input: bool,
 ) -> Option<RangeKey> {
     let side = |text: &Option<String>, inclusive: bool, lower: bool| {
@@ -1603,32 +1603,32 @@ fn range_key(
 ///
 /// `None` is the server's `22000` — a lower bound above its upper, a *semantic*
 /// refusal the container grammar cannot see (I44), so it is raised here where
-/// the bounds have been decoded — or a discrete bound whose successor
-/// overflows `i64`. Only an `int8range`'s can: every integer bound is read as
-/// `i64` (see `order_key`), so an `int4range` or `daterange` bound at its
-/// subtype's maximum takes a successor the server would refuse.
+/// the bounds have been decoded — or a discrete bound whose successor leaves
+/// the subtype, past [`Discrete::largest`], the canonical function's
+/// "out of range".
 fn make_range(
     lower: RangeBoundKey,
     upper: RangeBoundKey,
     empty: bool,
-    discrete: bool,
+    discrete: Option<Discrete>,
 ) -> Option<RangeKey> {
     let serialized = serialize_range(lower, upper, empty)?;
-    if !discrete || serialized.empty {
+    let Some(discrete) = discrete.filter(|_| !serialized.empty) else {
         return Some(serialized);
-    }
+    };
     // `int4range_canonical` and its two siblings, which differ only in the
-    // width they overflow at: an exclusive lower bound becomes inclusive at
-    // the successor, an inclusive upper becomes exclusive at the successor.
+    // value past which they refuse a successor: an exclusive lower bound
+    // becomes inclusive at the successor, an inclusive upper becomes
+    // exclusive at the successor.
     //
     // The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard: a
     // date `infinity` decodes to `OrderKey::PositiveInfinity` rather than to
     // a day count, so it matches no arm here and is left as written, which is
     // what makes `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
     let successor = |bound: &RangeBoundKey| match &bound.value {
-        Some(NestedKey::Leaf(OrderKey::Int(n))) => n.checked_add(1).map(|n| {
+        Some(NestedKey::Leaf(OrderKey::Int(n))) => (*n < discrete.largest()).then(|| {
             Some(RangeBoundKey {
-                value: Some(NestedKey::Leaf(OrderKey::Int(n))),
+                value: Some(NestedKey::Leaf(OrderKey::Int(n + 1))),
                 inclusive: !bound.inclusive,
                 lower: bound.lower,
             })
@@ -1744,7 +1744,10 @@ fn compare_range(a: &RangeKey, b: &RangeKey) -> Ordering {
 ///
 /// `None` propagates a bound the union could not re-serialize, which the
 /// shapes reaching here cannot produce; it is carried rather than unwrapped.
-fn canonical_multirange(mut members: Vec<RangeKey>, discrete: bool) -> Option<Vec<RangeKey>> {
+fn canonical_multirange(
+    mut members: Vec<RangeKey>,
+    discrete: Option<Discrete>,
+) -> Option<Vec<RangeKey>> {
     members.sort_by(compare_range);
     let mut out: Vec<RangeKey> = Vec::with_capacity(members.len());
     for current in members {
@@ -1777,7 +1780,7 @@ fn range_before(a: &RangeKey, b: &RangeKey) -> bool {
 
 /// `range_adjacent_internal`: the two ranges touch without overlapping,
 /// in either direction.
-fn ranges_adjacent(a: &RangeKey, b: &RangeKey, discrete: bool) -> bool {
+fn ranges_adjacent(a: &RangeKey, b: &RangeKey, discrete: Option<Discrete>) -> bool {
     !a.empty
         && !b.empty
         && (bounds_adjacent(&a.upper, &b.lower, discrete)
@@ -1791,12 +1794,16 @@ fn ranges_adjacent(a: &RangeKey, b: &RangeKey, discrete: bool) -> bool {
 /// other does not. Values that differ are adjacent only in a discrete range,
 /// which the server decides by building the range *between* them with both
 /// inclusivities flipped and asking whether it came out empty.
-fn bounds_adjacent(upper: &RangeBoundKey, lower: &RangeBoundKey, discrete: bool) -> bool {
+fn bounds_adjacent(
+    upper: &RangeBoundKey,
+    lower: &RangeBoundKey,
+    discrete: Option<Discrete>,
+) -> bool {
     match compare_bound_values(upper, lower) {
         Ordering::Equal => upper.inclusive != lower.inclusive,
         Ordering::Greater => false,
         Ordering::Less => {
-            discrete
+            discrete.is_some()
                 && make_range(
                     RangeBoundKey {
                         value: upper.value.clone(),
@@ -1819,7 +1826,7 @@ fn bounds_adjacent(upper: &RangeBoundKey, lower: &RangeBoundKey, discrete: bool)
 /// `range_union_internal` for two ranges already known to overlap or touch:
 /// the lower of the two lower bounds, the upper of the two uppers, back
 /// through [`make_range`].
-fn range_union(a: &RangeKey, b: &RangeKey, discrete: bool) -> Option<RangeKey> {
+fn range_union(a: &RangeKey, b: &RangeKey, discrete: Option<Discrete>) -> Option<RangeKey> {
     let lower =
         if compare_bounds(&a.lower, &b.lower).is_lt() { a.lower.clone() } else { b.lower.clone() };
     let upper =
@@ -5420,19 +5427,43 @@ mod tests {
             Truth::True
         );
         // The successor can leave the subtype's range, which the server
-        // raises on. `int8range` is where this build can see it: a leaf
-        // literal is read as `i64` whatever the column's width (see
-        // `order_key`), so `int4range` cannot.
-        assert!(matches!(
-            nested_verdict(
-                "int8range",
-                &types,
-                PredicateOp::Eq,
-                "[1,10)",
-                "[1,9223372036854775807]"
-            ),
-            Err(Error::PredicateValueDecode { .. })
-        ));
+        // raises on — at the subtype's own width, though a leaf is read as
+        // `i64` whatever the column's (see `order_key`). Under every
+        // operator, and from either bound; one below it is a value.
+        let refused = |declared: &str, op: PredicateOp, literal: &str| {
+            let field =
+                if declared.starts_with("date") { "[2020-01-01,2020-01-02)" } else { "[1,10)" };
+            let field =
+                if declared.contains("multi") { format!("{{{field}}}") } else { field.to_string() };
+            matches!(
+                nested_verdict(declared, &types, op, &field, literal),
+                Err(Error::PredicateValueDecode { .. })
+            )
+        };
+        for (declared, literal) in [
+            ("int4range", "[1,2147483647]"),
+            ("int4range", "(2147483647,)"),
+            ("int4multirange", "{[1,2147483647]}"),
+            ("int8range", "[1,9223372036854775807]"),
+            ("int8range", "(9223372036854775807,)"),
+            ("daterange", "[2020-01-01,5874897-12-31]"),
+            ("daterange", "(5874897-12-31,)"),
+            ("datemultirange", "{[2020-01-01,5874897-12-31]}"),
+        ] {
+            for op in [PredicateOp::Eq, PredicateOp::Lt, PredicateOp::Ge] {
+                assert!(refused(declared, op, literal), "{declared} {op:?} {literal}");
+            }
+        }
+        assert_eq!(eq("int4range", "[1,2147483647)", "[1,2147483646]"), Truth::True);
+        assert_eq!(eq("int4range", "[1,2147483647)", "[1,2147483647)"), Truth::True);
+        assert_eq!(
+            eq("daterange", "[2020-01-01,5874897-12-31)", "[2020-01-01,5874897-12-30]"),
+            Truth::True
+        );
+        assert_eq!(
+            decode::decode_date32("5874897-12-31").map(i64::from),
+            Some(Discrete::Date.largest())
+        );
         // A lower bound above its upper is `22000` on the server — a fault
         // the container grammar cannot see, since the text is well formed.
         assert!(matches!(

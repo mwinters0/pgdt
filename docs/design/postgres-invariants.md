@@ -3234,7 +3234,9 @@ statement is an error at every one.
   `CREATE TYPE … AS RANGE` declares `canonical = …`. All three built-in
   functions are the same rewriting — an exclusive lower bound becomes
   inclusive at the successor, an inclusive upper becomes exclusive at the
-  successor — differing only in the width they raise "out of range" at.
+  successor — differing only in where they raise "out of range": on a
+  successor past `int4`'s or `int8`'s maximum, or past `5874897-12-31`, the
+  last date `IS_VALID_DATE` admits.
   **`daterange_canonical` additionally skips any bound that is
   `DATE_NOT_FINITE`**, so `[2020-01-01,infinity]` keeps its inclusive upper
   while `[-infinity,2020-01-01]` still becomes `[-infinity,2020-01-02)`.
@@ -3287,6 +3289,13 @@ since v13). `make_range`:
 		!lower.inclusive)
 ```
 
+The out-of-range point is the successor's own check: from v16 each function
+tests the bound inline (`bnd == PG_INT32_MAX`, `PG_INT64_MAX`, or
+`!IS_VALID_DATE(bnd)` after `bnd++`), and before it calls `int4pl`, `int8pl`
+or `date_pli`, which raise the same message at the same value.
+`IS_VALID_DATE` (`src/include/datatype/timestamp.h`) is `d < DATE_END_JULIAN -
+POSTGRES_EPOCH_JDATE`, `DATE_END_JULIAN` being `date2j(5874898, 1, 1)`.
+
 `range_cmp` puts `empty` first (`/* For b-tree use, empty ranges sort before
 all else */`) and then calls `range_cmp_bounds` twice;
 `range_cmp_bounds` handles `b1->infinite`/`b2->infinite` before invoking the
@@ -3312,11 +3321,11 @@ read (see `decisions.md`, "D58").
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed in the committed oracle at all six, and the probe below run against
-16.15 and 18.6.
+16.15 and 18.6, its out-of-range lines against 13.23 too.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D58" — `predicate.rs`'s `make_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
-`NestedCompare::Range`/`Multirange` and the `discrete` flag
+`NestedCompare::Range`/`Multirange` and the `Discrete` value
 `builtin_range_subtype` sets. The first claim is also what makes a
 user-declared `canonical` function (I10) a refusal rather than a divergence:
 the rewriting happens before the value is stored *or* compared, so it is not
@@ -3353,6 +3362,8 @@ SELECT '{[1,5),[5,10)}'::int4multirange::text, '{[5,10),[1,5)}'::int4multirange:
        '{[1,5],[6,10)}'::int4multirange::text, '{[1,5),[6,10)}'::nummultirange::text,
        '{[1,3),[2,5)}'::int4multirange::text,  '{[1,5),(5,10)}'::nummultirange::text;
 SELECT '[1,9223372036854775807]'::int8range;   -- bigint out of range
+SELECT '[1,2147483647]'::int4range;            -- integer out of range
+SELECT '(5874897-12-31,)'::daterange;          -- date out of range
 DO $$ BEGIN PERFORM '[10,1)'::int4range;
       EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'out of order: %', SQLSTATE; END $$;
 SQL
@@ -3363,7 +3374,8 @@ Every column of the first query is `t`. The second answers `[1,11)`,
 `[1,10)`, `empty`, `empty`, `[1,10]`, `[2020-01-01,infinity]`,
 `[-infinity,2020-01-02)`; the third `{[1,10)}`, `{[1,10)}`, `{[1,10)}`,
 `{[1,5),[6,10)}`, `{[1,10)}`, `{[1,5),[6,10)}`, `{[1,5)}`,
-`{[1,5),(5,10)}`. The last two statements are an error and a `22000` notice.
+`{[1,5),(5,10)}`. The last four statements are three errors and a `22000`
+notice.
 The multirange lines need v14 or later (I10).
 
 ---

@@ -548,16 +548,16 @@ pub enum NestedCompare {
     ///
     /// **`discrete` is a property of the range type, never of its subtype**:
     /// only `int4range`, `int8range` and `daterange` carry a canonical
-    /// function among the built-ins, so the flag is set from the range's
-    /// *name*. A user-defined range never reaches this node with it set — one
-    /// declaring a `canonical` function is [`ComparisonPlan::Unanswerable`]
-    /// rather than a tree (I46).
-    Range { bound: Box<NestedCompare>, discrete: bool },
+    /// function among the built-ins, so it is set from the range's *name*. A
+    /// user-defined range never reaches this node with it set — one declaring
+    /// a `canonical` function is [`ComparisonPlan::Unanswerable`] rather than
+    /// a tree (I46).
+    Range { bound: Box<NestedCompare>, discrete: Option<Discrete> },
     /// `multirange_cmp`: member-wise over members the server has already
     /// sorted, coalesced and emptied out, the shorter multirange first
     /// (I46). The fields are the *member range's*, since a multirange has no
     /// comparison of its own beyond the sequence.
-    Multirange { bound: Box<NestedCompare>, discrete: bool },
+    Multirange { bound: Box<NestedCompare>, discrete: Option<Discrete> },
     /// `int2vector`, compared by `array_cmp` over `smallint` elements: the
     /// type names no operator of its own, and `anyarray` polymorphism
     /// resolves `<` and `=` for it (I47). [`Self::Array`]'s comparison over a
@@ -567,6 +567,35 @@ pub enum NestedCompare {
     /// It carries nothing: the element is always `smallint`, so no position
     /// here could refuse an order or announce a divergence.
     Int2Vector,
+}
+
+/// The canonical function of a built-in discrete range type —
+/// `int4range_canonical`, `int8range_canonical` or `daterange_canonical` —
+/// which are one rewriting differing only in where the successor leaves the
+/// subtype (I46).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Discrete {
+    Int4,
+    Int8,
+    Date,
+}
+
+impl Discrete {
+    /// The subtype's largest value, in the key a bound of it is read into:
+    /// a bound here has no successor, and the canonical function raises
+    /// `integer`, `bigint` or `date out of range` on it (I46). A leaf is read
+    /// as `i64` whatever the column's width, so the width is stated here
+    /// rather than found in the key.
+    ///
+    /// A date's is `5874897-12-31` as days since 1970, the day before
+    /// `IS_VALID_DATE`'s exclusive `DATE_END_JULIAN`.
+    pub(crate) fn largest(self) -> i64 {
+        match self {
+            Discrete::Int4 => i64::from(i32::MAX),
+            Discrete::Int8 => i64::MAX,
+            Discrete::Date => 2_145_042_905,
+        }
+    }
 }
 
 impl NestedCompare {
@@ -1399,11 +1428,10 @@ struct BuiltinRange {
     subtype: &'static str,
     /// Whether the name was the multirange half of the pair.
     multi: bool,
-    /// Whether values of this type are rewritten into canonical form on the
-    /// way in — `int4range_canonical` and its two siblings, the half of I46
-    /// the comparison reproduces. A fact about the *range type*, not about
-    /// the subtype.
-    discrete: bool,
+    /// The canonical function values of this type are rewritten through on
+    /// the way in, where there is one — the half of I46 the comparison
+    /// reproduces. A fact about the *range type*, not about the subtype.
+    discrete: Option<Discrete>,
 }
 
 /// The definition of one of PostgreSQL's twelve built-in range/multirange
@@ -1415,18 +1443,18 @@ struct BuiltinRange {
 /// and a different literal form, so they are told apart here.
 fn builtin_range_subtype(name: &str) -> Option<BuiltinRange> {
     let (subtype, multi, discrete) = match name {
-        "int4range" => ("integer", false, true),
-        "int8range" => ("bigint", false, true),
-        "numrange" => ("numeric", false, false),
-        "tsrange" => ("timestamp without time zone", false, false),
-        "tstzrange" => ("timestamp with time zone", false, false),
-        "daterange" => ("date", false, true),
-        "int4multirange" => ("integer", true, true),
-        "int8multirange" => ("bigint", true, true),
-        "nummultirange" => ("numeric", true, false),
-        "tsmultirange" => ("timestamp without time zone", true, false),
-        "tstzmultirange" => ("timestamp with time zone", true, false),
-        "datemultirange" => ("date", true, true),
+        "int4range" => ("integer", false, Some(Discrete::Int4)),
+        "int8range" => ("bigint", false, Some(Discrete::Int8)),
+        "numrange" => ("numeric", false, None),
+        "tsrange" => ("timestamp without time zone", false, None),
+        "tstzrange" => ("timestamp with time zone", false, None),
+        "daterange" => ("date", false, Some(Discrete::Date)),
+        "int4multirange" => ("integer", true, Some(Discrete::Int4)),
+        "int8multirange" => ("bigint", true, Some(Discrete::Int8)),
+        "nummultirange" => ("numeric", true, None),
+        "tsmultirange" => ("timestamp without time zone", true, None),
+        "tstzmultirange" => ("timestamp with time zone", true, None),
+        "datemultirange" => ("date", true, Some(Discrete::Date)),
         _ => return None,
     };
     Some(BuiltinRange { subtype, multi, discrete })
@@ -1811,7 +1839,7 @@ fn array_comparison(
 /// declared type to put in the refusal.
 fn range_comparison(
     subtype: Option<&str>,
-    discrete: bool,
+    discrete: Option<Discrete>,
     multi: bool,
     types: &[TypeDef],
     collations: &[CollationDef],
@@ -1978,7 +2006,7 @@ fn comparison_user_type(
                 match canonical {
                     Some(function) => unanswerable_range(name, function),
                     None => {
-                        range_comparison(subtype.as_deref(), false, true, types, collations, visits)
+                        range_comparison(subtype.as_deref(), None, true, types, collations, visits)
                     }
                 }
             }
@@ -2043,7 +2071,7 @@ fn comparison_user_type(
         // none.
         TypeKind::Range { subtype, canonical, .. } => match canonical {
             Some(function) => unanswerable_range(&def.name, function),
-            None => range_comparison(subtype.as_deref(), false, false, types, collations, visits),
+            None => range_comparison(subtype.as_deref(), None, false, types, collations, visits),
         },
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
     }
@@ -3364,14 +3392,14 @@ mod tests {
             comparison_for("public.myrange", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Range {
                 bound: Box::new(int_leaf()),
-                discrete: false,
+                discrete: None,
             }),
         );
         assert_eq!(
             comparison_for("public.myrange_multi", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Multirange {
                 bound: Box::new(int_leaf()),
-                discrete: false,
+                discrete: None,
             }),
         );
         // A built-in range is named nowhere in the file (I10), so its bound
@@ -3381,19 +3409,19 @@ mod tests {
             comparison_for("int4range", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Range {
                 bound: Box::new(int_leaf()),
-                discrete: true,
+                discrete: Some(Discrete::Int4),
             }),
         );
         assert_eq!(
             comparison_for("int4multirange", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Multirange {
                 bound: Box::new(int_leaf()),
-                discrete: true,
+                discrete: Some(Discrete::Int4),
             }),
         );
         assert!(matches!(
             comparison_for("numrange", None, &types, &[]),
-            ComparisonPlan::Nested(NestedCompare::Range { discrete: false, .. })
+            ComparisonPlan::Nested(NestedCompare::Range { discrete: None, .. })
         ));
         // A domain over a range is the range's own answer, through the same
         // recursion every domain takes.
