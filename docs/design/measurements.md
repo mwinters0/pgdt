@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator. **All 25 figures below come from that sitting.**
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator. **25 of the 27 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`2f94f14`), `dynamic-filter-topk` (`2f94f14`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -2631,6 +2631,61 @@ Per-rep readings (s):
 - `dd` → `/dev/null`: 0.326, 0.329, 0.319
 
 Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤8.84%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.77 GHz, ≤65°C.
+
+## What DataFusion's dynamic filters buy a query
+
+<!-- figure: dynamic-filter-join — taken at `2f94f14` — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-join` -->
+
+**A join's filter, over its probe table**
+
+| Query | Filter off | Filter on | Δ | Rows the join matched |
+|---|---|---|---|---|
+| A selective join on the clustered `id`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.near b ON p.id = b.k` | **0.984 s** (0.945–1.089) | **0.968 s** (0.939–1.021) | **-0.016 s, -2%** | 100 |
+| A selective join on the unclustered `u_key`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.scattered b ON p.u_key = b.k` | **0.977 s** (0.966–1.177) | **0.987 s** (0.952–1.074) | **+0.010 s, +1%** | 100 |
+| A join on `bucket` rejecting no row: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.every b ON p.bucket = b.k` | **0.970 s** (0.958–1.017) | **0.977 s** (0.957–1.013) | **+0.007 s, +1%** | 811,470 |
+
+One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_JOIN_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.334 s**.
+
+Per-rep readings (s):
+- A selective join on the clustered `id`, flag off: 1.089, 0.972, 0.987, 0.945, 0.996, 0.982
+- A selective join on the clustered `id`, flag on: 0.984, 0.960, 1.021, 0.977, 0.939, 0.956
+- A selective join on the unclustered `u_key`, flag off: 1.177, 0.989, 0.974, 0.971, 0.966, 0.980
+- A selective join on the unclustered `u_key`, flag on: 1.015, 1.074, 0.982, 0.964, 0.992, 0.952
+- A join on `bucket` rejecting no row, flag off: 1.017, 0.975, 0.972, 0.962, 0.969, 0.958
+- A join on `bucket` rejecting no row, flag on: 0.969, 1.013, 0.957, 0.960, 0.994, 0.985
+- `dd` → `/dev/null`: 0.334, 0.338, 0.334
+
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤6.09%, machine ≤8% busy, steal ≤0.00%, busiest core ≥4.02 GHz, ≤68°C.
+
+<!-- figure: dynamic-filter-topk — taken at `2f94f14` — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-topk` -->
+
+**A TopK's filter, over the table it sorts**
+
+| Query | Filter off | Filter on | Δ | Rows returned |
+|---|---|---|---|---|
+| `ORDER BY` the unsorted `u_key`, `LIMIT 10`: `p.u_key, p.v_text FROM bench.public.perf p ORDER BY p.u_key LIMIT 10` | **0.971 s** (0.956–0.976) | **0.951 s** (0.940–0.980) | **-0.020 s, -2%** | 10 |
+
+One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_TOPK_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.334 s**.
+
+Per-rep readings (s):
+- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag off: 0.970, 0.956, 0.976, 0.972, 0.972, 0.965
+- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag on: 0.954, 0.980, 0.948, 0.940, 0.959, 0.946
+- `dd` → `/dev/null`: 0.334, 0.335, 0.333
+
+Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤9.18%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.12 GHz, ≤65°C.
+
+**On today's code the flag moves nothing either table resolves, and every leg
+is the scan.** All eight medians lie between 0.951 and 0.987 s, whatever the
+query: the join passing 811,470 rows costs what the two matching 100 do, and
+the TopK what the joins do, so the operator above the scan is below what six
+reps resolve and the time is reading and decoding every row, against a `dd`
+floor of 0.334 s. That is the account the flag predicts: a join computes no
+filter while nothing below it holds one, and the filter a TopK publishes
+reaches no node that evaluates it, its own heap filtering the same rows either
+way ([`roadmap-P27.1-evidence-notes.md`](roadmap-P27.1-evidence-notes.md)). So
+each Δ, the largest −0.020 s, lies inside its legs' overlapping spreads, and
+these are the "before" slice 27.5 re-takes: what the scan's consuming a filter
+buys is the on leg moving while the off leg does not.
 
 ## What a session's own drift costs, measured rather than asserted
 

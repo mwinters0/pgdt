@@ -1,12 +1,9 @@
 # P27.1 — The evidence: notes
 
-What the rest of this slice, and the slices after, inherit. The spec is
+What the slices after this one inherit. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
-"Evidence". **The harness and the instrument landed; the readings did not**: a
-figure published outside a sweep names the commit it was taken at, and a
-sitting run from a tree carrying its own uncommitted apparatus has none
-([`measurements.md`](measurements.md), "A figure may be published outside the
-sweep"). No figure was taken.
+"Evidence". The figures are in [`measurements.md`](measurements.md), "What
+DataFusion's dynamic filters buy a query", taken at `2f94f14`.
 
 ## What exists
 
@@ -23,8 +20,8 @@ sweep"). No figure was taken.
   partitioned `CASE`, `struct(…) IN`, a null-equal join's `IS NULL`, a TopK's
   or an aggregate's threshold, and a TopK's `false`. So the harness cannot
   pass by exercising nothing, which on today's code it otherwise would.
-- **`dynamic-filter-join` and `dynamic-filter-topk` wait in
-  `measure.UNTAKEN`**, standing in no sharing edge. Each leg runs an untimed
+- **`dynamic-filter-join` and `dynamic-filter-topk`** stand in no sharing
+  edge, so each is re-taken alone from its own commit. Each leg runs an untimed
   `pgdt parse` stating `GATHER_STATISTICS` into `/dump.sql.dtcache`, where
   `--dump` looks, then times `datafusion-cli-pgdump -c` with its producer's
   flag `false` or `true` and `target_partitions` at `SWEEP_JOBS`, and hashes
@@ -82,15 +79,15 @@ sweep"). No figure was taken.
 - A `--dry-run` and a 0.25 GiB two-rep sitting of both rendered; the second
   found the reported key a digit kept `parse_reported` from reading.
 
-## For the rest of this slice
+## For 27.5
 
-- **Take the readings from the commit**: `cd scripts && uv run measure.py
-  --figure dynamic-filter-join --figure dynamic-filter-topk`. It generates the
-  3.00 GiB `dynfilter` input on its first run and builds
-  `datafusion-cli-pgdump`; each rep runs a gathering `parse` before its timer.
-  Then move both into `measure.FIGURES`, paste the tables under "What
-  DataFusion's dynamic filters buy a query" beside "What row-group statistics
-  buy a query", and tick the box.
+- **The "before" is flat**: every leg of both figures is the scan, the flag
+  moving nothing six reps resolve. So what 27.5 prices is the on leg alone
+  moving; a join's count stays 100, 100 and 811,470, which the re-take's table
+  shows beside the timing.
+- **A join's answer is `count(*)` first**, the column its table reports, and
+  `count(p.v_text)` beside it: `v_text` is nullable, and counting it alone
+  read 99 rows for a join matching 100.
 
 ## For 27.2
 

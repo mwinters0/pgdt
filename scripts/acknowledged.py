@@ -202,4 +202,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
         ),
     ),
+    Acknowledged(
+        commit="4d9fb4b",
+        figures=("session-drift",),
+        why=(
+            "P27.1 added `datafusion-cli-pgdump` as a second timed program: eight "
+            "new shapes, a `time_run` branch taken only for the `dfcli` binary, "
+            "and a dry-run stand-in; every existing shape's script, mounts and "
+            "image are unchanged, so no reading of `pgdt` can move"
+        ),
+        verified=(
+            "every `command_shapes()` entry's `_script` at 788fc7d against HEAD: "
+            "78 byte-identical, 8 `dfcli-dynamic-filter-*` added; "
+            "git show --format= -U0 4d9fb4b -- scripts/measure.py  # read the time_run hunks"
+        ),
+    ),
+    Acknowledged(
+        commit="2f94f14",
+        figures=("session-drift",),
+        why=(
+            "the dynamic-filter join queries answer `count(*)` first; only "
+            "`dfcli-dynamic-filter-join-*` shapes changed"
+        ),
+        verified="git show --format= -U0 2f94f14 -- scripts/measure.py  # the three query strings and a comment",
+    ),
 )

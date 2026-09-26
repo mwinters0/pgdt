@@ -717,11 +717,11 @@ class DynamicFilterFigures(unittest.TestCase):
 
     SHAPES = measure.dynfilter_shapes()
 
-    def test_both_wait_untaken_and_borrow_nothing(self):
+    def test_both_are_taken_and_borrow_nothing(self):
         for fid in ("dynamic-filter-join", "dynamic-filter-topk"):
             with self.subTest(figure=fid):
                 fig = measure.SELECTABLE_BY_ID[fid]
-                self.assertIn(fig, measure.UNTAKEN)
+                self.assertIn(fig, measure.FIGURES)
                 self.assertEqual(fig.shares, ())
                 self.assertEqual(measure.entangled_with(fid), [])
                 self.assertEqual(fig.warm_inputs, ("dynfilter",))
