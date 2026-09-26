@@ -37,6 +37,7 @@
 mod budget;
 mod catalog;
 mod dump;
+mod dynamic_filter;
 mod exec;
 mod factory;
 mod pushdown;

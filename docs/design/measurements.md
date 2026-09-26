@@ -2674,14 +2674,14 @@ Per-rep readings (s):
 
 Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤9.18%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.12 GHz, ≤65°C.
 
-**On today's code the flag moves nothing either table resolves, and every leg
-is the scan.** All eight medians lie between 0.951 and 0.987 s, whatever the
+**At `2f94f14` the flag moves nothing either table resolves, and every leg is
+the scan.** All eight medians lie between 0.951 and 0.987 s, whatever the
 query: the join passing 811,470 rows costs what the two matching 100 do, and
 the TopK what the joins do, so the operator above the scan is below what six
 reps resolve and the time is reading and decoding every row, against a `dd`
-floor of 0.334 s. That is the account the flag predicts: a join computes no
-filter while nothing below it holds one, and the filter a TopK publishes
-reaches no node that evaluates it, its own heap filtering the same rows either
+floor of 0.334 s. That is the account the flag predicts there: a join computed
+no filter while nothing below it held one, and the filter a TopK publishes
+reached no node that evaluated it, its own heap filtering the same rows either
 way ([`roadmap-P27.1-evidence-notes.md`](roadmap-P27.1-evidence-notes.md)). So
 each Δ, the largest −0.020 s, lies inside its legs' overlapping spreads, and
 these are the "before" slice 27.5 re-takes: what the scan's consuming a filter

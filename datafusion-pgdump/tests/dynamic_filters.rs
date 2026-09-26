@@ -12,41 +12,27 @@
 //! simply never sees the row.
 //!
 //! **Each query is also held to the shape it is here for**, so the harness
-//! cannot pass by exercising nothing. A third session carries each table
-//! under a recording node that holds whatever filter reaches the scan's
-//! position, answers `No` for it, and visits it in `apply_expressions` —
-//! which is what makes a join compute its filter at all — and the filters'
-//! final state is read after the query ran. The recording node filters
-//! nothing: its answers are checked against the flags-off session too.
+//! cannot pass by exercising nothing. The scan holds whatever filter reaches
+//! it, answers `No` for it, visits it in `apply_expressions` — which is what
+//! makes a join compute its filter at all — and prints it in `EXPLAIN`, where
+//! each filter's final state is read once the flags-on query has run.
 //!
 //! Every query selects its sort keys alone where it has a `LIMIT`, since
 //! ties at the cut are the TopK's to break however it likes.
 
 use std::collections::BTreeSet;
-use std::fmt;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::util::display::{ArrayFormatter, FormatOptions};
-use async_trait::async_trait;
-use datafusion::catalog::{Session, TableProvider};
+use datafusion::catalog::TableProvider;
 use datafusion::common::tree_node::TreeNodeRecursion;
-use datafusion::common::{Result, Statistics};
 use datafusion::config::ConfigOptions;
-use datafusion::datasource::TableType;
-use datafusion::execution::{SendableRecordBatchStream, TaskContext};
-use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_expr::PhysicalExpr;
-use datafusion::physical_plan::execution_plan::{ChildrenPropertiesMode, ReplaceChildrenOptions};
-use datafusion::physical_plan::filter_pushdown::{
-    ChildPushdownResult, FilterPushdownPhase, FilterPushdownPropagation, PushedDown,
-};
-use datafusion::physical_plan::statistics::{ChildStats, StatisticsArgs};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, apply_expression_roots,
-};
+use datafusion::physical_plan::execution_plan::reset_plan_states;
+use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
 use pgdump_query::cache::CacheMode;
@@ -103,7 +89,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
 }
 
 /// What the dynamic filter reaching a scan must look like, read off its
-/// final state's display.
+/// final state as the scan prints it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Shape {
     /// A join's `k >= min AND k <= max` over the build side's keys.
@@ -129,7 +115,8 @@ enum Shape {
 }
 
 impl Shape {
-    /// Whether `text`, one held filter's final display, is of this shape.
+    /// Whether `text`, what one scan prints of the filters it holds, is of
+    /// this shape.
     fn seen_in(self, text: &str) -> bool {
         match self {
             Shape::Bounds => text.contains(">=") && text.contains("<="),
@@ -373,17 +360,12 @@ fn session(join: Join, on: bool) -> SessionContext {
     SessionContext::new_with_config(config)
 }
 
-/// `dump`'s tables registered in `ctx` under their bare names, each under a
-/// [`Recorded`] where `held` is given.
-fn register(ctx: &SessionContext, dump: &Arc<PgDump>, held: Option<&Held>) {
+/// `dump`'s tables registered in `ctx` under their bare names.
+fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
     // The catalog is what installs the session's budget and settings.
     register_dump(ctx, Some("dump"), dump, Arc::new(ignore)).unwrap();
     for name in dump.tables() {
         let table: Arc<dyn TableProvider> = dump.table(None, None, &name.table).unwrap();
-        let table = match held {
-            Some(held) => Arc::new(Recorded { inner: table, held: Arc::clone(held) }),
-            None => table,
-        };
         ctx.register_table(&name.table, table).unwrap();
     }
 }
@@ -409,12 +391,54 @@ fn rows(batches: &[RecordBatch]) -> Vec<String> {
 }
 
 async fn answer(ctx: &SessionContext, sql: &str) -> Vec<String> {
+    run(ctx, sql).await.0
+}
+
+/// `sql`'s answer, and the plan it ran, whose scans now hold each filter in
+/// its final state.
+async fn run(ctx: &SessionContext, sql: &str) -> (Vec<String>, Arc<dyn ExecutionPlan>) {
     let df = ctx.sql(sql).await.unwrap_or_else(|e| panic!("{sql}: {e}"));
-    rows(&df.collect().await.unwrap_or_else(|e| panic!("{sql}: {e}")))
+    let plan = df.create_physical_plan().await.unwrap_or_else(|e| panic!("{sql}: {e}"));
+    let batches = collect(Arc::clone(&plan), ctx.task_ctx()).await;
+    (rows(&batches.unwrap_or_else(|e| panic!("{sql}: {e}"))), plan)
+}
+
+/// Every scan in `plan`.
+fn scans(plan: &Arc<dyn ExecutionPlan>) -> Vec<Arc<dyn ExecutionPlan>> {
+    let mut found: Vec<_> = plan.children().into_iter().flat_map(scans).collect();
+    if plan.name() == "PgDumpExec" {
+        found.push(Arc::clone(plan));
+    }
+    found
+}
+
+/// What each scan in `plan` prints of the dynamic filters it holds, for each
+/// that holds one.
+fn held(plan: &Arc<dyn ExecutionPlan>) -> Vec<String> {
+    scans(plan)
+        .iter()
+        .filter_map(|scan| {
+            let line = displayable(scan.as_ref()).one_line().to_string();
+            line.split_once(", dynamic_filter=").map(|(_, filters)| filters.trim().to_string())
+        })
+        .collect()
+}
+
+/// The filters `plan`'s scans visit in `apply_expressions`.
+fn visited(plan: &Arc<dyn ExecutionPlan>) -> Vec<Arc<dyn PhysicalExpr>> {
+    let mut visited = Vec::new();
+    for scan in scans(plan) {
+        scan.apply_expressions(&mut |filter| {
+            visited.push(Arc::clone(filter));
+            Ok(TreeNodeRecursion::Continue)
+        })
+        .unwrap();
+    }
+    visited
 }
 
 /// **Every join, TopK and aggregate shape answers alike with the producers'
-/// filters on and off**, under either join mode, and each published the
+/// filters on and off**, under either join mode, and each scan held the
 /// filter it is here for.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dynamic_filter_changes_no_answer() {
@@ -426,12 +450,9 @@ async fn a_dynamic_filter_changes_no_answer() {
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         let present: BTreeSet<&str> = dump.tables().iter().map(|t| t.table.as_str()).collect();
         for join in [Join::Chosen, Join::Partitioned] {
-            let (off, on, recording) =
-                (session(join, false), session(join, true), session(join, true));
-            let held: Held = Arc::default();
-            register(&off, &dump, None);
-            register(&on, &dump, None);
-            register(&recording, &dump, Some(&held));
+            let (off, on) = (session(join, false), session(join, true));
+            register(&off, &dump);
+            register(&on, &dump);
             for (i, query) in QUERIES.iter().enumerate() {
                 if !query.tables.iter().all(|t| present.contains(t)) {
                     continue;
@@ -439,11 +460,9 @@ async fn a_dynamic_filter_changes_no_answer() {
                 let at = format!("{} ({join:?}): {}", fixture.display(), query.sql);
                 let expected = answer(&off, query.sql).await;
                 assert!(!expected.is_empty(), "{at}: returned nothing, so it proves nothing");
-                assert_eq!(answer(&on, query.sql).await, expected, "{at}: flags on");
-                held.lock().unwrap().clear();
-                assert_eq!(answer(&recording, query.sql).await, expected, "{at}: recorded");
-                let seen: Vec<String> =
-                    held.lock().unwrap().iter().map(|f| f.to_string()).collect();
+                let (got, plan) = run(&on, query.sql).await;
+                assert_eq!(got, expected, "{at}: flags on");
+                let seen = held(&plan);
                 let shapes = match join {
                     Join::Chosen => query.chosen,
                     Join::Partitioned => query.partitioned,
@@ -467,6 +486,91 @@ async fn a_dynamic_filter_changes_no_answer() {
     }
 }
 
+/// The newest major's `statistics` fixture, parsed, and a session over it
+/// with every producer's flag on.
+async fn statistics_session(dir: &Path) -> SessionContext {
+    let fixture = fixtures_root().join("18/statistics/default.sql");
+    let copy = parsed_copy(&fixture, dir).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let ctx = session(Join::Chosen, true);
+    register(&ctx, &dump);
+    ctx
+}
+
+const JOIN: &str = "SELECT o.id, o.low_card FROM moods m JOIN ordered o ON o.id = m.id";
+const TOPK: &str = "SELECT unsorted FROM ordered ORDER BY unsorted LIMIT 7";
+
+async fn planned(ctx: &SessionContext, sql: &str) -> Arc<dyn ExecutionPlan> {
+    ctx.sql(sql).await.unwrap().create_physical_plan().await.unwrap()
+}
+
+/// **A scan prints each dynamic filter it holds, `empty` until its first
+/// update**, and visits it where a join looks for its consumer; once a join
+/// has run, its filter is printed in its final state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scan_prints_each_filter_it_holds_empty_until_its_first_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    for sql in [JOIN, TOPK] {
+        let plan = planned(&ctx, sql).await;
+        assert_eq!(held(&plan), ["DynamicFilter [ empty ]"], "{sql}");
+        assert_eq!(visited(&plan).len(), 1, "{sql}");
+    }
+    let (_, plan) = run(&ctx, JOIN).await;
+    let [filter] = held(&plan).try_into().unwrap();
+    assert!(Shape::Bounds.seen_in(&filter) && Shape::InList.seen_in(&filter), "{filter}");
+    let tree = displayable(plan.as_ref()).tree_render().to_string();
+    assert!(tree.contains("dynamic_filter"), "{tree}");
+}
+
+/// **A static filter is not held**: one the provider could not answer is a
+/// `FilterExec`'s, pushed to the scan in the `Pre` phase and declined there.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scan_holds_no_static_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    let plan = planned(&ctx, "SELECT id FROM ordered WHERE id + 1 > 5").await;
+    let shown = displayable(plan.as_ref()).indent(true).to_string();
+    assert!(shown.contains("FilterExec"), "{shown}");
+    assert!(held(&plan).is_empty() && visited(&plan).is_empty(), "{shown}");
+}
+
+/// **A second `Post` pass holds nothing twice**: a TopK pushes the filter it
+/// already published again, and a fetch set on the scan afterwards keeps
+/// what it holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_pass_holds_nothing_twice_and_a_fetch_keeps_it() {
+    use datafusion::physical_optimizer::PhysicalOptimizerRule;
+    use datafusion::physical_optimizer::filter_pushdown::FilterPushdown;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    let plan = planned(&ctx, TOPK).await;
+    let options = ctx.state().config_options().as_ref().clone();
+    let again = FilterPushdown::new_post_optimization().optimize(plan, &options).unwrap();
+    assert_eq!(visited(&again).len(), 1, "{}", displayable(again.as_ref()).indent(true));
+    let [scan] = scans(&again).try_into().unwrap();
+    let fetched = scan.with_fetch(Some(3)).unwrap();
+    assert_eq!(visited(&fetched).len(), 1);
+}
+
+/// **A reset drops every filter a scan holds**, its producers' having been
+/// replaced or discarded by their own resets, and the reset plan runs to the
+/// same answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reset_drops_every_filter_a_scan_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    for sql in [JOIN, TOPK] {
+        let (expected, plan) = run(&ctx, sql).await;
+        assert_eq!(visited(&plan).len(), 1, "{sql}");
+        let reset = reset_plan_states(plan).unwrap();
+        assert!(held(&reset).is_empty() && visited(&reset).is_empty(), "{sql}");
+        let batches = collect(reset, ctx.task_ctx()).await.unwrap();
+        assert_eq!(rows(&batches), expected, "{sql}");
+    }
+}
+
 /// **The figures' generator mirrors the largest `IN` list a join publishes**,
 /// so its costing join is published as one list of that many values rather
 /// than as a `hash_lookup` the scan cannot read
@@ -485,159 +589,4 @@ fn the_costing_input_is_the_largest_in_list_a_join_publishes() {
         .unwrap();
     let optimizer = ConfigOptions::default().optimizer;
     assert_eq!(buckets, optimizer.hash_join_inlist_pushdown_max_distinct_values);
-}
-
-/// The filters a [`Recorded`] scan has held while it executed.
-type Held = Arc<Mutex<Vec<Arc<dyn PhysicalExpr>>>>;
-
-/// A table whose scan is wrapped in a [`Recording`] node.
-#[derive(Debug)]
-struct Recorded {
-    inner: Arc<dyn TableProvider>,
-    held: Held,
-}
-
-#[async_trait]
-impl TableProvider for Recorded {
-    fn schema(&self) -> arrow::datatypes::SchemaRef {
-        self.inner.schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        self.inner.table_type()
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> Result<Vec<TableProviderFilterPushDown>> {
-        self.inner.supports_filters_pushdown(filters)
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let input = self.inner.scan(state, projection, filters, limit).await?;
-        Ok(Arc::new(Recording { input, filters: Vec::new(), held: Arc::clone(&self.held) }))
-    }
-}
-
-/// Holds every filter pushed to it in the `Post` phase and answers `No` for
-/// each, passing its input through untouched: the scan's position in the
-/// plan, as a consumer would occupy it, without consuming anything.
-#[derive(Debug)]
-struct Recording {
-    input: Arc<dyn ExecutionPlan>,
-    filters: Vec<Arc<dyn PhysicalExpr>>,
-    held: Held,
-}
-
-impl DisplayAs for Recording {
-    fn fmt_as(&self, _: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Recording: filters={}", self.filters.len())
-    }
-}
-
-impl ExecutionPlan for Recording {
-    fn name(&self) -> &str {
-        "Recording"
-    }
-
-    fn properties(&self) -> &Arc<PlanProperties> {
-        self.input.properties()
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
-
-    /// The held filters: what a join searches its probe side for before it
-    /// computes one.
-    fn apply_expressions(
-        &self,
-        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
-    ) -> Result<TreeNodeRecursion> {
-        apply_expression_roots(&self.filters, f)
-    }
-
-    fn maintains_input_order(&self) -> Vec<bool> {
-        vec![true]
-    }
-
-    fn benefits_from_input_partitioning(&self) -> Vec<bool> {
-        vec![false]
-    }
-
-    fn replace_children(
-        self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
-        _: ReplaceChildrenOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(Recording {
-            input: children.swap_remove(0),
-            filters: self.filters.clone(),
-            held: Arc::clone(&self.held),
-        }))
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.replace_children(
-            children,
-            ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
-        )
-    }
-
-    fn handle_child_pushdown_result(
-        &self,
-        phase: FilterPushdownPhase,
-        child_pushdown_result: ChildPushdownResult,
-        _config: &ConfigOptions,
-    ) -> Result<FilterPushdownPropagation<Arc<dyn ExecutionPlan>>> {
-        let pushed: Vec<_> =
-            child_pushdown_result.parent_filters.into_iter().map(|f| f.filter).collect();
-        let declined = FilterPushdownPropagation::with_parent_pushdown_result(vec![
-            PushedDown::No;
-            pushed.len()
-        ]);
-        if phase != FilterPushdownPhase::Post || pushed.is_empty() {
-            return Ok(declined);
-        }
-        let mut filters = self.filters.clone();
-        filters.extend(pushed);
-        Ok(declined.with_updated_node(Arc::new(Recording {
-            input: Arc::clone(&self.input),
-            filters,
-            held: Arc::clone(&self.held),
-        })))
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
-        if partition == 0 {
-            self.held.lock().unwrap().extend(self.filters.iter().cloned());
-        }
-        self.input.execute(partition, context)
-    }
-
-    fn child_stats_requests(&self, partition: Option<usize>) -> Vec<ChildStats> {
-        vec![ChildStats::At(partition)]
-    }
-
-    fn statistics_from_inputs(
-        &self,
-        input_stats: &[Arc<Statistics>],
-        _args: &StatisticsArgs,
-    ) -> Result<Arc<Statistics>> {
-        Ok(Arc::clone(&input_stats[0]))
-    }
 }

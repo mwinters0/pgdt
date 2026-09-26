@@ -8,6 +8,10 @@
 //! exec stays, held as an implementation detail rather than as a child: this
 //! is a leaf, and nothing in a plan tree sees the node inside it. Its metrics
 //! are reported beside the streaming exec's own ([`ScanMetrics`]).
+//!
+//! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
+//! consumes none: each is answered `No`, printed in `EXPLAIN`, and visited
+//! where DataFusion looks for a filter's consumer.
 
 use std::fmt;
 use std::pin::Pin;
@@ -17,9 +21,13 @@ use std::task::{Context, Poll};
 use datafusion::common::stats::Precision;
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::common::{Result, Statistics, internal_err};
+use datafusion::config::ConfigOptions;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::{ChildrenPropertiesMode, ReplaceChildrenOptions};
+use datafusion::physical_plan::filter_pushdown::{
+    ChildPushdownResult, FilterPushdownPhase, FilterPushdownPropagation, PushedDown,
+};
 use datafusion::physical_plan::metrics::{
     Count, ExecutionPlanMetricsSet, MetricBuilder, MetricCategory, MetricType, MetricValue,
     MetricsSet, PruningMetrics,
@@ -29,6 +37,8 @@ use datafusion::physical_plan::streaming::StreamingTableExec;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{Stream, StreamExt};
 use pgdump_query::{PlanNote, PlanNoteKind, TableStream};
+
+use crate::dynamic_filter::DynamicFilters;
 
 /// The replay of one table, with its statistics.
 #[derive(Debug, Clone)]
@@ -40,6 +50,7 @@ pub(crate) struct PgDumpExec {
     inner: Arc<StreamingTableExec>,
     statistics: Arc<Statistics>,
     metrics: ScanMetrics,
+    dynamic_filters: DynamicFilters,
 }
 
 impl PgDumpExec {
@@ -48,7 +59,12 @@ impl PgDumpExec {
         statistics: Statistics,
         metrics: ScanMetrics,
     ) -> Self {
-        Self { inner: Arc::new(inner), statistics: Arc::new(statistics), metrics }
+        Self {
+            inner: Arc::new(inner),
+            statistics: Arc::new(statistics),
+            metrics,
+            dynamic_filters: DynamicFilters::default(),
+        }
     }
 }
 
@@ -60,9 +76,20 @@ impl DisplayAs for PgDumpExec {
                 if let Some(fetch) = self.inner.limit() {
                     write!(f, ", fetch={fetch}")?;
                 }
+                // Not Parquet's `predicate=`: the static filter this scan
+                // answers is the logical plan's to print, and is not here.
+                if !self.dynamic_filters.is_empty() {
+                    write!(f, ", dynamic_filter={}", self.dynamic_filters)?;
+                }
                 Ok(())
             }
-            DisplayFormatType::TreeRender => self.inner.fmt_as(t, f),
+            DisplayFormatType::TreeRender => {
+                self.inner.fmt_as(t, f)?;
+                if !self.dynamic_filters.is_empty() {
+                    write!(f, "\ndynamic_filter={}", self.dynamic_filters.sql())?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -80,11 +107,14 @@ impl ExecutionPlan for PgDumpExec {
         vec![]
     }
 
+    /// The dynamic filters held: a hash join computes its filter only once
+    /// it finds it in its probe side this way, and an aggregate keeps its
+    /// own only where some node below visits it.
     fn apply_expressions(
         &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
     ) -> Result<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
+        self.dynamic_filters.apply(f)
     }
 
     fn replace_children(
@@ -107,6 +137,43 @@ impl ExecutionPlan for PgDumpExec {
             children,
             ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
         )
+    }
+
+    /// **Every filter the `Post` phase pushes is held and answered `No`**:
+    /// each is a dynamic filter a producer above re-checks its own rows
+    /// against. A `Pre` phase filter is a static one, which the provider
+    /// already answers where it can (`crate::pushdown`), and is not held.
+    fn handle_child_pushdown_result(
+        &self,
+        phase: FilterPushdownPhase,
+        child_pushdown_result: ChildPushdownResult,
+        _config: &ConfigOptions,
+    ) -> Result<FilterPushdownPropagation<Arc<dyn ExecutionPlan>>> {
+        let pushed: Vec<_> =
+            child_pushdown_result.parent_filters.into_iter().map(|f| f.filter).collect();
+        let declined = FilterPushdownPropagation::with_parent_pushdown_result(vec![
+            PushedDown::No;
+            pushed.len()
+        ]);
+        if phase != FilterPushdownPhase::Post {
+            return Ok(declined);
+        }
+        Ok(match self.dynamic_filters.with(pushed) {
+            Some(dynamic_filters) => {
+                declined.with_updated_node(Arc::new(Self { dynamic_filters, ..self.clone() }))
+            }
+            None => declined,
+        })
+    }
+
+    /// **The dynamic filters held are dropped**: a producer's own reset
+    /// replaces its filter or discards it, and no pushdown runs again, so one
+    /// held across a reset would describe the rows of the execution before.
+    fn reset_state(self: Arc<Self>) -> Result<Arc<dyn ExecutionPlan>> {
+        if self.dynamic_filters.is_empty() {
+            return Ok(self);
+        }
+        Ok(Arc::new(Self { dynamic_filters: DynamicFilters::default(), ..Self::clone(&self) }))
     }
 
     fn execute(
@@ -138,6 +205,7 @@ impl ExecutionPlan for PgDumpExec {
             inner: Arc::new(inner.clone()),
             statistics: Arc::clone(&self.statistics),
             metrics: self.metrics.clone(),
+            dynamic_filters: self.dynamic_filters.clone(),
         }))
     }
 

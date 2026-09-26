@@ -73,15 +73,9 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdump_
         }
         Expr::InList(InList { expr, list, negated }) => {
             // DataFusion answers a long list from a set of the values rather
-            // than through its comparison, and nothing there makes a float's
-            // `-0` into `0` first.
+            // than through its comparison ([`is_float`]).
             let index = column_index(expr, table)?;
-            if list.is_empty()
-                || matches!(
-                    table.schema.field(index).data_type(),
-                    DataType::Float32 | DataType::Float64
-                )
-            {
+            if list.is_empty() || is_float(index, table) {
                 return None;
             }
             let any = L::Or(
@@ -107,6 +101,18 @@ fn comparison(
         (Expr::Literal(value, _), Expr::Column(_)) => (right, op.swap()?, value),
         _ => return None,
     };
+    compared(column_index(column, table)?, op, literal, table)
+}
+
+/// Column `index` of `table` under `op` against `literal`, the column first:
+/// `None` where `op` is no comparing operator, the column is nested, or no
+/// text reads back as `literal` ([`literal_text`]).
+pub(crate) fn compared(
+    index: usize,
+    op: Operator,
+    literal: &ScalarValue,
+    table: &ResolvedSchema,
+) -> Option<Predicate> {
     let op = match op {
         Operator::Eq => PredicateOp::Eq,
         Operator::NotEq => PredicateOp::Ne,
@@ -118,7 +124,9 @@ fn comparison(
         Operator::IsNotDistinctFrom => PredicateOp::IsNotDistinctFrom,
         _ => return None,
     };
-    let index = column_index(column, table)?;
+    if table.plans[index] != NestedPlan::Scalar {
+        return None;
+    }
     let value = literal_text(literal, index, table)?;
     Some(Predicate { column: table.schema.field(index).name().clone(), op, value: Some(value) })
 }
@@ -127,8 +135,12 @@ fn comparison(
 /// included: neither reads a value.
 fn null_test(column: &Expr, op: PredicateOp, table: &ResolvedSchema) -> Option<Predicate> {
     let Expr::Column(column) = column else { return None };
-    let index = table.schema.index_of(&column.name).ok()?;
-    Some(Predicate { column: table.schema.field(index).name().clone(), op, value: None })
+    Some(null_term(table.schema.index_of(&column.name).ok()?, op, table))
+}
+
+/// `op`, `IS NULL` or `IS NOT NULL`, on column `index` of `table`.
+pub(crate) fn null_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Predicate {
+    Predicate { column: table.schema.field(index).name().clone(), op, value: None }
 }
 
 /// A term on a `Boolean` column of `table` against `value`, spelled as the
@@ -139,7 +151,16 @@ fn boolean(
     value: Option<bool>,
     table: &ResolvedSchema,
 ) -> Option<Predicate> {
-    let index = column_index(column, table)?;
+    boolean_term(column_index(column, table)?, op, value, table)
+}
+
+/// [`boolean`] on column `index` of `table`: `None` unless it is `Boolean`.
+pub(crate) fn boolean_term(
+    index: usize,
+    op: PredicateOp,
+    value: Option<bool>,
+    table: &ResolvedSchema,
+) -> Option<Predicate> {
     if table.schema.field(index).data_type() != &DataType::Boolean {
         return None;
     }
@@ -153,6 +174,13 @@ fn column_index(expr: &Expr, table: &ResolvedSchema) -> Option<usize> {
     let Expr::Column(column) = expr else { return None };
     let index = table.schema.index_of(&column.name).ok()?;
     (table.plans[index] == NestedPlan::Scalar).then_some(index)
+}
+
+/// Whether column `index` of `table` is a float, whose `IN` DataFusion
+/// answers from a set of the values' bits rather than through `=`, so `-0`
+/// and `0` stay apart there and nowhere else.
+pub(crate) fn is_float(index: usize, table: &ResolvedSchema) -> bool {
+    matches!(table.schema.field(index).data_type(), DataType::Float32 | DataType::Float64)
 }
 
 /// The text the library reads `literal` from, for comparison with column

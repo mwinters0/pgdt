@@ -9,17 +9,15 @@ DataFusion's dynamic filters buy a query", taken at `2f94f14`.
 
 - **`datafusion-pgdump/tests/dynamic_filters.rs`** runs 27 queries over every
   major's `statistics` fixtures, both flag sets, gathered at 1 KiB groups, in
-  three sessions per join mode — the three producer flags off, on, and on with
-  each table under a test-only `Recording` node — and holds all three to one
-  answer as a multiset. The join modes are the planner's choice and every hash
-  join `Partitioned` (both single-partition thresholds `0`).
-- **`Recording` is the scan's position in the plan without a consumer**: it
-  holds whatever the `Post` phase pushes to it, answers `No`, visits it in
-  `apply_expressions` and filters nothing. Each query asserts the shape its
-  filter took after the query ran — bounds, an `IN` list, `hash_lookup`, the
-  partitioned `CASE`, `struct(…) IN`, a null-equal join's `IS NULL`, a TopK's
-  or an aggregate's threshold, and a TopK's `false`. So the harness cannot
-  pass by exercising nothing, which on today's code it otherwise would.
+  two sessions per join mode — the three producer flags off and on — and holds
+  both to one answer as a multiset. The join modes are the planner's choice
+  and every hash join `Partitioned` (both single-partition thresholds `0`).
+- **Each query asserts the shape its filter took after the query ran**, read
+  off the flags-on scan's `EXPLAIN` line — bounds, an `IN` list,
+  `hash_lookup`, the partitioned `CASE`, `struct(…) IN`, a null-equal join's
+  `IS NULL`, a TopK's or an aggregate's threshold, and a TopK's `false` — so
+  the harness cannot pass by exercising nothing
+  ([`roadmap-P27.2-receiving-notes.md`](roadmap-P27.2-receiving-notes.md)).
 - **`dynamic-filter-join` and `dynamic-filter-topk`** stand in no sharing
   edge, so each is re-taken alone from its own commit. Each leg runs an untimed
   `pgdt parse` stating `GATHER_STATISTICS` into `/dump.sql.dtcache`, where
@@ -41,9 +39,9 @@ DataFusion's dynamic filters buy a query", taken at `2f94f14`.
 
 ## What the harness showed of DataFusion 55.1
 
-- **On today's code a join computes no filter at all**: the probe subtree holds
-  no node whose `apply_expressions` visits it, so `plan_contains_expression_id`
-  is false. The figures' join "on" leg is therefore today's plan with the flag
+- **At `2f94f14` a join computed no filter at all**: the probe subtree held no
+  node whose `apply_expressions` visits it, so `plan_contains_expression_id`
+  was false. The figures' join "on" leg is therefore that plan with the flag
   merely set; a TopK and an aggregate maintain theirs regardless.
 - **A float join's bounds and a TopK's threshold order `NaN` above `inf` and
   `-0` below `0`** — `f8 >= -0 AND f8 <= NaN`, `f8 < NaN` — Arrow's total
@@ -88,12 +86,3 @@ DataFusion's dynamic filters buy a query", taken at `2f94f14`.
 - **A join's answer is `count(*)` first**, the column its table reports, and
   `count(p.v_text)` beside it: `v_text` is nullable, and counting it alone
   read 99 rows for a join matching 100.
-
-## For 27.2
-
-- **The harness's "on" session is the plain provider**, so it starts testing
-  `PgDumpExec` the moment the scan holds a filter; `Recording` wraps the scan
-  and keeps the filter from reaching it, so it stays a record of the shapes,
-  or goes once EXPLAIN prints them.
-- **Every shape the translator meets is in the recorded displays above**,
-  `hash_lookup` and `struct(…) IN` included, which it answers `true`.

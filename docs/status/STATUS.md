@@ -78,7 +78,7 @@ instrument can see").
 Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic-filters.md).
 
 - [x] **27.1** The evidence, no product code: the flags-on-against-off result-equality harness over every filter shape the spec's "Evidence" names, an aggregate's included; `measure.py` timing `datafusion-cli-pgdump`, and `dynamic-filter-join`, `dynamic-filter-topk` and the costing input taken on today's code; [notes](../design/roadmap-P27.1-evidence-notes.md)
-- [ ] **27.2** Receiving and translating: `PgDumpExec` holds every pushed dynamic filter from any producer, visits it in `apply_expressions`, resets it in `reset_state` and prints it in EXPLAIN; the physical-to-library translator, with a generated check that it only loosens; nothing pruned yet
+- [x] **27.2** Receiving and translating: `PgDumpExec` holds every pushed dynamic filter from any producer, visits it in `apply_expressions`, resets it in `reset_state` and prints it in EXPLAIN; the physical-to-library translator, with a generated check that it only loosens; nothing pruned yet; [notes](../design/roadmap-P27.2-receiving-notes.md)
 - [ ] **27.3** The library's dynamic-filter trait on the partitioned replay: re-pruning between groups on a moved generation, the early stop at a dynamic bound, and the scan's new metrics
 - [ ] **27.4** The byte cut made once at the first poll, over the groups the static and dynamic filters keep, planning staying at `scan()`, tested to leave a clustered selective join's sub-streams byte-balanced over the groups the dynamic filter keeps
 - [ ] **27.5** Row-level evaluation before decode, the figures re-taken to decide its default, what they say filed against "D53"'s **Reopens**
@@ -112,3 +112,11 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A scan prints its dynamic filters under `dynamic_filter=`, not Parquet's
+  `predicate=`** (27.2). The spec asks for them printed "as Parquet does";
+  each is rendered as DataFusion renders one, `DynamicFilter [ … ]`, but under
+  a key of its own, because the static filter this scan answers is the
+  logical plan's to print and not the node's, so `predicate=` would read as
+  everything the scan applies. Reconsidering renames the key in `exec.rs`'s
+  `fmt_as` and in `tests/dynamic_filters.rs`, its only reader.
