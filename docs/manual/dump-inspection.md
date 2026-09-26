@@ -303,10 +303,11 @@ whenever a read fails or bytes do not parse — a file cut short or rewritten is
 often first met that way — and stops if the file moved, saying so rather than
 reporting the short read or the bad row. **Over HTTP the server does the checking**, on every
 request: each ranged GET names the version the run opened on — its `ETag`, or
-its `Last-Modified` where it sent no tag — so an object rewritten mid-scan is
+its `Last-Modified` where it sent no tag or only a weak one (`W/"…"`, which a
+server will not match a version against) — so an object rewritten mid-scan is
 refused on the first read after it happens rather than at the next save. A
-server that sends neither is read unpinned, there being nothing to name, and
-such a run has no in-flight check at all.
+server that sends neither, or a weak tag alone, is read unpinned, there being
+nothing to name, and such a run has no in-flight check at all.
 
 ```
 $ pgdt parse --source mydump.sql

@@ -14,7 +14,7 @@
 //!
 //! The failures a remote source has to get right are all *server* behaviours —
 //! a server that ignores `Range`, one whose validator changes between the probe
-//! and the read, one that answers fewer bytes than were asked for, one that
+//! and the read, one whose only tag is weak, one that answers fewer bytes than were asked for, one that
 //! dies mid-body, one that stops answering mid-scan, one that accepts a
 //! connection and then goes quiet. None of them is reachable
 //! against a well-behaved server, which is why serving a fixture over a real
@@ -99,6 +99,7 @@ struct Knobs {
     ignore_range: bool,
     suppress_etag: bool,
     suppress_last_modified: bool,
+    weak_etag: bool,
     etag_changes_after: Option<usize>,
     not_found_after: Option<usize>,
     short_range_after: Option<(usize, usize)>,
@@ -230,6 +231,14 @@ impl OracleBuilder {
         self
     }
 
+    /// State both entity tags weak, `W/"…"` — a server saying its tag names
+    /// the object's meaning rather than its bytes, which `If-Match`'s strong
+    /// comparison never accepts.
+    pub fn with_weak_etag(mut self) -> Self {
+        self.knobs.weak_etag = true;
+        self
+    }
+
     /// Serve a different validator and a newer modification time from request
     /// `after + 1` onward — the object rewritten between the probe and the
     /// read. A precondition carrying the first validator is then refused
@@ -292,8 +301,9 @@ impl OracleBuilder {
         let listener =
             TcpListener::bind(("127.0.0.1", 0)).expect("the oracle binds a loopback port");
         let addr = listener.local_addr().expect("a bound listener has an address");
-        let etag = format!("\"{:016x}\"", fnv1a(&self.body));
-        let changed_etag = format!("\"{:016x}\"", fnv1a(&self.body).wrapping_add(1));
+        let weak = if self.knobs.weak_etag { "W/" } else { "" };
+        let etag = format!("{weak}\"{:016x}\"", fnv1a(&self.body));
+        let changed_etag = format!("{weak}\"{:016x}\"", fnv1a(&self.body).wrapping_add(1));
         let state = Arc::new(State {
             body: self.body,
             etag,
@@ -465,12 +475,17 @@ struct Validators<'a> {
 /// `If-None-Match`, then `If-Modified-Since`. A conditional header naming a
 /// validator the object does not have fails, which is the case
 /// `docs/design/decisions.md`, "D21" pins a ranged GET with.
+///
+/// **`If-Match` compares strongly and `If-None-Match` weakly** (§13.1.1,
+/// §13.1.2), so a weak tag satisfies the second and never the first — which
+/// is what an origin that follows the RFC does, and the case a client pinning
+/// by a weak tag has to be read against.
 fn precondition(request: &Request, validators: Validators) -> Option<Response> {
     let refused = || Some(simple(412, "Precondition Failed", Vec::new(), Some(validators)));
     let fresh = || Some(simple(304, "Not Modified", Vec::new(), Some(validators)));
 
     if let Some(given) = request.header("if-match")
-        && !matches(given, validators.etag)
+        && !matches(given, validators.etag, Comparison::Strong)
     {
         return refused();
     }
@@ -485,7 +500,7 @@ fn precondition(request: &Request, validators: Validators) -> Option<Response> {
         }
     }
     if let Some(given) = request.header("if-none-match")
-        && matches(given, validators.etag)
+        && matches(given, validators.etag, Comparison::Weak)
     {
         return fresh();
     }
@@ -500,14 +515,29 @@ fn precondition(request: &Request, validators: Validators) -> Option<Response> {
     None
 }
 
-/// Whether a conditional header's value selects the object's validator. `*`
-/// matches any existing validator and nothing where there is none.
-fn matches(given: &str, etag: Option<&str>) -> bool {
+/// RFC 9110's two entity-tag comparisons (§8.8.3.2): strong needs both tags
+/// strong and their opaque parts equal, weak needs the opaque parts equal
+/// whatever either tag's `W/`.
+#[derive(Clone, Copy)]
+enum Comparison {
+    Strong,
+    Weak,
+}
+
+/// Whether a conditional header's value selects the object's validator under
+/// `comparison`. `*` matches any existing validator and nothing where there
+/// is none.
+fn matches(given: &str, etag: Option<&str>, comparison: Comparison) -> bool {
     let Some(etag) = etag else { return false };
     if given.trim() == "*" {
         return true;
     }
-    given.split(',').any(|candidate| candidate.trim().trim_start_matches("W/") == etag)
+    let opaque = |tag: &str| tag.strip_prefix("W/").unwrap_or(tag).to_string();
+    let weak = |tag: &str| tag.starts_with("W/");
+    given.split(',').map(str::trim).any(|candidate| match comparison {
+        Comparison::Strong => !weak(candidate) && !weak(etag) && candidate == etag,
+        Comparison::Weak => opaque(candidate) == opaque(etag),
+    })
 }
 
 /// Assemble a response. **`Content-Length` is always present and nothing is

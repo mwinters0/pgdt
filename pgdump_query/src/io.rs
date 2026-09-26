@@ -4235,16 +4235,20 @@ impl RemoteObject {
     /// a request the read was already making (D21).
     ///
     /// The entity tag is preferred, and `If-Unmodified-Since` is the fallback
-    /// for a server that sends none. A `Last-Modified` this build reads as
+    /// for a server that sends none **or only a weak one**: `If-Match`
+    /// compares strongly (RFC 9110, §13.1.1), so a weak tag is refused by a
+    /// server that follows the RFC however little has changed, and matched by
+    /// one that does not — a pin whose answer is the server's reading rather
+    /// than the object's. A `Last-Modified` this build reads as
     /// absence is not sent — `object_store` substitutes the epoch for a
     /// response that carries none (`docs/design/runtime-invariants.md`,
     /// "RT16"), and asking a server to confirm that nothing has changed since
-    /// 1970 refuses every read.
+    /// 1970 refuses every read. With neither usable the read goes unpinned.
     fn precondition(&self) -> object_store::GetOptions {
         let mut options = object_store::GetOptions::default();
         let Some(meta) = self.meta.get() else { return options };
-        match &meta.e_tag {
-            Some(tag) => options.if_match = Some(tag.clone()),
+        match meta.e_tag.as_deref().filter(|tag| !is_weak_tag(tag)) {
+            Some(tag) => options.if_match = Some(tag.to_string()),
             None => {
                 let stated = weak_identity(
                     meta.last_modified.timestamp(),
@@ -4293,6 +4297,13 @@ impl RemoteObject {
         let _ = self.meta.set(meta);
         Ok(OriginProbe { stored_size, modified, leading: leading.to_vec() })
     }
+}
+
+/// Whether an entity tag is weak: `W/`, case-sensitively, before the quoted
+/// tag (RFC 9110, §8.8.3). `object_store` hands the header over verbatim.
+#[cfg(feature = "http")]
+fn is_weak_tag(tag: &str) -> bool {
+    tag.starts_with("W/")
 }
 
 /// What a server's `Last-Modified` is worth as a weak identity: the time it

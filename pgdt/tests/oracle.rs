@@ -205,6 +205,26 @@ fn a_precondition_against_a_source_with_no_validator_is_refused() {
     assert_status(&response, 412);
 }
 
+/// RFC 9110, §13.1.1 and §13.1.2: a weak tag is never the object under
+/// `If-Match`, even spelled exactly as it was served, and is under
+/// `If-None-Match`.
+#[test]
+fn a_weak_validator_never_satisfies_if_match_and_satisfies_if_none_match() {
+    let oracle = Oracle::serving(BODY).with_weak_etag().start();
+    let served = raw_head(&oracle, &[]).header("etag").unwrap().to_string();
+    assert_eq!(served, oracle.etag());
+    assert!(served.starts_with("W/\""), "{served}");
+
+    let pinned = format!("If-Match: {served}");
+    assert_status(&raw_get(&oracle, &[&pinned, "Range: bytes=0-3"]), 412);
+    let unweakened = format!("If-Match: {}", served.trim_start_matches("W/"));
+    assert_status(&raw_get(&oracle, &[&unweakened, "Range: bytes=0-3"]), 412);
+    assert_status(&raw_get(&oracle, &["If-Match: *", "Range: bytes=0-3"]), 206);
+
+    let fresh = format!("If-None-Match: {}", served.trim_start_matches("W/"));
+    assert_status(&raw_get(&oracle, &[&fresh]), 304);
+}
+
 #[test]
 fn an_unmodified_since_precondition_refuses_only_a_newer_object() {
     let oracle = Oracle::serving(BODY).etag_changing_after(1).start();

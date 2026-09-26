@@ -548,6 +548,39 @@ async fn a_server_sending_no_entity_tag_is_pinned_by_its_modification_time() {
 }
 
 #[tokio::test]
+async fn a_server_stating_a_weak_entity_tag_is_pinned_by_its_modification_time() {
+    // `If-Match` compares strongly, so a weak tag carried there would be
+    // refused on the first read after the probe, the object unchanged.
+    let oracle = Oracle::serving(dump_bytes()).with_weak_etag().start();
+    let source = source_of(&oracle.url()).await;
+    assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
+    let requests = oracle.requests();
+    assert_eq!(requests[1].header("if-match"), None, "{requests:?}");
+    assert!(requests[1].header("if-unmodified-since").is_some(), "{requests:?}");
+    assert_eq!(
+        source.remote_identity().unwrap().etag(),
+        Some(oracle.etag()),
+        "the tag is still what the server called this version, between runs"
+    );
+
+    let oracle = Oracle::serving(dump_bytes()).with_weak_etag().etag_changing_after(1).start();
+    let source = source_of(&oracle.url()).await;
+    let err = source.read_range(0, 32).await.unwrap_err();
+    assert!(matches!(err, pgdump_query::Error::SourceChangedWhileRead { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_weak_entity_tag_with_no_modification_time_is_read_unpinned() {
+    let oracle = Oracle::serving(dump_bytes()).with_weak_etag().without_last_modified().start();
+    let source = source_of(&oracle.url()).await;
+    assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
+    for request in &oracle.requests() {
+        assert_eq!(request.header("if-match"), None, "{request:?}");
+        assert_eq!(request.header("if-unmodified-since"), None, "{request:?}");
+    }
+}
+
+#[tokio::test]
 async fn a_server_that_states_neither_validator_is_read_unpinned() {
     // `object_store` substitutes the epoch for an absent `Last-Modified`
     // (`docs/design/runtime-invariants.md`, "RT16"), so asking a server to
