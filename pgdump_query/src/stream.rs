@@ -1051,10 +1051,22 @@ pub async fn map_file(
     cache: &CacheMode,
     statistics: &StatisticsRequest,
 ) -> Result<MapRun> {
-    let size = source.size().await?;
     // Taken before anything is read, so every later observation compares
     // against what this run started from (`crate::cache::SourceWatch`).
     let watch = SourceWatch::open(source, cache.strict_identity()).await?;
+    let run = map_file_watched(source, scan_options, cache, statistics, &watch).await;
+    watch.attribute(source, run).await
+}
+
+/// [`map_file`] once its watch is open, which then attributes any failure.
+async fn map_file_watched(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+    statistics: &StatisticsRequest,
+    watch: &SourceWatch,
+) -> Result<MapRun> {
+    let size = source.size().await?;
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
         // Nothing to build forward from, and nothing at the path to keep.
@@ -1124,7 +1136,7 @@ pub async fn map_file(
                 index.roles.extend(roles);
                 index.tablespaces.extend(tablespaces);
                 index.scanned_through = preamble_end;
-                cache.save(&watch, source, &index).await?;
+                cache.save(watch, source, &index).await?;
             }
             // **Nothing to bank, so nothing is written.** The prepass holds
             // every span aside until it is whole, and this arm is reached
@@ -1146,7 +1158,7 @@ pub async fn map_file(
         source,
         scan_options,
         cache,
-        &watch,
+        watch,
         &mut index,
         None,
         statistics,
@@ -1167,7 +1179,7 @@ pub async fn map_file(
         // pass makes is caught at a check point of its own.
         Err(e) if cancelled_read(&e, scan_options) => {
             watch.check(source).await?;
-            cache.save(&watch, source, &index).await?;
+            cache.save(watch, source, &index).await?;
             return Ok(interrupted_run(index, resumed_from, &account));
         }
         Err(e) => return Err(e),
@@ -1188,7 +1200,7 @@ pub async fn map_file(
         source,
         scan_options,
         cache,
-        &watch,
+        watch,
         &mut index,
         statistics,
         &account,
@@ -1198,7 +1210,7 @@ pub async fn map_file(
     .await?;
     let mut declined_statistics = 0;
     if !backfill.interrupted {
-        cache.save(&watch, source, &index).await?;
+        cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics =
             report_statistics_declines(statistics, scan_options.statistics_allowance_bytes, &index);
@@ -1558,6 +1570,15 @@ async fn reread_block(
     size: u64,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockGathered>> {
+    let moved = || Error::CachedBlockChanged {
+        path: cache_path.map(Path::to_path_buf),
+        header_offset: block.header_offset,
+    };
+    // A source cut short of the block's recorded end cannot end it there, and
+    // every read loop below takes its length from `size` less its position.
+    if block.end_offset > size {
+        return Err(moved());
+    }
     let mut observer = gather::observer_tracking(
         backfill,
         &block.header,
@@ -1588,10 +1609,7 @@ async fn reread_block(
     };
     let recorded = (block.terminator_offset, block.end_offset, block.row_count);
     if (end.terminator_offset, end.end_offset, end.row_count) != recorded {
-        return Err(Error::CachedBlockChanged {
-            path: cache_path.map(Path::to_path_buf),
-            header_offset: block.header_offset,
-        });
+        return Err(moved());
     }
     // The observer's own allocation is freed as `finish` returns, attributed
     // as it was allocated (`crate::instrument`).
@@ -3791,7 +3809,8 @@ pub fn table_stream<'a>(
         // finishes (`crate::cache::SourceWatch`).
         let watch = SourceWatch::open(source, cache.strict_identity()).await?;
         let mapped =
-            map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
+            map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await;
+        let mapped = watch.attribute(source, mapped).await?;
 
         // Pass 2: replay each matching block for its rows, as one segment
         // per kept run. A resumed stream picks up inside this same list, every
@@ -3813,7 +3832,7 @@ pub fn table_stream<'a>(
         let mut rows =
             Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
         while let Some(batch) = rows.next().await {
-            yield batch?;
+            yield watch.attribute(source, batch).await?;
         }
         // The run's last word: the rows are out, so what this recovers is a
         // failure naming the cause in place of a silent wrong answer.
@@ -3865,8 +3884,8 @@ pub async fn table_stream_partitions<'a>(
     validate_request(&query_options, None, 0)?;
     let table = table.to_string();
     let watch = Arc::new(SourceWatch::open(source, cache.strict_identity()).await?);
-    let mapped =
-        map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
+    let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await;
+    let mapped = watch.attribute(source, mapped).await?;
     let MappedTable { matches, metadata } = mapped;
     let (plan, groups, plan_notes) =
         plan_replay(source, &matches, metadata, scan_options, query_options)?;
@@ -3889,7 +3908,7 @@ pub async fn table_stream_partitions<'a>(
                 let mut rows =
                     Box::pin(replay(source, plan, segments, shared_for_stream, None, fingerprint));
                 while let Some(batch) = rows.next().await {
-                    yield batch?;
+                    yield watch.attribute(source, batch).await?;
                 }
                 watch.check(source).await?;
             };
@@ -4112,7 +4131,7 @@ impl TablePartitions {
                 fingerprint,
             ));
             while let Some(batch) = rows.next().await {
-                yield batch?;
+                yield watch.attribute(source.as_ref(), batch).await?;
             }
             drop(rows);
             watch.check(source.as_ref()).await?;

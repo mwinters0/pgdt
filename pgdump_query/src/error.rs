@@ -78,8 +78,10 @@ pub enum Error {
     /// The source changed while this run was reading it, so every byte the
     /// run has already read is suspect and a map or row set built from them
     /// could mix two versions of the file. Raised by
-    /// [`crate::cache::SourceWatch`] — at a cache save and once when the run
-    /// finishes — and an abort rather than a diagnostic on every provider,
+    /// [`crate::cache::SourceWatch`] — at a cache save, once when the run
+    /// finishes, and in place of a failure met while reading, which the
+    /// change often is (`crate::cache::SourceWatch::attribute`) — and an
+    /// abort rather than a diagnostic on every provider,
     /// `crate::cache::StrictIdentity::NONE` being the only opt-out.
     ///
     /// **Nothing is saved and nothing is removed**: the check says when the
@@ -111,7 +113,8 @@ pub enum Error {
     /// A block re-read for the statistics it lacks did not end where the
     /// map records it ending, so the source was rewritten at the same stored
     /// size — which the cache's identity check cannot see
-    /// (`docs/design/decisions.md`, "D21") — and statistics gathered from it
+    /// (`docs/design/decisions.md`, "D21") — or, handed to the per-block
+    /// entry point, is cut short of that end, and statistics gathered from it
     /// would describe other bytes than the map does. Raised before they are
     /// stored (`crate::stream::gather_block_statistics`), never worked around
     /// (`docs/design/decisions.md`, "D20").

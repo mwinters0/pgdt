@@ -1428,6 +1428,29 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
         ),
         "{err}"
     );
+
+    // Cut short of the block's first row, which the per-block entry point is
+    // the only one to reach: every scan entry point refuses the cache first,
+    // by its stored size.
+    std::fs::write(&dump, &before[..mapped_block.data_offset as usize - 1]).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let err = gather_block_statistics(
+        &source,
+        &ScanOptions::default(),
+        mapped.metadata.as_ref(),
+        mapped_block,
+        &backfill,
+    )
+    .await
+    .expect_err("the block no longer ends where the map says");
+    assert!(
+        matches!(
+            &err,
+            pgdump_query::Error::CachedBlockChanged { path: None, header_offset: at }
+                if *at == header_offset
+        ),
+        "{err}"
+    );
 }
 
 /// A dump of one long `COPY` block, written into `dir` — enough groups over

@@ -476,6 +476,18 @@ pub async fn preamble_only(
     cache: &CacheMode,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let watch = SourceWatch::open(source, cache.strict_identity()).await?;
+    let answer = preamble_only_watched(source, options, cache, &watch).await;
+    watch.attribute(source, answer).await
+}
+
+/// [`preamble_only`] once its watch is open, which then attributes any
+/// failure.
+async fn preamble_only_watched(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    cache: &CacheMode,
+    watch: &SourceWatch,
+) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let mut base_index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
         // Nothing to build forward from, and nothing at the path to keep.
@@ -513,7 +525,7 @@ pub async fn preamble_only(
         }
         base_index.spans.extend(spans);
         attach_text(source, &mut base_index.spans).await?;
-        cache.save(&watch, source, &base_index).await?;
+        cache.save(watch, source, &base_index).await?;
     }
     // A preamble-only run over a complete cache saves nothing, so this is
     // where it says the file did not move underneath it

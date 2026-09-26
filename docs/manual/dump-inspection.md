@@ -298,8 +298,10 @@ That is a different question from the one above: between runs, a moved file is
 usually the same bytes in a new place, but *during* a run, bytes changing
 underneath a read that has already returned some of them cannot produce a right
 answer — the map or the rows would be mixed from two versions of the file. So
-pgdt checks as it banks the cache, and once more when the run finishes, and
-stops if the file moved. **Over HTTP the server does the checking**, on every
+pgdt checks as it banks the cache, once more when the run finishes, and
+whenever a read fails or bytes do not parse — a file cut short or rewritten is
+often first met that way — and stops if the file moved, saying so rather than
+reporting the short read or the bad row. **Over HTTP the server does the checking**, on every
 request: each ranged GET names the version the run opened on — its `ETag`, or
 its `Last-Modified` where it sent no tag — so an object rewritten mid-scan is
 refused on the first read after it happens rather than at the next save. A

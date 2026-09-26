@@ -141,13 +141,13 @@ an embedder cannot override); refusing a damaged one of ours (nothing readable l
 cause); `load` checking size alone (a claimless open gets another file's map). A moved block is `CachedBlockChanged`.
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
-`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and
-`SourceIdentity`'s variants are read through signal accessors, so two kinds compare rather than refuse.
-**Two questions, split by tense.** Between runs a weak signal — modification, and where a source was
-fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term
-alone, a missing time included. During one the cadence follows the cost of asking: `SourceWatch` re-reads the open
-descriptor at the save's cadence (D62) and at run end, aborting without saving or removing, where a server
-compares every ranged GET against the probe's validators and one stating neither is read unpinned.
+`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and `SourceIdentity`'s variants are read through
+signal accessors, so two kinds compare rather than refuse. **Two questions, split by tense.** Between runs a weak signal — modification, and where a
+source was fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term alone, a missing time included.
+During one the cadence follows the cost of asking: `SourceWatch` re-reads the open descriptor at the save's cadence (D62), at run end and before a
+failure is reported (`attribute`: a short read or bytes that do not parse is often the change itself), aborting without saving or removing, where a
+server compares every ranged GET against the probe's validators and one stating neither is read unpinned. Rejected: a check per chunk, narrowing
+without closing the window rows reach a caller in before the abort.
 
 ### D87 A remote cache is named from the URL, and the origin it records is advisory
 Default `./<last URL segment>.dtcache`; no last segment is refused by name. Another origin is a diagnostic,

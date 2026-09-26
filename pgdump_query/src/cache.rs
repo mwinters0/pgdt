@@ -436,6 +436,8 @@ impl Default for StrictIdentity {
 /// so nothing is added to the read loop; a run that never saves — a disabled
 /// cache, or a warm query answered wholly from the cache — is checked as its
 /// reading ends: once, or once per sub-stream of a partitioned replay. Writing the rule as uniform would be false.
+/// **A run that fails is checked before its failure is reported**
+/// ([`Self::attribute`]), since that failure is often the change itself.
 #[derive(Debug)]
 pub struct SourceWatch {
     baseline: SourceIdentity,
@@ -470,6 +472,25 @@ impl SourceWatch {
         }
         tracing::warn!(differences, "source changed while it was being read");
         Ok(())
+    }
+
+    /// `result`, re-checked where it failed. A read or a decode is often the
+    /// first thing to meet a file changed underneath the run — a truncation
+    /// as a short read, a rewrite as an `.xz` error, invalid UTF-8 or a row
+    /// that does not parse — and its own error names the symptom, not the
+    /// cause. So a change [`Self::check`] finds is the error instead; where it
+    /// finds none, where `StrictIdentity::NONE` makes it a warning, or where
+    /// the re-check itself cannot be made, the failure is reported as it was
+    /// (`docs/design/decisions.md`, "D21").
+    pub async fn attribute<T>(&self, source: &dyn ByteRangeSource, result: Result<T>) -> Result<T> {
+        let failure = match result {
+            Err(failure) if !matches!(failure, Error::SourceChangedWhileRead { .. }) => failure,
+            answered => return answered,
+        };
+        match self.check(source).await {
+            Err(changed @ Error::SourceChangedWhileRead { .. }) => Err(changed),
+            _ => Err(failure),
+        }
     }
 }
 

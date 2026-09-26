@@ -25,7 +25,7 @@ use pgdump_query::cache::{
 use pgdump_query::{
     ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, DiagnosticKind, Error, LocalFileSource,
     Parallelism, Partitioning, QueryOptions, Result, ScanOptions, StatisticsRequest, cache,
-    map_file, preamble_only, table_stream,
+    map_file, preamble_only, table_stream, table_stream_partitions,
 };
 
 mod common;
@@ -49,6 +49,10 @@ struct Shifting {
     /// (`docs/design/decisions.md`, "D26"). `None` for a source that always
     /// delivers, which is every other test here.
     dropping: Option<(u64, Arc<Cancellation>)>,
+    /// Where the file is cut short: a read reaching past it fails as
+    /// `LocalFileSource` fails a read past a truncation, with the short read's
+    /// own error. `None` for a file of its whole length.
+    cut: Option<u64>,
 }
 
 impl Shifting {
@@ -59,6 +63,7 @@ impl Shifting {
             seen: AtomicUsize::new(0),
             silent: false,
             dropping: None,
+            cut: None,
         }
     }
 
@@ -71,6 +76,12 @@ impl Shifting {
     /// `stream::cancelled_read` rather than through a polled check point.
     fn dropping(path: PathBuf, observations: usize, trip: u64, cancel: Arc<Cancellation>) -> Self {
         Self { dropping: Some((trip, cancel)), ..Self::new(path, observations) }
+    }
+
+    /// The same moving identity, over a file whose reads past `cut` fail —
+    /// the error a truncation is first met as, which says nothing of one.
+    fn cut(path: PathBuf, observations: usize, cut: u64) -> Self {
+        Self { cut: Some(cut), ..Self::new(path, observations) }
     }
 
     /// Whether this observation is past the point the identity moves. Counted
@@ -93,6 +104,15 @@ impl ByteRangeSource for Shifting {
             return Box::pin(std::future::ready(Err(Error::ScanCancelled {
                 scanned_through: offset,
             })));
+        }
+        if let Some(cut) = self.cut
+            && offset + len as u64 > cut
+        {
+            let short = std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            );
+            return Box::pin(std::future::ready(Err(Error::Io(short))));
         }
         self.inner.read_range(offset, len)
     }
@@ -316,6 +336,98 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
         .await
         .expect_err("a dropped region read still says the file moved");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
+}
+
+/// **A run that fails is checked before its failure is reported.** A file cut
+/// short or rewritten under a run is often first met as a read that comes up
+/// short or bytes that do not parse, and that error names the symptom; the
+/// identity re-read in its place names the change. So each entry point that
+/// watches its source says the file changed — the mapping pass, the preamble,
+/// and a warm query's replay, serial and partitioned — while a failure over an
+/// unmoved source, or under `none`, is reported as it was
+/// (`docs/design/decisions.md`, "D21").
+#[tokio::test]
+async fn a_failing_read_is_checked_before_it_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("cut.sql");
+    let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let cut = file.len() as u64 + 1000;
+    for i in 0..2000 {
+        file.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &file).unwrap();
+    let options = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let changed = |err: &Error| matches!(err, Error::SourceChangedWhileRead { .. });
+    let short =
+        |err: &Error| matches!(err, Error::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof);
+
+    // `--dtcache none` observes nothing but the baseline before the read that
+    // fails, so the re-check is the first to see the move.
+    let map = |source: Shifting, cache: CacheMode| {
+        let options = options.clone();
+        async move { map_file(&source, &options, &cache, &StatisticsRequest::NONE).await }
+    };
+    let err = map(Shifting::cut(dump.clone(), 1, cut), CacheMode::DISABLED).await.unwrap_err();
+    assert!(changed(&err), "the mapping pass names the change: {err:?}");
+    let err =
+        map(Shifting::cut(dump.clone(), usize::MAX, cut), CacheMode::DISABLED).await.unwrap_err();
+    assert!(short(&err), "an unmoved source's failure is its own: {err:?}");
+    let none = CacheMode::DISABLED.with_strict_identity(StrictIdentity::NONE);
+    let err = map(Shifting::cut(dump.clone(), 1, cut), none).await.unwrap_err();
+    assert!(short(&err), "`none` reports the failure, the move a warning: {err:?}");
+
+    let err = preamble_only(&Shifting::cut(dump.clone(), 1, 10), &options, &CacheMode::DISABLED)
+        .await
+        .unwrap_err();
+    assert!(changed(&err), "the preamble names the change: {err:?}");
+
+    // A warm query: the map is complete, so every read is the replay's. The
+    // baseline and the load are the two observations before it fails.
+    let path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    map_file(&source, &options, &CacheMode::enabled(&path), &StatisticsRequest::NONE)
+        .await
+        .unwrap();
+    let last = |mut stream: pgdump_query::TableStream<'static>| async move {
+        let mut failure = None;
+        while let Some(batch) = stream.next().await {
+            if let Err(err) = batch {
+                failure = Some(err);
+            }
+        }
+        failure
+    };
+    let shifting: &'static Shifting = Box::leak(Box::new(Shifting::cut(dump.clone(), 2, cut)));
+    let stream = table_stream(
+        shifting,
+        "public.t",
+        options.clone(),
+        QueryOptions::default(),
+        None,
+        CacheMode::enabled(&path),
+    );
+    let failure = last(stream).await.expect("the replay fails");
+    assert!(changed(&failure), "the replay names the change: {failure:?}");
+
+    let shifting: &'static Shifting = Box::leak(Box::new(Shifting::cut(dump.clone(), 2, cut)));
+    let streams = table_stream_partitions(
+        shifting,
+        "public.t",
+        options.clone(),
+        QueryOptions::default(),
+        CacheMode::enabled(&path),
+    )
+    .await
+    .unwrap();
+    let mut failures = Vec::new();
+    for stream in streams {
+        failures.extend(last(stream).await);
+    }
+    assert!(
+        !failures.is_empty() && failures.iter().all(changed),
+        "each failing sub-stream names the change: {failures:?}"
+    );
 }
 
 /// **The check reads the descriptor, not the path**, which is what makes it
