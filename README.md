@@ -1,46 +1,50 @@
-# `pgdump_query` / Postgres Dump Tool
+# Postgres Dump Tool
 
 Inspect Postgres dumps, query them like they're parquet, and export results.
 
 Available as:
 - A Rust library: `pgdump_query`
 - A CLI: `pgdt`
-    - Parses metadata and statistics from your dump (cached as `.dtcache`)
-    - Supports simple single-table queries with SQL-like `WHERE` syntax
-- A DataFusion catalog and `TableProvider`: `datafusion-pgdump`
-- A DataFusion SQL shell: `datafusion-cli-pgdump`
-    - Full SQL support (see: [`datafusion-cli`](https://datafusion.apache.org/user-guide/cli/usage.html)
+    - Parse metadata and statistics from your dump
+    - Inspect the metadata: `CREATE TABLE`, roles, row counts, etc.
+    - Execute single-table queries with SQL-like `WHERE` syntax
+- A DataFusion provider and shell: `datafusion-cli-pgdump`
+    - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
     - Export to Parquet, etc
 
 _Mostly written by LLMs, reviewed by human wetware._
 
 ## Quickstart
 
-**`pgdt`:**
+### `pgdt`
 ```bash
-# Parse a dump (builds a cache)
-pgdt parse --source=f00.xz
+# Parse a dump (builds foo.xz.dtcache)
+pgdt parse --source=foo.xz
 
-# Inspect what you parsed, e.g. tables, roles, etc
-pgdt info --details --source=f00.xz
+# Inspect what you parsed: tables, roles, etc
+pgdt info --detail --source=foo.xz
+
+# Or as JSON, list the role names
+pgdt info --json --source=foo.xz | jq -r '.roles[]'
 
 # Run a query.  Look ma, no daemons!
-pgdt query --where='foo.bar = baz' --source=f00.xz
+pgdt query --source=foo.xz --table=mytable --where='mycolumn = bar'
 ```
 
-**`datafusion-cli-pgdump`:**
+See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
+
+
+### `datafusion-cli-pgdump`
 ```bash
-# Parse a dump (builds f00.dtcache)
-pgdt parse --source=f00.xz
+# Parse a dump (builds foo.xz.dtcache)
+pgdt parse --source=foo.xz
 
-# Then query it as catalog `f00`
-datafusion-cli-pgdump --dump f00=f00.xz
+# Then query it as catalog `foo`
+datafusion-cli-pgdump --dump foo=foo.xz
 ```
-
-See the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
 
 ```sql
-SHOW TABLEs;
+SHOW TABLES;
 
 -- Export some hive-partitioned Parquet
 COPY (
@@ -48,7 +52,7 @@ COPY (
     *,
     date_part('year', event_ts)  AS year,
     date_part('month', event_ts) AS month
-  FROM f00.public.events
+  FROM foo.public.events
 )
 TO '/tmp/events_parquet'
 STORED AS PARQUET
@@ -61,21 +65,26 @@ OPTIONS (
 INSERT INTO ...; -- Unsupported!
 ```
 
-## Roadmap / Status
-**Early development**, pre-1.0, with no compatibility guarantees yet. Two things set the direction:
-- It is meant to be **embeddable as a query data source** (ultimately a DataFusion `TableProvider`).
-- **High performance on local files is a core goal** rather than a later optimization — dumps are
-routinely hundreds of gigabytes, so the local-file reader aims to stay device-bound rather than
-CPU-bound, at memory that does not grow with the size of the dump.
+For more, see:
+- [Our `datafusion-cli-pgdump` docs](docs/manual/datafusion-cli-pgdump.md)
+- Upstream's [`datafusion-cli` docs](https://datafusion.apache.org/user-guide/cli/index.html)
+- The [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
 
-### Status
-Anything unchecked here is considered "TODO" / Future.
+
+## Status
+⚠️ **Functional, but early development.**  No compatibility guarantees until we reach v1.0.
+
 - Input
     - `pg_dump` formats
-        - [X] plain
+        - [x] plain, including `pg_dumpall` / multi-database dumps
+        - [ ] plain with `--inserts` / `--column-inserts` (rows as `INSERT` statements)
         - [ ] directory
         - [ ] tar
         - [ ] custom
+    - `psql` COPY formats
+        - [ ] CSV
+        - [ ] text
+        - [ ] binary
     - Compression
         - [x] xz (seekable)
         - [ ] gzip (non-seekable) / bgzip (seekable)
@@ -83,63 +92,82 @@ Anything unchecked here is considered "TODO" / Future.
         - [ ] lz4
     - File locations
         - [x] local
-        - [x] http / https — ranged requests, nothing downloaded whole; a
-        seekable compressed dump is read the same way, a block at a time
+        - [x] http / https ranged requests (unauthenticated)
         - [ ] object store
+- Metadata collection:
+    - [x] A full byte-exact file map and DDL object inventory.
+    - [x] Row groups with per-column statistics.
+    - [ ] Statistics gathered by a cold `query`.
 - Postgres Correctness
+    - [x] Tests cover all major Postgres releases, v13-v18.
     - Data types
-        - [x] See [the
-        docs](https://github.com/mwinters0/pgdt/blob/main/docs/manual/type-handling.md), but
-        generally "all common base types".
-            - [ ] Notable exceptions: numeric `infinity`, `-infinity`, `NaN`.  (See: KD8)
+        - [x] Almost all common base types (see: [type handling](docs/manual/type-handling.md))
+            - Notable exceptions which lack an Arrow equivalent:
+                - [ ] `infinity`, `-infinity` and `NaN` in a `numeric`, `date` or `timestamp`
+                column
+                - [ ] An `interval` past Arrow's range
         - [ ] Common extension types, e.g. PostGIS
-        - [x] Any type that we don't parse is returned as `Utf8View` (aka a string) so you can parse
+        - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.
+    - [ ] Encodings other than UTF-8
+    - [ ] Large object (BLOB) contents
     - Collation
-        - [x] "default" (utf8)
-        - [x] `C`
-        - [ ] Everything else
+        - [x] `C` / `POSIX`
+        - [ ] Everything else.  Text compares bytewise, with a warning.  (See: KD7)
+- Query handling
+    - [x] Pushdown:
+        - [x] Column projection
+        - [x] Boolean filter expression — `AND`, `OR`, `NOT`
+        - [x] Parens
+        - [x] Typed single-column comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`,
+          `IS [NOT] NULL`).
+            - Comparisons follow Postgres's semantics per type. Wherever DataFusion's comparison differs
+              from the server's, e.g. collation, `interval`, `jsonb`, the column gets a warning.
+    - [x] Row-group pruning
+    - DataFusion
+        - [x] Filters pushed down as `Exact` where we answer them the way DataFusion would: the above,
+          plus `BETWEEN`, `IN (…)`, `IS [NOT] TRUE`/`FALSE`/`UNKNOWN` and bare boolean columns.
+          Anything else (`LIKE`, functions, cross-column comparisons) runs in DataFusion after the scan.
+        - [x] `LIMIT` pushed into the scan.
+        - [x] Exact statistics for the optimizer: row counts, NULL counts, min/max, distinct counts,
+          sums and byte sizes. `COUNT(*)`, `MIN`, `MAX` and `SUM` can answer without reading a row,
+          and joins are ordered by size.
+        - [x] Sort order: a column provably emitted in order is declared sorted, so an `ORDER BY` it
+          satisfies is skipped.
+        - [ ] Dynamic filters from joins and `ORDER BY … LIMIT`
 - Output
-    - [x] Arrow (aiming for "at least as good as ADBC")
+    - [x] Streaming Arrow batches, with typed columns aiming for "at least as good as ADBC".
     - [x] CLI text
-    - [ ] CLI parquet
+    - [x] Parquet, CSV, etc via `datafusion-cli-pgdump`
 - Consumers
-    - [x] Rust
-    - [x] DataFusion
+    - [x] Rust library
+    - [x] DataFusion provider + shell
     - [ ] Python
     - [ ] Trino
     - [ ] DuckDB
     - [ ] Spark
-- Optimization
-    - Parallelization
-        - [x] Parallel I/O, parallel scan, parallel query (where the input is suitable)
-        - [ ] Perform full `parse` and `query` in one file pass
-    - Auto-configuration
-        - [x] Bare minimum attempt to autoconfig per your machine's CPU / RAM
+- Parallelism
+    - [x] Parallel I/O, parallel scan, parallel query (where the input is suitable)
+    - [ ] Perform full `parse` and `query` in one file pass
+    - Auto-configuration:
+        - [x] Bare minimum attempt to autoconfig per your machine's (or container's) CPU / RAM.
+            - Defaults to 50% of a bare machine, or the full container when in a container.
         - [ ] Optimal per-machine config
-    - Adaptation to your data
+    - Adaptation to your data:
         - [x] Minimal adaptation to keep memory flat with large files
         - [ ] Optimal per-dump and per-table config
 
-What works today:
-- Streaming row extraction from plain-format dumps into typed Arrow batches, including arrays, composites,
-  ranges and multiranges.
-- A full byte-exact file map and DDL object inventory.
-- A resumable scan that reports what it has.
-- A best-effort structural cache.
-- Reading a dump straight off an HTTP server, by byte range, with no credential
-  handling — a presigned URL works as it is.
-- Pushdown: column projection and a boolean filter expression — `AND`, `OR`, `NOT` and parens — over
-  typed single-column comparisons.
-- Parallel scan (where the input is suitable), with automatic worker count and memory budget
-  defaulting to either the full container (when run in a container), or half of the machine (e.g.,
-  workstation).
+Two things set the direction:
+- It is meant to be embeddable as a query data source
+- High performance on local files is a core goal rather than a later optimization. Dumps are
+routinely hundreds of gigabytes, so the local-file reader aims to stay device-bound rather than
+CPU-bound, with a flat RSS profile.
 
 ### Next
-See:
-- [`docs/design/roadmap.md`](docs/design/roadmap.md)
-- [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation state, including known
-deficiencies.
+- [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (epics)
+- [`docs/status/STATUS.md`](docs/status/STATUS.md) - Exact implementation state
+- [`docs/status/deficiencies.md`](docs/status/deficiencies.md) - Known deficiencies (some TODO, some
+simply properties of our design).
 
 
 ## Operation
