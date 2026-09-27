@@ -19,10 +19,10 @@ use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DumpIndex, DumpMetadata, Finding, KnownCompression, NestedPlan, Origin, Parallelism, Predicate,
-    PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ScanOptions, Severity, Span,
-    SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open,
-    preamble_only, render_field_into,
+    DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
+    Parallelism, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized,
+    ScanOptions, Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, TypeKind, open, preamble_only, render_field_into,
 };
 use tracing::Instrument;
 
@@ -862,11 +862,12 @@ enum Command {
         /// Single-column filter: `column=value`, `column!=value`,
         /// `column<value`, `column<=value`, `column>value`,
         /// `column>=value`, `column IS DISTINCT FROM value`,
-        /// `column IS NOT DISTINCT FROM value`, `column IS NULL`, or
-        /// `column IS NOT NULL`. Repeatable — every term must match, so the
-        /// terms are ANDed. `OR`, negation and grouping are `--where`, which
-        /// takes an expression over these same terms; giving both flags ANDs
-        /// them (`docs/design/decisions.md`, "Predicates").
+        /// `column IS NOT DISTINCT FROM value`, `column IN (value, …)`,
+        /// `column IS NULL`, or `column IS NOT NULL`. Repeatable — every term
+        /// must match, so the terms are ANDed. `OR`, negation and grouping
+        /// are `--where`, which takes an expression over these same terms;
+        /// giving both flags ANDs them (`docs/design/decisions.md`,
+        /// "Predicates").
         ///
         /// Every operator but the two NULL tests compares **typed**: the
         /// filter's value is read with the column's own decoder, so a value
@@ -885,7 +886,7 @@ enum Command {
         /// A term is never read as an expression — but nor may it hold what
         /// `--where` would read as one. An unquoted `AND`, `OR` or `NOT` with
         /// whitespace, a paren or an end on both sides, `IS NOT` excepted, or a
-        /// paren, is refused rather than taken literally, so no string means
+        /// paren outside an `IN` list, is refused rather than taken literally, so no string means
         /// one thing here and another under `--where`; quote the part that
         /// holds it, or use `--where`.
         #[arg(long)]
@@ -1181,6 +1182,129 @@ fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
     Some((end - i, op))
 }
 
+/// `IN` starting at `i`, before the `(` its list opens with — the third
+/// worded operator, a candidate where the other two are, so **the earliest
+/// operator still wins**. Whitespace must precede it, as it must `IS`, and
+/// any may sit between it and the paren; its length is the word's alone,
+/// the list being the term's value.
+fn in_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
+    if i == 0 || !bytes[i - 1].is_ascii_whitespace() {
+        return None;
+    }
+    let end = word_at(bytes, i, "in")?;
+    let open = end + bytes[end..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+    (bytes.get(open) == Some(&b'(')).then_some((end - i, TermOp::In))
+}
+
+/// A term's operator: one comparison, or `IN` before a list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TermOp {
+    Compare(PredicateOp),
+    In,
+}
+
+/// What [`in_list`] found after an `IN`: each value's text, untrimmed and
+/// still quoted, and the byte past the `)` that closes the list — `None`
+/// where nothing closes it.
+pub(crate) struct InList<'a> {
+    pub(crate) values: Vec<&'a str>,
+    pub(crate) end: Option<usize>,
+}
+
+/// The list opening at the `(` at `open`, read as the term grammar reads a
+/// value: **a quote opens a region only at the start of a value**, past
+/// ASCII whitespace, and is data anywhere else; a `,` or `)` outside one
+/// ends the value. `--where`'s tokenizer asks here too, so it ends the term
+/// at the paren this ends the list at, and a paren or keyword inside the list
+/// is never structure there.
+pub(crate) fn in_list(spec: &str, open: usize) -> InList<'_> {
+    let bytes = spec.as_bytes();
+    let mut values = Vec::new();
+    let mut start = open + 1;
+    let mut at_start = true;
+    let mut i = start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if at_start && b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if at_start && (b == b'\'' || b == b'"') {
+            at_start = false;
+            i += 1;
+            loop {
+                match bytes.get(i) {
+                    None => return InList { values, end: None },
+                    Some(&q) if q == b && bytes.get(i + 1) == Some(&b) => i += 2,
+                    Some(&q) if q == b => {
+                        i += 1;
+                        break;
+                    }
+                    Some(_) => i += 1,
+                }
+            }
+            continue;
+        }
+        at_start = false;
+        match b {
+            b',' | b')' => {
+                values.push(&spec[start..i]);
+                if b == b')' {
+                    return InList { values, end: Some(i + 1) };
+                }
+                start = i + 1;
+                at_start = true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    InList { values, end: None }
+}
+
+/// The values of the list `rest` holds, `rest` being what follows `IN`:
+/// each trimmed and unquoted as a comparison's value is
+/// ([`filter_part`]). A list with no value, an empty value, an unquoted paren
+/// inside one, a list nothing closes, and anything but whitespace after its
+/// `)` are refused.
+fn parse_in_list(rest: &str, spec: &str) -> Result<Vec<String>> {
+    let open = rest.find('(').expect("`in_at` splits only before a paren");
+    let list = in_list(rest, open);
+    let Some(end) = list.end else {
+        anyhow::bail!("--filter `{spec}`: the `IN` list's `(` is never closed")
+    };
+    if list.values.len() == 1 && list.values[0].trim().is_empty() {
+        anyhow::bail!("--filter `{spec}`: an `IN` list needs at least one value")
+    }
+    let values = list
+        .values
+        .iter()
+        .map(|value| {
+            if value.trim().is_empty() {
+                anyhow::bail!(
+                    "--filter `{spec}`: an `IN` list holds an empty value — quote one to mean the empty string: `''`"
+                )
+            }
+            let text = filter_part(value, "value", spec)?;
+            if dequote(value.trim()).is_none() && text.contains('(') {
+                anyhow::bail!(
+                    "--filter `{spec}`: the `IN` value `{text}` holds a `(` — quote a value that holds a paren"
+                )
+            }
+            Ok(text)
+        })
+        .collect::<Result<_>>()?;
+    // After the values, so a paren left unquoted inside one is named as that
+    // rather than as the text its `)` strands.
+    if !rest[end..].trim().is_empty() {
+        anyhow::bail!(
+            "--filter `{spec}`: `{}` follows the `IN` list's closing `)`",
+            rest[end..].trim()
+        )
+    }
+    Ok(values)
+}
+
 /// Split `spec` at its operator.
 ///
 /// **The earliest position wins, and the longest spelling at that position**
@@ -1237,23 +1361,25 @@ fn split_filter_op(spec: &str) -> FilterSplit<'_> {
 /// The operator starting at byte `i` of the term `bytes`, and how many bytes
 /// it runs for: the longest punctuation spelling there, else a worded one.
 ///
-/// `bytes` must start where the term does, since [`distinct_from_at`] reads
-/// the term's start as no boundary. [`split_filter_op`] and `--where`'s
-/// tokenizer both ask here, so the tokenizer knows where a term's value
-/// begins by the rule that splits it.
-pub(crate) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
+/// `bytes` must start where the term does, since [`distinct_from_at`] and
+/// [`in_at`] read the term's start as no boundary. [`split_filter_op`] and
+/// `--where`'s tokenizer both ask here, so the tokenizer knows where a term's
+/// value begins by the rule that splits it.
+pub(crate) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
     FILTER_OPS
         .into_iter()
         .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))
         .map(|(symbol, op)| (symbol.len(), op))
         .or_else(|| distinct_from_at(bytes, i))
+        .map(|(len, op)| (len, TermOp::Compare(op)))
+        .or_else(|| in_at(bytes, i))
 }
 
 /// What [`split_filter_op`] found. `NoOperator` is the `IS NULL` forms' cue,
 /// not a fault: they are the fallback, tried only on a term with no operator
 /// outside quotes.
 enum FilterSplit<'a> {
-    Op(&'a str, PredicateOp, &'a str),
+    Op(&'a str, TermOp, &'a str),
     NoOperator,
     UnbalancedQuote(char),
 }
@@ -1314,29 +1440,39 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
 /// [`where_expr::refuse_where_structure`]. That runs first, so a term both
 /// structural and malformed earns the structural message —
 /// `--filter 'and is null'` is told that `AND` is a reserved spelling.
-fn parse_filter_flag(spec: &str) -> Result<Predicate> {
+fn parse_filter_flag(spec: &str) -> Result<Expr> {
     where_expr::refuse_where_structure(spec)?;
     parse_filter(spec)
 }
 
-/// Parse one filter term into a [`Predicate`] — one term of the conjunction a
-/// repeated `--filter` builds, and equally the **leaf** of a `--where`
+/// Parse one filter term into an [`Expr`] leaf — one term of the conjunction
+/// a repeated `--filter` builds, and equally the **leaf** of a `--where`
 /// expression ([`where_expr`]): `column<op>value` for any of the six
-/// comparison spellings, `column IS [NOT] DISTINCT FROM value`, or
-/// `column IS NULL` / `column IS NOT NULL`, the worded forms matched
-/// case-insensitively (`docs/design/decisions.md`, "D60").
+/// comparison spellings, `column IS [NOT] DISTINCT FROM value`,
+/// `column IN (value, …)`, or `column IS NULL` / `column IS NOT NULL`, the
+/// worded forms matched case-insensitively (`docs/design/decisions.md`,
+/// "D60").
+///
+/// **`IN` has no NULL**: its values are read as `=`'s are, so `null` in the
+/// list is the text `null`, and `c in (a, b)` means `c=a or c=b` exactly —
+/// answered as one [`pgdump_query::Membership`] (`docs/design/decisions.md`,
+/// "D53").
 ///
 /// **The `IS` forms are the fallback, not the first test**: an operator
 /// outside quotes is looked for first and the suffix is only stripped from a
 /// term that has none, so `note=this is null` is an equality against
 /// `this is null`.
-fn parse_filter(spec: &str) -> Result<Predicate> {
+fn parse_filter(spec: &str) -> Result<Expr> {
     match split_filter_op(spec) {
-        FilterSplit::Op(column, op, value) => Ok(Predicate {
+        FilterSplit::Op(column, TermOp::Compare(op), value) => Ok(Expr::Term(Predicate {
             column: filter_part(column, "column name", spec)?,
             op,
             value: Some(filter_part(value, "value", spec)?),
-        }),
+        })),
+        FilterSplit::Op(column, TermOp::In, list) => Ok(Expr::In(Membership {
+            column: filter_part(column, "column name", spec)?,
+            values: parse_in_list(list, spec)?.into_iter().map(Some).collect(),
+        })),
         FilterSplit::UnbalancedQuote(quote) => Err(unbalanced_quote("column name", quote, spec)),
         FilterSplit::NoOperator => {
             let trimmed = spec.trim();
@@ -1344,15 +1480,15 @@ fn parse_filter(spec: &str) -> Result<Predicate> {
                 [("is not null", PredicateOp::IsNotNull), ("is null", PredicateOp::IsNull)]
             {
                 if let Some(column) = strip_ci_suffix(trimmed, suffix) {
-                    return Ok(Predicate {
+                    return Ok(Expr::Term(Predicate {
                         column: filter_part(column, "column name", spec)?,
                         op,
                         value: None,
-                    });
+                    }));
                 }
             }
             anyhow::bail!(
-                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IN (value, …)`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
             )
         }
     }
@@ -2024,14 +2160,12 @@ async fn main() -> Result<()> {
             let filter = match where_expr {
                 // Byte for byte the tree a repeated `--filter` always built,
                 // including the empty conjunction that keeps every row.
-                None => pgdump_query::Expr::all(terms),
+                None => pgdump_query::Expr::And(terms),
                 Some(spec) if terms.is_empty() => where_expr::parse_where(&spec)?,
                 // Both flags: one conjunction of the expression and the
                 // terms, flattened rather than nested.
                 Some(spec) => pgdump_query::Expr::And(
-                    std::iter::once(where_expr::parse_where(&spec)?)
-                        .chain(terms.into_iter().map(pgdump_query::Expr::Term))
-                        .collect(),
+                    std::iter::once(where_expr::parse_where(&spec)?).chain(terms).collect(),
                 ),
             };
             // As `info`: a cache that does not describe this file is
@@ -3304,11 +3438,68 @@ mod tests {
         );
     }
 
-    /// One parsed term, or the message it was refused with.
+    /// One parsed comparison term, or the message it was refused with.
     fn filter(spec: &str) -> Result<(String, PredicateOp, Option<String>), String> {
         match parse_filter(spec) {
-            Ok(p) => Ok((p.column, p.op, p.value)),
+            Ok(Expr::Term(p)) => Ok((p.column, p.op, p.value)),
+            Ok(other) => panic!("`{spec}` should be a comparison, parsed as {other:?}"),
             Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// The column and values of a membership term that must parse.
+    fn membership(spec: &str) -> (String, Vec<String>) {
+        match parse_filter(spec) {
+            Ok(Expr::In(m)) => (m.column, m.values.into_iter().map(Option::unwrap).collect()),
+            other => panic!("`{spec}` should be a membership, got {other:?}"),
+        }
+    }
+
+    /// The message a membership term was refused with.
+    fn membership_err(spec: &str) -> String {
+        match parse_filter(spec) {
+            Err(e) => e.to_string(),
+            Ok(parsed) => panic!("`{spec}` should be refused, parsed as {parsed:?}"),
+        }
+    }
+
+    /// **`IN` is a worded operator before a list**, found where the others
+    /// are, the earliest winning; each value is read as `=`'s is — trimmed,
+    /// or quoted to keep its spaces, its commas or its parens — and `null`
+    /// is the text `null`, `=` having no NULL either.
+    #[test]
+    fn in_reads_a_list_of_values_as_equality_reads_one() {
+        let own =
+            |c: &str, vs: &[&str]| (c.to_string(), vs.iter().map(|v| v.to_string()).collect());
+        assert_eq!(membership("id in (1, 2,3)"), own("id", &["1", "2", "3"]));
+        assert_eq!(membership("id IN(7)"), own("id", &["7"]));
+        assert_eq!(membership("id   In   ( 7 )  "), own("id", &["7"]));
+        assert_eq!(
+            membership(r#"note in (' a, b ', "it""s", '(1,2)', null, '')"#),
+            own("note", &[" a, b ", r#"it"s"#, "(1,2)", "null", ""])
+        );
+        // An unquoted value keeps a quote that does not open it, as `=` does.
+        assert_eq!(membership("note in (don't, x)"), own("note", &["don't", "x"]));
+        assert_eq!(membership(r#""a in (b)" in (c)"#), own("a in (b)", &["c"]));
+        // The earliest operator wins: an `=` before the word keeps the term
+        // a comparison, and the word needs whitespace before it and a paren
+        // after it to be one.
+        assert_eq!(ok("note=x in (y)"), ("note".into(), PredicateOp::Eq, Some("x in (y)".into())));
+        assert!(err("tin (y)").contains("--filter must be"));
+        assert!(err("x in y").contains("--filter must be"));
+        for (spec, says) in [
+            ("x in ()", "at least one value"),
+            ("x in ( )", "at least one value"),
+            ("x in (1,,2)", "empty value"),
+            ("x in (1,)", "empty value"),
+            ("x in (1, 2", "never closed"),
+            ("x in ('1)", "never closed"),
+            ("x in (1) 2", "follows the `IN` list"),
+            ("x in ((1,2))", "holds a `(`"),
+            ("x in ('a'b)", "unbalanced `'` quote"),
+        ] {
+            let message = membership_err(spec);
+            assert!(message.contains(says), "`{spec}`: {message}");
         }
     }
 
@@ -4147,7 +4338,7 @@ mod tests {
         assert!(message.contains("`AND`"), "{message}");
         assert!(!message.contains("--filter must be"), "{message}");
         assert_eq!(
-            parse_filter_flag(r#""and" is null"#).expect("the quoted column is askable").column,
+            column_of(parse_filter_flag(r#""and" is null"#).expect("the quoted column is askable")),
             "and"
         );
         // A term with no structure still reaches the term grammar, refusal
@@ -4156,10 +4347,24 @@ mod tests {
             format!("{:#}", parse_filter_flag("nonsense").expect_err("no operator"))
                 .contains("--filter must be")
         );
-        assert_eq!(
-            parse_filter_flag("name=alpha").expect("a plain term").value.as_deref(),
-            Some("alpha")
-        );
+        let Expr::Term(term) = parse_filter_flag("name=alpha").expect("a plain term") else {
+            panic!("a comparison")
+        };
+        assert_eq!(term.value.as_deref(), Some("alpha"));
+        // A membership is one term under either flag, its paren no structure.
+        let Expr::In(membership) = parse_filter_flag("name in (alpha, 'and')").expect("a list")
+        else {
+            panic!("a membership")
+        };
+        assert_eq!(membership.values, [Some("alpha".to_string()), Some("and".to_string())]);
+    }
+
+    /// The column a comparison term names.
+    fn column_of(expr: Expr) -> String {
+        match expr {
+            Expr::Term(term) => term.column,
+            other => panic!("a comparison, not {other:?}"),
+        }
     }
 
     /// The note a name that was not found earns when it looks quoted —

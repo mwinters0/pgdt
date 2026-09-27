@@ -175,6 +175,24 @@ fn the_filter_flag_takes_the_worded_operators() {
     );
 }
 
+/// **`IN` keeps the rows its `OR` of `=` keeps**, under either flag and under
+/// `NOT` — which drops the NULL row as `NOT =` does, the membership being
+/// unknown there — and a value it cannot read is refused naming `IN`.
+#[test]
+fn in_keeps_the_rows_its_disjunction_of_equalities_keeps() {
+    assert_eq!(kept(&["--where", "name in (alpha, 'beta', nope)"]), ["alpha", "beta"]);
+    assert_eq!(kept(&["--filter", "name in (alpha, beta)"]), ["alpha", "beta"]);
+    assert_eq!(
+        kept(&["--where", "not is_active in (f)"]),
+        kept(&["--where", "not (is_active=f)"]),
+        "the NULL row is dropped by both"
+    );
+    assert_eq!(kept(&["--where", "not is_active in (f)"]), ["alpha", "gamma", "delta"]);
+    let out = widgets(&["--where", "is_active in (t, maybe)"]);
+    assert!(!out.status.success());
+    assert!(stderr_of(&out).contains("`is_active IN ...`"), "{}", stderr_of(&out));
+}
+
 /// **The `predicate-terms` figure's six command shapes actually run, and none
 /// of them keeps a row.**
 ///

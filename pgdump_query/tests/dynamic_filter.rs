@@ -24,9 +24,9 @@ use arrow::datatypes::Int32Type;
 use futures::StreamExt;
 use pgdump_query::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdump_query::{
-    ByteRangeSource, DumpIndex, DynamicFilter, Expr, LocalFileSource, Parallelism, Predicate,
-    PredicateOp, QueryOptions, ScanOptions, Sortedness, StatisticsRequest, StatisticsSelection,
-    TablePartitions, map_file,
+    ByteRangeSource, DumpIndex, DynamicFilter, Expr, LocalFileSource, Membership, Parallelism,
+    Predicate, PredicateOp, QueryOptions, ScanOptions, Sortedness, StatisticsRequest,
+    StatisticsSelection, TablePartitions, map_file,
 };
 
 mod common;
@@ -440,6 +440,8 @@ async fn a_term_no_block_resolves_keeps_every_row_where_it_sits() {
         Expr::Not(Box::new(undecodable())),
         Expr::Not(Box::new(Expr::Not(Box::new(undecodable())))),
         Expr::Or(vec![undecodable(), term("id", PredicateOp::Lt, "5")]),
+        among("nowhere", &["5"]),
+        Expr::Not(Box::new(among("id", &["1", "five"]))),
     ] {
         let got = run(&dump, &index, 1, true, Some(Moving::constant(state.clone()))).await;
         assert_eq!(got.ids, whole.ids, "{state:?}");
@@ -448,6 +450,35 @@ async fn a_term_no_block_resolves_keeps_every_row_where_it_sits() {
     let beside = Expr::And(vec![lacking(), term("id", PredicateOp::Lt, "5")]);
     let got = run(&dump, &index, 1, true, Some(Moving::constant(beside))).await;
     assert_eq!(got.ids, [1, 2, 3, 4]);
+}
+
+/// `column IN (values)`, no NULL among them.
+fn among(column: &str, values: &[&str]) -> Expr {
+    Expr::In(Membership {
+        column: column.into(),
+        values: values.iter().map(|v| Some(v.to_string())).collect(),
+    })
+}
+
+/// **A state holding a membership is read as its `Or` of `=` is**: the same
+/// rows emitted, the same groups skipped and the same rows dropped before
+/// they decode, serial and split alike.
+#[tokio::test]
+async fn a_membership_in_the_state_is_read_as_its_disjunction_is() {
+    let (_dir, dump, index) = gathered(18).await;
+    let values = ["3", "700", "990", "5000"];
+    let disjunction = || Expr::Or(values.iter().map(|v| term("id", PredicateOp::Eq, v)).collect());
+    for jobs in [1, SPLIT_JOBS] {
+        let want = run(&dump, &index, jobs, true, Some(Moving::constant(disjunction()))).await;
+        let got =
+            run(&dump, &index, jobs, true, Some(Moving::constant(among("id", &values)))).await;
+        assert_eq!(got.ids, [3, 700, 990], "{jobs} job(s)");
+        assert_eq!(
+            (got.ids, got.pruned, got.dropped, got.unread),
+            (want.ids, want.pruned, want.dropped, want.unread),
+            "{jobs} job(s)"
+        );
+    }
 }
 
 /// Each row of `table`'s block in `dump` by its first field, an integer: the

@@ -77,7 +77,9 @@ use crate::leader::{self, RegionScan};
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
 use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
-use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
+use crate::predicate::{
+    ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_membership, resolve_term,
+};
 use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::scan::{
@@ -153,25 +155,38 @@ fn resolve_expr(
             .map(|child| resolve_expr(child, resolved, header_offset, semantics))
             .collect::<Result<Vec<_>>>()
     };
+    let column = |name: &str| {
+        column_position(resolved, name).ok_or_else(|| Error::UnknownPredicateColumn {
+            header_offset,
+            column: name.to_string(),
+        })
+    };
     Ok(match filter {
-        Expr::Term(predicate) => {
-            let index = resolved
-                .schema
-                .fields()
-                .iter()
-                .position(|f| f.name() == &predicate.column)
-                .ok_or_else(|| Error::UnknownPredicateColumn {
-                    header_offset,
-                    column: predicate.column.clone(),
-                })?;
-            ResolvedExpr::Term(resolve_term(predicate, index, resolved, header_offset, semantics)?)
-        }
+        Expr::Term(predicate) => ResolvedExpr::Term(resolve_term(
+            predicate,
+            column(&predicate.column)?,
+            resolved,
+            header_offset,
+            semantics,
+        )?),
+        Expr::In(membership) => ResolvedExpr::In(resolve_membership(
+            membership,
+            column(&membership.column)?,
+            resolved,
+            header_offset,
+            semantics,
+        )?),
         Expr::And(children) => ResolvedExpr::And(branch(children)?),
         Expr::Or(children) => ResolvedExpr::Or(branch(children)?),
         Expr::Not(inner) => {
             ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset, semantics)?))
         }
     })
+}
+
+/// Where the column `name` sits in the block's unprojected schema.
+fn column_position(resolved: &ResolvedSchema, name: &str) -> Option<usize> {
+    resolved.schema.fields().iter().position(|f| f.name() == name)
 }
 
 /// A [`DynamicFilter`]'s state resolved as [`resolve_expr`] resolves a static
@@ -193,22 +208,25 @@ fn resolve_loosened(
             .map(|child| resolve_loosened(child, resolved, header_offset, semantics, negated))
             .collect()
     };
+    let leaf = match filter {
+        Expr::Term(predicate) => column_position(resolved, &predicate.column).and_then(|index| {
+            resolve_term(predicate, index, resolved, header_offset, semantics)
+                .ok()
+                .map(ResolvedExpr::Term)
+        }),
+        Expr::In(membership) => column_position(resolved, &membership.column).and_then(|index| {
+            resolve_membership(membership, index, resolved, header_offset, semantics)
+                .ok()
+                .map(ResolvedExpr::In)
+        }),
+        _ => None,
+    };
     match filter {
-        Expr::Term(predicate) => {
-            let term = resolved
-                .schema
-                .fields()
-                .iter()
-                .position(|f| f.name() == &predicate.column)
-                .and_then(|index| {
-                    resolve_term(predicate, index, resolved, header_offset, semantics).ok()
-                });
-            match (term, negated) {
-                (Some(term), _) => ResolvedExpr::Term(term),
-                (None, false) => ResolvedExpr::And(Vec::new()),
-                (None, true) => ResolvedExpr::Or(Vec::new()),
-            }
-        }
+        Expr::Term(_) | Expr::In(_) => match (leaf, negated) {
+            (Some(leaf), _) => leaf,
+            (None, false) => ResolvedExpr::And(Vec::new()),
+            (None, true) => ResolvedExpr::Or(Vec::new()),
+        },
         Expr::And(children) => ResolvedExpr::And(branch(children)),
         Expr::Or(children) => ResolvedExpr::Or(branch(children)),
         Expr::Not(inner) => ResolvedExpr::Not(Box::new(resolve_loosened(
@@ -337,6 +355,11 @@ fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
             }
             .hash(hasher);
             term.value.hash(hasher);
+        }
+        Expr::In(membership) => {
+            4u8.hash(hasher);
+            membership.column.hash(hasher);
+            membership.values.hash(hasher);
         }
         Expr::And(children) => {
             1u8.hash(hasher);

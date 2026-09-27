@@ -23,10 +23,10 @@ Options:
       --filter <FILTER>
           Single-column filter: `column=value`, `column!=value`, `column<value`, `column<=value`,
           `column>value`, `column>=value`, `column IS DISTINCT FROM value`, `column IS NOT DISTINCT
-          FROM value`, `column IS NULL`, or `column IS NOT NULL`. Repeatable — every term must
-          match, so the terms are ANDed. `OR`, negation and grouping are `--where`, which takes an
-          expression over these same terms; giving both flags ANDs them (`docs/design/decisions.md`,
-          "Predicates").
+          FROM value`, `column IN (value, …)`, `column IS NULL`, or `column IS NOT NULL`. Repeatable
+          — every term must match, so the terms are ANDed. `OR`, negation and grouping are
+          `--where`, which takes an expression over these same terms; giving both flags ANDs them
+          (`docs/design/decisions.md`, "Predicates").
           
           Every operator but the two NULL tests compares **typed**: the filter's value is read with
           the column's own decoder, so a value that is not of that type is refused by name rather
@@ -41,9 +41,9 @@ Options:
           
           A term is never read as an expression — but nor may it hold what `--where` would read as
           one. An unquoted `AND`, `OR` or `NOT` with whitespace, a paren or an end on both sides,
-          `IS NOT` excepted, or a paren, is refused rather than taken literally, so no string means
-          one thing here and another under `--where`; quote the part that holds it, or use
-          `--where`.
+          `IS NOT` excepted, or a paren outside an `IN` list, is refused rather than taken
+          literally, so no string means one thing here and another under `--where`; quote the part
+          that holds it, or use `--where`.
 
       --where <EXPR>
           Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and parens, with `NOT`

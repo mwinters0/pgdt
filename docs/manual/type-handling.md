@@ -427,10 +427,26 @@ one thing plain negation cannot say:
 --filter 'is_active != t'                    # drops them, as SQL does
 ```
 
+`column IN (value, …)` keeps a row whose value is any one of the listed ones —
+exactly the rows `column=value OR column=value …` keeps, each value read as
+`=` reads it, however long the list:
+
+```sh
+--filter "status IN (active, 'on hold', pending)"
+--where 'not id in (3, 5, 8)'       # NOT IN: also drops the rows where id is NULL
+```
+
+Each value is trimmed, or quoted to keep its spaces, a comma or a paren —
+`--filter "v in ('(1,a)', '(2,b)')"`. There is no NULL literal: `null` in the
+list is the text `null`, as `=null` is. An empty list, an empty value and
+anything after the closing `)` are refused.
+
 Any run of whitespace separates the words and the case is free. Whichever
 operator comes first in the term wins, so `--filter 'note=a is distinct from
 b'` is the equality it reads as, and a column whose name really is
 `is distinct from` is still asked for as `--filter 'is distinct from=x'`.
+`IN` needs whitespace before it and a `(` after it, so `--filter 'note=x in
+(y)'` is an equality against `x in (y)`.
 
 **`--column` and `--table` take their names exactly as given** — there is no
 quoting to strip there, because the shell has already delimited the argument.
@@ -458,6 +474,10 @@ the value, exactly as in a `--filter` term, so an apostrophe inside an
 unquoted value is just a character:
 `--where "note=don't and x=1"` is `note=don't` and `x=1`.
 
+An `IN` list's parens are the term's own, not a group, so a keyword or a
+paren inside the list is part of it: `--where "tag in (and, 'a)b') or x=1"` is
+two terms.
+
 **A value that holds a paren must be quoted**, because a bare `(` groups:
 
 ```sh
@@ -468,7 +488,8 @@ unquoted value is just a character:
 Given both flags, the expression and every `--filter` term must all hold.
 
 **A `--filter` term is never read as an expression — and may not hold one
-either.** A term carrying an unquoted `AND`, `OR` or `NOT` as a word, or a paren, is refused
+either.** A term carrying an unquoted `AND`, `OR` or `NOT` as a word, or a paren outside an
+`IN` list, is refused
 rather than taken literally, so no string can mean one thing under `--filter`
 and something else under `--where`:
 

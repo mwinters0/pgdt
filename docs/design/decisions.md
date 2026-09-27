@@ -223,8 +223,7 @@ no DDL. `attach_text` slices span text after building and `Data` spans store non
 ### D31 `Span::toc` is "belongs to", vetoed after classification
 Follow-ons inherit `governing_toc` (else coverage reads half on healthy input) and `toc_owned`
 counts objects; `Framing` vetoes after the transition that seeded the inheritance, and `Connect` is
-never seeded. The boundary predicate refuses `"Data for "` and accepts `"Statistics for "`, which
-matters under `--disable-triggers` (I31).
+never seeded. The boundary predicate refuses `"Data for "` and accepts `"Statistics for "`, which matters under `--disable-triggers` (I31).
 
 ### D32 Boundary rules that read as bugs
 A blank line does not close a pending comment (`_printTocEntry` writes `--\n\n`); `scan_preamble`
@@ -371,9 +370,10 @@ alone (older where groups merge); a `pgdump.*` switch ("Two tunables"; DataFusio
 the flag being an explicit request (D77). Reopens: pricing the per-chunk check; a switch if the `IN` term shows no universal win. Code: `stream::DynamicRead`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
-### D53 The operator set is closed
-No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or column-to-column. `IS [NOT] DISTINCT FROM`
-is what three-valued logic forces. Reopens: a set-membership term, admitted: `dynamic-filter-join` reads a dynamic `IN`, per row as `Or`, to cost per term.
+### D53 The operator set is closed but for membership
+No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
+`Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
+Rejected: an `IN` `PredicateOp`, every other operator carrying a list; recognizing the `Or` at resolution (D54). Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only

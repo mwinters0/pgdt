@@ -157,9 +157,33 @@ impl Truth {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Term(Predicate),
+    /// `column IN (…)`, answering exactly as the [`Expr::Or`] of one
+    /// [`PredicateOp::Eq`] term per value would, and `NOT IN` as [`Expr::Not`]
+    /// over it — but finding and decoding its field once a row, and answering
+    /// by one lookup however long the list (`docs/design/decisions.md`,
+    /// "D53").
+    In(Membership),
     And(Vec<Expr>),
     Or(Vec<Expr>),
     Not(Box<Expr>),
+}
+
+/// The leaf [`Expr::In`] carries: a column and the values it is tested for
+/// membership of, in the order written.
+///
+/// A value is read as a [`PredicateOp::Eq`] term's is, once per block, so a
+/// literal that is not of the column's type is `Error::PredicateValueDecode`
+/// for the first such value, naming the operator `IN`. **`None` is SQL's
+/// `NULL`**, which no row equals: it never makes the membership true, and
+/// wherever no other value matches it makes it [`Truth::Unknown`] rather than
+/// `False` — so `NOT IN` over a list holding one keeps no row. A NULL field
+/// is `Unknown` against any list with a value in it; the empty list is
+/// `False` on every row, as the empty disjunction is, and a list holding
+/// nothing but NULLs reads no field at all, as `= NULL` reads none.
+#[derive(Debug, Clone)]
+pub struct Membership {
+    pub column: String,
+    pub values: Vec<Option<String>>,
 }
 
 impl Expr {
@@ -2617,16 +2641,21 @@ impl ResolvedTerm {
             Some(f) => raw_row.decode(f)?,
             None => None,
         };
-        self.eval_value(decoded.as_deref()).ok_or_else(|| {
-            let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
-            Error::FieldDecode {
-                table: table.to_string(),
-                column: compared.column.clone(),
-                row_offset,
-                declared_type: compared.declared_type.clone(),
-                value: decoded.as_deref().unwrap_or_default().to_string(),
-            }
-        })
+        self.eval_value(decoded.as_deref())
+            .ok_or_else(|| self.field_decode(table, row_offset, decoded.as_deref()))
+    }
+
+    /// The `Error::FieldDecode` a comparing term raises over a `value` that
+    /// is not of its column's type.
+    fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
+        let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
+        Error::FieldDecode {
+            table: table.to_string(),
+            column: compared.column.clone(),
+            row_offset,
+            declared_type: compared.declared_type.clone(),
+            value: value.unwrap_or_default().to_string(),
+        }
     }
 
     /// This term's answer for one **already unescaped** value of its column,
@@ -2725,12 +2754,237 @@ impl ResolvedTerm {
     }
 }
 
+/// An [`Expr::In`] resolved against one `COPY` block: the `=` term each
+/// non-NULL value resolves to, and the lookup the row path answers from.
+///
+/// The terms are kept, in list order, because they are what the membership
+/// *is*: a row group's statistics and the divergence notes are read off them
+/// exactly as off the [`Expr::Or`] of them, and only the per-row answer is
+/// taken from [`Lookup`] instead — one decode and one probe where the `Or`
+/// would fetch, unescape and compare the field once per term
+/// (`docs/design/decisions.md`, "D53").
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedMembership {
+    index: usize,
+    terms: Vec<ResolvedTerm>,
+    /// Whether the list holds a NULL, which answers `Unknown` wherever no
+    /// other value matches.
+    null: bool,
+    lookup: Lookup,
+}
+
+/// Every non-NULL value of one membership, held the way its `=` terms
+/// compare. One column under one semantics settles one [`Comparison`] shape
+/// for every value, so the terms share one variant; were they ever not to,
+/// [`Lookup::Each`] answers through the terms themselves, in order, as the
+/// `Or` does.
+#[derive(Debug, Clone)]
+enum Lookup {
+    /// [`Comparison::Canonical`]: the literals as the file spells them, the
+    /// field probed as it stands.
+    Canonical(std::collections::HashSet<String>),
+    /// [`Comparison::Trimmed`]: the literals trimmed, the field trimmed
+    /// before it is probed.
+    Trimmed(std::collections::HashSet<String>),
+    /// [`Comparison::Decoded`]: the literals' keys sorted by
+    /// [`compare_keys`], the field keyed once and searched for among them.
+    Decoded { kind: CompareKind, keys: Vec<OrderKey> },
+    /// [`Comparison::Nested`]: as `Decoded`, by [`compare_nested`].
+    Nested { plan: NestedCompare, keys: Vec<NestedKey> },
+    /// Anything else: each term in list order.
+    Each,
+}
+
+impl Lookup {
+    fn of(terms: &[ResolvedTerm]) -> Self {
+        let comparisons: Vec<&Comparison> =
+            terms.iter().filter_map(|t| t.compared.as_ref().map(|c| &c.comparison)).collect();
+        if comparisons.len() != terms.len() {
+            return Self::Each;
+        }
+        let texts = |wanted: fn(&Comparison) -> Option<&String>| {
+            comparisons.iter().map(|c| wanted(c).cloned()).collect::<Option<_>>()
+        };
+        let built = match comparisons.first() {
+            None | Some(Comparison::Canonical(_)) => texts(|c| match c {
+                Comparison::Canonical(text) => Some(text),
+                _ => None,
+            })
+            .map(Self::Canonical),
+            Some(Comparison::Trimmed(_)) => texts(|c| match c {
+                Comparison::Trimmed(text) => Some(text),
+                _ => None,
+            })
+            .map(Self::Trimmed),
+            Some(Comparison::Decoded { kind, .. }) => comparisons
+                .iter()
+                .map(|c| match c {
+                    Comparison::Decoded { kind: own, bound } if own == kind => Some(bound.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|mut keys| {
+                    keys.sort_by(compare_keys);
+                    Self::Decoded { kind: kind.clone(), keys }
+                }),
+            Some(Comparison::Nested(first)) => comparisons
+                .iter()
+                .map(|c| match c {
+                    Comparison::Nested(own) if own.plan == first.plan => Some(own.bound.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|mut keys| {
+                    keys.sort_by(compare_nested);
+                    Self::Nested { plan: first.plan.clone(), keys }
+                }),
+            Some(Comparison::Ordered { .. }) => None,
+        };
+        built.unwrap_or(Self::Each)
+    }
+
+    /// Whether `text` equals one of the values, `None` where it is not a
+    /// value of the column's type — which the first `=` term would have
+    /// raised on.
+    fn contains(&self, text: &str, terms: &[ResolvedTerm]) -> Option<bool> {
+        Some(match self {
+            Self::Canonical(values) => values.contains(text),
+            Self::Trimmed(values) => values.contains(text.trim_end_matches(' ')),
+            Self::Decoded { kind, keys } => {
+                let key = order_key(kind, text)?;
+                keys.binary_search_by(|k| compare_keys(k, &key)).is_ok()
+            }
+            Self::Nested { plan, keys } => {
+                let key = nested_key(plan, text, false)?;
+                keys.binary_search_by(|k| compare_nested(k, &key)).is_ok()
+            }
+            Self::Each => {
+                for term in terms {
+                    if term.eval_value(Some(text))? == Truth::True {
+                        return Some(true);
+                    }
+                }
+                false
+            }
+        })
+    }
+}
+
+/// Resolve `membership` against the block's unprojected `resolved` schema,
+/// its column already found at `index`: each non-NULL value as the `=` term
+/// [`resolve_term`] makes of it, in list order, so the first value that
+/// refuses is the one refused — its error naming the operator `IN`.
+pub(crate) fn resolve_membership(
+    membership: &Membership,
+    index: usize,
+    resolved: &ResolvedSchema,
+    header_offset: u64,
+    semantics: ComparisonSemantics,
+) -> Result<ResolvedMembership> {
+    let terms = membership
+        .values
+        .iter()
+        .flatten()
+        .map(|value| {
+            let equal = Predicate {
+                column: membership.column.clone(),
+                op: PredicateOp::Eq,
+                value: Some(value.clone()),
+            };
+            resolve_term(&equal, index, resolved, header_offset, semantics).map_err(named_in)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ResolvedMembership {
+        index,
+        null: membership.values.iter().any(Option::is_none),
+        lookup: Lookup::of(&terms),
+        terms,
+    })
+}
+
+/// A refusal [`resolve_term`] raised for one value's `=`, re-worded as the
+/// membership's.
+fn named_in(error: Error) -> Error {
+    const IN: &str = "IN";
+    match error {
+        Error::PredicateValueDecode { column, value, declared_type, accepted, .. } => {
+            Error::PredicateValueDecode { column, op: IN, value, declared_type, accepted }
+        }
+        Error::UncomparablePredicateColumn { header_offset, column, reason, .. } => {
+            Error::UncomparablePredicateColumn { header_offset, column, op: IN, reason }
+        }
+        other => other,
+    }
+}
+
+impl ResolvedMembership {
+    /// What the membership answers where no value matched: `Unknown` if the
+    /// list holds a NULL, else `False`.
+    fn unmatched(&self) -> Truth {
+        if self.null { Truth::Unknown } else { Truth::False }
+    }
+
+    /// The membership's answer for one already unescaped value, `None`
+    /// being SQL NULL — [`ResolvedTerm::eval_value`]'s counterpart, `None`
+    /// back where the value is not of the column's type.
+    pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
+        if self.terms.is_empty() {
+            return Some(self.unmatched());
+        }
+        let Some(text) = value else { return Some(Truth::Unknown) };
+        Some(if self.lookup.contains(text, &self.terms)? { Truth::True } else { self.unmatched() })
+    }
+
+    /// [`Self::eval_value`] over `raw_row`'s field, raising what the first
+    /// `=` term would: the row's own error where the field does not unescape,
+    /// `Error::FieldDecode` where it does not decode. A membership with no
+    /// value to compare reads no field.
+    fn eval(
+        &self,
+        raw_row: RawRow<'_>,
+        split: &mut RowSplit,
+        table: &str,
+        row_offset: u64,
+    ) -> Result<Truth> {
+        let Some(first) = self.terms.first() else { return Ok(self.unmatched()) };
+        let decoded = match split.field(raw_row.bytes(), self.index) {
+            Some(field) => raw_row.decode(field)?,
+            None => None,
+        };
+        self.eval_value(decoded.as_deref())
+            .ok_or_else(|| first.field_decode(table, row_offset, decoded.as_deref()))
+    }
+
+    /// Every value this membership could take over a row of `group`: its
+    /// terms' sets combined as [`ResolvedExpr::Or`] combines them, a NULL in
+    /// the list adding `Unknown` over any group a row starts in — the answer
+    /// the `Or` of `=` over the same list gives, not a tighter one.
+    pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        let set =
+            self.terms.iter().fold(TruthSet::of(Truth::False), |set, t| set.or(t.truths(group)));
+        match (self.null, group.rows()) {
+            (false, _) => set,
+            // `= NULL` over a group no row starts in is the empty set, as
+            // every term is there, and the empty set absorbs a disjunction.
+            (true, 0) => TruthSet::EMPTY,
+            (true, _) => set.or(TruthSet::of(Truth::Unknown)),
+        }
+    }
+
+    /// The notes its first term carries, every term's being the same
+    /// column's under the same operator.
+    fn comparison_notes(&self) -> Vec<ComparisonNote> {
+        self.terms.first().map(ResolvedTerm::comparison_notes).unwrap_or_default()
+    }
+}
+
 /// One [`Expr`] resolved against one `COPY` block: the same tree, with each
 /// leaf replaced by the [`ResolvedTerm`] that block's schema produced. What a
 /// block's `Active` state carries, and evaluable on its own.
 #[derive(Debug, Clone)]
 pub(crate) enum ResolvedExpr {
     Term(ResolvedTerm),
+    In(ResolvedMembership),
     And(Vec<ResolvedExpr>),
     Or(Vec<ResolvedExpr>),
     Not(Box<ResolvedExpr>),
@@ -2774,6 +3028,7 @@ impl ResolvedExpr {
     ) -> Result<Truth> {
         Ok(match self {
             Self::Term(term) => term.eval(raw_row, split, table, row_offset)?,
+            Self::In(membership) => membership.eval(raw_row, split, table, row_offset)?,
             Self::And(children) => {
                 let mut unknown = false;
                 for child in children {
@@ -2819,6 +3074,7 @@ impl ResolvedExpr {
     pub(crate) fn reads_fields(&self) -> bool {
         match self {
             Self::Term(_) => true,
+            Self::In(membership) => !membership.terms.is_empty(),
             Self::And(children) | Self::Or(children) => children.iter().any(Self::reads_fields),
             Self::Not(inner) => inner.reads_fields(),
         }
@@ -2845,7 +3101,7 @@ impl ResolvedExpr {
                     out.push(term);
                 }
                 Self::And(children) => pending.extend(children.iter().rev()),
-                Self::Term(_) | Self::Or(_) | Self::Not(_) => {}
+                Self::Term(_) | Self::In(_) | Self::Or(_) | Self::Not(_) => {}
             }
         }
         out
@@ -2854,6 +3110,7 @@ impl ResolvedExpr {
     fn collect_notes(&self, out: &mut Vec<ComparisonNote>) {
         match self {
             Self::Term(term) => out.extend(term.comparison_notes()),
+            Self::In(membership) => out.extend(membership.comparison_notes()),
             Self::And(children) | Self::Or(children) => {
                 for child in children {
                     child.collect_notes(out);
@@ -3083,6 +3340,7 @@ impl ResolvedExpr {
     pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
         match self {
             Self::Term(term) => term.truths(group),
+            Self::In(membership) => membership.truths(group),
             Self::And(children) => children
                 .iter()
                 .fold(TruthSet::of(Truth::True), |set, child| set.and(child.truths(group))),
@@ -3700,6 +3958,208 @@ mod tests {
                 .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
                 .is_err()
         );
+    }
+
+    /// `column IN (values)` over `schema`'s column `index`, in PostgreSQL's
+    /// semantics, `None` in `values` a NULL.
+    fn membership(
+        schema: &ResolvedSchema,
+        index: usize,
+        values: &[Option<&str>],
+    ) -> Result<ResolvedMembership> {
+        let membership = Membership {
+            column: schema.schema.field(index).name().clone(),
+            values: values.iter().map(|v| v.map(str::to_string)).collect(),
+        };
+        resolve_membership(&membership, index, schema, 0, ComparisonSemantics::Postgres)
+    }
+
+    /// A tree's exact value over `row`, as a `Not` above it asks for it.
+    fn exact_over(expr: &ResolvedExpr, row: &[u8]) -> Result<Truth> {
+        expr.eval(true, RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
+    }
+
+    /// **A membership answers exactly what the `Or` of its `=` terms does**,
+    /// in all three values: a NULL in the list is a disjunct that is unknown
+    /// on every row — here an `=` over a field the row does not have — so it
+    /// never makes the membership true and turns a miss into `Unknown`; a
+    /// NULL field is unknown against any list with a value in it; and the
+    /// empty list is the empty disjunction, false on every row.
+    #[test]
+    fn a_membership_answers_as_its_disjunction_of_equalities() {
+        let schema = two_integers();
+        let lists: [&[Option<&str>]; 7] = [
+            &[Some("1")],
+            &[Some("3"), Some("1"), Some("1")],
+            &[Some("1"), None],
+            &[None, Some("7")],
+            &[None],
+            &[None, None],
+            &[],
+        ];
+        let rows: [&[u8]; 4] = [b"1\t2", b"3\t\\N", b"\\N\t1", b"7"];
+        for list in lists {
+            let resolved = ResolvedExpr::In(membership(&schema, 0, list).unwrap());
+            let disjunction = ResolvedExpr::Or(
+                list.iter()
+                    .map(|value| match value {
+                        Some(v) => {
+                            let p = Predicate {
+                                column: "a".into(),
+                                op: PredicateOp::Eq,
+                                value: Some((*v).into()),
+                            };
+                            ResolvedExpr::Term(resolve_term(&p, 0, &schema, 0).unwrap())
+                        }
+                        None => {
+                            let p = Predicate {
+                                column: "z".into(),
+                                op: PredicateOp::Eq,
+                                value: Some("0".into()),
+                            };
+                            ResolvedExpr::Term(text_term(&p, 99))
+                        }
+                    })
+                    .collect(),
+            );
+            for row in rows {
+                let want = exact_over(&disjunction, row).unwrap();
+                assert_eq!(exact_over(&resolved, row).unwrap(), want, "{list:?} over {row:?}");
+                let negated = |e: &ResolvedExpr| ResolvedExpr::Not(Box::new(e.clone()));
+                assert_eq!(
+                    exact_over(&negated(&resolved), row).unwrap(),
+                    exact_over(&negated(&disjunction), row).unwrap(),
+                    "NOT {list:?} over {row:?}"
+                );
+            }
+        }
+        let over = |list: &[Option<&str>], row: &[u8]| {
+            exact_over(&ResolvedExpr::In(membership(&schema, 0, list).unwrap()), row).unwrap()
+        };
+        assert_eq!(over(&[Some("1"), None], b"1\t2"), Truth::True);
+        assert_eq!(over(&[Some("1"), None], b"3\t2"), Truth::Unknown);
+        assert_eq!(over(&[Some("1")], b"\\N\t2"), Truth::Unknown);
+        assert_eq!(over(&[None], b"1\t2"), Truth::Unknown);
+        assert_eq!(over(&[], b"\\N\t2"), Truth::False);
+    }
+
+    /// **It raises where its first `=` would, and reads no field where none
+    /// is compared**: a value that does not decode is `FieldDecode` once any
+    /// value is listed, and a list of NULLs alone, like `= NULL`, never
+    /// reaches the field. A literal refused at resolution is the first one
+    /// in list order, the operator named `IN`.
+    #[test]
+    fn a_membership_raises_where_its_first_equality_would() {
+        // A bare `numeric` decodes its field to compare it, where an
+        // `integer`'s `=` compares the text as the file spells it.
+        let numeric = one_column("numeric", DataType::Utf8View);
+        let row: &[u8] = b"nope";
+        let raised = |list: &[Option<&str>]| {
+            exact_over(&ResolvedExpr::In(membership(&numeric, 0, list).unwrap()), row)
+        };
+        assert!(matches!(raised(&[Some("1"), None]), Err(Error::FieldDecode { .. })));
+        assert!(matches!(raised(&[None, Some("1")]), Err(Error::FieldDecode { .. })));
+        assert_eq!(raised(&[None]).unwrap(), Truth::Unknown);
+        assert_eq!(raised(&[]).unwrap(), Truth::False);
+        let schema = two_integers();
+        let refused = membership(&schema, 0, &[Some("1"), None, Some("x"), Some("y")]).unwrap_err();
+        assert!(
+            matches!(&refused, Error::PredicateValueDecode { op: "IN", value, .. } if value == "x"),
+            "{refused:?}"
+        );
+    }
+
+    /// **A row group is answered as the `Or` answers it**, its terms' sets
+    /// combined through Kleene's `OR` and a NULL in the list adding `Unknown`
+    /// over a group any row starts in — no tighter, though one row can equal
+    /// at most one value.
+    #[test]
+    fn a_membership_answers_a_group_as_its_disjunction_does() {
+        let schema = two_integers();
+        let groups = [
+            Group { rows: 0, ..Group::default() },
+            Group { rows: 4, nulls: Some(0), ..Group::default() },
+            Group { rows: 4, nulls: Some(4), ..Group::default() },
+            Group {
+                rows: 4,
+                nulls: Some(1),
+                bounds: Some(("2".into(), "5".into())),
+                ..Group::default()
+            },
+            Group {
+                rows: 4,
+                nulls: None,
+                dictionary: Some(vec!["1".into(), "9".into()]),
+                ..Group::default()
+            },
+        ];
+        let lists: [&[Option<&str>]; 5] =
+            [&[Some("1"), Some("3")], &[Some("1"), None], &[None], &[], &[Some("9"), Some("1")]];
+        for list in lists {
+            let resolved = membership(&schema, 0, list).unwrap();
+            for group in &groups {
+                let want = resolved
+                    .terms
+                    .iter()
+                    .fold(TruthSet::of(Truth::False), |set, term| set.or(term.truths(group)));
+                let want = match (resolved.null, group.rows) {
+                    (false, _) => want,
+                    (true, 0) => TruthSet::EMPTY,
+                    (true, _) => want.or(TruthSet::of(Truth::Unknown)),
+                };
+                assert_eq!(resolved.truths(group), want, "{list:?} over {group:?}");
+            }
+        }
+        let nulls_only = membership(&schema, 0, &[None]).unwrap();
+        assert_eq!(nulls_only.truths(&groups[0]), TruthSet::EMPTY);
+        assert_eq!(nulls_only.truths(&groups[1]), TruthSet::of(Truth::Unknown));
+        // Every row of this group is `1` or `9`, so each is in the list, but
+        // each term alone can be false of it, and so is the `Or` taken here.
+        let dictionary = membership(&schema, 0, &[Some("9"), Some("1")]).unwrap();
+        let all_listed = Group { nulls: Some(0), ..groups[4].clone() };
+        assert_eq!(dictionary.truths(&all_listed), sets(&[Truth::True, Truth::False]));
+    }
+
+    /// **Each comparison shape has its lookup**, answering as the `=` it
+    /// replaces: a spelling the file would not write matches a decoded kind
+    /// by value, a `character(n)` field matches past its padding, `NaN`
+    /// equals itself, and a nested value matches by structure.
+    #[test]
+    fn each_comparison_shape_is_looked_up_as_its_equality_compares() {
+        let over = |schema: &ResolvedSchema, list: &[&str], field: &str| {
+            let list: Vec<_> = list.iter().map(|v| Some(*v)).collect();
+            let resolved = membership(schema, 0, &list).unwrap();
+            (resolved.eval_value(Some(field)), std::mem::discriminant(&resolved.lookup))
+        };
+        let numeric = one_column("numeric", DataType::Utf8View);
+        let (answer, shape) = over(&numeric, &["2", "1.50", "NaN"], "1.5");
+        assert_eq!(answer, Some(Truth::True));
+        assert_eq!(
+            shape,
+            std::mem::discriminant(&Lookup::Decoded { kind: CompareKind::Text, keys: vec![] })
+        );
+        assert_eq!(over(&numeric, &["2", "1.50", "NaN"], "NaN").0, Some(Truth::True));
+        assert_eq!(over(&numeric, &["2", "1.50"], "1.51").0, Some(Truth::False));
+        assert_eq!(over(&numeric, &["2"], "x").0, None, "not a numeric: `=` would raise");
+        let float = one_column("double precision", DataType::Float64);
+        assert_eq!(over(&float, &["-Infinity", "NaN", "0"], "NaN").0, Some(Truth::True));
+        assert_eq!(over(&float, &["-Infinity", "NaN", "0"], "-0").0, Some(Truth::True));
+        let padded = one_column("character(4)", DataType::Utf8View);
+        let (answer, shape) = over(&padded, &["b ", "a"], "a   ");
+        assert_eq!(answer, Some(Truth::True));
+        assert_eq!(shape, std::mem::discriminant(&Lookup::Trimmed(Default::default())));
+        let integer = one_column("integer", DataType::Int32);
+        let (answer, shape) = over(&integer, &["+7", "3"], "7");
+        assert_eq!(answer, Some(Truth::True));
+        assert_eq!(shape, std::mem::discriminant(&Lookup::Canonical(Default::default())));
+        let types = test_types();
+        let ranges = nested_column("int4multirange", &types);
+        assert_eq!(over(&ranges, &["{[1,5),[5,10)}", "{}"], "{[1,10)}").0, Some(Truth::True));
+        assert_eq!(over(&ranges, &["{[1,5)}", "{}"], "{[1,10)}").0, Some(Truth::False));
+        assert!(matches!(
+            membership(&ranges, 0, &[Some("{}")]).unwrap().lookup,
+            Lookup::Nested { .. }
+        ));
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! `OR`; the three keywords are case-insensitive and recognised **only
 //! outside quotes**. Everything that is not a paren or a keyword is a
 //! **leaf**, handed to `parse_filter` — the same term grammar
-//! `--filter` uses, unchanged (`docs/design/decisions.md`, "D60").
+//! `--filter` uses, unchanged (`docs/design/decisions.md`, "D60") — and an
+//! `IN` list, its parens and whatever they hold, is part of its leaf.
 //!
 //! [`refuse_where_structure`] keeps the two flags meaning one thing: a
 //! `--filter` term that does not tokenize to a single [`Token::Leaf`] is
@@ -251,10 +252,22 @@ fn tokenize(spec: &str) -> Vec<Token<'_>> {
                 }
                 let start = *leaf.get_or_insert(i);
                 if part == Part::Column {
-                    if let Some((len, _)) = crate::filter_op_at(&bytes[start..], i - start) {
-                        part = Part::ValueStart;
-                        i += len;
-                        continue;
+                    match crate::filter_op_at(&bytes[start..], i - start) {
+                        // The list is the term's value, read to the `)` its
+                        // own grammar closes it at, and one that never closes
+                        // swallows the rest of the string as a quote does.
+                        Some((len, crate::TermOp::In)) => {
+                            let open = i + len + spec[i + len..].find('(').expect("`in_at`");
+                            i = crate::in_list(spec, open).end.unwrap_or(bytes.len());
+                            part = Part::Value;
+                            continue;
+                        }
+                        Some((len, crate::TermOp::Compare(_))) => {
+                            part = Part::ValueStart;
+                            i += len;
+                            continue;
+                        }
+                        None => {}
                     }
                 } else {
                     part = Part::Value;
@@ -355,9 +368,8 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 // The leaf's own faults keep `parse_filter`'s wording, under
                 // a line saying which flag and which term they came from.
-                let term = crate::parse_filter(text)
-                    .with_context(|| format!("--where `{}`: in the term `{text}`", self.spec))?;
-                Ok(Expr::Term(term))
+                crate::parse_filter(text)
+                    .with_context(|| format!("--where `{}`: in the term `{text}`", self.spec))
             }
             Some(token) => {
                 let described = token.describe();
@@ -397,6 +409,14 @@ mod tests {
                     Some(value) => format!("{}{symbol}{value}", term.column),
                     None => format!("{} {symbol}", term.column),
                 }
+            }
+            Expr::In(membership) => {
+                let values: Vec<String> = membership
+                    .values
+                    .iter()
+                    .map(|value| value.clone().unwrap_or_else(|| "NULL".into()))
+                    .collect();
+                format!("{} in [{}]", membership.column, values.join("|"))
             }
             Expr::And(children) => joined("and", children),
             Expr::Or(children) => joined("or", children),
@@ -677,5 +697,23 @@ mod tests {
             })
             .collect();
         assert_eq!(ops, [PredicateOp::IsDistinctFrom, PredicateOp::IsNotDistinctFrom]);
+    }
+
+    /// **An `IN` list is the term's value, not a group**: its parens, and a
+    /// keyword or a paren inside it, are read by the list's own grammar, so
+    /// the term ends at the `)` that closes the list and `NOT IN` is a
+    /// negation over the membership.
+    #[test]
+    fn an_in_list_is_one_term() {
+        assert_eq!(ok("id in (1, 2)"), "id in [1|2]");
+        assert_eq!(ok("id in (1) or x=2"), "or(id in [1], x=2)");
+        assert_eq!(ok("(id in (1))and x=2"), "and(id in [1], x=2)");
+        assert_eq!(ok("not id IN (1,2) and x=2"), "and(not(id in [1|2]), x=2)");
+        assert_eq!(ok("tag in (and, or, not, 'a)b')"), "tag in [and|or|not|a)b]");
+        assert!(err("id in (1, 2").contains("never closed"), "{}", err("id in (1, 2"));
+        assert!(err("id in (1))").contains("`)`"), "{}", err("id in (1))"));
+        // Under `--filter` it is one leaf too, so the same string is accepted
+        // by both flags and means one thing.
+        assert_eq!(refused("id in (1, 'and')"), None);
     }
 }
