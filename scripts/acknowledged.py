@@ -329,4 +329,36 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "map_file or splice; DynamicRead built only in sub_stream"
         ),
     ),
+    Acknowledged(
+        commit="ab59eda",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+        ),
+        why=(
+            "27.5's row-level evaluation is a hunk in `replay`'s row loop and "
+            "`DynamicRead`, which only a query reaches; these figures time `parse` "
+            "shapes, which run `map_file` → `map_forward`/`splice`, untouched, and "
+            "`rss-attribution`'s `query-nomatch` legs replay no segment, gaining one "
+            "`Arc<AtomicU64>` per scan. The figures timing a row-bearing `query` are "
+            "not excused: there `replay` gains a per-row `None` check"
+        ),
+        verified=(
+            "git show --format= -U0 ab59eda -- pgdump_query/src/stream.rs "
+            "pgdump_query/src/prune.rs | grep '^@@'  # no hunk inside map_file, "
+            "map_forward or splice"
+        ),
+    ),
 )
