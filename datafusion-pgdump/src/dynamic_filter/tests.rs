@@ -235,16 +235,19 @@ impl Generator<'_> {
         }
         match draw {
             // A column against a literal, either side first.
+            // A float against a zero has no term ([`comparison`]).
             0..=4 => {
                 let index = self.rng.pick(&scalars);
                 let op = self.rng.pick(&COMPARING);
-                let value = lit(self.value(index));
+                let value = self.value(index);
+                let zero = is_float(index, self.resolved) && is_zero(&value);
+                let value = lit(value);
                 let expr = if self.rng.below(2) == 0 {
                     binary(self.column(index), op, value, &schema)
                 } else {
                     binary(value, op.swap()?, self.column(index), &schema)
                 };
-                exact(expr.ok()?)
+                Some(Tree { expr: expr.ok()?, exact: !zero })
             }
             5 => {
                 let index = self.rng.below(self.batch.num_columns());
@@ -497,4 +500,31 @@ fn a_part_with_no_term_keeps_every_row_wherever_it_sits() {
     let misnamed: Arc<dyn PhysicalExpr> = Arc::new(Column::new("b", 0));
     let misread = binary(misnamed, Operator::Eq, lit(1i32), &schema).unwrap();
     assert_eq!(format!("{:?}", loosened(&misread, &table)), "And([])");
+}
+
+/// **A float compared with a zero of either sign has no term**, beneath
+/// either parity and with the literal on either side, where the same
+/// comparison with any other value has one ([`comparison`]).
+#[test]
+fn a_float_compared_with_a_zero_has_no_term() {
+    let schema = Schema::new(vec![
+        arrow::datatypes::Field::new("f", DataType::Float64, true),
+        arrow::datatypes::Field::new("g", DataType::Float32, true),
+    ]);
+    let table = resolved(vec![("f", DataType::Float64, true), ("g", DataType::Float32, true)]);
+    let (f, g): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
+        (Arc::new(Column::new("f", 0)), Arc::new(Column::new("g", 1)));
+    let above = binary(Arc::clone(&f), Operator::Gt, lit(-0.0f64), &schema).unwrap();
+    assert_eq!(format!("{:?}", loosened(&above, &table)), "And([])");
+    let below = binary(Arc::clone(&f), Operator::Lt, lit(0.0f64), &schema).unwrap();
+    let not_below = not(below).unwrap();
+    assert_eq!(format!("{:?}", loosened(&not_below, &table)), "Not(Or([]))");
+    let reversed = binary(lit(-0.0f32), Operator::Eq, Arc::clone(&g), &schema).unwrap();
+    assert_eq!(format!("{:?}", loosened(&reversed, &table)), "And([])");
+    for value in [lit(1.0f64), lit(-0.5f64)] {
+        let compared = binary(Arc::clone(&f), Operator::Gt, value, &schema).unwrap();
+        assert!(matches!(loosened(&compared, &table), L::Term(_)), "{compared}");
+    }
+    let compared = binary(lit(1.0f32), Operator::Eq, Arc::clone(&g), &schema).unwrap();
+    assert!(matches!(loosened(&compared, &table), L::Term(_)), "{compared}");
 }

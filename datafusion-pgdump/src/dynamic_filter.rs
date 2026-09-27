@@ -11,8 +11,9 @@
 //! **A filter is translated loosened, never refused.** Its state now is read
 //! into the library's tree in Arrow semantics, as a static filter is
 //! ([`crate::pushdown`]), and every row DataFusion's evaluation of that state
-//! keeps, the translation keeps: a wrongly skipped row is one the join or the
-//! TopK never sees. Where a part has no library term — a `hash_lookup`, a
+//! keeps, or its producer keeps by its own order ([`loosened`]), the
+//! translation keeps: a wrongly skipped row is one the join or the TopK never
+//! sees. Where a part has no library term — a `hash_lookup`, a
 //! `struct(…) IN`, a column under a cast — it stands as whatever keeps every
 //! row where it sits: `true` beneath an even number of `NOT`s, `false`
 //! beneath an odd one ([`Parity`]). So translating never fails, and the worst
@@ -106,8 +107,10 @@ impl fmt::Display for Sql<'_> {
 }
 
 /// `filter`'s state now as the library's tree over `table`, **keeping every
-/// row DataFusion's evaluation of it keeps**, and exactly those wherever each
-/// part has a library term that answers as DataFusion does.
+/// row DataFusion's evaluation of it keeps and every row its producer keeps
+/// by its own order** — the two part at a float's zeros ([`comparison`]) —
+/// and exactly DataFusion's rows wherever each part has a library term that
+/// answers as DataFusion does.
 ///
 /// `table` is the scan's own schema: a physical column is read by its index,
 /// as DataFusion evaluates it, and stands for nothing unless the field there
@@ -202,6 +205,19 @@ fn translate(expr: &Arc<dyn PhysicalExpr>, parity: Parity, table: &ResolvedSchem
 }
 
 /// `left op right`, one side a column of `table` and the other a literal.
+///
+/// **A float compared with a zero of either sign has no term.** A TopK's heap
+/// and an aggregate's `MIN`/`MAX` order a float by IEEE `totalOrder`, `-0`
+/// below `0`, and publish their threshold as a comparison DataFusion
+/// evaluates with `-0` made `0`, as the library compares too: under `f > -0`,
+/// a `MAX` holding `-0` rejects the `0` it would still have taken. So no
+/// state answering as DataFusion evaluates it keeps what the producer needs
+/// there, and the part stands as whatever keeps every row. Upstream, as of
+/// DataFusion 55.1.0: `apply_cmp` runs `normalize_cmp_input` over both
+/// operands, where TopK's heap compares row-format keys and `MaxAccumulator`
+/// folds with arrow's `max`, whose float `is_gt` is `total_cmp`; a release
+/// whose producers' thresholds hold with the zeros made equal leaves this
+/// rule costing pruning at a zero and saving nothing.
 fn comparison(
     left: &Arc<dyn PhysicalExpr>,
     op: Operator,
@@ -220,6 +236,9 @@ fn comparison(
         },
     };
     let Some((index, op, value)) = sides else { return parity.anything() };
+    if is_float(index, table) && is_zero(&value) {
+        return parity.anything();
+    }
     if value.is_null() {
         return match op {
             Operator::IsDistinctFrom => L::Term(null_term(index, PredicateOp::IsNotNull, table)),
@@ -234,6 +253,15 @@ fn comparison(
         };
     }
     compared(index, op, &value, table).map_or_else(|| parity.anything(), L::Term)
+}
+
+/// Whether `value` is a float zero, of either sign.
+fn is_zero(value: &ScalarValue) -> bool {
+    match value {
+        ScalarValue::Float32(Some(v)) => *v == 0.0,
+        ScalarValue::Float64(Some(v)) => *v == 0.0,
+        _ => false,
+    }
 }
 
 /// `IS NULL` or `IS NOT NULL` on a column of `table`, any type.

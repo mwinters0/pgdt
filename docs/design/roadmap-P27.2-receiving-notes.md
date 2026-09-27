@@ -28,7 +28,9 @@ nothing but its tests.
   branches (the `And` beneath an odd number); a `NULL` literal, or a comparison
   with one, is never the reason a row is kept; an `IN` is the `Or` of its `=`
   terms. It shares its leaves with the static translator
-  (`pushdown::compared`, `null_term`, `boolean_term`).
+  (`pushdown::compared`, `null_term`, `boolean_term`). What it keeps besides,
+  where a producer orders a float's zeros apart, is
+  [`roadmap-P27.2.1-float-zero-notes.md`](roadmap-P27.2.1-float-zero-notes.md)'s.
 - **The harness lost `Recording`**: `tests/dynamic_filters.rs` reads each
   query's shapes off the flags-on scan's `EXPLAIN` line after the query ran,
   so the session that holds the filters is the one whose answers are checked.
