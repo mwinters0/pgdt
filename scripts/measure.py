@@ -9747,7 +9747,17 @@ def glibc_problems(text: str) -> list[str]:
     """Where the doc does not say which glibc a figure ran under, one line each:
     a stamp naming none, or a sitting marker naming none. A figure of the
     sweep run outside the register's image is the harness's to mark, and is not
-    visible from the doc."""
+    visible from the doc.
+
+    **A stamp or sitting older than `glibc_of` is not exempt.** The ones
+    published before it name a glibc read off the image records and
+    `pacman.log` (`docs/status/history/2026-09-27.md`, "`M174`: the images are
+    pinned, and each figure names its glibc"), which is as certain as asking: a
+    digest is immutable and each tag's record is unmoved since before its
+    sitting. The next sitting of each replaces them, so an exemption would be a
+    cutoff kept here for a state the next sweep ends. A `--render` of one of
+    those sittings names no glibc, its record never having held one, so this
+    refuses the paste until the values are restored from that entry."""
     out = []
     if stamp_in(text) is not None and stamp_glibc(text) is None:
         out.append(

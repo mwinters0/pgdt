@@ -112,14 +112,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The published figures' glibc was written into the doc by hand, from
-  records** (`M174`). The stamp's glibc 2.41 and the 2.44 in the markers of
-  `nested-decode-micro` and the two dynamic-filter figures were asked by no
-  sitting: they are read off the image records' dates and `pacman.log`, each
-  place answering that version today
-  ([`history/2026-09-27.md`](history/2026-09-27.md)). Made so `--check`'s new
-  rule — the stamp and every sitting marker name a glibc — holds for lines
-  older than it, rather than loosening the rule until a sweep replaces them.
-  Reconsidering strikes those four clauses and has `measure.glibc_problems`
-  pass a stamp and sittings taken before the asking existed.
