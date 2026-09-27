@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator. **25 of the 27 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`2f94f14`), `dynamic-filter-topk` (`2f94f14`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator and glibc 2.41. **25 of the 27 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`2f94f14`), `dynamic-filter-topk` (`2f94f14`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -93,12 +93,22 @@ Eighteen standing rules for reading anything below:
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
   the figures here are `cargo build --release` (no `--target`) run under
-  `postgres:16`, whose **glibc malloc is part of the apparatus** and should be
-  named when a figure moves. **The tag is not pinned and no figure records
-  the glibc it ran under**, and the tag has moved: it is Debian trixie with
-  glibc 2.41 wherever it was pulled after 2026-08-13, and a binary built on a
-  newer host starts in it only while it links no newer symbol version
-  ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md)).
+  `postgres:16`, whose **glibc malloc is part of the apparatus**. **Both
+  images the harness runs are pinned by digest** (`measure.Config.image` and
+  `dfcli_image`), a tag being free to move under the register
+  ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
+  register's image has moved under it"), and a binary built on a newer host
+  starts in an image only while it links no newer symbol version. **Which
+  glibc a figure ran under is asked, not assumed**: `measure.glibc_of` runs
+  `getconf GNU_LIBC_VERSION` wherever a figure's program runs — an image, or
+  the host for `nested-decode-micro`'s `cargo bench` — and refuses a place
+  answering with none. The session stamp names the register image's, and a
+  figure's marker names its own wherever the stamp does not speak for it: a
+  program run in the other image or on the host, and every figure of a
+  sitting of its own. `--check` fails a stamp or a sitting marker naming
+  none. `--stale` does not see a moved pin, `measure.py` being a declared
+  path of `session-drift` alone, so what records one is the glibc the next
+  stamp names.
   **musl is not measured
   and is in no recipe.** Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
@@ -1025,8 +1035,8 @@ own high-water for free, and
 a sampler that missed the peak is the failure mode `rss_wrapper`'s own docstring
 describes for `/proc` polling.
 
-**Verified on the apparatus's own libc**, in `postgres:16` ("The apparatus"
-says which glibc that tag holds):
+**Verified on the apparatus's own libc**, in `postgres:16` (the session stamp
+names the glibc the pinned image holds):
 
 - `mallinfo2` **sums all arenas**, not just the main one. Its `arena` matched
   `malloc_info`'s total `system type="current"` exactly across nine heaps.
@@ -2023,7 +2033,7 @@ what the census's own section consumes ([`decisions.md`](decisions.md), "D35").
 
 ## Nested decode costs what it copies, and an element is now a borrowed slice
 
-<!-- figure: nested-decode-micro — reproduce with `cd scripts && uv run measure.py --figure nested-decode-micro` -->
+<!-- figure: nested-decode-micro — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure nested-decode-micro` -->
 
 `benches/decoders.rs`'s `nested` group, criterion medians. **Two controls,
 because there are two questions.**
@@ -2634,7 +2644,7 @@ Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤8.84%, 
 
 ## What DataFusion's dynamic filters buy a query
 
-<!-- figure: dynamic-filter-join — taken at `2f94f14` — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-join` -->
+<!-- figure: dynamic-filter-join — taken at `2f94f14` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-join` -->
 
 **A join's filter, over its probe table**
 
@@ -2657,7 +2667,7 @@ Per-rep readings (s):
 
 Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤6.09%, machine ≤8% busy, steal ≤0.00%, busiest core ≥4.02 GHz, ≤68°C.
 
-<!-- figure: dynamic-filter-topk — taken at `2f94f14` — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-topk` -->
+<!-- figure: dynamic-filter-topk — taken at `2f94f14` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-topk` -->
 
 **A TopK's filter, over the table it sorts**
 

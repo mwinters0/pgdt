@@ -26,7 +26,8 @@ What it enforces, from that doc's standing rules:
 * every table carries its per-rep readings, so a wrong median is visible
   against the numbers that produced it (an SE from one sweep is not an error
   bar -- that doc's ninth rule);
-* one libc: the default glibc build, in a glibc image.
+* one libc: the default glibc build, in a glibc image pinned by digest, and
+  the glibc each figure ran under named in the stamp or in its own marker.
 
 **Selection is per figure, never finer.** One figure is exactly one table, and
 a table is atomic -- half of one may not be re-taken. Figures that share a
@@ -194,7 +195,14 @@ class Config:
     out_dir: Path = Path(_env("PGDT_MEASURE_OUT_DIR", str(REPO / "runs")))
 
     container: str = _env("PGDT_MEASURE_CONTAINER", "sudo nerdctl")
-    image: str = _env("PGDT_MEASURE_IMAGE", "postgres:16")
+    # **Pinned by digest**, the tag before it being for a reader only: a tag
+    # moves under the register, and what a figure names is the glibc the
+    # image answers (`glibc_of`) rather than a tag's (`measurements.md`, "The
+    # apparatus"). A digest the machine lacks is pulled by the first run.
+    image: str = _env(
+        "PGDT_MEASURE_IMAGE",
+        "postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5",
+    )
     memory: str = _env("PGDT_MEASURE_MEMORY", "512m")
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
@@ -207,7 +215,11 @@ class Config:
     # own `mimalloc` in either (`datafusion-cli-pgdump/src/main.rs`), so the
     # image's `malloc`, which is why `image` is part of the apparatus, times
     # nothing there; the departure is stated in each such figure's table.
-    dfcli_image: str = _env("PGDT_MEASURE_DFCLI_IMAGE", "archlinux:base")
+    # Pinned by digest as `image` is, the tag being a rolling one.
+    dfcli_image: str = _env(
+        "PGDT_MEASURE_DFCLI_IMAGE",
+        "archlinux:base@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6",
+    )
     bin_nocensus: Path = Path(
         _env("PGDT_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdt-nocensus"))
     )
@@ -3838,8 +3850,26 @@ class Session:
         #: Every reading's telemetry, in the order taken, so a sweep can be
         #: audited after the fact even where the gate let a reading through.
         self.telemetry: list[dict] = []
+        #: The places each figure's programs ran in — an image, or `HOST` —
+        #: and the glibc each place answered, which is what a figure's marker
+        #: names where the stamp does not speak for it (`marker_glibc`).
+        self.places: dict[str, set[str]] = {}
+        self.glibcs: dict[str, str] = {}
+
+    def ran_in(self, figure: str, where: str) -> None:
+        """Record that `figure`'s program runs in `where`, asking that place
+        for its glibc the first time — before the run, so a place that is no
+        glibc refuses the figure rather than a sitting's last table."""
+        self.places.setdefault(figure, set()).add(where)
+        if not self.cfg.dry_run and where not in self.glibcs:
+            self.glibcs[where] = glibc_of(self.cfg, where)
 
     # -- one timed run ----------------------------------------------------
+
+    def image_for(self, spec: RunSpec) -> str:
+        """The image a run goes in: the second program's own where it cannot
+        run in the register's (`Config.dfcli_image`), the register's else."""
+        return self.cfg.dfcli_image if spec.binary == "dfcli" else self.cfg.image
 
     def binary_path(self, which: str) -> Path:
         if which == "pgdt":
@@ -3925,15 +3955,14 @@ class Session:
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
         mounts = [f"{dump}:/dump.sql:ro"]
-        image = self.cfg.image
+        image = self.image_for(spec)
         if spec.binary == "dfcli":
             # The second program, and `pgdt` beside it to build the cache it
-            # reads, in the image it can run in (`Config.dfcli_image`).
+            # reads, in the image it can run in.
             mounts[:0] = [
                 f"{self.cfg.bin_pgdt}:/pgdt:ro",
                 f"{self.binary_path(spec.binary)}:{DFCLI}:ro",
             ]
-            image = self.cfg.dfcli_image
         elif spec.binary != "none":
             mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdt:ro")
         if spec.command == "parse-cache-out":
@@ -4204,6 +4233,13 @@ class Session:
         keys = [s.key(figure) for s in specs]
         for k in keys:
             self.readings.setdefault(k, [])
+        # Where the figure's programs run, and so which glibc it names. A `dd`
+        # floor is a reading of `dd` rather than of the program, so it names
+        # nothing: the dynamic-filter figures' floor runs in the register's
+        # image while their program runs in its own.
+        for spec in specs:
+            if spec.binary != "none":
+                self.ran_in(figure, self.image_for(spec))
         for rep in range(reps):
             order = list(specs) if rep < (reps + 1) // 2 else list(reversed(specs))
             for spec in order:
@@ -4697,6 +4733,54 @@ def binary_allocator(binary: Path) -> str:
             "it is too old to be an `allocator` figure leg"
         )
     return match.group(1)
+
+
+#: Where a figure's program runs when it runs in no container: `cargo bench`,
+#: which is `nested-decode-micro`. Every other place is an image reference.
+HOST = "host"
+
+#: What glibc's `getconf GNU_LIBC_VERSION` prints. musl's `getconf` has no such
+#: variable and exits non-zero, which is the refusal `glibc_of` wants.
+LIBC_RE = re.compile(r"^glibc (\d+(?:\.\d+)+)$", re.MULTILINE)
+
+
+def glibc_of(cfg: Config, where: str) -> str:
+    """The glibc a program run in `where` — an image, or `HOST` — runs under,
+    asked of that place rather than assumed from a tag.
+
+    The allocator's argument one layer down (`binary_allocator`): a tag moves
+    under the register and says nothing about the libc it holds, so the stamp
+    and a figure's marker name what the image answers. **A place answering
+    with no glibc is refused**, since the apparatus is a glibc one and the
+    figure would otherwise publish under a libc nothing named."""
+    argv = ["getconf", "GNU_LIBC_VERSION"]
+    if where != HOST:
+        argv = [*cfg.container_argv(), "run", "--rm", where, *argv]
+    try:
+        out = run(argv, capture=True)
+    except subprocess.CalledProcessError:
+        out = ""
+    match = LIBC_RE.search(out)
+    if match is None:
+        raise RuntimeError(
+            f"{where} answers `getconf GNU_LIBC_VERSION` with {out.strip()!r}, so it is no "
+            "glibc — a figure is taken under glibc and names the one it ran under"
+        )
+    return match.group(1)
+
+
+def glibc_named(places: Iterable[str], glibcs: Mapping[str, str]) -> str | None:
+    """The glibc a figure ran under, from the places its programs ran in: one
+    version, or several joined where they ran in more than one; `None` where no
+    place was asked, which is `--dry-run` and a sitting older than the asking."""
+    versions = sorted({glibcs[p] for p in places if p in glibcs})
+    return " and ".join(versions) or None
+
+
+def image_name(ref: str) -> str:
+    """An image reference without its digest, for prose: the digest is the
+    pin, and `Config` is where a reader finds it."""
+    return ref.partition("@")[0]
 
 
 #: Legs whose (absent) build a dry run has already reported. Only a dry run
@@ -5894,6 +5978,7 @@ VIEW_BATCH = 1024
 
 def run_nested_decode_micro(session: Session) -> str:
     cfg = session.cfg
+    session.ran_in("nested-decode-micro", HOST)
     if not cfg.dry_run:
         run(
             ["cargo", "bench", "-p", "pgdump_query", "--bench", "decoders", "--", "nested"],
@@ -8146,7 +8231,8 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         f"byte for byte: `{flag}` is `false` off and `true` on, and the on leg's filter is "
         "whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own "
         "`mimalloc`, in the "
-        f"`{session.cfg.dfcli_image}` image rather than `{session.cfg.image}`, whose glibc "
+        f"`{image_name(session.cfg.dfcli_image)}` image rather than "
+        f"`{image_name(session.cfg.image)}`, whose glibc "
         "is older than the one it was linked against. `dd` → `/dev/null` on the same file: "
         f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
@@ -9409,7 +9495,8 @@ def cmd_drift(first: str, second: str) -> int:
     # other and declares where it came from. A pair whose legs disagree
     # declares nothing: nothing was to be committed between them, so the table
     # is already invalid and its own closing sentence names both commits.
-    commits = {json.loads((Path(d) / "raw.json").read_text())["commit"] for d in (first, second)}
+    raws = [json.loads((Path(d) / "raw.json").read_text()) for d in (first, second)]
+    commits = {raw["commit"] for raw in raws}
     stamp = stamped_commit(REPO / "docs/design/measurements.md")
     taken = commits.pop() if len(commits) == 1 else None
     sitting = (
@@ -9417,8 +9504,13 @@ def cmd_drift(first: str, second: str) -> int:
         if taken and stamp and resolve_commit(taken) != resolve_commit(stamp)
         else None
     )
+    # Named beside the sitting, as any sitting marker names it, where the two
+    # sweeps agree on the register image's glibc — which one sweep pair
+    # re-taking one apparatus does unless the image was re-pinned between them.
+    glibcs = {raw.get("glibc") for raw in raws}
+    glibc = glibcs.pop() if sitting and len(glibcs) == 1 else None
     print(f"## {fig.section}\n")
-    print(figure_marker(fig.id, sitting, reproduce="--drift <sweep> <sweep>") + "\n")
+    print(figure_marker(fig.id, sitting, reproduce="--drift <sweep> <sweep>", glibc=glibc) + "\n")
     print(drift_table(Path(first) / "raw.json", Path(second) / "raw.json"))
     return 0
 
@@ -9591,19 +9683,85 @@ def markers_in(doc: Path) -> list[str]:
 SITTING_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)[^>]*?taken at `([0-9a-f]{7,40})`")
 
 
-def figure_marker(fid: str, sitting: str | None = None, reproduce: str | None = None) -> str:
+def figure_marker(
+    fid: str,
+    sitting: str | None = None,
+    reproduce: str | None = None,
+    glibc: str | None = None,
+) -> str:
     """The marker a table is emitted under: the figure's id, the commit it was
-    taken at where that is not the stamp's, and how to reproduce it.
+    taken at and the glibc it ran under where the stamp does not speak for
+    them, and how to reproduce it.
 
     Written in one place so that what `emit` puts above a table is by
-    construction what `markers_in` and `figure_sittings` read back out of the
-    doc after the paste."""
+    construction what `markers_in`, `figure_sittings` and `marker_glibcs` read
+    back out of the doc after the paste."""
     reproduce = reproduce or f"--figure {fid}"
     taken = f" — taken at `{sitting}`" if sitting else ""
+    under = f" — under glibc {glibc}" if glibc else ""
     return (
-        f"<!-- figure: {fid}{taken} — reproduce with "
+        f"<!-- figure: {fid}{taken}{under} — reproduce with "
         f"`cd scripts && uv run measure.py {reproduce}` -->"
     )
+
+
+#: A glibc version as `glibc_named` writes one, and the two places it is read
+#: back from: a figure's marker, and the session stamp's clause after its
+#: commit — bounded, and barred from a full stop, so it cannot run on into the
+#: accounting sentence or the next paragraph.
+_GLIBC_VERSION = r"(\d+(?:\.\d+)+(?: and \d+(?:\.\d+)+)*)"
+MARKER_GLIBC_RE = re.compile(rf"<!--\s*figure:\s*([a-z0-9-]+)[^>]*?under glibc {_GLIBC_VERSION}")
+STAMP_GLIBC_RE = re.compile(
+    rf"measure\.py.{{0,200}}?commit `[0-9a-f]{{7,40}}`[^.]{{0,120}}?glibc {_GLIBC_VERSION}",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def marker_glibcs(text: str) -> dict[str, str]:
+    """Each figure whose marker names the glibc it ran under, and that glibc."""
+    return dict(MARKER_GLIBC_RE.findall(text))
+
+
+def stamp_glibc(text: str) -> str | None:
+    """The glibc the session stamp names, read out of the doc's text."""
+    match = STAMP_GLIBC_RE.search(text)
+    return match.group(1) if match else None
+
+
+def marker_glibc(whole_sweep: bool, stamped: str | None, ran_under: str | None) -> str | None:
+    """The glibc a figure's marker names: its own, wherever the stamp does not
+    speak for it.
+
+    The stamp names the register image's, so a figure of the sweep whose
+    program ran there names nothing — `taken at`'s convention, the datum
+    present only where it differs. It differs for a program run in another
+    place (`datafusion-cli-pgdump`'s image, `cargo bench` on the host), and for
+    every figure of a sitting of its own, whose marker already names the commit
+    the stamp does not and names the glibc beside it."""
+    if ran_under is None or (whole_sweep and ran_under == stamped):
+        return None
+    return ran_under
+
+
+def glibc_problems(text: str) -> list[str]:
+    """Where the doc does not say which glibc a figure ran under, one line each:
+    a stamp naming none, or a sitting marker naming none. A figure of the
+    sweep run outside the register's image is the harness's to mark, and is not
+    visible from the doc."""
+    out = []
+    if stamp_in(text) is not None and stamp_glibc(text) is None:
+        out.append(
+            "the session stamp names no glibc, so nothing says which one the figures it "
+            "covers ran under"
+        )
+    named = marker_glibcs(text)
+    for fid, sha in sorted(figure_sittings(text).items()):
+        if fid not in named:
+            out.append(
+                f"{fid} declares a sitting of its own ({sha}) and names no glibc — write "
+                f"`under glibc <version>` inside its marker"
+            )
+    return out
 
 
 def figure_sittings(text: str) -> dict[str, str]:
@@ -9989,6 +10147,7 @@ def session_stamp(
     dirty: bool,
     allocator: str | None = None,
     outside: Sequence[tuple[str, str]] = (),
+    glibc: str | None = None,
 ) -> str:
     """The line the doc carries, and the line `stamped_commit` reads back.
 
@@ -9997,7 +10156,9 @@ def session_stamp(
     allocator a figure was taken under". It is read out of the binary rather
     than assumed, so the day the CLI's default changes the stamp changes with
     it; `None` where there is no binary to ask, which is `--dry-run` and the
-    unit tests.
+    unit tests. **The glibc is the register image's**, asked of the image
+    (`glibc_of`) for the same reason; a figure whose program ran anywhere else
+    names its own in its marker (`marker_glibc`).
 
     **It is scoped to the register, not to everything printed below it.** The
     doc also carries sections this harness does not own, and the stamp's claim
@@ -10011,18 +10172,22 @@ def session_stamp(
     return (
         f"**Session stamp.** Every figure below — every section carrying a "
         f"`<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on "
-        f"{date.today().isoformat()}, against commit `{head}`{taken_against(dirty, allocator)}. "
+        f"{date.today().isoformat()}, against commit `{head}`"
+        f"{taken_against(dirty, allocator, glibc)}. "
         + sitting_accounting(outside)
     )
 
 
-def taken_against(dirty: bool, allocator: str | None) -> str:
-    """What qualifies a commit in a stamp: the tree's state and the allocator.
+def taken_against(dirty: bool, allocator: str | None, glibc: str | None = None) -> str:
+    """What qualifies a commit in a stamp: the tree's state, the allocator and
+    the register image's glibc.
 
     Shared with the header a *partial* sitting writes instead of a stamp, so
     that the two say the same thing about the same run."""
     suffix = " (with uncommitted changes under a measured path)" if dirty else ""
-    return suffix + (f", under the `{allocator}` allocator" if allocator else "")
+    under = [f"the `{allocator}` allocator"] if allocator else []
+    under += [f"glibc {glibc}"] if glibc else []
+    return suffix + (", under " + " and ".join(under) if under else "")
 
 
 def partial_lead(
@@ -10031,6 +10196,7 @@ def partial_lead(
     dirty: bool,
     allocator: str | None,
     unpublishable: str | None,
+    glibc: str | None = None,
 ) -> str:
     """The header a sitting short of the sweep writes instead of a stamp.
 
@@ -10042,7 +10208,7 @@ def partial_lead(
         "Its tables do not enter the document at all — see the banner below."
         if unpublishable
         else "Leave its session stamp alone, and fold each table in with the `taken at` "
-        "commit its own marker carries; `--check` refuses that marker on a figure that "
+        "commit and glibc its own marker carries; `--check` refuses that marker on a figure that "
         "shares a reading or stands in a derivation, which is every figure a sweep is the "
         "only way to move."
     )
@@ -10050,7 +10216,7 @@ def partial_lead(
         f"**A sitting of its own, not a sweep.** This run took {taken} of the "
         f"{len(FIGURES)} figures a sweep takes, with `scripts/measure.py` on "
         f"{date.today().isoformat()}, against commit `{head}`"
-        f"{taken_against(dirty, allocator)} — so this run does not stamp the document. "
+        f"{taken_against(dirty, allocator, glibc)} — so this run does not stamp the document. "
         + fold_in
     )
 
@@ -10124,6 +10290,10 @@ class ReplaySession(Session):
 
     def sweep(self, figure: str, specs: Sequence[RunSpec], reps: int) -> None:
         """A no-op: every reading this sitting holds is already loaded."""
+
+    def ran_in(self, figure: str, where: str) -> None:
+        """A no-op: which glibc each figure ran under is the sitting's own
+        record (`figure_glibc`), and asking a place now would name today's."""
 
     def take(self, spec: RunSpec, rep: int) -> float:
         raise AssertionError(f"--render must measure nothing, but {spec.label} was run")
@@ -10212,7 +10382,13 @@ def render(cfg: Config, run_dir: Path) -> int:
             heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
             sections_seen.add(fig.section)
             label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
-            marker = figure_marker(fig.id, None if whole_sweep else head)
+            marker = figure_marker(
+                fig.id,
+                None if whole_sweep else head,
+                glibc=marker_glibc(
+                    whole_sweep, raw.get("glibc"), raw.get("figure_glibc", {}).get(fig.id)
+                ),
+            )
             kills = session.figure_kills(fig.id)
             bar = censored_note(kills) if kills else ""
             parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{note}")
@@ -10253,6 +10429,10 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
 
     head, dirty = git_head()
     allocator = None if cfg.dry_run else binary_allocator(cfg.bin_pgdt)
+    # The register image's glibc, which the stamp names: asked before anything
+    # is staged, so an image that is no glibc costs a second rather than a
+    # sitting. A figure run anywhere else asks its own place (`Session.ran_in`).
+    glibc = None if cfg.dry_run else glibc_of(cfg, cfg.image)
     # A sitting short of the whole sweep does not re-stamp the document, so
     # each table it emits carries the commit it was taken at inside its own
     # marker and every reader of the stamp argues from that
@@ -10267,6 +10447,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     log(
         f"measure.py — {len(figures)} figure(s), commit {head}{' (dirty)' if dirty else ''}"
         + (f", allocator {allocator}" if allocator else "")
+        + (f", glibc {glibc}" if glibc else "")
         + ("" if selected_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
@@ -10310,6 +10491,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log_file.close()
         return 2
     session = Session(cfg, stager, log, out_root)
+    if glibc is not None:
+        session.glibcs[cfg.image] = glibc
     # The apparatus, in the order it has to be established: pin the governor
     # (a machine-wide change, restored on the way out), then start sampling.
     # `--dry-run` touches neither: it runs nothing worth witnessing and must
@@ -10406,10 +10589,20 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             "produced a table, so this sitting does not re-stamp the document: each table it "
             "did take declares this commit inside its own marker instead"
         )
-    parts = [
-        f"{heading}{figure_marker(fid, None if whole_sweep else head)}\n\n{tail}"
-        for fid, heading, tail in rendered
-    ]
+    # The glibc each figure's programs ran under, from the places the sitting
+    # recorded; its marker names it wherever the stamp does not speak for it.
+    ran_under = {
+        fid: glibc_named(session.places.get(fid, ()), session.glibcs) for fid, _, _ in rendered
+    }
+    markers = {
+        fid: figure_marker(
+            fid,
+            None if whole_sweep else head,
+            glibc=marker_glibc(whole_sweep, glibc, ran_under[fid]),
+        )
+        for fid, _, _ in rendered
+    }
+    parts = [f"{heading}{markers[fid]}\n\n{tail}" for fid, heading, tail in rendered]
 
     stager.cleanup()
     if not cfg.dry_run:
@@ -10429,11 +10622,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     # A whole sweep stamps the document; a sitting of its own does not, and
     # says what it is instead of writing a stamp nobody may paste.
     if whole_sweep:
-        lead = session_stamp(head, dirty, allocator, outside)
+        lead = session_stamp(head, dirty, allocator, outside, glibc)
     else:
         # `len(rendered)`, not `len(figures)`: the lead counts the tables below
         # it, and a selected figure that failed produced none.
-        lead = partial_lead(len(rendered), head, dirty, allocator, unpublishable)
+        lead = partial_lead(len(rendered), head, dirty, allocator, unpublishable, glibc)
     header = [
         "# measure.py output",
         "",
@@ -10503,6 +10696,10 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 # table -- which is how a table came to disagree with the
                 # harness that would have produced it.
                 "allocator": allocator,
+                "glibc": glibc,
+                "figure_glibc": ran_under,
+                "places": {fid: sorted(where) for fid, where in session.places.items()},
+                "glibcs": session.glibcs,
                 "whole_sweep": whole_sweep,
                 "header": header,
                 "input_sizes": recorded_input_sizes(stager, figures),
@@ -11416,6 +11613,15 @@ def cmd_check(doc: Path) -> int:
         for line in bad_sittings:
             print(f"  {line}")
         print()
+    unnamed_glibc = glibc_problems(text)
+    if unnamed_glibc:
+        print(
+            "Figures whose glibc the doc does not name — the stamp names the register image's,\n"
+            "and a sitting marker the one its own sitting ran under:"
+        )
+        for line in unnamed_glibc:
+            print(f"  {line}")
+        print()
     bad_outside = outside_sitting_problems(text)
     if bad_outside:
         print(
@@ -11492,6 +11698,7 @@ def cmd_check(doc: Path) -> int:
             or unknown_outside
             or both
             or bad_sittings
+            or unnamed_glibc
             or bad_outside
             or miscounted
             or unknown_ack

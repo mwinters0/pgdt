@@ -1121,6 +1121,162 @@ class Allocator(unittest.TestCase):
         self.assertNotIn("allocator", measure.session_stamp("deadbee", dirty=False))
 
 
+class Glibc(unittest.TestCase):
+    """Which glibc a figure ran under: both images pinned by digest, each place
+    a figure's program runs asked for its glibc, and the answer named in the
+    stamp or in the figure's own marker (`measurements.md`, "The apparatus")."""
+
+    DOC = measure.REPO / "docs/design/measurements.md"
+    PIN = re.compile(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}")
+
+    @unittest.skipIf(
+        {"PGDT_MEASURE_IMAGE", "PGDT_MEASURE_DFCLI_IMAGE"} & set(measure.os.environ),
+        "an image is overridden in this environment",
+    )
+    def test_both_images_are_pinned_by_digest(self):
+        # A tag moves under the register; a digest is the image a figure ran in.
+        cfg = measure.Config()
+        self.assertRegex(cfg.image, self.PIN)
+        self.assertRegex(cfg.dfcli_image, self.PIN)
+
+    def test_prose_names_an_image_by_its_tag(self):
+        self.assertEqual(measure.image_name("postgres:16@sha256:" + "0" * 64), "postgres:16")
+        self.assertEqual(measure.image_name("archlinux:base"), "archlinux:base")
+
+    def test_an_image_is_asked_in_a_container_and_the_host_is_asked_directly(self):
+        cfg = measure.Config()
+        asked = []
+
+        def fake(argv, **_kwargs):
+            asked.append(list(argv))
+            return "glibc 2.41\n"
+
+        with unittest.mock.patch.object(measure, "run", fake):
+            self.assertEqual(measure.glibc_of(cfg, "some:image@sha256:ab"), "2.41")
+            self.assertEqual(measure.glibc_of(cfg, measure.HOST), "2.41")
+        self.assertEqual(
+            asked[0],
+            [*cfg.container_argv(), "run", "--rm", "some:image@sha256:ab",
+             "getconf", "GNU_LIBC_VERSION"],
+        )
+        self.assertEqual(asked[1], ["getconf", "GNU_LIBC_VERSION"])
+
+    def test_a_place_that_is_no_glibc_is_refused(self):
+        # musl's `getconf` has no GNU_LIBC_VERSION and exits non-zero.
+        failed = subprocess.CalledProcessError(1, ["getconf"])
+        with unittest.mock.patch.object(measure, "run", side_effect=failed):
+            with self.assertRaises(RuntimeError) as raised:
+                measure.glibc_of(measure.Config(), "alpine:3")
+        self.assertIn("alpine:3", str(raised.exception))
+        with unittest.mock.patch.object(measure, "run", return_value="musl\n"):
+            with self.assertRaises(RuntimeError):
+                measure.glibc_of(measure.Config(), "alpine:3")
+
+    def test_the_stamp_names_the_glibc_and_still_reads_back(self):
+        stamp = measure.session_stamp("deadbee", dirty=True, allocator="system", glibc="2.41")
+        self.assertIn("under the `system` allocator and glibc 2.41.", stamp)
+        self.assertEqual(measure.stamp_in(stamp), "deadbee")
+        self.assertEqual(measure.stamp_glibc(stamp), "2.41")
+        self.assertIsNone(measure.stamp_glibc(measure.session_stamp("deadbee", dirty=False)))
+        self.assertIn(", under glibc 2.41", measure.taken_against(False, None, "2.41"))
+
+    def test_a_partial_sitting_says_its_glibc_too(self):
+        lead = measure.partial_lead(1, "deadbee", False, "system", None, "2.41")
+        self.assertIn("glibc 2.41", lead)
+
+    def test_a_marker_names_its_glibc_beside_its_sitting_and_both_read_back(self):
+        marker = measure.figure_marker("map-only", "7ee5db5", glibc="2.44")
+        self.assertEqual(measure.figure_sittings(marker), {"map-only": "7ee5db5"})
+        self.assertEqual(measure.marker_glibcs(marker), {"map-only": "2.44"})
+        alone = measure.figure_marker("nested-decode-micro", glibc="2.41 and 2.44")
+        self.assertEqual(measure.figure_sittings(alone), {})
+        self.assertEqual(measure.marker_glibcs(alone), {"nested-decode-micro": "2.41 and 2.44"})
+
+    def test_a_marker_names_its_glibc_only_where_the_stamp_does_not_speak_for_it(self):
+        # A figure of the sweep run in the register's image: the stamp speaks.
+        self.assertIsNone(measure.marker_glibc(True, "2.41", "2.41"))
+        # Run elsewhere — the second program's image, or the host.
+        self.assertEqual(measure.marker_glibc(True, "2.41", "2.44"), "2.44")
+        # A sitting of its own names its glibc beside its commit, whatever it is.
+        self.assertEqual(measure.marker_glibc(False, "2.41", "2.41"), "2.41")
+        # Nothing asked, nothing named: `--dry-run`, or a sitting older than this.
+        self.assertIsNone(measure.marker_glibc(False, "2.41", None))
+
+    def test_several_places_are_named_together(self):
+        glibcs = {"a": "2.44", "b": "2.41", "c": "2.41"}
+        self.assertEqual(measure.glibc_named(["a", "b", "c"], glibcs), "2.41 and 2.44")
+        self.assertIsNone(measure.glibc_named(["a"], {}))
+
+    def test_a_sweep_records_where_the_program_ran_and_not_the_floor(self):
+        cfg = measure.Config(dry_run=True)
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        leg = measure.RunSpec("dfcli", "dynfilter", "dfcli-dynamic-filter-topk-unsorted-on",
+                              "warm", "")
+        floor = measure.RunSpec("none", "dynfilter", "dd", "warm", "dd floor")
+        session.sweep("dynamic-filter-topk", [leg, floor], 1)
+        self.assertEqual(session.places["dynamic-filter-topk"], {cfg.dfcli_image})
+        # `--dry-run` asks nothing: it must not need root or a runtime.
+        self.assertEqual(session.glibcs, {})
+        measure.run_nested_decode_micro(session)
+        self.assertEqual(session.places["nested-decode-micro"], {measure.HOST})
+
+    def test_a_place_is_asked_once_and_before_its_first_run(self):
+        cfg = measure.Config()
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        with unittest.mock.patch.object(measure, "glibc_of", return_value="2.41") as asked:
+            session.ran_in("f", cfg.image)
+            session.ran_in("g", cfg.image)
+        asked.assert_called_once_with(cfg, cfg.image)
+        self.assertEqual(session.places, {"f": {cfg.image}, "g": {cfg.image}})
+
+    def test_a_render_names_what_the_sitting_recorded_and_asks_nothing(self):
+        render = inspect.getsource(measure.render)
+        self.assertIn('raw.get("figure_glibc"', render)
+        self.assertIn("marker_glibc(", render)
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(), {"readings": {}, "runs": []}, Path(tmp), lambda _m: None
+            )
+            with unittest.mock.patch.object(measure, "glibc_of") as asked:
+                session.ran_in("nested-decode-micro", measure.HOST)
+            asked.assert_not_called()
+
+    def test_the_check_wants_a_glibc_in_the_stamp_and_in_every_sitting_marker(self):
+        text = (
+            measure.session_stamp("aaaaaaa", dirty=False, allocator="system") + "\n"
+            + measure.figure_marker("map-only", "bbbbbbb") + "\n"
+            + measure.figure_marker("peak-rss", "ccccccc", glibc="2.41") + "\n"
+        )
+        problems = measure.glibc_problems(text)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("session stamp", problems[0])
+        self.assertIn("map-only", problems[1])
+
+    def test_the_doc_names_every_glibc_it_must(self):
+        self.assertEqual(measure.glibc_problems(self.DOC.read_text()), [])
+        self.assertIsNotNone(measure.stamp_glibc(self.DOC.read_text()))
+
+    def test_a_drift_taken_outside_the_stamp_names_the_sweeps_glibc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dirs = []
+            for name in ("a", "b"):
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "raw.json").write_text(
+                    json.dumps(
+                        {"commit": "abc1234", "date": "2026-09-27", "glibc": "2.41",
+                         "readings": {"f/x": [1.0]}}
+                    )
+                )
+                dirs.append(str(d))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                measure.cmd_drift(*dirs)
+        self.assertEqual(measure.marker_glibcs(out.getvalue()), {"session-drift": "2.41"})
+
+
 class CensusBinary(unittest.TestCase):
     """The census-off binary's stamp: the harness will not build that binary,
     and will not trust one whose tree could have moved a reading.
@@ -6262,7 +6418,16 @@ class Render(unittest.TestCase):
         # lists live in the source, so a field added to one and not the other
         # is caught here rather than at the next fold-in.
         source = inspect.getsource(measure.emit)
-        for field in ("allocator", "whole_sweep", "header", "input_sizes", "rss", "reported"):
+        for field in (
+            "allocator",
+            "glibc",
+            "figure_glibc",
+            "whole_sweep",
+            "header",
+            "input_sizes",
+            "rss",
+            "reported",
+        ):
             self.assertIn(f'"{field}"', source, f"emit does not record {field}")
 
     def test_a_render_skips_the_figures_the_sitting_failed(self):

@@ -681,7 +681,8 @@ behind every figure.
 
 ```sh
 getconf GNU_LIBC_VERSION                                   # the host's
-docker run --rm postgres:16 getconf GNU_LIBC_VERSION       # the figures'
+docker run --rm "$(cd scripts && uv run python -c 'import measure; print(measure.Config().image)')" \
+  getconf GNU_LIBC_VERSION                                 # the figures', as pinned
 curl -sfL 'https://sourceware.org/git/?p=glibc.git;a=blob_plain;f=malloc/arena.c;hb=glibc-2.44' \
   | grep -n -A16 'static size_t narenas_limit'
 ```
