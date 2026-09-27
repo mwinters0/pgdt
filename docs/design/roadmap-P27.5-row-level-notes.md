@@ -4,8 +4,8 @@ What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Scope"
 and "Evidence". **The mechanism has landed, on, and the readings are taken:
 row evaluation acting alone loses on both inputs that isolate it**, which
-reopens "D53" for a set-membership term; 27.6 lands it, and 27.7 re-takes
-the figures, which decide the default by the spec's criterion.
+reopens "D53" for a set-membership term; 27.6 lands it, 27.7 re-takes the
+figures, and 27.9 decides the default by the spec's criterion.
 
 ## What exists
 

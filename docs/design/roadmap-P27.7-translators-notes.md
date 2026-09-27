@@ -3,10 +3,8 @@
 What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
 item 7. **Both DataFusion translators now hand an `IN` over as one
-`Expr::In`; the readings that decide row evaluation's default are not taken**,
-a figure being taken from a commit and this tree carrying the change it
-prices ([`measurements.md`](measurements.md), "A figure may be published
-outside the sweep").
+`Expr::In`; the readings are taken from the commit landing it and not yet
+folded in**, and row evaluation's default is not this slice's but item 9's.
 
 ## What exists
 
@@ -45,17 +43,13 @@ outside the sweep").
 
 ## The readings
 
-**Owed, and they finish the slice**, from the commit landing this tree:
-
-```sh
-cd scripts && uv run measure.py --figure dynamic-filter-join,dynamic-filter-topk
-```
-
-A sitting of both took about five minutes at 27.5. The criterion is the
-spec's, set before them: row evaluation stays on only if the unclustered join
-wins with its legs' spreads apart and the costing input's Δ lies inside its
-legs' overlapping spreads; failing that it goes off and "D93" reopens. The
-prose under the two tables in `measurements.md`, "What DataFusion's dynamic
-filters buy a query", describes the `28e804f` sitting's `Or` of `=` and is
-rewritten with them, `EXPLAIN ANALYZE` of each on leg attributing the rows
-again.
+**Taken at `11e13f2`**, `runs/measure-20260927T221125/` (`tables.md`,
+`raw.json`, `log.txt`), with `EXPLAIN ANALYZE` of each on leg in
+`runs/dynfilter-27.7-explain-20260927/explain.txt`. **Folding them in
+finishes the slice**: the prose under the two tables in `measurements.md`,
+"What DataFusion's dynamic filters buy a query", describes the `28e804f`
+sitting's `Or` of `=` and is rewritten with them. It sets the costing row's
+cost a row against 27.5's cost a term, fitted with no per-row intercept and
+including each term's own unescape, and says in those words what that leaves
+unattributed, which 27.8 attributes. It states no default: the criterion is
+applied at 27.9, after the mechanism 27.8 names.

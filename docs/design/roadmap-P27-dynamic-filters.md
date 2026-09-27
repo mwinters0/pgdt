@@ -105,6 +105,8 @@ neither of which group pruning helps; and **where it costs**, a join whose
 `pgdump.*` switch and no build made only to be measured: a loss on the costing
 input is answered by "D53"'s set-membership term, never by a switch or by a
 stream ceasing to evaluate a filter it holds (`decisions.md`, "D93").
+What the term leaves of that loss is accounted for and answered by slices 8
+and 9.
 
 **No row may be lost, and two checks say so before anything is on by
 default**: every join and TopK query shape is run over the fixtures with the
@@ -159,10 +161,27 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    `in (…)`, its first caller.
 7. **The translators emit it**, both DataFusion translators turning `IN` into
    `Expr::In`; then both figures re-taken, in the slice whose change they
-   price. **Row evaluation stays on only if the unclustered join wins, its
-   legs' spreads apart, and the costing input's Δ lies within its legs'
-   overlapping spreads**; failing that it goes off and "D93" reopens, a
-   `pgdump.*` switch with it.
+   price, and their readings filed. Row evaluation's default is decided at
+   slice 9, not here.
+8. **The per-row account of the costing input**, admitted on 27.7's readings:
+   an instrument, no product code. The costing input's on-leg cost a row is
+   attributed among the fixed cost of evaluating a row at all (the row split,
+   the tree walk), each leaf's decode, each comparison and the `IN` lookup —
+   the code's own account first, then a `perf` profile
+   (`measure.py --profile-recipe`) and a per-term reading from an
+   `introspect` build, built here where that build cannot yet time a term
+   (`roadmap.md`, "Attribution is introspective; only the gate is blind").
+   Its deliverable is an account summing to the measured Δ within its spread,
+   filed where `process.md`, "Where does this fact go?" sends each part. It
+   then names the mechanism, if any, that would remove the attributed cost
+   within "D54" (the tree evaluated is the tree handed); choosing it is a
+   design decision, so it goes to `STATUS.md`'s "Decisions worth another
+   look" unless the record already settles it.
+9. **The mechanism slice 8 names**, then both figures re-taken, in the slice
+   whose change they price. **Row evaluation stays on only if the unclustered
+   join wins, its legs' spreads apart, and the costing input's Δ lies within
+   its legs' overlapping spreads**; failing that it goes off and "D93"
+   reopens, a `pgdump.*` switch with it.
 
 ## Facts found while grilling
 
