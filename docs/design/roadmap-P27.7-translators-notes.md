@@ -3,8 +3,8 @@
 What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
 item 7. **Both DataFusion translators now hand an `IN` over as one
-`Expr::In`; the readings are taken from the commit landing it and not yet
-folded in**, and row evaluation's default is not this slice's but item 9's.
+`Expr::In`, and both figures are re-taken from the commit landing it**; row
+evaluation's default is not this slice's but item 9's.
 
 ## What exists
 
@@ -43,13 +43,23 @@ folded in**, and row evaluation's default is not this slice's but item 9's.
 
 ## The readings
 
-**Taken at `11e13f2`**, `runs/measure-20260927T221125/` (`tables.md`,
-`raw.json`, `log.txt`), with `EXPLAIN ANALYZE` of each on leg in
-`runs/dynfilter-27.7-explain-20260927/explain.txt`. **Folding them in
-finishes the slice**: the prose under the two tables in `measurements.md`,
-"What DataFusion's dynamic filters buy a query", describes the `28e804f`
-sitting's `Or` of `=` and is rewritten with them. It sets the costing row's
-cost a row against 27.5's cost a term, fitted with no per-row intercept and
-including each term's own unescape, and says in those words what that leaves
-unattributed, which 27.8 attributes. It states no default: the criterion is
-applied at 27.9, after the mechanism 27.8 names.
+**Taken at `11e13f2`**, each alone, raw sitting
+`runs/measure-20260927T221125/`, with `EXPLAIN ANALYZE` of each on leg in
+`runs/dynfilter-27.7-explain-20260927/`; the numbers and the account are
+[`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy a
+query".
+
+- **The metrics count what they counted at `28e804f`**: the membership term
+  moved what a row costs, not which mechanism acts on which row.
+- **The unclustered join now wins and the costing input still loses**, each
+  with its legs' spreads apart, so the spec's criterion would fail on the
+  costing row as it stands; it is not applied here (item 9).
+- **27.5's cost a term leaves most of the costing row's cost a row
+  unattributed.** Three leaves a row, each unescaping the field, fall well
+  short of it; a fixed cost of evaluating a row at all and the lookup's own
+  cost could each hold the rest, and neither reading separates them. That is 27.8's to attribute, the account first, then a `perf` profile
+  of the costing on leg and a per-term `introspect` reading.
+- **The TopK's off-leg median reads below every `28e804f` reading**, the
+  spreads overlapping, and the `dd` floor fell too, with no change between
+  the commits reaching a scan holding no filter; the difference is the
+  sitting's and unattributed, and no Δ carries it.

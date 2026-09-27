@@ -77,8 +77,9 @@ figures, and 27.9 decides the default by the spec's criterion.
 ## The readings
 
 `dynamic-filter-join` and `dynamic-filter-topk`, taken at `28e804f`, each
-alone (neither stands in a sharing edge); the numbers, the metrics that
-attribute each row and the per-term account are
+alone (neither stands in a sharing edge), raw sitting
+`runs/measure-20260927T200534/`; the tables are 27.7's now, and the per-term
+account and the metrics that attribute each row are
 [`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy a
 query".
 
