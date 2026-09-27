@@ -81,10 +81,10 @@ pub(crate) struct SortedStop {
 
 impl SortedStop {
     /// Whether `raw_row` is past the bound: some term is `False` of it. A
-    /// static filter's stop is asked only of a row that filter rejected, a
-    /// kept row having made every term `True`; a dynamic filter's, of every
-    /// row of a group it is armed in ([`DynamicPruning::arm`]), that filter
-    /// being evaluated nowhere else.
+    /// filter's stop is asked only of a row that filter rejected, a kept row
+    /// having made every term `True` — a dynamic filter's only in a group it
+    /// is armed in ([`DynamicPruning::arm`]), and of every row there the
+    /// static filter rejects, which its state is not evaluated on.
     pub(crate) fn passed(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
         self.terms.iter().any(|term| term.is_false(raw_row, split))
     }
@@ -257,11 +257,13 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
 /// replay reads there.
 ///
 /// **Its stop is asked only in a group whose statistics say a row there can
-/// pass it** ([`Self::stop`]). The state is evaluated nowhere else, so the
-/// stop is asked of every row it is asked of at all; asked in every kept
-/// group, it would evaluate its terms on each row of each group before the
-/// one holding the bound, where none can pass it and what it could save is
-/// the rest of that one group, pruning skipping every group after it.
+/// pass it** ([`Self::stop`]). The state is evaluated on the rows the static
+/// filter keeps and on no others ([`Self::state`]), so the stop is asked of
+/// every row the static filter rejects that it is asked of at all, and of
+/// each kept row the state rejects; asked in every kept group, it would
+/// evaluate its terms on such rows of each group before the one holding the
+/// bound, where none can pass it and what it could save is the rest of that
+/// one group, pruning skipping every group after it.
 ///
 /// `generation` and `filter` are the state last read, resolved against this
 /// block ([`Self::read`]); until the first read the filter is the empty
@@ -321,6 +323,12 @@ impl DynamicPruning {
         self.filter = filter;
         self.generation = Some(generation);
         self.verdicts.fill(None);
+    }
+
+    /// The state last read, resolved against this block — `None` before the
+    /// first read, when there is nothing to evaluate a row against.
+    pub(crate) fn state(&self) -> Option<&ResolvedExpr> {
+        self.generation.map(|_| &self.filter)
     }
 
     /// The verdict reached on each group under the state last read, `None`

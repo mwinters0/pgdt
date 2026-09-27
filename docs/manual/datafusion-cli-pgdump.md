@@ -156,9 +156,10 @@ metrics: `row_groups_pruned_statistics`, how many of the row groups `pgdt
 parse` recorded statistics for a `WHERE` ruled out unread;
 `row_groups_pruned_dynamic_filter`, how many more were ruled out while the
 query ran, by what a join's other side, an `ORDER BY … LIMIT`'s rows so far
-or an ungrouped `MIN`/`MAX` had narrowed the scan to; and
-`bytes_unread_early_stop`, the bytes of rows left unread in a block sorted
-past either one's bound. The node's `predicate=` opens with the part of the
+or an ungrouped `MIN`/`MAX` had narrowed the scan to;
+`rows_pruned_dynamic_filter`, how many rows of the groups read that narrowing
+dropped before decoding them; and `bytes_unread_early_stop`, the bytes of rows
+left unread in a block sorted past either one's bound. The node's `predicate=` opens with the part of the
 `WHERE` the scan answers itself, followed by each `DynamicFilter [ … ]` a
 join, sort or aggregate above hands it, `empty` until it first narrows; any
 other part of the `WHERE` is a `FilterExec` above it.

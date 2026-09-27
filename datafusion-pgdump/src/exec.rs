@@ -12,7 +12,8 @@
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
 //! hands them to every sub-stream it runs ([`ReplayFilter`]): the sub-streams
 //! are cut over the row groups their state keeps when the first is polled,
-//! and each skips those a later state rules out as it reaches them. Each is answered
+//! and each skips those a later state rules out as it reaches them and drops
+//! a row of the rest the state rejects before decoding it. Each is answered
 //! `No`, its producer re-checking its own rows, printed in `EXPLAIN`, and
 //! visited where DataFusion looks for a filter's consumer. The streaming exec
 //! is built again over the same planned replay each time the filters it
@@ -373,10 +374,17 @@ pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
 /// replay reached them, named as Parquet's scan names its own.
 pub(crate) const ROW_GROUPS_PRUNED_DYNAMIC_FILTER: &str = "row_groups_pruned_dynamic_filter";
 
+/// The metric counting the rows a dynamic filter dropped before decoding
+/// them, of those the replay read: named beside
+/// [`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`] rather than as Parquet's
+/// `pushdown_rows_pruned`, which counts the rows its static filter drops too.
+pub(crate) const ROWS_PRUNED_DYNAMIC_FILTER: &str = "rows_pruned_dynamic_filter";
+
 /// What a scan reports under `EXPLAIN ANALYZE`, beside the streaming exec's
 /// rows and time: the row groups the map's statistics ruled out, of those its
 /// blocks list ([`ROW_GROUPS_PRUNED_STATISTICS`]), those a dynamic filter
-/// ruled out of the rest ([`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`]), and the
+/// ruled out of the rest ([`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`]), the rows of
+/// those left that it dropped ([`ROWS_PRUNED_DYNAMIC_FILTER`]), and the
 /// bytes of rows an early stop left unread, at a static filter's bound or a
 /// dynamic one's ([`BYTES_UNREAD_EARLY_STOP`]). Counts rather than findings
 /// ([`crate::report`]): the note saying the same of the static pruning is
@@ -415,9 +423,9 @@ impl ScanMetrics {
     }
 
     /// `stream`, partition `partition` of this scan, counting what its early
-    /// stops left unread and what its dynamic filter pruned once it ends or
-    /// is dropped — a `LIMIT` met drops a partition before its end, and what
-    /// was skipped by then was still not read.
+    /// stops left unread and what its dynamic filter pruned and dropped once
+    /// it ends or is dropped — a `LIMIT` met drops a partition before its
+    /// end, and what was skipped by then was still not read.
     pub(crate) fn counted(&self, stream: TableStream<'static>, partition: usize) -> Counted {
         let unread = MetricBuilder::new(&self.set)
             .with_type(MetricType::Summary)
@@ -427,12 +435,16 @@ impl ScanMetrics {
             .with_type(MetricType::Summary)
             .with_category(MetricCategory::Rows)
             .counter(ROW_GROUPS_PRUNED_DYNAMIC_FILTER, partition);
-        Counted { stream, unread, pruned, counted: false }
+        let dropped = MetricBuilder::new(&self.set)
+            .with_type(MetricType::Summary)
+            .with_category(MetricCategory::Rows)
+            .counter(ROWS_PRUNED_DYNAMIC_FILTER, partition);
+        Counted { stream, unread, pruned, dropped, counted: false }
     }
 }
 
 /// A partition's stream, adding its early stops' unread bytes and the groups
-/// its dynamic filter pruned to the scan's metrics once
+/// and rows its dynamic filter pruned to the scan's metrics once
 /// ([`ScanMetrics::counted`]). A block cut across partitions is counted in
 /// each for the pieces that partition read, and the pieces' bytes add
 /// (`pgdump_query::EarlyStop::unread_bytes`); a group, by the one partition
@@ -442,6 +454,7 @@ pub(crate) struct Counted {
     stream: TableStream<'static>,
     unread: Count,
     pruned: Count,
+    dropped: Count,
     counted: bool,
 }
 
@@ -453,6 +466,8 @@ impl Counted {
             self.unread.add(usize::try_from(bytes).unwrap_or(usize::MAX));
             let groups = self.stream.dynamic_filter_pruned_groups();
             self.pruned.add(usize::try_from(groups).unwrap_or(usize::MAX));
+            let rows = self.stream.dynamic_filter_pruned_rows();
+            self.dropped.add(usize::try_from(rows).unwrap_or(usize::MAX));
         }
     }
 }

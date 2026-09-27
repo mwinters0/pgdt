@@ -471,19 +471,24 @@ fn counted(plan: &Arc<dyn ExecutionPlan>, name: &str) -> usize {
 /// The metric counting the row groups a dynamic filter pruned.
 const PRUNED_DYNAMIC: &str = "row_groups_pruned_dynamic_filter";
 
+/// The metric counting the rows a dynamic filter dropped before decoding them.
+const DROPPED_DYNAMIC: &str = "rows_pruned_dynamic_filter";
+
 /// The metric counting the bytes an early stop left unread.
 const UNREAD: &str = "bytes_unread_early_stop";
 
 /// **Every join, TopK and aggregate shape answers alike with the producers'
 /// filters on and off**, under either join mode, and each scan held the
-/// filter it is here for; **and some filter pruned a group, and some stopped
-/// a block its static filter alone did not.**
+/// filter it is here for; **and some filter pruned a group, some dropped a
+/// row of a group it read, and some stopped a block its static filter alone
+/// did not.**
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dynamic_filter_changes_no_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut ran = vec![BTreeSet::new(); QUERIES.len()];
     let mut unshaped = Vec::new();
-    let (mut pruning, mut stopping) = (BTreeSet::new(), BTreeSet::new());
+    let (mut pruning, mut dropping, mut stopping) =
+        (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     for fixture in statistics_fixtures() {
         let copy = parsed_copy(&fixture, dir.path()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
@@ -502,8 +507,12 @@ async fn a_dynamic_filter_changes_no_answer() {
                 let (got, plan) = run(&on, query.sql).await;
                 assert_eq!(got, expected, "{at}: flags on");
                 assert_eq!(counted(&unfiltered, PRUNED_DYNAMIC), 0, "{at}: flags off");
+                assert_eq!(counted(&unfiltered, DROPPED_DYNAMIC), 0, "{at}: flags off");
                 if counted(&plan, PRUNED_DYNAMIC) > 0 {
                     pruning.insert(query.sql);
+                }
+                if counted(&plan, DROPPED_DYNAMIC) > 0 {
+                    dropping.insert(query.sql);
                 }
                 if counted(&plan, UNREAD) > counted(&unfiltered, UNREAD) {
                     stopping.insert(query.sql);
@@ -531,6 +540,7 @@ async fn a_dynamic_filter_changes_no_answer() {
         assert_eq!(joins.len(), 2, "never ran under both join modes: {}", query.sql);
     }
     assert!(pruning.len() > 10, "queries whose filter pruned a group: {pruning:#?}");
+    assert!(dropping.len() > 12, "queries whose filter dropped a row: {dropping:#?}");
     assert!(stopping.len() > 2, "queries whose filter stopped a block: {stopping:#?}");
 }
 
@@ -650,6 +660,7 @@ async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
     let explained = explained.collect().await.unwrap();
     let explained = arrow::util::pretty::pretty_format_batches(&explained).unwrap().to_string();
     assert!(explained.contains(PRUNED_DYNAMIC), "{explained}");
+    assert!(explained.contains(DROPPED_DYNAMIC), "{explained}");
 
     let off = session(Join::Chosen, false);
     let fixture = fixtures_root().join("18/statistics/default.sql");
@@ -658,7 +669,8 @@ async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
     register(&off, &dump);
     let (unfiltered, plan) = run(&off, JOIN).await;
     assert_eq!(unfiltered, rows);
-    assert_eq!((counted(&plan, PRUNED_DYNAMIC), counted(&plan, UNREAD)), (0, 0));
+    let counts = [PRUNED_DYNAMIC, DROPPED_DYNAMIC, UNREAD].map(|name| counted(&plan, name));
+    assert_eq!(counts, [0, 0, 0]);
 }
 
 /// The rows each output partition of `plan`'s hash join emitted.

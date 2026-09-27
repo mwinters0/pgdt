@@ -9,8 +9,8 @@
 //! **And a replay reading it as a dynamic filter loses no row it keeps**:
 //! the same filters handed to the replay as a scan hands them
 //! ([`ReplayFilter`]), over several sub-streams, from the start or only once
-//! the first batch is out, skip only groups and sorted tails holding none of
-//! DataFusion's rows, and emit no row twice.
+//! the first batch is out, skip only groups, sorted tails and rows none of
+//! which DataFusion keeps, and emit no row twice.
 //!
 //! The filters are built of what the producers publish — comparisons with a
 //! literal either side, `IS [NOT] NULL`, `[NOT] IN` lists holding a `NULL`
@@ -148,9 +148,9 @@ async fn read(
 const DYNAMIC_JOBS: usize = 3;
 
 /// What a replay read under a dynamic filter emitted: every row as one batch
-/// (`None` for none), the groups it pruned, and whether an early stop left a
-/// byte unread.
-type ReadDynamic = (Option<RecordBatch>, u64, bool);
+/// (`None` for none), the groups it pruned, the rows it dropped, and whether
+/// an early stop left a byte unread.
+type ReadDynamic = (Option<RecordBatch>, u64, u64, bool);
 
 /// What a scan's replay returns of `table`, projected to `projection`, under
 /// no static filter and `tree` as a dynamic filter, over up to
@@ -193,7 +193,7 @@ async fn read_dynamic(
         Arc::new(ReplayFilter::new(held, partitions.resolved_schema()));
     let partitions = Arc::new(partitions);
     let under = partitions.under(filter);
-    let (mut batches, mut pruned, mut stopped) = (Vec::new(), 0, false);
+    let (mut batches, mut pruned, mut dropped, mut stopped) = (Vec::new(), 0, 0, false);
     for partition in 0..partitions.len() {
         let mut stream = under.stream(partition, 8);
         while let Some(batch) = stream.next().await {
@@ -203,10 +203,11 @@ async fn read_dynamic(
             }
         }
         pruned += stream.dynamic_filter_pruned_groups();
+        dropped += stream.dynamic_filter_pruned_rows();
         stopped |= stream.early_stops().iter().any(|stop| stop.unread_bytes.is_some());
     }
     let rows = batches.first().map(|first| concat_batches(&first.schema(), &batches).unwrap());
-    Ok((rows, pruned, stopped))
+    Ok((rows, pruned, dropped, stopped))
 }
 
 /// Each row of `batch` as text, counted: the rows as a multiset.
@@ -449,6 +450,8 @@ struct Tally {
     dynamic_pruning: usize,
     /// Groups those replays pruned.
     dynamic_groups: u64,
+    /// Replays under a dynamic filter that dropped a row of a group they read.
+    dynamic_dropping: usize,
     /// Replays under a dynamic filter that an early stop ended.
     dynamic_stopping: usize,
 }
@@ -519,9 +522,10 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
                 let from_the_start = rng.below(2) == 0;
                 let dynamic =
                     read_dynamic(&dump, name, &projection, &tree.expr, from_the_start).await;
-                let (got, pruned, stopped) = match dynamic {
-                    Ok((got, pruned, stopped)) => {
-                        (got.map(|got| rows(&got, |_| true)).unwrap_or_default(), pruned, stopped)
+                let (got, pruned, dropped, stopped) = match dynamic {
+                    Ok((got, pruned, dropped, stopped)) => {
+                        let got = got.map(|got| rows(&got, |_| true)).unwrap_or_default();
+                        (got, pruned, dropped, stopped)
                     }
                     Err(e) => {
                         failures.push(format!("{at}\n  refused as a dynamic filter: {e}"));
@@ -541,6 +545,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
                 }
                 tally.dynamic_pruning += usize::from(pruned > 0);
                 tally.dynamic_groups += pruned;
+                tally.dynamic_dropping += usize::from(dropped > 0);
                 tally.dynamic_stopping += usize::from(stopped);
             }
         }
@@ -551,6 +556,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
     assert!(tally.narrowed > tally.compared / 3, "{tally:?}");
     assert!(tally.loosened > 50, "{tally:?}");
     assert!(tally.dynamic_pruning > tally.compared / 10, "{tally:?}");
+    assert!(tally.dynamic_dropping > tally.compared / 10, "{tally:?}");
     assert!(tally.dynamic_stopping > 10, "{tally:?}");
 }
 

@@ -1,7 +1,8 @@
 //! A dynamic filter handed to a partitioned replay
 //! (`TablePartitions::under`): the sub-streams are cut over the row groups
 //! its state keeps at their first poll, the groups a later state rules out
-//! are skipped as the replay reaches them, a block sorted on a bound the state
+//! are skipped as the replay reaches them, a row of the rest the state
+//! rejects is dropped before it decodes, a block sorted on a bound the state
 //! requires stops past it, and a term a block cannot resolve keeps every row
 //! where it sits.
 //!
@@ -104,13 +105,15 @@ async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
 }
 
 /// What a replay of a table's `id` emitted under `dynamic`: the ids in file
-/// order and each sub-stream's, the groups its sub-streams pruned, the bytes
-/// its early stops left unread, and the order the plan declared `id` in.
+/// order and each sub-stream's, the groups its sub-streams pruned, the rows
+/// they dropped, the bytes its early stops left unread, and the order the
+/// plan declared `id` in.
 #[derive(Debug)]
 struct Run {
     ids: Vec<i32>,
     partitions: Vec<Vec<i32>>,
     pruned: u64,
+    dropped: u64,
     unread: u64,
     order: Sortedness,
 }
@@ -149,7 +152,7 @@ async fn run_table(
         .unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|filter| plan.under(filter));
-    let (mut partitions, mut pruned, mut unread) = (Vec::new(), 0, 0);
+    let (mut partitions, mut pruned, mut dropped, mut unread) = (Vec::new(), 0, 0, 0);
     for partition in 0..plan.len() {
         let mut stream = match &dynamic {
             Some(dynamic) => dynamic.stream(partition, 64),
@@ -162,21 +165,32 @@ async fn run_table(
         }
         partitions.push(ids);
         pruned += stream.dynamic_filter_pruned_groups();
+        dropped += stream.dynamic_filter_pruned_rows();
         unread += stream.early_stops().iter().filter_map(|stop| stop.unread_bytes).sum::<u64>();
     }
     let ids = partitions.concat();
-    Run { ids, partitions, pruned, unread, order: plan.orders()[0] }
+    Run { ids, partitions, pruned, dropped, unread, order: plan.orders()[0] }
 }
 
-/// `ordered`'s block, and the number of its groups whose `id` is at most
-/// `below`'s maximum — every group before the one holding `990`.
+/// The number of `ordered`'s groups whose `id` is below `bound` throughout —
+/// every group before the one holding it — and the groups its block lists.
 fn groups_below(index: &DumpIndex, bound: i64) -> (u64, usize) {
+    let (below, _) = below(index, bound);
+    let block = index.blocks_for("public.ordered").next().unwrap();
+    (below, block.statistics.as_deref().unwrap().groups.len())
+}
+
+/// The number of `ordered`'s groups whose `id` is below `bound` throughout,
+/// and the rows they hold.
+fn below(index: &DumpIndex, bound: i64) -> (u64, u64) {
     let block = index.blocks_for("public.ordered").next().unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
-    let below =
-        id.groups.iter().flatten().filter(|b| b.max.parse::<i64>().unwrap() < bound).count();
-    (below as u64, statistics.groups.len())
+    let below: Vec<usize> = (0..statistics.groups.len())
+        .filter(|&g| id.groups[g].as_ref().unwrap().max.parse::<i64>().unwrap() < bound)
+        .collect();
+    let rows = below.iter().map(|&g| statistics.groups[g].rows).sum();
+    (below.len() as u64, rows)
 }
 
 /// How many of `ordered`'s groups hold an `id` in `ids`, which its ids being
@@ -191,11 +205,12 @@ fn groups_meeting(index: &DumpIndex, ids: std::ops::RangeInclusive<i64>) -> u64 
     id.groups.iter().flatten().filter(meets).count() as u64
 }
 
-/// **A dynamic filter's state skips every group it rules out, and only
-/// those**: under `id >= 990` the replay emits exactly the rows of the groups
-/// at and past the one holding `990`, serially and split alike, and counts
-/// each group it skipped once; with statistics off, or a state that rules
-/// nothing out, it skips nothing.
+/// **A dynamic filter's state skips every group it rules out, and drops each
+/// row of the rest it rejects**: under `id >= 990` the replay reads exactly
+/// the groups at and past the one holding `990`, emits exactly the rows the
+/// state keeps, serially and split alike, and counts each group it skipped
+/// and each row it dropped once; with statistics off, or a state that rules
+/// nothing out, it skips and drops nothing.
 #[tokio::test]
 async fn a_dynamic_filter_skips_every_group_its_state_rules_out() {
     for version in VERSIONS {
@@ -205,18 +220,22 @@ async fn a_dynamic_filter_skips_every_group_its_state_rules_out() {
         let whole = run(&dump, &index, 1, true, None).await;
         assert_eq!(whole.ids, (1..=1000).collect::<Vec<_>>(), "pg_dump {version}");
 
+        let (_, skipped_rows) = self::below(&index, 990);
         let at_least = || Moving::constant(term("id", PredicateOp::Ge, "990"));
         let serial = run(&dump, &index, 1, true, Some(at_least())).await;
-        let first_kept = serial.ids[0];
-        assert!(first_kept <= 990 && first_kept > 1, "pg_dump {version}: {:?}", serial.ids);
-        assert_eq!(serial.ids, (first_kept..=1000).collect::<Vec<_>>(), "pg_dump {version}");
+        assert_eq!(serial.ids, (990..=1000).collect::<Vec<_>>(), "pg_dump {version}");
         assert_eq!(serial.pruned, below, "pg_dump {version}");
+        // The kept groups' rows below the bound, read and dropped.
+        assert!(skipped_rows < 989, "pg_dump {version}: every row below 990 skipped");
+        assert_eq!(serial.dropped, 989 - skipped_rows, "pg_dump {version}");
         assert_eq!(serial.unread, 0, "pg_dump {version}: no bound its order closes");
 
-        // Each group the cut ruled out is counted once, by one sub-stream.
+        // Each group the cut ruled out is counted once, by one sub-stream,
+        // and each row dropped by the sub-stream that read it.
         let split = run(&dump, &index, SPLIT_JOBS, true, Some(at_least())).await;
         assert_eq!(split.ids, serial.ids, "pg_dump {version}");
         assert_eq!(split.pruned, below, "pg_dump {version}: {split:?}");
+        assert_eq!(split.dropped, serial.dropped, "pg_dump {version}: {split:?}");
 
         for (what, unfiltered) in [
             ("statistics off", run(&dump, &index, 1, false, Some(at_least())).await),
@@ -226,7 +245,8 @@ async fn a_dynamic_filter_skips_every_group_its_state_rules_out() {
             }),
         ] {
             assert_eq!(unfiltered.ids, whole.ids, "pg_dump {version}: {what}");
-            assert_eq!((unfiltered.pruned, unfiltered.unread), (0, 0), "pg_dump {version}: {what}");
+            let counts = (unfiltered.pruned, unfiltered.dropped, unfiltered.unread);
+            assert_eq!(counts, (0, 0, 0), "pg_dump {version}: {what}");
         }
     }
 }
@@ -301,7 +321,7 @@ async fn a_term_no_block_resolves_keeps_every_row_where_it_sits() {
     ] {
         let got = run(&dump, &index, 1, true, Some(Moving::constant(state.clone()))).await;
         assert_eq!(got.ids, whole.ids, "{state:?}");
-        assert_eq!((got.pruned, got.unread), (0, 0), "{state:?}");
+        assert_eq!((got.pruned, got.dropped, got.unread), (0, 0, 0), "{state:?}");
     }
     let beside = Expr::And(vec![lacking(), term("id", PredicateOp::Lt, "5")]);
     let got = run(&dump, &index, 1, true, Some(Moving::constant(beside))).await;
@@ -324,6 +344,34 @@ fn row_bytes(dump: &Path, table: &str) -> BTreeMap<i32, u64> {
         .collect()
 }
 
+/// A dynamic filter whose state is `at_cut` when the cut reads it and keeps
+/// every row after, under a generation of its own — so a replay reads each
+/// group the cut handed it whole, and what a sub-stream emits is what it was
+/// handed rather than the rows of it the cut's state keeps.
+struct CutOnly {
+    at_cut: Arc<Expr>,
+    reads: AtomicU64,
+}
+
+impl CutOnly {
+    fn new(at_cut: Expr) -> Arc<Self> {
+        Arc::new(Self { at_cut: Arc::new(at_cut), reads: AtomicU64::new(0) })
+    }
+}
+
+impl DynamicFilter for CutOnly {
+    fn generation(&self) -> u64 {
+        1
+    }
+
+    fn current(&self) -> (u64, Arc<Expr>) {
+        match self.reads.fetch_add(1, Ordering::Relaxed) {
+            0 => (0, Arc::clone(&self.at_cut)),
+            _ => (1, Arc::new(Expr::default())),
+        }
+    }
+}
+
 /// **A selective state on a clustered key is cut balanced over the groups it
 /// keeps**: the membership a hash join publishes for a build side holding
 /// `ordered`'s ids 400 to 499 keeps a run of groups inside the middle
@@ -333,14 +381,15 @@ fn row_bytes(dump: &Path, table: &str) -> BTreeMap<i32, u64> {
 /// rows are the kept groups' in file order, and each group ruled out is
 /// counted once.
 ///
-/// The bounds a join publishes beside its membership keep the same groups,
-/// and add the stop the sorted-block test above reads; without them no row
-/// ends a sub-stream early, so what each emits is what it was handed.
+/// The state keeps every row once the cut is made ([`CutOnly`]), so what each
+/// sub-stream emits is what it was handed: the membership's own state would
+/// drop the kept groups' rows outside it, and a join's bounds would add the
+/// stop the sorted-block test above reads.
 #[tokio::test]
 async fn a_selective_state_on_a_clustered_key_is_cut_balanced_over_the_groups_it_keeps() {
     let build_side = || {
         let members = (400..500).map(|id| term("id", PredicateOp::Eq, &id.to_string()));
-        Moving::constant(Expr::Or(members.collect()))
+        CutOnly::new(Expr::Or(members.collect()))
     };
     for version in VERSIONS {
         let (_dir, dump, index) = gathered(version).await;
@@ -448,17 +497,93 @@ impl DynamicFilter for Unmoving {
 /// verdicts** rather than asking its groups again, a generation naming one
 /// state. The cut reads a state keeping everything; each sub-stream then
 /// reads one ruling most groups out under the same generation, and prunes
-/// nothing by it.
+/// no group by it — reading every row, and dropping each the state it read
+/// rejects.
 #[tokio::test]
 async fn a_replay_takes_the_cut_s_verdicts_under_the_generation_it_read() {
     let (_dir, dump, index) = gathered(18).await;
-    let whole = run(&dump, &index, 1, true, None).await;
     let filter = Arc::new(Unmoving {
         first: Arc::new(Expr::default()),
         then: Arc::new(term("id", PredicateOp::Ge, "990")),
         reads: AtomicU64::new(0),
     });
     let got = run(&dump, &index, SPLIT_JOBS, true, Some(filter)).await;
-    assert_eq!(got.ids, whole.ids);
-    assert_eq!(got.pruned, 0);
+    assert_eq!(got.ids, (990..=1000).collect::<Vec<_>>());
+    assert_eq!((got.pruned, got.dropped), (0, 989));
+}
+
+/// `public.t`'s `id` from 1 to 200 beside an integer `v` that is its `id`,
+/// but text no `integer` decoder reads in the first fifty rows.
+fn undecodable_head(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("undecodable.sql");
+    let rows: String = (1..=200)
+        .map(|id| if id <= 50 { format!("{id}\tnope\n") } else { format!("{id}\t{id}\n") })
+        .collect();
+    std::fs::write(
+        &path,
+        format!(
+            "CREATE TABLE public.t (\n    id integer,\n    v integer\n);\n\n\
+             COPY public.t (id, v) FROM stdin;\n{rows}\\.\n"
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// The ids a serial replay of `public.t`, projecting `id` and `v`, emitted
+/// under `dynamic` and the rows it dropped — or the error it ended on.
+async fn read_both(
+    dump: &Path,
+    index: &DumpIndex,
+    dynamic: Option<Arc<dyn DynamicFilter>>,
+) -> Result<(Vec<i32>, u64), String> {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    let watch =
+        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
+    let table = index.tables().into_iter().find(|t| t.qualified() == "public.t").unwrap();
+    let options = QueryOptions {
+        projection: Some(vec!["id".into(), "v".into()]),
+        parallelism: Parallelism::workers(1, 1 << 30),
+        ..QueryOptions::default()
+    };
+    let plan = TablePartitions::plan(source, index, watch, &table, ScanOptions::default(), options)
+        .await
+        .unwrap();
+    let plan = Arc::new(plan);
+    let mut stream = match dynamic {
+        Some(filter) => plan.under(filter).stream(0, 64),
+        None => plan.stream(0, 64),
+    };
+    let mut ids = Vec::new();
+    while let Some(batch) = stream.next().await {
+        let batch: RecordBatch = batch.map_err(|e| e.to_string())?;
+        ids.extend(batch.column(0).as_primitive::<Int32Type>().iter().map(Option::unwrap));
+    }
+    Ok((ids, stream.dynamic_filter_pruned_rows()))
+}
+
+/// **A row the state rejects is dropped before a column of it decodes**, in
+/// a group the state keeps: under `id > 50`, over one group holding every
+/// row, the fifty rows whose `v` no decoder reads are dropped and counted,
+/// where read without the filter the first of them is the replay's error.
+/// **A field of the state's own that does not decode keeps its row**, so
+/// under `v > 100` the error is the one the unfiltered replay raises.
+#[tokio::test]
+async fn a_row_the_state_rejects_is_dropped_before_it_decodes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = undecodable_head(dir.path());
+    let index = mapped(&dump, 1 << 20).await;
+    let block = index.blocks_for("public.t").next().unwrap();
+    assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
+
+    let unfiltered = read_both(&dump, &index, None).await;
+    let refused = unfiltered.expect_err("the head's `v` decodes");
+
+    let past_head = Moving::constant(term("id", PredicateOp::Gt, "50"));
+    let (ids, dropped) = read_both(&dump, &index, Some(past_head)).await.unwrap();
+    assert_eq!(ids, (51..=200).collect::<Vec<_>>());
+    assert_eq!(dropped, 50);
+
+    let on_v = Moving::constant(term("v", PredicateOp::Gt, "100"));
+    assert_eq!(read_both(&dump, &index, Some(on_v)).await, Err(refused));
 }
