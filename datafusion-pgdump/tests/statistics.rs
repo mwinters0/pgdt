@@ -518,6 +518,90 @@ async fn an_extreme_answers_where_its_stored_bound_is_the_value() {
     }
 }
 
+/// **An enum's extremes answer in its labels' text order, as scalars of its
+/// own `Dictionary`**: `public.moods.m` holds `happy`, `ok` and `sad`,
+/// declared `sad`, `ok`, `happy`, so the extremes DataFusion takes are the
+/// declared order's reversed.
+///
+/// - `MIN(m), MAX(m)` answers from statistics, and the blind session agrees.
+/// - Each alone is asked uncoerced, of the scan's own column: SQL's lone
+///   `MIN(m)` aggregates a cast to text, which `aggregate_statistics` reads
+///   nothing through, so SQL can only ever read the rows for it. Each answers
+///   with the value and the type reading the rows gives.
+/// - A filter DataFusion evaluates above the scan is planned over the table,
+///   and its statistics keep the enum's bounds in the column's type.
+#[tokio::test]
+async fn an_enum_s_extremes_answer_in_label_text_order() {
+    use datafusion::functions_aggregate::min_max::{max_udaf, min_udaf};
+    use datafusion::physical_expr::PhysicalExpr;
+    use datafusion::physical_expr::aggregate::AggregateExprBuilder;
+    use datafusion::physical_optimizer::PhysicalOptimizerRule;
+    use datafusion::physical_optimizer::aggregate_statistics::AggregateStatistics;
+    use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode, PhysicalGroupBy};
+    use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/statistics/default.sql");
+    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let (dump, reading, blind, _) = opened(&copy, SchemaMode::Typed).await;
+    let both = "SELECT MIN(m), MAX(m) FROM \"dump\".public.moods";
+    assert_eq!(agrees(&reading, &blind, None, both).await, Answer::FromStatistics, "{both}");
+
+    let table = dump.table(None, Some("public"), "moods").unwrap();
+    let m = table.schema().index_of("m").unwrap();
+    let enum_type = table.schema().field(m).data_type().clone();
+    let state = reading.state();
+    let scan = table.scan(&state, None, &[], None).await.unwrap();
+    let extreme = async |plan: Arc<dyn ExecutionPlan>| {
+        let batches = datafusion::physical_plan::collect(plan, reading.task_ctx()).await.unwrap();
+        let [batch] = batches.as_slice() else { panic!("{batches:?}") };
+        ScalarValue::try_from_array(batch.column(0), 0).unwrap()
+    };
+    for (udaf, expected) in [(min_udaf(), "happy"), (max_udaf(), "sad")] {
+        let name = udaf.name().to_string();
+        let argument: Arc<dyn PhysicalExpr> = Arc::new(ColumnExpr::new("m", m));
+        let aggregate = AggregateExprBuilder::new(udaf, vec![argument])
+            .schema(scan.schema())
+            .alias(&name)
+            .build()
+            .unwrap();
+        let input: Arc<dyn ExecutionPlan> =
+            Arc::new(CoalescePartitionsExec::new(Arc::clone(&scan)));
+        let plan: Arc<dyn ExecutionPlan> = Arc::new(
+            AggregateExec::try_new(
+                AggregateMode::Single,
+                PhysicalGroupBy::new_single(vec![]),
+                vec![Arc::new(aggregate)],
+                vec![None],
+                input,
+                scan.schema(),
+            )
+            .unwrap(),
+        );
+        let options = state.config().options();
+        let answered = AggregateStatistics::new().optimize(Arc::clone(&plan), options).unwrap();
+        let shown = displayable(answered.as_ref()).indent(false).to_string();
+        assert!(!shown.contains("PgDumpExec"), "a lone {name}(m) was not answered:\n{shown}");
+        let (from_statistics, from_rows) = (extreme(answered).await, extreme(plan).await);
+        assert_eq!(from_statistics, from_rows, "{name}(m)");
+        assert_eq!(from_statistics.data_type(), enum_type, "{name}(m)");
+        assert_eq!(from_statistics.to_string(), expected, "{name}(m)");
+    }
+
+    let filtered = "SELECT id, m FROM \"dump\".public.moods WHERE id % 2 = 1 ORDER BY id";
+    agrees(&reading, &blind, None, filtered).await;
+    let plan = reading.sql(filtered).await.unwrap().create_physical_plan().await.unwrap();
+    let shown = displayable(plan.as_ref()).indent(false).to_string();
+    assert!(shown.contains("FilterExec"), "the filter was not left above the scan:\n{shown}");
+    let statistics =
+        StatisticsContext::new().compute(plan.as_ref(), &StatisticsArgs::new()).unwrap();
+    let bounds = &statistics.column_statistics[1];
+    for bound in [&bounds.min_value, &bounds.max_value] {
+        let bound_type = bound.get_value().map(ScalarValue::data_type);
+        assert_eq!(bound_type.as_ref(), Some(&enum_type), "{filtered}: {bounds:?}");
+    }
+}
+
 /// A filter cuts rows out of the scan, so the table's own counts and extremes
 /// stop describing what it emits and nothing may be answered from them.
 #[tokio::test]
@@ -645,10 +729,9 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
             );
         }
     }
-    // An enum's `MIN` and `MAX` are not handed over (`KD45`); its
-    // `COUNT(DISTINCT)` is an `Int64` and
-    // counts labels, so it answers. So does an `interval`, a
-    // `MonthDayNano` distinct wherever its text is.
+    // An enum's `COUNT(DISTINCT)` is an `Int64` and counts labels, so it
+    // answers. So does an `interval`, a `MonthDayNano` distinct wherever its
+    // text is.
     let (_dump, reading, blind, _) = opened(&types, SchemaMode::Typed).await;
     for (column, table) in [("v_mood", "t_enum_domain"), ("v_interval", "t_interval")] {
         let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM \"dump\".public.{table}");

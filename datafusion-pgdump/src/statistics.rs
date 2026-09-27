@@ -56,16 +56,6 @@ pub(crate) fn table_statistics(
                 .and_then(|distinct| usize::try_from(distinct).ok())
                 .map_or(Precision::Absent, Precision::Exact);
             statistics.byte_size = byte_size(data_type, rows, column.value_bytes);
-            // deficiency: KD45 — an enum is emitted `Dictionary`, and no
-            // extreme of one is handed over, though the summary's bounds for it
-            // are the label-order set, the order DataFusion compares it in, and
-            // `bound` makes them scalars of the column's own type, which every
-            // reader of a column's `min_value` in 55 accepts — a `Utf8` would
-            // not meet the `Dictionary` null filter estimation fills a missing
-            // end with, so closing this is removing the return below.
-            if matches!(data_type, DataType::Dictionary(..)) {
-                return statistics;
-            }
             statistics.min_value = bound(column.min.as_ref(), column.bounds_complete);
             statistics.max_value = bound(column.max.as_ref(), column.bounds_complete);
             statistics.sum_value = sum(column.sum, data_type);
@@ -179,6 +169,13 @@ fn count(value: u64, complete: bool) -> Precision<usize> {
 ///
 /// A bound is withheld where it is itself a value the Arrow type cannot hold:
 /// it does not decode, and the module's note above says what that leaves.
+///
+/// A bound is a scalar of the column's own type — an enum's its `Dictionary`,
+/// which is what an uncoerced `MIN` returns and what filter estimation fills a
+/// missing end with, so a `Utf8` would be refused beside it. SQL's `MIN(e)`
+/// aggregates a cast to text, which DataFusion reads no statistics through,
+/// so a lone one reads the rows; beside `MAX(e)` the cast is shared in a
+/// projection that carries the bounds across it, and both answer.
 fn bound(bound: Option<&pgdump_query::Bound>, complete: bool) -> Precision<ScalarValue> {
     let Some(bound) = bound else { return Precision::Absent };
     let Ok(value) = ScalarValue::try_from_array(&bound.value, 0) else {

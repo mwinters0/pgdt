@@ -257,12 +257,6 @@ than reading as a phase nobody has sliced.
   choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
   of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
 
-- **KD45** — neither extreme of an enum column answers from the DataFusion
-  provider's statistics, though the bounds its summary reads are in label
-  order, the order DataFusion compares the emitted `Dictionary` in, and are
-  already of the column's own type. **(b) owned by `M173`**. Detail:
-  `datafusion-pgdump/src/statistics.rs`.
-
 - **KD46** — a block holding one distinct value records `Ascending`, so a
   descending table holding one declares no ordering to DataFusion and a sort
   it would satisfy is planned. **(c) unowned**; promoted by a table seen to lose its
