@@ -361,4 +361,40 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "map_forward or splice"
         ),
     ),
+    Acknowledged(
+        commit="9527003",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why=(
+            "27.5's evaluation in every block and its per-chunk state read change "
+            "only `DynamicRead`, `DynamicBlock`, `DynamicPruning` and one "
+            "`if let Some(dynamic)` per chunk in `replay`; `pgdt` never hands a "
+            "replay a dynamic filter, so every figure here runs one `None` check "
+            "per chunk and none per row"
+        ),
+        verified=(
+            "git show --format= -U0 9527003 -- pgdump_query/src/stream.rs "
+            "pgdump_query/src/prune.rs | grep '^@@'  # outside the Dynamic* types, "
+            "only the chunk-loop hunk in replay, guarded by dynamic.as_mut()"
+        ),
+    ),
 )
