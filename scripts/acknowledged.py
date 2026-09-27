@@ -260,4 +260,35 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show --format= -U0 2f75ff4 -- scripts/measure.py  # one docstring",
     ),
+    Acknowledged(
+        commit="7f5002d",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "preamble-prepass",
+            "parallel-peak-rss",
+            "statistics-gathering",
+            "reserve",
+            "map-only",
+            "rss-attribution",
+        ),
+        why=(
+            "27.3 changed the query replay (`replay`, `TablePartitions`, "
+            "`TableStream`, `StreamShared`) and `prune.rs`, which only a query's "
+            "plan reaches; `pgdt parse` runs `map_file` → `map_file_watched` → "
+            "`map_forward`/`splice`, none touched, so no parse timing moves; "
+            "`query-nomatch` replays no segment, gaining one `Arc<AtomicU64>` "
+            "per stream"
+        ),
+        verified=(
+            "git show --format= -U0 7f5002d -- pgdump_query/src/stream.rs | grep '^@@'  "
+            "# no hunk inside splice, map_forward, map_file or map_file_watched"
+        ),
+    ),
 )
