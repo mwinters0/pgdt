@@ -76,3 +76,4 @@ table as a work queue.
 | M173 | 2026-09-27 | An enum's `MIN`/`MAX` handed over as `Dictionary` scalars off the label-order bounds, closing `KD45` | | [2026-09-26](../status/history/2026-09-26.md) |
 | M174 | 2026-09-27 | `measure.py`'s two images pinned by digest, and the glibc each figure ran under named in the stamp or its own marker | | [2026-09-27](../status/history/2026-09-27.md) |
 | M175 | 2026-09-27 | A scan's `EXPLAIN` line prints its static filter and its dynamic ones as one `predicate=`, as Parquet does | | [2026-09-26](../status/history/2026-09-26.md) |
+| M176 | | A test-only node running a scan's partitions in a stated order: `statistics_never_change_an_answer` in file order, `dynamic_filters.rs` gaining the zeros' extremes in both, both targets re-run under load | P27 | [2026-09-27](../status/history/2026-09-27.md) |

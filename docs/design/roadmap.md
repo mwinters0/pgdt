@@ -17,6 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P27 — DataFusion's dynamic filters | **Current** | [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P28 — unrepresentable values | Sketched; not grilled | this file, below; [inbox](roadmap-P28-unrepresentable-values-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -558,6 +559,38 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
+
+## P28 — Unrepresentable values
+
+**A query's outcome never depends on which rows it happened to read.** A typed
+column holding a value its Arrow type cannot hold refuses wherever a read
+reaches that value (`KD8`), and a DataFusion query need not read every row, so
+the same query answers on one run and refuses on the next
+([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md)).
+Sketched to corner-avoidance depth, and after P27.
+
+**Correctness of type or correctness of data — only a wider type gives the
+second — is the user's choice, made at query time**, between two modes, neither
+of which fails a read:
+
+- **Typed, the default**: the column keeps the type the ADBC floor sets
+  ([`decisions.md`](decisions.md), "D38"), an unrepresentable value is read as
+  NULL, so an aggregate skips it, and a diagnostic says how many were skipped.
+  Such values are rare in real dumps, which is why this is the default.
+- **Untyped**: a column holding one is read as `Utf8View`, wider than the
+  floor, each value as its text.
+
+**So every map records what both modes need**, whatever statistics it was
+asked to gather — which columns hold such a value, and how many each group
+holds, which `info` reports — since the mode is chosen after the cache is
+written.
+
+What it must decide: how a query states its mode; the diagnostic's shape;
+the filter's semantics for such a value under the typed mode, and the
+statistics' NULL counts; the exception "D38" takes for the untyped mode;
+`interval`'s overflowing time part, which is no special value; and where the
+count lives in the cache. It runs after P27 because P27's last slice settles
+the per-row evaluation the typed mode must then change.
 
 ## P22 — The third tunable
 

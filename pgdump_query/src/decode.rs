@@ -341,9 +341,11 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// refusals ([`decode_interval`]'s infinities and overflowing time part, and
 /// `NaN` on a `Decimal128`): a typed column cannot hold the value, so
 /// materializing one is an `Error::FieldDecode` and there is no typed way to
-/// read it. `--schema-mode strings` returns the literal verbatim. **(c)
-/// unowned** — what is open is materialization, where the choice between a
-/// null, a sentinel and the error belongs to whichever phase takes it up.
+/// read it. `--schema-mode strings` returns the literal verbatim. A
+/// DataFusion query need not read every row — a `LIMIT` one partition meets
+/// first, a dynamic filter another partition tightened — so whether it
+/// reaches the value, and refuses, can differ from run to run. **(b) owned by
+/// P28**, whose modes read the value as NULL or its column as text.
 /// **A null makes every NULL count a floor**, each being `\N`s counted off
 /// the text: pruning's `IS NULL` truths (`ResolvedTerm::truths`) and the
 /// provider's `Exact` `COUNT(<column>)` would both answer wrongly unless
