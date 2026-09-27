@@ -82,7 +82,7 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.2.1** A dynamic filter's float comparison with a zero of either sign has no term, the translator keeping every row the filter's producer keeps by its own order and not only every row DataFusion's evaluation of the filter keeps; [notes](../design/roadmap-P27.2.1-float-zero-notes.md)
 - [x] **27.3** The library's dynamic-filter trait on the partitioned replay: re-pruning between groups on a moved generation, the early stop at a dynamic bound, and the scan's new metrics; [notes](../design/roadmap-P27.3-re-pruning-notes.md)
 - [x] **27.4** The byte cut made once at the first poll, over the groups the static and dynamic filters keep, planning staying at `scan()`, tested to leave a clustered selective join's sub-streams byte-balanced over the groups the dynamic filter keeps; [notes](../design/roadmap-P27.4-first-poll-cut-notes.md)
-- [ ] **27.5** Row-level evaluation before decode, the figures re-taken to decide its default, what they say filed against "D53"'s **Reopens** — the evaluation has landed, on; only the readings remain, `dynamic-filter-join` and `dynamic-filter-topk` from its commit, and their filing against "D53"; [notes](../design/roadmap-P27.5-row-level-notes.md)
+- [ ] **27.5** Row-level evaluation before decode, the figures re-taken to decide its default, what they say filed against "D53"'s **Reopens** — the evaluation has landed, on, in a block whose statistics answer; evaluation in every other block remains ([history](history/2026-09-27.md), "27.5 evaluates a dynamic filter's rows in every block"), then the readings, `dynamic-filter-join` and `dynamic-filter-topk` from its commit, and their filing against "D53"; [notes](../design/roadmap-P27.5-row-level-notes.md)
 
 ## Not started
 
@@ -114,14 +114,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **27.5 evaluates a dynamic filter per row only in a block whose statistics
-  answer.** The spec's row-level evaluation names no such condition. The call:
-  the state is read as the replay enters a row group, which only statistics
-  delimit, so a block without believed statistics — a cache parsed with
-  `--statistics none`, a block that declined, a query not using them — reads
-  no state and drops no row, keeping the trait's word that a replay drops
-  nothing on a filter's account where the query does not use statistics
-  (`stream.rs`, `DynamicRead::rejects`). Reconsidering means choosing a
-  cadence for reading the state where there is no group: per row, a read
-  lock per held filter each row; per segment or batch, a rule a TopK's
-  tightening would then depend on.

@@ -34,11 +34,10 @@ sweep").
 
 ## Negative results
 
-- **Evaluating in a block without statistics** is not done: it needs a
-  cadence for reading the state that no group boundary gives — per row, a
-  read lock per held filter per row; per segment or per batch, a new rule a
-  TopK's tightening would lean on. It is under STATUS's "Decisions worth
-  another look".
+- **Evaluating only in a block whose statistics answer** is refused, and is
+  owed by this slice
+  ([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md),
+  "27.5 evaluates a dynamic filter's rows in every block").
 - **A decode failure as a rejection** is refused: it would hide a refusal
   behind whether the state had narrowed, the timing `KD8`'s refusal already
   depends on elsewhere (the P28 inbox).
