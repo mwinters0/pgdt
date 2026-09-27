@@ -291,4 +291,42 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "# no hunk inside splice, map_forward, map_file or map_file_watched"
         ),
     ),
+    Acknowledged(
+        commit="dbea055",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why=(
+            "27.4's first-poll cut lives in `TablePartitions::under`/`DynamicPartitions` "
+            "and `DynamicRead`, built only in `sub_stream`, which `pgdt` never calls; "
+            "what `pgdt` reaches is once-per-plan and keeps its arithmetic: "
+            "`plan_partitions`'s cutting loop moved verbatim into `cut_blocks`, "
+            "`PlannedReplay` a tuple become a struct, and `prune_block`'s runs built by "
+            "`group_run`/`push_run`/`or_header_run` with the same terms; no hunk in "
+            "`replay`'s row loop or in the map/scan path"
+        ),
+        verified=(
+            "git show --format= -U0 dbea055 -- pgdump_query/src/stream.rs "
+            "pgdump_query/src/prune.rs | grep '^@@'  # no hunk inside replay, "
+            "map_file or splice; DynamicRead built only in sub_stream"
+        ),
+    ),
 )
