@@ -397,4 +397,42 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "only the chunk-loop hunk in replay, guarded by dynamic.as_mut()"
         ),
     ),
+    Acknowledged(
+        commit="a62367c",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "census-attribution",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "nested-end-to-end",
+            "cross-file-floor",
+        ),
+        why=(
+            "27.6's `Expr::In` adds a leaf resolved once per block and a match arm in "
+            "`ResolvedExpr`'s evaluation, statistics and notes, reached only through "
+            "a filter; `pgdt`'s change is argument parsing. None of these figures "
+            "states `--where` or `--filter`, so none resolves or evaluates a term"
+        ),
+        verified=(
+            "git show --format= -U0 a62367c -- pgdump_query/src/stream.rs "
+            "pgdump_query/src/predicate.rs pgdt/src/main.rs pgdt/src/where_expr.rs "
+            "| grep '^@@'  # resolve_expr, resolve_loosened, hash_expr, ResolvedExpr "
+            "arms, ResolvedTerm::field_decode, parse_filter; measure.py's --where "
+            "appears only in query-where-* and the pruning family"
+        ),
+    ),
 )
