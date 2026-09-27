@@ -20,7 +20,10 @@ skipping the `NaN`'s rows once the other has tightened the aggregate's bound.
 
 **Why P28 cares.** Its evidence is that every order gives one answer, and
 neither path shows under a fixed schedule: `M176`'s test-only node, running a
-scan's partitions in a stated order, is the instrument, run in every order.
+scan's partitions in a stated order (`datafusion-pgdump/tests/in_order/`), is
+the instrument, run in every order: over majors 13, 16 and 18, thirty runs
+each, the blind `MIN(v_small)` refuses in every file-order run and answers
+`-1.50` in every reversed one.
 
 **Origin.** 2026-09-27, `runs/limit-refusal-20260927/` and
 `runs/statistics-flake-20260927/`. *Contingent on* DataFusion 55.1's merge.

@@ -34,16 +34,20 @@ use arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::catalog::TableProvider;
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::config::ConfigOptions;
+use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::reset_plan_states;
 use datafusion::physical_plan::metrics::MetricValue;
-use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
+use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     Finding, LocalFileSource, ScanOptions, StatisticsRequest, StatisticsSelection, map_file,
 };
+
+mod in_order;
+use in_order::{Order, RunScansInOrder};
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
@@ -353,6 +357,20 @@ const FLAGS: [&str; 3] = [
 /// Several partitions and small batches, so a TopK's filter tightens while
 /// the scan still streams and a partition's cut lands inside a block.
 fn session(join: Join, on: bool) -> SessionContext {
+    SessionContext::new_with_config(config(join, on))
+}
+
+/// [`session`], running each scan's partitions one at a time in `order`.
+fn session_in(join: Join, on: bool, order: Order) -> SessionContext {
+    SessionContext::new_with_state(
+        SessionStateBuilder::new_with_default_features()
+            .with_config(config(join, on))
+            .with_physical_optimizer_rule(Arc::new(RunScansInOrder(order)))
+            .build(),
+    )
+}
+
+fn config(join: Join, on: bool) -> SessionConfig {
     let mut config = SessionConfig::new().with_target_partitions(3).with_batch_size(8);
     for flag in FLAGS {
         config = config.set_bool(flag, on);
@@ -362,7 +380,7 @@ fn session(join: Join, on: bool) -> SessionContext {
             .set_usize("datafusion.optimizer.hash_join_single_partition_threshold", 0)
             .set_usize("datafusion.optimizer.hash_join_single_partition_threshold_rows", 0);
     }
-    SessionContext::new_with_config(config)
+    config
 }
 
 /// `dump`'s tables registered in `ctx` under their bare names.
@@ -514,6 +532,69 @@ async fn a_dynamic_filter_changes_no_answer() {
     }
     assert!(pruning.len() > 10, "queries whose filter pruned a group: {pruning:#?}");
     assert!(stopping.len() > 2, "queries whose filter stopped a block: {stopping:#?}");
+}
+
+/// `zeros`' columns, each holding both zeros at an extreme, in both orders of
+/// appearance (`scripts/fixture_schema_statistics.sql`).
+const ZEROS: [&str; 6] = [
+    "min_pos_first",
+    "min_neg_first",
+    "max_neg_first",
+    "max_pos_first",
+    "r_min_pos_first",
+    "r_max_neg_first",
+];
+
+/// **A float's zeros at its extremes answer alike with the producers'
+/// filters on and off, whichever partition runs first.** A TopK and an
+/// ungrouped `MIN`/`MAX` order `-0` below `0` while their thresholds'
+/// evaluation calls them equal, so a scan pruning by such a threshold loses
+/// the zero it rules out only where the partition holding the other zero has
+/// already published it — which a schedule decides. Each order is run, so
+/// the translator's rule for a zero (`dynamic_filter.rs`, `comparison`) is
+/// held to both.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut split = false;
+    for fixture in statistics_fixtures() {
+        let copy = parsed_copy(&fixture, dir.path()).await;
+        let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+        if !dump.tables().iter().any(|t| t.table == "zeros") {
+            continue;
+        }
+        for order in Order::ALL {
+            let (off, on) =
+                (session_in(Join::Chosen, false, order), session_in(Join::Chosen, true, order));
+            register(&off, &dump);
+            register(&on, &dump);
+            for column in ZEROS {
+                // A static filter keeps the statistics from answering the
+                // aggregates.
+                for sql in [
+                    format!("SELECT MIN({column}) FROM zeros WHERE id > 0"),
+                    format!("SELECT MAX({column}) FROM zeros WHERE id > 0"),
+                    format!("SELECT {column} FROM zeros ORDER BY {column} LIMIT 1"),
+                    format!("SELECT {column} FROM zeros ORDER BY {column} DESC LIMIT 1"),
+                ] {
+                    let at = format!("{} ({order:?}): {sql}", fixture.display());
+                    let (expected, _) = run(&off, &sql).await;
+                    let (got, plan) = run(&on, &sql).await;
+                    assert_eq!(got, expected, "{at}: flags on");
+                    // A column declared sorted is read under a limit with
+                    // no TopK, so only the aggregates are sure to publish.
+                    let aggregate = !sql.contains("LIMIT");
+                    assert!(
+                        !aggregate || !held(&plan).is_empty(),
+                        "{at}: no filter reached the scan"
+                    );
+                    let [scan] = scans(&plan).try_into().unwrap();
+                    split |= scan.output_partitioning().partition_count() > 1;
+                }
+            }
+        }
+    }
+    assert!(split, "`zeros` was never read as more than one partition, so no order was run");
 }
 
 /// The newest major's `statistics` fixture, parsed, and a session over it

@@ -41,6 +41,7 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{BinaryExpr, Expr, Operator, TableProviderFilterPushDown};
 use datafusion::physical_expr::LexOrdering;
 use datafusion::physical_expr::expressions::Column as ColumnExpr;
+use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::statistics::{StatisticsArgs, StatisticsContext};
@@ -53,6 +54,9 @@ use pgdump_query::{
     Finding, LocalFileSource, NestedPlan, ScanOptions, SchemaMode, StatisticsRequest,
     StatisticsSelection, TableName, map_file,
 };
+
+mod in_order;
+use in_order::{Order, RunScansInOrder};
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
@@ -132,31 +136,45 @@ async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsR
     copy
 }
 
-/// A session that reads the provider's statistics, and one that cannot.
+/// A session that reads the provider's statistics, and one that cannot, each
+/// running a scan's partitions in file order. **The blind session's answer is
+/// the oracle, so it must be one answer**: which partition an ungrouped
+/// aggregate's dynamic filter hears from first decides whether a partition
+/// holding a value its column's type cannot hold is read, and so whether the
+/// query refuses (`KD8`) — in file order the same one on every run.
 fn sessions() -> (SessionContext, SessionContext) {
-    sessions_at(2)
+    sessions_in(2, Some(Order::File))
 }
 
-/// [`sessions`], planning `partitions` partitions to a scan.
+/// [`sessions`], planning `partitions` partitions to a scan and running them
+/// however DataFusion schedules them.
 fn sessions_at(partitions: usize) -> (SessionContext, SessionContext) {
+    sessions_in(partitions, None)
+}
+
+fn sessions_in(partitions: usize, order: Option<Order>) -> (SessionContext, SessionContext) {
     let config = SessionConfig::new().with_target_partitions(partitions).with_batch_size(64);
-    let reading = SessionContext::new_with_config(config.clone());
-    let state = reading.state();
-    let all = state.physical_optimizers();
-    let rules: Vec<_> =
+    let defaults = SessionContext::new_with_config(config.clone());
+    let all = defaults.state().physical_optimizers().to_vec();
+    let blind: Vec<_> =
         all.iter().filter(|rule| rule.name() != "aggregate_statistics").cloned().collect();
     assert_eq!(
-        rules.len() + 1,
+        blind.len() + 1,
         all.len(),
         "`aggregate_statistics` is the rule that reads a source's statistics"
     );
-    let blind = SessionContext::new_with_state(
-        SessionStateBuilder::new_with_default_features()
-            .with_config(config)
-            .with_physical_optimizer_rules(rules)
-            .build(),
-    );
-    (reading, blind)
+    let session = |mut rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>>| {
+        if let Some(order) = order {
+            rules.push(Arc::new(RunScansInOrder(order)));
+        }
+        SessionContext::new_with_state(
+            SessionStateBuilder::new_with_default_features()
+                .with_config(config.clone())
+                .with_physical_optimizer_rules(rules)
+                .build(),
+        )
+    };
+    (session(all), session(blind))
 }
 
 /// A SQL identifier, quoted.
