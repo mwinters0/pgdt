@@ -235,4 +235,29 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show --format= -U0 b326165 -- scripts/measure.py  # the registry move alone",
     ),
+    Acknowledged(
+        commit="b470ab6",
+        figures=("session-drift",),
+        why=(
+            "`M174` pinned both images to the digests their tags already resolved "
+            "to, and asks each place's glibc by one untimed `getconf` run per "
+            "session, before that place's first figure; every shape's script, "
+            "mounts and image content are unchanged, so no reading can move"
+        ),
+        verified=(
+            "git show --format= -U0 b470ab6 -- scripts/measure.py  # read every hunk; "
+            "`sudo nerdctl image inspect --mode=native docker.io/library/postgres:16` "
+            "and `…/archlinux:base`, `.[0].Image.Target.digest`, against `Config`'s pins"
+        ),
+    ),
+    Acknowledged(
+        commit="2f75ff4",
+        figures=("session-drift",),
+        why=(
+            "the review of `M174`'s glibc call added to `glibc_problems`'s "
+            "docstring; no command shape, input, regime or gate moved, so no "
+            "reading can"
+        ),
+        verified="git show --format= -U0 2f75ff4 -- scripts/measure.py  # one docstring",
+    ),
 )
