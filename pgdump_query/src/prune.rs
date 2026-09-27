@@ -15,8 +15,9 @@
 //! **A dynamic filter is read against the same statistics** ([`DynamicPruning`]):
 //! every group once when the first sub-stream is polled, which is where they
 //! are cut ([`DynamicPruning::kept_within`]), and after that a group at a time
-//! as the replay reaches it under a state that has moved, rather than every
-//! group of the block at each move, since its state can move at any boundary.
+//! as the replay reaches it, or the group being read where a state moves
+//! inside it, rather than every group of the block at each move, since its
+//! state can move at any moment (`docs/design/decisions.md`, "D93").
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -250,32 +251,30 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
 /// **Past the cut, a group's verdict is reached only when the replay reaches
 /// the group**, and kept until the state moves. The cut asks every group once,
 /// under the state it reads ([`Self::kept_within`]), and a replay reading that
-/// state takes its verdicts ([`Self::seed`]). A state can move at every group
-/// boundary — a TopK tightens while the scan streams — so re-pruning the whole
-/// block on each move would evaluate its every group at each of its
-/// boundaries; asked in order, each group is evaluated once per state the
-/// replay reads there.
+/// state takes its verdicts ([`Self::seed`]). A state can move at any moment —
+/// a TopK tightens while the scan streams — so re-pruning the whole block on
+/// each move would evaluate its every group at each read; asked in order, each
+/// group is evaluated once per state the replay reads there.
 ///
 /// **Its stop is asked only in a group whose statistics say a row there can
 /// pass it** ([`Self::stop`]). The state is evaluated on the rows the static
-/// filter keeps and on no others ([`Self::state`]), so the stop is asked of
-/// every row the static filter rejects that it is asked of at all, and of
-/// each kept row the state rejects; asked in every kept group, it would
-/// evaluate its terms on such rows of each group before the one holding the
-/// bound, where none can pass it and what it could save is the rest of that
-/// one group, pruning skipping every group after it.
+/// filter keeps and on no others (`crate::stream`'s `DynamicRead::rejects`),
+/// so the stop is asked of every row the static filter rejects that it is
+/// asked of at all, and of each kept row the state rejects; asked in every
+/// kept group, it would evaluate its terms on such rows of each group before
+/// the one holding the bound, where none can pass it and what it could save
+/// is the rest of that one group, pruning skipping every group after it.
 ///
-/// `generation` and `filter` are the state last read, resolved against this
-/// block ([`Self::read`]); until the first read the filter is the empty
-/// conjunction, keeping every group.
+/// `filter` is the state last read, resolved against this block
+/// ([`Self::read`]); until the first read it is the empty conjunction,
+/// keeping every group.
 pub(crate) struct DynamicPruning {
     statistics: Arc<BlockStatistics>,
     believed: Vec<bool>,
     kinds: StoredKinds,
     /// The block's data and its end, as [`group_run`] reads them.
     extent: Range<u64>,
-    generation: Option<u64>,
-    filter: ResolvedExpr,
+    filter: Arc<ResolvedExpr>,
     /// Per group, whether `filter` keeps it, where asked since it was read.
     verdicts: Vec<Option<bool>>,
     stop: Option<SortedStop>,
@@ -300,8 +299,7 @@ impl DynamicPruning {
             believed,
             kinds,
             extent: block.data_offset..block.end_offset,
-            generation: None,
-            filter: ResolvedExpr::And(Vec::new()),
+            filter: Arc::new(ResolvedExpr::And(Vec::new())),
             verdicts: vec![None; groups],
             stop: None,
             entered: None,
@@ -309,26 +307,14 @@ impl DynamicPruning {
         })
     }
 
-    /// The generation of the state last read, `None` before the first.
-    pub(crate) fn generation(&self) -> Option<u64> {
-        self.generation
-    }
-
-    /// Take `filter`, the state at `generation` resolved against this block:
-    /// every verdict reached under the state before is forgotten.
-    pub(crate) fn read(&mut self, generation: u64, filter: ResolvedExpr) {
+    /// Take `filter`, a state resolved against this block: every verdict
+    /// reached under the state before is forgotten.
+    pub(crate) fn read(&mut self, filter: Arc<ResolvedExpr>) {
         let view =
             Believed { statistics: &self.statistics, believed: &self.believed, kinds: &self.kinds };
         self.stop = sorted_stop(&filter, &view);
         self.filter = filter;
-        self.generation = Some(generation);
         self.verdicts.fill(None);
-    }
-
-    /// The state last read, resolved against this block — `None` before the
-    /// first read, when there is nothing to evaluate a row against.
-    pub(crate) fn state(&self) -> Option<&ResolvedExpr> {
-        self.generation.map(|_| &self.filter)
     }
 
     /// The verdict reached on each group under the state last read, `None`

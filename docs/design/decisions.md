@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D92 -->
+<!-- decision-watermark: D93 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -356,13 +356,19 @@ in file order, so concatenating them *is* the serial replay. Rejected: cutting a
 sparing a declared ordering its proof across them (`summary::partition_orders`) at every table's balance.
 
 ### D52 The worker is fused, and the earliest failing piece is the error
-A piece reads its range and parses each read in `spawn_blocking`; `scan_piece` does no I/O.
-Rejected: decode and parse pools over a channel (the ratio is a property of the command);
-speculative splitting; cross-block pipelining. Pieces drain in file order so the same truncated file
-names the same byte. `close_copy_block` has one body and two callers, or a parallel cache stops
-matching a serial one's. A failure only reading finds is the lowest-indexed failed sub-stream's,
-after the rows before it; a resolution refusal comes from the plan (D54).
-Across a DataFusion query's partitions the first refusal wins, each true; rejected: ordering them.
+A piece reads its range and parses each read in `spawn_blocking`; `scan_piece` does no I/O. Rejected: decode and parse pools over a
+channel (the ratio is a property of the command); speculative splitting; cross-block pipelining. Pieces drain in file order so the same
+truncated file names the same byte. `close_copy_block` has one body and two callers, or a parallel cache stops matching a serial one's.
+A failure only reading finds is the lowest-indexed failed sub-stream's, after the rows before it; a resolution refusal comes from the
+plan (D54). Across a DataFusion query's partitions the first refusal wins, each true; rejected: ordering them.
+
+### D93 A dynamic filter's rows are evaluated in every block, its state read at each group entered and each chunk taken
+Row evaluation consults no statistics, so it runs where none answer — a `--statistics none` cache, a declined block (D85), `KD33`'s tail —
+and under `use_statistics: false`. The state is read where its generation moved, at each group the replay enters and each chunk it takes;
+one read mid-group judges that group again, skipping the rest of it with each later group it rules out and re-arming one still kept, so
+when a state was read decides nothing its proof saves. Rejected: evaluating only where statistics delimit groups; a read per row, a lock
+per held filter on a line every partition shares; per output batch, upstream's, the filter running before the batch fills so a state ages
+with its own selectivity; group entry alone, older where merged groups are. Reopens: a reading pricing the per-chunk check. Code: `stream::DynamicRead`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed
@@ -370,13 +376,11 @@ No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or colu
 is what three-valued logic forces. Reopens: a set-membership term, should a dynamic filter's `IN`, evaluated per row as `Or`, be read to cost.
 
 ### D54 One tree, no planner, short-circuit defined against the root
-`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first
-`Unknown` except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only
-where evaluation reaches it, never in a row group statistics rule out or past a sorted block's
-stopping row, neither read (`prune.rs`). Resolution refusals come from the plan before any row, for
-the first refusing block in file order, walking leaves the evaluator would skip; a block with no
-column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group
-holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
+`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only
+the root's `True` matters; a decode failure surfaces only where evaluation reaches it, never in a row group statistics rule out or past
+a sorted block's stopping row, neither read (`prune.rs`). Resolution refusals come from the plan before any row, for the first refusing
+block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact
+Kleene everywhere; not skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —
@@ -417,22 +421,18 @@ Evidence: `datafusion-pgdump/tests/pushdown.rs`.
 
 ## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`, `summary.rs`)
 ### D75 Pruning takes only what each operator family proves
-Bounds answer the ordering operators, and under an equality operator rule out "equal" but never
-"unequal"; a dictionary answers the equality operators; a stop needs an ordering term the root
-conjunction requires, on a column sorted the way its bound closes; terms combine as if independent.
-Rejected: bounds proving "unequal", `Canonical`/`Trimmed` comparing spellings, one to a key only in
-text `*_out` wrote; and, though sound, a dictionary answering ordering, or a stop under `=` or `NOT`
-over the opposite operator. Reopens: a filter shape a reading shows common. Code:
-`ResolvedTerm::truths`, `prune::SortedStop`. Evidence: `tests/pruning.rs`'s generated check.
+Bounds answer the ordering operators, and under an equality operator rule out "equal" but never "unequal"; a dictionary answers the
+equality operators; a stop needs an ordering term the root conjunction requires, on a column sorted the way its bound closes; terms
+combine as if independent. Rejected: bounds proving "unequal", `Canonical`/`Trimmed` comparing spellings, one to a key only in text
+`*_out` wrote; and, though sound, a dictionary answering ordering, or a stop under `=` or `NOT` over the opposite operator. Reopens: a
+filter shape a reading shows common. Code: `ResolvedTerm::truths`, `prune::SortedStop`. Evidence: `tests/pruning.rs`'s generated check.
 
 ### D76 Gathering never keys a bytewise value; a bound past the cap is a prefix and a successor
-`text`, `character` and `bytea` order by a clipped head (`gather::Clipped`), not an `OrderKey`: a
-key copies the whole value, and a row may run to `--max-line-bytes`. Values agreeing on the head
-share every byte a stored bound reads, so bounds stay valid and only row order is lost (`Unsorted`),
-where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its last character by the
-next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte
-successor for text, which can end mid-character. Evidence: `gather.rs`'s
-`a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
+`text`, `character` and `bytea` order by a clipped head (`gather::Clipped`), not an `OrderKey`: a key copies the whole value, and a row
+may run to `--max-line-bytes`. Values agreeing on the head share every byte a stored bound reads, so bounds stay valid and only row
+order is lost (`Unsorted`), where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its
+last character by the next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte successor for text,
+which can end mid-character. Evidence: `gather.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
 ### D77 The statistics request is the mapping pass's argument, and gathering nothing is a selection
 `map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is

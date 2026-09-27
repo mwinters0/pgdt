@@ -21,8 +21,8 @@
 //!
 //! **The replay reads the translation when its first sub-stream is polled**,
 //! where it cuts them, **and as they run** ([`ReplayFilter`],
-//! `pgdump_query::DynamicFilter`), each time one enters a row group; the
-//! filters are translated again only once one of them has moved.
+//! `pgdump_query::DynamicFilter`), each time one enters a row group or takes
+//! a chunk; the filters are translated again only once one of them has moved.
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -116,8 +116,9 @@ impl fmt::Display for Sql<'_> {
 ///
 /// **Its generation is the sum of theirs**, each of which only rises, so it
 /// moves whenever one of them does; and the translation last made is kept
-/// until it has, since the replay asks at every row group it enters and a
-/// join's filter, once complete, never moves again.
+/// until it has, since the replay asks at every row group it enters and
+/// every chunk it takes, and a join's filter, once complete, never moves
+/// again.
 pub(crate) struct ReplayFilter {
     held: DynamicFilters,
     table: ResolvedSchema,
@@ -143,7 +144,7 @@ impl DynamicFilter for ReplayFilter {
 
     /// The generation is read before the states it is paired with: a filter
     /// moving in between is translated at its new state under the old
-    /// generation, and so read again at the next group, where the other order
+    /// generation, and so read again at the next group or chunk, where the other order
     /// would pair an old state with the new generation and keep it.
     fn current(&self) -> (u64, Arc<L>) {
         let generation = self.generation();

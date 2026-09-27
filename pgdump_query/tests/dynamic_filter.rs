@@ -1,10 +1,10 @@
 //! A dynamic filter handed to a partitioned replay
 //! (`TablePartitions::under`): the sub-streams are cut over the row groups
 //! its state keeps at their first poll, the groups a later state rules out
-//! are skipped as the replay reaches them, a row of the rest the state
-//! rejects is dropped before it decodes, a block sorted on a bound the state
-//! requires stops past it, and a term a block cannot resolve keeps every row
-//! where it sits.
+//! are skipped as the replay reaches them, the state is read again at each
+//! chunk the replay takes, a row the state rejects is dropped before it
+//! decodes in every block, a block sorted on a bound the state requires stops
+//! past it, and a term a block cannot resolve keeps every row where it sits.
 //!
 //! **That skipping loses no row the filter keeps** is checked with generated
 //! filters beside DataFusion's own evaluation of them
@@ -137,6 +137,20 @@ async fn run_table(
     use_statistics: bool,
     dynamic: Option<Arc<dyn DynamicFilter>>,
 ) -> Run {
+    let scan = ScanOptions::default();
+    run_scanned(dump, index, table, jobs, use_statistics, scan, dynamic).await
+}
+
+/// [`run_table`], reading in `scan`'s chunks.
+async fn run_scanned(
+    dump: &Path,
+    index: &DumpIndex,
+    table: &str,
+    jobs: usize,
+    use_statistics: bool,
+    scan: ScanOptions,
+    dynamic: Option<Arc<dyn DynamicFilter>>,
+) -> Run {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
@@ -147,9 +161,7 @@ async fn run_table(
         parallelism: Parallelism::workers(jobs, 1 << 30),
         ..QueryOptions::default()
     };
-    let plan = TablePartitions::plan(source, index, watch, &table, ScanOptions::default(), options)
-        .await
-        .unwrap();
+    let plan = TablePartitions::plan(source, index, watch, &table, scan, options).await.unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|filter| plan.under(filter));
     let (mut partitions, mut pruned, mut dropped, mut unread) = (Vec::new(), 0, 0, 0);
@@ -209,8 +221,9 @@ fn groups_meeting(index: &DumpIndex, ids: std::ops::RangeInclusive<i64>) -> u64 
 /// row of the rest it rejects**: under `id >= 990` the replay reads exactly
 /// the groups at and past the one holding `990`, emits exactly the rows the
 /// state keeps, serially and split alike, and counts each group it skipped
-/// and each row it dropped once; with statistics off, or a state that rules
-/// nothing out, it skips and drops nothing.
+/// and each row it dropped once. With statistics off it skips no group and
+/// drops every row the state rejects; under a state that rules nothing out it
+/// skips and drops nothing.
 #[tokio::test]
 async fn a_dynamic_filter_skips_every_group_its_state_rules_out() {
     for version in VERSIONS {
@@ -237,24 +250,27 @@ async fn a_dynamic_filter_skips_every_group_its_state_rules_out() {
         assert_eq!(split.pruned, below, "pg_dump {version}: {split:?}");
         assert_eq!(split.dropped, serial.dropped, "pg_dump {version}: {split:?}");
 
-        for (what, unfiltered) in [
-            ("statistics off", run(&dump, &index, 1, false, Some(at_least())).await),
-            ("a state keeping every row", {
-                let everything = Moving::constant(Expr::default());
-                run(&dump, &index, SPLIT_JOBS, true, Some(everything)).await
-            }),
-        ] {
-            assert_eq!(unfiltered.ids, whole.ids, "pg_dump {version}: {what}");
-            let counts = (unfiltered.pruned, unfiltered.dropped, unfiltered.unread);
-            assert_eq!(counts, (0, 0, 0), "pg_dump {version}: {what}");
+        for jobs in [1, SPLIT_JOBS] {
+            let blind = run(&dump, &index, jobs, false, Some(at_least())).await;
+            assert_eq!(blind.ids, serial.ids, "pg_dump {version}: statistics off, {jobs} job(s)");
+            let counts = (blind.pruned, blind.dropped, blind.unread);
+            assert_eq!(counts, (0, 989, 0), "pg_dump {version}: statistics off, {jobs} job(s)");
         }
+
+        let everything = Moving::constant(Expr::default());
+        let unfiltered = run(&dump, &index, SPLIT_JOBS, true, Some(everything)).await;
+        assert_eq!(unfiltered.ids, whole.ids, "pg_dump {version}");
+        let counts = (unfiltered.pruned, unfiltered.dropped, unfiltered.unread);
+        assert_eq!(counts, (0, 0, 0), "pg_dump {version}: a state keeping every row");
     }
 }
 
 /// **A state that moves mid-block is read as the replay enters the next
-/// group, and only then**: the groups read before it moved are emitted whole,
-/// the ones after it rules out are skipped, and the filter is asked once per
-/// group entered, not per row.
+/// group**: the groups read before it moved are emitted whole, the ones after
+/// it rules out are skipped, and the filter is asked once per group entered
+/// and chunk taken, not per row. `ordered` is one chunk, so the move is asked
+/// for at the fourth group: the first chunk's read and three groups' entries
+/// come before it.
 #[tokio::test]
 async fn a_state_moving_mid_block_prunes_from_the_next_group_it_enters() {
     for version in VERSIONS {
@@ -262,7 +278,7 @@ async fn a_state_moving_mid_block_prunes_from_the_next_group_it_enters() {
         let (below, groups) = groups_below(&index, 990);
         let at_least = || term("id", PredicateOp::Ge, "990");
         let serial = run(&dump, &index, 1, true, Some(Moving::constant(at_least()))).await;
-        let moving = Moving::new(Expr::default(), at_least(), 3);
+        let moving = Moving::new(Expr::default(), at_least(), 4);
         let moved = run(&dump, &index, 1, true, Some(Arc::clone(&moving) as _)).await;
         // The three groups entered before the move are read whole, and from
         // the fourth on the replay reads what the moved state keeps.
@@ -272,8 +288,114 @@ async fn a_state_moving_mid_block_prunes_from_the_next_group_it_enters() {
         assert_eq!(tail, serial.ids, "pg_dump {version}");
         assert_eq!(moved.pruned, below - 3, "pg_dump {version}");
         let asked = moving.asked.load(Ordering::Relaxed);
-        assert!(asked > 3 && asked <= groups as u64, "pg_dump {version}: asked {asked} times");
+        assert!(asked > 4 && asked <= groups as u64 + 1, "pg_dump {version}: asked {asked} times");
     }
+}
+
+/// `public.t`'s `id` from 1 to [`LONG_ROWS`], each row padded so that a
+/// small read chunk holds a few of them.
+fn long_block(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("long.sql");
+    let rows: String = (1..=LONG_ROWS).map(|id| format!("{id}\t{:>40}\n", "pad")).collect();
+    std::fs::write(
+        &path,
+        format!(
+            "CREATE TABLE public.t (\n    id integer,\n    pad text\n);\n\n\
+             COPY public.t (id, pad) FROM stdin;\n{rows}\\.\n"
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// The rows of [`long_block`].
+const LONG_ROWS: i32 = 2000;
+
+/// A read chunk holding a handful of [`long_block`]'s rows.
+const SMALL_CHUNK: usize = 512;
+
+/// `run`'s ids, split where they stop ascending by one: the rows read before
+/// a state moved, and those after.
+fn at_the_move(run: &Run) -> (&[i32], &[i32]) {
+    let jump = run.ids.windows(2).position(|pair| pair[1] != pair[0] + 1).map_or(0, |at| at + 1);
+    run.ids.split_at(jump)
+}
+
+/// **A state is read again at each chunk the replay takes, in every block**
+/// (`docs/design/decisions.md`, "D93"): over one row group, which a replay
+/// enters once, a state moving to `id > 1500` after a few reads drops every
+/// row it rejects from the next chunk on — statistics or not, and serially
+/// and split alike, each sub-stream from its own next chunk. Read only at
+/// the group's entry, the move would never be seen.
+#[tokio::test]
+async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = long_block(dir.path());
+    let index = mapped(&dump, 1 << 20).await;
+    let block = index.blocks_for("public.t").next().unwrap();
+    assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
+    let scan = ScanOptions { chunk_size_bytes: SMALL_CHUNK, ..ScanOptions::default() };
+    let past = || term("id", PredicateOp::Gt, "1500");
+
+    for use_statistics in [true, false] {
+        let moving = Moving::new(Expr::default(), past(), 4);
+        let got =
+            run_scanned(&dump, &index, "public.t", 1, use_statistics, scan.clone(), Some(moving))
+                .await;
+        let (head, tail) = at_the_move(&got);
+        let read = head.len() as i32;
+        assert!(read > 0 && read < 1500, "statistics {use_statistics}: {read} row(s) before");
+        assert!(head.iter().copied().eq(1..=read), "statistics {use_statistics}");
+        assert!(tail.iter().copied().eq(1501..=LONG_ROWS), "statistics {use_statistics}");
+        let counts = (got.pruned, got.dropped);
+        assert_eq!(counts, (0, (1500 - read) as u64), "statistics {use_statistics}");
+
+        let moving = Moving::new(Expr::default(), past(), 4);
+        let split = run_scanned(
+            &dump,
+            &index,
+            "public.t",
+            SPLIT_JOBS,
+            use_statistics,
+            scan.clone(),
+            Some(moving),
+        )
+        .await;
+        assert!(split.partitions.len() > 1, "statistics {use_statistics}: {split:?}");
+        let kept: Vec<i32> = split.ids.iter().copied().filter(|&id| id > 1500).collect();
+        assert!(kept.iter().copied().eq(1501..=LONG_ROWS), "statistics {use_statistics}");
+        assert!(split.ids.len() < LONG_ROWS as usize, "statistics {use_statistics}: none dropped");
+        assert_eq!(split.ids.len() as u64 + split.dropped, LONG_ROWS as u64);
+    }
+}
+
+/// **A state read inside a group acts as one read at its entry does**
+/// (`docs/design/decisions.md`, "D93"): moving to one ruling the group out,
+/// the rest of it is skipped rather than read and dropped a row at a time,
+/// and the group, part of it read, is not counted as pruned. Without
+/// statistics nothing rules the group out, so the same move drops each row
+/// after it.
+#[tokio::test]
+async fn a_state_read_inside_a_group_it_rules_out_skips_the_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = long_block(dir.path());
+    let index = mapped(&dump, 1 << 20).await;
+    let scan = ScanOptions { chunk_size_bytes: SMALL_CHUNK, ..ScanOptions::default() };
+    let beyond = || term("id", PredicateOp::Gt, "5000");
+
+    let moving = Moving::new(Expr::default(), beyond(), 4);
+    let got = run_scanned(&dump, &index, "public.t", 1, true, scan.clone(), Some(moving)).await;
+    let read = got.ids.len() as i32;
+    assert!(read > 0 && read < LONG_ROWS, "{read} row(s) before");
+    assert!(got.ids.iter().copied().eq(1..=read));
+    assert_eq!((got.pruned, got.dropped), (0, 0), "{got:?}");
+
+    let moving = Moving::new(Expr::default(), beyond(), 4);
+    let blind = run_scanned(&dump, &index, "public.t", 1, false, scan, Some(moving)).await;
+    let read = blind.ids.len() as i32;
+    assert!(read > 0 && read < LONG_ROWS, "{read} row(s) before");
+    assert!(blind.ids.iter().copied().eq(1..=read));
+    assert_eq!((blind.pruned, blind.dropped), (0, (LONG_ROWS - read) as u64), "{blind:?}");
 }
 
 /// **A block sorted on a bound the state requires stops at its first row past

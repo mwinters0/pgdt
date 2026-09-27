@@ -31,12 +31,13 @@ each, the blind `MIN(v_small)` refuses in every file-order run and answers
 ## A dynamic filter drops a row before its columns decode
 
 **Fact.** A replay evaluates a dynamic filter's state on each row its static
-filter keeps, in a block whose statistics answer, and drops a row the state
-rejects before any column of it decodes (`pgdump_query/src/stream.rs`,
-`DynamicRead::rejects`). So a projected column's unrepresentable value in a
-row the state rejects is never decoded: the refusal it would raise depends on
-whether the state had narrowed when the row was read — inside a row group,
-where the paths above decide it between partitions and between groups. A field of the state's own that does not
+filter keeps, in every block, and drops a row the state rejects before any
+column of it decodes (`pgdump_query/src/stream.rs`, `DynamicRead::rejects`),
+re-reading the state at each chunk ("D93"). So a projected column's
+unrepresentable value in a row the state rejects is never decoded: the
+refusal it would raise depends on whether the state had narrowed when the row
+was read — inside a row group, where the paths above decide it between
+partitions and between groups. A field of the state's own that does not
 decode keeps its row, so that refusal is not hidden.
 
 **Why P28 cares.** It is a third timing path, and the only one inside a
