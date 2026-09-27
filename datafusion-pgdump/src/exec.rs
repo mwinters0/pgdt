@@ -12,6 +12,13 @@
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
 //! consumes none: each is answered `No`, printed in `EXPLAIN`, and visited
 //! where DataFusion looks for a filter's consumer.
+//!
+//! **Its `EXPLAIN` line prints the whole filter the scan holds as one
+//! `predicate=`**, as Parquet's scan does: the static filter it answered
+//! `Exact` ([`StaticFilter`]), then each dynamic filter. No other node of a
+//! physical plan names the static one. Parquet's `pruning_predicate=` is not
+//! copied: it exists because Parquet prunes by something other than its
+//! `predicate=`, where this scan prunes by the static filter it prints.
 
 use std::fmt;
 use std::pin::Pin;
@@ -23,6 +30,8 @@ use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::common::{Result, Statistics, internal_err};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
+use datafusion::logical_expr::expr_rewriter::unnormalize_col;
+use datafusion::logical_expr::{BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::{ChildrenPropertiesMode, ReplaceChildrenOptions};
 use datafusion::physical_plan::filter_pushdown::{
@@ -50,6 +59,8 @@ pub(crate) struct PgDumpExec {
     inner: Arc<StreamingTableExec>,
     statistics: Arc<Statistics>,
     metrics: ScanMetrics,
+    /// The filter the replay `inner` streams applies, as `EXPLAIN` prints it.
+    static_filter: Arc<StaticFilter>,
     dynamic_filters: DynamicFilters,
 }
 
@@ -58,12 +69,37 @@ impl PgDumpExec {
         inner: StreamingTableExec,
         statistics: Statistics,
         metrics: ScanMetrics,
+        static_filter: StaticFilter,
     ) -> Self {
         Self {
             inner: Arc::new(inner),
             statistics: Arc::new(statistics),
             metrics,
+            static_filter: Arc::new(static_filter),
             dynamic_filters: DynamicFilters::default(),
+        }
+    }
+
+    /// `, predicate=…` or, in the tree rendering, a `predicate=…` line of its
+    /// own: the static filter, then the dynamic filters as DataFusion writes
+    /// each in this view. Nothing where the scan holds no filter at all.
+    fn fmt_predicate(&self, f: &mut fmt::Formatter, tree: bool) -> fmt::Result {
+        let answered = !self.static_filter.is_empty();
+        let held = !self.dynamic_filters.is_empty();
+        if !answered && !held {
+            return Ok(());
+        }
+        f.write_str(if tree { "\npredicate=" } else { ", predicate=" })?;
+        if answered {
+            self.static_filter.fmt_beside(f, held)?;
+        }
+        if answered && held {
+            f.write_str(" AND ")?;
+        }
+        match (held, tree) {
+            (false, _) => Ok(()),
+            (true, false) => write!(f, "{}", self.dynamic_filters),
+            (true, true) => write!(f, "{}", self.dynamic_filters.sql()),
         }
     }
 }
@@ -76,21 +112,77 @@ impl DisplayAs for PgDumpExec {
                 if let Some(fetch) = self.inner.limit() {
                     write!(f, ", fetch={fetch}")?;
                 }
-                // Not Parquet's `predicate=`: the static filter this scan
-                // answers is the logical plan's to print, and is not here.
-                if !self.dynamic_filters.is_empty() {
-                    write!(f, ", dynamic_filter={}", self.dynamic_filters)?;
-                }
-                Ok(())
+                self.fmt_predicate(f, false)
             }
             DisplayFormatType::TreeRender => {
                 self.inner.fmt_as(t, f)?;
-                if !self.dynamic_filters.is_empty() {
-                    write!(f, "\ndynamic_filter={}", self.dynamic_filters.sql())?;
-                }
-                Ok(())
+                self.fmt_predicate(f, true)
             }
         }
+    }
+}
+
+/// The filters `scan()` answered `Exact`, which the library applies as one
+/// conjunction, kept to be printed.
+///
+/// **Written by bare column name, in DataFusion's SQL form** — as
+/// `Expr::human_display` writes each part, the column's qualifier dropped
+/// first — rather than by index as a physical expression is: a static filter
+/// may name a column the scan's projection drops, so no index into its output
+/// reaches it. `human_display` parenthesises nothing, so an `AND`, `OR` or
+/// `NOT` inside another is written here, parenthesised where precedence needs
+/// it as DataFusion's physical `BinaryExpr` is.
+#[derive(Debug)]
+pub(crate) struct StaticFilter(Vec<Expr>);
+
+impl StaticFilter {
+    pub(crate) fn new<'a>(answered: impl IntoIterator<Item = &'a Expr>) -> Self {
+        Self(answered.into_iter().map(|filter| unnormalize_col(filter.clone())).collect())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The parts as the one conjunction they are, with `more` parts of it
+    /// written after them or not: a part is parenthesised as a conjunct only
+    /// where it has one beside it.
+    fn fmt_beside(&self, f: &mut fmt::Formatter<'_>, more: bool) -> fmt::Result {
+        let above = if more || self.0.len() > 1 { Operator::And.precedence() } else { 0 };
+        for (i, filter) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" AND ")?;
+            }
+            write_sql(f, filter, above)?;
+        }
+        Ok(())
+    }
+}
+
+/// `expr` as a part of an expression whose operator binds at `above`,
+/// parenthesised where its own binds looser.
+fn write_sql(f: &mut fmt::Formatter<'_>, expr: &Expr, above: u8) -> fmt::Result {
+    match expr {
+        Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
+            let own = op.precedence();
+            let parenthesised = own < above;
+            if parenthesised {
+                f.write_str("(")?;
+            }
+            write_sql(f, left, own)?;
+            write!(f, " {op} ")?;
+            write_sql(f, right, own)?;
+            if parenthesised {
+                f.write_str(")")?;
+            }
+            Ok(())
+        }
+        // `NOT` binds tighter than `AND` and looser than a comparison.
+        Expr::Not(inner) => {
+            f.write_str("NOT ")?;
+            write_sql(f, inner, Operator::And.precedence() + 1)
+        }
+        _ => write!(f, "{}", expr.human_display()),
     }
 }
 
@@ -205,6 +297,7 @@ impl ExecutionPlan for PgDumpExec {
             inner: Arc::new(inner.clone()),
             statistics: Arc::clone(&self.statistics),
             metrics: self.metrics.clone(),
+            static_filter: Arc::clone(&self.static_filter),
             dynamic_filters: self.dynamic_filters.clone(),
         }))
     }
@@ -346,5 +439,51 @@ impl Stream for EarlyStopsCounted {
 impl Drop for EarlyStopsCounted {
     fn drop(&mut self) {
         self.add_unread();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use datafusion::logical_expr::{col, lit, not};
+
+    use super::*;
+
+    /// A static filter written with `more` parts of its conjunction after it
+    /// or not.
+    struct Beside(StaticFilter, bool);
+
+    impl fmt::Display for Beside {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_beside(f, self.1)
+        }
+    }
+
+    fn written(filters: &[Expr], more: bool) -> String {
+        Beside(StaticFilter::new(filters), more).to_string()
+    }
+
+    /// **A static filter is written by bare column name, parenthesised only
+    /// where precedence needs it** — shapes a simplified SQL plan never
+    /// hands a scan among them, a `NOT` over an `OR`, since an embedder's
+    /// plan need not have been simplified.
+    #[test]
+    fn a_static_filter_is_parenthesised_only_where_precedence_needs_it() {
+        let id = || col("o.id").lt(lit(5));
+        let stepped = || col("o.stepped").gt(lit(3));
+        let card = || col("low_card").eq(lit("amber"));
+        let either = || id().or(stepped());
+        assert_eq!(written(&[id()], false), "id < 5");
+        assert_eq!(written(&[either()], false), "id < 5 OR stepped > 3");
+        assert_eq!(written(&[either()], true), "(id < 5 OR stepped > 3)");
+        assert_eq!(
+            written(&[either(), card()], false),
+            "(id < 5 OR stepped > 3) AND low_card = amber"
+        );
+        assert_eq!(
+            written(&[id().or(stepped().and(card().or(id())))], false),
+            "id < 5 OR stepped > 3 AND (low_card = amber OR id < 5)"
+        );
+        assert_eq!(written(&[not(either())], false), "NOT (id < 5 OR stepped > 3)");
+        assert_eq!(written(&[not(id())], true), "NOT id < 5");
     }
 }

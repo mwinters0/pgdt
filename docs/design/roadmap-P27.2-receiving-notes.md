@@ -11,9 +11,9 @@ nothing but its tests.
   (`datafusion-pgdump/src/exec.rs`, `handle_child_pushdown_result`), none
   twice, answers `No` for each, visits them in `apply_expressions`, keeps them
   across `with_fetch`, and drops them in `reset_state`. `EXPLAIN` prints them
-  as `dynamic_filter=`, each `DynamicFilter [ … ]`, `empty` until its first
-  update, and the tree rendering as a line of its own. A `Pre` phase filter is
-  a `FilterExec`'s static one and is not held.
+  in the scan's `predicate=`, after the static filter it answers, each
+  `DynamicFilter [ … ]`, `empty` until its first update. A `Pre` phase filter
+  is a `FilterExec`'s static one and is not held.
 - **A join now computes its filter**, its probe side's scan visiting it. So a
   `dynamic-filter-join` "on" leg taken from here on pays the producer's cost —
   the bounds, the `IN` list or the hash table's lookup — with nothing consumed;
@@ -41,9 +41,6 @@ nothing but its tests.
   drop ours: `SortExec`'s reset makes a filter nobody pushes and
   `HashJoinExec`'s discards its own, so a held one would describe the rows of
   the run before — rows a recursive query's next iteration needs.
-- **The `EXPLAIN` key is not Parquet's `predicate=`**: the static filter this
-  scan answers is the logical plan's to print, so `predicate=` would claim the
-  scan applies nothing else.
 - **A float's `IN` is a set of bits** in DataFusion
   (`physical-expr/src/expressions/in_list/primitive_filter.rs`,
   `OrderedFloat64`): `-0` is not in a list holding `0` there, where the

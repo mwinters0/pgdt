@@ -155,7 +155,9 @@ past that its warnings name the chunk and not `pgdump.memory`.
 metrics: `row_groups_pruned_statistics`, how many of the row groups `pgdt
 parse` recorded statistics for a `WHERE` ruled out unread, and
 `bytes_unread_early_stop`, the bytes of rows left unread in a block sorted
-past the filter's bound.
+past the filter's bound. The node's `predicate=` opens with the part of the
+`WHERE` the scan answers itself, the only part the statistics prune by; any
+other part is a `FilterExec` above it.
 
 ```sql
 > EXPLAIN ANALYZE SELECT * FROM koji.public.build WHERE id < 1000;

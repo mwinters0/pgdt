@@ -413,13 +413,16 @@ fn scans(plan: &Arc<dyn ExecutionPlan>) -> Vec<Arc<dyn ExecutionPlan>> {
 }
 
 /// What each scan in `plan` prints of the dynamic filters it holds, for each
-/// that holds one.
+/// that holds one: its `predicate=` from the first of them, the static
+/// filter it answers standing ahead of them there.
 fn held(plan: &Arc<dyn ExecutionPlan>) -> Vec<String> {
     scans(plan)
         .iter()
         .filter_map(|scan| {
             let line = displayable(scan.as_ref()).one_line().to_string();
-            line.split_once(", dynamic_filter=").map(|(_, filters)| filters.trim().to_string())
+            let (_, predicate) = line.split_once(", predicate=")?;
+            let first = predicate.find("DynamicFilter [")?;
+            Some(predicate[first..].trim().to_string())
         })
         .collect()
 }
@@ -520,7 +523,7 @@ async fn a_scan_prints_each_filter_it_holds_empty_until_its_first_update() {
     let [filter] = held(&plan).try_into().unwrap();
     assert!(Shape::Bounds.seen_in(&filter) && Shape::InList.seen_in(&filter), "{filter}");
     let tree = displayable(plan.as_ref()).tree_render().to_string();
-    assert!(tree.contains("dynamic_filter"), "{tree}");
+    assert!(tree.contains("predicate") && tree.contains("DynamicFilter"), "{tree}");
 }
 
 /// **A static filter is not held**: one the provider could not answer is a

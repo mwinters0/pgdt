@@ -20,7 +20,7 @@ use pgdump_query::{ComparisonSemantics, QueryOptions, ResolvedSchema, TableName,
 
 use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
-use crate::exec::{PgDumpExec, ScanMetrics};
+use crate::exec::{PgDumpExec, ScanMetrics, StaticFilter};
 use crate::pushdown::translate;
 use crate::report::Reporting;
 use crate::settings::PgDumpSettings;
@@ -169,14 +169,16 @@ impl TableProvider for PgDumpTable {
         ));
         let parallelism = draw.parallelism();
         let schema = self.resolved.schema.fields();
+        // A filter that does not translate was not answered `Exact`, so
+        // DataFusion keeps it above the scan and it is not needed here.
+        let (answered, translated): (Vec<&Expr>, Vec<_>) = filters
+            .iter()
+            .filter_map(|filter| Some((filter, translate(filter, &self.resolved)?)))
+            .unzip();
         let query_options = QueryOptions {
             projection: projection
                 .map(|columns| columns.iter().map(|&i| schema[i].name().clone()).collect()),
-            // A filter that does not translate was not answered `Exact`, so
-            // DataFusion keeps it above the scan and it is not needed here.
-            filter: pgdump_query::Expr::And(
-                filters.iter().filter_map(|filter| translate(filter, &self.resolved)).collect(),
-            ),
+            filter: pgdump_query::Expr::And(translated),
             parallelism,
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
@@ -239,7 +241,7 @@ impl TableProvider for PgDumpTable {
         statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
         let orderings = output_orderings(&schema, partitions.orders());
         let inner = StreamingTableExec::try_new(schema, streams, None, orderings, false, limit)?;
-        Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics)))
+        Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics, StaticFilter::new(answered))))
     }
 }
 

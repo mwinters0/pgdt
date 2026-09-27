@@ -1,7 +1,8 @@
 //! What a scan reports: what its plan settled, to the sink its table was
-//! registered with, when it is planned; and what it finds while reading — the groups
-//! statistics pruned, the bytes an early stop left unread — as the plan
-//! node's metrics under `EXPLAIN ANALYZE`.
+//! registered with, when it is planned; the filter it answers, on its
+//! `EXPLAIN` line; and what it finds while reading — the groups statistics
+//! pruned, the bytes an early stop left unread — as the plan node's metrics
+//! under `EXPLAIN ANALYZE`.
 //!
 //! **Over the statistics fixture gathered at a small group size**, so
 //! `public.ordered`'s ascending ids span many groups and a range filter on
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use arrow::util::pretty::pretty_format_batches;
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::physical_plan::metrics::MetricValue;
-use datafusion::physical_plan::{ExecutionPlan, collect};
+use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
     AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget,
@@ -310,4 +311,46 @@ async fn pruned_groups_and_early_stop_bytes_are_the_scan_s_metrics() {
     let explained = pretty_format_batches(&explained.collect().await.unwrap()).unwrap().to_string();
     assert!(explained.contains("row_groups_pruned_statistics"), "{explained}");
     assert!(explained.contains("bytes_unread_early_stop"), "{explained}");
+}
+
+/// **A scan's `EXPLAIN` line prints the filter it answers as its
+/// `predicate=`**, by bare column name however the query qualified it and
+/// whether or not the scan emits the column, ahead of the dynamic filters it
+/// holds, and so does its tree rendering; a filter it cannot answer is the
+/// `FilterExec`'s above it, and the scan prints none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scan_prints_the_filter_it_answers_as_its_predicate() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = gathered_copy(dir.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let ctx = session(1);
+    register_dump(&ctx, Some("shop"), &dump, Arc::new(Plans::default()) as _).unwrap();
+    for (query, printed) in [
+        (format!("SELECT id FROM {ORDERED} WHERE id < 50"), Some("id < 50")),
+        (
+            format!(
+                "SELECT o.id FROM {ORDERED} o WHERE o.stepped > 3 AND (o.id < 5 OR o.id > 100)"
+            ),
+            Some("stepped > 3 AND (id < 5 OR id > 100)"),
+        ),
+        (
+            format!(
+                "SELECT o.id FROM {ORDERED} o WHERE o.id < 5 OR o.stepped > 3 AND o.low_card = 'amber'"
+            ),
+            Some("id < 5 OR stepped > 3 AND low_card = amber"),
+        ),
+        (
+            format!("SELECT unsorted FROM {ORDERED} WHERE id > 1 ORDER BY unsorted LIMIT 7"),
+            Some("id > 1 AND DynamicFilter [ empty ]"),
+        ),
+        (format!("SELECT id FROM {ORDERED} WHERE id + 1 > 5"), None),
+    ] {
+        let planned = plan(&ctx, &query).await;
+        let line = displayable(pgdump_exec(&planned).unwrap().as_ref()).one_line().to_string();
+        let predicate = line.split_once(", predicate=").map(|(_, predicate)| predicate.trim());
+        assert_eq!(predicate, printed, "{query}");
+    }
+    let planned = plan(&ctx, &format!("SELECT id FROM {ORDERED} WHERE id < 50")).await;
+    let tree = displayable(planned.as_ref()).tree_render().to_string();
+    assert!(tree.contains("predicate: id < 50"), "{tree}");
 }
