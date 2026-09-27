@@ -46,7 +46,7 @@ group: the typed mode's diagnostic must not count rows a scan decoded.
 **Origin.** 27.5, 2026-09-27;
 `pgdump_query/tests/dynamic_filter.rs`,
 `a_row_the_state_rejects_is_dropped_before_it_decodes`. *Contingent on*
-row-level evaluation shipping on, which 27.5's figures decide.
+row-level evaluation shipping on, which 27.7's figures decide.
 
 ## A third option: the refusal made deterministic
 

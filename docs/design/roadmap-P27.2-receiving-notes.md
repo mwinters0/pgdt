@@ -17,7 +17,7 @@ Every filter a scan holds is answered `No`; what reads it is
 - **A join now computes its filter**, its probe side's scan visiting it. So a
   `dynamic-filter-join` "on" leg taken from here on pays the producer's cost —
   the bounds, the `IN` list or the hash table's lookup — which it paid none of
-  at `2f94f14`, where the figures stand.
+  at `2f94f14`, where 27.1 took them.
 - **`dynamic_filter::loosened`** reads a filter's state now into the
   library's `Expr` over the scan's own schema, keeping every row DataFusion's
   evaluation keeps: a part with no library term is `true` beneath an even

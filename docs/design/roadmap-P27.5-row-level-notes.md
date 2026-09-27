@@ -2,10 +2,10 @@
 
 What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Scope"
-and "Evidence". **The mechanism has landed, on; the readings that decide
-whether it stays on have not been taken**, a figure being taken from a commit
-([`measurements.md`](measurements.md), "A figure may be published outside the
-sweep").
+and "Evidence". **The mechanism has landed, on, and the readings are taken:
+row evaluation acting alone loses on both inputs that isolate it**, which
+reopens "D53" for a set-membership term; 27.6 lands it, and 27.7 re-takes
+the figures, which decide the default by the spec's criterion.
 
 ## What exists
 
@@ -76,23 +76,25 @@ sweep").
 
 ## The readings
 
-From this slice's commit, each alone (neither stands in a sharing edge):
+`dynamic-filter-join` and `dynamic-filter-topk`, taken at `28e804f`, each
+alone (neither stands in a sharing edge); the numbers, the metrics that
+attribute each row and the per-term account are
+[`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy a
+query".
 
-```sh
-cd scripts && uv run measure.py --figure dynamic-filter-join
-cd scripts && uv run measure.py --figure dynamic-filter-topk
-```
-
-- **What each row can attribute.** 27.1's "before" is flat, every leg the
-  scan. The re-take's on leg carries 27.3's pruning, 27.4's cut and this
-  slice's row evaluation together, and the figure records no metric saying
-  which acted. The clustered join is built for pruning; the other three rows
-  for row evaluation alone, the TopK's state now read at each chunk as well, but whether a group's dictionary or a TopK's
-  tightening rules any group out there is unread — `EXPLAIN ANALYZE` of the
-  row's SQL over the figure's input answers it, and an attribution needs it.
-  The off leg holds no filter and runs none of this, so it should not move;
-  one that does prices unrelated work since `2f94f14`.
-- **What they decide**: a loss on the costing input — every row passing a
-  150-term `Or` — reopens the question as a switch against a set-membership
-  term, and whichever way it reads is filed against "D53"'s **Reopens**,
-  with the box ticked then.
+- **The two wins are group pruning, not row evaluation.** `EXPLAIN ANALYZE`
+  of each on leg over the figure's input names the mechanism: the clustered
+  join and the TopK each prune nearly every group and evaluate few rows; the
+  unclustered join and the costing input prune nothing, and there row
+  evaluation acts alone.
+- **Alone, it loses, and by more where it was meant to pay.** The added time
+  is in proportion to the terms evaluated per row, the `IN` reaching the
+  evaluator as an `Or` of `=`, each leaf unescaping and comparing its field
+  again. How a term's cost divides between the unescape, the comparison and
+  the tree walk is unattributed.
+- **Filed against "D53"**: its **Reopens** is met, and answered by a
+  set-membership term — not a switch, and not a stream ceasing to evaluate a
+  filter that rejects nothing (`decisions.md`, "D93"). The mechanism ships on,
+  the tree unchanged by the readings.
+- **The off legs did not move** beyond their spreads since `2f94f14`, so no
+  unrelated work is priced in the on legs' Δ.

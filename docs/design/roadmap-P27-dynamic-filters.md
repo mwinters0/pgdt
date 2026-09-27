@@ -71,12 +71,14 @@ TopK's is still `true`, so its cut is today's. What DataFusion was told at
 planning stays true: rows and bytes are bounds ("D89"), and the filter only
 narrows them.
 
-**`decisions.md`'s "D53" stands.** An `IN` is an `Or` of `=`, as the static
-translator builds it; a join's bounds and a TopK's chain are comparisons,
-`And`, `Or` and `IS [NOT] NULL`; a partitioned join's `CASE` is the `Or` of
-its branches; `hash_lookup` and `struct(…) IN` are `true`. Pruning needs no
-new operator. The entry's **Reopens** is a set-membership term, should the
-row-level figure show the per-row `Or` to be what costs.
+**`decisions.md`'s "D53" reopens for a set-membership term.** Pruning needs
+no new operator: a join's bounds and a TopK's chain are comparisons, `And`,
+`Or` and `IS [NOT] NULL`; a partitioned join's `CASE` is the `Or` of its
+branches; `hash_lookup` and `struct(…) IN` are `true`. Row evaluation does:
+27.5's readings price a dynamic `IN`, evaluated per row as an `Or` of `=`, in
+proportion to its terms, so it becomes one term, found and decoded once a row
+and answered by one lookup ([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md),
+"27.5's readings reopen D53 for a set-membership term").
 
 **What a dynamic filter did is read off EXPLAIN and the plan node's
 metrics**, never the plan-note sink, which hears what planning settles and
@@ -101,8 +103,8 @@ selective join on an unclustered key and a TopK over an unsorted column,
 neither of which group pruning helps; and **where it costs**, a join whose
 `IN` rejects no row, so the checks and the per-row `Or` are pure overhead. No
 `pgdump.*` switch and no build made only to be measured: a loss on the costing
-input reopens the question as a switch against "D53"'s set-membership term,
-under "Two tunables fit pgdt to hardware".
+input is answered by "D53"'s set-membership term, never by a switch or by a
+stream ceasing to evaluate a filter it holds (`decisions.md`, "D93").
 
 **No row may be lost, and two checks say so before anything is on by
 default**: every join and TopK query shape is run over the fixtures with the
@@ -143,8 +145,24 @@ path on its own**, so each slice's mistakes show in the next one's checks:
 4. **The byte cut at the first poll** — a rework of `TablePartitions`'
    planning, with a test that a selective join on a clustered key leaves its
    sub-streams byte-balanced over the groups the dynamic filter keeps.
-5. **Row-level evaluation**, the figures re-taken; they decide whether it
-   ships on, and what they say is filed against "D53"'s **Reopens**.
+5. **Row-level evaluation**, the figures re-taken, and what they say filed
+   against "D53"'s **Reopens**.
+6. **The set-membership term**, admitted on 27.5's readings: a leaf of its
+   own, `Expr::In`, not a `PredicateOp` (whose other operators would carry a
+   list they never use) and not an `Or` of `=` recognized at resolution
+   ("D54": the tree evaluated is the tree handed). It finds and decodes its
+   field once a row and answers by one lookup, exactly as the `Or` of `=` it
+   replaces — `NULL`, a list holding `NULL`, `NOT IN` as `Not` over it, a row
+   group's statistics — **proved by a generated check** beside
+   `tests/pruning.rs` that the two agree per row, per group and in the error
+   raised wherever the `Or` would raise one. `pgdt --where` reads it as
+   `in (…)`, its first caller.
+7. **The translators emit it**, both DataFusion translators turning `IN` into
+   `Expr::In`; then both figures re-taken, in the slice whose change they
+   price. **Row evaluation stays on only if the unclustered join wins, its
+   legs' spreads apart, and the costing input's Δ lies within its legs'
+   overlapping spreads**; failing that it goes off and "D93" reopens, a
+   `pgdump.*` switch with it.
 
 ## Facts found while grilling
 

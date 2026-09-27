@@ -3,7 +3,8 @@
 What the slices after this one inherit. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
 "Evidence". The figures are in [`measurements.md`](measurements.md), "What
-DataFusion's dynamic filters buy a query", taken at `2f94f14`.
+DataFusion's dynamic filters buy a query", each marker naming the commit it
+was taken at; this slice took them at `2f94f14`.
 
 ## What exists
 

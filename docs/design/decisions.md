@@ -363,17 +363,17 @@ A failure only reading finds is the lowest-indexed failed sub-stream's, after th
 plan (D54). Across a DataFusion query's partitions the first refusal wins, each true; rejected: ordering them.
 
 ### D93 A dynamic filter's rows are evaluated in every block, its state read at each group entered and each chunk taken
-Row evaluation consults no statistics, so it runs where none answer — a `--statistics none` cache, a declined block (D85), `KD33`'s tail —
-and under `use_statistics: false`. The state is read where its generation moved, at each group the replay enters and each chunk it takes;
-one read mid-group judges that group again, skipping the rest of it with each later group it rules out and re-arming one still kept, so
-when a state was read decides nothing its proof saves. Rejected: evaluating only where statistics delimit groups; a read per row, a lock
-per held filter on a line every partition shares; per output batch, upstream's, the filter running before the batch fills so a state ages
-with its own selectivity; group entry alone, older where merged groups are. Reopens: a reading pricing the per-chunk check. Code: `stream::DynamicRead`.
+Row evaluation consults no statistics, so it runs where none answer (`--statistics none`, D85's declined block, `KD33`'s tail) and under
+`use_statistics: false`. The state is read where its generation moved, at each group entered and each chunk taken; a read mid-group judges
+that group again, skipping its rest with each later group it rules out and re-arming one still kept. Rejected: evaluating only where
+statistics delimit groups; reading per row (a lock every partition shares), per batch (a state aging with its selectivity) or at group entry
+alone (older where groups merge); a `pgdump.*` switch ("Two tunables"; DataFusion's flag is the user's); ceasing where nothing is rejected,
+the flag being an explicit request (D77). Reopens: pricing the per-chunk check; a switch if the `IN` term shows no universal win. Code: `stream::DynamicRead`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed
 No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or column-to-column. `IS [NOT] DISTINCT FROM`
-is what three-valued logic forces. Reopens: a set-membership term, should a dynamic filter's `IN`, evaluated per row as `Or`, be read to cost.
+is what three-valued logic forces. Reopens: a set-membership term, admitted: `dynamic-filter-join` reads a dynamic `IN`, per row as `Or`, to cost per term.
 
 ### D54 One tree, no planner, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only
