@@ -19,7 +19,7 @@ use datafusion::common::ScalarValue;
 use datafusion::logical_expr::expr::InList;
 use datafusion::logical_expr::{Between, BinaryExpr, Expr, Operator};
 use pgdump_query::{
-    ColumnResolution, CompareKind, ComparisonPlan, NestedPlan, Predicate, PredicateOp,
+    ColumnResolution, CompareKind, ComparisonPlan, Membership, NestedPlan, Predicate, PredicateOp,
     ResolvedSchema,
 };
 
@@ -29,9 +29,10 @@ use pgdump_query::{
 /// What translates: `AND`, `OR`, `NOT`; a column compared with a literal by
 /// any of the eight comparing operators, either side first; `IS [NOT] NULL`;
 /// `BETWEEN`, which DataFusion evaluates as the two comparisons; `IN` over
-/// literals, but for a float column; and a boolean column standing alone or
-/// under `IS [NOT] TRUE|FALSE|UNKNOWN`. A column wrapped in a cast, a
-/// function or an arithmetic expression does not.
+/// literals, a `NULL` among them, as one membership, but for a float column;
+/// and a boolean column standing alone or under `IS [NOT] TRUE|FALSE|UNKNOWN`.
+/// A column wrapped in a cast, a function or an arithmetic expression does
+/// not.
 pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdump_query::Expr> {
     use pgdump_query::Expr as L;
     Some(match filter {
@@ -78,11 +79,15 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdump_
             if list.is_empty() || is_float(index, table) {
                 return None;
             }
-            let any = L::Or(
-                list.iter()
-                    .map(|value| comparison(expr, Operator::Eq, value, table).map(L::Term))
-                    .collect::<Option<_>>()?,
-            );
+            let values = list
+                .iter()
+                .map(|value| match value {
+                    Expr::Literal(value, _) => member(index, value, table),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?;
+            let any =
+                L::In(Membership { column: table.schema.field(index).name().clone(), values });
             if *negated { L::Not(Box::new(any)) } else { any }
         }
         _ => return None,
@@ -129,6 +134,21 @@ pub(crate) fn compared(
     }
     let value = literal_text(literal, index, table)?;
     Some(Predicate { column: table.schema.field(index).name().clone(), op, value: Some(value) })
+}
+
+/// `literal` as one value of an `IN` list over column `index` of `table`:
+/// `Some(None)` for a `NULL`, which the library's membership reads as SQL's,
+/// and `None` where no text reads back as DataFusion's value
+/// ([`literal_text`]).
+pub(crate) fn member(
+    index: usize,
+    literal: &ScalarValue,
+    table: &ResolvedSchema,
+) -> Option<Option<String>> {
+    if literal.is_null() {
+        return Some(None);
+    }
+    literal_text(literal, index, table).map(Some)
 }
 
 /// `IS NULL` or `IS NOT NULL` on a column of `table`, any type, nested

@@ -36,9 +36,9 @@ use datafusion::physical_expr::expressions::{
 };
 use datafusion::physical_expr_common::physical_expr::{fmt_sql, snapshot_generation};
 use datafusion::physical_plan::apply_expression_roots;
-use pgdump_query::{DynamicFilter, Expr as L, PredicateOp, ResolvedSchema};
+use pgdump_query::{DynamicFilter, Expr as L, Membership, PredicateOp, ResolvedSchema};
 
-use crate::pushdown::{boolean_term, compared, is_float, null_term};
+use crate::pushdown::{boolean_term, compared, is_float, member, null_term};
 
 #[cfg(test)]
 mod tests;
@@ -331,8 +331,8 @@ fn null_test(
         .map_or_else(|| parity.anything(), |index| L::Term(null_term(index, op, table)))
 }
 
-/// A column of `table` in an `IN` list of literals, as the `Or` of its `=`
-/// terms (`docs/design/decisions.md`, "D53"), and `NOT IN` as its negation.
+/// A column of `table` in an `IN` list of literals, as one membership
+/// (`docs/design/decisions.md`, "D53"), and `NOT IN` as its negation.
 fn in_list(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
     if list.negated() {
         L::Not(Box::new(membership(list, parity.flip(), table)))
@@ -341,30 +341,23 @@ fn in_list(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
     }
 }
 
-/// Whether a row's value is among `list`'s. A `NULL` in the list matches no
-/// row, so it leaves the `Or`, though it makes the membership never false.
-/// **A float's is loosened only where a row needs it true**: DataFusion
-/// answers it from a set of the values' bits, so `-0` is not in a list
-/// holding `0` there, where the library's `=` equates them ([`is_float`]).
+/// Whether a row's value is among `list`'s, a `NULL` in it answering as SQL's
+/// does in the library's membership too. **A float's is loosened only where a
+/// row needs it true**: DataFusion answers it from a set of the values' bits,
+/// so `-0` is not in a list holding `0` there, where the library's `=`
+/// equates them ([`is_float`]).
 fn membership(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
     let Some(index) = column_at(list.expr(), table) else { return parity.anything() };
-    let mut values = Vec::with_capacity(list.len());
-    for item in list.list() {
-        let Some(literal) = item.downcast_ref::<Literal>() else { return parity.anything() };
-        values.push(literal.value());
-    }
-    if parity == Parity::Odd && values.iter().any(|value| value.is_null()) {
-        return L::And(Vec::new());
-    }
     if parity == Parity::Odd && is_float(index, table) {
         return parity.anything();
     }
-    let terms: Option<Vec<L>> = values
-        .into_iter()
-        .filter(|value| !value.is_null())
-        .map(|value| compared(index, Operator::Eq, value, table).map(L::Term))
+    let values: Option<Vec<Option<String>>> = list
+        .list()
+        .iter()
+        .map(|item| member(index, item.downcast_ref::<Literal>()?.value(), table))
         .collect();
-    terms.map_or_else(|| parity.anything(), L::Or)
+    let Some(values) = values else { return parity.anything() };
+    L::In(Membership { column: table.schema.field(index).name().clone(), values })
 }
 
 /// A `CASE` as its branches alone: the branch answering a row is one of its

@@ -238,11 +238,21 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
                     if values.len() > 1
                         && !matches!(field.data_type(), DataType::Float32 | DataType::Float64)
                     {
-                        filters.push(Expr::InList(InList::new(
-                            Box::new(column(field.name())),
-                            values.iter().cloned().map(literal).collect(),
-                            true,
-                        )));
+                        // Each way round, and with a `NULL` in the list,
+                        // which the library's membership answers as SQL's.
+                        let null = ScalarValue::try_from(values[0].data_type()).unwrap();
+                        let with_null: Vec<_> =
+                            values.iter().cloned().chain([null]).map(literal).collect();
+                        let without: Vec<_> = values.iter().cloned().map(literal).collect();
+                        for list in [without, with_null] {
+                            for negated in [false, true] {
+                                filters.push(Expr::InList(InList::new(
+                                    Box::new(column(field.name())),
+                                    list.clone(),
+                                    negated,
+                                )));
+                            }
+                        }
                     }
                     for filter in filters {
                         let pushed =
@@ -429,6 +439,9 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
         ("SELECT id FROM t_float WHERE v_double IN (0, 1)", true),
         ("SELECT id FROM t_float WHERE v_double IN (0, 1, 2, 3, 4)", false),
         ("SELECT id FROM t_int WHERE v_integer IN (0, 1, 2, 3, 4)", true),
+        ("SELECT id FROM t_int WHERE v_integer IN (0, 1, 2, NULL)", true),
+        ("SELECT id FROM t_int WHERE v_integer NOT IN (0, 1, 2, NULL)", true),
+        ("SELECT id FROM t_enum_domain WHERE v_mood IN ('sad', 'ok', 'happy', NULL)", true),
         ("SELECT id FROM t_numeric WHERE v_untyped = '100.00'", true),
         ("SELECT id FROM t_numeric WHERE v_typed = -1.5", true),
         ("SELECT id FROM t_net WHERE v_inet = '192.168.1.1'", true),

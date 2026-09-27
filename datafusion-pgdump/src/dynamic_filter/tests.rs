@@ -642,3 +642,42 @@ fn a_float_compared_with_a_zero_has_no_term() {
     let compared = binary(lit(1.0f32), Operator::Eq, Arc::clone(&g), &schema).unwrap();
     assert!(matches!(loosened(&compared, &table), L::Term(_)), "{compared}");
 }
+
+/// **Both translators hand an `IN` list over as one membership**, a `NULL`
+/// in it included and `NOT IN` as its negation (`docs/design/decisions.md`,
+/// "D53"); what each answers is the generated checks' — this one's and
+/// `tests/pushdown.rs`'s.
+#[test]
+fn an_in_list_reaches_the_library_as_one_membership() {
+    use datafusion::logical_expr::{col, lit as logical};
+    let schema = Schema::new(vec![
+        arrow::datatypes::Field::new("k", DataType::Int32, true),
+        arrow::datatypes::Field::new("f", DataType::Float64, true),
+    ]);
+    let table = resolved(vec![("k", DataType::Int32, true), ("f", DataType::Float64, true)]);
+    let (k, f): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
+        (Arc::new(Column::new("k", 0)), Arc::new(Column::new("f", 1)));
+    let values = || vec![lit(1i32), lit(ScalarValue::Int32(None)), lit(3i32)];
+    let membership = r#"In(Membership { column: "k", values: [Some("1"), None, Some("3")] })"#;
+    let listed = in_list(Arc::clone(&k), values(), &false, &schema).unwrap();
+    assert_eq!(format!("{:?}", loosened(&listed, &table)), membership);
+    let excluded = in_list(Arc::clone(&k), values(), &true, &schema).unwrap();
+    assert_eq!(format!("{:?}", loosened(&excluded, &table)), format!("Not({membership})"));
+    // A float's `NOT IN` has no term, DataFusion's set keeping `-0` from `0`.
+    let floats = vec![lit(1.0f64), lit(2.0f64)];
+    let excluded = in_list(Arc::clone(&f), floats, &true, &schema).unwrap();
+    assert_eq!(format!("{:?}", loosened(&excluded, &table)), "Not(Or([]))");
+
+    let listed = col("k").in_list(
+        vec![logical(1i32), logical(ScalarValue::Int32(None)), logical(3i32), logical(4i32)],
+        false,
+    );
+    let translated = crate::pushdown::translate(&listed, &table).unwrap();
+    assert_eq!(
+        format!("{translated:?}"),
+        r#"In(Membership { column: "k", values: [Some("1"), None, Some("3"), Some("4")] })"#
+    );
+    let excluded = col("k").in_list(vec![logical(1i32), logical(2i32)], true);
+    let translated = crate::pushdown::translate(&excluded, &table).unwrap();
+    assert!(matches!(translated, L::Not(inner) if matches!(*inner, L::In(_))), "{excluded}");
+}

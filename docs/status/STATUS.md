@@ -84,7 +84,7 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.4** The byte cut made once at the first poll, over the groups the static and dynamic filters keep, planning staying at `scan()`, tested to leave a clustered selective join's sub-streams byte-balanced over the groups the dynamic filter keeps; [notes](../design/roadmap-P27.4-first-poll-cut-notes.md)
 - [x] **27.5** Row-level evaluation before decode, in every block, its state read at each group entered and each chunk taken, the figures re-taken and what they say filed against "D53"'s **Reopens**, which a set-membership term answers; [notes](../design/roadmap-P27.5-row-level-notes.md)
 - [x] **27.6** The set-membership term, `Expr::In`, answering exactly as the `Or` of `=` it replaces by a generated check, and `pgdt --where`'s `in (…)`; [notes](../design/roadmap-P27.6-membership-notes.md)
-- [ ] **27.7** Both DataFusion translators emit `Expr::In` for `IN`; `dynamic-filter-join` and `dynamic-filter-topk` re-taken, deciding whether row evaluation stays on by the spec's criterion
+- [ ] **27.7** Both DataFusion translators emit `Expr::In` for `IN`; `dynamic-filter-join` and `dynamic-filter-topk` re-taken, deciding whether row evaluation stays on by the spec's criterion — the translators have landed, and only the readings remain; [notes](../design/roadmap-P27.7-translators-notes.md)
 
 ## Not started
 
