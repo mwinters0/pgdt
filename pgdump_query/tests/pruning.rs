@@ -665,7 +665,7 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
             assert_eq!(plan.kept_value_bytes()[8], Some(low_card[kept]), "{what}: low_card");
             let mut emitted = 0;
             for partition in 0..plan.len() {
-                let mut stream = plan.stream(partition, 1024, None);
+                let mut stream = plan.stream(partition, 1024);
                 while let Some(batch) = stream.next().await {
                     emitted += batch.unwrap().num_rows() as u64;
                 }

@@ -19,10 +19,10 @@
 //! beneath an odd one ([`Parity`]). So translating never fails, and the worst
 //! a filter can come to is keeping every row.
 //!
-//! **The replay reads the translation as its sub-streams run**
-//! ([`ReplayFilter`], `pgdump_query::DynamicFilter`), each time it enters a
-//! row group, and the filters are translated again only once one of them has
-//! moved.
+//! **The replay reads the translation when its first sub-stream is polled**,
+//! where it cuts them, **and as they run** ([`ReplayFilter`],
+//! `pgdump_query::DynamicFilter`), each time one enters a row group; the
+//! filters are translated again only once one of them has moved.
 
 use std::fmt;
 use std::sync::{Arc, Mutex};

@@ -1124,7 +1124,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
         for _ in 0..2 {
             let mut rows = Rows::new();
             for partition in 0..plan.len() {
-                let mut stream = plan.stream(partition, 1, None);
+                let mut stream = plan.stream(partition, 1);
                 while let Some(batch) = stream.next().await {
                     let batch = batch.unwrap();
                     assert!(batch.num_rows() <= 1);

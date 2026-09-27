@@ -10,8 +10,9 @@
 //! are reported beside the streaming exec's own ([`ScanMetrics`]).
 //!
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
-//! hands them to every sub-stream it runs, which skips the row groups their
-//! state rules out as it reaches them ([`ReplayFilter`]): each is answered
+//! hands them to every sub-stream it runs ([`ReplayFilter`]): the sub-streams
+//! are cut over the row groups their state keeps when the first is polled,
+//! and each skips those a later state rules out as it reaches them. Each is answered
 //! `No`, its producer re-checking its own rows, printed in `EXPLAIN`, and
 //! visited where DataFusion looks for a filter's consumer. The streaming exec
 //! is built again over the same planned replay each time the filters it
@@ -53,7 +54,9 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{Stream, StreamExt};
-use pgdump_query::{PlanNote, PlanNoteKind, ResolvedSchema, TablePartitions, TableStream};
+use pgdump_query::{
+    DynamicPartitions, PlanNote, PlanNoteKind, ResolvedSchema, TablePartitions, TableStream,
+};
 
 use crate::budget::Draw;
 use crate::dynamic_filter::{DynamicFilters, ReplayFilter};
@@ -433,7 +436,7 @@ impl ScanMetrics {
 /// ([`ScanMetrics::counted`]). A block cut across partitions is counted in
 /// each for the pieces that partition read, and the pieces' bytes add
 /// (`pgdump_query::EarlyStop::unread_bytes`); a group, by the one partition
-/// whose piece holds its start
+/// the library counts it in
 /// (`pgdump_query::TableStream::dynamic_filter_pruned_groups`).
 pub(crate) struct Counted {
     stream: TableStream<'static>,
@@ -509,16 +512,19 @@ impl Replay {
     }
 
     /// A streaming exec over every sub-stream, each reading `filter` as it
-    /// runs.
+    /// runs, and cut over the groups its state keeps when the first of them
+    /// is polled (`pgdump_query::DynamicPartitions`): once for this exec, and
+    /// again for the next one built over this replay.
     fn streaming(
         self: &Arc<Self>,
         filter: Option<Arc<ReplayFilter>>,
         orderings: Vec<LexOrdering>,
         limit: Option<usize>,
     ) -> Result<StreamingTableExec> {
+        let dynamic = filter.map(|filter| self.partitions.under(filter));
         let streams = (0..self.partitions.len())
             .map(|index| {
-                Arc::new(Partition { replay: Arc::clone(self), index, filter: filter.clone() })
+                Arc::new(Partition { replay: Arc::clone(self), index, dynamic: dynamic.clone() })
                     as Arc<dyn PartitionStream>
             })
             .collect();
@@ -537,7 +543,7 @@ impl Replay {
 struct Partition {
     replay: Arc<Replay>,
     index: usize,
-    filter: Option<Arc<ReplayFilter>>,
+    dynamic: Option<DynamicPartitions>,
 }
 
 impl fmt::Debug for Partition {
@@ -555,10 +561,11 @@ impl PartitionStream for Partition {
     /// DataFusion's own sources read it.
     fn execute(&self, ctx: Arc<TaskContext>) -> SendableRecordBatchStream {
         let draw = Arc::clone(&self.replay.draw);
-        let filter =
-            self.filter.clone().map(|filter| filter as Arc<dyn pgdump_query::DynamicFilter>);
         let batch_size = ctx.session_config().batch_size();
-        let stream = self.replay.partitions.stream(self.index, batch_size, filter);
+        let stream = match &self.dynamic {
+            Some(dynamic) => dynamic.stream(self.index, batch_size),
+            None => self.replay.partitions.stream(self.index, batch_size),
+        };
         let rows = self.replay.metrics.counted(stream, self.index).map(move |batch| {
             let _held = &draw;
             batch.map_err(external)

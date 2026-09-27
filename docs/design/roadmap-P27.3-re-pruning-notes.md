@@ -10,8 +10,9 @@ group that can hold the bound.
 
 - **`pgdump_query::DynamicFilter`** (`stream.rs`): `generation()` and
   `current()`, the state as the library's `Expr` beside the generation it is
-  the state of. `TablePartitions::stream` takes one as its third argument, the
-  only entry point that does, and the contract is stated on the trait.
+  the state of. One entry point takes it, and the contract is stated on the
+  trait; which entry point, and the cut it makes at the first poll, are
+  [`roadmap-P27.4-first-poll-cut-notes.md`](roadmap-P27.4-first-poll-cut-notes.md)'s.
 - **The replay asks it as each row group is entered**, never per row
   (`DynamicRead::at_row`): where the generation moved it re-reads the state and
   resolves it against the block (`resolve_loosened`, a term the block refuses
@@ -98,15 +99,6 @@ group that can hold the bound.
   group. What this slice's pruning exposes at a float's zeros, and the test
   that shows it, is
   [`roadmap-P27.2.1-float-zero-notes.md`](roadmap-P27.2.1-float-zero-notes.md)'s.
-
-## For 27.4
-
-- **The cut is still made at `scan()`**, over the static filter's groups: a
-  selective join on a clustered key leaves every sub-stream but one holding
-  only groups its state rules out, which each skips as it enters them — the
-  imbalance 27.4's cut removes. The first poll's state is `current()`, and a
-  whole block's verdicts under it are `prune_block`'s loop over
-  `Believed::keeps`.
 
 ## For 27.5
 

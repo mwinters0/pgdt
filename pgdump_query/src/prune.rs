@@ -12,10 +12,11 @@
 //! its first row past the bound** ([`SortedStop`]), which settles inside a
 //! group what the statistics can settle only between groups.
 //!
-//! **A dynamic filter is read against the same statistics while the replay
-//! runs** ([`DynamicPruning`]): a group at a time as the replay reaches it,
-//! rather than every group of the block once, since its state can move at
-//! any boundary.
+//! **A dynamic filter is read against the same statistics** ([`DynamicPruning`]):
+//! every group once when the first sub-stream is polled, which is where they
+//! are cut ([`DynamicPruning::kept_within`]), and after that a group at a time
+//! as the replay reaches it under a state that has moved, rather than every
+//! group of the block at each move, since its state can move at any boundary.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -120,7 +121,6 @@ pub(crate) fn prune_block(
     let (believed, kinds) = believed_columns(block, statistics, metadata)?;
     let view = Believed { statistics, believed: &believed, kinds: &kinds };
 
-    let n = statistics.group_size;
     let mut pruning = BlockPruning {
         kept: Vec::new(),
         groups: statistics.groups.len() as u64,
@@ -138,20 +138,42 @@ pub(crate) fn prune_block(
         }
         pruning.kept_rows += group.rows;
         pruning.kept_groups[index] = true;
-        let k = index as u64;
-        let start = block.data_offset + k * n - 1;
-        let end =
-            if index == last { block.end_offset } else { block.data_offset + (k + 1) * n - 1 };
-        match pruning.kept.last_mut() {
-            Some(run) if run.end == start => run.end = end,
-            _ => pruning.kept.push(start..end),
-        }
+        let run =
+            group_run(block.data_offset..block.end_offset, statistics.group_size, index, last);
+        push_run(&mut pruning.kept, run);
     }
-    if pruning.kept.is_empty() {
-        let header_lf = block.data_offset - 1;
-        pruning.kept.push(header_lf..header_lf);
-    }
+    pruning.kept = or_header_run(pruning.kept, block.data_offset);
     Some(pruning)
+}
+
+/// Group `index` of the block whose data starts at `extent.start` and which
+/// ends at `extent.end`, its statistics grouping by `group_size` and listing
+/// `last + 1` groups, as a replay segment's search bounds
+/// ([`BlockPruning::kept`]): the last ends at the block's end.
+fn group_run(extent: Range<u64>, group_size: u64, index: usize, last: usize) -> Range<u64> {
+    let k = index as u64;
+    let start = extent.start + k * group_size - 1;
+    let end = if index == last { extent.end } else { extent.start + (k + 1) * group_size - 1 };
+    start..end
+}
+
+/// `run` appended to `runs`, the last of them extended where `run` continues
+/// it.
+fn push_run(runs: &mut Vec<Range<u64>>, run: Range<u64>) {
+    match runs.last_mut() {
+        Some(last) if last.end == run.start => last.end = run.end,
+        _ => runs.push(run),
+    }
+}
+
+/// `runs`, or the empty run on the header's LF where there are none, which
+/// reads the header line and no row ([`BlockPruning::kept`]).
+fn or_header_run(mut runs: Vec<Range<u64>>, data_offset: u64) -> Vec<Range<u64>> {
+    if runs.is_empty() {
+        let header_lf = data_offset - 1;
+        runs.push(header_lf..header_lf);
+    }
+    runs
 }
 
 /// Per header column, the kinds its stored sets of bounds are ordered by
@@ -225,11 +247,14 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
 /// the filter's state keeps, and where the block's row order stops a read
 /// under it.
 ///
-/// **A group's verdict is reached only when the replay reaches the group**,
-/// and kept until the state moves. A state can move at every group boundary —
-/// a TopK tightens while the scan streams — so re-pruning the whole block on
-/// each move would evaluate its every group at each of its boundaries; asked
-/// in order, each group is evaluated once per state the replay reads there.
+/// **Past the cut, a group's verdict is reached only when the replay reaches
+/// the group**, and kept until the state moves. The cut asks every group once,
+/// under the state it reads ([`Self::kept_within`]), and a replay reading that
+/// state takes its verdicts ([`Self::seed`]). A state can move at every group
+/// boundary — a TopK tightens while the scan streams — so re-pruning the whole
+/// block on each move would evaluate its every group at each of its
+/// boundaries; asked in order, each group is evaluated once per state the
+/// replay reads there.
 ///
 /// **Its stop is asked only in a group whose statistics say a row there can
 /// pass it** ([`Self::stop`]). The state is evaluated nowhere else, so the
@@ -245,7 +270,8 @@ pub(crate) struct DynamicPruning {
     statistics: Arc<BlockStatistics>,
     believed: Vec<bool>,
     kinds: StoredKinds,
-    data_offset: u64,
+    /// The block's data and its end, as [`group_run`] reads them.
+    extent: Range<u64>,
     generation: Option<u64>,
     filter: ResolvedExpr,
     /// Per group, whether `filter` keeps it, where asked since it was read.
@@ -271,7 +297,7 @@ impl DynamicPruning {
             statistics,
             believed,
             kinds,
-            data_offset: block.data_offset,
+            extent: block.data_offset..block.end_offset,
             generation: None,
             filter: ResolvedExpr::And(Vec::new()),
             verdicts: vec![None; groups],
@@ -297,10 +323,25 @@ impl DynamicPruning {
         self.verdicts.fill(None);
     }
 
+    /// The verdict reached on each group under the state last read, `None`
+    /// for one not yet asked.
+    pub(crate) fn verdicts(&self) -> &[Option<bool>] {
+        &self.verdicts
+    }
+
+    /// Take `verdicts`, reached on this block's groups under the state last
+    /// read by another reading of it, in place of asking those groups again.
+    /// Ones of another length describe other groups, and are not taken.
+    pub(crate) fn seed(&mut self, verdicts: &[Option<bool>]) {
+        if verdicts.len() == self.verdicts.len() {
+            self.verdicts.copy_from_slice(verdicts);
+        }
+    }
+
     /// The group whose rows include the one starting at `offset`, or `None`
     /// past the last — the block's `\.` line, if nothing else.
     pub(crate) fn group_of(&self, offset: u64) -> Option<usize> {
-        let group = offset.checked_sub(self.data_offset)? / self.statistics.group_size;
+        let group = offset.checked_sub(self.extent.start)? / self.statistics.group_size;
         usize::try_from(group).ok().filter(|&group| group < self.groups())
     }
 
@@ -319,7 +360,43 @@ impl DynamicPruning {
     /// search (`crate::stream::Segment`), as [`BlockPruning::kept`] states a
     /// run's.
     pub(crate) fn search_start(&self, group: usize) -> u64 {
-        self.data_offset + group as u64 * self.statistics.group_size - 1
+        self.run(group).start
+    }
+
+    /// `group` as a replay segment's search bounds ([`group_run`]).
+    fn run(&self, group: usize) -> Range<u64> {
+        let last = self.groups() - 1;
+        group_run(self.extent.clone(), self.statistics.group_size, group, last)
+    }
+
+    /// The runs of this block's groups the state last read keeps, stated as
+    /// [`BlockPruning::kept`] states them, **of those `within` holds** — the
+    /// runs a static filter's pruning kept, or every group where `None` — and
+    /// how many groups `within` holds that the state rules out. Every group
+    /// `within` holds is asked of the state, which is what a cut made before a
+    /// row is read costs.
+    pub(crate) fn kept_within(&mut self, within: Option<&[Range<u64>]>) -> (Vec<Range<u64>>, u64) {
+        let mut within = within.map(|runs| runs.iter().peekable());
+        let (mut runs, mut ruled_out) = (Vec::new(), 0);
+        for group in 0..self.groups() {
+            let run = self.run(group);
+            // Both lists are in file order, so the static runs are walked
+            // once: a group is in one where the first run not ending at or
+            // before its start begins at or before it.
+            let statically = within.as_mut().is_none_or(|within| {
+                while within.next_if(|kept| kept.end <= run.start).is_some() {}
+                within.peek().is_some_and(|kept| kept.start <= run.start)
+            });
+            if !statically {
+                continue;
+            }
+            if self.keeps(group) {
+                push_run(&mut runs, run);
+            } else {
+                ruled_out += 1;
+            }
+        }
+        (or_header_run(runs, self.extent.start), ruled_out)
     }
 
     /// Whether the state last read could keep a row of `group`.

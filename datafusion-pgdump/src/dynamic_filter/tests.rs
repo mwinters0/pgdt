@@ -135,7 +135,7 @@ async fn read(
     .map_err(|e| e.to_string())?;
     let mut batches = Vec::new();
     for partition in 0..partitions.len() {
-        let mut stream = partitions.stream(partition, 1024, None);
+        let mut stream = partitions.stream(partition, 1024);
         while let Some(batch) = stream.next().await {
             batches.push(batch.map_err(|e| e.to_string())?);
         }
@@ -191,9 +191,11 @@ async fn read_dynamic(
     let held = DynamicFilters::default().with(vec![Arc::clone(&dynamic) as _]).unwrap();
     let filter: Arc<dyn DynamicFilter> =
         Arc::new(ReplayFilter::new(held, partitions.resolved_schema()));
+    let partitions = Arc::new(partitions);
+    let under = partitions.under(filter);
     let (mut batches, mut pruned, mut stopped) = (Vec::new(), 0, false);
     for partition in 0..partitions.len() {
-        let mut stream = partitions.stream(partition, 8, Some(Arc::clone(&filter)));
+        let mut stream = under.stream(partition, 8);
         while let Some(batch) = stream.next().await {
             batches.push(batch.map_err(|e| e.to_string())?);
             if batches.len() == 1 && !from_the_start {

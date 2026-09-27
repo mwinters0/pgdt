@@ -53,6 +53,7 @@ use arrow::datatypes::Schema;
 use async_stream::try_stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use tokio::sync::OnceCell;
 
 use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent};
 #[cfg(test)]
@@ -1856,14 +1857,16 @@ impl<'a> TableStream<'a> {
         self.early_stops.lock().unwrap().clone()
     }
 
-    /// The row groups this stream's [`DynamicFilter`] ruled out as the
-    /// replay reached them, so far — none where it was handed none, and none
-    /// of the groups [`PlanNoteKind::StatisticsPruned`] counts, which the
-    /// replay never reaches. **A group is counted by the sub-stream whose
-    /// piece holds the byte its search starts at** (`D + k·N − 1`,
-    /// [`crate::prune::BlockPruning::kept`]'s terms), where that sub-stream
-    /// skipped it: a group cut between two sub-streams counts once at most,
-    /// and not at all where the first read any of it.
+    /// The row groups this stream's [`DynamicFilter`] ruled out, so far —
+    /// none where it was handed none, and none of the groups
+    /// [`PlanNoteKind::StatisticsPruned`] counts, which the replay never
+    /// reaches. **Each group is counted by one sub-stream**: one the cut at
+    /// the first poll ruled out, by the first sub-stream to take that cut
+    /// ([`DynamicPartitions`]); one ruled out as the replay reached it, by the
+    /// sub-stream whose piece holds the byte its search starts at
+    /// (`D + k·N − 1`, [`crate::prune::BlockPruning::kept`]'s terms), where
+    /// that sub-stream skipped it — so a group cut between two sub-streams
+    /// counts once at most, and not at all where the first read any of it.
     pub fn dynamic_filter_pruned_groups(&self) -> u64 {
         self.dynamic_pruned.load(Ordering::Relaxed)
     }
@@ -3268,7 +3271,8 @@ fn compressed_block_path_declined(
 /// ([`PlanNoteKind::BatchSpanNarrowed`]).**
 /// Empty on every path that limits nothing, so a caller need not special-case
 /// "nothing to say" — though an empty `matches`, still charged its span, can
-/// name a count the budget cut.
+/// name a count the budget cut. The fourth is each block's advice, which a cut
+/// made again at a dynamic filter's first poll cuts by ([`cut_blocks`]).
 ///
 /// Deficiency register: `deficiency: KD17` — the sub-streams planned here
 /// gain little on a plain typed `query`: throughput rises about a tenth by four
@@ -3309,7 +3313,7 @@ fn plan_partitions(
     parallelism: Parallelism,
     max_source_span: Option<usize>,
     chunk_size: usize,
-) -> (Vec<Vec<Segment>>, Vec<PlanNote>, Option<usize>) {
+) -> (Vec<Vec<Segment>>, Vec<PlanNote>, Option<usize>, Vec<Partitioning>) {
     // **Announced before the advice is asked for**, since a compressed source
     // decides from the stated budget whether it can decode a whole block at
     // all (`ByteRangeSource::partitions`): asking under the mapping pass's
@@ -3401,8 +3405,21 @@ fn plan_partitions(
         ));
     }
 
+    let groups = cut_blocks(matches, kept, &advice, workers);
+    (groups, notes, charged_span.or(max_source_span), advice)
+}
+
+/// Cut `matches` — each whole, or the runs of row groups `kept` holds of it —
+/// into the pieces each block's `advice` permits, and group them into at most
+/// `workers` sub-streams ([`distribute`]), byte-balanced over what they read.
+fn cut_blocks(
+    matches: &[CopyBlock],
+    kept: &BTreeMap<u64, Vec<Range<u64>>>,
+    advice: &[Partitioning],
+    workers: usize,
+) -> Vec<Vec<Segment>> {
     let mut segments = Vec::new();
-    for (block, advice) in matches.iter().zip(&advice) {
+    for (block, advice) in matches.iter().zip(advice) {
         let want = match advice.max_partitions() {
             Some(max) => workers.min(max),
             None => workers,
@@ -3440,7 +3457,7 @@ fn plan_partitions(
             }
         }
     }
-    (distribute(segments, workers), notes, charged_span.or(max_source_span))
+    distribute(segments, workers)
 }
 
 /// The span a sub-stream's held batch is charged, given what one reader of
@@ -3914,15 +3931,17 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 
 /// A filter a query's consumer refines while the query runs — a hash join's
 /// build side, a TopK's heap — handed to a partitioned replay
-/// ([`TablePartitions::stream`]), which skips the row groups its state rules
-/// out as it reaches them, and ends a sorted block at the first row past a
-/// bound the state requires.
+/// ([`TablePartitions::under`]), which cuts its sub-streams over the row
+/// groups the state keeps when the first is polled, skips those it rules out
+/// as it reaches them, and ends a sorted block at the first row past a bound
+/// the state requires.
 ///
 /// **Its contract is looser than a filter's, and is stated here alone.** A
 /// replay may drop any row a state it read rejects, at any moment, and reads
-/// the state only as it enters a row group: what a stream emits lies between
-/// the rows its static filter keeps and those the states it read keep, and
-/// depends on when each was read. So a replay is handed one by the one entry
+/// the state only at its first poll and as it enters a row group: what a
+/// stream emits lies between the rows its static filter keeps and those the
+/// states it read keep, and depends on when each was read. So a replay is
+/// handed one by the one entry
 /// point that never resumes, a resume token counting rows being meaningless
 /// under it, and drops nothing on its account where the query does not use
 /// statistics. A consumer needing an exact answer re-checks its own rows.
@@ -3945,6 +3964,9 @@ pub trait DynamicFilter: Send + Sync {
 struct DynamicRead {
     filter: Arc<dyn DynamicFilter>,
     statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    /// The cut the sub-stream was handed, whose verdicts a state it read is
+    /// read with again rather than asked of each group anew.
+    cut: Arc<Cut>,
     /// The block last entered, by `header_offset`, with its pruning — `None`
     /// for one whose statistics answer nothing.
     block: Option<(u64, Option<DynamicBlock>)>,
@@ -3952,11 +3974,38 @@ struct DynamicRead {
     pruned: Arc<AtomicU64>,
 }
 
-/// One block as a [`DynamicRead`] prunes it: its unprojected schema, which
+/// One block as a [`DynamicFilter`] prunes it: its unprojected schema, which
 /// each state is resolved against, and its statistics.
 struct DynamicBlock {
+    header_offset: u64,
     full: ResolvedSchema,
     pruning: DynamicPruning,
+}
+
+impl DynamicBlock {
+    /// `block` of `plan`'s table with `statistics`, or `None` where they
+    /// answer nothing ([`DynamicPruning::new`]) or its schema does not
+    /// resolve.
+    fn new(
+        block: &CopyBlock,
+        statistics: &Arc<BlockStatistics>,
+        plan: &ReplayPlan,
+    ) -> Option<Self> {
+        let metadata = plan.metadata.as_ref();
+        let pruning = DynamicPruning::new(block, Arc::clone(statistics), metadata)?;
+        let census = plan.table.census_for(&block.header.columns);
+        let schema_mode = plan.query_options.schema_mode;
+        let database = block.database.as_deref();
+        let full = resolve_block(&block.header, metadata, database, schema_mode, &census).ok()?;
+        Some(Self { header_offset: block.header_offset, full, pruning })
+    }
+
+    /// Take `state`, the filter's state at `generation`, resolved against
+    /// this block ([`resolve_loosened`]).
+    fn read(&mut self, generation: u64, state: &Expr, semantics: ComparisonSemantics) {
+        let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false);
+        self.pruning.read(generation, resolved);
+    }
 }
 
 /// What a [`DynamicFilter`] says of the row a replay is about to read
@@ -3976,16 +4025,10 @@ impl DynamicRead {
         if self.block.as_ref().is_some_and(|(at, _)| *at == block.header_offset) {
             return;
         }
-        let pruning = self.statistics.get(&block.header_offset).and_then(|statistics| {
-            let metadata = plan.metadata.as_ref();
-            let pruning = DynamicPruning::new(block, Arc::clone(statistics), metadata)?;
-            let census = plan.table.census_for(&block.header.columns);
-            let schema_mode = plan.query_options.schema_mode;
-            let database = block.database.as_deref();
-            let full =
-                resolve_block(&block.header, metadata, database, schema_mode, &census).ok()?;
-            Some(DynamicBlock { full, pruning })
-        });
+        let pruning = self
+            .statistics
+            .get(&block.header_offset)
+            .and_then(|statistics| DynamicBlock::new(block, statistics, plan));
         self.block = Some((block.header_offset, pruning));
     }
 
@@ -4004,17 +4047,23 @@ impl DynamicRead {
         limit: u64,
         semantics: ComparisonSemantics,
     ) -> Skip {
-        let Some((header_offset, Some(block))) = self.block.as_mut() else { return Skip::Read };
-        let pruning = &mut block.pruning;
-        let Some(group) = pruning.group_of(offset) else { return Skip::Read };
-        if !pruning.enters(group) {
+        let Some((_, Some(block))) = self.block.as_mut() else { return Skip::Read };
+        let Some(group) = block.pruning.group_of(offset) else { return Skip::Read };
+        if !block.pruning.enters(group) {
             return Skip::Read;
         }
-        if pruning.generation() != Some(self.filter.generation()) {
+        if block.pruning.generation() != Some(self.filter.generation()) {
             let (generation, state) = self.filter.current();
-            let resolved = resolve_loosened(&state, &block.full, *header_offset, semantics, false);
-            pruning.read(generation, resolved);
+            block.read(generation, &state, semantics);
+            // A generation names one state, so the cut's verdicts under it
+            // are this state's.
+            if generation == self.cut.generation
+                && let Some(verdicts) = self.cut.verdicts.get(&block.header_offset)
+            {
+                block.pruning.seed(verdicts);
+            }
         }
+        let pruning = &mut block.pruning;
         if pruning.keeps(group) {
             pruning.arm(group);
             return Skip::Read;
@@ -4172,7 +4221,7 @@ pub async fn table_stream_partitions<'a>(
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await;
     let mapped = watch.attribute(source, mapped).await?;
     let MappedTable { matches, metadata } = mapped;
-    let (plan, groups, plan_notes) =
+    let PlannedReplay { plan, groups, plan_notes, .. } =
         plan_replay(source, &matches, metadata, scan_options, query_options)?;
     let of = groups.len();
     Ok(groups
@@ -4209,14 +4258,20 @@ pub async fn table_stream_partitions<'a>(
         .collect())
 }
 
-/// A [`ReplayPlan`], its sub-streams' segments, and the plan notes each
-/// carries.
-type PlannedReplay = (Arc<ReplayPlan>, Vec<Vec<Segment>>, Vec<PlanNote>);
+/// The plan and the sub-streams' segments for replaying a table's blocks
+/// ([`plan_replay`]).
+struct PlannedReplay {
+    plan: Arc<ReplayPlan>,
+    /// The blocks cut into sub-streams ([`plan_partitions`]).
+    groups: Vec<Vec<Segment>>,
+    /// What every sub-stream carries ([`TableStream::plan_notes`]).
+    plan_notes: Vec<PlanNote>,
+    /// Each block's advice, in file order, as the cut was made by.
+    advice: Vec<Partitioning>,
+}
 
 /// The plan and the sub-streams' segments for replaying `matches`, shared by
-/// [`table_stream_partitions`] and [`TablePartitions::plan`]: the
-/// [`ReplayPlan`], its blocks cut into groups ([`plan_partitions`]), and the
-/// plan notes every sub-stream carries.
+/// [`table_stream_partitions`] and [`TablePartitions::plan`].
 fn plan_replay(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
@@ -4225,7 +4280,7 @@ fn plan_replay(
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {
     let mut plan = ReplayPlan::new(scan_options, query_options, matches, metadata)?;
-    let (groups, mut plan_notes, span) = plan_partitions(
+    let (groups, mut plan_notes, span, advice) = plan_partitions(
         source,
         matches,
         &plan.kept,
@@ -4239,7 +4294,7 @@ fn plan_replay(
     // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
     plan.query_options.max_source_span = span;
     plan_notes.extend(plan.pruned.iter().cloned());
-    Ok((Arc::new(plan), groups, plan_notes))
+    Ok(PlannedReplay { plan: Arc::new(plan), groups, plan_notes, advice })
 }
 
 /// The schema a query of `table` would resolve over `index`, read off the map
@@ -4285,18 +4340,25 @@ pub fn table_schema(
 ///
 /// **It shares each matched block's statistics with the caller's map**, where
 /// the query uses them, for a [`DynamicFilter`] to be read against as its
-/// sub-streams run ([`Self::stream`]): nothing is copied, so they cost
+/// sub-streams run ([`Self::under`]): nothing is copied, so they cost
 /// nothing the map does not while the caller holds it, and a plan kept after
 /// the map is dropped keeps them.
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,
     plan: Arc<ReplayPlan>,
-    groups: Vec<Vec<Segment>>,
+    /// The planned cut: each sub-stream's segments, over the row groups the
+    /// static filter keeps.
+    groups: Arc<Vec<Vec<Segment>>>,
     plan_notes: Vec<PlanNote>,
     orders: Vec<Sortedness>,
     table: String,
     statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    /// Every matched block in file order, its statistics held where the query
+    /// uses them, and the advice the planned cut was made by: what a dynamic
+    /// filter's cut is made from again ([`Self::cut_under`]).
+    matches: Vec<CopyBlock>,
+    advice: Vec<Partitioning>,
 }
 
 impl TablePartitions {
@@ -4319,17 +4381,13 @@ impl TablePartitions {
             return Err(Error::MapIncomplete { scanned_through: index.scanned_through, size });
         }
         let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
-        let (plan, groups, plan_notes) = plan_replay(
+        let PlannedReplay { plan, groups, plan_notes, advice } = plan_replay(
             source.as_ref(),
             &matches,
             index.metadata.clone(),
             scan_options,
             query_options,
         )?;
-        let runs: Vec<Vec<u64>> = groups
-            .iter()
-            .map(|segments| segments.iter().map(|segment| segment.block.header_offset).collect())
-            .collect();
         let resolved = plan
             .blocks
             .values()
@@ -4337,25 +4395,31 @@ impl TablePartitions {
             .map(|planned| &planned.resolved)
             .cloned()
             .unwrap_or_default();
-        let orders = partition_orders(&matches, index.metadata.as_ref(), &resolved, &runs);
-        let statistics = match plan.query_options.use_statistics {
-            true => matches
-                .iter()
-                .filter_map(|block| {
-                    Some((block.header_offset, Arc::clone(block.statistics.as_ref()?)))
-                })
-                .collect(),
-            false => BTreeMap::new(),
-        };
+        let orders =
+            partition_orders(&matches, index.metadata.as_ref(), &resolved, &block_runs(&groups));
+        let use_statistics = plan.query_options.use_statistics;
+        let matches: Vec<CopyBlock> = matches
+            .into_iter()
+            .map(|block| match use_statistics {
+                true => block,
+                false => CopyBlock { statistics: None, ..block },
+            })
+            .collect();
+        let statistics = matches
+            .iter()
+            .filter_map(|block| Some((block.header_offset, Arc::clone(block.statistics.as_ref()?))))
+            .collect();
         Ok(Self {
             source,
             watch,
             plan,
-            groups,
+            groups: Arc::new(groups),
             plan_notes,
             orders,
             table: table.qualified(),
             statistics: Arc::new(statistics),
+            matches,
+            advice,
         })
     }
 
@@ -4419,20 +4483,95 @@ impl TablePartitions {
     /// runs the partition, and outside the plan it was cut under
     /// (`docs/design/decisions.md`, "D50"). Each call starts the partition from
     /// its beginning; a partition past [`Self::len`] is an empty stream.
+    pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
+        self.sub_stream(partition, max_rows, None)
+    }
+
+    /// These partitions under `filter`, which each of their sub-streams reads
+    /// as it runs, against the statistics the plan holds, and whose state
+    /// when the first of them is polled decides their byte cut
+    /// ([`DynamicPartitions`]). Where the plan does not use statistics it
+    /// skips nothing.
+    pub fn under(self: &Arc<Self>, filter: Arc<dyn DynamicFilter>) -> DynamicPartitions {
+        DynamicPartitions { partitions: Arc::clone(self), filter, cut: Arc::new(OnceCell::new()) }
+    }
+
+    /// The cut a [`DynamicPartitions`] makes at its first poll: the matched
+    /// blocks cut again into [`Self::len`] sub-streams over the row groups the
+    /// static filter and `filter`'s state now both keep, beside how many of
+    /// the groups the static filter kept that state rules out.
     ///
-    /// **`dynamic` is read as the stream runs**, against the statistics the
-    /// plan holds ([`DynamicFilter`]): the row groups its state rules out are
-    /// skipped as the replay reaches them
-    /// ([`TableStream::dynamic_filter_pruned_groups`]), and a block sorted on a
-    /// bound it requires stops past it ([`TableStream::early_stops`]). Where
-    /// the plan does not use statistics it skips nothing.
-    pub fn stream(
+    /// **The planned cut stands, ruling nothing out,** where the state rules
+    /// out no group — a TopK's or an aggregate's, the empty conjunction until
+    /// the scan streams — and where the new cut would lose an order
+    /// [`Self::orders`] declared ([`Self::keeps_orders`]).
+    fn cut_under(&self, filter: &dyn DynamicFilter) -> Cut {
+        let (generation, state) = filter.current();
+        let semantics = self.plan.query_options.semantics;
+        let mut kept = self.plan.kept.clone();
+        let (mut ruled_out, mut verdicts) = (0, BTreeMap::new());
+        for block in &self.matches {
+            let Some(statistics) = block.statistics.as_ref() else { continue };
+            let Some(mut dynamic) = DynamicBlock::new(block, statistics, &self.plan) else {
+                continue;
+            };
+            dynamic.read(generation, &state, semantics);
+            let within = self.plan.kept.get(&block.header_offset).map(Vec::as_slice);
+            let (runs, out) = dynamic.pruning.kept_within(within);
+            verdicts.insert(block.header_offset, dynamic.pruning.verdicts().to_vec());
+            if out > 0 {
+                ruled_out += out;
+                kept.insert(block.header_offset, runs);
+            }
+        }
+        let cut = (ruled_out > 0)
+            .then(|| cut_blocks(&self.matches, &kept, &self.advice, self.groups.len()))
+            .filter(|groups| self.keeps_orders(groups));
+        let (groups, ruled_out) = match cut {
+            Some(groups) => (Arc::new(groups), ruled_out),
+            None => (Arc::clone(&self.groups), 0),
+        };
+        Cut { groups, ruled_out: AtomicU64::new(ruled_out), generation, verdicts }
+    }
+
+    /// Whether every sub-stream of `groups` is proved to emit each column
+    /// [`Self::orders`] declares ordered in that order — which the planned
+    /// cut was, and the caller planned on. **A cut made again can lose it
+    /// only across a block boundary**, where it puts two blocks in one
+    /// sub-stream that the planned cut kept apart, and nothing proves the
+    /// later one's rows follow the earlier one's.
+    ///
+    /// Deficiency register: `deficiency: KD53` — where it would, the planned
+    /// cut stands whole, so a selective join into a table of several blocks
+    /// declared in order is read balanced over what its static filter keeps,
+    /// not over what the join's filter does. A cut breaking at every block
+    /// boundary nothing proves, and balanced between them, would keep both.
+    /// **(c) unowned**; promoted by such a table's probe side seen unbalanced.
+    fn keeps_orders(&self, groups: &[Vec<Segment>]) -> bool {
+        if self.orders.iter().all(|order| *order == Sortedness::Unsorted) {
+            return true;
+        }
+        let metadata = self.plan.metadata.as_ref();
+        let resolved = self.resolved_schema();
+        let proved = partition_orders(&self.matches, metadata, &resolved, &block_runs(groups));
+        self.orders
+            .iter()
+            .zip(&proved)
+            .all(|(declared, proved)| *declared == Sortedness::Unsorted || declared == proved)
+    }
+
+    /// Partition `partition`'s stream, cutting batches at `max_rows` rows,
+    /// over the planned cut — or under `dynamic`, over the cut it makes when
+    /// the first of its sub-streams is polled, the groups that cut ruled out
+    /// counted as this stream's where it is the first to take it
+    /// ([`TableStream::dynamic_filter_pruned_groups`]), and its filter read
+    /// as the stream runs, against the statistics the plan holds.
+    fn sub_stream(
         &self,
         partition: usize,
         max_rows: usize,
-        dynamic: Option<Arc<dyn DynamicFilter>>,
+        dynamic: Option<DynamicPartitions>,
     ) -> TableStream<'static> {
-        let segments = self.groups.get(partition).cloned().unwrap_or_default();
         let plan = if self.plan.query_options.max_rows == max_rows {
             Arc::clone(&self.plan)
         } else {
@@ -4447,16 +4586,24 @@ impl TablePartitions {
         );
         let shared = StreamShared::new(ResumeToken::start(fingerprint))
             .with_plan_notes(self.plan_notes.clone());
-        let dynamic = dynamic.map(|filter| DynamicRead {
-            filter,
-            statistics: Arc::clone(&self.statistics),
-            block: None,
-            pruned: Arc::clone(&shared.dynamic_pruned),
-        });
+        let planned = Arc::clone(&self.groups);
+        let statistics = Arc::clone(&self.statistics);
         let shared_for_stream = shared.clone();
         let source = Arc::clone(&self.source);
         let watch = Arc::clone(&self.watch);
         let inner = try_stream! {
+            let (groups, dynamic) = match dynamic {
+                None => (planned, None),
+                Some(under) => {
+                    let cut = under.cut().await;
+                    let pruned = Arc::clone(&shared_for_stream.dynamic_pruned);
+                    pruned.fetch_add(cut.ruled_out.swap(0, Ordering::Relaxed), Ordering::Relaxed);
+                    let groups = Arc::clone(&cut.groups);
+                    let filter = under.filter;
+                    (groups, Some(DynamicRead { filter, statistics, cut, block: None, pruned }))
+                }
+            };
+            let segments = groups.get(partition).cloned().unwrap_or_default();
             let mut rows = Box::pin(replay(
                 source.as_ref(),
                 plan,
@@ -4474,6 +4621,74 @@ impl TablePartitions {
         };
         shared.into_stream(Box::pin(inner))
     }
+}
+
+/// Each sub-stream's blocks, by header offset, in the order it reads them.
+fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<u64>> {
+    groups
+        .iter()
+        .map(|segments| segments.iter().map(|segment| segment.block.header_offset).collect())
+        .collect()
+}
+
+/// A plan's partitions under one [`DynamicFilter`]
+/// ([`TablePartitions::under`]): each sub-stream streamed from it skips the
+/// row groups the filter's state rules out as the replay reaches them, and
+/// ends a block sorted past a bound the state requires.
+///
+/// **Their byte cut is made once, when the first of them is polled**, over
+/// the row groups the plan's static filter and the filter's state at that
+/// moment both keep, so they are byte-balanced over what they read rather
+/// than over what the plan kept (`docs/design/decisions.md`, "D51"): a hash
+/// join's filter is complete by its probe side's first poll. The count stays
+/// the plan's, which the caller planned on, so a sub-stream the new cut
+/// leaves nothing to is empty; and the planned cut stands where the state
+/// then rules out no group, or where the new cut would put two blocks in one
+/// sub-stream that nothing proves in an order [`TablePartitions::orders`]
+/// declared. The groups the cut rules out are counted by the first sub-stream
+/// to take it.
+///
+/// **The cut lasts as long as the handle, not one run**: a sub-stream
+/// streamed again takes the cut already made, which the filter's contract
+/// allows — a replay may drop any row a state it read rejects — so a caller
+/// whose filter's producer has started over hands it to
+/// [`TablePartitions::under`] again.
+#[derive(Clone)]
+pub struct DynamicPartitions {
+    partitions: Arc<TablePartitions>,
+    filter: Arc<dyn DynamicFilter>,
+    cut: Arc<OnceCell<Arc<Cut>>>,
+}
+
+impl DynamicPartitions {
+    /// A fresh stream over partition `partition`, as
+    /// [`TablePartitions::stream`] makes one, reading the filter as it runs.
+    pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
+        self.partitions.sub_stream(partition, max_rows, Some(self.clone()))
+    }
+
+    /// The cut, made by the first caller.
+    async fn cut(&self) -> Arc<Cut> {
+        let made = self
+            .cut
+            .get_or_init(|| async { Arc::new(self.partitions.cut_under(self.filter.as_ref())) });
+        Arc::clone(made.await)
+    }
+}
+
+/// The byte cut a [`DynamicPartitions`] made at its first poll, beside what
+/// it read to make it.
+struct Cut {
+    groups: Arc<Vec<Vec<Segment>>>,
+    /// The row groups the cut ruled out, until the first sub-stream to take
+    /// it counts them.
+    ruled_out: AtomicU64,
+    /// The generation of the state the cut read, and per block by header
+    /// offset the verdict it reached on each group under that state: a
+    /// sub-stream reading the same state takes them rather than asking each
+    /// group again ([`DynamicPruning::seed`]).
+    generation: u64,
+    verdicts: BTreeMap<u64, Vec<Option<bool>>>,
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers
@@ -4723,7 +4938,7 @@ mod tests {
         // Nothing is read: the plan prices the chunk the source was last told.
         let planned = |chunk: usize, parallelism, span| {
             source.hint_read_size(chunk);
-            let (_, notes, span) = plan_partitions(
+            let (_, notes, span, _) = plan_partitions(
                 &source,
                 std::slice::from_ref(&block),
                 &BTreeMap::new(),
@@ -5144,7 +5359,7 @@ mod tests {
         let held: Vec<_> =
             matches.iter().map(|block| Arc::clone(block.statistics.as_ref().unwrap())).collect();
 
-        let (plan, groups, _) =
+        let PlannedReplay { plan, groups, .. } =
             plan_replay(&source, &matches, mapped.metadata, ScanOptions::default(), query_options)
                 .unwrap();
         let serial: Vec<Segment> = matches.iter().flat_map(|block| plan.segments(block)).collect();

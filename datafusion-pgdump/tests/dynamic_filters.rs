@@ -36,6 +36,7 @@ use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::config::ConfigOptions;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::reset_plan_states;
+use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
@@ -577,6 +578,56 @@ async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
     let (unfiltered, plan) = run(&off, JOIN).await;
     assert_eq!(unfiltered, rows);
     assert_eq!((counted(&plan, PRUNED_DYNAMIC), counted(&plan, UNREAD)), (0, 0));
+}
+
+/// The rows each output partition of `plan`'s hash join emitted.
+fn joined_per_partition(plan: &Arc<dyn ExecutionPlan>) -> Vec<usize> {
+    fn join(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
+        if plan.name() == "HashJoinExec" {
+            return Some(Arc::clone(plan));
+        }
+        plan.children().into_iter().find_map(join)
+    }
+    let join = join(plan).expect("a hash join");
+    let mut rows = vec![0; join.properties().partitioning.partition_count()];
+    for metric in join.metrics().unwrap().iter() {
+        if let (MetricValue::OutputRows(count), Some(partition)) =
+            (metric.value(), metric.partition())
+        {
+            rows[partition] += count.value();
+        }
+    }
+    rows
+}
+
+/// **A selective join on a clustered key spreads its probe side over every
+/// partition**: a build side of `ordered`'s ids 400 to 499 publishes a filter
+/// keeping a run of groups that the planned cut leaves to one of the probe's
+/// three partitions, and the cut made at the probe's first poll, where the
+/// filter is complete, gives each partition a third of that run, so each
+/// joins a share of the hundred rows — where with the producers' flags off
+/// one partition joins them all.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_selective_join_s_probe_side_is_cut_over_what_its_filter_keeps() {
+    const SELECTIVE: &str = "SELECT o.id FROM (SELECT id FROM ordered WHERE id BETWEEN 400 AND 499) b \
+                             JOIN ordered o ON o.id = b.id";
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    let (rows, plan) = run(&ctx, SELECTIVE).await;
+    assert_eq!(rows.len(), 100);
+    let spread = joined_per_partition(&plan);
+    assert_eq!(spread.len(), 3, "{}", displayable(plan.as_ref()).indent(true));
+    assert!(spread.iter().all(|&rows| rows > 0), "{spread:?}");
+
+    let off = session(Join::Chosen, false);
+    let fixture = fixtures_root().join("18/statistics/default.sql");
+    let copy = parsed_copy(&fixture, dir.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    register(&off, &dump);
+    let (unfiltered, plan) = run(&off, SELECTIVE).await;
+    assert_eq!(unfiltered, rows);
+    let planned = joined_per_partition(&plan);
+    assert_eq!(planned.iter().filter(|&&rows| rows > 0).count(), 1, "{planned:?}");
 }
 
 /// **A static filter is not held**: one the provider could not answer is a
