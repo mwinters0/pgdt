@@ -6,6 +6,12 @@
 //! group size that leaves pruning groups to skip, beside
 //! `pgdump_query/tests/pruning.rs`'s check of what pruning keeps.
 //!
+//! **And a replay reading it as a dynamic filter loses no row it keeps**:
+//! the same filters handed to the replay as a scan hands them
+//! ([`ReplayFilter`]), over several sub-streams, from the start or only once
+//! the first batch is out, skip only groups and sorted tails holding none of
+//! DataFusion's rows, and emit no row twice.
+//!
 //! The filters are built of what the producers publish — comparisons with a
 //! literal either side, `IS [NOT] NULL`, `[NOT] IN` lists holding a `NULL`
 //! or not, `AND`, `OR`, `NOT`, a `CASE` over its branches, boolean literals
@@ -29,8 +35,8 @@ use datafusion::physical_expr::utils::collect_columns;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ComparisonSemantics, LocalFileSource, QueryOptions, ScanOptions, StatisticsRequest,
-    StatisticsSelection, TableName, TablePartitions, map_file,
+    ComparisonSemantics, LocalFileSource, Parallelism, QueryOptions, ScanOptions,
+    StatisticsRequest, StatisticsSelection, TableName, TablePartitions, map_file,
 };
 
 use super::*;
@@ -129,13 +135,76 @@ async fn read(
     .map_err(|e| e.to_string())?;
     let mut batches = Vec::new();
     for partition in 0..partitions.len() {
-        let mut stream = partitions.stream(partition, 1024);
+        let mut stream = partitions.stream(partition, 1024, None);
         while let Some(batch) = stream.next().await {
             batches.push(batch.map_err(|e| e.to_string())?);
         }
     }
     let rows = batches.first().map(|first| concat_batches(&first.schema(), &batches).unwrap());
     Ok((rows, partitions.resolved_schema()))
+}
+
+/// The sub-streams [`read_dynamic`] asks for.
+const DYNAMIC_JOBS: usize = 3;
+
+/// What a replay read under a dynamic filter emitted: every row as one batch
+/// (`None` for none), the groups it pruned, and whether an early stop left a
+/// byte unread.
+type ReadDynamic = (Option<RecordBatch>, u64, bool);
+
+/// What a scan's replay returns of `table`, projected to `projection`, under
+/// no static filter and `tree` as a dynamic filter, over up to
+/// [`DYNAMIC_JOBS`] sub-streams in batches of a few rows: the filter is
+/// `empty` until the first batch is out unless `from_the_start`, as a join's
+/// is complete at the probe's first poll and a TopK's tightens while the scan
+/// streams.
+async fn read_dynamic(
+    dump: &PgDump,
+    table: &TableName,
+    projection: &Option<Vec<String>>,
+    tree: &Arc<dyn PhysicalExpr>,
+    from_the_start: bool,
+) -> std::result::Result<ReadDynamic, String> {
+    let options = QueryOptions {
+        projection: projection.clone(),
+        semantics: ComparisonSemantics::Arrow,
+        schema_mode: dump.schema_mode(),
+        parallelism: Parallelism::workers(DYNAMIC_JOBS, 1 << 30),
+        ..QueryOptions::default()
+    };
+    let partitions = TablePartitions::plan(
+        Arc::clone(dump.source()),
+        dump.index(),
+        Arc::clone(dump.watch()),
+        table,
+        ScanOptions::default(),
+        options,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let children =
+        collect_columns(tree).into_iter().map(|c| Arc::new(c) as Arc<dyn PhysicalExpr>).collect();
+    let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(children, lit(true)));
+    if from_the_start {
+        dynamic.update(Arc::clone(tree)).unwrap();
+    }
+    let held = DynamicFilters::default().with(vec![Arc::clone(&dynamic) as _]).unwrap();
+    let filter: Arc<dyn DynamicFilter> =
+        Arc::new(ReplayFilter::new(held, partitions.resolved_schema()));
+    let (mut batches, mut pruned, mut stopped) = (Vec::new(), 0, false);
+    for partition in 0..partitions.len() {
+        let mut stream = partitions.stream(partition, 8, Some(Arc::clone(&filter)));
+        while let Some(batch) = stream.next().await {
+            batches.push(batch.map_err(|e| e.to_string())?);
+            if batches.len() == 1 && !from_the_start {
+                dynamic.update(Arc::clone(tree)).unwrap();
+            }
+        }
+        pruned += stream.dynamic_filter_pruned_groups();
+        stopped |= stream.early_stops().iter().any(|stop| stop.unread_bytes.is_some());
+    }
+    let rows = batches.first().map(|first| concat_batches(&first.schema(), &batches).unwrap());
+    Ok((rows, pruned, stopped))
 }
 
 /// Each row of `batch` as text, counted: the rows as a multiset.
@@ -374,11 +443,19 @@ struct Tally {
     narrowed: usize,
     /// Filters whose translation kept rows DataFusion's evaluation did not.
     loosened: usize,
+    /// Replays under a dynamic filter that pruned a group.
+    dynamic_pruning: usize,
+    /// Groups those replays pruned.
+    dynamic_groups: u64,
+    /// Replays under a dynamic filter that an early stop ended.
+    dynamic_stopping: usize,
 }
 
 /// **Every generated filter's translation keeps every row DataFusion keeps,
 /// and no other where the filter is exact**, over every table of every
-/// fixture, and none is refused by the library's plan.
+/// fixture, and none is refused by the library's plan. **Read as a dynamic
+/// filter, from the start or once a batch is out, it loses none of those
+/// rows either, and emits no row the table does not hold as often.**
 #[tokio::test(flavor = "multi_thread")]
 async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
     let dir = tempfile::tempdir().unwrap();
@@ -436,6 +513,33 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
                 tally.exact += usize::from(tree.exact);
                 tally.narrowed += usize::from(got != everything);
                 tally.loosened += usize::from(got != expected);
+
+                let from_the_start = rng.below(2) == 0;
+                let dynamic =
+                    read_dynamic(&dump, name, &projection, &tree.expr, from_the_start).await;
+                let (got, pruned, stopped) = match dynamic {
+                    Ok((got, pruned, stopped)) => {
+                        (got.map(|got| rows(&got, |_| true)).unwrap_or_default(), pruned, stopped)
+                    }
+                    Err(e) => {
+                        failures.push(format!("{at}\n  refused as a dynamic filter: {e}"));
+                        continue;
+                    }
+                };
+                let when = if from_the_start { "from the start" } else { "after a batch" };
+                let lost: Vec<_> =
+                    expected.iter().filter(|(row, n)| got.get(*row) < Some(n)).collect();
+                if !lost.is_empty() {
+                    failures.push(format!("{at}\n  dynamic {when} lost {lost:?}"));
+                }
+                let extra: Vec<_> =
+                    got.iter().filter(|(row, n)| everything.get(*row) < Some(n)).collect();
+                if !extra.is_empty() {
+                    failures.push(format!("{at}\n  dynamic {when} emitted {extra:?}"));
+                }
+                tally.dynamic_pruning += usize::from(pruned > 0);
+                tally.dynamic_groups += pruned;
+                tally.dynamic_stopping += usize::from(stopped);
             }
         }
     }
@@ -444,6 +548,8 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
     assert!(tally.exact > tally.compared / 3, "{tally:?}");
     assert!(tally.narrowed > tally.compared / 3, "{tally:?}");
     assert!(tally.loosened > 50, "{tally:?}");
+    assert!(tally.dynamic_pruning > tally.compared / 10, "{tally:?}");
+    assert!(tally.dynamic_stopping > 10, "{tally:?}");
 }
 
 /// A one-table schema as the provider resolves it, for the shapes below.

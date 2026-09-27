@@ -2,8 +2,8 @@
 
 What the slices after this one inherit. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Scope".
-Nothing is pruned: every filter a scan holds is answered `No` and read by
-nothing but its tests.
+Every filter a scan holds is answered `No`; what reads it is
+[`roadmap-P27.3-re-pruning-notes.md`](roadmap-P27.3-re-pruning-notes.md)'s.
 
 ## What exists
 
@@ -16,11 +16,8 @@ nothing but its tests.
   is a `FilterExec`'s static one and is not held.
 - **A join now computes its filter**, its probe side's scan visiting it. So a
   `dynamic-filter-join` "on" leg taken from here on pays the producer's cost —
-  the bounds, the `IN` list or the hash table's lookup — with nothing consumed;
-  the figures stand at `2f94f14`, where it paid none. `--stale` holds both
-  dynamic-filter figures red on this slice's paths: the join's is owed a
-  re-take, its leg having moved, and the TopK's leg runs nothing new, its
-  producer having kept its filter up already.
+  the bounds, the `IN` list or the hash table's lookup — which it paid none of
+  at `2f94f14`, where the figures stand.
 - **`dynamic_filter::loosened`** reads a filter's state now into the
   library's `Expr` over the scan's own schema, keeping every row DataFusion's
   evaluation keeps: a part with no library term is `true` beneath an even
@@ -66,21 +63,9 @@ nothing but its tests.
   every filter and the reset plan answering alike. Holding a filter twice, and
   keeping it across a reset, each fail one.
 
-## For 27.3
+## What each shape prunes by
 
-- **`loosened` takes the scan's own `ResolvedSchema`**, the projected one
-  `TablePartitions::resolved_schema` gives, and reads a physical column by
-  index; `PgDumpExec` holds no schema and no partitions.
-- **Nothing asks the library's plan whether a translated term resolves.** The
-  static path asks `table_schema`, which reads every block, per filter; a
-  dynamic filter's terms are values of the column's own type rendered by
-  `render_field`, and the generated check met no refusal, but a consumer must
-  read a term its plan refuses as the term's parity says, never as a refusal
-  of the query.
-- **What each shape translates to**: a partitioned join's `CASE` is the `Or`
-  of every partition's bounds and list, so it prunes by the whole build side;
-  a join past the list's limit (`hash_lookup`) and a multi-key one
-  (`struct(…) IN`) by their bounds alone; a TopK's `false` is `Or([])`, which
-  rules out every group left.
-- **The manual says nothing of dynamic filters yet**: what `EXPLAIN` prints is
-  worth a sentence once the metrics that say what a filter did exist.
+A partitioned join's `CASE` is the `Or` of every partition's bounds and list,
+so it prunes by the whole build side; a join past the list's limit
+(`hash_lookup`) and a multi-key one (`struct(…) IN`) by their bounds alone; a
+TopK's `false` is `Or([])`, which rules out every group left.

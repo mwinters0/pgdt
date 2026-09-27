@@ -153,11 +153,15 @@ past that its warnings name the chunk and not `pgdump.memory`.
 
 **What a scan skipped is under `EXPLAIN ANALYZE`**, as the scan node's
 metrics: `row_groups_pruned_statistics`, how many of the row groups `pgdt
-parse` recorded statistics for a `WHERE` ruled out unread, and
+parse` recorded statistics for a `WHERE` ruled out unread;
+`row_groups_pruned_dynamic_filter`, how many more were ruled out while the
+query ran, by what a join's other side, an `ORDER BY … LIMIT`'s rows so far
+or an ungrouped `MIN`/`MAX` had narrowed the scan to; and
 `bytes_unread_early_stop`, the bytes of rows left unread in a block sorted
-past the filter's bound. The node's `predicate=` opens with the part of the
-`WHERE` the scan answers itself, the only part the statistics prune by; any
-other part is a `FilterExec` above it.
+past either one's bound. The node's `predicate=` opens with the part of the
+`WHERE` the scan answers itself, followed by each `DynamicFilter [ … ]` a
+join, sort or aggregate above hands it, `empty` until it first narrows; any
+other part of the `WHERE` is a `FilterExec` above it.
 
 ```sql
 > EXPLAIN ANALYZE SELECT * FROM koji.public.build WHERE id < 1000;

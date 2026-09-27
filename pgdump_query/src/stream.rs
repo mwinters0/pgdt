@@ -40,10 +40,11 @@
 //! orders, and every batch comes out in the table's one order
 //! ([`TableColumns`]).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -76,7 +77,7 @@ use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
 use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
-use crate::prune::{SortedStop, prune_block};
+use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
@@ -170,6 +171,53 @@ fn resolve_expr(
             ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset, semantics)?))
         }
     })
+}
+
+/// A [`DynamicFilter`]'s state resolved as [`resolve_expr`] resolves a static
+/// filter, but **never refused**: a term this block cannot resolve stands as
+/// whatever keeps every row where it sits — the empty conjunction beneath an
+/// even number of `Not`s, the empty disjunction beneath an odd one — since a
+/// dynamic filter only ever licenses dropping rows, and a term it cannot
+/// state here licenses nothing.
+fn resolve_loosened(
+    filter: &Expr,
+    resolved: &ResolvedSchema,
+    header_offset: u64,
+    semantics: ComparisonSemantics,
+    negated: bool,
+) -> ResolvedExpr {
+    let branch = |children: &[Expr]| {
+        children
+            .iter()
+            .map(|child| resolve_loosened(child, resolved, header_offset, semantics, negated))
+            .collect()
+    };
+    match filter {
+        Expr::Term(predicate) => {
+            let term = resolved
+                .schema
+                .fields()
+                .iter()
+                .position(|f| f.name() == &predicate.column)
+                .and_then(|index| {
+                    resolve_term(predicate, index, resolved, header_offset, semantics).ok()
+                });
+            match (term, negated) {
+                (Some(term), _) => ResolvedExpr::Term(term),
+                (None, false) => ResolvedExpr::And(Vec::new()),
+                (None, true) => ResolvedExpr::Or(Vec::new()),
+            }
+        }
+        Expr::And(children) => ResolvedExpr::And(branch(children)),
+        Expr::Or(children) => ResolvedExpr::Or(branch(children)),
+        Expr::Not(inner) => ResolvedExpr::Not(Box::new(resolve_loosened(
+            inner,
+            resolved,
+            header_offset,
+            semantics,
+            !negated,
+        ))),
+    }
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
@@ -1729,6 +1777,7 @@ pub struct TableStream<'a> {
     batch_offset: Arc<Mutex<u64>>,
     plan_notes: Arc<Mutex<Vec<PlanNote>>>,
     early_stops: Arc<Mutex<Vec<EarlyStop>>>,
+    dynamic_pruned: Arc<AtomicU64>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -1800,9 +1849,23 @@ impl<'a> TableStream<'a> {
     /// block with a stop planned has an entry, one not yet read holding `None`
     /// as one whose stop saved nothing does, and before it nothing. A block with no stop
     /// planned has no entry: the filter requires no bound its sort order
-    /// closes, or statistics were not used.
+    /// closes, or statistics were not used — unless a [`DynamicFilter`]'s
+    /// bound stopped it, which adds the block's entry when it leaves a byte
+    /// unread.
     pub fn early_stops(&self) -> Vec<EarlyStop> {
         self.early_stops.lock().unwrap().clone()
+    }
+
+    /// The row groups this stream's [`DynamicFilter`] ruled out as the
+    /// replay reached them, so far — none where it was handed none, and none
+    /// of the groups [`PlanNoteKind::StatisticsPruned`] counts, which the
+    /// replay never reaches. **A group is counted by the sub-stream whose
+    /// piece holds the byte its search starts at** (`D + k·N − 1`,
+    /// [`crate::prune::BlockPruning::kept`]'s terms), where that sub-stream
+    /// skipped it: a group cut between two sub-streams counts once at most,
+    /// and not at all where the first read any of it.
+    pub fn dynamic_filter_pruned_groups(&self) -> u64 {
+        self.dynamic_pruned.load(Ordering::Relaxed)
     }
 
     /// Where in the source the batch [`futures::StreamExt::next`] last
@@ -2309,6 +2372,13 @@ impl Segment {
         Some(self)
     }
 
+    /// The rest of this piece from `start`, the search start of a group
+    /// inside its data ([`DynamicRead::at_row`]): entered there, its limit
+    /// unchanged.
+    fn rest_from(&self, start: u64) -> Self {
+        Segment::new(&self.block, start, self.limit, SegmentEntry::Interior)
+    }
+
     /// The bytes this piece is responsible for, for balancing sub-streams
     /// against each other. Approximate at both ends by exactly one row, which
     /// is why nothing reads it as an extent. Measured from the block's
@@ -2330,6 +2400,7 @@ struct StreamShared {
     batch_offset: Arc<Mutex<u64>>,
     plan_notes: Arc<Mutex<Vec<PlanNote>>>,
     early_stops: Arc<Mutex<Vec<EarlyStop>>>,
+    dynamic_pruned: Arc<AtomicU64>,
 }
 
 impl StreamShared {
@@ -2341,6 +2412,7 @@ impl StreamShared {
             batch_offset: Arc::new(Mutex::new(0)),
             plan_notes: Arc::new(Mutex::new(Vec::new())),
             early_stops: Arc::new(Mutex::new(Vec::new())),
+            dynamic_pruned: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -2363,6 +2435,7 @@ impl StreamShared {
             batch_offset: self.batch_offset,
             plan_notes: self.plan_notes,
             early_stops: self.early_stops,
+            dynamic_pruned: self.dynamic_pruned,
         }
     }
 }
@@ -2853,9 +2926,9 @@ pub enum PlanNoteKind {
     StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
 }
 
-/// One block a [`TableStream`] replayed under a planned early stop — the
-/// filter requiring a bound the block's stored row order closes — and what
-/// the stop left unread ([`TableStream::early_stops`];
+/// One block a [`TableStream`] replayed under an early stop — the filter, or
+/// a [`DynamicFilter`]'s state, requiring a bound the block's stored row
+/// order closes — and what the stop left unread ([`TableStream::early_stops`];
 /// `docs/design/decisions.md`, "D80").
 ///
 /// **Per block, not a count**, because a partitioned replay can hand one
@@ -3455,6 +3528,13 @@ fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
 /// serial [`table_stream`] is this function over one segment per kept run of
 /// each matching block, a partitioned replay it over each group
 /// [`plan_partitions`] handed out.
+///
+/// **Under a [`DynamicFilter`]** (`dynamic`), each row group the replay
+/// enters is first asked of the filter's state ([`DynamicRead::at_row`]): one
+/// it rules out ends the segment there, and the replay re-enters the block
+/// at the next group it keeps as a piece starting inside the data, the
+/// segment's limit unchanged. A block sorted on a bound the state requires
+/// stops at its first row past it, as under a static filter's.
 fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
@@ -3462,10 +3542,12 @@ fn replay<'a>(
     shared: StreamShared,
     resume: Option<ResumeToken>,
     fingerprint: u64,
+    mut dynamic: Option<DynamicRead>,
 ) -> impl Stream<Item = Result<RecordBatch>> + Send + 'a {
     try_stream! {
         let scan_options = &plan.scan_options;
         let query_options = &plan.query_options;
+        let semantics = query_options.semantics;
 
         // The chunk length every segment's replay repeats, announced once for
         // the whole sub-stream (`ByteRangeSource::hint_read_size`). The budget
@@ -3523,12 +3605,19 @@ fn replay<'a>(
             }
         }
 
-        for segment in segments {
+        // A segment a dynamic filter cut short is followed by the rest of it
+        // the filter keeps, re-entered ahead of the segments after it.
+        let mut queue = VecDeque::from(segments);
+        while let Some(segment) = queue.pop_front() {
             let block = &segment.block;
+            let seg_start = segment.start;
             let seg_limit = segment.limit;
             let seg_end = block.end_offset;
             let block_database = block.database.clone();
             let stop = plan.stops.get(&block.header_offset);
+            if let Some(dynamic) = dynamic.as_mut() {
+                dynamic.enter(block, &plan);
+            }
 
             let resumes_here = paused_in.is_some_and(|(offset, header_offset)| {
                 header_offset == block.header_offset
@@ -3570,6 +3659,17 @@ fn replay<'a>(
                         *shared.comparison_notes.lock().unwrap() = notes;
                         *shared.resolved_schema.lock().unwrap() = resolved;
                         let Some(row_start) = row_start else { continue };
+                        let skip = dynamic.as_mut().map_or(Skip::Read, |dynamic| {
+                            dynamic.at_row(row_start, seg_start, seg_limit, semantics)
+                        });
+                        match skip {
+                            Skip::Read => {}
+                            Skip::To(start) => {
+                                queue.push_front(segment.rest_from(start));
+                                continue;
+                            }
+                            Skip::Rest => continue,
+                        }
                         active = Some(opened);
                         CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                     }
@@ -3581,12 +3681,16 @@ fn replay<'a>(
             // Set once this segment has read the line that ends at or past
             // its limit — the last it owns, and the one the next segment's
             // search skips, so the two tile — or a row past its block's
-            // sorted bound, after which it owns none the filter keeps. A later
-            // segment of the same block stops at its own first row, where
-            // pruning has not already skipped it.
+            // sorted bound, after which it owns none the filter keeps, or the
+            // start of a group a dynamic filter rules out. A later segment of
+            // the same block stops at its own first row, where pruning has not
+            // already skipped it.
             let mut past_limit = false;
             // Where the row that stopped this segment ends, if one did.
             let mut stopped_at: Option<u64> = None;
+            // Where the rest of this segment is searched from, where a
+            // dynamic filter ruled out the group its next row starts.
+            let mut rest_from: Option<u64> = None;
 
             loop {
                 let want = scan_options.chunk_size_bytes.min((seg_end - read_pos) as usize);
@@ -3614,6 +3718,9 @@ fn replay<'a>(
                     // nothing pays nothing (`docs/design/decisions.md`, "D27").
                     let mut validated: Option<&str> = None;
                     while let Some(event) = scanner.next_event(span, span_eof)? {
+                        // Whether the scanner now stands at a row's start
+                        // inside the block's data.
+                        let at_row = matches!(event, Event::CopyStart(_) | Event::Row(_));
                         match event {
                             Event::CopyStart(start) => {
                                 let (opened, resolved, notes) = activate(
@@ -3650,7 +3757,23 @@ fn replay<'a>(
                                         batcher.table(),
                                         row.offset,
                                     )?;
-                                    if keep {
+                                    // A dynamic filter's state is evaluated
+                                    // nowhere else, so its stop is asked of
+                                    // every row, kept or not, of a group it
+                                    // is armed in (`DynamicPruning::arm`).
+                                    let dynamic_stop = dynamic.as_ref().and_then(DynamicRead::stop);
+                                    let passed = if keep {
+                                        dynamic_stop
+                                            .is_some_and(|stop| stop.passed(raw, &mut split))
+                                    } else {
+                                        stop.is_some_and(|stop| stop.passed(raw, &mut split))
+                                            || dynamic_stop
+                                                .is_some_and(|stop| stop.passed(raw, &mut split))
+                                    };
+                                    if passed {
+                                        past_limit = true;
+                                        stopped_at = Some(scanner.position());
+                                    } else if keep {
                                         batcher.push_row(
                                             *header_offset,
                                             row.offset,
@@ -3658,10 +3781,6 @@ fn replay<'a>(
                                             &mut split,
                                             &mut chunks,
                                         )?;
-                                    } else if stop.is_some_and(|stop| stop.passed(raw, &mut split))
-                                    {
-                                        past_limit = true;
-                                        stopped_at = Some(scanner.position());
                                     }
                                     if batcher.should_flush() {
                                         let begins_at = batcher
@@ -3706,6 +3825,23 @@ fn replay<'a>(
                             past_limit = true;
                             break;
                         }
+                        // The next row is this segment's: where it enters a
+                        // group a dynamic filter rules out, the segment ends.
+                        if at_row && let Some(dynamic) = dynamic.as_mut() {
+                            match dynamic.at_row(scanner.position(), seg_start, seg_limit, semantics)
+                            {
+                                Skip::Read => {}
+                                Skip::To(start) => {
+                                    rest_from = Some(start);
+                                    past_limit = true;
+                                    break;
+                                }
+                                Skip::Rest => {
+                                    past_limit = true;
+                                    break;
+                                }
+                            }
+                        }
                     }
                     carry.consumed(pass, &chunk, scanner.take_consumed());
                     if past_limit {
@@ -3735,12 +3871,11 @@ fn replay<'a>(
                 let unread = owned_end.saturating_sub(stopped_at);
                 if unread > 0 {
                     let mut early_stops = shared.early_stops.lock().unwrap();
-                    if let Some(entry) =
-                        early_stops.iter_mut().find(|e| e.header_offset == block.header_offset)
-                    {
-                        *entry.unread_bytes.get_or_insert(0) += unread;
-                    }
+                    record_unread(&mut early_stops, block.header_offset, unread);
                 }
+            }
+            if let Some(start) = rest_from {
+                queue.push_front(segment.rest_from(start));
             }
 
             // A segment that stopped at its limit rather than at the block's
@@ -3759,6 +3894,150 @@ fn replay<'a>(
                 yield batch;
             }
         }
+    }
+}
+
+/// Add `unread` to the entry of `early_stops` for the block at
+/// `header_offset`, adding the entry in file order where there is none: a
+/// dynamic filter's stop is found as the replay runs, not planned.
+fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u64) {
+    match early_stops.iter().position(|e| e.header_offset >= header_offset) {
+        Some(at) if early_stops[at].header_offset == header_offset => {
+            *early_stops[at].unread_bytes.get_or_insert(0) += unread;
+        }
+        at => early_stops.insert(
+            at.unwrap_or(early_stops.len()),
+            EarlyStop { header_offset, unread_bytes: Some(unread) },
+        ),
+    }
+}
+
+/// A filter a query's consumer refines while the query runs — a hash join's
+/// build side, a TopK's heap — handed to a partitioned replay
+/// ([`TablePartitions::stream`]), which skips the row groups its state rules
+/// out as it reaches them, and ends a sorted block at the first row past a
+/// bound the state requires.
+///
+/// **Its contract is looser than a filter's, and is stated here alone.** A
+/// replay may drop any row a state it read rejects, at any moment, and reads
+/// the state only as it enters a row group: what a stream emits lies between
+/// the rows its static filter keeps and those the states it read keep, and
+/// depends on when each was read. So a replay is handed one by the one entry
+/// point that never resumes, a resume token counting rows being meaningless
+/// under it, and drops nothing on its account where the query does not use
+/// statistics. A consumer needing an exact answer re-checks its own rows.
+///
+/// **A state is the library's filter tree**, over the table's column names,
+/// resolved against each block as a static filter is, in the query's
+/// semantics: a term a block cannot resolve stands as whatever keeps every
+/// row where it sits, never as the query's refusal.
+pub trait DynamicFilter: Send + Sync {
+    /// A number that moves whenever the state does. Asked each time the
+    /// replay enters a row group, so it should cost little.
+    fn generation(&self) -> u64;
+
+    /// The state now, and the generation it is the state of.
+    fn current(&self) -> (u64, Arc<Expr>);
+}
+
+/// A [`DynamicFilter`] as one sub-stream's replay reads it: the filter, the
+/// statistics of the blocks it may prune, and the block being read.
+struct DynamicRead {
+    filter: Arc<dyn DynamicFilter>,
+    statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    /// The block last entered, by `header_offset`, with its pruning — `None`
+    /// for one whose statistics answer nothing.
+    block: Option<(u64, Option<DynamicBlock>)>,
+    /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`]).
+    pruned: Arc<AtomicU64>,
+}
+
+/// One block as a [`DynamicRead`] prunes it: its unprojected schema, which
+/// each state is resolved against, and its statistics.
+struct DynamicBlock {
+    full: ResolvedSchema,
+    pruning: DynamicPruning,
+}
+
+/// What a [`DynamicFilter`] says of the row a replay is about to read
+/// ([`DynamicRead::at_row`]).
+enum Skip {
+    Read,
+    /// The row's group and every one up to the group whose search starts at
+    /// this offset are ruled out: the segment ends, and resumes here.
+    To(u64),
+    /// The row's group and every later one the segment holds are ruled out.
+    Rest,
+}
+
+impl DynamicRead {
+    /// Make `block` the block being read, unless it already is.
+    fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {
+        if self.block.as_ref().is_some_and(|(at, _)| *at == block.header_offset) {
+            return;
+        }
+        let pruning = self.statistics.get(&block.header_offset).and_then(|statistics| {
+            let metadata = plan.metadata.as_ref();
+            let pruning = DynamicPruning::new(block, Arc::clone(statistics), metadata)?;
+            let census = plan.table.census_for(&block.header.columns);
+            let schema_mode = plan.query_options.schema_mode;
+            let database = block.database.as_deref();
+            let full =
+                resolve_block(&block.header, metadata, database, schema_mode, &census).ok()?;
+            Some(DynamicBlock { full, pruning })
+        });
+        self.block = Some((block.header_offset, pruning));
+    }
+
+    /// What the filter says of the row starting at `offset`, the next a
+    /// segment searched from `start` to `limit` owns. **Asked only as the row
+    /// enters a group**: the state is re-read there where its generation has
+    /// moved, and a group it rules out is skipped with every one after it
+    /// that it also rules out, up to the segment's limit.
+    ///
+    /// A skipped group is counted where the segment holds its search start,
+    /// which a segment begun inside the group does not.
+    fn at_row(
+        &mut self,
+        offset: u64,
+        start: u64,
+        limit: u64,
+        semantics: ComparisonSemantics,
+    ) -> Skip {
+        let Some((header_offset, Some(block))) = self.block.as_mut() else { return Skip::Read };
+        let pruning = &mut block.pruning;
+        let Some(group) = pruning.group_of(offset) else { return Skip::Read };
+        if !pruning.enters(group) {
+            return Skip::Read;
+        }
+        if pruning.generation() != Some(self.filter.generation()) {
+            let (generation, state) = self.filter.current();
+            let resolved = resolve_loosened(&state, &block.full, *header_offset, semantics, false);
+            pruning.read(generation, resolved);
+        }
+        if pruning.keeps(group) {
+            pruning.arm(group);
+            return Skip::Read;
+        }
+        let mut skipped = u64::from(start <= pruning.search_start(group));
+        let mut next = group + 1;
+        let skip = loop {
+            if next >= pruning.groups() || pruning.search_start(next) >= limit {
+                break Skip::Rest;
+            }
+            if pruning.keeps(next) {
+                break Skip::To(pruning.search_start(next));
+            }
+            skipped += 1;
+            next += 1;
+        };
+        self.pruned.fetch_add(skipped, Ordering::Relaxed);
+        skip
+    }
+
+    /// Where the state last read stops the block being read, if anywhere.
+    fn stop(&self) -> Option<&SortedStop> {
+        self.block.as_ref()?.1.as_ref()?.pruning.stop()
     }
 }
 
@@ -3836,7 +4115,7 @@ pub fn table_stream<'a>(
         // ([`Segment::new`]).
         drop(matches);
         let mut rows =
-            Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
+            Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint, None));
         while let Some(batch) = rows.next().await {
             yield watch.attribute(source, batch).await?;
         }
@@ -3911,8 +4190,15 @@ pub async fn table_stream_partitions<'a>(
             // from a file that had already moved.
             let watch = Arc::clone(&watch);
             let inner = try_stream! {
-                let mut rows =
-                    Box::pin(replay(source, plan, segments, shared_for_stream, None, fingerprint));
+                let mut rows = Box::pin(replay(
+                    source,
+                    plan,
+                    segments,
+                    shared_for_stream,
+                    None,
+                    fingerprint,
+                    None,
+                ));
                 while let Some(batch) = rows.next().await {
                     yield watch.attribute(source, batch).await?;
                 }
@@ -3996,6 +4282,12 @@ pub fn table_schema(
 /// needs. `watch` is the caller's: its baseline is what each sub-stream
 /// checks the source against when it ends, so a caller opens it before
 /// trusting the map it loaded and shares it across every replay of that map.
+///
+/// **It shares each matched block's statistics with the caller's map**, where
+/// the query uses them, for a [`DynamicFilter`] to be read against as its
+/// sub-streams run ([`Self::stream`]): nothing is copied, so they cost
+/// nothing the map does not while the caller holds it, and a plan kept after
+/// the map is dropped keeps them.
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,
@@ -4004,6 +4296,7 @@ pub struct TablePartitions {
     plan_notes: Vec<PlanNote>,
     orders: Vec<Sortedness>,
     table: String,
+    statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
 }
 
 impl TablePartitions {
@@ -4045,7 +4338,25 @@ impl TablePartitions {
             .cloned()
             .unwrap_or_default();
         let orders = partition_orders(&matches, index.metadata.as_ref(), &resolved, &runs);
-        Ok(Self { source, watch, plan, groups, plan_notes, orders, table: table.qualified() })
+        let statistics = match plan.query_options.use_statistics {
+            true => matches
+                .iter()
+                .filter_map(|block| {
+                    Some((block.header_offset, Arc::clone(block.statistics.as_ref()?)))
+                })
+                .collect(),
+            false => BTreeMap::new(),
+        };
+        Ok(Self {
+            source,
+            watch,
+            plan,
+            groups,
+            plan_notes,
+            orders,
+            table: table.qualified(),
+            statistics: Arc::new(statistics),
+        })
     }
 
     /// How many sub-streams the plan cut: at least one, and never more than
@@ -4108,7 +4419,19 @@ impl TablePartitions {
     /// runs the partition, and outside the plan it was cut under
     /// (`docs/design/decisions.md`, "D50"). Each call starts the partition from
     /// its beginning; a partition past [`Self::len`] is an empty stream.
-    pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
+    ///
+    /// **`dynamic` is read as the stream runs**, against the statistics the
+    /// plan holds ([`DynamicFilter`]): the row groups its state rules out are
+    /// skipped as the replay reaches them
+    /// ([`TableStream::dynamic_filter_pruned_groups`]), and a block sorted on a
+    /// bound it requires stops past it ([`TableStream::early_stops`]). Where
+    /// the plan does not use statistics it skips nothing.
+    pub fn stream(
+        &self,
+        partition: usize,
+        max_rows: usize,
+        dynamic: Option<Arc<dyn DynamicFilter>>,
+    ) -> TableStream<'static> {
         let segments = self.groups.get(partition).cloned().unwrap_or_default();
         let plan = if self.plan.query_options.max_rows == max_rows {
             Arc::clone(&self.plan)
@@ -4124,6 +4447,12 @@ impl TablePartitions {
         );
         let shared = StreamShared::new(ResumeToken::start(fingerprint))
             .with_plan_notes(self.plan_notes.clone());
+        let dynamic = dynamic.map(|filter| DynamicRead {
+            filter,
+            statistics: Arc::clone(&self.statistics),
+            block: None,
+            pruned: Arc::clone(&shared.dynamic_pruned),
+        });
         let shared_for_stream = shared.clone();
         let source = Arc::clone(&self.source);
         let watch = Arc::clone(&self.watch);
@@ -4135,6 +4464,7 @@ impl TablePartitions {
                 shared_for_stream,
                 None,
                 fingerprint,
+                dynamic,
             ));
             while let Some(batch) = rows.next().await {
                 yield watch.attribute(source.as_ref(), batch).await?;
@@ -4823,6 +5153,69 @@ mod tests {
         for statistics in &held {
             assert_eq!(Arc::strong_count(statistics), 1, "only the test's own copy remains");
         }
+    }
+
+    /// **A dynamic filter's stop is armed only in a group a row of which can
+    /// pass it**: under `id < 150` over ascending ids, of the groups the
+    /// state keeps only the one whose maximum reaches the bound is asked
+    /// row by row, so the groups before it pay nothing for the stop.
+    #[tokio::test]
+    async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
+        use crate::io::LocalFileSource;
+        use crate::predicate::Predicate;
+        use crate::statistics::{StatisticsRequest, StatisticsSelection};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ascending.sql");
+        let rows: String = (1..=200).map(|id| format!("{id}\n")).collect();
+        std::fs::write(
+            &path,
+            format!(
+                "CREATE TABLE public.t (\n    id integer\n);\n\n\
+                 COPY public.t (id) FROM stdin;\n{rows}\\.\n"
+            ),
+        )
+        .unwrap();
+        let source = LocalFileSource::open(&path).unwrap();
+        let request = StatisticsRequest {
+            selection: StatisticsSelection::All,
+            group_size: Some(std::num::NonZeroU64::new(64).unwrap()),
+            ..StatisticsRequest::ALL
+        };
+        let run = map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request)
+            .await
+            .unwrap();
+        let block = run.index.blocks_for("public.t").next().unwrap();
+        let statistics = Arc::clone(block.statistics.as_ref().unwrap());
+        let metadata = run.index.metadata.as_ref();
+        let census = vec![ArrayShape::default(); block.header.columns.len()];
+        let full =
+            resolve_block(&block.header, metadata, None, SchemaMode::Typed, &census).unwrap();
+        let below = Expr::all([Predicate {
+            column: "id".into(),
+            op: PredicateOp::Lt,
+            value: Some("150".into()),
+        }]);
+        let filter =
+            resolve_expr(&below, &full, block.header_offset, ComparisonSemantics::Postgres)
+                .unwrap();
+        let mut pruning = DynamicPruning::new(block, Arc::clone(&statistics), metadata).unwrap();
+        pruning.read(1, filter);
+
+        let bounds = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        let (mut armed, mut reaching) = (Vec::new(), Vec::new());
+        for group in 0..pruning.groups() {
+            if !pruning.keeps(group) {
+                continue;
+            }
+            pruning.arm(group);
+            armed.push(pruning.stop().is_some());
+            let max: i64 = bounds.groups[group].as_ref().unwrap().max.parse().unwrap();
+            reaching.push(max >= 150);
+        }
+        assert!(armed.len() > 3, "{armed:?}");
+        assert_eq!(armed, reaching);
+        assert_eq!(armed.iter().filter(|&&armed| armed).count(), 1, "{armed:?}");
     }
 
     /// **The plan resolves every block before any is read, and activation

@@ -10,17 +10,13 @@ use datafusion::catalog::{Session, TableProvider};
 use datafusion::common::stats::Precision;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
-use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
-use futures::StreamExt;
 use pgdump_query::{ComparisonSemantics, QueryOptions, ResolvedSchema, TableName, TablePartitions};
 
-use crate::budget::{Draw, ScanBudget, pool_limit};
+use crate::budget::{ScanBudget, pool_limit};
 use crate::dump::PgDump;
-use crate::exec::{PgDumpExec, ScanMetrics, StaticFilter};
+use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::pushdown::translate;
 use crate::report::Reporting;
 use crate::settings::PgDumpSettings;
@@ -198,17 +194,6 @@ impl TableProvider for PgDumpTable {
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema;
-        let streams = (0..partitions.len())
-            .map(|index| {
-                Arc::new(Partition {
-                    partitions: Arc::clone(&partitions),
-                    index,
-                    schema: Arc::clone(&schema),
-                    draw: Arc::clone(&draw),
-                    metrics: metrics.clone(),
-                }) as Arc<dyn PartitionStream>
-            })
-            .collect();
         let mut statistics = self
             .statistics
             .get_or_init(|| {
@@ -240,42 +225,8 @@ impl TableProvider for PgDumpTable {
         // projected columns' own sum describes.
         statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
         let orderings = output_orderings(&schema, partitions.orders());
-        let inner = StreamingTableExec::try_new(schema, streams, None, orderings, false, limit)?;
-        Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics, StaticFilter::new(answered))))
-    }
-}
-
-/// One sub-stream of a planned replay, run when DataFusion executes it.
-struct Partition {
-    partitions: Arc<TablePartitions>,
-    index: usize,
-    schema: SchemaRef,
-    /// Held by the plan and by every stream it starts, so the budget it drew
-    /// returns once the last of them is gone.
-    draw: Arc<Draw>,
-    metrics: ScanMetrics,
-}
-
-impl fmt::Debug for Partition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Partition").field("index", &self.index).finish()
-    }
-}
-
-impl PartitionStream for Partition {
-    fn schema(&self) -> &SchemaRef {
-        &self.schema
-    }
-
-    /// Batch size is read here, from the context the partition runs under, as
-    /// DataFusion's own sources read it.
-    fn execute(&self, ctx: Arc<TaskContext>) -> SendableRecordBatchStream {
-        let draw = Arc::clone(&self.draw);
-        let stream = self.partitions.stream(self.index, ctx.session_config().batch_size());
-        let rows = self.metrics.counted(stream, self.index).map(move |batch| {
-            let _held = &draw;
-            batch.map_err(external)
-        });
-        Box::pin(RecordBatchStreamAdapter::new(Arc::clone(&self.schema), rows))
+        let replay = Replay::new(partitions, schema, draw, metrics);
+        let answered = StaticFilter::new(answered);
+        Ok(Arc::new(PgDumpExec::new(replay, orderings, limit, statistics, answered)?))
     }
 }

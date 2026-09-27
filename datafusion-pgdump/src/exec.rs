@@ -10,21 +10,27 @@
 //! are reported beside the streaming exec's own ([`ScanMetrics`]).
 //!
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
-//! consumes none: each is answered `No`, printed in `EXPLAIN`, and visited
-//! where DataFusion looks for a filter's consumer.
+//! hands them to every sub-stream it runs, which skips the row groups their
+//! state rules out as it reaches them ([`ReplayFilter`]): each is answered
+//! `No`, its producer re-checking its own rows, printed in `EXPLAIN`, and
+//! visited where DataFusion looks for a filter's consumer. The streaming exec
+//! is built again over the same planned replay each time the filters it
+//! holds change, a sub-stream's filters being fixed when it is built.
 //!
 //! **Its `EXPLAIN` line prints the whole filter the scan holds as one
 //! `predicate=`**, as Parquet's scan does: the static filter it answered
 //! `Exact` ([`StaticFilter`]), then each dynamic filter. No other node of a
 //! physical plan names the static one. Parquet's `pruning_predicate=` is not
 //! copied: it exists because Parquet prunes by something other than its
-//! `predicate=`, where this scan prunes by the static filter it prints.
+//! `predicate=`, where this scan prunes by the filters it prints — a dynamic
+//! one as far as its translation reaches ([`crate::dynamic_filter`]).
 
 use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use arrow::datatypes::SchemaRef;
 use datafusion::common::stats::Precision;
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::common::{Result, Statistics, internal_err};
@@ -32,6 +38,7 @@ use datafusion::config::ConfigOptions;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::logical_expr::expr_rewriter::unnormalize_col;
 use datafusion::logical_expr::{BinaryExpr, Expr, Operator};
+use datafusion::physical_expr::LexOrdering;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::{ChildrenPropertiesMode, ReplaceChildrenOptions};
 use datafusion::physical_plan::filter_pushdown::{
@@ -42,42 +49,61 @@ use datafusion::physical_plan::metrics::{
     MetricsSet, PruningMetrics,
 };
 use datafusion::physical_plan::statistics::{ChildStats, StatisticsArgs};
-use datafusion::physical_plan::streaming::StreamingTableExec;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{Stream, StreamExt};
-use pgdump_query::{PlanNote, PlanNoteKind, TableStream};
+use pgdump_query::{PlanNote, PlanNoteKind, ResolvedSchema, TablePartitions, TableStream};
 
-use crate::dynamic_filter::DynamicFilters;
+use crate::budget::Draw;
+use crate::dynamic_filter::{DynamicFilters, ReplayFilter};
+use crate::table::external;
 
 /// The replay of one table, with its statistics.
 #[derive(Debug, Clone)]
 pub(crate) struct PgDumpExec {
-    /// The streaming exec this node *is*, minus the statistics. Held rather
+    /// The streaming exec this node *is*, minus the statistics, built over
+    /// `replay` handing each sub-stream the dynamic filters held. Held rather
     /// than made a child, so the optimizer sees one leaf and the node it
     /// would otherwise replace cannot be swapped out from under the
     /// statistics.
     inner: Arc<StreamingTableExec>,
+    replay: Arc<Replay>,
     statistics: Arc<Statistics>,
-    metrics: ScanMetrics,
     /// The filter the replay `inner` streams applies, as `EXPLAIN` prints it.
     static_filter: Arc<StaticFilter>,
     dynamic_filters: DynamicFilters,
 }
 
 impl PgDumpExec {
+    /// A scan of `replay`, declaring `orderings` and fetching `limit` rows.
     pub(crate) fn new(
-        inner: StreamingTableExec,
+        replay: Replay,
+        orderings: Vec<LexOrdering>,
+        limit: Option<usize>,
         statistics: Statistics,
-        metrics: ScanMetrics,
         static_filter: StaticFilter,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let replay = Arc::new(replay);
+        let inner = replay.streaming(None, orderings, limit)?;
+        Ok(Self {
             inner: Arc::new(inner),
+            replay,
             statistics: Arc::new(statistics),
-            metrics,
             static_filter: Arc::new(static_filter),
             dynamic_filters: DynamicFilters::default(),
-        }
+        })
+    }
+
+    /// This scan holding `dynamic_filters` in place of those it holds, its
+    /// streaming exec built again to hand them to each sub-stream, under the
+    /// orderings and fetch it has.
+    fn holding(&self, dynamic_filters: DynamicFilters) -> Result<Self> {
+        let filter = (!dynamic_filters.is_empty())
+            .then(|| Arc::new(ReplayFilter::new(dynamic_filters.clone(), self.replay.table())));
+        let orderings = self.inner.projected_output_ordering().into_iter().collect();
+        let inner = self.replay.streaming(filter, orderings, self.inner.limit())?;
+        Ok(Self { inner: Arc::new(inner), dynamic_filters, ..self.clone() })
     }
 
     /// `, predicate=…` or, in the tree rendering, a `predicate=…` line of its
@@ -252,7 +278,7 @@ impl ExecutionPlan for PgDumpExec {
         }
         Ok(match self.dynamic_filters.with(pushed) {
             Some(dynamic_filters) => {
-                declined.with_updated_node(Arc::new(Self { dynamic_filters, ..self.clone() }))
+                declined.with_updated_node(Arc::new(self.holding(dynamic_filters)?))
             }
             None => declined,
         })
@@ -265,7 +291,7 @@ impl ExecutionPlan for PgDumpExec {
         if self.dynamic_filters.is_empty() {
             return Ok(self);
         }
-        Ok(Arc::new(Self { dynamic_filters: DynamicFilters::default(), ..Self::clone(&self) }))
+        Ok(Arc::new(self.holding(DynamicFilters::default())?))
     }
 
     fn execute(
@@ -280,7 +306,7 @@ impl ExecutionPlan for PgDumpExec {
     /// scan's ([`ScanMetrics`]).
     fn metrics(&self) -> Option<MetricsSet> {
         let mut metrics = self.inner.metrics().unwrap_or_default();
-        for metric in self.metrics.set.clone_inner().iter() {
+        for metric in self.replay.metrics.set.clone_inner().iter() {
             metrics.push(Arc::clone(metric));
         }
         Some(metrics)
@@ -293,13 +319,7 @@ impl ExecutionPlan for PgDumpExec {
     fn with_fetch(&self, limit: Option<usize>) -> Option<Arc<dyn ExecutionPlan>> {
         let inner = self.inner.with_fetch(limit)?;
         let inner = inner.downcast_ref::<StreamingTableExec>()?;
-        Some(Arc::new(Self {
-            inner: Arc::new(inner.clone()),
-            statistics: Arc::clone(&self.statistics),
-            metrics: self.metrics.clone(),
-            static_filter: Arc::clone(&self.static_filter),
-            dynamic_filters: self.dynamic_filters.clone(),
-        }))
+        Some(Arc::new(Self { inner: Arc::new(inner.clone()), ..self.clone() }))
     }
 
     fn child_stats_requests(&self, _partition: Option<usize>) -> Vec<ChildStats> {
@@ -346,19 +366,25 @@ pub(crate) const ROW_GROUPS_PRUNED_STATISTICS: &str = "row_groups_pruned_statist
 /// unread.
 pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
 
+/// The metric counting the row groups a dynamic filter ruled out as the
+/// replay reached them, named as Parquet's scan names its own.
+pub(crate) const ROW_GROUPS_PRUNED_DYNAMIC_FILTER: &str = "row_groups_pruned_dynamic_filter";
+
 /// What a scan reports under `EXPLAIN ANALYZE`, beside the streaming exec's
 /// rows and time: the row groups the map's statistics ruled out, of those its
-/// blocks list ([`ROW_GROUPS_PRUNED_STATISTICS`]), and the bytes of rows an
-/// early stop left unread ([`BYTES_UNREAD_EARLY_STOP`]). Counts rather than
-/// findings ([`crate::report`]):
-/// the note saying the same of the pruning is also a plan note, which the
-/// table's sink hears as an `Info`.
+/// blocks list ([`ROW_GROUPS_PRUNED_STATISTICS`]), those a dynamic filter
+/// ruled out of the rest ([`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`]), and the
+/// bytes of rows an early stop left unread, at a static filter's bound or a
+/// dynamic one's ([`BYTES_UNREAD_EARLY_STOP`]). Counts rather than findings
+/// ([`crate::report`]): the note saying the same of the static pruning is
+/// also a plan note, which the table's sink hears as an `Info`.
 ///
-/// **The pruning is counted once, for the whole node, when the scan is
-/// planned**, since that is when the library settles it; an early stop is
-/// found while rows are read, so it is counted per partition as each one
-/// ends. Clones share one set, so a plan node rebuilt around a fetch reports
-/// what its partitions count.
+/// **The static pruning is counted once, for the whole node, when the scan
+/// is planned**, since that is when the library settles it; what a dynamic
+/// filter pruned and an early stop left unread are found while rows are
+/// read, so they are counted per partition as each one ends. Clones share one
+/// set, so a plan node rebuilt around a fetch or a filter reports what its
+/// partitions count.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ScanMetrics {
     set: ExecutionPlanMetricsSet,
@@ -386,43 +412,49 @@ impl ScanMetrics {
     }
 
     /// `stream`, partition `partition` of this scan, counting what its early
-    /// stops left unread once it ends or is dropped — a `LIMIT` met drops a
-    /// partition before its end, and what was stopped by then was still not
-    /// read.
-    pub(crate) fn counted(
-        &self,
-        stream: TableStream<'static>,
-        partition: usize,
-    ) -> EarlyStopsCounted {
+    /// stops left unread and what its dynamic filter pruned once it ends or
+    /// is dropped — a `LIMIT` met drops a partition before its end, and what
+    /// was skipped by then was still not read.
+    pub(crate) fn counted(&self, stream: TableStream<'static>, partition: usize) -> Counted {
         let unread = MetricBuilder::new(&self.set)
             .with_type(MetricType::Summary)
             .with_category(MetricCategory::Bytes)
             .counter(BYTES_UNREAD_EARLY_STOP, partition);
-        EarlyStopsCounted { stream, unread, counted: false }
+        let pruned = MetricBuilder::new(&self.set)
+            .with_type(MetricType::Summary)
+            .with_category(MetricCategory::Rows)
+            .counter(ROW_GROUPS_PRUNED_DYNAMIC_FILTER, partition);
+        Counted { stream, unread, pruned, counted: false }
     }
 }
 
-/// A partition's stream, adding its early stops' unread bytes to the scan's
-/// metric once ([`ScanMetrics::counted`]). A block cut across partitions is
-/// counted in each for the pieces that partition read, and the pieces' bytes
-/// add (`pgdump_query::EarlyStop::unread_bytes`).
-pub(crate) struct EarlyStopsCounted {
+/// A partition's stream, adding its early stops' unread bytes and the groups
+/// its dynamic filter pruned to the scan's metrics once
+/// ([`ScanMetrics::counted`]). A block cut across partitions is counted in
+/// each for the pieces that partition read, and the pieces' bytes add
+/// (`pgdump_query::EarlyStop::unread_bytes`); a group, by the one partition
+/// whose piece holds its start
+/// (`pgdump_query::TableStream::dynamic_filter_pruned_groups`).
+pub(crate) struct Counted {
     stream: TableStream<'static>,
     unread: Count,
+    pruned: Count,
     counted: bool,
 }
 
-impl EarlyStopsCounted {
-    fn add_unread(&mut self) {
+impl Counted {
+    fn add_counts(&mut self) {
         if !std::mem::replace(&mut self.counted, true) {
             let stops = self.stream.early_stops();
             let bytes: u64 = stops.iter().filter_map(|stop| stop.unread_bytes).sum();
             self.unread.add(usize::try_from(bytes).unwrap_or(usize::MAX));
+            let groups = self.stream.dynamic_filter_pruned_groups();
+            self.pruned.add(usize::try_from(groups).unwrap_or(usize::MAX));
         }
     }
 }
 
-impl Stream for EarlyStopsCounted {
+impl Stream for Counted {
     type Item = pgdump_query::Result<arrow::array::RecordBatch>;
 
     /// Counted before the end is handed on, so a reader of the metrics who
@@ -430,15 +462,108 @@ impl Stream for EarlyStopsCounted {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let polled = self.stream.poll_next_unpin(cx);
         if let Poll::Ready(None) = polled {
-            self.add_unread();
+            self.add_counts();
         }
         polled
     }
 }
 
-impl Drop for EarlyStopsCounted {
+impl Drop for Counted {
     fn drop(&mut self) {
-        self.add_unread();
+        self.add_counts();
+    }
+}
+
+/// One table's planned replay, which a scan's streaming exec is built over:
+/// the sub-streams, the schema they emit, the budget they drew and the
+/// metrics they count into.
+pub(crate) struct Replay {
+    partitions: Arc<TablePartitions>,
+    schema: SchemaRef,
+    /// Held by the plan and by every stream it starts, so the budget it drew
+    /// returns once the last of them is gone.
+    draw: Arc<Draw>,
+    metrics: ScanMetrics,
+}
+
+impl fmt::Debug for Replay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Replay").field("partitions", &self.partitions.len()).finish()
+    }
+}
+
+impl Replay {
+    pub(crate) fn new(
+        partitions: Arc<TablePartitions>,
+        schema: SchemaRef,
+        draw: Arc<Draw>,
+        metrics: ScanMetrics,
+    ) -> Self {
+        Self { partitions, schema, draw, metrics }
+    }
+
+    /// The schema the sub-streams emit, as the library resolved it: what a
+    /// dynamic filter's columns index.
+    fn table(&self) -> ResolvedSchema {
+        self.partitions.resolved_schema()
+    }
+
+    /// A streaming exec over every sub-stream, each reading `filter` as it
+    /// runs.
+    fn streaming(
+        self: &Arc<Self>,
+        filter: Option<Arc<ReplayFilter>>,
+        orderings: Vec<LexOrdering>,
+        limit: Option<usize>,
+    ) -> Result<StreamingTableExec> {
+        let streams = (0..self.partitions.len())
+            .map(|index| {
+                Arc::new(Partition { replay: Arc::clone(self), index, filter: filter.clone() })
+                    as Arc<dyn PartitionStream>
+            })
+            .collect();
+        StreamingTableExec::try_new(
+            Arc::clone(&self.schema),
+            streams,
+            None,
+            orderings,
+            false,
+            limit,
+        )
+    }
+}
+
+/// One sub-stream of a planned replay, run when DataFusion executes it.
+struct Partition {
+    replay: Arc<Replay>,
+    index: usize,
+    filter: Option<Arc<ReplayFilter>>,
+}
+
+impl fmt::Debug for Partition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Partition").field("index", &self.index).finish()
+    }
+}
+
+impl PartitionStream for Partition {
+    fn schema(&self) -> &SchemaRef {
+        &self.replay.schema
+    }
+
+    /// Batch size is read here, from the context the partition runs under, as
+    /// DataFusion's own sources read it.
+    fn execute(&self, ctx: Arc<TaskContext>) -> SendableRecordBatchStream {
+        let draw = Arc::clone(&self.replay.draw);
+        let filter =
+            self.filter.clone().map(|filter| filter as Arc<dyn pgdump_query::DynamicFilter>);
+        let batch_size = ctx.session_config().batch_size();
+        let stream = self.replay.partitions.stream(self.index, batch_size, filter);
+        let rows = self.replay.metrics.counted(stream, self.index).map(move |batch| {
+            let _held = &draw;
+            batch.map_err(external)
+        });
+        Box::pin(RecordBatchStreamAdapter::new(Arc::clone(&self.replay.schema), rows))
     }
 }
 

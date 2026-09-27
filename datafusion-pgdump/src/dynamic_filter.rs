@@ -18,9 +18,14 @@
 //! row where it sits: `true` beneath an even number of `NOT`s, `false`
 //! beneath an odd one ([`Parity`]). So translating never fails, and the worst
 //! a filter can come to is keeping every row.
+//!
+//! **The replay reads the translation as its sub-streams run**
+//! ([`ReplayFilter`], `pgdump_query::DynamicFilter`), each time it enters a
+//! row group, and the filters are translated again only once one of them has
+//! moved.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::common::{Result, ScalarValue};
@@ -29,9 +34,9 @@ use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_expr::expressions::{
     BinaryExpr, CaseExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal, NotExpr,
 };
-use datafusion::physical_expr_common::physical_expr::fmt_sql;
+use datafusion::physical_expr_common::physical_expr::{fmt_sql, snapshot_generation};
 use datafusion::physical_plan::apply_expression_roots;
-use pgdump_query::{Expr as L, PredicateOp, ResolvedSchema};
+use pgdump_query::{DynamicFilter, Expr as L, PredicateOp, ResolvedSchema};
 
 use crate::pushdown::{boolean_term, compared, is_float, null_term};
 
@@ -106,6 +111,57 @@ impl fmt::Display for Sql<'_> {
     }
 }
 
+/// The dynamic filters a scan holds, as each of its sub-streams reads them:
+/// their conjunction, each [`loosened`] over the schema the scan emits.
+///
+/// **Its generation is the sum of theirs**, each of which only rises, so it
+/// moves whenever one of them does; and the translation last made is kept
+/// until it has, since the replay asks at every row group it enters and a
+/// join's filter, once complete, never moves again.
+pub(crate) struct ReplayFilter {
+    held: DynamicFilters,
+    table: ResolvedSchema,
+    translated: Mutex<Option<(u64, Arc<L>)>>,
+}
+
+impl ReplayFilter {
+    pub(crate) fn new(held: DynamicFilters, table: ResolvedSchema) -> Self {
+        Self { held, table, translated: Mutex::new(None) }
+    }
+}
+
+impl fmt::Debug for ReplayFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ReplayFilter({})", self.held)
+    }
+}
+
+impl DynamicFilter for ReplayFilter {
+    fn generation(&self) -> u64 {
+        self.held.0.iter().fold(0, |sum, filter| sum.wrapping_add(snapshot_generation(filter)))
+    }
+
+    /// The generation is read before the states it is paired with: a filter
+    /// moving in between is translated at its new state under the old
+    /// generation, and so read again at the next group, where the other order
+    /// would pair an old state with the new generation and keep it.
+    fn current(&self) -> (u64, Arc<L>) {
+        let generation = self.generation();
+        let mut translated =
+            self.translated.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, state)) = translated.as_ref()
+            && *at == generation
+        {
+            return (generation, Arc::clone(state));
+        }
+        let state = Arc::new(L::And(
+            self.held.0.iter().map(|filter| loosened(filter, &self.table)).collect(),
+        ));
+        *translated = Some((generation, Arc::clone(&state)));
+        (generation, state)
+    }
+}
+
 /// `filter`'s state now as the library's tree over `table`, **keeping every
 /// row DataFusion's evaluation of it keeps and every row its producer keeps
 /// by its own order** — the two part at a float's zeros ([`comparison`]) —
@@ -115,7 +171,6 @@ impl fmt::Display for Sql<'_> {
 /// `table` is the scan's own schema: a physical column is read by its index,
 /// as DataFusion evaluates it, and stands for nothing unless the field there
 /// carries its name.
-#[cfg_attr(not(test), expect(dead_code, reason = "no replay consumes a dynamic filter yet"))]
 pub(crate) fn loosened(filter: &Arc<dyn PhysicalExpr>, table: &ResolvedSchema) -> L {
     translate(filter, Parity::Even, table)
 }

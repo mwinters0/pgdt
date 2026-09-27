@@ -15,7 +15,11 @@
 //! cannot pass by exercising nothing. The scan holds whatever filter reaches
 //! it, answers `No` for it, visits it in `apply_expressions` — which is what
 //! makes a join compute its filter at all — and prints it in `EXPLAIN`, where
-//! each filter's final state is read once the flags-on query has run.
+//! each filter's final state is read once the flags-on query has run. **And
+//! the sweep is held to having consumed them**: the scan skips the row groups
+//! a filter's state rules out and stops a sorted block at a bound it requires,
+//! which its metrics count, so a sweep in which no filter pruned or stopped
+//! anything fails.
 //!
 //! Every query selects its sort keys alone where it has a `LIMIT`, since
 //! ties at the cut are the TopK's to break however it likes.
@@ -390,10 +394,6 @@ fn rows(batches: &[RecordBatch]) -> Vec<String> {
     out
 }
 
-async fn answer(ctx: &SessionContext, sql: &str) -> Vec<String> {
-    run(ctx, sql).await.0
-}
-
 /// `sql`'s answer, and the plan it ran, whose scans now hold each filter in
 /// its final state.
 async fn run(ctx: &SessionContext, sql: &str) -> (Vec<String>, Arc<dyn ExecutionPlan>) {
@@ -440,14 +440,31 @@ fn visited(plan: &Arc<dyn ExecutionPlan>) -> Vec<Arc<dyn PhysicalExpr>> {
     visited
 }
 
+/// What `plan`'s scans counted under the metric `name`, summed.
+fn counted(plan: &Arc<dyn ExecutionPlan>, name: &str) -> usize {
+    scans(plan)
+        .iter()
+        .filter_map(|scan| scan.metrics()?.sum_by_name(name))
+        .map(|value| value.as_usize())
+        .sum()
+}
+
+/// The metric counting the row groups a dynamic filter pruned.
+const PRUNED_DYNAMIC: &str = "row_groups_pruned_dynamic_filter";
+
+/// The metric counting the bytes an early stop left unread.
+const UNREAD: &str = "bytes_unread_early_stop";
+
 /// **Every join, TopK and aggregate shape answers alike with the producers'
 /// filters on and off**, under either join mode, and each scan held the
-/// filter it is here for.
+/// filter it is here for; **and some filter pruned a group, and some stopped
+/// a block its static filter alone did not.**
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dynamic_filter_changes_no_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut ran = vec![BTreeSet::new(); QUERIES.len()];
     let mut unshaped = Vec::new();
+    let (mut pruning, mut stopping) = (BTreeSet::new(), BTreeSet::new());
     for fixture in statistics_fixtures() {
         let copy = parsed_copy(&fixture, dir.path()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
@@ -461,10 +478,17 @@ async fn a_dynamic_filter_changes_no_answer() {
                     continue;
                 }
                 let at = format!("{} ({join:?}): {}", fixture.display(), query.sql);
-                let expected = answer(&off, query.sql).await;
+                let (expected, unfiltered) = run(&off, query.sql).await;
                 assert!(!expected.is_empty(), "{at}: returned nothing, so it proves nothing");
                 let (got, plan) = run(&on, query.sql).await;
                 assert_eq!(got, expected, "{at}: flags on");
+                assert_eq!(counted(&unfiltered, PRUNED_DYNAMIC), 0, "{at}: flags off");
+                if counted(&plan, PRUNED_DYNAMIC) > 0 {
+                    pruning.insert(query.sql);
+                }
+                if counted(&plan, UNREAD) > counted(&unfiltered, UNREAD) {
+                    stopping.insert(query.sql);
+                }
                 let seen = held(&plan);
                 let shapes = match join {
                     Join::Chosen => query.chosen,
@@ -487,6 +511,8 @@ async fn a_dynamic_filter_changes_no_answer() {
     for (query, joins) in QUERIES.iter().zip(&ran) {
         assert_eq!(joins.len(), 2, "never ran under both join modes: {}", query.sql);
     }
+    assert!(pruning.len() > 10, "queries whose filter pruned a group: {pruning:#?}");
+    assert!(stopping.len() > 2, "queries whose filter stopped a block: {stopping:#?}");
 }
 
 /// The newest major's `statistics` fixture, parsed, and a session over it
@@ -524,6 +550,33 @@ async fn a_scan_prints_each_filter_it_holds_empty_until_its_first_update() {
     assert!(Shape::Bounds.seen_in(&filter) && Shape::InList.seen_in(&filter), "{filter}");
     let tree = displayable(plan.as_ref()).tree_render().to_string();
     assert!(tree.contains("predicate") && tree.contains("DynamicFilter"), "{tree}");
+}
+
+/// **A join's filter prunes its probe side and stops it**: `moods` holds ids
+/// 1 to 9, so `ordered`, whose `id` ascends, is read no further than its first
+/// row past 9 and none of the groups after it, which the scan's metrics count
+/// under `EXPLAIN ANALYZE` — and with the producers' flags off, not.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    let (rows, plan) = run(&ctx, JOIN).await;
+    assert_eq!(rows.len(), 9, "{rows:?}");
+    assert!(counted(&plan, PRUNED_DYNAMIC) > 0, "{}", displayable(plan.as_ref()).indent(true));
+    assert!(counted(&plan, UNREAD) > 0, "{}", displayable(plan.as_ref()).indent(true));
+    let explained = ctx.sql(&format!("EXPLAIN ANALYZE {JOIN}")).await.unwrap();
+    let explained = explained.collect().await.unwrap();
+    let explained = arrow::util::pretty::pretty_format_batches(&explained).unwrap().to_string();
+    assert!(explained.contains(PRUNED_DYNAMIC), "{explained}");
+
+    let off = session(Join::Chosen, false);
+    let fixture = fixtures_root().join("18/statistics/default.sql");
+    let copy = parsed_copy(&fixture, dir.path()).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    register(&off, &dump);
+    let (unfiltered, plan) = run(&off, JOIN).await;
+    assert_eq!(unfiltered, rows);
+    assert_eq!((counted(&plan, PRUNED_DYNAMIC), counted(&plan, UNREAD)), (0, 0));
 }
 
 /// **A static filter is not held**: one the provider could not answer is a
