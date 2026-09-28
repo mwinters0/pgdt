@@ -124,6 +124,16 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show --format= -U0 c151c64 -- scripts/measure.py  # read every hunk",
     ),
     Acknowledged(
+        commit="f3983fd",
+        figures=("session-drift",),
+        why=(
+            "`M178`'s landing rewrote one sentence of `arm_drift_table`'s docstring, "
+            "the sittings' gap recorded rather than set; no command shape, input, "
+            "regime or gate moved, so no reading can"
+        ),
+        verified="git show --format= -U0 f3983fd -- scripts/measure.py  # one docstring hunk",
+    ),
+    Acknowledged(
         commit="fd082b2",
         figures=(),
         why=(
