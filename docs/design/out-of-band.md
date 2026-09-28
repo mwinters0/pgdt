@@ -77,4 +77,4 @@ table as a work queue.
 | M174 | 2026-09-27 | `measure.py`'s two images pinned by digest, and the glibc each figure ran under named in the stamp or its own marker | | [2026-09-27](../status/history/2026-09-27.md) |
 | M175 | 2026-09-27 | A scan's `EXPLAIN` line prints its static filter and its dynamic ones as one `predicate=`, as Parquet does | | [2026-09-26](../status/history/2026-09-26.md) |
 | M176 | 2026-09-27 | A test-only node running a scan's partitions in a stated order: `statistics_never_change_an_answer` in file order, `dynamic_filters.rs` gaining the zeros' extremes in both, both targets re-run under load | | [2026-09-27](../status/history/2026-09-27.md) |
-| M177 | | `render_allocations`' counting allocator counts only its own thread, so a stray allocation elsewhere in the process cannot fail the per-row budget | P27 | [2026-09-28](../status/history/2026-09-28.md) |
+| M177 | 2026-09-28 | `render_allocations`' counting allocator counts only its own thread, so a stray allocation elsewhere in the process cannot fail the per-row budget | | [2026-09-28](../status/history/2026-09-28.md) |

@@ -15,12 +15,14 @@
 //! element counts, because what an array arm costs is the count that has to
 //! *not* grow with the elements.
 //!
-//! **This binary installs a counting global allocator**, which is why it is a
-//! test file of its own rather than a case in `tests/batch.rs`.
+//! **This binary installs a counting global allocator**, per thread, which is
+//! why it is a test file of its own rather than a case in `tests/batch.rs`: a
+//! window counts what the test's own thread asks of the allocator, whatever
+//! any other thread of the process is doing meanwhile.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use arrow::array::{
     ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, FixedSizeBinaryArray,
@@ -33,14 +35,23 @@ use pgdump_query::{NestedPlan, render_field_into};
 
 struct Counting;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    /// Whether this thread is inside a [`counting`] window.
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+    /// Trips this thread has made through the allocator inside one.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// One trip through the allocator, counted if this thread is in a window.
+fn tally() {
+    if COUNTING.get() {
+        ALLOCATIONS.set(ALLOCATIONS.get() + 1);
+    }
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        }
+        tally();
         unsafe { System.alloc(layout) }
     }
 
@@ -51,9 +62,7 @@ unsafe impl GlobalAlloc for Counting {
     // A grow counts too: it is a second trip through the allocator, and
     // removing exactly that trip is half of what pre-sizing a buffer buys.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        }
+        tally();
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -114,13 +123,11 @@ fn array_row(len: usize) -> (ArrayRef, ArrayRef) {
     (wrap(ints, DataType::Int32), wrap(texts, DataType::Utf8View))
 }
 
-/// **One test, deliberately.** The counter is process-wide, so a second test
-/// running on another thread would land in this one's window; a single test
-/// function is the cheapest way to have exactly one thread allocating while
-/// the flag is on. And it is a **debug** build, so what it counts is the
-/// allocations the *source* asks for, not what an optimizer folds away — which
-/// is the property worth pinning, since a reintroduced `format!` is a source
-/// change.
+/// **The counter is the calling thread's**, so nothing another thread of the
+/// process allocates — the harness's, or a second test's — lands in a window.
+/// And it is a **debug** build, so what it counts is the allocations the
+/// *source* asks for, not what an optimizer folds away — which is the property
+/// worth pinning, since a reintroduced `format!` is a source change.
 ///
 /// **Most of the control row allocates nothing**: the three integers, all
 /// four date/time columns, the boolean and the three texts write straight
@@ -212,13 +219,13 @@ fn the_render_path_allocation_budget_per_row() {
     );
 }
 
-/// Run `body` with the counter on, and return how many times the allocator
-/// was entered.
+/// Run `body` with this thread's counter on, and return how many times this
+/// thread entered the allocator.
 fn counting(body: impl FnOnce()) -> usize {
-    COUNTING.store(true, Ordering::Relaxed);
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    COUNTING.set(true);
+    let before = ALLOCATIONS.get();
     body();
-    let counted = ALLOCATIONS.load(Ordering::Relaxed) - before;
-    COUNTING.store(false, Ordering::Relaxed);
+    let counted = ALLOCATIONS.get() - before;
+    COUNTING.set(false);
     counted
 }
