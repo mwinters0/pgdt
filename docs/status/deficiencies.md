@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD53 -->
-**`KD1`–`KD53` are allocated, and nothing at or below `KD53` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD54 -->
+**`KD1`–`KD54` are allocated, and nothing at or below `KD54` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -297,6 +297,13 @@ than reading as a phase nobody has sliced.
   the join's filter does. **(c) unowned**; promoted by such a table's probe
   side seen unbalanced, the fix being a cut that breaks at every boundary
   nothing proves. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD54** — a query's replay keeps every chunk a batch's views point into
+  until the batch flushes, and the read pool keeps `POOL_DEPTH` of them, so a
+  batch spanning more chunks drops the rest and the reads after it zero fresh
+  buffers — a third of the costing row's off-leg user cycles, under mimalloc.
+  **(c) unowned**; promoted by a figure pricing the zeroing or a phase taking
+  up query-path memory. Detail: `pgdump_query/src/io.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst

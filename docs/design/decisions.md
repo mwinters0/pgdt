@@ -64,7 +64,7 @@ the flagless default. Rejected: deriving width from the charge. Reopens: an expl
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on release: a chunk read and
 `attach_text`'s one coalesced read are indistinguishable by length. `POOL_DEPTH` is the replay
-retention depth, which only a block pool raises to `--jobs`. `PLAIN_PARTITION_CHUNKS` caps tail-read
+retention depth, which only a block pool raises to `--jobs`, short of what one batch retains (`KD54`). `PLAIN_PARTITION_CHUNKS` caps tail-read
 waste and is not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
 
 ### D10 mmap, `fadvise` and double-buffered readahead are refused

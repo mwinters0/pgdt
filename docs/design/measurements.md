@@ -1007,7 +1007,11 @@ membership's lookup, writing `evaluation_*` lines to the same file. It reads
 the time-stamp counter unordered against the work around it, so a span
 shorter than the pipeline is smeared across its neighbours and **only a sum
 over many spans is read**, less what the report's own calibration says a span
-costs itself and costs a span around it. It is **blind to everything outside
+costs itself and costs a span around it. **That calibration is taken back to
+back and overstates what a span costs among real work**, so a calibrated part
+under-reads and a short one reads near zero; what it is read for is its
+counts, which are exact, and its split among parts is the profile's ("What
+DataFusion's dynamic filters buy a query"). It is **blind to everything outside
 a row's evaluation** — the replay's row loop, DataFusion — which a sampling
 profile of the same run sees; `measure.py --profile-recipe` prints both, over
 one figure's legs.
@@ -2737,15 +2741,10 @@ those rows being spared the decode of `v_text` the off leg pays. That cost a
 term is the Δ over the terms evaluated — **fitted with no per-row intercept,
 and including each term's own unescape**. Set against it, the costing row's
 +0.131 s here is **161 ns a row**, where three leaves at 15.5 ns predict
-46.5 ns, so **about 115 ns a row is unattributed**. Unescaping the field once
-a leaf is inside that prediction already. Two terms could hold the rest and
-neither reading separates them: a fixed cost of evaluating a row at all, which
-27.5's fit spread over 77.5 terms — 115 ns a row there being 1.5 ns of its
-15.5 — and the lookup's own cost, which had no counterpart at `28e804f`. The
-account that attributes it is a `perf` profile of this row and a per-term
-reading from an `introspect` build
-([`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
-"Slices", item 8).
+46.5 ns, so **about 115 ns a row is left over by that fit**. A fit over
+terms cannot hold it: the account below finds much of it in no leaf at all —
+the tree walk, the byte cut's keying of every group, and the replay's reads of
+the filter outside evaluation — and the lookup costing more than a term.
 
 **The off legs, which hold no filter and run none of this, sit within their
 spreads of where they stood at `28e804f`**, bar the TopK's: its median lies
@@ -2762,6 +2761,83 @@ mechanism 27.8's account names
 "Slices", item 9); these readings are what admitted those two slices
 ([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md),
 "27.7's readings: the costing row is accounted for before the criterion").
+
+**The costing row's cost a row, attributed.** Two instruments over the same
+two legs, taken at `e653505` on the host rather than in the figure's image,
+each an instrument reading and not a figure
+(`runs/p27.8-readings-20260928.log`, the `measure.py --profile-recipe` steps
+naming this row): a `perf` pair of the `profiling` build, taken twice
+(`runs/profile-dfcli-join-costing-{off,on}{,-2}.data`), its samples bucketed
+by the frame that owns them, the bucketing inlined frames included; and three
+on-leg runs of the introspection build (`runs/introspect-dfcli-join-costing-*.txt`),
+whose off-leg runs time no span. The profile is read in cycles a row, since a
+difference of two samplings is what it has: its two pairs read **+841 and
++750 cycles a row**, and `perf stat` over the release build, seven runs a leg,
+**+805** (`runs/p27.8-perfstat-20260928.txt`), the build's frame pointers
+moving none of it (the `profiling` build, **+817**). The host's release Δ is
+**+0.153 s** over nine runs a leg (`runs/p27.8-perfstat-usertime-20260928.txt`),
+the figure's **+0.131 s**; the shares below are of the profile's own Δ.
+
+| Where the on leg's extra cycles go | Scales with | Δ cycles a row, pairs 1 and 2 | Share of the mean |
+|---|---|---|---|
+| The field split, moved from `push_row` into the first `Locate`, net of the move: the split's walk, the offsets it pushes, two leaves reading it back | row | +81, +115 | 12.3% |
+| Three unescapes of the one field | row | +54, +60 | 7.1% |
+| Two keys: the `i64` parse, its `?`, the key's drop | row | +148, +130 | 17.5% |
+| Two comparisons | row | +31, +22 | 3.3% |
+| One lookup: std's SipHash over the field's text, the probe, the string equality on the hit | row | +155, +135 | 18.3% |
+| The tree walk: `And` over three children, each leaf's `Result` | row | +185, +180 | 22.9% |
+| **Evaluating a row, net of the moved split** | row | **+654, +642** | **81.5%** |
+| `at_row`'s group lookup on every row and `at_chunk`'s re-read | row, chunk | +30, +21 | 3.2% |
+| `DynamicRead::stop` and `reads_fields`, asked every row | row | +13, +16 | 1.8% |
+| `push_row` past its split | row | +20, +22 | 2.6% |
+| The byte cut: the state's truths over every group, the membership keying each group's bounds once per term (`ResolvedTerm::bounded`) | groups × list | +112, +112 | 14.1% |
+| Unattributed: sampling, over buckets nothing between the legs reaches — UTF-8 validation alone reads +33 and −55 | — | +12, −64 | −3.2% |
+
+The move is exact: the on leg's `push_row` loses **786 and 787 cycles a row**
+of split walk, and the first `Locate` takes it. **Every term the on leg adds
+has a row here and the rows sum to its Δ, the sampling's own remainder
+named**; the code's own account
+([`roadmap-P27.8-per-row-account-notes.md`](roadmap-P27.8-per-row-account-notes.md))
+having missed two terms the profile names: the cut's per-group keying, paid
+per query whether or not a row is evaluated, and `at_row`'s lookup, asked on
+every row rather than only on a row entering a group.
+
+**The introspection build counts what the code says and times less than the
+profile finds.** Its counts a row are exactly 1 row, 3 `Locate`s and
+`Unescape`s, 2 `Key`s and `Compare`s, 1 `Lookup`, and one `Chunk` a chunk
+(3,073). Its calibrated nanoseconds a row, mean of three: `Row` **235.9**,
+`Locate` **189.5**, `Unescape` **0.7**, `Key` **7.4**, `Compare` **0.3**,
+`Lookup` **16.9**, walk **21.2**; raw, `Row` **428.7**. The calibration
+subtracts **192.8 ns a row** from `Row` for the twelve spans it holds, 0.156 s
+over the run, where the introspection build's whole Δ exceeds the release
+build's by **0.100 s** (0.253 s against 0.153 s, nine runs a leg) — every
+span's cost, `Row`'s own and the chunks' included. So the calibration
+over-subtracts at least 0.056 s from `Row`, and the short spans reading near
+zero are that, not free work; the two instruments agree on the ranking —
+split, walk and lookup, keys, then unescapes and comparisons — and the
+profile's split is the account.
+
+**What each shape of removing duplicate decoding saves, off the table**, as
+shares of the costing Δ: **a field decoded once a row for every leaf** saves
+two unescapes and one key, **13.5%**, and at most the two read-backs inside
+the split's net term, **25.8%** in all, the two instruments separating the
+read-backs from the first `Locate`'s walk no more than the table does; **the
+bounds an `IN` implies dropped from row evaluation** saves two unescapes, both
+keys and both comparisons, **25.6%**, and at most the read-backs and the
+walk's two children and `And`, **60.9%** — so on this row it subsumes the
+first. **The criterion needs about two thirds of the Δ gone**: at this
+figure's spreads the on leg's lowest reading sits 0.005 s below its median and
+the off leg's highest 0.038 s above its, so the spreads overlap only at a
+median Δ of at most 0.043 s, 33% of today's 0.131 s, the spreads assumed
+unmoved. Of the rest, the cut is 14.1% and the lookup 18.3% — its hash
+roughly half, the equality on the hit most of the other.
+
+**A third of the off leg's user cycles are neither leg's filter**: `memset`
+under `BufferPool::pick`'s fresh `vec![0u8; len]`, **800 to 830 million
+cycles** in every leg of both pairs, alike off and on and so in no Δ. A batch
+keeps every chunk its views point into and the pool keeps `POOL_DEPTH`, so
+the chunks past it are zeroed afresh ([`../status/deficiencies.md`](../status/deficiencies.md),
+`KD54`); no figure prices it.
 
 ## What a session's own drift costs, measured rather than asserted
 

@@ -1533,7 +1533,8 @@ pub fn available_memory_in(root: &Path) -> Option<u64> {
 /// A scan holds one chunk at a time, so one slot would serve it; the query
 /// replay path retains chunks past the read that produced them
 /// (`crate::batch::RetainedChunks`), so the buffer of chunk *N* can still be
-/// alive when chunk *N+1* is read. This is that depth with room to spare.
+/// alive when chunk *N+1* is read — and every chunk a batch's views point into
+/// is alive until that batch flushes, which this depth does not cover (`KD54`).
 ///
 /// **It is a wish, not the bound** — the stated budget is the bound, and the
 /// two together are what make a slot able to hold a decoded xz block rather
@@ -1543,6 +1544,17 @@ pub fn available_memory_in(root: &Path) -> Option<u64> {
 /// beside it: a block pool of one makes eviction drain before every decode and
 /// stops pooling exactly when a caller is holding a block. Neither depth is
 /// measured against what block retention buys a seeking query.
+// Deficiency register: `deficiency: KD54` — a replay batch pins every chunk
+// its rows came from, so a batch of rows wider than a chunk over `POOL_DEPTH`
+// pins more chunks than the free list keeps: at its flush the rest are
+// dropped ([`BufferPool::release`]), and the reads after it allocate
+// `vec![0u8; len]` afresh ([`BufferPool::pick`]), the zeroing a `memset`
+// under mimalloc. The costing input's profiles find a third of the off leg's
+// user cycles there, in a `datafusion-cli-pgdump` scan
+// (`docs/design/measurements.md`, "What DataFusion's dynamic filters buy a
+// query"). **(c) unowned**; promoted by a figure pricing the zeroing or a
+// phase taking up query-path memory, the fix being a depth that follows what
+// a batch retains, which the budget then has to bill (`KD24`).
 const POOL_DEPTH: usize = 4;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has

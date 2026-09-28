@@ -2,12 +2,12 @@
 
 What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
-item 8. **The instruments have landed and the code's own account is below;
-the readings are not taken**, a reading being taken from the commit that
-lands its instrument ([`measurements.md`](measurements.md), "A figure may be
-published outside the sweep", whose rule the `go` skill applies to an
-instrument's readings too). What remains is taking them, and the account and
-the mechanism they name.
+item 8. **The account sums to the costing row's Δ, and its numbers are
+[`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy
+a query"**, taken at `e653505`, the commit after the one landing the
+instruments. What each shape of removing duplicate decoding saves is there;
+the mechanisms beyond it are named below, and the choice among them is under
+STATUS's "Decisions worth another look".
 
 ## What exists
 
@@ -44,22 +44,29 @@ rejected, so nothing downstream of the evaluation changes.
   membership probes a `HashSet<String>` of the literals, hashing the field's
   text once a row (`tests/evaluation_instrument.rs` pins these counts).
 - **Per row, outside `Row`**: the row loop looking up the dynamic filter's
-  sorted stop once a row (`DynamicRead::stop`), which only the profile sees.
+  sorted stop once a row (`DynamicRead::stop`), and — missed here, named by
+  the profile — `DynamicRead::at_row` asking every row which group it is in,
+  where only a row entering one needs the answer.
 - **Per chunk**: `Chunk`, which asks DataFusion's filters their generation
   (`ReplayFilter::generation`) and, the join's having moved once, translates
   and resolves the state once per block.
 - **Per query**: the join's filter built from the build side and translated
-  once (`ReplayFilter::current` keeps it until its generation moves);
-  nothing that scales with the probe.
+  once (`ReplayFilter::current` keeps it until its generation moves); and —
+  missed here, named by the profile — **the byte cut at the first poll**
+  (`TablePartitions::cut_under`), asking the state's truths of every
+  group, where a membership's truths fold each term's, and each term keys
+  the group's bounds afresh (`ResolvedTerm::bounded`): groups × list length
+  key parses, paid whether or not a row is then evaluated.
 
 So **Δ = rows × (Row + outside) + chunks × Chunk + fixed**, and the code
 predicts no size for any term: the one reading bearing on a leaf is
 `predicate-terms`' per-term steps, of a text `=` against a shared split,
 which is not this leaf's comparison. **Duplicate decoding is two `Unescape`s
-and one `Key` a row**; the reading prices each span, so it prices them.
+and one `Key` a row**; the profile prices each, the introspection build's
+calibrated spans under-reading both (below).
 
 **What each shape of removing it would save**, in spans a row on this filter,
-priced by the reading's own per-span nanoseconds:
+priced in [`measurements.md`](measurements.md)'s account:
 
 - **A field decoded once a row for every leaf reading it**: two `Unescape`s
   and one `Key`. General: it also serves a TopK's chain, which reads a column
@@ -86,6 +93,16 @@ priced by the reading's own per-span nanoseconds:
   `be2af8f` (`nm -S`, both built in this round). The one edit that still moved
   one was a key's drop moving ahead of its comparison's result, now back where
   its temporary was.
+- **The introspection build's calibrated parts are not the account.** Its
+  calibration, taken back to back, subtracts more from `Row` than the whole
+  build costs over the release one, so its short spans read near zero; its
+  counts are exact and match the code's account, and the per-part split is
+  the profile's. A reading that needs a leaf's own time reads a profile, or
+  calibrates against a span among real work.
+- **The split's walk is moved, not added**: what `push_row` loses of it the
+  first `Locate` takes, to within the profile's sampling, so row evaluation's
+  cost is net of it and the `Locate` span's size says nothing of what
+  evaluation adds.
 - **Per-thread accumulators** are refused: the figure runs one partition, so
   a relaxed atomic is uncontended, and the calibration pays what a span pays.
 
@@ -101,19 +118,38 @@ priced by the reading's own per-span nanoseconds:
   own cache; `the_variable_matches_the_binarys` holds the report's variable
   to `datafusion-cli-pgdump`'s.
 
+## The mechanisms beyond duplicate decoding
+
+What the account leaves once duplicate decoding goes, each named where it
+lives; none is chosen here ("Decisions worth another look").
+
+- **The lookup**: a membership's `Lookup::Canonical` hashes the field's text with
+  std's SipHash and compares the string on the hit, an integer's `=`
+  comparing the spelling. The hash is about half of it; a keyed lookup would
+  add back a `Key` the bounds' removal takes away.
+- **The byte cut's keying**: a membership's group truths key each group's
+  bounds once per term (above). Keyed once per group, or answered by a
+  search of the sorted list within the bounds, it stops scaling with the
+  list; it is a cost of the cut, so it is paid with row evaluation off.
+- **The walk**: the `And` over three children and each leaf's `Result`, most
+  of which the bounds' removal takes with them.
+
+The spec's criterion needs about two thirds of the Δ gone at the figure's
+spreads, were they to stay where they are; dropping the implied bounds falls
+short of that even at its upper bound, so by this account 27.9 meets it only
+with a second mechanism beside it.
+
 ## The readings
 
 ```sh
-cd scripts && uv run measure.py --profile-recipe   # prints; steps 0-4 and 7-9 are this slice's
+cd scripts && uv run measure.py --profile-recipe   # steps 0-4 and 7-9 are this slice's
 ```
 
-Minutes, not a detached job. **What would falsify the account**: `Row` ×
-rows plus the chunks' time falling short of Δ by more than the legs'
-spreads, with the profiles' difference naming nothing outside evaluation
-that fills it; or the two instruments disagreeing on evaluation's share,
-since they differ exactly where the error could live — an unordered counter
-smearing short spans against a sampler that attributes by the instruction.
-Each part then goes where "Where does this fact go?" sends it, the numbers
-into [`measurements.md`](measurements.md), and the mechanism beyond duplicate
-decoding, if the account names one, to STATUS's "Decisions worth another
-look" unless the record and the account settle it.
+Taken at `e653505`, with a second profile pair and two `perf stat` sittings
+beside the recipe's steps; every artifact is named in
+[`measurements.md`](measurements.md)'s account. Neither falsification this
+slice set came true: the instrument's `Row` net of the moved split falls
+short of Δ, and the profile names what fills it outside evaluation — the
+cut, the per-row reads — with the calibration's over-subtraction bounded by
+the builds' own difference; the two instruments differ on the split among
+leaves exactly where the calibration errs, and agree on their ranking.
