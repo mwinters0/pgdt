@@ -12,8 +12,10 @@
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
 //! hands them to every sub-stream it runs ([`ReplayFilter`]): the sub-streams
 //! are cut over the row groups their state keeps when the first is polled,
-//! and each skips those a later state rules out as it reaches them and drops
-//! a row of the rest the state rejects before decoding it. Each is answered
+//! and each skips those a later state rules out as it reaches them and, where
+//! `pgdump.dynamic_filter_rows` was on when the scan was planned
+//! ([`crate::PgDumpSettings`]), drops a row of the rest the state rejects
+//! before decoding it. Each is answered
 //! `No`, its producer re-checking its own rows, printed in `EXPLAIN`, and
 //! visited where DataFusion looks for a filter's consumer. The streaming exec
 //! is built again over the same planned replay each time the filters it
@@ -56,7 +58,8 @@ use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{Stream, StreamExt};
 use pgdump_query::{
-    DynamicPartitions, PlanNote, PlanNoteKind, ResolvedSchema, TablePartitions, TableStream,
+    DynamicPartitions, PlanNote, PlanNoteKind, ResolvedSchema, RowEvaluation, TablePartitions,
+    TableStream,
 };
 
 use crate::budget::Draw;
@@ -375,7 +378,8 @@ pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
 pub(crate) const ROW_GROUPS_PRUNED_DYNAMIC_FILTER: &str = "row_groups_pruned_dynamic_filter";
 
 /// The metric counting the rows a dynamic filter dropped before decoding
-/// them, of those the replay read: named beside
+/// them, of those the replay read — none unless the scan was planned under
+/// `pgdump.dynamic_filter_rows`: named beside
 /// [`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`] rather than as Parquet's
 /// `pushdown_rows_pruned`, which counts the rows its static filter drops too.
 pub(crate) const ROWS_PRUNED_DYNAMIC_FILTER: &str = "rows_pruned_dynamic_filter";
@@ -502,6 +506,9 @@ pub(crate) struct Replay {
     /// returns once the last of them is gone.
     draw: Arc<Draw>,
     metrics: ScanMetrics,
+    /// Whether a sub-stream evaluates each row against the dynamic filters
+    /// it is handed, as the session said when the scan was planned.
+    evaluation: RowEvaluation,
 }
 
 impl fmt::Debug for Replay {
@@ -516,8 +523,9 @@ impl Replay {
         schema: SchemaRef,
         draw: Arc<Draw>,
         metrics: ScanMetrics,
+        evaluation: RowEvaluation,
     ) -> Self {
-        Self { partitions, schema, draw, metrics }
+        Self { partitions, schema, draw, metrics, evaluation }
     }
 
     /// The schema the sub-streams emit, as the library resolved it: what a
@@ -527,8 +535,9 @@ impl Replay {
     }
 
     /// A streaming exec over every sub-stream, each reading `filter` as it
-    /// runs, and cut over the groups its state keeps when the first of them
-    /// is polled (`pgdump_query::DynamicPartitions`): once for this exec, and
+    /// runs, evaluating each row against it where the replay was planned to,
+    /// and cut over the groups its state keeps when the first of them is
+    /// polled (`pgdump_query::DynamicPartitions`): once for this exec, and
     /// again for the next one built over this replay.
     fn streaming(
         self: &Arc<Self>,
@@ -536,7 +545,7 @@ impl Replay {
         orderings: Vec<LexOrdering>,
         limit: Option<usize>,
     ) -> Result<StreamingTableExec> {
-        let dynamic = filter.map(|filter| self.partitions.under(filter));
+        let dynamic = filter.map(|filter| self.partitions.under(filter, self.evaluation));
         let streams = (0..self.partitions.len())
             .map(|index| {
                 Arc::new(Partition { replay: Arc::clone(self), index, dynamic: dynamic.clone() })

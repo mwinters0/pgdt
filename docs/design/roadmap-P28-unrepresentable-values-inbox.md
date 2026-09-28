@@ -30,10 +30,11 @@ each, the blind `MIN(v_small)` refuses in every file-order run and answers
 
 ## A dynamic filter drops a row before its columns decode
 
-**Fact.** A replay evaluates a dynamic filter's state on each row its static
+**Fact.** Where a query states `pgdump.dynamic_filter_rows`, off by default
+("D93"), a replay evaluates a dynamic filter's state on each row its static
 filter keeps, in every block, and drops a row the state rejects before any
 column of it decodes (`pgdump_query/src/stream.rs`, `DynamicRead::rejects`),
-re-reading the state at each chunk ("D93"). So a projected column's
+re-reading the state at each chunk. So a projected column's
 unrepresentable value in a row the state rejects is never decoded: the
 refusal it would raise depends on whether the state had narrowed when the row
 was read — inside a row group, where the paths above decide it between
@@ -46,7 +47,8 @@ group: the typed mode's diagnostic must not count rows a scan decoded.
 **Origin.** 27.5, 2026-09-27;
 `pgdump_query/tests/dynamic_filter.rs`,
 `a_row_the_state_rejects_is_dropped_before_it_decodes`. *Contingent on*
-row-level evaluation shipping on, which 27.9 decides.
+the setting existing; off by default since 27.10, the path is reached only
+where a session turns it on.
 
 ## A third option: the refusal made deterministic
 

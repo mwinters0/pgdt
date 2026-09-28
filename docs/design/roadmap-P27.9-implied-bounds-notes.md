@@ -86,9 +86,9 @@ cd scripts && uv run measure.py --figure statistics-pruning
   legs' spreads apart, so its Δ lies inside no overlap
   ([`measurements.md`](measurements.md), "What DataFusion's dynamic filters
   buy a query"). Row evaluation goes off, "D93" reopens, and 27.10 is taken:
-  the switch, off by default. **The shipped scan still evaluates rows until
-  27.10 lands**, since turning it off with no switch would leave the
-  unclustered join's win unreachable and re-time the figure just taken.
+  the switch, off by default. **27.9 itself left rows evaluated**, since
+  turning them off with no switch would leave the unclustered join's win
+  unreachable; 27.10 turns them off with its switch.
 - **No figure is slower by its spreads, so both mechanisms stay.** The
   costing row's Δ fell inside the band 27.8's account predicted, at its low
   end; `predicate-terms` and `statistics-pruning` moved nothing beyond their

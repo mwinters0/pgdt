@@ -11,6 +11,10 @@
 //! have kept is a different answer, and nothing else would say so: the join
 //! simply never sees the row.
 //!
+//! **Both of a scan's ways of consuming them are held to it**: with
+//! `pgdump.dynamic_filter_rows` off, the default, and on, where the scan also
+//! drops each row a filter's state rejects before decoding it.
+//!
 //! **Each query is also held to the shape it is here for**, so the harness
 //! cannot pass by exercising nothing. The scan holds whatever filter reaches
 //! it, answers `No` for it, visits it in `apply_expressions` — which is what
@@ -18,8 +22,9 @@
 //! each filter's final state is read once the flags-on query has run. **And
 //! the sweep is held to having consumed them**: the scan skips the row groups
 //! a filter's state rules out and stops a sorted block at a bound it requires,
-//! which its metrics count, so a sweep in which no filter pruned or stopped
-//! anything fails.
+//! and where it evaluates rows drops those the state rejects, which its
+//! metrics count, so a sweep in which no filter pruned, stopped or dropped
+//! anything its setting allows fails.
 //!
 //! Every query selects its sort keys alone where it has a `LIMIT`, since
 //! ties at the cut are the TopK's to break however it likes.
@@ -40,10 +45,11 @@ use datafusion::physical_plan::execution_plan::reset_plan_states;
 use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
+use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    Finding, LocalFileSource, ScanOptions, StatisticsRequest, StatisticsSelection, map_file,
+    Finding, LocalFileSource, RowEvaluation, ScanOptions, StatisticsRequest, StatisticsSelection,
+    map_file,
 };
 
 mod in_order;
@@ -355,23 +361,36 @@ const FLAGS: [&str; 3] = [
 ];
 
 /// Several partitions and small batches, so a TopK's filter tightens while
-/// the scan still streams and a partition's cut lands inside a block.
+/// the scan still streams and a partition's cut lands inside a block; a
+/// dynamic filter's rows evaluated as the settings' default says.
 fn session(join: Join, on: bool) -> SessionContext {
-    SessionContext::new_with_config(config(join, on))
+    evaluating(join, on, RowEvaluation::default())
 }
 
-/// [`session`], running each scan's partitions one at a time in `order`.
-fn session_in(join: Join, on: bool, order: Order) -> SessionContext {
+/// [`session`], evaluating a dynamic filter's rows as `rows` says.
+fn evaluating(join: Join, on: bool, rows: RowEvaluation) -> SessionContext {
+    SessionContext::new_with_config(config(join, on, rows))
+}
+
+/// [`evaluating`], running each scan's partitions one at a time in `order`.
+fn session_in(join: Join, on: bool, rows: RowEvaluation, order: Order) -> SessionContext {
     SessionContext::new_with_state(
         SessionStateBuilder::new_with_default_features()
-            .with_config(config(join, on))
+            .with_config(config(join, on, rows))
             .with_physical_optimizer_rule(Arc::new(RunScansInOrder(order)))
             .build(),
     )
 }
 
-fn config(join: Join, on: bool) -> SessionConfig {
-    let mut config = SessionConfig::new().with_target_partitions(3).with_batch_size(8);
+/// Both ways a scan consumes a dynamic filter, the default first.
+const ROWS: [RowEvaluation; 2] = [RowEvaluation::Off, RowEvaluation::On];
+
+fn config(join: Join, on: bool, rows: RowEvaluation) -> SessionConfig {
+    let settings = PgDumpSettings { dynamic_filter_rows: rows, ..PgDumpSettings::default() };
+    let mut config = SessionConfig::new()
+        .with_target_partitions(3)
+        .with_batch_size(8)
+        .with_option_extension(settings);
     for flag in FLAGS {
         config = config.set_bool(flag, on);
     }
@@ -477,26 +496,37 @@ const DROPPED_DYNAMIC: &str = "rows_pruned_dynamic_filter";
 /// The metric counting the bytes an early stop left unread.
 const UNREAD: &str = "bytes_unread_early_stop";
 
+/// What a sweep's flags-on queries did under one [`RowEvaluation`]: the
+/// queries whose filter pruned a group, dropped a row of a group it read, or
+/// stopped a block its static filter alone did not.
+#[derive(Default)]
+struct Consumed {
+    pruning: BTreeSet<&'static str>,
+    dropping: BTreeSet<&'static str>,
+    stopping: BTreeSet<&'static str>,
+}
+
 /// **Every join, TopK and aggregate shape answers alike with the producers'
-/// filters on and off**, under either join mode, and each scan held the
-/// filter it is here for; **and some filter pruned a group, some dropped a
-/// row of a group it read, and some stopped a block its static filter alone
-/// did not.**
+/// filters on and off**, under either join mode, a dynamic filter's rows
+/// evaluated or not, and each scan held the filter it is here for; **and
+/// under either, some filter pruned a group and some stopped a block its
+/// static filter alone did not, and some dropped a row of a group it read
+/// exactly where rows are evaluated.**
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dynamic_filter_changes_no_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut ran = vec![BTreeSet::new(); QUERIES.len()];
     let mut unshaped = Vec::new();
-    let (mut pruning, mut dropping, mut stopping) =
-        (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let mut consumed: [Consumed; 2] = Default::default();
     for fixture in statistics_fixtures() {
         let copy = parsed_copy(&fixture, dir.path()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         let present: BTreeSet<&str> = dump.tables().iter().map(|t| t.table.as_str()).collect();
         for join in [Join::Chosen, Join::Partitioned] {
-            let (off, on) = (session(join, false), session(join, true));
+            let off = session(join, false);
             register(&off, &dump);
-            register(&on, &dump);
+            let on = ROWS.map(|rows| evaluating(join, true, rows));
+            on.iter().for_each(|on| register(on, &dump));
             for (i, query) in QUERIES.iter().enumerate() {
                 if !query.tables.iter().all(|t| present.contains(t)) {
                     continue;
@@ -504,27 +534,30 @@ async fn a_dynamic_filter_changes_no_answer() {
                 let at = format!("{} ({join:?}): {}", fixture.display(), query.sql);
                 let (expected, unfiltered) = run(&off, query.sql).await;
                 assert!(!expected.is_empty(), "{at}: returned nothing, so it proves nothing");
-                let (got, plan) = run(&on, query.sql).await;
-                assert_eq!(got, expected, "{at}: flags on");
                 assert_eq!(counted(&unfiltered, PRUNED_DYNAMIC), 0, "{at}: flags off");
                 assert_eq!(counted(&unfiltered, DROPPED_DYNAMIC), 0, "{at}: flags off");
-                if counted(&plan, PRUNED_DYNAMIC) > 0 {
-                    pruning.insert(query.sql);
-                }
-                if counted(&plan, DROPPED_DYNAMIC) > 0 {
-                    dropping.insert(query.sql);
-                }
-                if counted(&plan, UNREAD) > counted(&unfiltered, UNREAD) {
-                    stopping.insert(query.sql);
-                }
-                let seen = held(&plan);
-                let shapes = match join {
-                    Join::Chosen => query.chosen,
-                    Join::Partitioned => query.partitioned,
-                };
-                for shape in shapes {
-                    if !seen.iter().any(|f| shape.seen_in(f)) {
-                        unshaped.push(format!("{at}: none is {shape:?}; held: {seen:?}"));
+                for ((rows, on), consumed) in ROWS.iter().zip(&on).zip(&mut consumed) {
+                    let at = format!("{at}, rows {rows:?}");
+                    let (got, plan) = run(on, query.sql).await;
+                    assert_eq!(got, expected, "{at}: flags on");
+                    if counted(&plan, PRUNED_DYNAMIC) > 0 {
+                        consumed.pruning.insert(query.sql);
+                    }
+                    if counted(&plan, DROPPED_DYNAMIC) > 0 {
+                        consumed.dropping.insert(query.sql);
+                    }
+                    if counted(&plan, UNREAD) > counted(&unfiltered, UNREAD) {
+                        consumed.stopping.insert(query.sql);
+                    }
+                    let seen = held(&plan);
+                    let shapes = match join {
+                        Join::Chosen => query.chosen,
+                        Join::Partitioned => query.partitioned,
+                    };
+                    for shape in shapes {
+                        if !seen.iter().any(|f| shape.seen_in(f)) {
+                            unshaped.push(format!("{at}: none is {shape:?}; held: {seen:?}"));
+                        }
                     }
                 }
                 ran[i].insert(join as u8);
@@ -539,9 +572,20 @@ async fn a_dynamic_filter_changes_no_answer() {
     for (query, joins) in QUERIES.iter().zip(&ran) {
         assert_eq!(joins.len(), 2, "never ran under both join modes: {}", query.sql);
     }
-    assert!(pruning.len() > 10, "queries whose filter pruned a group: {pruning:#?}");
-    assert!(dropping.len() > 12, "queries whose filter dropped a row: {dropping:#?}");
-    assert!(stopping.len() > 2, "queries whose filter stopped a block: {stopping:#?}");
+    for (rows, consumed) in ROWS.iter().zip(&consumed) {
+        let Consumed { pruning, dropping, stopping } = consumed;
+        assert!(pruning.len() > 10, "{rows:?}: queries whose filter pruned a group: {pruning:#?}");
+        assert!(
+            stopping.len() > 2,
+            "{rows:?}: queries whose filter stopped a block: {stopping:#?}"
+        );
+        match rows {
+            RowEvaluation::Off => assert!(dropping.is_empty(), "rows not evaluated: {dropping:#?}"),
+            RowEvaluation::On => {
+                assert!(dropping.len() > 12, "queries whose filter dropped a row: {dropping:#?}")
+            }
+        }
+    }
 }
 
 /// `zeros`' columns, each holding both zeros at an extreme, in both orders of
@@ -556,7 +600,8 @@ const ZEROS: [&str; 6] = [
 ];
 
 /// **A float's zeros at its extremes answer alike with the producers'
-/// filters on and off, whichever partition runs first.** A TopK and an
+/// filters on and off, whichever partition runs first**, a dynamic filter's
+/// rows evaluated or not. A TopK and an
 /// ungrouped `MIN`/`MAX` order `-0` below `0` while their thresholds'
 /// evaluation calls them equal, so a scan pruning by such a threshold loses
 /// the zero it rules out only where the partition holding the other zero has
@@ -573,9 +618,9 @@ async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {
         if !dump.tables().iter().any(|t| t.table == "zeros") {
             continue;
         }
-        for order in Order::ALL {
-            let (off, on) =
-                (session_in(Join::Chosen, false, order), session_in(Join::Chosen, true, order));
+        for (order, rows) in Order::ALL.into_iter().flat_map(|o| ROWS.map(|r| (o, r))) {
+            let off = session_in(Join::Chosen, false, rows, order);
+            let on = session_in(Join::Chosen, true, rows, order);
             register(&off, &dump);
             register(&on, &dump);
             for column in ZEROS {
@@ -587,7 +632,7 @@ async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {
                     format!("SELECT {column} FROM zeros ORDER BY {column} LIMIT 1"),
                     format!("SELECT {column} FROM zeros ORDER BY {column} DESC LIMIT 1"),
                 ] {
-                    let at = format!("{} ({order:?}): {sql}", fixture.display());
+                    let at = format!("{} ({order:?}, rows {rows:?}): {sql}", fixture.display());
                     let (expected, _) = run(&off, &sql).await;
                     let (got, plan) = run(&on, &sql).await;
                     assert_eq!(got, expected, "{at}: flags on");
@@ -671,6 +716,21 @@ async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
     assert_eq!(unfiltered, rows);
     let counts = [PRUNED_DYNAMIC, DROPPED_DYNAMIC, UNREAD].map(|name| counted(&plan, name));
     assert_eq!(counts, [0, 0, 0]);
+}
+
+/// **`SET pgdump.dynamic_filter_rows` binds the scans planned after it**:
+/// off by default, a TopK's scan drops no row its threshold rejects, and once
+/// set it drops some, the answer the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn setting_dynamic_filter_rows_binds_the_scans_planned_after_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = statistics_session(dir.path()).await;
+    let (unevaluated, plan) = run(&ctx, TOPK).await;
+    assert_eq!(counted(&plan, DROPPED_DYNAMIC), 0, "{}", displayable(plan.as_ref()).indent(true));
+    ctx.sql("SET pgdump.dynamic_filter_rows = true").await.unwrap().collect().await.unwrap();
+    let (evaluated, plan) = run(&ctx, TOPK).await;
+    assert!(counted(&plan, DROPPED_DYNAMIC) > 0, "{}", displayable(plan.as_ref()).indent(true));
+    assert_eq!(evaluated, unevaluated);
 }
 
 /// The rows each output partition of `plan`'s hash join emitted.

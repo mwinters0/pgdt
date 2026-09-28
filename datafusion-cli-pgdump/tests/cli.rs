@@ -181,7 +181,12 @@ async fn a_scan_setting_is_set_by_sql() {
     let out = run(&["-q", "-c", "SHOW ALL"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let shown = text(&out.stdout);
-    for key in ["pgdump.memory", "pgdump.chunk_size", "pgdump.max_line_bytes"] {
+    for key in [
+        "pgdump.memory",
+        "pgdump.chunk_size",
+        "pgdump.max_line_bytes",
+        "pgdump.dynamic_filter_rows",
+    ] {
         assert!(shown.contains(key), "{key}: {shown}");
     }
 }

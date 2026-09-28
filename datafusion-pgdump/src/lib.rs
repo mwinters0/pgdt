@@ -8,7 +8,8 @@
 //! sub-stream, with the projection pushed into the library by name, a filter
 //! pushed `Exact` wherever the library answers it as DataFusion would, a
 //! join's, a TopK's or an aggregate's dynamic filter read as each sub-stream
-//! runs ([`crate::dynamic_filter`]), the batch
+//! runs ([`crate::dynamic_filter`]), its rows evaluated only where a session
+//! turns that on ([`PgDumpSettings`]), the batch
 //! size the session's, and the worker count the session's `target_partitions`
 //! lowered to what the session's [`ScanBudget`] affords, and the `pgdump.`
 //! settings a `SET` states read as each scan is planned ([`PgDumpSettings`]).

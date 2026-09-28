@@ -95,7 +95,8 @@ query".
   the tree walk is unattributed.
 - **Filed against "D53"**: its **Reopens** is met, and answered by a
   set-membership term — not a switch, and not a stream ceasing to evaluate a
-  filter that rejects nothing (`decisions.md`, "D93"). The mechanism ships on,
-  the tree unchanged by the readings.
+  filter that rejects nothing (`decisions.md`, "D93"). The mechanism stays,
+  the tree unchanged by the readings; it is off by default behind a switch
+  since 27.9's criterion failed ([`roadmap-P27.10-switch-notes.md`](roadmap-P27.10-switch-notes.md)).
 - **The off legs did not move** beyond their spreads since `2f94f14`, so no
   unrelated work is priced in the on legs' Δ.

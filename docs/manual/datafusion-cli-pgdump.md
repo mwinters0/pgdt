@@ -158,7 +158,8 @@ parse` recorded statistics for a `WHERE` ruled out unread;
 query ran, by what a join's other side, an `ORDER BY … LIMIT`'s rows so far
 or an ungrouped `MIN`/`MAX` had narrowed the scan to;
 `rows_pruned_dynamic_filter`, how many rows that narrowing dropped before
-decoding them, whether or not `pgdt parse` recorded statistics; and `bytes_unread_early_stop`, the bytes of rows
+decoding them, whether or not `pgdt parse` recorded statistics — none unless
+[`pgdump.dynamic_filter_rows`](#scan-settings) is on; and `bytes_unread_early_stop`, the bytes of rows
 left unread in a block sorted past either one's bound. The node's `predicate=` opens with the part of the
 `WHERE` the scan answers itself, followed by each `DynamicFilter [ … ]` a
 join, sort or aggregate above hands it, `empty` until it first narrows; any
@@ -214,11 +215,22 @@ SET pgdump.memory = 4294967296;
 | `pgdump.memory` | [`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance): bytes every dump's scans may hold resident between them. Unset, or `0`, the limit found, as above. |
 | `pgdump.chunk_size` | [`--chunk-size`](dump-inspection.md#--chunk-size-you-almost-certainly-do-not-need-it): bytes a scan asks of the dump per read. |
 | `pgdump.max_line_bytes` | [`--max-line-bytes`](dump-inspection.md#--max-line-bytes-a-dump-holding-very-large-values): the longest row a scan holds before refusing the dump. |
+| `pgdump.dynamic_filter_rows` | None, `pgdt query` having no join or sort above it: `true` or `false`, whether a scan drops each row a join's other side, an `ORDER BY … LIMIT`'s rows so far or an ungrouped `MIN`/`MAX` has ruled out before decoding it. Off by default. |
 
-Each is a whole number of bytes. **A setting binds the queries planned after
-it**: a query already running keeps the memory it was given. `SET
+The first three are whole numbers of bytes. **A setting binds the queries
+planned after it**: a query already running keeps the memory it was given. `SET
 pgdump.memory = 0` returns to the limit found, as `SET
 datafusion.execution.target_partitions = 0` returns to the machine's cores;
 `RESET` does not, reaching only DataFusion's own settings. The other two may
 not be `0`, and neither may `pgdt --memory`, which returns to the limit found
 by being left off.
+
+**`pgdump.dynamic_filter_rows` trades one kind of query against another.**
+Off, a scan still skips the row groups such a narrowing rules out and stops
+reading a sorted block past its bound, which is what makes a selective join on
+a clustered key or an `ORDER BY … LIMIT` fast, and leaves each remaining row to
+the join, sort or aggregate above it. On, it also checks each row itself, which
+pays where the narrowing rejects most rows that no row group could skip — a
+selective join on a key scattered through the table — and costs where it
+rejects few, such as a join most rows match. The answer is the same either
+way.

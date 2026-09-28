@@ -1899,7 +1899,8 @@ impl<'a> TableStream<'a> {
 
     /// The rows this stream's [`DynamicFilter`] dropped, so far, before
     /// decoding them: rows its static filter kept, in any block, that the
-    /// state last read rejects. None of the rows
+    /// state last read rejects — none under [`RowEvaluation::Off`]. None of
+    /// the rows
     /// [`Self::dynamic_filter_pruned_groups`] counts the groups of, which
     /// the replay never reads, nor those past an early stop or in the rest
     /// of a group a state read inside it ruled out.
@@ -3591,10 +3592,11 @@ fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
 /// chunk the replay takes ([`DynamicRead::at_chunk`]): one it rules out ends
 /// the segment there, and the replay re-enters the block at the next group it
 /// keeps as a piece starting inside the data, the segment's limit unchanged.
-/// A row the static filter keeps is evaluated against the state before a
-/// column of the row decodes, in every block, and dropped where it rejects it
-/// ([`DynamicRead::rejects`]). A block sorted on a bound the state requires
-/// stops at its first row past it, as under a static filter's.
+/// Under [`RowEvaluation::On`], a row the static filter keeps is evaluated
+/// against the state before a column of the row decodes, in every block, and
+/// dropped where it rejects it ([`DynamicRead::rejects`]). A block sorted on a
+/// bound the state requires stops at its first row past it, as under a static
+/// filter's.
 fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
@@ -3848,10 +3850,15 @@ fn replay<'a>(
                                     // asked only of a row its filter
                                     // rejected — the dynamic one's in a
                                     // group it is armed in
-                                    // (`DynamicPruning::arm`).
+                                    // (`DynamicPruning::arm`), and of every
+                                    // row there where its rows are not
+                                    // evaluated.
                                     let dynamic_stop = dynamic.as_ref().and_then(DynamicRead::stop);
+                                    let unevaluated = dynamic
+                                        .as_ref()
+                                        .is_some_and(|dynamic| !dynamic.evaluates_rows());
                                     let passed = if keep {
-                                        rejected
+                                        (rejected || unevaluated)
                                             && dynamic_stop
                                                 .is_some_and(|stop| stop.passed(raw, &mut split))
                                     } else {
@@ -4005,9 +4012,9 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 /// build side, a TopK's heap — handed to a partitioned replay
 /// ([`TablePartitions::under`]), which cuts its sub-streams over the row
 /// groups the state keeps when the first is polled, skips those it rules out
-/// as it reaches them, drops each row of the rest the state rejects before
-/// decoding it, and ends a sorted block at the first row past a bound the
-/// state requires.
+/// as it reaches them, ends a sorted block at the first row past a bound the
+/// state requires, and, under [`RowEvaluation::On`], drops each row of the
+/// rest the state rejects before decoding it.
 ///
 /// **Its contract is looser than a filter's, and is stated here alone.** A
 /// replay may drop any row a state it read rejects, at any moment, and reads
@@ -4017,7 +4024,8 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 /// replay is handed one by the one entry point that never resumes, a resume
 /// token counting rows being meaningless under it. Where the query does not
 /// use statistics it skips no group on its account, and still drops each row
-/// a state rejects. A consumer needing an exact answer re-checks its own rows.
+/// a state rejects where it evaluates rows. A consumer needing an exact answer
+/// re-checks its own rows.
 ///
 /// **A state is the library's filter tree**, over the table's column names,
 /// resolved against each block as a static filter is, in the query's
@@ -4032,10 +4040,28 @@ pub trait DynamicFilter: Send + Sync {
     fn current(&self) -> (u64, Arc<Expr>);
 }
 
+/// Whether a replay under a [`DynamicFilter`] evaluates each row its static
+/// filter keeps against the state, dropping the rows it rejects before they
+/// decode. Either way the state still skips the row groups it rules out, cuts
+/// the sub-streams and ends a block sorted past a bound it requires; what
+/// `Off` gives up is only the rows its consumer would have dropped itself.
+///
+/// **`Off` is the default** (`docs/design/decisions.md`, "D93").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowEvaluation {
+    /// Each row is left to the filter's consumer.
+    #[default]
+    Off,
+    /// Each row the state rejects is dropped before a column of it decodes.
+    On,
+}
+
 /// A [`DynamicFilter`] as one sub-stream's replay reads it: the filter, the
 /// statistics of the blocks it may prune, and the block being read.
 struct DynamicRead {
     filter: Arc<dyn DynamicFilter>,
+    /// Whether each row is evaluated against the state.
+    evaluation: RowEvaluation,
     statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
     /// The cut the sub-stream was handed, whose verdicts a state it read is
     /// read with again rather than asked of each group anew.
@@ -4061,8 +4087,8 @@ struct DynamicBlock {
     /// are judged by.
     state: Arc<ResolvedExpr>,
     /// The same state as its rows are evaluated against
-    /// ([`ResolvedExpr::for_rows`]).
-    rows: ResolvedExpr,
+    /// ([`ResolvedExpr::for_rows`]), where they are.
+    rows: Option<ResolvedExpr>,
     /// `None` where the block's statistics answer nothing
     /// ([`DynamicPruning::new`]), no group then being ruled out.
     pruning: Option<DynamicPruning>,
@@ -4088,17 +4114,24 @@ impl DynamicBlock {
             full,
             generation: None,
             state: Arc::new(ResolvedExpr::And(Vec::new())),
-            rows: ResolvedExpr::And(Vec::new()),
+            rows: None,
             pruning,
         })
     }
 
     /// Take `state`, the filter's state at `generation`, resolved against
     /// this block ([`resolve_loosened`]) — whole for its groups, and in its
-    /// row form for its rows (`docs/design/decisions.md`, "D93").
-    fn read(&mut self, generation: u64, state: &Expr, semantics: ComparisonSemantics) {
+    /// row form for its rows where `evaluation` evaluates them
+    /// (`docs/design/decisions.md`, "D93").
+    fn read(
+        &mut self,
+        generation: u64,
+        state: &Expr,
+        semantics: ComparisonSemantics,
+        evaluation: RowEvaluation,
+    ) {
         let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false);
-        self.rows = resolved.for_rows();
+        self.rows = (evaluation == RowEvaluation::On).then(|| resolved.for_rows());
         self.state = Arc::new(resolved);
         self.generation = Some(generation);
         if let Some(pruning) = self.pruning.as_mut() {
@@ -4139,12 +4172,13 @@ impl DynamicRead {
     fn refresh(&mut self, semantics: ComparisonSemantics) -> bool {
         let moved = self.filter.generation();
         let (filter, cut) = (Arc::clone(&self.filter), Arc::clone(&self.cut));
+        let evaluation = self.evaluation;
         let Some(block) = self.block() else { return false };
         if block.generation == Some(moved) {
             return false;
         }
         let (generation, state) = filter.current();
-        block.read(generation, &state, semantics);
+        block.read(generation, &state, semantics, evaluation);
         // A generation names one state, so the cut's verdicts under it are
         // this state's.
         if generation == cut.generation
@@ -4245,11 +4279,15 @@ impl DynamicRead {
     }
 
     /// The state last read, resolved against the block being read as its
-    /// rows are evaluated against it — `None` before the first read, or
-    /// where the block's schema does not resolve.
+    /// rows are evaluated against it — `None` where rows are not evaluated,
+    /// before the first read, or where the block's schema does not resolve.
     fn state(&self) -> Option<&ResolvedExpr> {
-        let block = self.block.as_ref()?.1.as_ref()?;
-        block.generation.map(|_| &block.rows)
+        self.block.as_ref()?.1.as_ref()?.rows.as_ref()
+    }
+
+    /// Whether each row is evaluated against the state.
+    fn evaluates_rows(&self) -> bool {
+        self.evaluation == RowEvaluation::On
     }
 
     /// Whether evaluating the state last read reads a field of a row.
@@ -4259,7 +4297,8 @@ impl DynamicRead {
 
     /// Whether the state last read rejects `raw_row`, a row the static filter
     /// kept, which the replay then drops before decoding a column of it,
-    /// counting it ([`TableStream::dynamic_filter_pruned_rows`]).
+    /// counting it ([`TableStream::dynamic_filter_pruned_rows`]) — never
+    /// where rows are not evaluated ([`RowEvaluation`]).
     ///
     /// **Evaluated in every block**, statistics or not, the state being read
     /// at each chunk as well as at each group entered
@@ -4274,10 +4313,10 @@ impl DynamicRead {
         table: &str,
         row_offset: u64,
     ) -> bool {
+        let Some(state) = self.state() else { return false };
         // Timed whole where the instrument is built in
         // (`crate::instrument::row_evaluated!`).
         row_evaluated!({
-            let Some(state) = self.state() else { return false };
             let rejected = matches!(state.matches(raw_row, split, table, row_offset), Ok(false));
             if rejected {
                 self.rows.fetch_add(1, Ordering::Relaxed);
@@ -4685,12 +4724,22 @@ impl TablePartitions {
     }
 
     /// These partitions under `filter`, which each of their sub-streams reads
-    /// as it runs, against the statistics the plan holds, and whose state
-    /// when the first of them is polled decides their byte cut
-    /// ([`DynamicPartitions`]). Where the plan does not use statistics it
-    /// skips no group, and still drops each row a state rejects.
-    pub fn under(self: &Arc<Self>, filter: Arc<dyn DynamicFilter>) -> DynamicPartitions {
-        DynamicPartitions { partitions: Arc::clone(self), filter, cut: Arc::new(OnceCell::new()) }
+    /// as it runs, against the statistics the plan holds, evaluating each row
+    /// against it as `evaluation` says, and whose state when the first of
+    /// them is polled decides their byte cut ([`DynamicPartitions`]). Where
+    /// the plan does not use statistics it skips no group, and still drops
+    /// each row a state rejects where it evaluates rows.
+    pub fn under(
+        self: &Arc<Self>,
+        filter: Arc<dyn DynamicFilter>,
+        evaluation: RowEvaluation,
+    ) -> DynamicPartitions {
+        DynamicPartitions {
+            partitions: Arc::clone(self),
+            filter,
+            evaluation,
+            cut: Arc::new(OnceCell::new()),
+        }
     }
 
     /// The cut a [`DynamicPartitions`] makes at its first poll: the matched
@@ -4712,7 +4761,7 @@ impl TablePartitions {
             let Some(mut dynamic) = DynamicBlock::new(block, Some(statistics), &self.plan) else {
                 continue;
             };
-            dynamic.read(generation, &state, semantics);
+            dynamic.read(generation, &state, semantics, RowEvaluation::Off);
             let Some(pruning) = dynamic.pruning.as_mut() else { continue };
             let within = self.plan.kept.get(&block.header_offset).map(Vec::as_slice);
             let (runs, out) = pruning.kept_within(within);
@@ -4797,9 +4846,11 @@ impl TablePartitions {
                     let pruned = Arc::clone(&shared_for_stream.dynamic_pruned);
                     pruned.fetch_add(cut.ruled_out.swap(0, Ordering::Relaxed), Ordering::Relaxed);
                     let groups = Arc::clone(&cut.groups);
-                    let filter = under.filter;
+                    let (filter, evaluation) = (under.filter, under.evaluation);
                     let rows = Arc::clone(&shared_for_stream.dynamic_rows);
-                    let read = DynamicRead { filter, statistics, cut, block: None, pruned, rows };
+                    let block = None;
+                    let read =
+                        DynamicRead { filter, evaluation, statistics, cut, block, pruned, rows };
                     (groups, Some(read))
                 }
             };
@@ -4833,9 +4884,10 @@ fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<u64>> {
 
 /// A plan's partitions under one [`DynamicFilter`]
 /// ([`TablePartitions::under`]): each sub-stream streamed from it skips the
-/// row groups the filter's state rules out as the replay reaches them, drops
-/// each row of the rest the state rejects before decoding it, and ends a
-/// block sorted past a bound the state requires.
+/// row groups the filter's state rules out as the replay reaches them, ends a
+/// block sorted past a bound the state requires, and under
+/// [`RowEvaluation::On`] drops each row of the rest the state rejects before
+/// decoding it.
 ///
 /// **Their byte cut is made once, when the first of them is polled**, over
 /// the row groups the plan's static filter and the filter's state at that
@@ -4858,6 +4910,7 @@ fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<u64>> {
 pub struct DynamicPartitions {
     partitions: Arc<TablePartitions>,
     filter: Arc<dyn DynamicFilter>,
+    evaluation: RowEvaluation,
     cut: Arc<OnceCell<Arc<Cut>>>,
 }
 

@@ -3,8 +3,9 @@
 //! its state keeps at their first poll, the groups a later state rules out
 //! are skipped as the replay reaches them, the state is read again at each
 //! chunk the replay takes, a row the state rejects is dropped before it
-//! decodes in every block, a block sorted on a bound the state requires stops
-//! past it, and a term a block cannot resolve keeps every row where it sits.
+//! decodes in every block where rows are evaluated, a block sorted on a bound
+//! the state requires stops past it whether they are or not, and a term a
+//! block cannot resolve keeps every row where it sits.
 //!
 //! **That skipping loses no row the filter keeps** is checked with generated
 //! filters beside DataFusion's own evaluation of them
@@ -25,8 +26,8 @@ use futures::StreamExt;
 use pgdump_query::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdump_query::{
     ByteRangeSource, DumpIndex, DynamicFilter, Expr, LocalFileSource, Membership, Parallelism,
-    Predicate, PredicateOp, QueryOptions, ScanOptions, Sortedness, StatisticsRequest,
-    StatisticsSelection, TablePartitions, map_file,
+    Predicate, PredicateOp, QueryOptions, RowEvaluation, ScanOptions, Sortedness,
+    StatisticsRequest, StatisticsSelection, TablePartitions, map_file,
 };
 
 mod common;
@@ -151,6 +152,23 @@ async fn run_scanned(
     scan: ScanOptions,
     dynamic: Option<Arc<dyn DynamicFilter>>,
 ) -> Run {
+    let on = RowEvaluation::On;
+    run_evaluating(dump, index, table, jobs, use_statistics, scan, dynamic, on).await
+}
+
+/// [`run_scanned`], evaluating each row against the state as `evaluation`
+/// says.
+#[allow(clippy::too_many_arguments)]
+async fn run_evaluating(
+    dump: &Path,
+    index: &DumpIndex,
+    table: &str,
+    jobs: usize,
+    use_statistics: bool,
+    scan: ScanOptions,
+    dynamic: Option<Arc<dyn DynamicFilter>>,
+    evaluation: RowEvaluation,
+) -> Run {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
@@ -163,7 +181,7 @@ async fn run_scanned(
     };
     let plan = TablePartitions::plan(source, index, watch, &table, scan, options).await.unwrap();
     let plan = Arc::new(plan);
-    let dynamic = dynamic.map(|filter| plan.under(filter));
+    let dynamic = dynamic.map(|filter| plan.under(filter, evaluation));
     let (mut partitions, mut pruned, mut dropped, mut unread) = (Vec::new(), 0, 0, 0);
     for partition in 0..plan.len() {
         let mut stream = match &dynamic {
@@ -420,6 +438,47 @@ async fn a_sorted_block_stops_at_a_bound_the_state_requires() {
         assert_eq!(split.ids, [1, 2, 3, 4], "pg_dump {version}");
         assert!(split.unread > 0, "pg_dump {version}: {split:?}");
         assert_eq!(split.pruned, past, "pg_dump {version}");
+    }
+}
+
+/// **Not evaluating rows, a state still skips every group it rules out and
+/// still stops a sorted block, and drops no row** (`RowEvaluation::Off`):
+/// under `id >= 990` the replay emits every row of the groups the state
+/// keeps, those below the bound included, and counts the same groups skipped
+/// as evaluating rows does; with statistics off it emits every row; and under
+/// `id < 5` it still ends at the first row past the bound, a row the static
+/// filter kept, serially and split alike.
+#[tokio::test]
+async fn not_evaluating_rows_a_state_still_skips_groups_and_stops_blocks() {
+    for version in VERSIONS {
+        let (_dir, dump, index) = gathered(version).await;
+        let off = |jobs: usize, use_statistics: bool, state: Expr| {
+            let (scan, filter) = (ScanOptions::default(), Some(Moving::constant(state) as _));
+            let table = "public.ordered";
+            let evaluation = RowEvaluation::Off;
+            run_evaluating(&dump, &index, table, jobs, use_statistics, scan, filter, evaluation)
+        };
+        let at_least = || term("id", PredicateOp::Ge, "990");
+        let (below, _) = groups_below(&index, 990);
+        let (_, skipped_rows) = self::below(&index, 990);
+        let (below_bound, groups) = groups_below(&index, 5);
+        let past = groups as u64 - below_bound - 1;
+        for jobs in [1, SPLIT_JOBS] {
+            let at = format!("pg_dump {version}, {jobs} job(s)");
+            let got = off(jobs, true, at_least()).await;
+            let kept: Vec<i32> = (skipped_rows as i32 + 1..=1000).collect();
+            assert_eq!(got.ids, kept, "{at}");
+            assert_eq!((got.pruned, got.dropped, got.unread), (below, 0, 0), "{at}");
+
+            let blind = off(jobs, false, at_least()).await;
+            assert_eq!(blind.ids, (1..=1000).collect::<Vec<_>>(), "{at}: statistics off");
+            assert_eq!((blind.pruned, blind.dropped), (0, 0), "{at}: statistics off");
+
+            let stopped = off(jobs, true, term("id", PredicateOp::Lt, "5")).await;
+            assert_eq!(stopped.ids, [1, 2, 3, 4], "{at}");
+            assert!(stopped.unread > 0, "{at}: {stopped:?}");
+            assert_eq!((stopped.pruned, stopped.dropped), (past, 0), "{at}");
+        }
     }
 }
 
@@ -704,7 +763,7 @@ async fn read_both(
         .unwrap();
     let plan = Arc::new(plan);
     let mut stream = match dynamic {
-        Some(filter) => plan.under(filter).stream(0, 64),
+        Some(filter) => plan.under(filter, RowEvaluation::On).stream(0, 64),
         None => plan.stream(0, 64),
     };
     let mut ids = Vec::new();

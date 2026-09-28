@@ -360,14 +360,14 @@ truncated file names the same byte. `close_copy_block` has one body and two call
 A failure only reading finds is the lowest-indexed failed sub-stream's, after the rows before it; a resolution refusal comes from the
 plan (D54). Across a DataFusion query's partitions the first refusal wins, each true; rejected: ordering them.
 
-### D93 A dynamic filter's rows are evaluated in every block, its state read at each group entered and each chunk taken
-Row evaluation consults no statistics, so it runs where none answer (`--statistics none`, D85's declined block, `KD33`'s tail) and under
-`use_statistics: false`. The state is read where its generation moved, at each group entered and each chunk taken; a read mid-group judges
-that group again, skipping its rest with each later group it rules out and re-arming one still kept. A row meets it less each bound an `IN`
-beside it implies, no `Not` above (D54). Rejected: evaluating only where statistics delimit groups; reading per row (a lock every partition
-shares), per batch (a state aging with its selectivity) or at group entry alone (older where groups merge); a `pgdump.*` switch ("Two tunables";
-DataFusion's flag is the user's); ceasing where nothing is rejected (D77); dropping a static filter's implied bounds, which raise where reached.
-Reopens: pricing the per-chunk check; a switch if the `IN` term shows no universal win. Code: `stream::DynamicRead`, `ResolvedExpr::for_rows`.
+### D93 A dynamic filter's rows are evaluated only under `pgdump.dynamic_filter_rows`, off by default; its state is read at each group entered and each chunk
+Off, a state still prunes groups, cuts the sub-streams and stops a sorted block, its stop asked of each kept row where armed; the setting states intent,
+which "Two tunables" does not refuse, and is the one way to the unclustered join's win, DataFusion's flag taking pruning with it. On, rows are evaluated
+in every block, statistics or not (`--statistics none`, D85's declined block, `KD33`'s tail), less each bound an `IN` beside it implies, no `Not` above
+(D54). The state is read where its generation moved; a read mid-group judges that group again, skipping its rest with each later group it rules out.
+Rejected: on by default (`dynamic-filter-join`'s costing row); no switch; evaluating only where statistics delimit groups; reading per row (a shared
+lock), per batch (aging) or at group entry alone (older where groups merge); ceasing where nothing is rejected (D77); dropping a static filter's implied
+bounds, which raise. Reopens: the costing row's Δ within its legs' spreads (`KD55`); the per-chunk check priced. Code: `stream::RowEvaluation`, `DynamicRead`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership

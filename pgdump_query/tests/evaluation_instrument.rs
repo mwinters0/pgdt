@@ -17,7 +17,7 @@ use pgdump_query::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdump_query::instrument::{EvaluationPart, evaluation_reading};
 use pgdump_query::{
     ByteRangeSource, DynamicFilter, Expr, LocalFileSource, Membership, Parallelism, Predicate,
-    PredicateOp, QueryOptions, ScanOptions, StatisticsRequest, StatisticsSelection,
+    PredicateOp, QueryOptions, RowEvaluation, ScanOptions, StatisticsRequest, StatisticsSelection,
     TablePartitions, map_file,
 };
 
@@ -66,9 +66,13 @@ fn counts() -> Vec<u64> {
 }
 
 /// `ordered`'s `id`, read serially with statistics off — so every row is
-/// evaluated — under `filter` as the static filter, `dynamic` as the dynamic
-/// one, or both; the rows emitted.
-async fn read(static_filter: Option<Expr>, dynamic: Option<Expr>) -> u64 {
+/// evaluated where `evaluation` evaluates rows — under `filter` as the static
+/// filter, `dynamic` as the dynamic one, or both; the rows emitted.
+async fn read(
+    static_filter: Option<Expr>,
+    dynamic: Option<Expr>,
+    evaluation: RowEvaluation,
+) -> u64 {
     let version = *VERSIONS.last().unwrap();
     let (_dir, dump) = sandboxed(&statistics_fixture(version, "default"), "dump.sql");
     let source = LocalFileSource::open(&dump).unwrap();
@@ -93,7 +97,7 @@ async fn read(static_filter: Option<Expr>, dynamic: Option<Expr>) -> u64 {
     let scan = ScanOptions::default();
     let plan = TablePartitions::plan(source, &index, watch, &table, scan, options).await.unwrap();
     let plan = Arc::new(plan);
-    let dynamic = dynamic.map(|state| plan.under(Arc::new(Constant(Arc::new(state)))));
+    let dynamic = dynamic.map(|state| plan.under(Arc::new(Constant(Arc::new(state))), evaluation));
     let mut rows = 0;
     for partition in 0..plan.len() {
         let mut stream = match &dynamic {
@@ -115,15 +119,28 @@ async fn read(static_filter: Option<Expr>, dynamic: Option<Expr>) -> u64 {
 /// spells, so its membership keys nothing and probes a set of the literals.
 /// **A static filter's
 /// evaluation of the same tree is timed nowhere**, the leaf parts being timed
-/// only inside a row; and the reading's derived times are finite.
+/// only inside a row, and **a replay not evaluating rows times none**, only
+/// its reads of the state at each chunk; and the reading's derived times are
+/// finite.
 #[tokio::test]
 async fn the_instrument_times_each_row_the_state_is_evaluated_on_and_its_leaves() {
     let before = counts();
-    assert_eq!(read(Some(join_filter()), None).await, IN_VALUES);
+    assert_eq!(read(Some(join_filter()), None, RowEvaluation::On).await, IN_VALUES);
     assert_eq!(counts(), before, "a static filter's evaluation is timed");
 
     let before = counts();
-    assert_eq!(read(None, Some(join_filter())).await, IN_VALUES);
+    assert_eq!(read(None, Some(join_filter()), RowEvaluation::Off).await, ROWS);
+    let after = counts();
+    for part in EvaluationPart::ALL {
+        let spans = after[part as usize] - before[part as usize];
+        match part {
+            EvaluationPart::Chunk => assert!(spans >= 1, "no chunk read the state"),
+            _ => assert_eq!(spans, 0, "{part:?} timed with rows not evaluated"),
+        }
+    }
+
+    let before = counts();
+    assert_eq!(read(None, Some(join_filter()), RowEvaluation::On).await, IN_VALUES);
     let after = counts();
     let spans = |part: EvaluationPart| after[part as usize] - before[part as usize];
     assert_eq!(spans(EvaluationPart::Row), ROWS);

@@ -225,7 +225,7 @@ impl TableProvider for PgDumpTable {
         // projected columns' own sum describes.
         statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
         let orderings = output_orderings(&schema, partitions.orders());
-        let replay = Replay::new(partitions, schema, draw, metrics);
+        let replay = Replay::new(partitions, schema, draw, metrics, settings.dynamic_filter_rows);
         let answered = StaticFilter::new(answered);
         Ok(Arc::new(PgDumpExec::new(replay, orderings, limit, statistics, answered)?))
     }

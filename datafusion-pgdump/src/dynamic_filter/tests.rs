@@ -35,7 +35,7 @@ use datafusion::physical_expr::utils::collect_columns;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ComparisonSemantics, LocalFileSource, Parallelism, QueryOptions, ScanOptions,
+    ComparisonSemantics, LocalFileSource, Parallelism, QueryOptions, RowEvaluation, ScanOptions,
     StatisticsRequest, StatisticsSelection, TableName, TablePartitions, map_file,
 };
 
@@ -192,7 +192,7 @@ async fn read_dynamic(
     let filter: Arc<dyn DynamicFilter> =
         Arc::new(ReplayFilter::new(held, partitions.resolved_schema()));
     let partitions = Arc::new(partitions);
-    let under = partitions.under(filter);
+    let under = partitions.under(filter, RowEvaluation::On);
     let (mut batches, mut pruned, mut dropped, mut stopped) = (Vec::new(), 0, 0, false);
     for partition in 0..partitions.len() {
         let mut stream = under.stream(partition, 8);
