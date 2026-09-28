@@ -88,6 +88,7 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread, what each shape of removing duplicate decoding saves, and the mechanisms beyond it named; [notes](../design/roadmap-P27.8-per-row-account-notes.md)
 - [x] **27.9** The bounds an `IN` implies dropped from row evaluation and the byte cut keying each group's bounds once, every figure the change could move re-taken, and the spec's criterion applied: it fails on the costing input, so row evaluation goes off, delivered by 27.10; [notes](../design/roadmap-P27.9-implied-bounds-notes.md)
 - [x] **27.10** The `pgdump.*` switch for row evaluation, taken since 27.9 turned it off: the setting off by default, its manual entry, "D93" rewritten, and the result-equality harness run with it on; [notes](../design/roadmap-P27.10-switch-notes.md)
+- [ ] **27.11** The figures price the switch: `dynamic-filter-join` and `dynamic-filter-topk` timing the filter off, on at the default and on with `pgdump.dynamic_filter_rows` set, `--profile-recipe`'s costing pair the default against the rows leg, "D93" rewritten to read that pair, and both figures re-taken
 
 ## Not started
 
@@ -118,20 +119,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`dynamic-filter-join` and the per-row account's recipe were left timing
-  the shipped default, now rows not evaluated.** 27.10 changed no apparatus:
-  `measure.py`'s `dfcli_invocation` states only DataFusion's producer flag,
-  so from this commit the join figure's on leg no longer prices the switch.
-  At `5e02bf9` that leg showed the unclustered win and the costing loss.
-  Re-taken as it stands, it shows neither. And `--profile-recipe`'s
-  introspection of the costing row (`DFCLI_ACCOUNT`) now reads no row span.
-  It was left because the spec's row asks for no apparatus change, and a
-  change to the apparatus is a separate review from a change to the product
-  ([`../process.md`](../process.md), "Working unattended"). **What is being
-  decided**: whether `dfcli_invocation` gains a third leg that runs `SET
-  pgdump.dynamic_filter_rows = true` ahead of the SQL, for the join figure
-  and the account's pair, with `test_measure.py` asserting it, so that the
-  trade the manual describes stays priced — or whether the figures time the
-  default alone, and the readings at `5e02bf9` stand as the last pricing of
-  row evaluation.

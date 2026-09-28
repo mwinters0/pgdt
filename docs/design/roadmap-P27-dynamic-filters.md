@@ -202,6 +202,16 @@ path on its own**, so each slice's mistakes show in the next one's checks:
     with it on, so the path off by default is still checked. It states
     intent, which roadmap.md's "Two tunables fit pgdt to hardware" does not
     refuse. Were 27.9 to keep row evaluation on, this slice is struck.
+11. **The figures price the switch**, admitted on 27.10: `dynamic-filter-join`
+    and `dynamic-filter-topk` time three legs — the filter off, on at the
+    default, and on with `pgdump.dynamic_filter_rows` set — so each prices
+    what ships and what the setting buys and costs, and `--profile-recipe`'s
+    costing pair becomes the default leg against the rows leg. "D93"'s
+    refusal of on by default and its reopening read that same pair: the
+    costing row's rows leg within the default leg's spreads, and the
+    unclustered row's beating it with the spreads apart. Both figures are
+    re-taken here, the change they price
+    ([`../status/history/2026-09-28.md`](../status/history/2026-09-28.md)).
 
 ## Facts found while grilling
 

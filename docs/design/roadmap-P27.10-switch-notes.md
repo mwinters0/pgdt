@@ -1,6 +1,6 @@
 # P27.10 — The switch for row evaluation: notes
 
-What the phase's wrap inherits. The spec is
+What 27.11 and the phase's wrap inherit. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
 item 10. **Row evaluation is off by default, `pgdump.dynamic_filter_rows`
 turns it on, and the result-equality harness runs both ways**
@@ -59,6 +59,5 @@ turns it on, and the result-equality harness runs both ways**
 is taken from a commit (`measurements.md`, "A figure may be published outside
 the sweep"). `dynamic-filter-join`'s and `dynamic-filter-topk`'s on legs time
 the shipped default, so from this commit they time rows not evaluated, where
-the readings at `5e02bf9` timed them evaluated. Whether the join figure
-should gain a leg that states the setting is under STATUS's "Decisions worth
-another look".
+the readings at `5e02bf9` timed them evaluated. Both gain a leg stating the
+setting in 27.11 (the spec, "Slices", item 11), which re-takes them.
