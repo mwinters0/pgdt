@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD54 -->
-**`KD1`–`KD54` are allocated, and nothing at or below `KD54` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD55 -->
+**`KD1`–`KD55` are allocated, and nothing at or below `KD55` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -304,6 +304,13 @@ than reading as a phase nobody has sliced.
   buffers — a third of the costing row's off-leg user cycles, under mimalloc.
   **(c) unowned**; promoted by a figure pricing the zeroing or a phase taking
   up query-path memory. Detail: `pgdump_query/src/io.rs`.
+
+- **KD55** — a membership over a text-compared column probes std's
+  SipHash-keyed set with the field's text, among the costliest terms of the
+  costing row's evaluation, where a fast hasher seeded once a process would
+  keep a flooded list's defence at a fraction of the cost. **(c) unowned**;
+  promoted by row evaluation going on by default, or a figure pricing
+  `pgdt --where`'s `in (…)`. Detail: `pgdump_query/src/predicate.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst

@@ -86,7 +86,8 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.6** The set-membership term, `Expr::In`, answering exactly as the `Or` of `=` it replaces by a generated check, and `pgdt --where`'s `in (…)`; [notes](../design/roadmap-P27.6-membership-notes.md)
 - [x] **27.7** Both DataFusion translators emit `Expr::In` for `IN`; `dynamic-filter-join` and `dynamic-filter-topk` re-taken and their readings filed; [notes](../design/roadmap-P27.7-translators-notes.md)
 - [x] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread, what each shape of removing duplicate decoding saves, and the mechanisms beyond it named; [notes](../design/roadmap-P27.8-per-row-account-notes.md)
-- [ ] **27.9** The mechanism 27.8 names and duplicate decoding removed, every figure the change could move re-taken, and the spec's criterion applied to decide whether row evaluation stays on
+- [ ] **27.9** The bounds an `IN` implies dropped from row evaluation and the byte cut keying each group's bounds once, every figure the change could move re-taken, and the spec's criterion applied to decide whether row evaluation stays on
+- [ ] **27.10** The `pgdump.*` switch for row evaluation, taken only if 27.9 turns it off: the setting off by default, its manual entry, "D93" rewritten, and the result-equality harness run with it on
 
 ## Not started
 
@@ -117,21 +118,4 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **27.9's scope is the implied bounds dropped from row evaluation and the
-  byte cut keying each group's bounds once, not the lookup.** 27.8's account
-  ([`../design/measurements.md`](../design/measurements.md), "What
-  DataFusion's dynamic filters buy a query") settles the duplicate-decoding
-  shape by the spec's own words: dropping the bounds an `IN` implies saves
-  more than decoding a field once for every leaf, and subsumes it on the
-  costing row. It settles nothing further: at the figure's spreads the
-  criterion needs about two thirds of the Δ gone, which that removal misses
-  even at its upper bound, and three more mechanisms are named
-  ([`../design/roadmap-P27.8-per-row-account-notes.md`](../design/roadmap-P27.8-per-row-account-notes.md),
-  "The mechanisms beyond duplicate decoding"). The call: the cut's keying
-  goes too, a saving that changes no answer and is paid with row evaluation
-  off; the lookup stays, its cheaper shapes giving up std's resistance to a
-  flooded hash or adding back the key the removal takes. Reconsidering moves
-  whether 27.9 can meet the criterion: without the lookup it does only if the
-  bounds' removal saves near its upper bound.
 

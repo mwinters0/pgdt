@@ -121,7 +121,8 @@ priced in [`measurements.md`](measurements.md)'s account:
 ## The mechanisms beyond duplicate decoding
 
 What the account leaves once duplicate decoding goes, each named where it
-lives; none is chosen here ("Decisions worth another look").
+lives. 27.9 takes the byte cut's keying beside the implied bounds and leaves
+the lookup (the spec, "Slices", item 9), whose cheaper shape is `KD55`.
 
 - **The lookup**: a membership's `Lookup::Canonical` hashes the field's text with
   std's SipHash and compares the string on the hit, an integer's `=`

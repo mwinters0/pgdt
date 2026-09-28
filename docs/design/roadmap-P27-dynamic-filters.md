@@ -181,10 +181,13 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    none); choosing among shapes is a design decision, so it goes to
    `STATUS.md`'s "Decisions worth another look" unless the record and the
    account settle it.
-9. **The mechanism slice 8 names, and duplicate decoding removed** — a field
-   unescaped and decoded once per leaf reading it — in whichever shape the
-   account says pays best, unless a reading shows the removal makes a figure
-   slower. Then every figure the change could move is re-taken, in the slice
+9. **Duplicate decoding removed by dropping the bounds an `IN` implies from
+   row evaluation**, the shape 27.8's account says pays best, the bounds still
+   pruning groups; **and the byte cut keying each group's bounds once**, not
+   once per list value, a saving paid with row evaluation off too. Both go in
+   unless a reading shows either makes a figure slower. The lookup is left as
+   it stands (`KD55`): 27.9 does not chase the criterion below by giving up
+   what it buys. Then every figure the change could move is re-taken, in the slice
    whose change it prices: `dynamic-filter-join`, `dynamic-filter-topk`,
    `predicate-terms` and `statistics-pruning`; where it is faster, the
    phase's notes and history cite the re-taken figures, not the ones before
@@ -192,6 +195,12 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    join wins, its legs' spreads apart, and the costing input's Δ lies within
    its legs' overlapping spreads**; failing that it goes off and "D93"
    reopens, a `pgdump.*` switch with it.
+10. **The switch, taken only if 27.9 turns row evaluation off**: a
+    `pgdump.*` setting stating it, off by default, with its manual entry,
+    "D93" rewritten, and the flags-on-against-off result-equality harness run
+    with it on, so the path off by default is still checked. It states
+    intent, which roadmap.md's "Two tunables fit pgdt to hardware" does not
+    refuse. Were 27.9 to keep row evaluation on, this slice is struck.
 
 ## Facts found while grilling
 

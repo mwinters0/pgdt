@@ -2794,6 +2794,17 @@ pub(crate) struct ResolvedMembership {
 /// for every value, so the terms share one variant; were they ever not to,
 /// [`Lookup::Each`] answers through the terms themselves, in order, as the
 /// `Or` does.
+// Deficiency register: `deficiency: KD55` — `Canonical` and `Trimmed` hash
+// the field's text with std's `HashSet` hasher, SipHash-1-3 under a random
+// key, on every row a membership reads; the costing input's account puts the
+// lookup among the largest terms of a row's evaluation
+// (`docs/design/measurements.md`, "What DataFusion's dynamic filters buy a
+// query"). A fast hasher seeded once a process (`foldhash`'s, say) keeps a
+// list flooded with colliding values from degrading the probe, which is what
+// SipHash's key is for, at a fraction of its cost; keying the field instead
+// adds back the parse dropping the implied bounds removes. **(c) unowned**;
+// promoted by row evaluation going on by default, or a figure pricing
+// `pgdt --where`'s `in (…)`.
 #[derive(Debug, Clone)]
 enum Lookup {
     /// [`Comparison::Canonical`]: the literals as the file spells them, the
