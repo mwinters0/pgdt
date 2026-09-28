@@ -486,4 +486,38 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "every DYNFILTER_QUERIES shape and leg: 8 compared, 0 differing"
         ),
     ),
+    Acknowledged(
+        commit="f7a7409",
+        figures=(
+            "allocator",
+            "census-arrays",
+            "census-brace-free",
+            "chunk-size",
+            "map-only",
+            "parallel-peak-rss",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "per-block-quadratic",
+            "preamble-prepass",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "scan-throughput-cold",
+            "scan-throughput-nvme",
+            "scan-throughput-warm",
+            "statistics-gathering",
+        ),
+        why=(
+            "27.9's row form (`ResolvedExpr::for_rows`) is read only by "
+            "`DynamicBlock`, and `KeyedBounds` only where a resolved filter's group "
+            "truths are computed; none of these figures states `--where` or a "
+            "dynamic filter, so neither is reached"
+        ),
+        verified=(
+            "git show --format= -U0 f7a7409 -- pgdump_query/src/stream.rs "
+            "pgdump_query/src/predicate.rs | grep '^@@'  # stream.rs: DynamicBlock "
+            "and DynamicRead only; predicate.rs: ResolvedMembership, ResolvedExpr, "
+            "GroupStatistics, ResolvedTerm group truths, tests"
+        ),
+    ),
 )
