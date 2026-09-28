@@ -433,8 +433,8 @@ back to run artifacts that `runs/` does not keep — a much larger mechanism tha
 the markers it would police. So this boundary is discipline, recorded here.
 
 **One line, in three regimes: 3.00 GiB inputs read at `--jobs 1` by a `glibc`
-binary in a 512 MB `postgres:16` container, timed by that container's own
-`bash`.** Warm
+binary staged on tmpfs, in a 512 MB `postgres:16` container, timed by that
+container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
 before every run, including before the floor; `cold-nvme` ones are that same
 discipline against a copy of the input on the NVMe. Nothing else builds or runs
@@ -956,13 +956,14 @@ deleted because the reasoning is machine-specific: a box on `acpi-cpufreq`
 with a genuine `ondemand` governor would show exactly the effect this was
 written for.
 
-**Pinning a leg to L3 groups and staging the binaries on tmpfs are an
-experiment's arms, not the apparatus.** `measure.py --pin-cpus` and
-`--stage-binaries` are off, any other value marks a sitting unpublishable, and
-`alternate` takes every leg under both arrangements in turn: the first arm is
-what the tables render, and every arm's readings go to `raw.json`'s `arms`,
-read by `--arms` within a sitting and by `--drift` across two. The criterion
-each was read against, fixed before any sitting, is
+**Staging the binaries on tmpfs is the apparatus, in every regime; pinning a
+leg to L3 groups is an experiment's arm.** `measure.py --stage-binaries` is on
+and `--pin-cpus` off (`measure.Arm`'s defaults), any other value marks a
+sitting unpublishable, and `alternate` takes every leg under both arrangements
+in turn: the recorded arm goes first and is what the tables render, and every
+arm's readings go to `raw.json`'s `arms`, read by `--arms` within a sitting
+and by `--drift` across two. The criterion each was read against, fixed before
+any sitting, is
 [`../status/history/2026-09-28.md`](../status/history/2026-09-28.md), "`M178`:
 whether pinning to an L3 group cuts drift, settled with the maintainer".
 
@@ -993,11 +994,11 @@ no binary of ours, moved 0.05% (`runs/measure-20260928T164621`, `measure.py
 `pgdt` legs). Every published cold absolute carries that term, since
 `drop_caches` evicts `pgdt` and an unstaged leg loads it off the HDD inside
 `time`; a warm one at most on its first rep after another figure's drop, which
-no median of three or more reps takes. Staging in every regime is adopted
-and lands as `M179`
+no median of three or more reps takes. So every regime stages them, the warm
+ones for the regimes' sake rather than for a term their medians carry
 ([`../status/history/2026-09-28.md`](../status/history/2026-09-28.md),
-"Staging the binaries is adopted, settled with the maintainer"); until then
-every figure here is taken unstaged.
+"Staging the binaries is adopted, settled with the maintainer"). Every table
+here was taken unstaged, and `M179`'s sweep re-takes them staged.
 
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
@@ -1403,7 +1404,7 @@ perfectly. The kernel's own readahead is what has already taken the rest.
 **Part of that gap is not the scan at all**: `drop_caches` evicts `pgdt`, and
 the leg loads it off the HDD inside `time` — 57–71 ms in the cold-SSD regime
 ("The apparatus"), unmeasured on NVMe — so the prize is smaller still, until
-`M179` stages the binary and re-takes this table.
+`M179`'s sweep re-takes this table staged.
 Nothing about a slower device changes that arithmetic in the levers' favour:
 on the SATA SSD the same subtraction is under 1% and on the HDD the scan is
 device-bound by a factor of several.

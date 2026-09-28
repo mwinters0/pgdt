@@ -244,13 +244,13 @@ class Config:
     # that constant for the measurement that says why.
     pin_governor: bool = _env("PGDT_MEASURE_PIN_GOVERNOR", "") not in ("", "0", "no")
     # Place each leg on one or two L3 groups by the threads it states, and the
-    # harness on the other die (`PIN_CHOICES`). Off by default: whether it is
-    # adopted is `M178`'s sittings' to decide, and anything else marks the run
-    # unpublishable.
+    # harness on the other die (`PIN_CHOICES`). Off: `M178`'s sittings refuted
+    # it, and anything else marks the run unpublishable.
     pin_cpus: str = _env("PGDT_MEASURE_PIN_CPUS", "off")
     # Mount the timed binaries from tmpfs, read once untimed before each run
-    # (`Session.stage_binary`). Off by default for `pin_cpus`'s reason.
-    stage_binaries: str = _env("PGDT_MEASURE_STAGE_BINARIES", "off")
+    # (`Session.stage_binary`). On: it is the recorded apparatus, in every
+    # regime, and anything else marks the run unpublishable.
+    stage_binaries: str = _env("PGDT_MEASURE_STAGE_BINARIES", "on")
     # Rep-count override, for smoke runs only. None means each figure's own.
     reps_override: int | None = None
     dry_run: bool = False
@@ -306,7 +306,7 @@ class Config:
                 "below that republishes a shared reading measured it here for itself. "
                 "It says whether a change moved a figure; it is not a table to fold in."
             )
-        if self.pin_cpus != "off" or self.stage_binaries != "off":
+        if self.arms != (Arm(),):
             return (
                 f"This run placed its legs under an apparatus not adopted "
                 f"(`--pin-cpus {self.pin_cpus}`, `--stage-binaries {self.stage_binaries}`). "
@@ -319,8 +319,8 @@ class Config:
     def arms(self) -> tuple["Arm", ...]:
         """The arrangements every leg of this run is taken under, the first
         being the one `readings` and every table carry (`Arm`)."""
-        pins = arm_values(self.pin_cpus, "--pin-cpus")
-        stages = arm_values(self.stage_binaries, "--stage-binaries")
+        pins = arm_values(self.pin_cpus, "--pin-cpus", Arm().pinned)
+        stages = arm_values(self.stage_binaries, "--stage-binaries", Arm().staged)
         return tuple(Arm(pinned=p, staged=s) for p in pins for s in stages)
 
     @property
@@ -629,22 +629,23 @@ class Sampler:
 #: re-sweep.
 SWEEP_GOVERNOR = "performance"
 
-#: What `--pin-cpus` and `--stage-binaries` take: the apparatus as recorded
-#: (`off`), the arrangement on every leg (`on`), or both arms, each leg taken
-#: under one and then the other, alternating which goes first rep by rep
-#: (`alternate`) — the experiment's shape, so its arms share every minute of
-#: the machine's own drift rather than a sitting each.
+#: What `--pin-cpus` and `--stage-binaries` take: the arrangement off every
+#: leg (`off`), on every leg (`on`), or both arms, each leg taken under one
+#: and then the other, alternating which goes first rep by rep (`alternate`)
+#: — the experiment's shape, so its arms share every minute of the machine's
+#: own drift rather than a sitting each. Which of `off` and `on` is the
+#: recorded apparatus is `Arm`'s defaults.
 ARM_CHOICES = ("off", "on", "alternate")
 
 
-def arm_values(choice: str, flag: str) -> tuple[bool, ...]:
-    """The arms one `ARM_CHOICES` value asks for, the recorded one first."""
+def arm_values(choice: str, flag: str, recorded: bool) -> tuple[bool, ...]:
+    """The arms one `ARM_CHOICES` value asks for, the `recorded` one first."""
     if choice == "off":
         return (False,)
     if choice == "on":
         return (True,)
     if choice == "alternate":
-        return (False, True)
+        return (recorded, not recorded)
     raise ValueError(f"{flag} takes one of {', '.join(ARM_CHOICES)}, not {choice!r}")
 
 
@@ -653,13 +654,15 @@ class Arm:
     """One arrangement a leg is placed under: pinned to L3 groups or not, and
     its binaries on tmpfs or where cargo left them.
 
-    **Neither is adopted** (`docs/status/history/2026-09-28.md`, "`M178`"):
-    the first arm of `Config.arms` is the one every table renders, and a
-    second arm's readings go to `raw.json`'s `arms` alone, read by `--arms`
-    within one sitting and `--drift` across two."""
+    **The defaults are the recorded apparatus**: unpinned, pinning being
+    refuted, and staged, which is adopted in every regime
+    (`measurements.md`, "The apparatus"). The first arm of `Config.arms` is
+    the one every table renders, and a second arm's readings go to
+    `raw.json`'s `arms` alone, read by `--arms` within one sitting and
+    `--drift` across two."""
 
     pinned: bool = False
-    staged: bool = False
+    staged: bool = True
 
     @property
     def name(self) -> str:
@@ -10968,7 +10971,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         + ("" if selected_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
-    if len(cfg.arms) > 1 or cfg.arms[0] != Arm():
+    if cfg.arms != (Arm(),):
         log(
             "arms: " + ", ".join(a.name for a in cfg.arms)
             + (" — each leg taken under each in turn; tables render the first" if len(cfg.arms) > 1 else "")
@@ -12797,15 +12800,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--pin-cpus",
         choices=ARM_CHOICES,
         help="place each leg on one L3 group, or two, by the workers it states, and the "
-        "harness on the other die; `alternate` takes every leg pinned and unpinned in turn. "
-        "Not adopted, so anything but `off` is unpublishable",
+        "harness on the other die; `alternate` takes every leg unpinned and pinned in turn. "
+        "Refuted, so anything but `off` is unpublishable",
     )
     parser.add_argument(
         "--stage-binaries",
         choices=ARM_CHOICES,
         help="run the timed binaries from tmpfs, read once untimed before each run; "
-        "`alternate` takes every leg staged and unstaged in turn. Not adopted, so "
-        "anything but `off` is unpublishable",
+        "`alternate` takes every leg staged and unstaged in turn. The recorded apparatus, "
+        "so anything but `on` is unpublishable",
     )
     args = parser.parse_args(argv)
 

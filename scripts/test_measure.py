@@ -7666,7 +7666,8 @@ class TimeRunHandlesAKill(unittest.TestCase):
 
 class Arms(unittest.TestCase):
     """`--pin-cpus` and `--stage-binaries` (`M178`): an arrangement a leg is
-    placed under, off by default, and read against the recorded one leg by leg.
+    placed under — unpinned and staged by default, that being the recorded
+    apparatus — and read against the recorded one leg by leg.
 
     Each way the experiment could read something other than what it claims is
     held here: a leg placed by a count it does not run at, a second arm leaking
@@ -7733,11 +7734,16 @@ class Arms(unittest.TestCase):
         cfg = measure.Config()
         self.assertEqual(cfg.arms, (measure.Arm(),))
         self.assertTrue(cfg.publishable)
-        for pin, stage in (("on", "off"), ("off", "on"), ("alternate", "off"), ("off", "alternate")):
+        self.assertEqual(cfg.arms[0].name, "unpinned+staged")
+        self.assertTrue(measure.Config(pin_cpus="off", stage_binaries="on").publishable)
+        for pin, stage in (("on", "on"), ("off", "off"), ("alternate", "on"), ("off", "alternate")):
             with self.subTest(pin=pin, stage=stage):
                 self.assertFalse(measure.Config(pin_cpus=pin, stage_binaries=stage).publishable)
+        # `alternate` puts the recorded arm first, so it is the one the tables render.
         both = measure.Config(pin_cpus="alternate", stage_binaries="on").arms
         self.assertEqual([a.name for a in both], ["unpinned+staged", "pinned+staged"])
+        both = measure.Config(stage_binaries="alternate").arms
+        self.assertEqual([a.name for a in both], ["unpinned+staged", "unpinned+unstaged"])
         with self.assertRaises(ValueError):
             measure.Config(pin_cpus="sometimes").arms
 
@@ -7779,16 +7785,31 @@ class Arms(unittest.TestCase):
         self.assertEqual((record["arm"], record["cpuset"]), ("pinned+staged", "3-5,15-17"))
         self.assertEqual(record["cpu_seconds"], {"user": 0.008, "sys": 0.004})
 
-    def test_the_recorded_apparatus_adds_nothing_but_the_report_format(self):
+    def test_the_recorded_apparatus_stages_and_adds_nothing_else(self):
         session = self._session()
-        spec = measure.RunSpec("pgdt", "control", "parse", "warm", "")
-        argv = self._argv(session, spec)
-        self.assertNotIn("--cpuset-cpus", argv)
+        # A cold regime too: a `drop_caches` evicts a binary read off disk,
+        # and none staged on tmpfs.
+        for regime in ("warm", "cold"):
+            with self.subTest(regime=regime):
+                spec = measure.RunSpec("pgdt", "control", "parse", regime, "")
+                session.drop_caches = lambda: None
+                argv = self._argv(session, spec)
+                self.assertNotIn("--cpuset-cpus", argv)
+                self.assertIn("/dev/shm/pgdt/bin/pgdt:/pgdt:ro", argv)
+                self.assertEqual(
+                    argv[-1],
+                    measure.TIME_FORMAT + "cat /pgdt >/dev/null; "
+                    + measure._script("parse") + measure.OOM_ORACLE,
+                )
+        self.assertFalse(hasattr(session, "placed"))
+
+    def test_an_unstaged_leg_mounts_where_cargo_left_it_and_reads_nothing_first(self):
+        session = self._session(stage_binaries="off")
+        argv = self._argv(session, measure.RunSpec("pgdt", "control", "parse", "warm", ""))
         self.assertIn("/bin/pgdt:/pgdt:ro", argv)
         self.assertEqual(
             argv[-1], measure.TIME_FORMAT + measure._script("parse") + measure.OOM_ORACLE
         )
-        self.assertFalse(hasattr(session, "placed"))
 
     def test_an_unpinned_leg_under_the_pinned_arm_sends_the_harness_home(self):
         session = self._session(pin_cpus="on")
@@ -7814,13 +7835,13 @@ class Arms(unittest.TestCase):
         # Each rep takes the leg under both arms, the first arm alternating.
         self.assertEqual(
             taken,
-            [(0, "unpinned+unstaged"), (0, "pinned+unstaged"),
-             (1, "pinned+unstaged"), (1, "unpinned+unstaged")],
+            [(0, "unpinned+staged"), (0, "pinned+staged"),
+             (1, "pinned+staged"), (1, "unpinned+staged")],
         )
         key = spec.key("f")
         self.assertEqual(session.readings[key], [2.0, 2.0])
-        self.assertEqual(session.arm_readings["pinned+unstaged"][key], [1.0, 1.0])
-        self.assertEqual(session.arm_readings["unpinned+unstaged"][key], [2.0, 2.0])
+        self.assertEqual(session.arm_readings["pinned+staged"][key], [1.0, 1.0])
+        self.assertEqual(session.arm_readings["unpinned+staged"][key], [2.0, 2.0])
 
     def _raw(self, first, second, commit="abc"):
         return {
