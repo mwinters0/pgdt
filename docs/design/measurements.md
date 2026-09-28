@@ -999,6 +999,19 @@ statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
 same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
 
+**One built instrument times rather than counts**: under
+`datafusion-cli-pgdump`'s own `introspect` feature, `pgdump_query::instrument`
+times each row a dynamic filter's state is evaluated on, and within it each
+leaf's locating, unescaping and keying of its field, its comparison and a
+membership's lookup, writing `evaluation_*` lines to the same file. It reads
+the time-stamp counter unordered against the work around it, so a span
+shorter than the pipeline is smeared across its neighbours and **only a sum
+over many spans is read**, less what the report's own calibration says a span
+costs itself and costs a span around it. It is **blind to everything outside
+a row's evaluation** — the replay's row loop, DataFusion — which a sampling
+profile of the same run sees; `measure.py --profile-recipe` prints both, over
+one figure's legs.
+
 **The third is a tool rather than a build, and `cd scripts && uv run
 measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the
 harness's third such invocation, beside koji's scan and the sampling profile.

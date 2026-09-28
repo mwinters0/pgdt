@@ -151,8 +151,8 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    against "D53"'s **Reopens**.
 6. **The set-membership term**, admitted on 27.5's readings: a leaf of its
    own, `Expr::In`, not a `PredicateOp` (whose other operators would carry a
-   list they never use) and not an `Or` of `=` recognized at resolution
-   ("D54": the tree evaluated is the tree handed). It finds and decodes its
+   list they never use) and not an `Or` of `=` recognized at resolution,
+   every front end emitting the term. It finds and decodes its
    field once a row and answers by one lookup, exactly as the `Or` of `=` it
    replaces — `NULL`, a list holding `NULL`, `NOT IN` as `Not` over it, a row
    group's statistics — **proved by a generated check** beside
@@ -172,13 +172,23 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    `introspect` build, built here where that build cannot yet time a term
    (`roadmap.md`, "Attribution is introspective; only the gate is blind").
    Its deliverable is an account summing to the measured Δ within its spread,
-   filed where `process.md`, "Where does this fact go?" sends each part. It
-   then names the mechanism, if any, that would remove the attributed cost
-   within "D54" (the tree evaluated is the tree handed); choosing it is a
-   design decision, so it goes to `STATUS.md`'s "Decisions worth another
-   look" unless the record already settles it.
-9. **The mechanism slice 8 names**, then both figures re-taken, in the slice
-   whose change they price. **Row evaluation stays on only if the unclustered
+   filed where `process.md`, "Where does this fact go?" sends each part,
+   saying what each shape of removing duplicate decoding would save — a
+   field decoded once a row for every leaf reading it, and the bounds an
+   `IN` implies dropped from row evaluation while still pruning groups. It
+   then names the mechanism, if any, that would remove the rest of the
+   attributed cost ("D54" defers a rewrite until one pays, and refuses
+   none); choosing among shapes is a design decision, so it goes to
+   `STATUS.md`'s "Decisions worth another look" unless the record and the
+   account settle it.
+9. **The mechanism slice 8 names, and duplicate decoding removed** — a field
+   unescaped and decoded once per leaf reading it — in whichever shape the
+   account says pays best, unless a reading shows the removal makes a figure
+   slower. Then every figure the change could move is re-taken, in the slice
+   whose change it prices: `dynamic-filter-join`, `dynamic-filter-topk`,
+   `predicate-terms` and `statistics-pruning`; where it is faster, the
+   phase's notes and history cite the re-taken figures, not the ones before
+   it. **Row evaluation stays on only if the unclustered
    join wins, its legs' spreads apart, and the costing input's Δ lies within
    its legs' overlapping spreads**; failing that it goes off and "D93"
    reopens, a `pgdump.*` switch with it.

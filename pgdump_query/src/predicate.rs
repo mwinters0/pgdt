@@ -7,6 +7,9 @@ use arrow::datatypes::i256;
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
 use crate::diagnostic::{Finding, Severity};
+#[cfg(feature = "introspect")]
+use crate::instrument::timed_span;
+use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
@@ -2636,9 +2639,9 @@ impl ResolvedTerm {
         table: &str,
         row_offset: u64,
     ) -> Result<Truth> {
-        let field = split.field(raw_row.bytes(), self.index);
+        let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
         let decoded = match field {
-            Some(f) => raw_row.decode(f)?,
+            Some(f) => timed!(Part::Unescape, raw_row.decode(f))?,
             None => None,
         };
         self.eval_value(decoded.as_deref())
@@ -2685,9 +2688,15 @@ impl ResolvedTerm {
                 _ => Truth::Unknown,
             });
         };
+        // The key and the comparison are timed apart, where the instrument
+        // is built in (`crate::instrument::timed!`), each key dropped where
+        // it was when it was a temporary of the comparison.
         Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
-                let ord = compare_keys(&order_key(kind, text)?, bound);
+                let ord = {
+                    let key = timed!(Part::Key, order_key(kind, text))?;
+                    timed!(Part::Compare, compare_keys(&key, bound))
+                };
                 match self.op {
                     PredicateOp::Lt => ord.is_lt(),
                     PredicateOp::Le => ord.is_le(),
@@ -2695,18 +2704,25 @@ impl ResolvedTerm {
                     _ => ord.is_ge(),
                 }
             }
-            Comparison::Canonical(bound) => (text == bound.as_str()) == self.wants_equal(),
+            Comparison::Canonical(bound) => {
+                timed!(Part::Compare, text == bound.as_str()) == self.wants_equal()
+            }
             Comparison::Trimmed(bound) => {
-                (text.trim_end_matches(' ') == bound.as_str()) == self.wants_equal()
+                timed!(Part::Compare, text.trim_end_matches(' ') == bound.as_str())
+                    == self.wants_equal()
             }
             Comparison::Decoded { kind, bound } => {
-                compare_keys(&order_key(kind, text)?, bound).is_eq() == self.wants_equal()
+                let key = timed!(Part::Key, order_key(kind, text))?;
+                timed!(Part::Compare, compare_keys(&key, bound)).is_eq() == self.wants_equal()
             }
             // Two-valued throughout: a NULL *inside* the container is a value
             // of it, and only the whole field being NULL is unknown — which
             // was decided above, before any of this runs.
             Comparison::Nested(nested) => {
-                let ord = compare_nested(&nested_key(&nested.plan, text, false)?, &nested.bound);
+                let ord = {
+                    let key = timed!(Part::Key, nested_key(&nested.plan, text, false))?;
+                    timed!(Part::Compare, compare_nested(&key, &nested.bound))
+                };
                 match self.op {
                     PredicateOp::Lt => ord.is_lt(),
                     PredicateOp::Le => ord.is_le(),
@@ -2848,15 +2864,17 @@ impl Lookup {
     /// raised on.
     fn contains(&self, text: &str, terms: &[ResolvedTerm]) -> Option<bool> {
         Some(match self {
-            Self::Canonical(values) => values.contains(text),
-            Self::Trimmed(values) => values.contains(text.trim_end_matches(' ')),
+            Self::Canonical(values) => timed!(Part::Lookup, values.contains(text)),
+            Self::Trimmed(values) => {
+                timed!(Part::Lookup, values.contains(text.trim_end_matches(' ')))
+            }
             Self::Decoded { kind, keys } => {
-                let key = order_key(kind, text)?;
-                keys.binary_search_by(|k| compare_keys(k, &key)).is_ok()
+                let key = timed!(Part::Key, order_key(kind, text))?;
+                timed!(Part::Lookup, keys.binary_search_by(|k| compare_keys(k, &key)).is_ok())
             }
             Self::Nested { plan, keys } => {
-                let key = nested_key(plan, text, false)?;
-                keys.binary_search_by(|k| compare_nested(k, &key)).is_ok()
+                let key = timed!(Part::Key, nested_key(plan, text, false))?;
+                timed!(Part::Lookup, keys.binary_search_by(|k| compare_nested(k, &key)).is_ok())
             }
             Self::Each => {
                 for term in terms {
@@ -2947,8 +2965,8 @@ impl ResolvedMembership {
         row_offset: u64,
     ) -> Result<Truth> {
         let Some(first) = self.terms.first() else { return Ok(self.unmatched()) };
-        let decoded = match split.field(raw_row.bytes(), self.index) {
-            Some(field) => raw_row.decode(field)?,
+        let decoded = match timed!(Part::Locate, split.field(raw_row.bytes(), self.index)) {
+            Some(field) => timed!(Part::Unescape, raw_row.decode(field))?,
             None => None,
         };
         self.eval_value(decoded.as_deref())

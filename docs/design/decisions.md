@@ -373,7 +373,7 @@ the flag being an explicit request (D77). Reopens: pricing the per-chunk check; 
 ### D53 The operator set is closed but for membership
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
 `Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
-Rejected: an `IN` `PredicateOp`, every other operator carrying a list; recognizing the `Or` at resolution (D54). Evidence: `tests/membership.rs`.
+Rejected: an `IN` `PredicateOp`, every operator carrying a list; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only
@@ -381,6 +381,8 @@ the root's `True` matters; a decode failure surfaces only where evaluation reach
 a sorted block's stopping row, neither read (`prune.rs`). Resolution refusals come from the plan before any row, for the first refusing
 block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact
 Kleene everywhere; not skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
+No planner defers complexity until one buys something and refuses no evident simplification: a resolution-time rewrite removing
+redundant work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —
@@ -568,10 +570,9 @@ below and implemented above (`statistics::BlockObserver`), as a scan predicate h
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family
-`postgres:<major>.<minor>-trixie`, exact minor, never `-alpine`: musl's `strcoll` is `strcmp`, so
-every text answer would be the `C` answer. Four things move on regeneration (`\restrict`, `now()`,
-`--verbose` timestamps, OID drift) and nothing may assert on them. Every `ColumnResolution` variant
-must come from a real fixture column (I36).
+`postgres:<major>.<minor>-trixie`, exact minor, never `-alpine`: musl's `strcoll` is `strcmp`, so every text answer would be the `C`
+answer. Four things move on regeneration (`\restrict`, `now()`, `--verbose` timestamps, OID drift) and nothing may assert on them.
+Every `ColumnResolution` variant must come from a real fixture column (I36).
 
 ### D70 "Agrees with PostgreSQL" is a generated check
 `fixtures/<major>/oracle/` commits the server's own answers, asked through two typed columns (a cast
@@ -581,9 +582,8 @@ the oracle. Semantics are the newest major's, and `oracle_differences.py` checks
 (I35) by classing every cell moving between adjacent majors as additive or not (I37, I38, I42).
 
 ### D71 Register arms are parsed out of `pgtype.rs`
-A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the
-finest closable unit, the join is existence rather than branch coverage, and an exemption carries
-`Evidence(file, needle)` the check resolves.
+A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the finest closable unit, the join is
+existence rather than branch coverage, and an exemption carries `Evidence(file, needle)` the check resolves.
 
 ### D73 Round trips, asserted shapes, and a hand-verified signal path
 `Typed` against `Strings` over a fixture and `encode(decode(raw))` against on-disk bytes; boundary

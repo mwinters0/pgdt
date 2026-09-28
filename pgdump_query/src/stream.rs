@@ -66,9 +66,11 @@ use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, TableName, scan_preamble, tiling_diagnostics,
     toc_coverage_diagnostic, union_census,
 };
-use crate::instrument::StatisticsScope;
 #[cfg(feature = "introspect")]
 use crate::instrument::statistics_loaded;
+use crate::instrument::{EvaluationPart, StatisticsScope, row_evaluated, timed};
+#[cfg(feature = "introspect")]
+use crate::instrument::{evaluated_row, timed_span};
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
@@ -4190,13 +4192,15 @@ impl DynamicRead {
         limit: u64,
         semantics: ComparisonSemantics,
     ) -> Skip {
-        if !self.refresh(semantics) {
-            return Skip::Read;
-        }
-        match self.group_at(offset) {
-            Some((group, entering)) => self.judge(group, entering, start, limit),
-            None => Skip::Read,
-        }
+        timed!(EvaluationPart::Chunk, {
+            if !self.refresh(semantics) {
+                return Skip::Read;
+            }
+            match self.group_at(offset) {
+                Some((group, entering)) => self.judge(group, entering, start, limit),
+                None => Skip::Read,
+            }
+        })
     }
 
     /// Whether the state last read keeps `group` of the block being read,
@@ -4262,12 +4266,16 @@ impl DynamicRead {
         table: &str,
         row_offset: u64,
     ) -> bool {
-        let Some(state) = self.state() else { return false };
-        let rejected = matches!(state.matches(raw_row, split, table, row_offset), Ok(false));
-        if rejected {
-            self.rows.fetch_add(1, Ordering::Relaxed);
-        }
-        rejected
+        // Timed whole where the instrument is built in
+        // (`crate::instrument::row_evaluated!`).
+        row_evaluated!({
+            let Some(state) = self.state() else { return false };
+            let rejected = matches!(state.matches(raw_row, split, table, row_offset), Ok(false));
+            if rejected {
+                self.rows.fetch_add(1, Ordering::Relaxed);
+            }
+            rejected
+        })
     }
 }
 

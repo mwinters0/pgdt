@@ -21,6 +21,37 @@ use pgdump_query::{
     ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, SchemaMode, Severity,
 };
 
+/// The environment variable naming the file the introspection build writes
+/// its report to — `pgdt`'s, so one harness variable reaches either binary.
+/// Unset, nothing is written.
+#[cfg(feature = "introspect")]
+const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
+
+/// Writes the introspection build's report as the process returns from
+/// `main`: what `pgdump_query::instrument` timed of each row a dynamic
+/// filter's state was evaluated on, as `key=value` lines, to the file
+/// `PGDT_INTROSPECT_OUT` names. Nothing with the variable unset, or on a
+/// signal's `_exit`.
+///
+/// **An instrument, never timed**: `scripts/measure.py` times only the build
+/// its own `cargo build --release` makes, which carries no feature, and
+/// `measure.py --profile-recipe` builds this one into a target directory of
+/// its own. Absent from that build, so its `main` is upstream's.
+#[cfg(feature = "introspect")]
+pub struct IntrospectAtExit;
+
+#[cfg(feature = "introspect")]
+impl Drop for IntrospectAtExit {
+    fn drop(&mut self) {
+        if let Some(path) = std::env::var_os(INTROSPECT_OUT_VAR) {
+            let lines = pgdump_query::instrument::evaluation_reading().lines();
+            if let Err(e) = std::fs::write(&path, lines) {
+                eprintln!("introspect: cannot write {}: {e}", path.to_string_lossy());
+            }
+        }
+    }
+}
+
 /// As its PID namespace's init, end on every signal but a fault that ends this
 /// binary anywhere else, exiting `128 + n` (`docs/design/decisions.md`, "D26") —
 /// but `SIGINT` in the REPL, whose `ctrl_c` cancels a statement rather than

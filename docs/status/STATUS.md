@@ -85,8 +85,8 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.5** Row-level evaluation before decode, in every block, its state read at each group entered and each chunk taken, the figures re-taken and what they say filed against "D53"'s **Reopens**, which a set-membership term answers; [notes](../design/roadmap-P27.5-row-level-notes.md)
 - [x] **27.6** The set-membership term, `Expr::In`, answering exactly as the `Or` of `=` it replaces by a generated check, and `pgdt --where`'s `in (…)`; [notes](../design/roadmap-P27.6-membership-notes.md)
 - [x] **27.7** Both DataFusion translators emit `Expr::In` for `IN`; `dynamic-filter-join` and `dynamic-filter-topk` re-taken and their readings filed; [notes](../design/roadmap-P27.7-translators-notes.md)
-- [ ] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread; and the mechanism that would remove the attributed cost named
-- [ ] **27.9** The mechanism 27.8 names, both figures re-taken, and the spec's criterion applied to decide whether row evaluation stays on
+- [ ] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread; and the mechanism that would remove the attributed cost named — the instruments and the code's own account have landed, and only the readings (`measure.py --profile-recipe`) and the account and mechanism they name remain; [notes](../design/roadmap-P27.8-per-row-account-notes.md)
+- [ ] **27.9** The mechanism 27.8 names and duplicate decoding removed, every figure the change could move re-taken, and the spec's criterion applied to decide whether row evaluation stays on
 
 ## Not started
 

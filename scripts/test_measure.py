@@ -3938,6 +3938,11 @@ class InstrumentReport(unittest.TestCase):
         # name is right.
         source = (measure.REPO / "pgdt/src/introspect.rs").read_text()
         self.assertIn(f'pub const OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source)
+        # `datafusion-cli-pgdump`'s introspection build reads the same one.
+        source = (measure.REPO / "datafusion-cli-pgdump/src/pgdump.rs").read_text()
+        self.assertIn(
+            f'const INTROSPECT_OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source
+        )
 
     def test_no_leg_that_does_not_declare_it_is_given_the_variable(self):
         # An env var leaves the command shape identical, which is the whole
@@ -5416,18 +5421,25 @@ class ProfileRecipe(unittest.TestCase):
         # states a count too -- its own, which is the only thing separating the
         # two profiles -- so what is asserted is that every recorded line pins
         # one, not that every one pins the same one.
-        recorded = [ln for ln in self._recipe().splitlines() if ln.strip().startswith("-- ")]
+        lines = self._recipe().splitlines()
+        recorded = [
+            (lines[i - 1], ln) for i, ln in enumerate(lines) if ln.strip().startswith("-- ")
+        ]
         self.assertEqual(
             len(recorded),
             len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)
-            + len(measure.PROFILE_AXIS),
+            + len(measure.PROFILE_AXIS)
+            + len(measure.DYNFILTER_LEGS),
         )
         axis = {f"--jobs {s.rpartition('-jobs-')[2]}" for s, _ in measure.PROFILE_AXIS}
-        for line in recorded:
+        for record, line in recorded:
             with self.subTest(line=line):
+                # `datafusion-cli-pgdump` states its count as the figure does,
+                # in the environment `perf` hands on.
                 self.assertTrue(
                     f"--jobs {measure.SWEEP_JOBS}" in line
-                    or any(f"{j} " in line for j in axis),
+                    or any(f"{j} " in line for j in axis)
+                    or f"{measure.DFCLI_PARTITIONS}={measure.SWEEP_JOBS} " in record,
                     line,
                 )
 
@@ -5491,6 +5503,44 @@ class ProfileRecipe(unittest.TestCase):
                 timed = [w for w in timed[2:] if w != ">/dev/null"]
                 profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
                 self.assertEqual(profiled, timed)
+
+    def test_the_dfcli_pair_and_its_reading_run_the_timed_legs(self):
+        """The costing row's pair, and the introspection build's runs of it,
+        state what `_script` times: the same environment, arguments and SQL,
+        read out of the timed line rather than restated, over a cache the
+        figure's own `pgdt parse` writes where `--dump` looks."""
+        cfg = measure.Config()
+        recipe = measure.profile_recipe(cfg)
+        figure, query = measure.DFCLI_ACCOUNT
+        dump = cfg.warm_dir / "dynfilter.sql"
+        self.assertIn(f"cp -n {cfg.cache_dir / 'dynfilter.sql'} {dump}", recipe)
+        self.assertIn(
+            f"parse --source {dump} --dtcache {dump}.dtcache --jobs {measure.SWEEP_JOBS} "
+            f"{measure.GATHER_STATISTICS} >/dev/null",
+            recipe,
+        )
+        profiled = str(measure.REPO / "target/profiling/datafusion-cli-pgdump")
+        introspected = str(
+            cfg.alloc_build_root / "dfcli-introspect/release/datafusion-cli-pgdump"
+        )
+        for leg in measure.DYNFILTER_LEGS:
+            with self.subTest(leg=leg):
+                timed = measure._script(f"{measure.DYNFILTER_FAMILY}{figure}-{query}-{leg}")
+                run = timed.split(" && time ", 1)[1].split(" >/tmp/result.csv", 1)[0]
+                env, _, rest = run.partition(f"{measure.DFCLI} ")
+                rest = rest.replace("=/dump.sql ", f"={dump} ")
+                self.assertIn(f"{env}{measure.PERF} record", recipe)
+                self.assertIn(f"  -- {profiled} {rest} >/dev/null", recipe)
+                for rep in range(1, measure.DFCLI_INTROSPECT_REPS + 1):
+                    report = cfg.out_dir / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"
+                    self.assertIn(
+                        f"{measure.INSTRUMENT_OUT_VAR}={report} {env}{introspected} {rest} "
+                        ">/dev/null",
+                        recipe,
+                    )
+        self.assertIn("--features introspect", recipe)
+        self.assertIn(f"--target-dir {cfg.alloc_build_root / 'dfcli-introspect'}", recipe)
+        self.assertIn(f"{dump}.dtcache", recipe.splitlines()[-1])
 
     def test_the_recipe_never_runs_anything(self):
         # The same rule koji's recipe obeys: this prints, and a session runs it

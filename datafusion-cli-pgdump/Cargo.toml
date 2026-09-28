@@ -12,6 +12,15 @@ license = "Apache-2.0"
 # sql` subcommand, which would put DataFusion into the build every figure in
 # `docs/design/measurements.md` times.
 
+[features]
+default = []
+# The introspection build: what `pgdump_query::instrument` timed of a dynamic
+# filter's row evaluation, written on the way out to the file
+# `PGDT_INTROSPECT_OUT` names (`src/pgdump.rs`, `IntrospectAtExit`). An
+# instrument, never timed (`docs/design/roadmap.md`, "Attribution is
+# introspective; only the gate is blind").
+introspect = ["pgdump_query/introspect"]
+
 [dependencies]
 # Every version below is the targeted `datafusion-cli` release's own
 # (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so the copied

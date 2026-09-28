@@ -2390,6 +2390,29 @@ DYNFILTER_FLAGS = {
 #: The legs, in the table's column order, and the flag's value in each.
 DYNFILTER_LEGS = {"off": "false", "on": "true"}
 
+
+def dfcli_invocation(figure: str, name: str, leg: str, dump: str) -> tuple[list[str], list[str]]:
+    """The environment and the arguments one run of `DFCLI` over a
+    dynamic-filter shape states, over the dump at `dump`, its SQL last.
+
+    One function for the figure (`_script`) and for the account's
+    instruments (`profile_recipe`), so a profiled or introspected leg is the
+    timed one by construction: a flag moved in one and not the other would
+    profile something no figure measures."""
+    if name not in DYNFILTER_QUERIES.get(figure, {}) or leg not in DYNFILTER_LEGS:
+        raise ValueError(f"unknown dynamic-filter shape {figure}-{name}-{leg}")
+    env = [
+        f"{DFCLI_PARTITIONS}={SWEEP_JOBS}",
+        f"{DYNFILTER_FLAGS[figure]}={DYNFILTER_LEGS[leg]}",
+    ]
+    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q", "-c"]
+    return env, [*argv, DYNFILTER_QUERIES[figure][name][0]]
+
+
+def dfcli_shell(env: list[str], program: str, argv: list[str]) -> str:
+    """`dfcli_invocation`'s run as one shell line, its SQL single-quoted."""
+    return f"{' '.join(env)} {program} {' '.join(argv[:-1])} '{argv[-1]}'"
+
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
 #: compressed windows and 24 LZMA2 dictionaries — around 950 MB on the
@@ -3357,13 +3380,11 @@ def _script(command: str) -> str:
         name, _, leg = rest.rpartition("-")
         if name not in DYNFILTER_QUERIES.get(figure, {}) or leg not in DYNFILTER_LEGS:
             raise ValueError(f"unknown command shape {command!r}")
-        sql = DYNFILTER_QUERIES[figure][name][0]
+        env, argv = dfcli_invocation(figure, name, leg, "/dump.sql")
         return (
             f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
-            f"time {DFCLI_PARTITIONS}={SWEEP_JOBS} "
-            f"{DYNFILTER_FLAGS[figure]}={DYNFILTER_LEGS[leg]} "
-            f"{DFCLI} --dump {DFCLI_CATALOG}=/dump.sql --format csv -q -c '{sql}' "
+            f"time {dfcli_shell(env, DFCLI, argv)} "
             ">/tmp/result.csv && "
             "echo result_rows=$(($(wc -l </tmp/result.csv) - 1)) && "
             "echo result_first=$(sed -n 2p /tmp/result.csv | cut -d, -f1) && "
@@ -10974,6 +10995,20 @@ PROFILE_AXIS: tuple[tuple[str, str], ...] = (
     ("parse-jobs-2", "control"),
 )
 
+#: The row of a `datafusion-cli-pgdump` figure whose two legs are profiled as
+#: a pair and read by the introspection build, as `(figure, query)`:
+#: `dynamic-filter-join`'s costing row, whose on leg's cost a row
+#: `docs/design/roadmap-P27-dynamic-filters.md`, "Slices", item 8 accounts
+#: for. **A pair for the axis pair's reason**: what the on leg adds is a
+#: difference, read bucket by bucket, and the off leg is the flag alone
+#: removed. Its input is `dynfilter`, its cache the figure's own
+#: `GATHER_STATISTICS`, and each leg's command `dfcli_invocation`'s, so the
+#: profiled run is the timed one.
+DFCLI_ACCOUNT: tuple[str, str] = ("join", "costing")
+#: How many times the introspection build runs each of those legs. Its
+#: spans are summed within a run; three runs say how far one moves.
+DFCLI_INTROSPECT_REPS = 3
+
 
 def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
     """The `pgdt` arguments one profiled shape runs.
@@ -11070,11 +11105,28 @@ def profile_recipe(cfg: Config) -> str:
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
-    without changing them."""
+    without changing them.
+
+    **`DFCLI_ACCOUNT`'s pair runs `datafusion-cli-pgdump`**, off the same
+    profiling build, over a cache the figure's own `pgdt parse` writes beside
+    the dump where `--dump` looks, each leg stating `dfcli_invocation`'s
+    environment and arguments. Beside it, **the introspection build**
+    (`--features introspect`, in a target directory of its own so no timed
+    binary is overwritten) runs the same legs, each run writing what
+    `pgdump_query::instrument` timed of its row evaluation to the file
+    `INSTRUMENT_OUT_VAR` names: a `runs/` artifact, like the profiles, and
+    never a figure."""
     warm = cfg.warm_dir
     binary = REPO / "target/profiling/pgdt"
+    dfcli = REPO / "target/profiling/datafusion-cli-pgdump"
+    introspect_target = cfg.alloc_build_root / "dfcli-introspect"
+    introspect = introspect_target / "release/datafusion-cli-pgdump"
     cache = warm / "profile.dtcache"
     out = cfg.out_dir
+    figure, query = DFCLI_ACCOUNT
+    account_input = "dynfilter"
+    account_dump = warm / f"{account_input}.sql"
+    account_cache = warm / f"{account_input}.sql.dtcache"
 
     lines: list[str] = []
     step = 0
@@ -11099,7 +11151,17 @@ def profile_recipe(cfg: Config) -> str:
     )
     lines += [
         'RUSTFLAGS="-C force-frame-pointers=yes" \\',
-        "  cargo build --profile profiling -p pgdt",
+        "  cargo build --profile profiling -p pgdt -p datafusion-cli-pgdump",
+        "",
+    ]
+
+    head(
+        "The introspection build of `datafusion-cli-pgdump`, in a target",
+        "directory of its own: no timed binary is overwritten, and it is never timed.",
+    )
+    lines += [
+        "cargo build --release -p datafusion-cli-pgdump --features introspect \\",
+        f"  --target-dir {introspect_target}",
         "",
     ]
 
@@ -11133,6 +11195,7 @@ def profile_recipe(cfg: Config) -> str:
     # than restated, so a pair taken on an input the cross product does not
     # carry is staged and torn down without a second edit.
     staged = list(PROFILE_INPUTS) + [n for _, n in PROFILE_AXIS if n not in PROFILE_INPUTS]
+    staged += [account_input] if account_input not in staged else []
 
     head("Stage the inputs warm, on the host.")
     lines.append(f"mkdir -p {warm} {out}")
@@ -11170,8 +11233,48 @@ def profile_recipe(cfg: Config) -> str:
     for shape, name in PROFILE_AXIS:
         record(shape, name)
     lines.append("")
+    head(
+        f"The pair `{figure}`'s `{query}` row is read as: its two legs, flag off and",
+        "on, over a cache the figure's own `pgdt parse` writes beside the dump,",
+        "where `--dump` looks. Read as a difference, bucket by bucket.",
+    )
+    lines += [
+        f"rm -f {account_cache}",
+        f"{binary} parse --source {account_dump} --dtcache {account_cache} "
+        f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null",
+    ]
+    for leg in DYNFILTER_LEGS:
+        env, argv = dfcli_invocation(figure, query, leg, str(account_dump))
+        stem = f"profile-dfcli-{figure}-{query}-{leg}"
+        lines.extend(
+            [
+                "",
+                f"{' '.join(env)} {PERF} record -F {PERF_FREQ} --call-graph fp "
+                f"-o {out / (stem + '.data')} \\",
+                f"  -- {dfcli_shell([], str(dfcli), argv).lstrip()} >/dev/null",
+                f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
+                f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
+            ]
+        )
+    lines.append("")
+    head(
+        "The per-term reading: the same legs on the introspection build, each run",
+        "writing what it timed of its row evaluation. The off leg holds no filter,",
+        "so it reads no span at all: the control that only the filter is timed.",
+    )
+    for leg in DYNFILTER_LEGS:
+        env, argv = dfcli_invocation(figure, query, leg, str(account_dump))
+        for rep in range(1, DFCLI_INTROSPECT_REPS + 1):
+            report = out / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"
+            lines.append(
+                f"{INSTRUMENT_OUT_VAR}={report} {dfcli_shell(env, str(introspect), argv)} "
+                ">/dev/null"
+            )
+    lines.append("")
     head("Tear down: tmpfs is 16 G and these inputs do not fit beside a sweep's.")
-    lines.append(f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache}")
+    lines.append(
+        f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache} {account_cache}"
+    )
     return "\n".join(lines)
 
 

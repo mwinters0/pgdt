@@ -209,6 +209,9 @@ impl Args {
 #[tokio::main]
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
 pub async fn main() -> ExitCode {
+    // pgdump: the introspection build's report, written on the way out.
+    #[cfg(feature = "introspect")]
+    let _report = pgdump::IntrospectAtExit;
     if let Err(e) = main_inner().await {
         println!("Error: {e}");
         return ExitCode::FAILURE;
