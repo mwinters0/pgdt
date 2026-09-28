@@ -678,6 +678,17 @@ class Arm:
 #: settled. A leg stating more, or discovering its count, stays unpinned:
 #: its subject is the whole machine, and discovery reads the affinity mask a
 #: cpuset would narrow (`runtime-invariants.md`, "RT7").
+#:
+#: **Its count is its parallelism, not every size a program reads off its
+#: CPUs.** A pinned `DFCLI` leg states one partition and its provider spawns no
+#: task, yet `#[tokio::main]`'s worker pool and DataFusion's
+#: `planning_concurrency` still follow the cpuset: one worker per CPU given, as
+#: unpinned, so fewer idle workers. That comes with the placement, and adoption
+#: would install exactly it, so the arms compare what would be adopted and need
+#: not attribute. *Rejected:* stating `TOKIO_WORKER_THREADS` on every run —
+#: at the machine's count it oversubscribes a pinned leg four to one, at
+#: `SWEEP_JOBS` it re-shapes every published leg; and leaving the
+#: dynamic-filter legs unpinned, dropping the figures the experiment is for.
 PIN_SMALL_GROUPS: tuple[int, ...] = (1,)
 PIN_LARGE_GROUPS: tuple[int, ...] = (0, 1)
 PIN_HARNESS_GROUPS: tuple[int, ...] = (2, 3)
