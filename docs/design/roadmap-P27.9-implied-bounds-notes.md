@@ -2,10 +2,9 @@
 
 What the round after this one inherits. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
-item 9. **Both mechanisms are in; the four re-takes and the criterion are
-not**, a figure being taken from a commit and never from a tree carrying its
-own change ([`measurements.md`](measurements.md), "A figure may be published
-outside the sweep").
+item 9. **Both mechanisms are in, the four figures they could move are
+re-taken at `5e02bf9`, and the criterion fails: row evaluation goes off**,
+which 27.10 delivers with its switch.
 
 ## What exists
 
@@ -69,9 +68,11 @@ outside the sweep").
   form's counts on the join-shaped state: one `Locate`, `Unescape` and
   `Lookup` a row, no `Key` or `Compare`.
 
-## What remains: the readings and the criterion
+## The readings and the criterion
 
-Take these from the commit landing this change, each figure alone:
+Each figure taken alone at `5e02bf9`, the commit after the one landing the
+mechanisms, and folded into [`measurements.md`](measurements.md), where
+every number below it is stated:
 
 ```sh
 cd scripts && uv run measure.py --figure dynamic-filter-join
@@ -80,17 +81,19 @@ cd scripts && uv run measure.py --figure predicate-terms
 cd scripts && uv run measure.py --figure statistics-pruning
 ```
 
-Then apply the spec's criterion word for word. A figure that is slower
-takes out the mechanism that slowed it. **Predicted from 27.8's account**
-([`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy
-a query"), so that a reading can come back "no":
-
-- The costing row's Δ loses the bounds' share, between its lower and upper
-  bound in that account, plus most of the cut's share. A Δ outside that band
-  means the account missed a term.
-- The TopK row holds no membership, and its chain is one term per column,
-  so neither change reaches it. **A TopK on-leg move beyond its spread is a
-  finding, not a saving.**
-- The clustered join saves only the cut's keying over the groups it prunes.
-  `predicate-terms` and `statistics-pruning` save only per group, where
-  terms over one column share a kind.
+- **The criterion fails on the costing input.** The unclustered join wins
+  with its legs' spreads apart, and the costing input still loses with its
+  legs' spreads apart, so its Δ lies inside no overlap
+  ([`measurements.md`](measurements.md), "What DataFusion's dynamic filters
+  buy a query"). Row evaluation goes off, "D93" reopens, and 27.10 is taken:
+  the switch, off by default. **The shipped scan still evaluates rows until
+  27.10 lands**, since turning it off with no switch would leave the
+  unclustered join's win unreachable and re-time the figure just taken.
+- **No figure is slower by its spreads, so both mechanisms stay.** The
+  costing row's Δ fell inside the band 27.8's account predicted, at its low
+  end; `predicate-terms` and `statistics-pruning` moved nothing beyond their
+  spreads.
+- **Two moves are unattributed**, each said so beside its figure: the
+  unclustered join saving more than the costing row over the same removed
+  leaves, and the TopK table's legs both rising, the off leg more, over
+  identical scan metrics (`runs/dynfilter-27.9-explain-20260928/`).

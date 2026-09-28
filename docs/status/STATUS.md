@@ -86,8 +86,8 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.6** The set-membership term, `Expr::In`, answering exactly as the `Or` of `=` it replaces by a generated check, and `pgdt --where`'s `in (…)`; [notes](../design/roadmap-P27.6-membership-notes.md)
 - [x] **27.7** Both DataFusion translators emit `Expr::In` for `IN`; `dynamic-filter-join` and `dynamic-filter-topk` re-taken and their readings filed; [notes](../design/roadmap-P27.7-translators-notes.md)
 - [x] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread, what each shape of removing duplicate decoding saves, and the mechanisms beyond it named; [notes](../design/roadmap-P27.8-per-row-account-notes.md)
-- [ ] **27.9** The bounds an `IN` implies dropped from row evaluation and the byte cut keying each group's bounds once, every figure the change could move re-taken, and the spec's criterion applied to decide whether row evaluation stays on; both mechanisms landed, and the four re-takes and the criterion remain; [notes](../design/roadmap-P27.9-implied-bounds-notes.md)
-- [ ] **27.10** The `pgdump.*` switch for row evaluation, taken only if 27.9 turns it off: the setting off by default, its manual entry, "D93" rewritten, and the result-equality harness run with it on
+- [x] **27.9** The bounds an `IN` implies dropped from row evaluation and the byte cut keying each group's bounds once, every figure the change could move re-taken, and the spec's criterion applied: it fails on the costing input, so row evaluation goes off, delivered by 27.10; [notes](../design/roadmap-P27.9-implied-bounds-notes.md)
+- [ ] **27.10** The `pgdump.*` switch for row evaluation, taken since 27.9 turned it off: the setting off by default, its manual entry, "D93" rewritten, and the result-equality harness run with it on
 
 ## Not started
 
@@ -119,3 +119,11 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **27.9 is ticked with row evaluation still on in the tree; 27.10 turns it
+  off with its switch.** The criterion failed, and the spec's item 9 says row
+  evaluation then "goes off", while item 10 is "a `pgdump.*` setting stating
+  it, off by default". Turning it off in 27.9 with no setting would leave
+  the unclustered join's win out of every user's reach for a round, and a
+  default and the switch overriding it are one review. Reconsidering means
+  27.9 unticked until no row is evaluated by default, and 27.10 adding a
+  switch to a path already off.

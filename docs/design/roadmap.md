@@ -684,9 +684,10 @@ What it inherits:
   the only statistics term a query has. It is filed for P22 as well, being a
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
-- **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` were re-taken at `542fdfb` against the reserve as it
-  stands, so a settled constant re-takes them. `reserve`'s stated axis — a
+- **The figures owed.** `reserve`, `rss-attribution` and
+  `statistics-gathering` were re-taken at `542fdfb`, and `statistics-pruning`
+  at `5e02bf9`, against the reserve as it stands, so a settled constant
+  re-takes them. `reserve`'s stated axis — a
   typed `--jobs 24` under `--memory` — is where the margin lowers only the
   budget, and its worst rep held more above the resolved budget than
   `MEMORY_RESERVE` (`measurements.md`, `reserve`; `KD34`). Both statistics
@@ -695,10 +696,10 @@ What it inherits:
   `v_escaped`) should grow, every retained column carrying one more
   `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
   `v_category` carries bounds its fidelity guard no longer asserts absent,
-  `pgdt query` still reading only its dictionary. Since those re-takes a
+  `pgdt query` still reading only its dictionary. Since `542fdfb` a
   summed column keeps an `i128` a group and every tracked column a `u64` of
   text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times; what the
-  heavier cache costs either figure is unpriced.
+  heavier cache costs `statistics-gathering` is unpriced.
 - **A default `parse` on NVMe may be CPU-bound, which is D10's reopen
   condition.** Every `scan-throughput-*` and `chunk-size` run states
   `--statistics none`, where the shipped `parse` gathers, and

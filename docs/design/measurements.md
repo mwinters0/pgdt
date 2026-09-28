@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator and glibc 2.41. **25 of the 27 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`11e13f2`), `dynamic-filter-topk` (`11e13f2`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-23, against commit `542fdfb`, under the `system` allocator and glibc 2.41. **23 of the 27 figures below come from that sitting.** The other 4 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`5e02bf9`), `dynamic-filter-topk` (`5e02bf9`), `predicate-terms` (`5e02bf9`), `statistics-pruning` (`5e02bf9`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -2440,7 +2440,7 @@ silently restate a number under a heading that does not claim it.
 
 ## What a filter term costs, and how much of it is the walk to its field
 
-<!-- figure: predicate-terms — reproduce with `cd scripts && uv run measure.py --figure predicate-terms` -->
+<!-- figure: predicate-terms — taken at `5e02bf9` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure predicate-terms` -->
 
 One file, read six ways, and **the only table in this document that passes a
 filter at all.** The terms are OR'd and every one of them is false, so `Or`
@@ -2451,12 +2451,12 @@ all six. Two axes: how many terms, and how far into the row each one reaches.
 
 | Predicate | Median | Per row | Δ per row against the row above | What that buys |
 |---|---|---|---|---|
-| 1 term, 13th column | 1.034 s | 1.27 µs | — | the base: one term, thirteen fields in |
-| 2 terms, 13th column | 1.050 s | 1.29 µs | **+0.03 µs** | one more term at that depth |
-| 3 terms, 13th column | 1.043 s | 1.28 µs | **-0.00 µs** | one more |
-| 5 terms, 13th column | 1.089 s | 1.34 µs | **+0.05 µs** | two more — the five-way disjunction |
-| 5 terms, 1st column | 1.016 s | 1.25 µs | **-0.07 µs** | **the walk those five terms pay** |
-| 1 term, 1st column | 0.963 s | 1.18 µs | **-0.07 µs** | four of those five terms, walk-free |
+| 1 term, 13th column | 1.007 s | 1.24 µs | — | the base: one term, thirteen fields in |
+| 2 terms, 13th column | 1.019 s | 1.25 µs | **-0.00 µs** | one more term at that depth |
+| 3 terms, 13th column | 1.024 s | 1.26 µs | **+0.01 µs** | one more |
+| 5 terms, 13th column | 1.075 s | 1.32 µs | **+0.06 µs** | two more — the five-way disjunction |
+| 5 terms, 1st column | 1.011 s | 1.24 µs | **-0.07 µs** | **the walk those five terms pay** |
+| 1 term, 1st column | 0.927 s | 1.14 µs | **-0.10 µs** | four of those five terms, walk-free |
 
 One file — the brace-free control, 814,362 rows of 16 columns — read 6 ways, warm and `--schema-mode strings`, through the CLI. Every term is an equality against a literal no value of the column can equal, so every row is walked, every term is evaluated, and no row is decoded, built or rendered. Per-row differences are paired rep by rep and then taken as a median.
 
@@ -2469,21 +2469,21 @@ As written:
 - 1 term, 1st column: `--where 'id=zzz1'`
 
 Per-rep readings (s):
-- 1 term, 13th column: 1.105, 1.043, 1.025, 1.019, 1.052, 1.026
-- 2 terms, 13th column: 1.038, 1.059, 1.110, 1.044, 1.039, 1.055
-- 3 terms, 13th column: 1.046, 1.076, 1.041, 1.042, 1.036, 1.045
-- 5 terms, 13th column: 1.104, 1.089, 1.065, 1.072, 1.088, 1.090
-- 5 terms, 1st column: 1.024, 1.057, 1.006, 1.009, 1.007, 1.043
-- 1 term, 1st column: 0.967, 0.951, 0.975, 0.975, 0.948, 0.959
+- 1 term, 13th column: 1.004, 1.044, 1.110, 1.010, 0.999, 0.999
+- 2 terms, 13th column: 1.013, 1.027, 1.007, 0.998, 1.026, 1.112
+- 3 terms, 13th column: 1.024, 1.025, 1.022, 1.018, 1.038, 1.030
+- 5 terms, 13th column: 1.078, 1.054, 1.145, 1.117, 1.039, 1.073
+- 5 terms, 1st column: 1.016, 1.006, 0.973, 1.071, 1.028, 0.987
+- 1 term, 1st column: 0.965, 0.906, 0.941, 0.916, 0.923, 0.931
 
-Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤7.38%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤9.58%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.91 GHz, ≤64°C.
 
 **A term's cost is still mostly the walk to its field, and the depth is still
 what says so — but the walk is now paid once for the whole row.** A term against
 the control's thirteenth column reaches thirteen fields in and one against its
 first reaches one. The two five-term rows are the same five terms at those two
 depths and differ by **0.07 µs a row**: 5% of what the deep one costs, on a
-query that decodes nothing. The two one-term rows differ by 0.09 µs, which is
+query that decodes nothing. The two one-term rows differ by 0.10 µs, which is
 the same walk bought by a single term.
 
 **This table reads the shared field split, where the `ba2fc12` stamp read the
@@ -2496,8 +2496,8 @@ falls to a quarter of what it was or less — 0.04 µs at the previous stamp and
 0.07 µs here, both inside this instrument's own scatter of each other.
 
 **The term-count axis is flat, which is the sharper half of the result.**
-Going from one term to five at the same depth costs **+0.08 µs a row in total**
-(+0.03, −0.00, +0.05 across the three steps), against +0.37 µs under the
+Going from one term to five at the same depth costs **+0.07 µs a row in total**
+(−0.00, +0.01, +0.06 across the three steps), against +0.37 µs under the
 `ba2fc12` stamp. Five terms against one column cost almost exactly what one
 does, because four of them are reading boundaries the first already found. What
 the sharing measured on the deterministic instrument, over five more shapes than
@@ -2511,8 +2511,17 @@ walk already happens and sharing it costs less. Selectivity is the axis the
 sharing turns on, and a figure on which nothing survives sits at its pessimal
 end, which makes the losses read off this table **upper bounds**.
 
-**This sitting ran at ≤5% busy** with per-rep spreads inside 7% of their
-medians. The deterministic corroboration is `runs/measure-7.7.tsv` — retired
+**At `5e02bf9` the paired differences are where the `542fdfb` sitting put
+them, and the absolutes sit 1–4% lower**, their spreads overlapping. What
+27.9 changed that this command can reach is a filter's group truths keyed
+once for every term reading a group's bounds, and that only where
+statistics are held — per group, never per row. The absolutes' move spans
+every commit between the two sittings and a sitting's own drift (the
+section "What a session's own drift costs"), and is **unattributed**.
+
+**This sitting ran at ≤5% busy** with per-rep spreads inside 11% of their
+medians, one rep in each of the two shallowest-count deep rows reading 9–10%
+above its median and every other inside 7%. The deterministic corroboration is `runs/measure-7.7.tsv` — retired
 user instructions on the host, immune to what else the machine was doing —
 which put the walk at 49% of a five-term query's instructions under the
 unshared mechanism this table no longer measures.
@@ -2600,114 +2609,123 @@ Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤8.99%, 
 
 ## What row-group statistics buy a query
 
-<!-- figure: statistics-pruning — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
+<!-- figure: statistics-pruning — taken at `5e02bf9` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
 
 | Filter | `--statistics none` | Statistics used | Δ | Speedup | Statistics used, none in the cache | Δ carrying them | Groups skipped | Bytes a stop left unread | Of the rows' bytes, not read | Rows returned |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.536 s** (0.526–0.592) | **0.042 s** (0.041–0.044) | **-0.493 s, -92%** | **12.6×** | — | — | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
-| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.639 s** (0.625–0.652) | **0.043 s** (0.039–0.045) | **-0.596 s, -93%** | **14.7×** | — | — | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
-| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.496 s** (0.487–0.502) | **0.497 s** (0.486–0.545) | **+0.002 s, +0%** | **1.0×** | **0.483 s** (0.464–0.522) | **+0.015 s, +3%** | 0 of 3,072 | 0 | 0.00% | 13 |
+| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.518 s** (0.504–0.539) | **0.042 s** (0.041–0.046) | **-0.476 s, -92%** | **12.3×** | — | — | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
+| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.635 s** (0.622–0.692) | **0.042 s** (0.042–0.047) | **-0.592 s, -93%** | **14.9×** | — | — | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
+| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.471 s** (0.458–0.490) | **0.463 s** (0.458–0.487) | **-0.008 s, -2%** | **1.0×** | **0.452 s** (0.449–0.460) | **+0.011 s, +2%** | 0 of 3,072 | 0 | 0.00% | 13 |
 
-One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The cache is decoded whole whatever the query states, so the third filter also runs against a cache an untimed `parse` stating `--statistics none` wrote, with statistics used and none to consult, and its Δ against the cache carrying them is what carrying them costs that query. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.326 s**.
+One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The cache is decoded whole whatever the query states, so the third filter also runs against a cache an untimed `parse` stating `--statistics none` wrote, with statistics used and none to consult, and its Δ against the cache carrying them is what carrying them costs that query. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.296 s**.
 
 **Both pruned legs read a floor, not their bytes.** Each read under 0.5% of the
 file's row bytes — about 11.6 MiB for the range, which at the unpruned leg's
-own rate of 0.174 ms a MiB is about 2 ms of the 42 ms measured — so about
+own rate of 0.168 ms a MiB is about 2 ms of the 42 ms measured — so about
 40 ms of each pruned leg is not reading rows. Process start, the preamble, the
 plan and decoding the whole cache are in it, and **it is unattributed between
 them**. The speedups are therefore ratios against that floor: the range leg's
-bytes not read are 264× its bytes read, where its wall is 12.6× shorter. The
+bytes not read are 264× its bytes read, where its wall is 12.3× shorter. The
 dictionary leg reads fifteen groups to the range's twelve, three runs of about
-1,000 rows each, and lands within 1 ms of it, which
+1,000 rows each, and lands on the same median, which
 is what a fixed floor predicts. Six reps resolve both: neither spread is wider
-than 6 ms.
+than 5 ms.
 
 **Consulting statistics that skip nothing costs nothing this table resolves**:
-the third row's legs overlap, 0.486–0.545 s against 0.487–0.502 s, the query
+the third row's legs overlap, 0.458–0.487 s against 0.458–0.490 s, the query
 having consulted every one of 3,072 groups' statistics and skipped none.
 
 **Nor does carrying them, resolvably.** Against a cache written without
-statistics the same query reads 0.464–0.522 s, overlapping both other legs'
-spreads, and its median is 15 ms *faster* than the carrying cache's; paired rep
-by rep five of six differences favour it and one runs 29 ms the other way.
-Subtracting the two Δs to isolate the decode gives +13 ms, inside the 58 ms
-spread of the leg it is read against, so **the decode is unresolved here, not
-zero and not 13 ms**. What bounds it is the pruned legs: each decodes this same
-cache whole, statistics included, inside a 39–45 ms wall, so decoding 3,072
-groups' statistics costs at most that floor, which is no wider than the
-unnarrowed legs' own 15–59 ms spreads. Pricing it below the floor takes
-more groups or the process timing its own cache load, not another subtraction.
+statistics the same query reads 0.449–0.460 s, overlapping both other legs'
+spreads by 2 ms, and its median is 11 ms *faster* than the carrying cache's;
+paired rep by rep all six differences favour it, by 6 to 27 ms. Subtracting
+the two Δs to isolate the decode gives +19 ms, inside the 29 ms spread of the
+leg it is read against, so **the decode is unresolved here by the spreads, not
+zero and not 19 ms**, though every pair leans the same way. What bounds it
+from above is the pruned legs: each decodes this same cache whole, statistics
+included, inside a 41–47 ms wall, so decoding 3,072 groups' statistics costs
+at most that floor. Pricing it below the floor takes more groups or the
+process timing its own cache load, not another subtraction.
 
 **Rows returned agree across every leg**, 13 on the third, the cache without
 statistics included, exactly as `generate_pruning_bench.py`'s draws, recomputed
 without writing the file, predicted — a count taken by a different route from
 the one timed.
 
-The three unpruned legs differ by their filters alone, 0.496 s to 0.639 s, the
+The three unpruned legs differ by their filters alone, 0.471 s to 0.635 s, the
 text equality on the last column slowest; that is the filter's own cost,
 `predicate-terms`' subject, and is not attributed here.
 
-Per-rep readings (s):
-- Range on the sorted `id`, `--statistics none`: 0.533, 0.541, 0.538, 0.526, 0.526, 0.592
-- Range on the sorted `id`, `--statistics all`: 0.042, 0.041, 0.043, 0.041, 0.044, 0.043
-- Equality on the low-cardinality `v_category`, `--statistics none`: 0.642, 0.625, 0.641, 0.652, 0.638, 0.636
-- Equality on the low-cardinality `v_category`, `--statistics all`: 0.039, 0.042, 0.043, 0.045, 0.044, 0.044
-- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.502, 0.494, 0.487, 0.498, 0.496, 0.496
-- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.545, 0.508, 0.493, 0.502, 0.486, 0.492
-- Equality on the uniformly drawn `v_smallint`, `--statistics all`, a cache written by `parse --statistics none`: 0.464, 0.484, 0.522, 0.489, 0.477, 0.482
-- `dd` → `/dev/null`: 0.326, 0.329, 0.319
+**No leg is slower than the `542fdfb` sitting put it**: each median lies
+inside that sitting's spread or below it, and the `dd` floor fell 9% between
+the two. What 27.9 changed that this figure reaches is a group's bounds keyed
+once for every term of the filter reading them, per group; the unpruned legs'
+fall spans every commit between the sittings and the sitting's own drift, and
+is **unattributed**.
 
-Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤8.84%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.77 GHz, ≤65°C.
+Per-rep readings (s):
+- Range on the sorted `id`, `--statistics none`: 0.504, 0.528, 0.507, 0.506, 0.539, 0.533
+- Range on the sorted `id`, `--statistics all`: 0.042, 0.042, 0.041, 0.042, 0.043, 0.046
+- Equality on the low-cardinality `v_category`, `--statistics none`: 0.633, 0.636, 0.692, 0.642, 0.622, 0.624
+- Equality on the low-cardinality `v_category`, `--statistics all`: 0.044, 0.042, 0.043, 0.047, 0.042, 0.042
+- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.467, 0.490, 0.468, 0.473, 0.473, 0.458
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.487, 0.465, 0.483, 0.458, 0.458, 0.460
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`, a cache written by `parse --statistics none`: 0.460, 0.450, 0.460, 0.450, 0.449, 0.454
+- `dd` → `/dev/null`: 0.293, 0.301, 0.296
+
+Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤4.97%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.90 GHz, ≤66°C.
 
 ## What DataFusion's dynamic filters buy a query
 
-<!-- figure: dynamic-filter-join — taken at `11e13f2` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-join` -->
+<!-- figure: dynamic-filter-join — taken at `5e02bf9` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-join` -->
 
 **A join's filter, over its probe table**
 
 | Query | Filter off | Filter on | Δ | Rows the join matched |
 |---|---|---|---|---|
-| A selective join on the clustered `id`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.near b ON p.id = b.k` | **0.959 s** (0.941–0.975) | **0.046 s** (0.045–0.051) | **-0.912 s, -95%** | 100 |
-| A selective join on the unclustered `u_key`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.scattered b ON p.u_key = b.k` | **0.958 s** (0.932–0.989) | **0.779 s** (0.760–0.824) | **-0.179 s, -19%** | 100 |
-| A join on `bucket` rejecting no row: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.every b ON p.bucket = b.k` | **0.950 s** (0.941–0.988) | **1.081 s** (1.076–1.104) | **+0.131 s, +14%** | 811,470 |
+| A selective join on the clustered `id`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.near b ON p.id = b.k` | **0.954 s** (0.930–0.986) | **0.041 s** (0.039–0.046) | **-0.912 s, -96%** | 100 |
+| A selective join on the unclustered `u_key`: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.scattered b ON p.u_key = b.k` | **0.967 s** (0.955–0.973) | **0.688 s** (0.681–0.770) | **-0.279 s, -29%** | 100 |
+| A join on `bucket` rejecting no row: `count(*), count(p.v_text) FROM bench.public.perf p JOIN bench.public.every b ON p.bucket = b.k` | **0.946 s** (0.939–0.963) | **1.021 s** (1.002–1.033) | **+0.075 s, +8%** | 811,470 |
 
-One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_JOIN_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.325 s**.
+One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_JOIN_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.332 s**.
 
 Per-rep readings (s):
-- A selective join on the clustered `id`, flag off: 0.956, 0.975, 0.962, 0.965, 0.942, 0.941
-- A selective join on the clustered `id`, flag on: 0.051, 0.046, 0.051, 0.046, 0.047, 0.045
-- A selective join on the unclustered `u_key`, flag off: 0.977, 0.932, 0.989, 0.968, 0.942, 0.949
-- A selective join on the unclustered `u_key`, flag on: 0.824, 0.794, 0.760, 0.764, 0.809, 0.764
-- A join on `bucket` rejecting no row, flag off: 0.946, 0.953, 0.960, 0.941, 0.943, 0.988
-- A join on `bucket` rejecting no row, flag on: 1.082, 1.082, 1.080, 1.104, 1.076, 1.077
-- `dd` → `/dev/null`: 0.334, 0.320, 0.325
+- A selective join on the clustered `id`, flag off: 0.966, 0.941, 0.967, 0.986, 0.930, 0.930
+- A selective join on the clustered `id`, flag on: 0.046, 0.040, 0.039, 0.043, 0.039, 0.043
+- A selective join on the unclustered `u_key`, flag off: 0.972, 0.955, 0.973, 0.966, 0.959, 0.968
+- A selective join on the unclustered `u_key`, flag on: 0.689, 0.684, 0.770, 0.681, 0.693, 0.686
+- A join on `bucket` rejecting no row, flag off: 0.939, 0.956, 0.946, 0.963, 0.946, 0.941
+- A join on `bucket` rejecting no row, flag on: 1.026, 1.002, 1.033, 1.031, 1.010, 1.016
+- `dd` → `/dev/null`: 0.327, 0.336, 0.332
 
-Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤5.64%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.72 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.32%, I/O stall ≤7.77%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.87 GHz, ≤66°C.
 
 
-<!-- figure: dynamic-filter-topk — taken at `11e13f2` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-topk` -->
+<!-- figure: dynamic-filter-topk — taken at `5e02bf9` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure dynamic-filter-topk` -->
 
 **A TopK's filter, over the table it sorts**
 
 | Query | Filter off | Filter on | Δ | Rows returned |
 |---|---|---|---|---|
-| `ORDER BY` the unsorted `u_key`, `LIMIT 10`: `p.u_key, p.v_text FROM bench.public.perf p ORDER BY p.u_key LIMIT 10` | **0.921 s** (0.913–0.949) | **0.064 s** (0.058–0.068) | **-0.858 s, -93%** | 10 |
+| `ORDER BY` the unsorted `u_key`, `LIMIT 10`: `p.u_key, p.v_text FROM bench.public.perf p ORDER BY p.u_key LIMIT 10` | **0.966 s** (0.934–1.002) | **0.072 s** (0.065–0.099) | **-0.894 s, -93%** | 10 |
 
-One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_TOPK_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.327 s**.
+One file — the control's rows with `u_key` and `bucket` appended, and three small build tables, 811,820 rows in all — queried warm by `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, against a cache one untimed `pgdt parse` stating `--statistics all --row-group-size 1048576` wrote in the same container, so the two legs of a row differ by the producer's flag alone and answer alike, byte for byte: `DATAFUSION_OPTIMIZER_ENABLE_TOPK_DYNAMIC_FILTER_PUSHDOWN` is `false` off and `true` on, and the on leg's filter is whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against. `dd` → `/dev/null` on the same file: **0.324 s**.
 
 Per-rep readings (s):
-- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag off: 0.920, 0.931, 0.922, 0.921, 0.949, 0.913
-- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag on: 0.058, 0.060, 0.063, 0.068, 0.064, 0.064
-- `dd` → `/dev/null`: 0.328, 0.321, 0.327
+- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag off: 0.967, 0.959, 0.966, 1.002, 0.934, 0.969
+- `ORDER BY` the unsorted `u_key`, `LIMIT 10`, flag on: 0.074, 0.075, 0.070, 0.065, 0.099, 0.070
+- `dd` → `/dev/null`: 0.324, 0.322, 0.330
 
-Apparatus over every run in this table: CPU stall ≤0.22%, I/O stall ≤5.29%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.13 GHz, ≤68°C.
+Apparatus over every run in this table: CPU stall ≤0.26%, I/O stall ≤6.88%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.82 GHz, ≤64°C.
 
-**At `11e13f2` the scan consumes each filter as it did at `28e804f`, and what
-each row's Δ is made of is read off the scan's own metrics, not the timing.**
-`EXPLAIN ANALYZE` of each on leg's SQL over this input, in the same image, at
-the same partition count and against a cache the same `parse` wrote — an
-instrument reading, not a figure (`runs/dynfilter-27.7-explain-20260927/`) —
-names which mechanism acted, and counts at both commits alike:
+**At `5e02bf9` the scan's metrics count what they counted at `11e13f2` and
+`28e804f`, and what each row's Δ is made of is read off them, not the
+timing.** `EXPLAIN ANALYZE` of each on leg's SQL over this input, in the same
+image, at the same partition count and against a cache the same `parse`
+wrote — an instrument reading, not a figure
+(`runs/dynfilter-27.9-explain-20260928/`, and
+`runs/dynfilter-27.7-explain-20260927/` for `11e13f2`) — names which
+mechanism acted:
 
 | Row | Groups the dynamic filter pruned | Rows row evaluation dropped | Bytes an early stop left |
 |---|---|---|---|
@@ -2719,48 +2737,67 @@ names which mechanism acted, and counts at both commits alike:
 So **the two wins are group pruning**, the clustered join's bounds and the
 TopK's tightening threshold each ruling out all but a handful of groups, and
 the rows evaluated in what is left are too few to price. **Row evaluation acts
-alone on the other two rows.** Each join's filter reaches a row as
+alone on the other two rows.** Each join's filter is
 `k >= lo AND k <= hi AND k IN (v₁, …, vₙ)`, the `IN` one `Expr::In`
-(`decisions.md`, "D53"): each bound unescapes and compares the field, and the
-membership unescapes it once more and answers by one lookup
-(`predicate::ResolvedMembership::eval`). Neither row's bounds rule a row out,
-so every row evaluates all three leaves, whatever the list's length.
+(`decisions.md`, "D53"), and it reaches a row as the membership alone: the
+bounds it implies still prune groups and are dropped from row evaluation
+("D93"), so a row unescapes the field once and answers by one lookup
+(`predicate::ResolvedMembership::eval`), whatever the list's length.
 
-**The unclustered join now wins, its legs' spreads apart**, where at
-`28e804f` (`runs/measure-20260927T200534/`), the `IN` reaching a row as an
-`Or` of 100 `=` each unescaping and comparing the field again
-(`predicate::ResolvedTerm::eval`), it lost by +1.451 s. **The costing input
-still loses, its legs' spreads apart**, by +0.131 s where it lost by +0.973 s.
+**Against `11e13f2`** (`runs/measure-20260927T221125/`), where each row also
+evaluated both bounds — two more unescapes, keys and comparisons — and the
+byte cut keyed each group's bounds once per list value: **the costing row's
+Δ fell from +0.131 s to +0.075 s**, 43% of it, and **the unclustered join's
+on leg from 0.779 s to 0.688 s**, its Δ from −0.179 s to −0.279 s. Every join
+off leg lies inside its `11e13f2` spread, and `dd` moved 0.007 s.
 
-**27.5's cost a term does not account for the costing row's cost a row.** At
-`28e804f` each costing row stopped at the equality naming its `bucket`, which
-cycles through the list in order, so 2 + 75.5 terms on average, and the
-+0.973 s over 811,470 rows came to **15.5 ns a term**; the unclustered row's
-+1.451 s over 811.4 K rows of 102 terms each came to at least 17.5 ns, a floor,
-those rows being spared the decode of `v_text` the off leg pays. That cost a
-term is the Δ over the terms evaluated — **fitted with no per-row intercept,
-and including each term's own unescape**. Set against it, the costing row's
-+0.131 s here is **161 ns a row**, where three leaves at 15.5 ns predict
-46.5 ns, so **about 115 ns a row is left over by that fit**. A fit over
-terms cannot hold it: the account below finds much of it in no leaf at all —
-the tree walk, the byte cut's keying of every group, and the replay's reads of
-the filter outside evaluation — and the lookup costing more than a term.
+- **The costing row lands inside the band 27.8's account predicts**
+  ([`roadmap-P27.9-implied-bounds-notes.md`](roadmap-P27.9-implied-bounds-notes.md)):
+  the bounds' share, 25.6% to 60.9% of the Δ, plus the cut's 14.1%, so
+  between 40% and 75% gone. At 43% it sits at the band's low end, which is
+  what the bounds' removal saving near its lower bound — the unescapes, keys
+  and comparisons, not the read-backs or the walk — beside the whole cut
+  predicts; one reading does not separate the two mechanisms' shares.
+- **The unclustered row saves 0.091 s to the costing row's 0.056 s** over
+  the same removed leaves, though its list is 100 values to the costing
+  row's 150 and so its cut saves less. The removed leaves unescape and parse
+  the field twice a row, and a `u_key` is a `bigint` spelling up to ten
+  digits where a `bucket` spells at most three: a candidate the code names,
+  **unattributed** by any reading here.
+- **The clustered join's on leg moved 0.046 s to 0.041 s**, the two spreads
+  touching; the cut's keying over the groups it prunes is what reaches it,
+  and this reading does not resolve it.
+- **The TopK's on leg sits above its `11e13f2` spread, 0.072 s against
+  0.058–0.068 s, the spreads overlapping — and its off leg, which holds no
+  filter and which nothing between the two commits reaches, rose further**,
+  0.966 s against 0.913–0.949 s. Its metrics count what they counted, and all
+  27.9 adds to its on leg is the row form rebuilt at each state read, a
+  clone per block per generation; the move is the TopK table's own sitting
+  (taken apart from the join's, whose off legs did not move), and is
+  **unattributed**. It makes no figure slower by its spreads, so nothing is
+  taken out for it.
 
-**The off legs, which hold no filter and run none of this, sit within their
-spreads of where they stood at `28e804f`**, bar the TopK's: its median lies
-below `28e804f`'s lowest reading, though the two spreads overlap. Nothing
-between the two commits reaches a scan holding no filter, and the `dd` floor
-fell by 0.009 s over both tables alike, so that difference is the sitting's,
-and **unattributed**; each Δ above is taken within one sitting and carries
-none of it.
-
-**What it decides is not decided here.** Row evaluation's default is the
-spec's criterion applied to the figures of the slice that builds the
-mechanism 27.8's account names
+**The spec's criterion fails, so row evaluation goes off**
 ([`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
-"Slices", item 9); these readings are what admitted those two slices
-([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md),
-"27.7's readings: the costing row is accounted for before the criterion").
+"Slices", item 9). The unclustered join wins, its legs' spreads apart,
+0.955–0.973 s off against 0.681–0.770 s on; the costing input's Δ does not
+lie within its legs' overlapping spreads, the spreads not overlapping at all,
+0.939–0.963 s off against 1.002–1.033 s on.
+
+**27.5's cost a term did not account for the costing row's cost a row at
+`11e13f2`.** At `28e804f` each costing row stopped at the equality naming
+its `bucket`, which cycles through the list in order, so 2 + 75.5 terms on
+average, and the +0.973 s over 811,470 rows came to **15.5 ns a term**; the
+unclustered row's +1.451 s over 811.4 K rows of 102 terms each came to at
+least 17.5 ns, a floor, those rows being spared the decode of `v_text` the
+off leg pays. That cost a term is the Δ over the terms evaluated — **fitted
+with no per-row intercept, and including each term's own unescape**. Set
+against it, the costing row's +0.131 s at `11e13f2` was **161 ns a row**,
+where three leaves at 15.5 ns predict 46.5 ns, so **about 115 ns a row was
+left over by that fit**. A fit over terms cannot hold it: the account below
+finds much of it in no leaf at all — the tree walk, the byte cut's keying of
+every group, and the replay's reads of the filter outside evaluation — and
+the lookup costing more than a term.
 
 **The costing row's cost a row, attributed.** Two instruments over the same
 two legs, taken at `e653505` on the host rather than in the figure's image,
@@ -2776,7 +2813,7 @@ difference of two samplings is what it has: its two pairs read **+841 and
 **+805** (`runs/p27.8-perfstat-20260928.txt`), the build's frame pointers
 moving none of it (the `profiling` build, **+817**). The host's release Δ is
 **+0.153 s** over nine runs a leg (`runs/p27.8-perfstat-usertime-20260928.txt`),
-the figure's **+0.131 s**; the shares below are of the profile's own Δ.
+the figure's **+0.131 s** at `11e13f2`; the shares below are of the profile's own Δ.
 
 | Where the on leg's extra cycles go | Scales with | Δ cycles a row, pairs 1 and 2 | Share of the mean |
 |---|---|---|---|
@@ -2825,10 +2862,10 @@ read-backs from the first `Locate`'s walk no more than the table does; **the
 bounds an `IN` implies dropped from row evaluation** saves two unescapes, both
 keys and both comparisons, **25.6%**, and at most the read-backs and the
 walk's two children and `And`, **60.9%** — so on this row it subsumes the
-first. **The criterion needs about two thirds of the Δ gone**: at this
-figure's spreads the on leg's lowest reading sits 0.005 s below its median and
+first. **The criterion needed about two thirds of the Δ gone**: at the
+`11e13f2` figure's spreads the on leg's lowest reading sits 0.005 s below its median and
 the off leg's highest 0.038 s above its, so the spreads overlap only at a
-median Δ of at most 0.043 s, 33% of today's 0.131 s, the spreads assumed
+median Δ of at most 0.043 s, 33% of `11e13f2`'s 0.131 s, the spreads assumed
 unmoved. Of the rest, the cut is 14.1% and the lookup 18.3% — its hash
 roughly half, the equality on the hit most of the other.
 
