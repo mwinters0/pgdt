@@ -993,9 +993,11 @@ no binary of ours, moved 0.05% (`runs/measure-20260928T164621`, `measure.py
 `pgdt` legs). Every published cold absolute carries that term, since
 `drop_caches` evicts `pgdt` and an unstaged leg loads it off the HDD inside
 `time`; a warm one at most on its first rep after another figure's drop, which
-no median of three or more reps takes. Whether staging becomes the
-apparatus is the maintainer's, put to them under `STATUS.md`'s "Decisions
-worth another look".
+no median of three or more reps takes. Staging in every regime is adopted
+and lands as `M179`
+([`../status/history/2026-09-28.md`](../status/history/2026-09-28.md),
+"Staging the binaries is adopted, settled with the maintainer"); until then
+every figure here is taken unstaged.
 
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
@@ -1398,6 +1400,10 @@ fastest disk this project has, the whole prize for overlapping I/O with parsing
 is the **0.093 s** by which a cold `COPY` scan exceeds its own floor, **7.1%**
 of that scan, and less than that in practice since no scheme overlaps
 perfectly. The kernel's own readahead is what has already taken the rest.
+**Part of that gap is not the scan at all**: `drop_caches` evicts `pgdt`, and
+the leg loads it off the HDD inside `time` — 57–71 ms in the cold-SSD regime
+("The apparatus"), unmeasured on NVMe — so the prize is smaller still, until
+`M179` stages the binary and re-takes this table.
 Nothing about a slower device changes that arithmetic in the levers' favour:
 on the SATA SSD the same subtraction is under 1% and on the HDD the scan is
 device-bound by a factor of several.
