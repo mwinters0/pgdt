@@ -1,6 +1,6 @@
 # Postgres Dump Tool
 
-Inspect Postgres dumps, query them like they're parquet, and export results.
+Inspect Postgres dumps and query them like they're parquet (with streaming Arrow batches).
 
 Available as:
 - A Rust library: `pgdump_query`
@@ -12,7 +12,7 @@ Available as:
     - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
     - Export to Parquet, etc
 
-_Mostly written by LLMs, reviewed by human wetware._
+_Human author, LLM autocomplete._
 
 ## Quickstart
 
@@ -23,9 +23,8 @@ pgdt parse --source=foo.xz
 
 # Inspect what you parsed: tables, roles, etc
 pgdt info --detail --source=foo.xz
-
-# Or as JSON, list the role names
-pgdt info --json --source=foo.xz | jq -r '.roles[]'
+# Or as JSON
+pgdt info --json --source=foo.xz | jq '.roles[]'
 
 # Run a query.  Look ma, no daemons!
 pgdt query --source=foo.xz --table=mytable --where='mycolumn = bar'
@@ -72,7 +71,8 @@ For more, see:
 
 
 ## Status
-⚠️ **Functional, but early development.**  No compatibility guarantees until we reach v1.0.
+⚠️ **Functional, with extensive tests, but still early development.**  No stability guarantees for
+our API, CLI, or data until we reach v1.0.
 
 - Input
     - `pg_dump` formats
@@ -101,13 +101,14 @@ For more, see:
 - Postgres Correctness
     - [x] Tests cover all major Postgres releases, v13-v18.
     - Data types
-        - [x] Almost all common base types (see: [type handling](docs/manual/type-handling.md))
+        - [x] Almost all common base types parsed into Arrow types (see: [type
+        handling](docs/manual/type-handling.md))
             - Notable exceptions which lack an Arrow equivalent:
                 - [ ] `infinity`, `-infinity` and `NaN` in a `numeric`, `date` or `timestamp`
                 column
                 - [ ] An `interval` past Arrow's range
-        - [ ] Common extension types, e.g. PostGIS
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
+        - [ ] Common extension types, e.g. PostGIS
         it yourself.
     - [ ] Encodings other than UTF-8
     - [ ] Large object (BLOB) contents
@@ -124,7 +125,7 @@ For more, see:
             - Comparisons follow Postgres's semantics per type. Wherever DataFusion's comparison differs
               from the server's, e.g. collation, `interval`, `jsonb`, the column gets a warning.
     - [x] Row-group pruning
-    - DataFusion
+    - DataFusion integration
         - [x] Filters pushed down as `Exact` where we answer them the way DataFusion would: the above,
           plus `BETWEEN`, `IN (…)`, `IS [NOT] TRUE`/`FALSE`/`UNKNOWN` and bare boolean columns.
           Anything else (`LIKE`, functions, cross-column comparisons) runs in DataFusion after the scan.
@@ -132,8 +133,7 @@ For more, see:
         - [x] Exact statistics for the optimizer: row counts, NULL counts, min/max, distinct counts,
           sums and byte sizes. `COUNT(*)`, `MIN`, `MAX` and `SUM` can answer without reading a row,
           and joins are ordered by size.
-        - [x] Sort order: a column provably emitted in order is declared sorted, so an `ORDER BY` it
-          satisfies is skipped.
+        - [x] Sort order: `ORDER BY` skips when a column is detected as sorted
         - [ ] Dynamic filters from joins and `ORDER BY … LIMIT`
 - Output
     - [x] Streaming Arrow batches, with typed columns aiming for "at least as good as ADBC".
@@ -164,27 +164,21 @@ routinely hundreds of gigabytes, so the local-file reader aims to stay device-bo
 CPU-bound, with a flat RSS profile.
 
 ### Next
-- [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (epics)
-- [`docs/status/STATUS.md`](docs/status/STATUS.md) - Exact implementation state
+- [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (aka epics)
 - [`docs/status/deficiencies.md`](docs/status/deficiencies.md) - Known deficiencies (some TODO, some
 simply properties of our design).
 
 
-## Operation
-This code essentially has two phases:
-1. Parse the file's contents (`pgdt parse`).  Stores a file map, row group statistics, etc in a `*.dtcache` file.
-2. Query the contents using the cache (`pgdt query`).
-
-Note that this order is not strictly necessary -- you can "cold query" the file without a cache.  This will build a partial cache as it scans, though beware that:
-- A partial cache will never provide the same query efficiency as a full one.  (We can only build certain statistics with a full parse.)
-- A partial cache will not see your full data if A) your database is using partitions, or B) your dump file is from `pg_dumpall` and contains multiple databases.
-
-
 ## Documentation
-
+For humans:
+- [`docs/manual/`](docs/manual/) — user manual:
+    - [dump inspection](docs/manual/dump-inspection.md)
+    - [type handling](docs/manual/type-handling.md)
+    - [SQL over a dump](docs/manual/datafusion-cli-pgdump.md).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
+
+Mostly for LLMs:
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not); [`docs/status/deficiencies.md`](docs/status/deficiencies.md) beside it indexes the known deficiencies. [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
-- [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md), [SQL over a dump](docs/manual/datafusion-cli-pgdump.md).
 - [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 500 lines; how the system works is the code and its rustdoc.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.
 - [`docs/design/out-of-band.md`](docs/design/out-of-band.md) — the ledger of one-session work belonging to no phase: the admission rule, the watermark of spent `M<k>` numbers, and the rows still outstanding.

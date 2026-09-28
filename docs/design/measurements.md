@@ -66,8 +66,8 @@ Eighteen standing rules for reading anything below:
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
   multi-file comparison a file at a time. Session-to-session level shifts of up
-  to 8.5% happen here on identical binaries and identical inputs, and that is
-  the two-hour figure rather than the back-to-back one — measured, in
+  to 5.6% in the median, over three pairs of sweeps, happen here on identical
+  binaries and identical inputs — measured, in
   "What a session's own drift costs" below — and a
   file-at-a-time sweep maps a session's own drift onto file identity,
   manufacturing a between-file difference that is apparatus. Each rep runs
@@ -961,10 +961,41 @@ experiment's arms, not the apparatus.** `measure.py --pin-cpus` and
 `--stage-binaries` are off, any other value marks a sitting unpublishable, and
 `alternate` takes every leg under both arrangements in turn: the first arm is
 what the tables render, and every arm's readings go to `raw.json`'s `arms`,
-read by `--arms` within a sitting and by `--drift` across two. Whether either
-is adopted is `M178`'s sittings' to decide
-([`../status/history/2026-09-28.md`](../status/history/2026-09-28.md), "`M178`:
-whether pinning to an L3 group cuts drift, settled with the maintainer").
+read by `--arms` within a sitting and by `--drift` across two. The criterion
+each was read against, fixed before any sitting, is
+[`../status/history/2026-09-28.md`](../status/history/2026-09-28.md), "`M178`:
+whether pinning to an L3 group cuts drift, settled with the maintainer".
+
+*Rejected:* **pinning a leg to one L3 group, or to die 0.** Three sittings at
+`a25a2dc` (`runs/measure-20260928T153622`, `…T172329`, `…T183058`), each
+`measure.py --alone --pin-cpus alternate --stage-binaries on --figure
+dynamic-filter-join,dynamic-filter-topk,predicate-terms,scan-throughput-warm,parallel-scan-throughput`,
+put the pinned arm's median absolute move between sittings at 1.27×,
+0.74× and 1.21× the unpinned arm's over pairs 1–2, 2–3 and 1–3 (`measure.py
+--drift <a> <b>`), and at 1.27×, 0.69× and 1.23× over the 42 readings it
+placed, its 16- and 24-worker cells running unpinned in both arms; the
+criterion was at most 0.50×. The dynamic-filter legs alone read the same way,
+their pinned runtime starting 6 workers where an unpinned one starts 24. The
+criterion's other half, no leg's spread widening, decides nothing at three to
+six reps: the eight cells both arms ran unpinned read "wider" on 1, 3 and 5 of
+8, so an arm identical to its baseline fails it. What pinning moves is
+absolutes, both ways and in all three sittings — `control`'s 4-worker parse
+40–48% faster, `control_xz`'s 4-, 8- and 12-worker parses 7–15% slower —
+neither attributed, the second consistent with 12 threads sharing die 0's six
+cores where unpinned they spread over twelve. `--pin-cpus` is kept, off, for
+`--pin-governor`'s reason: the reasoning is this machine's topology.
+
+**Staging the binaries on tmpfs takes 57–71 ms off a cold `pgdt` reading**,
+0.96–1.22% of `scan-throughput-cold`'s three `pgdt` legs, where `dd`, loading
+no binary of ours, moved 0.05% (`runs/measure-20260928T164621`, `measure.py
+--alone --stage-binaries alternate --figure scan-throughput-cold`, read by
+`--arms <dir>`, three reps an arm, the arms' ranges apart on two of the three
+`pgdt` legs). Every published cold absolute carries that term, since
+`drop_caches` evicts `pgdt` and an unstaged leg loads it off the HDD inside
+`time`; a warm one at most on its first rep after another figure's drop, which
+no median of three or more reps takes. Whether staging becomes the
+apparatus is the maintainer's, put to them under `STATUS.md`'s "Decisions
+worth another look".
 
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
@@ -2910,25 +2941,25 @@ telemetry every table above reports.** The point is not any row but the shape:
 | the one cold reading with real CPU in it (`INSERT`) | **0.2%** |
 | warm readings | **−14.3% to +9.7%**, median absolute 2.2% |
 
-**Drift is not a single number, and the gap between the sweeps is one of its
-terms.** A pair two hours apart read a median absolute 5.6% and a largest 8.5%;
-a pair three minutes apart read 0.9% and 15.9%; this pair, back to back over 92
-readings rather than 53, reads 1.6% and 14.3%. The register carries no gap
-parameter, so all of these are the same figure taken at three intervals, and
-**the two-hour median is the one to plan against** — it is what "another
-session" and "a comparison re-taken next week" actually cost. What a short
-interval buys is a cleaner view of the rest: back to back almost everything
-reproduces, so the readings that still move name themselves. The *largest* move
-does not follow the interval at all — three pairs have now put it at 8.5%,
-15.9% and 14.3% — and in each case it is a sub-second reading rather than a
-headline figure.
+**Drift is not a single number, and it moves from one pair of sweeps to the
+next.** Three pairs have read a median absolute 5.6% and a largest 8.5%, 0.9%
+and 15.9%, and — this pair, over 92 readings rather than 53 — 1.6% and 14.3%.
+They were two hours, three minutes and no time apart, and **the interval is not
+a term**: the one thing a gap could change is what else the machine is doing,
+which each reading's telemetry and the contention gate ("The apparatus")
+already witness. So the three are one figure taken three times, and **the
+5.6% median is the one to plan against** as the largest of them — what
+"another session" and "a comparison re-taken next week" may cost. A pair that
+reproduces almost everything is the cleaner view of the rest, since the
+readings that still move name themselves. The *largest* move is in each pair a
+sub-second reading rather than a headline figure.
 
 Three of them move, and each says something different:
 
 - **Nothing device-bound does.** Every cold 5–6 s reading is inside 0.7%, and
   the cold `INSERT` scan — the one with real CPU riding on the device — is
-  0.2%, where at two hours it drifted 8.1%. The device is the clock, and back
-  to back even the CPU riding on it holds still. The cold-NVMe readings, three
+  0.2%, where in the 5.6% pair it drifted 8.1%. The device is the clock, and
+  in this pair even the CPU riding on it holds still. The cold-NVMe readings, three
   to five times faster, are looser at up to 4.4%, which is the same statement
   scaled: the faster the device, the less of the reading it fixes.
 - **The `control` file's warm `dd` floor moved −2.5% to −5.3% across its three

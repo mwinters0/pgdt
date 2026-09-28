@@ -61,7 +61,7 @@ figure was re-taken at `542fdfb`**, the four P23 had held included: three
 resolve no reader count the margin could lower, and `reserve`'s stated axis,
 which does, is a reading `KD34` names. Two can never be cleared by a sweep at all:
 `session-drift`, whose apparatus is the harness itself and which only
-a second sweep run back to back with a first re-takes, and the koji section,
+a second sweep on a first's commit re-takes, and the koji section,
 outside the register, which only a run on the HDD clears. Red with the reason
 written down is the standing requirement, not red cleared
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
@@ -119,3 +119,19 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`M178` landed without adopting staging, and P27's block is cleared.**
+  Pinning went by its own criterion; staging had none, only a term to price,
+  and its price is `measurements.md`, "The apparatus": a cold `pgdt` reading
+  loads the binary off the HDD inside `time`. The call is to change no
+  apparatus unattended, since adoption is an apparatus rule and a full
+  re-sweep, and to unblock 27.11 because its figures are warm, which staging
+  does not move. **What is being decided**: whether `--stage-binaries` becomes
+  on for every figure, an apparatus rule saying so, the full re-sweep, and
+  `session-drift` re-taken by a second sweep against its standing readings
+  (`history/2026-09-28.md`, "`M178`: whether pinning to an L3 group cuts
+  drift, settled with the maintainer"). Recommended: adopt it — it removes a
+  term every cold absolute carries that is none of the program's work, and it
+  costs a sweep, which is not a ground. Against: the term sits inside the drift the project
+  already plans against. Reconsidering the unblocking means 27.11 waits for
+  this answer, though its readings would not differ.

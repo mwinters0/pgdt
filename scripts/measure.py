@@ -9942,8 +9942,8 @@ def arm_drift_table(a: dict, b: dict) -> str:
     **The criterion it is read against is `M178`'s, written before any
     sitting** (`docs/status/history/2026-09-28.md`): pinning is adopted only
     if its median absolute move between sittings is **at most half** the
-    unpinned arm's, over the pairs of three sittings two hours apart, **and no
-    leg's spread widens** — a pinned leg whose spread within a sitting exceeds
+    unpinned arm's, over the pairs of three sittings, each gap recorded rather
+    than set, **and no leg's spread widens** — a pinned leg whose spread within a sitting exceeds
     the unpinned leg's in that same sitting counts against it. Either half
     failing refutes it; the table prints both, and the ratio, rather than
     deciding over pairs it sees one of."""
