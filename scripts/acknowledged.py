@@ -435,4 +435,55 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "appears only in query-where-* and the pruning family"
         ),
     ),
+    Acknowledged(
+        commit="2b26631",
+        figures=(
+            "allocator",
+            "census-arrays",
+            "census-brace-free",
+            "chunk-size",
+            "map-only",
+            "parallel-peak-rss",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "per-block-quadratic",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "scan-throughput-cold",
+            "scan-throughput-nvme",
+            "scan-throughput-warm",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why=(
+            "27.8's per-row instrument wraps each evaluation step in `timed!`, "
+            "which without `introspect` expands to its body alone, and adds the "
+            "feature to `datafusion-cli-pgdump`; no timed build carries it, and the "
+            "release `pgdt` and `datafusion-cli-pgdump` match be2af8f's function "
+            "for function"
+        ),
+        verified=(
+            "git show 2b26631 -- pgdump_query/src/instrument.rs | grep -A12 "
+            "'macro_rules! timed'  # the not(introspect) arm is `let _ = $part; $body`"
+        ),
+    ),
+    Acknowledged(
+        commit="2b26631",
+        figures=("session-drift",),
+        why=(
+            "27.8 moved the dynamic-filter run's env and argv into "
+            "`dfcli_invocation`, shared with `--profile-recipe`, and added the "
+            "recipe's steps; `_script` renders every dynamic-filter shape byte for "
+            "byte as before, and the recipe only prints"
+        ),
+        verified=(
+            "_script(c) compared between be2af8f's and 2b26631's measure.py over "
+            "every DYNFILTER_QUERIES shape and leg: 8 compared, 0 differing"
+        ),
+    ),
 )
