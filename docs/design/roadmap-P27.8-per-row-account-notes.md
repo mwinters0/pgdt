@@ -42,7 +42,7 @@ rejected, so nothing downstream of the evaluation changes.
   the same text as an `i64`; two `Compare`s; and **one `Lookup` that keys
   nothing**: an `integer`'s `=` compares the text the file spells, so the
   membership probes a `HashSet<String>` of the literals, hashing the field's
-  text once a row (`tests/evaluation_instrument.rs` pins these counts).
+  text once a row.
 - **Per row, outside `Row`**: the row loop looking up the dynamic filter's
   sorted stop once a row (`DynamicRead::stop`), and — missed here, named by
   the profile — `DynamicRead::at_row` asking every row which group it is in,
@@ -110,8 +110,8 @@ priced in [`measurements.md`](measurements.md)'s account:
 
 - `pgdump_query/tests/evaluation_instrument.rs`, run with
   `--features introspect`: a join-shaped state over `ordered` times one row
-  a row, three `Locate`s and `Unescape`s, two `Key`s and `Compare`s and one
-  `Lookup`; the same tree as a static filter is timed nowhere; the reading's
+  a row and each leaf's parts once per leaf reached, the leaves being 27.9's
+  row form; the same tree as a static filter is timed nowhere; the reading's
   derived times are finite. Mutation: leaf parts timed outside a row fails it.
 - `scripts/test_measure.py`, `ProfileRecipe`: the pair and the introspected
   runs state what `_script` times, read out of its line, over the figure's

@@ -108,11 +108,12 @@ async fn read(static_filter: Option<Expr>, dynamic: Option<Expr>) -> u64 {
 }
 
 /// **One row span per row the state is evaluated on, and each leaf's parts
-/// once per leaf that row reaches**: under a join's filter every row meets
-/// both bounds, so each reaches all three leaves — three fields located and
-/// unescaped, two keyed and compared, one looked up. An `integer`'s `=`
-/// compares the text the file spells, so its membership keys nothing and
-/// probes a set of the literals. **A static filter's
+/// once per leaf that row reaches**: a join's bounds are implied by its keys,
+/// so a row is evaluated against the membership alone
+/// (`ResolvedExpr::for_rows`) — one field located and unescaped, none keyed
+/// or compared, one looked up. An `integer`'s `=` compares the text the file
+/// spells, so its membership keys nothing and probes a set of the literals.
+/// **A static filter's
 /// evaluation of the same tree is timed nowhere**, the leaf parts being timed
 /// only inside a row; and the reading's derived times are finite.
 #[tokio::test]
@@ -126,10 +127,10 @@ async fn the_instrument_times_each_row_the_state_is_evaluated_on_and_its_leaves(
     let after = counts();
     let spans = |part: EvaluationPart| after[part as usize] - before[part as usize];
     assert_eq!(spans(EvaluationPart::Row), ROWS);
-    assert_eq!(spans(EvaluationPart::Locate), 3 * ROWS);
-    assert_eq!(spans(EvaluationPart::Unescape), 3 * ROWS);
-    assert_eq!(spans(EvaluationPart::Key), 2 * ROWS);
-    assert_eq!(spans(EvaluationPart::Compare), 2 * ROWS);
+    assert_eq!(spans(EvaluationPart::Locate), ROWS);
+    assert_eq!(spans(EvaluationPart::Unescape), ROWS);
+    assert_eq!(spans(EvaluationPart::Key), 0);
+    assert_eq!(spans(EvaluationPart::Compare), 0);
     assert_eq!(spans(EvaluationPart::Lookup), ROWS);
     assert!(spans(EvaluationPart::Chunk) >= 1, "no chunk read the state");
 

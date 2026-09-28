@@ -52,9 +52,8 @@ feature without the dependency. Boxed futures so wrappers compose rather than br
 Rejected: generics matched per command; `enum AnySource`. `size_is_exact` is for gzip/zstd.
 
 ### D7 `partitions()` says where and at what cost, never whether
-The same file is worth cutting for extraction and not for discovery, so the
-caller decides. The scheduler's only refusal is a memory floor against the
-file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
+The same file is worth cutting for extraction and not for discovery, so the caller decides. The scheduler's only
+refusal is a memory floor against the file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
 
 ### D8 The cut is one unit wide, sized apart from the charge
 `BOUNDARIED_PARTITION_UNITS = 1`; on a boundaried source `window_end` sizes the cut, `partition_bytes` the
@@ -364,10 +363,11 @@ plan (D54). Across a DataFusion query's partitions the first refusal wins, each 
 ### D93 A dynamic filter's rows are evaluated in every block, its state read at each group entered and each chunk taken
 Row evaluation consults no statistics, so it runs where none answer (`--statistics none`, D85's declined block, `KD33`'s tail) and under
 `use_statistics: false`. The state is read where its generation moved, at each group entered and each chunk taken; a read mid-group judges
-that group again, skipping its rest with each later group it rules out and re-arming one still kept. Rejected: evaluating only where
-statistics delimit groups; reading per row (a lock every partition shares), per batch (a state aging with its selectivity) or at group entry
-alone (older where groups merge); a `pgdump.*` switch ("Two tunables"; DataFusion's flag is the user's); ceasing where nothing is rejected,
-the flag being an explicit request (D77). Reopens: pricing the per-chunk check; a switch if the `IN` term shows no universal win. Code: `stream::DynamicRead`.
+that group again, skipping its rest with each later group it rules out and re-arming one still kept. A row meets it less each bound an `IN`
+beside it implies, no `Not` above (D54). Rejected: evaluating only where statistics delimit groups; reading per row (a lock every partition
+shares), per batch (a state aging with its selectivity) or at group entry alone (older where groups merge); a `pgdump.*` switch ("Two tunables";
+DataFusion's flag is the user's); ceasing where nothing is rejected (D77); dropping a static filter's implied bounds, which raise where reached.
+Reopens: pricing the per-chunk check; a switch if the `IN` term shows no universal win. Code: `stream::DynamicRead`, `ResolvedExpr::for_rows`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership

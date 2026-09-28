@@ -4057,8 +4057,12 @@ struct DynamicBlock {
     full: ResolvedSchema,
     /// The generation of the state last read, `None` before the first.
     generation: Option<u64>,
-    /// The state last read, resolved against this block.
+    /// The state last read, resolved against this block: what its groups
+    /// are judged by.
     state: Arc<ResolvedExpr>,
+    /// The same state as its rows are evaluated against
+    /// ([`ResolvedExpr::for_rows`]).
+    rows: ResolvedExpr,
     /// `None` where the block's statistics answer nothing
     /// ([`DynamicPruning::new`]), no group then being ruled out.
     pruning: Option<DynamicPruning>,
@@ -4084,14 +4088,17 @@ impl DynamicBlock {
             full,
             generation: None,
             state: Arc::new(ResolvedExpr::And(Vec::new())),
+            rows: ResolvedExpr::And(Vec::new()),
             pruning,
         })
     }
 
     /// Take `state`, the filter's state at `generation`, resolved against
-    /// this block ([`resolve_loosened`]).
+    /// this block ([`resolve_loosened`]) — whole for its groups, and in its
+    /// row form for its rows (`docs/design/decisions.md`, "D93").
     fn read(&mut self, generation: u64, state: &Expr, semantics: ComparisonSemantics) {
         let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false);
+        self.rows = resolved.for_rows();
         self.state = Arc::new(resolved);
         self.generation = Some(generation);
         if let Some(pruning) = self.pruning.as_mut() {
@@ -4237,11 +4244,12 @@ impl DynamicRead {
         self.block.as_ref()?.1.as_ref()?.pruning.as_ref()?.stop()
     }
 
-    /// The state last read, resolved against the block being read — `None`
-    /// before the first read, or where the block's schema does not resolve.
+    /// The state last read, resolved against the block being read as its
+    /// rows are evaluated against it — `None` before the first read, or
+    /// where the block's schema does not resolve.
     fn state(&self) -> Option<&ResolvedExpr> {
         let block = self.block.as_ref()?.1.as_ref()?;
-        block.generation.map(|_| block.state.as_ref())
+        block.generation.map(|_| &block.rows)
     }
 
     /// Whether evaluating the state last read reads a field of a row.

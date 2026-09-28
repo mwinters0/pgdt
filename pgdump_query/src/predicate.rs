@@ -2988,15 +2988,64 @@ impl ResolvedMembership {
     /// terms' sets combined as [`ResolvedExpr::Or`] combines them, a NULL in
     /// the list adding `Unknown` over any group a row starts in — the answer
     /// the `Or` of `=` over the same list gives, not a tighter one.
-    pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
-        let set =
-            self.terms.iter().fold(TruthSet::of(Truth::False), |set, t| set.or(t.truths(group)));
+    #[cfg(test)]
+    fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        self.truths_keyed(group, &mut KeyedBounds::default())
+    }
+
+    /// [`Self::truths`], every term reading the group's bounds out of
+    /// `keyed`, so they are keyed once for the whole list.
+    fn truths_keyed<'a>(
+        &'a self,
+        group: &impl GroupStatistics,
+        keyed: &mut KeyedBounds<'a>,
+    ) -> TruthSet {
+        let set = self
+            .terms
+            .iter()
+            .fold(TruthSet::of(Truth::False), |set, t| set.or(t.truths_keyed(group, keyed)));
         match (self.null, group.rows()) {
             (false, _) => set,
             // `= NULL` over a group no row starts in is the empty set, as
             // every term is there, and the empty set absorbs a disjunction.
             (true, 0) => TruthSet::EMPTY,
             (true, _) => set.or(TruthSet::of(Truth::Unknown)),
+        }
+    }
+
+    /// Whether every row this membership makes `True` makes `term` `True`
+    /// too: `term` is one of the four ordering operators over the same
+    /// column, and every value in the list meets it as a row equal to that
+    /// value would. Answered for the two lookups whose equality settles what
+    /// an ordering term reads — the text the file spells, or a key in the
+    /// ordering term's own kind — and `false` for any other.
+    fn implies(&self, term: &ResolvedTerm) -> bool {
+        if term.index != self.index || !term.op.is_ordering() || self.terms.is_empty() {
+            return false;
+        }
+        let Some(Comparison::Ordered { kind: ordered, bound }) =
+            term.compared.as_ref().map(|c| &c.comparison)
+        else {
+            return false;
+        };
+        let meets = |key: &OrderKey| {
+            let ord = compare_keys(key, bound);
+            match term.op {
+                PredicateOp::Lt => ord.is_lt(),
+                PredicateOp::Le => ord.is_le(),
+                PredicateOp::Gt => ord.is_gt(),
+                _ => ord.is_ge(),
+            }
+        };
+        match &self.lookup {
+            Lookup::Canonical(_) => self.terms.iter().all(|value| {
+                matches!(
+                    value.compared.as_ref().map(|c| &c.comparison),
+                    Some(Comparison::Canonical(text)) if term.eval_value(Some(text)) == Some(Truth::True)
+                )
+            }),
+            Lookup::Decoded { kind, keys } => kind == ordered && keys.iter().all(meets),
+            Lookup::Trimmed(_) | Lookup::Nested { .. } | Lookup::Each => false,
         }
     }
 
@@ -3083,6 +3132,62 @@ impl ResolvedExpr {
             }
             Self::Not(inner) => inner.eval(true, raw_row, split, table, row_offset)?.not(),
         })
+    }
+
+    /// This tree as a row is evaluated against it where only whether the root
+    /// is `True` decides anything and a failing leaf keeps the row — a
+    /// dynamic filter's ([`crate::stream::DynamicFilter`]) — **with every
+    /// ordering term a membership in the same conjunction implies dropped**
+    /// ([`ResolvedMembership::implies`]): a join's filter bounds its keys and
+    /// lists them, and each bound reads, unescapes and keys a field the list
+    /// answers alone (`docs/design/decisions.md`, "D54" and "D93").
+    ///
+    /// **Only where the evaluation is not exact**, reached from the root
+    /// through `And` and `Or` alone: there a conjunction is `True` exactly
+    /// where each conjunct is, and a membership `True` makes each term it
+    /// implies `True`, so the root is `True` on the same rows. Beneath a
+    /// `Not`, where a conjunction's `Unknown` and `False` are different
+    /// answers, the subtree stands as it is. A conjunction nested in another
+    /// is read as one, and one left with a single conjunct is that conjunct.
+    ///
+    /// A row the dropped term would have failed to key — a value that is
+    /// not of its column's type, which a file's `*_out` text never is — is
+    /// answered by the membership instead, as any row a leaf earlier in the
+    /// tree rules out is (`docs/design/decisions.md`, "D54").
+    pub(crate) fn for_rows(&self) -> ResolvedExpr {
+        match self {
+            Self::Term(_) | Self::In(_) | Self::Not(_) => self.clone(),
+            Self::Or(children) => Self::Or(children.iter().map(Self::for_rows).collect()),
+            Self::And(_) => {
+                let mut conjuncts = Vec::new();
+                self.conjuncts(&mut conjuncts);
+                let memberships: Vec<&ResolvedMembership> = conjuncts
+                    .iter()
+                    .filter_map(|c| match c {
+                        Self::In(membership) => Some(membership),
+                        _ => None,
+                    })
+                    .collect();
+                let mut kept: Vec<ResolvedExpr> = conjuncts
+                    .into_iter()
+                    .filter(|c| match c {
+                        Self::Term(term) => !memberships.iter().any(|m| m.implies(term)),
+                        _ => true,
+                    })
+                    .map(Self::for_rows)
+                    .collect();
+                if kept.len() == 1 { kept.pop().expect("one conjunct") } else { Self::And(kept) }
+            }
+        }
+    }
+
+    /// This node's conjuncts, in order, a conjunction nested in it read as
+    /// part of it.
+    fn conjuncts<'a>(&'a self, out: &mut Vec<&'a ResolvedExpr>) {
+        match self {
+            Self::And(children) => children.iter().for_each(|child| child.conjuncts(out)),
+            other => out.push(other),
+        }
     }
 
     /// The divergence notes for every term in this tree, in the order the
@@ -3270,6 +3375,38 @@ pub(crate) trait GroupStatistics {
     fn dictionary(&self, column: usize) -> Option<impl Iterator<Item = &str>>;
 }
 
+/// One row group's bounds on one column in one kind, read as keys once for
+/// every term of a tree that reads them — a membership's `=` terms all read
+/// its column's, so a list is keyed against a group once rather than once per
+/// value. It holds the last column and kind asked for, and lives no longer
+/// than one group's answer, a group's bounds on a column in a kind being one
+/// pair of texts.
+#[derive(Default)]
+struct KeyedBounds<'a> {
+    /// The column and kind last asked for, `None` before the first ask.
+    of: Option<(usize, &'a CompareKind)>,
+    /// Their bounds as keys, `None` where either does not key.
+    keys: Option<(OrderKey, OrderKey)>,
+}
+
+impl<'a> KeyedBounds<'a> {
+    /// `min` and `max`, the group's bounds on `column` ordered as `kind`
+    /// orders, as keys — `None` where either does not key.
+    fn keys(
+        &mut self,
+        column: usize,
+        kind: &'a CompareKind,
+        min: &str,
+        max: &str,
+    ) -> Option<(&OrderKey, &OrderKey)> {
+        if self.of != Some((column, kind)) {
+            self.keys = order_key(kind, min).zip(order_key(kind, max));
+            self.of = Some((column, kind));
+        }
+        self.keys.as_ref().map(|(low, high)| (low, high))
+    }
+}
+
 impl ResolvedTerm {
     /// Every value this term could take over a row of `group` — a superset
     /// of what [`Self::eval`] answers over each of its rows, and exact where
@@ -3280,6 +3417,16 @@ impl ResolvedTerm {
     /// row path raises `Error::FieldDecode` there rather than answering, and
     /// no statistic records that such a row exists.
     pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        self.truths_keyed(group, &mut KeyedBounds::default())
+    }
+
+    /// [`Self::truths`], reading `group`'s bounds as keys out of `keyed`,
+    /// which keys them once for every term of a tree reading them.
+    fn truths_keyed<'a>(
+        &'a self,
+        group: &impl GroupStatistics,
+        keyed: &mut KeyedBounds<'a>,
+    ) -> TruthSet {
         let rows = group.rows();
         let (nulls, values) = match group.null_count(self.index) {
             Some(nulls) => (nulls > 0, nulls < rows),
@@ -3290,7 +3437,7 @@ impl ResolvedTerm {
             set = set.union(TruthSet::of(self.eval_value(None).expect("a NULL always answers")));
         }
         if values {
-            set = set.union(self.value_truths(group));
+            set = set.union(self.value_truths(group, keyed));
         }
         set
     }
@@ -3299,7 +3446,11 @@ impl ResolvedTerm {
     ///
     /// The dictionary and the bounds each give a superset of the answer, so
     /// where the term reads both it takes what they agree on.
-    fn value_truths(&self, group: &impl GroupStatistics) -> TruthSet {
+    fn value_truths<'a>(
+        &'a self,
+        group: &impl GroupStatistics,
+        keyed: &mut KeyedBounds<'a>,
+    ) -> TruthSet {
         let Some(compared) = self.compared.as_ref() else {
             return TruthSet::of(Truth::of(self.op == PredicateOp::IsNotNull));
         };
@@ -3323,13 +3474,17 @@ impl ResolvedTerm {
         if let Some((kind, literal)) = compared.statistics.bounds.as_deref()
             && let Some((min, max)) = group.bounds(self.index, kind)
         {
-            set = set.intersection(self.bounded(kind, literal, min, max));
+            set = set.intersection(match keyed.keys(self.index, kind, min, max) {
+                Some((low, high)) => self.bounded(literal, low, high),
+                // A bound that does not key allows anything.
+                None => TruthSet::TWO_VALUED,
+            });
         }
         set
     }
 
-    /// What `min` and `max` allow this term to answer over a value between
-    /// them. A bound that does not key allows anything.
+    /// What bounds keyed as `low` and `high` allow this term to answer over
+    /// a value between them.
     ///
     /// The four ordering operators are monotone in the value, so each end
     /// settles one truth. **The equality operators only ever rule out
@@ -3338,12 +3493,9 @@ impl ResolvedTerm {
     /// to it say so of keys, where a canonicalized comparison reads spellings
     /// — one per key only in text `*_out` wrote
     /// (`docs/design/decisions.md`, "D56").
-    fn bounded(&self, kind: &CompareKind, literal: &OrderKey, min: &str, max: &str) -> TruthSet {
-        let (Some(low), Some(high)) = (order_key(kind, min), order_key(kind, max)) else {
-            return TruthSet::TWO_VALUED;
-        };
-        let low = compare_keys(&low, literal);
-        let high = compare_keys(&high, literal);
+    fn bounded(&self, literal: &OrderKey, low: &OrderKey, high: &OrderKey) -> TruthSet {
+        let low = compare_keys(low, literal);
+        let high = compare_keys(high, literal);
         let (can_be_true, can_be_false) = match self.op {
             PredicateOp::Lt => (low.is_lt(), high.is_ge()),
             PredicateOp::Le => (low.is_le(), high.is_gt()),
@@ -3367,16 +3519,27 @@ impl ResolvedExpr {
     /// being exact: `v < 5 AND v >= 5` cannot be true of any one row, and
     /// each term alone can.
     pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        self.truths_keyed(group, &mut KeyedBounds::default())
+    }
+
+    /// [`Self::truths`], every term reading the group's bounds out of
+    /// `keyed`, so a column's are keyed once for the whole tree where its
+    /// terms read them in one kind.
+    fn truths_keyed<'a>(
+        &'a self,
+        group: &impl GroupStatistics,
+        keyed: &mut KeyedBounds<'a>,
+    ) -> TruthSet {
         match self {
-            Self::Term(term) => term.truths(group),
-            Self::In(membership) => membership.truths(group),
-            Self::And(children) => children
-                .iter()
-                .fold(TruthSet::of(Truth::True), |set, child| set.and(child.truths(group))),
-            Self::Or(children) => children
-                .iter()
-                .fold(TruthSet::of(Truth::False), |set, child| set.or(child.truths(group))),
-            Self::Not(inner) => inner.truths(group).not(),
+            Self::Term(term) => term.truths_keyed(group, keyed),
+            Self::In(membership) => membership.truths_keyed(group, keyed),
+            Self::And(children) => children.iter().fold(TruthSet::of(Truth::True), |set, child| {
+                set.and(child.truths_keyed(group, keyed))
+            }),
+            Self::Or(children) => children.iter().fold(TruthSet::of(Truth::False), |set, child| {
+                set.or(child.truths_keyed(group, keyed))
+            }),
+            Self::Not(inner) => inner.truths_keyed(group, keyed).not(),
         }
     }
 }
@@ -4189,6 +4352,165 @@ mod tests {
             membership(&ranges, 0, &[Some("{}")]).unwrap().lookup,
             Lookup::Nested { .. }
         ));
+    }
+
+    /// A tree's shape, each leaf named by its operator and column: what
+    /// [`ResolvedExpr::for_rows`] leaves of it.
+    fn shape(expr: &ResolvedExpr) -> String {
+        let list =
+            |children: &[ResolvedExpr]| children.iter().map(shape).collect::<Vec<_>>().join(", ");
+        match expr {
+            ResolvedExpr::Term(term) => format!("{}{}", term.index, term.op.symbol()),
+            ResolvedExpr::In(membership) => format!("{}in", membership.index),
+            ResolvedExpr::And(children) => format!("and({})", list(children)),
+            ResolvedExpr::Or(children) => format!("or({})", list(children)),
+            ResolvedExpr::Not(inner) => format!("not({})", shape(inner)),
+        }
+    }
+
+    /// **Row evaluation drops each ordering term a membership in the same
+    /// conjunction implies, and nothing else**: a bound every listed value
+    /// meets goes, one a value misses stays, as does one over another column
+    /// or beneath a `Not`; a conjunction nested in another is read as one, a
+    /// NULL in the list implies nothing less, and an empty list nothing.
+    #[test]
+    fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
+        let schema = two_integers();
+        let term = |index: usize, op, value: &str| {
+            let column = schema.schema.field(index).name().clone();
+            let p = Predicate { column, op, value: Some(value.into()) };
+            ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
+        };
+        let listed =
+            |values: &[Option<&str>]| ResolvedExpr::In(membership(&schema, 0, values).unwrap());
+        let list = || listed(&[Some("1"), Some("3"), Some("5")]);
+        let and = ResolvedExpr::And;
+        let rows = |expr: ResolvedExpr| shape(&expr.for_rows());
+        use PredicateOp::{Ge, Gt, Le, Lt};
+
+        assert_eq!(rows(and(vec![term(0, Ge, "1"), term(0, Le, "5"), list()])), "0in");
+        assert_eq!(
+            rows(and(vec![and(vec![term(0, Gt, "0"), term(0, Lt, "6")]), list()])),
+            "0in",
+            "a join's filter nests its bounds"
+        );
+        assert_eq!(
+            rows(and(vec![term(0, Ge, "1"), term(0, Le, "4"), list(), term(1, Gt, "0")])),
+            "and(0<=, 0in, 1>)"
+        );
+        assert_eq!(rows(and(vec![term(0, Gt, "1"), list()])), "and(0>, 0in)");
+        assert_eq!(
+            rows(and(vec![term(0, Ge, "1"), listed(&[Some("3"), None])])),
+            "0in",
+            "a NULL in the list"
+        );
+        assert_eq!(rows(and(vec![term(0, Ge, "1"), listed(&[None])])), "and(0>=, 0in)");
+        assert_eq!(rows(and(vec![term(0, Ge, "1"), listed(&[])])), "and(0>=, 0in)");
+        assert_eq!(
+            rows(ResolvedExpr::Or(vec![and(vec![term(0, Ge, "1"), list()]), term(1, Gt, "0")])),
+            "or(0in, 1>)"
+        );
+        let negated = ResolvedExpr::Not(Box::new(and(vec![term(0, Ge, "1"), list()])));
+        assert_eq!(rows(negated), "not(and(0>=, 0in))");
+        assert_eq!(rows(and(vec![term(1, Ge, "1"), list()])), "and(1>=, 0in)");
+
+        // A decoded kind's `=` keys its field, so a bound is implied by key.
+        let numeric = one_column("numeric", DataType::Utf8View);
+        let numeric_term = |op, value: &str| {
+            let p = Predicate { column: "v".into(), op, value: Some(value.into()) };
+            ResolvedExpr::Term(resolve_term(&p, 0, &numeric, 0).unwrap())
+        };
+        let decoded =
+            ResolvedExpr::In(membership(&numeric, 0, &[Some("1.50"), Some("2")]).unwrap());
+        let tree = and(vec![numeric_term(Ge, "1.5"), numeric_term(Lt, "2"), decoded]);
+        assert_eq!(rows(tree), "and(0<, 0in)");
+    }
+
+    /// **A tree and its row form answer `True` on the same rows**, wherever
+    /// the tree answers at all: every bound between two edges of a list,
+    /// over every list of up to three values from a small range, a NULL
+    /// among them or not, alone and beside a term on another column, under
+    /// an `Or`, and beneath a `Not`, over rows holding each value, a NULL
+    /// and a field no `integer` reads.
+    #[test]
+    fn a_tree_and_its_row_form_keep_the_same_rows() {
+        let schema = two_integers();
+        let term = |index: usize, op, value: String| {
+            let column = schema.schema.field(index).name().clone();
+            let p = Predicate { column, op, value: Some(value) };
+            ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
+        };
+        let values = ["0", "2", "4"];
+        let mut lists: Vec<Vec<Option<&str>>> = vec![vec![], vec![None]];
+        for mask in 1..8u32 {
+            let chosen: Vec<_> =
+                (0..3).filter(|bit| mask & (1 << bit) != 0).map(|bit| Some(values[bit])).collect();
+            lists.push(chosen.clone());
+            lists.push(chosen.into_iter().chain([None]).collect());
+        }
+        let rows: Vec<Vec<u8>> = ["-1", "0", "1", "2", "3", "4", "5", "\\N", "nope"]
+            .iter()
+            .flat_map(|a| ["1", "\\N"].map(|b| format!("{a}\t{b}").into_bytes()))
+            .collect();
+        let (mut compared, mut dropped) = (0, 0);
+        for list in &lists {
+            let listed = ResolvedExpr::In(membership(&schema, 0, list).unwrap());
+            for op in [PredicateOp::Lt, PredicateOp::Le, PredicateOp::Gt, PredicateOp::Ge] {
+                for edge in -1..=5 {
+                    let bound = term(0, op, edge.to_string());
+                    let conjunction = ResolvedExpr::And(vec![bound.clone(), listed.clone()]);
+                    let beside = ResolvedExpr::And(vec![
+                        bound.clone(),
+                        term(1, PredicateOp::Ge, "1".into()),
+                        listed.clone(),
+                    ]);
+                    let trees = [
+                        conjunction.clone(),
+                        beside.clone(),
+                        ResolvedExpr::Or(vec![beside, term(1, PredicateOp::Lt, "0".into())]),
+                        ResolvedExpr::Not(Box::new(conjunction)),
+                    ];
+                    for tree in trees {
+                        let row_form = tree.for_rows();
+                        dropped += usize::from(shape(&row_form) != shape(&tree));
+                        for row in &rows {
+                            let at = RawRow::unchecked(row);
+                            let full = tree.matches(at, &mut RowSplit::default(), "public.t", 0);
+                            let Ok(full) = full else { continue };
+                            let got = row_form.matches(at, &mut RowSplit::default(), "public.t", 0);
+                            assert_eq!(
+                                got.ok(),
+                                Some(full),
+                                "{} as {} over {:?}",
+                                shape(&tree),
+                                shape(&row_form),
+                                String::from_utf8_lossy(row)
+                            );
+                            compared += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(dropped > 100 && compared > 10_000, "{dropped} dropped, {compared} compared");
+    }
+
+    /// **A group's bounds are keyed once for every term reading them**: the
+    /// keys held answer a second ask of the same column and kind, a group's
+    /// bounds there being one pair of texts, and another column is keyed
+    /// afresh.
+    #[test]
+    fn a_group_s_bounds_are_keyed_once_per_column_and_kind() {
+        let kind = CompareKind::Int;
+        let mut keyed = KeyedBounds::default();
+        let key = |text: &str| order_key(&CompareKind::Int, text).unwrap();
+        let held = |keys: Option<(&OrderKey, &OrderKey)>| {
+            keys.map(|(low, high)| (compare_keys(low, &key("1")), compare_keys(high, &key("9"))))
+        };
+        assert_eq!(held(keyed.keys(0, &kind, "1", "9")), Some((Ordering::Equal, Ordering::Equal)));
+        assert_eq!(held(keyed.keys(0, &kind, "2", "8")), Some((Ordering::Equal, Ordering::Equal)));
+        assert_eq!(held(keyed.keys(1, &kind, "2", "8")), Some((Ordering::Greater, Ordering::Less)));
+        assert_eq!(keyed.keys(2, &kind, "x", "8"), None, "a bound that does not key");
     }
 
     #[test]
