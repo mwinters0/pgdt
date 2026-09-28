@@ -243,6 +243,14 @@ class Config:
     # Pin every CPU to SWEEP_GOVERNOR for the sweep. Off by default -- see
     # that constant for the measurement that says why.
     pin_governor: bool = _env("PGDT_MEASURE_PIN_GOVERNOR", "") not in ("", "0", "no")
+    # Place each leg on one or two L3 groups by the threads it states, and the
+    # harness on the other die (`PIN_CHOICES`). Off by default: whether it is
+    # adopted is `M178`'s sittings' to decide, and anything else marks the run
+    # unpublishable.
+    pin_cpus: str = _env("PGDT_MEASURE_PIN_CPUS", "off")
+    # Mount the timed binaries from tmpfs, read once untimed before each run
+    # (`Session.stage_binary`). Off by default for `pin_cpus`'s reason.
+    stage_binaries: str = _env("PGDT_MEASURE_STAGE_BINARIES", "off")
     # Rep-count override, for smoke runs only. None means each figure's own.
     reps_override: int | None = None
     dry_run: bool = False
@@ -298,7 +306,22 @@ class Config:
                 "below that republishes a shared reading measured it here for itself. "
                 "It says whether a change moved a figure; it is not a table to fold in."
             )
+        if self.pin_cpus != "off" or self.stage_binaries != "off":
+            return (
+                f"This run placed its legs under an apparatus not adopted "
+                f"(`--pin-cpus {self.pin_cpus}`, `--stage-binaries {self.stage_binaries}`). "
+                "It is an experiment's sitting, read with `--arms` and `--drift`; "
+                "it is not a figure."
+            )
         return None
+
+    @property
+    def arms(self) -> tuple["Arm", ...]:
+        """The arrangements every leg of this run is taken under, the first
+        being the one `readings` and every table carry (`Arm`)."""
+        pins = arm_values(self.pin_cpus, "--pin-cpus")
+        stages = arm_values(self.stage_binaries, "--stage-binaries")
+        return tuple(Arm(pinned=p, staged=s) for p in pins for s in stages)
 
     @property
     def publishable(self) -> bool:
@@ -606,6 +629,126 @@ class Sampler:
 #: re-sweep.
 SWEEP_GOVERNOR = "performance"
 
+#: What `--pin-cpus` and `--stage-binaries` take: the apparatus as recorded
+#: (`off`), the arrangement on every leg (`on`), or both arms, each leg taken
+#: under one and then the other, alternating which goes first rep by rep
+#: (`alternate`) — the experiment's shape, so its arms share every minute of
+#: the machine's own drift rather than a sitting each.
+ARM_CHOICES = ("off", "on", "alternate")
+
+
+def arm_values(choice: str, flag: str) -> tuple[bool, ...]:
+    """The arms one `ARM_CHOICES` value asks for, the recorded one first."""
+    if choice == "off":
+        return (False,)
+    if choice == "on":
+        return (True,)
+    if choice == "alternate":
+        return (False, True)
+    raise ValueError(f"{flag} takes one of {', '.join(ARM_CHOICES)}, not {choice!r}")
+
+
+@dataclass(frozen=True)
+class Arm:
+    """One arrangement a leg is placed under: pinned to L3 groups or not, and
+    its binaries on tmpfs or where cargo left them.
+
+    **Neither is adopted** (`docs/status/history/2026-09-28.md`, "`M178`"):
+    the first arm of `Config.arms` is the one every table renders, and a
+    second arm's readings go to `raw.json`'s `arms` alone, read by `--arms`
+    within one sitting and `--drift` across two."""
+
+    pinned: bool = False
+    staged: bool = False
+
+    @property
+    def name(self) -> str:
+        return f"{'pinned' if self.pinned else 'unpinned'}+{'staged' if self.staged else 'unstaged'}"
+
+
+#: The L3 groups `--pin-cpus` places on, as indices into `l3_groups`' order
+#: (by lowest CPU). **This machine's arrangement, deliberately**: a 3900X is
+#: four L3 groups of three cores and their SMT siblings, two to a die, which
+#: sysfs does not expose as dies — so the placement is declared here and
+#: `pin_topology_problem` refuses any other topology rather than guessing one.
+#:
+#: A leg stating up to one group's CPUs runs on group 1, one stating up to two
+#: groups' on groups 0 and 1 (die 0), and the harness beside a pinned leg — its
+#: sampler and every process it launches — on die 1, as the admitting entry
+#: settled. A leg stating more, or discovering its count, stays unpinned:
+#: its subject is the whole machine, and discovery reads the affinity mask a
+#: cpuset would narrow (`runtime-invariants.md`, "RT7").
+PIN_SMALL_GROUPS: tuple[int, ...] = (1,)
+PIN_LARGE_GROUPS: tuple[int, ...] = (0, 1)
+PIN_HARNESS_GROUPS: tuple[int, ...] = (2, 3)
+#: How many L3 groups the placement above is written for.
+PIN_GROUP_COUNT = 4
+
+CPU_SYSFS = Path("/sys/devices/system/cpu")
+
+
+def parse_cpu_list(text: str) -> frozenset[int]:
+    """A kernel CPU list (`0-2,12-14`) as the CPUs it names."""
+    cpus: set[int] = set()
+    for part in text.strip().split(","):
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        cpus.update(range(int(lo), int(hi or lo) + 1))
+    return frozenset(cpus)
+
+
+def cpu_list(cpus: Iterable[int]) -> str:
+    """CPUs as a kernel CPU list, runs collapsed, which `--cpuset-cpus` takes."""
+    out: list[str] = []
+    ordered = sorted(cpus)
+    i = 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
+            j += 1
+        out.append(str(ordered[i]) if i == j else f"{ordered[i]}-{ordered[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
+def l3_groups(root: Path = CPU_SYSFS) -> list[frozenset[int]]:
+    """The machine's L3 groups, each the CPUs sharing one, by lowest CPU."""
+    groups = {
+        parse_cpu_list(path.read_text())
+        for path in root.glob("cpu[0-9]*/cache/index3/shared_cpu_list")
+    }
+    return sorted(groups, key=min)
+
+
+def pin_topology_problem(groups: Sequence[frozenset[int]]) -> str | None:
+    """Why `--pin-cpus` cannot place on this machine, or `None`.
+
+    The placement names groups by index, so a machine with another count, or
+    groups of unequal size, would put a leg somewhere nobody chose."""
+    if len(groups) != PIN_GROUP_COUNT or len({len(g) for g in groups}) != 1:
+        return (
+            f"--pin-cpus is written for {PIN_GROUP_COUNT} equal L3 groups and this machine "
+            f"has {len(groups)} ({'; '.join(cpu_list(g) for g in groups) or 'none readable'})"
+        )
+    return None
+
+
+def placement(threads: int | None, groups: Sequence[frozenset[int]]) -> frozenset[int] | None:
+    """The CPUs a leg stating `threads` is pinned to, or `None` for unpinned."""
+    if threads is None:
+        return None
+    for chosen in (PIN_SMALL_GROUPS, PIN_LARGE_GROUPS):
+        cpus = frozenset().union(*(groups[i] for i in chosen))
+        if threads <= len(cpus):
+            return cpus
+    return None
+
+
+def harness_cpus(groups: Sequence[frozenset[int]]) -> frozenset[int]:
+    """Where the harness runs beside a pinned leg."""
+    return frozenset().union(*(groups[i] for i in PIN_HARNESS_GROUPS))
+
 
 #: The staging areas a regime can read from, and the only values a `Regime`
 #: may name. Three devices, three areas: the SSD cache, the NVMe copy of it,
@@ -909,7 +1052,8 @@ def spread(values: Sequence[float]) -> tuple[float, float]:
 
 def fmt_s(value: float) -> str:
     """Seconds, at the precision measurements.md quotes: three decimals below
-    two seconds, two above -- the timer resolves to 1 ms either way."""
+    two seconds, two above -- the register's image's timer resolves to 1 ms
+    (`TIME_FORMAT`), and no table quotes the second program's microseconds."""
     return f"{value:.3f}" if abs(value) < 2 else f"{value:.2f}"
 
 
@@ -976,6 +1120,16 @@ def md_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 
 TIME_RE = re.compile(r"^real\s+(\d+)m([\d.]+)s\s*$", re.MULTILINE)
+#: The CPU the timed command spent, beside its wall clock.
+CPU_TIME_RE = re.compile(r"^(user|sys)\s+(\d+)m([\d.]+)s\s*$", re.MULTILINE)
+
+#: What every in-container script is prefixed with, outside every command
+#: shape as `OOM_ORACLE` is: bash's default report at six decimals rather than
+#: three. **Bash 5.3 honours it and 5.2 clamps it to three**, so the
+#: second program's image reads to the microsecond and the register's
+#: `postgres:16` still to the millisecond; the report's shape is the default's
+#: either way, which `TIME_RE` reads.
+TIME_FORMAT = "TIMEFORMAT=$'\\nreal\\t%6lR\\nuser\\t%6lU\\nsys\\t%6lS'; "
 
 
 def parse_bash_time(text: str) -> float:
@@ -991,6 +1145,15 @@ def parse_bash_time(text: str) -> float:
         raise ValueError(f"{len(matches)} `real` lines in one timed run; the script times more than one command")
     minutes, seconds = matches[0]
     return int(minutes) * 60 + float(seconds)
+
+
+def parse_bash_cpu(text: str) -> dict[str, float]:
+    """The `user` and `sys` seconds beside a `real` line, keyed by name.
+
+    Recorded per run rather than read: a CPU-bound reading's user time moves
+    with the placement where its wall clock may not, which is what `M178`'s
+    sittings want beside the drift."""
+    return {name: int(m) * 60 + float(s) for name, m, s in CPU_TIME_RE.findall(text)}
 
 
 #: What the RSS wrapper prints, on stderr, beside bash's own `real` line.
@@ -1482,6 +1645,10 @@ def file_size(cfg: Config, path: Path, name: str) -> int:
     raise FileNotFoundError(path)
 
 
+#: The subdirectory of the tmpfs staging area staged binaries go in.
+STAGED_BIN_DIR = "bin"
+
+
 class Stager:
     """Generates inputs onto the SSD once, then copies them into tmpfs as each
     figure needs them, evicting whatever no remaining figure wants.
@@ -1764,9 +1931,11 @@ class Stager:
                 self.log(f"  removing {path}")
                 path.unlink()
             del self._staged[name]
-        # The caches a run writes into the staging directory go with it.
+        # The caches a run writes into the staging directory go with it, and
+        # so do the binaries a staged leg ran (`Session.stage_binary`).
         for leftover in self.cfg.warm_dir.glob("*.dtcache"):
             leftover.unlink(missing_ok=True)
+        shutil.rmtree(self.cfg.warm_dir / STAGED_BIN_DIR, ignore_errors=True)
 
     # -- profiling --------------------------------------------------------
 
@@ -2389,6 +2558,14 @@ DYNFILTER_FLAGS = {
 }
 #: The legs, in the table's column order, and the flag's value in each.
 DYNFILTER_LEGS = {"off": "false", "on": "true"}
+#: **The startup leg**: the builder as every leg runs it, then
+#: `datafusion-cli-pgdump` registering the dump and answering `STARTUP_SQL`
+#: under the timer, so what loading the program, its runtime and the
+#: registration cost a leg — and how much that varies — sits in each table
+#: beside the legs it is inside. Taken in each figure's own interleave rather
+#: than borrowed between the two.
+DYNFILTER_STARTUP = f"{DYNFILTER_FAMILY}startup"
+STARTUP_SQL = "SELECT 1"
 
 
 def dfcli_invocation(figure: str, name: str, leg: str, dump: str) -> tuple[list[str], list[str]]:
@@ -3370,6 +3547,19 @@ def _script(command: str) -> str:
             f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
             f"--schema-mode typed --where '{expr}' --statistics {used} {j} >/dev/null"
         )
+    if command == DYNFILTER_STARTUP:
+        # The builder and the registration exactly as a leg has them, and a
+        # query whose answer is read back outside the timer, so a startup that
+        # did not answer is refused rather than timed.
+        env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
+        argv = ["--dump", f"{DFCLI_CATALOG}=/dump.sql", "--format", "csv", "-q", "-c", STARTUP_SQL]
+        return (
+            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
+            f"{GATHER_STATISTICS} >/dev/null && "
+            f"time {dfcli_shell(env, DFCLI, argv)} "
+            ">/tmp/result.csv && "
+            "echo startup_answer=$(sed -n 2p /tmp/result.csv)"
+        )
     if command.startswith(DYNFILTER_FAMILY):
         # `dynamic-filter-join` and `-topk`. The builder is outside the timer,
         # as `statistics-pruning`'s is, and writes the cache beside the dump,
@@ -3553,6 +3743,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
         *dynfilter_shapes(),
+        DYNFILTER_STARTUP,
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
@@ -3630,6 +3821,27 @@ def _dfcli_partitions(script: str) -> set[str] | None:
         return None
     stated = _DFCLI_PARTITIONS.findall(script)
     return set(stated) if len(stated) == runs else set()
+
+
+def stated_threads(command: str) -> int | None:
+    """The most workers any program in a command shape states, which is what
+    `--pin-cpus` places it by, or `None` where one of them discovers its own.
+
+    Read off the script rather than declared beside the shape, so the count a
+    leg is placed by is the count it runs at. `dd` states none and is one
+    thread; the flagless family states none on purpose and stays unpinned,
+    its reading being what discovery resolves."""
+    if command in _NO_WORKERS:
+        return 1
+    if command.startswith(_NO_FLAGS):
+        return None
+    script = _script(command)
+    counts = [int(n) for n in re.findall(r"--(?:jobs|workers) (\d+)", script)]
+    partitions = _dfcli_partitions(script)
+    if partitions == set():
+        return None
+    counts += [int(n) for n in partitions or ()]
+    return max(counts) if counts else None
 
 
 #: One `pgdt parse` invocation inside a command shape's script, up to the next
@@ -3876,6 +4088,67 @@ class Session:
         #: names where the stamp does not speak for it (`marker_glibc`).
         self.places: dict[str, set[str]] = {}
         self.glibcs: dict[str, str] = {}
+        #: The arrangements every leg is taken under, and the one in force.
+        #: The first is the one `readings` and every table carry.
+        self.arms = cfg.arms
+        self.arm = self.arms[0]
+        #: Every arm's readings under the same keys as `readings`, kept only
+        #: where there is more than one arm (`raw.json`'s `arms`).
+        self.arm_readings: dict[str, dict[str, list[float]]] = {}
+        #: The machine's L3 groups, read only where a leg may be pinned.
+        self.groups: list[frozenset[int]] = (
+            l3_groups() if any(a.pinned for a in self.arms) else []
+        )
+        #: Where the harness was allowed to run when it started, which is
+        #: where it goes back to beside an unpinned leg.
+        self._harness_home = frozenset(os.sched_getaffinity(0))
+        self._harness_at: frozenset[int] | None = None
+        #: Each binary's tmpfs copy, made once a process (`stage_binary`).
+        self._staged_bins: dict[Path, Path] = {}
+
+    # -- placement ------------------------------------------------------------
+
+    def leg_cpus(self, spec: RunSpec) -> frozenset[int] | None:
+        """The CPUs this leg is pinned to under the arm in force, or `None`."""
+        if not self.arm.pinned:
+            return None
+        return placement(stated_threads(spec.command), self.groups)
+
+    def place_harness(self, cpus: frozenset[int]) -> None:
+        """Move every thread of this process — the sampler's included — and so
+        whatever it launches next, onto `cpus`. `sched_setaffinity` moves one
+        thread, so each is moved by its own id."""
+        if cpus == self._harness_at or self.cfg.dry_run:
+            return
+        for tid in os.listdir("/proc/self/task"):
+            try:
+                os.sched_setaffinity(int(tid), cpus)
+            except (ProcessLookupError, PermissionError):
+                continue
+        self._harness_at = cpus
+
+    def stage_binary(self, src: Path) -> Path:
+        """`src`'s copy on tmpfs, which a staged leg mounts in its place.
+
+        Copied once a process, after the harness's own build: a `drop_caches`
+        evicts a binary read off disk, so an unstaged cold leg loads it inside
+        the timer, and tmpfs is shmem, which it does not evict. Outside the
+        warm budget — a few hundred MiB against the tmpfs's slack — and removed
+        with the staged inputs (`Stager.cleanup`)."""
+        if src in self._staged_bins:
+            return self._staged_bins[src]
+        # Named by the path it came from as well as its own name: the
+        # instrument build and the register's are both called `pgdt`.
+        tag = hashlib.sha256(str(src.resolve()).encode()).hexdigest()[:12]
+        dst = self.cfg.warm_dir / STAGED_BIN_DIR / f"{tag}-{src.name}"
+        if self.cfg.dry_run:
+            self.log(f"  [dry-run] would stage {src} -> {dst}")
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            self.log(f"  staging {src} -> {dst}")
+            shutil.copy2(src, dst)
+        self._staged_bins[src] = dst
+        return dst
 
     def ran_in(self, figure: str, where: str) -> None:
         """Record that `figure`'s program runs in `where`, asking that place
@@ -3975,17 +4248,27 @@ class Session:
         self._last_killed = False
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
-        mounts = [f"{dump}:/dump.sql:ro"]
         image = self.image_for(spec)
+        bins: list[tuple[Path, str]] = []
         if spec.binary == "dfcli":
             # The second program, and `pgdt` beside it to build the cache it
             # reads, in the image it can run in.
-            mounts[:0] = [
-                f"{self.cfg.bin_pgdt}:/pgdt:ro",
-                f"{self.binary_path(spec.binary)}:{DFCLI}:ro",
-            ]
+            bins = [(self.cfg.bin_pgdt, "/pgdt"), (self.binary_path(spec.binary), DFCLI)]
         elif spec.binary != "none":
-            mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdt:ro")
+            bins = [(self.binary_path(spec.binary), "/pgdt")]
+        mounts = [
+            f"{self.stage_binary(path) if self.arm.staged else path}:{at}:ro"
+            for path, at in bins
+        ]
+        mounts.append(f"{dump}:/dump.sql:ro")
+        # A staged leg reads its binaries once before the timer, inside the
+        # container and off the path it will run them from.
+        preread = (
+            f"cat {' '.join(at for _, at in bins)} >/dev/null; "
+            if self.arm.staged and bins
+            else ""
+        )
+        cpus = self.leg_cpus(spec)
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
         # The instrument writes to a file rather than to a stream, so the leg
@@ -4015,6 +4298,8 @@ class Session:
             "--memory-swap",
             memory,
         ]
+        if cpus is not None:
+            argv += ["--cpuset-cpus", cpu_list(cpus)]
         for m in mounts:
             argv += ["-v", m]
         argv += env_argv
@@ -4023,7 +4308,14 @@ class Session:
         # `_script` so that what a figure records as its shape is exactly what
         # was measured, and so the oracle covers every shape by construction
         # rather than by thirty branches remembering to carry it.
-        argv += [image, "bash", "-c", _script(spec.command) + OOM_ORACLE]
+        # The report's format and a staged leg's untimed read go in front of
+        # it on the same terms: outside the shape, so neither is recorded as
+        # part of what was measured.
+        argv += [image, "bash", "-c", TIME_FORMAT + preread + _script(spec.command) + OOM_ORACLE]
+        # The harness beside a pinned leg goes to the other die, and back
+        # beside an unpinned one, before anything it launches for this run.
+        if self.groups:
+            self.place_harness(harness_cpus(self.groups) if cpus else self._harness_home)
 
         # Whether the cache is dropped is the regime's own declaration, not a
         # prefix on its name: the name and the staging area are two facts, and
@@ -4064,6 +4356,8 @@ class Session:
                     "result_first": "100",
                     "result_digest": hashlib.sha256(query.encode()).hexdigest(),
                 }
+                if spec.command == DYNFILTER_STARTUP:
+                    self._last_stdout = {"startup_answer": "1"}
             if spec.command.startswith(PRUNING_FAMILY):
                 # A stand-in of what the query's own notes say, for the same
                 # reason: the pruning table divides by them and refuses a
@@ -4183,6 +4477,7 @@ class Session:
                         "seconds_to_kill": _bound(parse_bash_time),
                         "oom_kill": oom,
                         "exit": proc.returncode,
+                        **self._arm_record(cpus),
                         "wall_including_container": round(time.time() - started, 3),
                         "telemetry": {},
                         "reported": self._last_stdout,
@@ -4224,6 +4519,9 @@ class Session:
                 # `None` where `memory.events` could not be read, which is a
                 # different answer and stays one (`parse_oom_kills`).
                 "oom_kill": oom,
+                # The CPU the timed command spent, beside its wall clock.
+                "cpu_seconds": parse_bash_cpu(proc.stderr),
+                **self._arm_record(cpus),
                 "wall_including_container": round(time.time() - started, 3),
                 "telemetry": telemetry,
                 "reported": self._last_stdout,
@@ -4241,6 +4539,17 @@ class Session:
         self.telemetry.append({"key": spec.key(self.figure_id), **telemetry})
         self._last_telemetry = telemetry
         return seconds
+
+    def _arm_record(self, cpus: frozenset[int] | None) -> dict:
+        """What a run's record says about the arrangement it was taken under.
+
+        `secondary_arm` marks a reading no table renders, so a reader of
+        `runs` — `censored_bounds` — takes only the first arm's."""
+        return {
+            "arm": self.arm.name,
+            "secondary_arm": self.arm != self.arms[0],
+            "cpuset": cpu_list(cpus) if cpus is not None else None,
+        }
 
     # -- sweeps -----------------------------------------------------------
 
@@ -4263,8 +4572,20 @@ class Session:
                 self.ran_in(figure, self.image_for(spec))
         for rep in range(reps):
             order = list(specs) if rep < (reps + 1) // 2 else list(reversed(specs))
-            for spec in order:
+            # Each leg under every arm in turn, the arm going first alternating
+            # rep by rep, so neither arm is always the warmer one.
+            arms = self.arms if rep % 2 == 0 else tuple(reversed(self.arms))
+            for spec, arm in ((spec, arm) for spec in order for arm in arms):
+                self.arm = arm
                 seconds = self.take(spec, rep)
+                if len(self.arms) > 1 and not self._last_killed:
+                    self.arm_readings.setdefault(arm.name, {}).setdefault(
+                        spec.key(figure), []
+                    ).append(seconds)
+                if arm != self.arms[0]:
+                    # A second arm's reading is `arm_readings`' alone: every
+                    # table renders the first arm.
+                    continue
                 if self._last_killed:
                     # Censored: recorded as a kill, never as a number. The RSS
                     # key is opened here so a leg whose every rep was killed
@@ -4318,18 +4639,19 @@ class Session:
         """
         for attempt in range(1, GATE_RETRIES + 1):
             seconds = self.time_run(spec)
+            label = spec.label if len(self.arms) == 1 else f"{spec.label} [{self.arm.name}]"
             if self._last_killed:
                 # A killed run is not a timing reading at all, so the
                 # contention gate has nothing to judge and retaking it would
                 # spend `GATE_RETRIES` runs reproducing the kill.
-                self.log(f"  rep{rep + 1} {spec.label}: **OOM-killed** — recorded, censored")
+                self.log(f"  rep{rep + 1} {label}: **OOM-killed** — recorded, censored")
                 return seconds
             verdict = contention_verdict(self._last_telemetry, spec.regime)
             if verdict is None:
-                self.log(f"  rep{rep + 1} {spec.label}: {seconds:.3f} s")
+                self.log(f"  rep{rep + 1} {label}: {seconds:.6f} s")
                 return seconds
             self.log(
-                f"  rep{rep + 1} {spec.label}: {seconds:.3f} s — DISCARDED, "
+                f"  rep{rep + 1} {label}: {seconds:.6f} s — DISCARDED, "
                 f"machine contended ({verdict}); attempt {attempt}/{GATE_RETRIES}"
             )
         raise RuntimeError(
@@ -4393,7 +4715,10 @@ class Session:
         return [
             (r.get("maxrss_bound_kib"), r.get("seconds_to_kill"))
             for r in self.records
-            if r.get("killed") and r.get("figure") == figure and r.get("spec") == want
+            if r.get("killed")
+            and not r.get("secondary_arm")
+            and r.get("figure") == figure
+            and r.get("spec") == want
         ]
 
     def has(self, figure: str, spec: RunSpec) -> bool:
@@ -8195,7 +8520,14 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
     """One dynamic-filter figure: each of `kind`'s queries, the producer's flag
     off and on, warm, and the `dd` floor."""
     specs = _dynfilter_specs(kind)
-    session.sweep(figure, specs, session.cfg.reps(6))
+    startup = RunSpec("dfcli", "dynfilter", DYNFILTER_STARTUP, "warm", "startup")
+    session.sweep(figure, [*specs, startup], session.cfg.reps(6))
+    answer = session.reported.get(startup.key(figure), {}).get("startup_answer")
+    if answer != "1":
+        raise RuntimeError(
+            f"{figure}: the startup leg answered {answer!r} to `{STARTUP_SQL}`, so it "
+            "timed something other than a startup"
+        )
     floor = RunSpec("none", "dynfilter", "dd", "warm", "dd floor dynfilter")
     session.sweep(figure, [floor], session.cfg.reps(3))
     prefix = f"{DYNFILTER_FAMILY}{kind}-"
@@ -8229,6 +8561,8 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         )
         for leg in DYNFILTER_LEGS:
             per_rep.append(f"- {label}, flag {leg}: {fmt_readings(walls[leg])}")
+    started = session.get(figure, startup)
+    per_rep.append(f"- startup, `{STARTUP_SQL}`: {fmt_readings(started)}")
     per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
     flag = DYNFILTER_FLAGS[kind]
     table = md_table(
@@ -8254,7 +8588,11 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         "`mimalloc`, in the "
         f"`{image_name(session.cfg.dfcli_image)}` image rather than "
         f"`{image_name(session.cfg.image)}`, whose glibc "
-        "is older than the one it was linked against. `dd` → `/dev/null` on the same file: "
+        "is older than the one it was linked against. Every leg's reading carries the "
+        "program's startup — loading it, starting its runtime and registering the dump — "
+        f"which a leg answering `{STARTUP_SQL}` over the same cache, taken in the same "
+        f"interleave, reads as {fmt_median_spread(started)}. "
+        "`dd` → `/dev/null` on the same file: "
         f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
         + "\n"
@@ -9508,6 +9846,139 @@ def drift_table(first: Path, second: Path) -> str:
     )
 
 
+def _fmt_fine(value: float) -> str:
+    """Seconds at the precision the arms reports read: to the microsecond,
+    which the second program's image reports (`TIME_FORMAT`)."""
+    return f"{value:.6f}"
+
+
+def relative_spread(values: Sequence[float]) -> float:
+    """A leg's spread within one sitting, as a percentage of its median."""
+    lo, hi = spread(values)
+    return (hi - lo) / median(values) * 100
+
+
+def _arm_readings(raw: dict, which: str) -> tuple[list[str], dict[str, dict[str, list[float]]]]:
+    arms = raw.get("arms")
+    if not arms or len(arms.get("names", ())) < 2:
+        raise ValueError(
+            f"{which} took one arm, so there is nothing to set beside it: take it with "
+            "`--pin-cpus alternate` or `--stage-binaries alternate`"
+        )
+    return arms["names"], arms["readings"]
+
+
+def _shared_keys(*tables: Mapping[str, Sequence[float]]) -> list[str]:
+    keys = set(tables[0])
+    for table in tables[1:]:
+        keys &= set(table)
+    return sorted(k for k in keys if all(table[k] for table in tables))
+
+
+def arms_table(raw: dict) -> str:
+    """One sitting's arms set beside each other, reading by reading: each
+    arm's median, its spread within the sitting, and each later arm's move
+    against the first.
+
+    What it prices is a term both arms' readings share every minute of the
+    machine with, which is why `alternate` takes them leg by leg in one
+    sitting — the staged cold figure's Δ is what staging removes from a cold
+    absolute. What it cannot price is drift, which only `--drift` across two
+    sittings reads."""
+    names, readings = _arm_readings(raw, "this sitting")
+    keys = _shared_keys(*(readings.get(n, {}) for n in names))
+    if not keys:
+        raise ValueError("the arms share no reading")
+    first = names[0]
+    rows, wider = [], {n: 0 for n in names[1:]}
+    moves: dict[str, list[float]] = {n: [] for n in names[1:]}
+    for key in keys:
+        figure, _, reading = key.partition("/")
+        row = [figure, f"`{reading}`"]
+        for n in names:
+            vals = readings[n][key]
+            lo, hi = spread(vals)
+            row.append(
+                f"{_fmt_fine(median(vals))} ({_fmt_fine(lo)}–{_fmt_fine(hi)}, "
+                f"{relative_spread(vals):.1f}%)"
+            )
+        base = median(readings[first][key])
+        for n in names[1:]:
+            pct = (median(readings[n][key]) - base) / base * 100
+            moves[n].append(pct)
+            row.append(f"{pct:+.2f}%")
+            if relative_spread(readings[n][key]) > relative_spread(readings[first][key]):
+                wider[n] += 1
+        rows.append(row)
+    table = md_table(
+        ["Figure", "Reading", *(f"{n}: median (range, spread)" for n in names),
+         *(f"{n} against {first}" for n in names[1:])],
+        rows,
+    )
+    summary = "".join(
+        f"\n- **{n}** against **{first}**: median move {median(moves[n]):+.2f}%, "
+        f"range {min(moves[n]):+.2f}% to {max(moves[n]):+.2f}%; spread wider than "
+        f"{first}'s on {wider[n]} of {len(keys)} readings."
+        for n in names[1:]
+    )
+    return f"{table}\n\nCommit `{raw['commit']}`, {raw['date']}, {len(keys)} readings.\n{summary}\n"
+
+
+def arm_drift_table(a: dict, b: dict) -> str:
+    """Two sittings' arms, each differenced across the pair as
+    `drift_table` differences one.
+
+    **The criterion it is read against is `M178`'s, written before any
+    sitting** (`docs/status/history/2026-09-28.md`): pinning is adopted only
+    if its median absolute move between sittings is **at most half** the
+    unpinned arm's, over the pairs of three sittings two hours apart, **and no
+    leg's spread widens** — a pinned leg whose spread within a sitting exceeds
+    the unpinned leg's in that same sitting counts against it. Either half
+    failing refutes it; the table prints both, and the ratio, rather than
+    deciding over pairs it sees one of."""
+    names_a, ra = _arm_readings(a, "the first sitting")
+    names_b, rb = _arm_readings(b, "the second sitting")
+    names = [n for n in names_a if n in names_b]
+    if len(names) < 2:
+        raise ValueError("the two sittings share fewer than two arms")
+    first = names[0]
+    rows, drift = [], {}
+    for n in names:
+        keys = _shared_keys(ra.get(n, {}), rb.get(n, {}))
+        deltas = [
+            abs((median(rb[n][k]) - median(ra[n][k])) / median(ra[n][k]) * 100) for k in keys
+        ]
+        if not deltas:
+            raise ValueError(f"arm {n} shares no reading across the two sittings")
+        drift[n] = median(deltas)
+        rows.append([n, str(len(keys)), f"**{median(deltas):.2f}%**", f"{max(deltas):.2f}%"])
+    table = md_table(["Arm", "Readings", "Median absolute move", "Largest"], rows)
+    lines = []
+    for n in names[1:]:
+        ratio = drift[n] / drift[first] if drift[first] else float("inf")
+        wider = []
+        for which, raw in (("sitting 1", ra), ("sitting 2", rb)):
+            keys = _shared_keys(raw.get(first, {}), raw.get(n, {}))
+            count = sum(
+                relative_spread(raw[n][k]) > relative_spread(raw[first][k]) for k in keys
+            )
+            wider.append(f"{count} of {len(keys)} in {which}")
+        lines.append(
+            f"- **{n}**: its drift is {ratio:.2f}× **{first}**'s (at most 0.50 is the "
+            f"criterion); legs whose spread is wider than {first}'s: {', '.join(wider)} "
+            "(none is the criterion)."
+        )
+    return (
+        f"{table}\n\nSittings at `{a['commit']}` ({a['date']}) and `{b['commit']}` "
+        f"({b['date']}).\n\n" + "\n".join(lines) + "\n"
+    )
+
+
+def cmd_arms(run_dir: str) -> int:
+    print(arms_table(json.loads((Path(run_dir) / "raw.json").read_text())))
+    return 0
+
+
 def cmd_drift(first: str, second: str) -> int:
     fig = ALL_BY_ID["session-drift"]
     # A derived figure is computed across two sweeps of one commit, and that
@@ -9533,6 +10004,10 @@ def cmd_drift(first: str, second: str) -> int:
     print(f"## {fig.section}\n")
     print(figure_marker(fig.id, sitting, reproduce="--drift <sweep> <sweep>", glibc=glibc) + "\n")
     print(drift_table(Path(first) / "raw.json", Path(second) / "raw.json"))
+    # A pair of experiment sittings is read arm by arm as well; `drift_table`
+    # above is the first arm's, which is what every table renders.
+    if all(len(raw.get("arms", {}).get("names", ())) > 1 for raw in raws):
+        print(arm_drift_table(*raws))
     return 0
 
 
@@ -10482,6 +10957,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         + ("" if selected_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
+    if len(cfg.arms) > 1 or cfg.arms[0] != Arm():
+        log(
+            "arms: " + ", ".join(a.name for a in cfg.arms)
+            + (" — each leg taken under each in turn; tables render the first" if len(cfg.arms) > 1 else "")
+        )
     unpublishable = cfg.unpublishable_reason
     if unpublishable:
         log(
@@ -10636,6 +11116,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     parts = [f"{heading}{markers[fid]}\n\n{tail}" for fid, heading, tail in rendered]
 
     stager.cleanup()
+    if session.groups:
+        session.place_harness(session._harness_home)
     if not cfg.dry_run:
         session.sampler.stop()
     if governor is not None:
@@ -10740,6 +11222,19 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "reported": session.reported,
                 "instrument": session.instrument,
                 "telemetry": session.telemetry,
+                # Every arm's readings, where a leg was taken under more than
+                # one; `readings` above is the first arm's (`Arm`).
+                **(
+                    {
+                        "arms": {
+                            "primary": cfg.arms[0].name,
+                            "names": [a.name for a in cfg.arms],
+                            "readings": session.arm_readings,
+                        }
+                    }
+                    if len(cfg.arms) > 1
+                    else {}
+                ),
                 "governor": {
                     "requested": SWEEP_GOVERNOR if cfg.pin_governor else None,
                     "pinned": bool(governor and governor.ok),
@@ -12239,7 +12734,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--drift",
         nargs=2,
         metavar=("SWEEP", "SWEEP"),
-        help="two runs/measure-* directories: emit the session-drift table across them",
+        help="two runs/measure-* directories: emit the session-drift table across them, "
+        "and each arm's drift where both took more than one",
+    )
+    parser.add_argument(
+        "--arms",
+        metavar="RUN_DIR",
+        help="one runs/measure-* directory taken under more than one arm: set its arms' "
+        "readings beside each other",
     )
     parser.add_argument(
         "--koji-recipe",
@@ -12280,6 +12782,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"pin every CPU to the {SWEEP_GOVERNOR} governor for the sweep and restore it "
         "afterwards; an apparatus change, and a measured no-op on amd-pstate-epp",
     )
+    parser.add_argument(
+        "--pin-cpus",
+        choices=ARM_CHOICES,
+        help="place each leg on one L3 group, or two, by the workers it states, and the "
+        "harness on the other die; `alternate` takes every leg pinned and unpinned in turn. "
+        "Not adopted, so anything but `off` is unpublishable",
+    )
+    parser.add_argument(
+        "--stage-binaries",
+        choices=ARM_CHOICES,
+        help="run the timed binaries from tmpfs, read once untimed before each run; "
+        "`alternate` takes every leg staged and unstaged in turn. Not adopted, so "
+        "anything but `off` is unpublishable",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
@@ -12287,6 +12803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.drift:
         return cmd_drift(*args.drift)
+    if args.arms:
+        return cmd_arms(args.arms)
     if args.koji_recipe:
         return cmd_koji(args.wrap, args.koji_jobs)
     if args.profile_recipe:
@@ -12326,7 +12844,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         keep_warm=args.keep_warm,
         alone=args.alone,
         pin_governor=args.pin_governor or Config().pin_governor,
+        pin_cpus=args.pin_cpus or Config().pin_cpus,
+        stage_binaries=args.stage_binaries or Config().stage_binaries,
     )
+    try:
+        arms = cfg.arms
+    except ValueError as exc:
+        parser.error(str(exc))
+    if any(a.pinned for a in arms):
+        problem = pin_topology_problem(l3_groups())
+        if problem:
+            parser.error(problem)
     figures = resolve_selection(ids, alone=args.alone)
     # A sitting short of the sweep publishes outside the session stamp, which
     # only a figure standing in no borrow edge may do. Asked here, before the

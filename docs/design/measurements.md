@@ -81,8 +81,9 @@ Eighteen standing rules for reading anything below:
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
   brace-free control is **0.457 s** timed by the container's own shell. So the
-  timed command is `bash -c 'time /pgdt …'`, whose
-  timer resolves to 1 ms. This does not license running a figure outside the
+  timed command is `bash -c 'time /pgdt …'`, asked for six decimals and user
+  and sys beside them (`measure.TIME_FORMAT`): the register's image's bash
+  5.2 resolves 1 ms and the second program's 5.3 a microsecond. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
 - **A performance figure is taken with the default `glibc` build, in a glibc
@@ -954,6 +955,16 @@ re-sweep in exchange for nothing measurable here. It is kept rather than
 deleted because the reasoning is machine-specific: a box on `acpi-cpufreq`
 with a genuine `ondemand` governor would show exactly the effect this was
 written for.
+
+**Pinning a leg to L3 groups and staging the binaries on tmpfs are an
+experiment's arms, not the apparatus.** `measure.py --pin-cpus` and
+`--stage-binaries` are off, any other value marks a sitting unpublishable, and
+`alternate` takes every leg under both arrangements in turn: the first arm is
+what the tables render, and every arm's readings go to `raw.json`'s `arms`,
+read by `--arms` within a sitting and by `--drift` across two. Whether either
+is adopted is `M178`'s sittings' to decide
+([`../status/history/2026-09-28.md`](../status/history/2026-09-28.md), "`M178`:
+whether pinning to an L3 group cuts drift, settled with the maintainer").
 
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the

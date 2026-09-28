@@ -119,3 +119,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`M178`'s pinned `datafusion-cli-pgdump` leg runs 6 runtime workers
+  against the unpinned leg's 24.** The call: `measure.stated_threads` places
+  a dynamic-filter leg by what it states — `target_partitions` at
+  `SWEEP_JOBS` — so it is pinned to one L3 group, and `#[tokio::main]` then
+  sizes its runtime off the cpuset (`nproc` 6 in its image). Taken because the
+  admitting entry names the dynamic-filter figures as experiment legs and
+  places by thread count, and those legs state one. But the same entry keeps
+  "every leg discovering its count" unpinned, and the runtime's size is
+  discovered, so the two arms of those legs differ by a thread pool as well as
+  a placement. Reconsidering means one of: state `TOKIO_WORKER_THREADS` on
+  every run of the second program so both arms start the same pool, which
+  changes the unpinned leg's shape too; or keep those legs unpinned, leaving
+  the experiment's CPU-bound legs to `pgdt`. Either lands before the first
+  sitting, which none has yet.

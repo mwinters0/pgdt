@@ -7662,3 +7662,212 @@ class TimeRunHandlesAKill(unittest.TestCase):
         self.assertFalse(session._last_killed)
         self.assertAlmostEqual(seconds, 0.012)
         self.assertEqual(session.records[0]["oom_kill"], 0)
+
+
+class Arms(unittest.TestCase):
+    """`--pin-cpus` and `--stage-binaries` (`M178`): an arrangement a leg is
+    placed under, off by default, and read against the recorded one leg by leg.
+
+    Each way the experiment could read something other than what it claims is
+    held here: a leg placed by a count it does not run at, a second arm leaking
+    into a rendered table, an arm that is not the recorded apparatus passing as
+    publishable, and the untimed additions reaching the timer."""
+
+    # This machine's topology, as sysfs spells it: four L3 groups of six.
+    GROUPS = [
+        measure.parse_cpu_list(t)
+        for t in ("0-2,12-14", "3-5,15-17", "6-8,18-20", "9-11,21-23")
+    ]
+    TIMED = "\nreal\t0m0.012345s\nuser\t0m0.008000s\nsys\t0m0.004000s\n"
+    EVENTS = "oom_kill 0\n"
+
+    def test_cpu_lists_round_trip(self):
+        self.assertEqual(measure.parse_cpu_list("0-2,12-14"), frozenset({0, 1, 2, 12, 13, 14}))
+        self.assertEqual(measure.parse_cpu_list("5"), frozenset({5}))
+        self.assertEqual(measure.cpu_list({3, 4, 5, 15, 16, 17}), "3-5,15-17")
+        self.assertEqual(measure.cpu_list({1, 3}), "1,3")
+
+    def test_l3_groups_are_read_off_sysfs_by_lowest_cpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for cpu, shared in ((0, "0,2"), (1, "1,3"), (2, "0,2"), (3, "1,3")):
+                d = root / f"cpu{cpu}/cache/index3"
+                d.mkdir(parents=True)
+                (d / "shared_cpu_list").write_text(shared + "\n")
+            self.assertEqual(measure.l3_groups(root), [frozenset({0, 2}), frozenset({1, 3})])
+
+    def test_the_placement_follows_the_stated_count(self):
+        small, large = self.GROUPS[1], self.GROUPS[0] | self.GROUPS[1]
+        self.assertEqual(measure.placement(1, self.GROUPS), small)
+        self.assertEqual(measure.placement(6, self.GROUPS), small)
+        self.assertEqual(measure.placement(7, self.GROUPS), large)
+        self.assertEqual(measure.placement(12, self.GROUPS), large)
+        # The whole machine's subject stays on the whole machine.
+        self.assertIsNone(measure.placement(16, self.GROUPS))
+        self.assertIsNone(measure.placement(None, self.GROUPS))
+        # The harness never shares a group with a pinned leg.
+        self.assertFalse(measure.harness_cpus(self.GROUPS) & large)
+
+    def test_another_topology_is_refused_rather_than_guessed(self):
+        self.assertIsNone(measure.pin_topology_problem(self.GROUPS))
+        self.assertIn("4 equal L3 groups", measure.pin_topology_problem(self.GROUPS[:2]))
+        uneven = [*self.GROUPS[:3], frozenset({9})]
+        self.assertIsNotNone(measure.pin_topology_problem(uneven))
+
+    def test_a_leg_is_placed_by_the_count_its_script_states(self):
+        self.assertEqual(measure.stated_threads("dd"), 1)
+        self.assertEqual(measure.stated_threads("parse"), measure.SWEEP_JOBS)
+        self.assertEqual(measure.stated_threads("parse-jobs-24"), 24)
+        self.assertEqual(measure.stated_threads("decode-16"), 16)
+        self.assertEqual(measure.stated_threads(measure.DYNFILTER_STARTUP), measure.SWEEP_JOBS)
+        for command in measure.dynfilter_shapes():
+            self.assertEqual(measure.stated_threads(command), measure.SWEEP_JOBS)
+        # Discovery stays unpinned: a cpuset would narrow what it reads.
+        flagless = next(c for c in measure.command_shapes() if c.startswith(measure.RESERVE_FLAGLESS))
+        self.assertIsNone(measure.stated_threads(flagless))
+        # Every shape resolves, so no leg reaches a sitting unplaceable.
+        for command in measure.command_shapes():
+            measure.stated_threads(command)
+
+    def test_the_recorded_apparatus_is_the_default_and_the_only_publishable_one(self):
+        cfg = measure.Config()
+        self.assertEqual(cfg.arms, (measure.Arm(),))
+        self.assertTrue(cfg.publishable)
+        for pin, stage in (("on", "off"), ("off", "on"), ("alternate", "off"), ("off", "alternate")):
+            with self.subTest(pin=pin, stage=stage):
+                self.assertFalse(measure.Config(pin_cpus=pin, stage_binaries=stage).publishable)
+        both = measure.Config(pin_cpus="alternate", stage_binaries="on").arms
+        self.assertEqual([a.name for a in both], ["unpinned+staged", "pinned+staged"])
+        with self.assertRaises(ValueError):
+            measure.Config(pin_cpus="sometimes").arms
+
+    def test_the_report_format_reads_to_the_microsecond_outside_the_shape(self):
+        self.assertAlmostEqual(measure.parse_bash_time(self.TIMED), 0.012345)
+        self.assertEqual(measure.parse_bash_cpu(self.TIMED), {"user": 0.008, "sys": 0.004})
+        # The default's shape, which `TIME_RE` reads, at six places.
+        self.assertIn("%6lR", measure.TIME_FORMAT)
+        self.assertNotIn("time ", measure.TIME_FORMAT)
+
+    def _session(self, **cfg):
+        config = measure.Config(**cfg)
+        with unittest.mock.patch.object(measure, "l3_groups", return_value=self.GROUPS):
+            session = measure.Session(config, measure.Stager(config, lambda _m: None), lambda _m: None)
+        session.figure_id = "dynamic-filter-topk"
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path(f"/bin/{which}")
+        session.stage_binary = lambda src: Path("/dev/shm/pgdt/bin") / src.name
+        session.place_harness = lambda cpus: setattr(session, "placed", cpus)
+        return session
+
+    def _argv(self, session, spec):
+        proc = subprocess.CompletedProcess([], 0, stdout="startup_answer=1\n", stderr=self.TIMED + self.EVENTS)
+        with unittest.mock.patch.object(measure.subprocess, "run", return_value=proc) as ran:
+            session.time_run(spec)
+        return ran.call_args[0][0]
+
+    def test_a_pinned_staged_leg_mounts_from_tmpfs_and_reads_it_before_the_timer(self):
+        session = self._session(pin_cpus="on", stage_binaries="on")
+        spec = measure.RunSpec("dfcli", "dynfilter", measure.DYNFILTER_STARTUP, "warm", "")
+        argv = self._argv(session, spec)
+        self.assertEqual(argv[argv.index("--cpuset-cpus") + 1], "3-5,15-17")
+        self.assertIn("/dev/shm/pgdt/bin/dfcli:/datafusion-cli-pgdump:ro", argv)
+        script = argv[-1]
+        self.assertTrue(script.startswith(measure.TIME_FORMAT + "cat /pgdt /datafusion-cli-pgdump >/dev/null; "))
+        self.assertLess(script.index("cat /pgdt"), script.index("time "))
+        self.assertEqual(session.placed, measure.harness_cpus(self.GROUPS))
+        record = session.records[-1]
+        self.assertEqual((record["arm"], record["cpuset"]), ("pinned+staged", "3-5,15-17"))
+        self.assertEqual(record["cpu_seconds"], {"user": 0.008, "sys": 0.004})
+
+    def test_the_recorded_apparatus_adds_nothing_but_the_report_format(self):
+        session = self._session()
+        spec = measure.RunSpec("pgdt", "control", "parse", "warm", "")
+        argv = self._argv(session, spec)
+        self.assertNotIn("--cpuset-cpus", argv)
+        self.assertIn("/bin/pgdt:/pgdt:ro", argv)
+        self.assertEqual(
+            argv[-1], measure.TIME_FORMAT + measure._script("parse") + measure.OOM_ORACLE
+        )
+        self.assertFalse(hasattr(session, "placed"))
+
+    def test_an_unpinned_leg_under_the_pinned_arm_sends_the_harness_home(self):
+        session = self._session(pin_cpus="on")
+        argv = self._argv(session, measure.RunSpec("pgdt", "control", "parse-jobs-24", "warm", ""))
+        self.assertNotIn("--cpuset-cpus", argv)
+        self.assertEqual(session.placed, session._harness_home)
+
+    def test_alternating_arms_file_the_second_arm_apart_from_the_tables(self):
+        session = self._session(pin_cpus="alternate")
+        taken = []
+
+        def take(spec, rep):
+            taken.append((rep, session.arm.name))
+            session._last_killed = False
+            session._last_stdout = {}
+            session._last_instrument = {}
+            session._last_rss = None
+            return 1.0 if session.arm.pinned else 2.0
+
+        session.take = take
+        spec = measure.RunSpec("pgdt", "control", "parse", "warm", "")
+        session.sweep("f", [spec], 2)
+        # Each rep takes the leg under both arms, the first arm alternating.
+        self.assertEqual(
+            taken,
+            [(0, "unpinned+unstaged"), (0, "pinned+unstaged"),
+             (1, "pinned+unstaged"), (1, "unpinned+unstaged")],
+        )
+        key = spec.key("f")
+        self.assertEqual(session.readings[key], [2.0, 2.0])
+        self.assertEqual(session.arm_readings["pinned+unstaged"][key], [1.0, 1.0])
+        self.assertEqual(session.arm_readings["unpinned+unstaged"][key], [2.0, 2.0])
+
+    def _raw(self, first, second, commit="abc"):
+        return {
+            "commit": commit,
+            "date": "2026-09-28",
+            "arms": {
+                "primary": "unpinned+staged",
+                "names": ["unpinned+staged", "pinned+staged"],
+                "readings": {"unpinned+staged": first, "pinned+staged": second},
+            },
+        }
+
+    def test_one_sitting_sets_its_arms_beside_each_other(self):
+        raw = self._raw({"f/a": [1.0, 1.1, 0.9]}, {"f/a": [0.5, 0.5, 0.5]})
+        text = measure.arms_table(raw)
+        self.assertIn("-50.00%", text)
+        self.assertIn("spread wider than unpinned+staged's on 0 of 1", text)
+        with self.assertRaises(ValueError):
+            measure.arms_table({"commit": "abc", "date": "d"})
+
+    def test_two_sittings_price_each_arms_drift_against_the_criterion(self):
+        a = self._raw({"f/a": [1.0], "f/b": [1.0]}, {"f/a": [1.0], "f/b": [1.0]})
+        b = self._raw({"f/a": [1.10], "f/b": [0.90]}, {"f/a": [1.04], "f/b": [0.96]})
+        text = measure.arm_drift_table(a, b)
+        self.assertIn("**10.00%**", text)
+        self.assertIn("**4.00%**", text)
+        self.assertIn("0.40×", text)
+
+    def test_a_second_arm_never_reaches_a_censored_bound(self):
+        session = self._session()
+        spec = measure.RunSpec("pgdt", "control", "parse", "warm", "")
+        want = dataclasses.asdict(spec)
+        session.records = [
+            {"killed": True, "figure": "f", "spec": want, "maxrss_bound_kib": 1,
+             "seconds_to_kill": 1.0, "secondary_arm": False},
+            {"killed": True, "figure": "f", "spec": want, "maxrss_bound_kib": 2,
+             "seconds_to_kill": 2.0, "secondary_arm": True},
+        ]
+        self.assertEqual(session.censored_bounds("f", spec), [(1, 1.0)])
+
+    def test_the_startup_leg_answers_before_its_table_does(self):
+        script = measure._script(measure.DYNFILTER_STARTUP)
+        builder, _, timed = script.partition(" && ")
+        self.assertTrue(builder.startswith("/pgdt parse --source /dump.sql "))
+        self.assertIn(measure.GATHER_STATISTICS, builder)
+        self.assertTrue(timed.startswith(f"time {measure.DFCLI_PARTITIONS}={measure.SWEEP_JOBS} "))
+        self.assertIn(f"'{measure.STARTUP_SQL}'", timed)
+        self.assertEqual(script.count("time "), 1)
+        self.assertIn(measure.DYNFILTER_STARTUP, measure.command_shapes())
+        self.assertEqual(measure.statistics_flag_problems(), [])
