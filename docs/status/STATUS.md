@@ -119,11 +119,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **27.9 is ticked with row evaluation still on in the tree; 27.10 turns it
-  off with its switch.** The criterion failed, and the spec's item 9 says row
-  evaluation then "goes off", while item 10 is "a `pgdump.*` setting stating
-  it, off by default". Turning it off in 27.9 with no setting would leave
-  the unclustered join's win out of every user's reach for a round, and a
-  default and the switch overriding it are one review. Reconsidering means
-  27.9 unticked until no row is evaluated by default, and 27.10 adding a
-  switch to a path already off.

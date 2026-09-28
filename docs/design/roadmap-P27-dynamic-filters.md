@@ -196,7 +196,8 @@ path on its own**, so each slice's mistakes show in the next one's checks:
    its legs' overlapping spreads**; failing that it goes off and "D93"
    reopens, a `pgdump.*` switch with it.
 10. **The switch, taken only if 27.9 turns row evaluation off**: a
-    `pgdump.*` setting stating it, off by default, with its manual entry,
+    `pgdump.*` setting stating it, off by default — the default turned off
+    here with its switch, not in 27.9 before it — with its manual entry,
     "D93" rewritten, and the flags-on-against-off result-equality harness run
     with it on, so the path off by default is still checked. It states
     intent, which roadmap.md's "Two tunables fit pgdt to hardware" does not
