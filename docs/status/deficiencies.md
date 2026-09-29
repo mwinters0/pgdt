@@ -102,8 +102,8 @@ than reading as a phase nobody has sliced.
   on an `interval` — a time part past `2562047:47:16.854775807`, so
   materializing one raises `Error::FieldDecode`, and whether a DataFusion query
   reaches it can depend on how its partitions run: the same query may answer on
-  one run and refuse on the next. **(b) owned by P28**, whose two modes, chosen
-  at query time, never fail a read. Detail: `pgdump_query/src/decode.rs`.
+  one run and refuse on the next. **(b) owned by P28**, whose three modes never
+  depend on which rows a read reached; slice 28.7 closes it. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
   warm and most of a cold NVMe scan's time (`measurements.md`,

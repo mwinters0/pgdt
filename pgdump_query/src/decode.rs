@@ -345,7 +345,8 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// DataFusion query need not read every row — a `LIMIT` one partition meets
 /// first, a dynamic filter another partition tightened — so whether it
 /// reaches the value, and refuses, can differ from run to run. **(b) owned by
-/// P28**, whose modes read the value as NULL or its column as text.
+/// P28**, whose modes read the value as NULL, its column as text, or refuse
+/// wherever the query could reach it.
 /// **A null makes every NULL count a floor**, each being `\N`s counted off
 /// the text: pruning's `IS NULL` truths (`ResolvedTerm::truths`) and the
 /// provider's `Exact` `COUNT(<column>)` would both answer wrongly unless

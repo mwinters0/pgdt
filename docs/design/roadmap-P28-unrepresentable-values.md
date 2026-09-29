@@ -1,0 +1,284 @@
+# P28 — Unrepresentable values
+
+What this phase will do and why; how it lands is its slices'. Progress is
+`STATUS.md`'s checklist, never this file. **Its first slice exists to produce
+evidence** — the harness that holds every query to one outcome — so slice
+numbers after it are allocation order as much as schedule. Grilled 2026-09-29.
+
+## Premise
+
+**A query's outcome never depends on which rows it happened to read.** A typed
+column holding a value its Arrow type cannot hold refuses wherever a read
+reaches that value (`KD8`), and a DataFusion query need not read every row —
+a `LIMIT` one partition meets first, a dynamic filter another partition
+tightened, a row a dynamic filter's state rejects before it decodes
+(`decisions.md`, "D93") — so the same query answers on one run and refuses on
+the next ([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md),
+"A `KD8` refusal decided by timing is a defect, and P28's").
+
+## Scope
+
+**How an unrepresentable value is handled is the user's choice, among three
+modes, and every map supports all three.** The choice is made at query time;
+`parse` records what each mode needs whatever it was asked to gather, since
+the mode is chosen after the cache is written.
+
+- **Typed, the default**: the column keeps the type the ADBC floor sets ("D38"), and an
+  unrepresentable value is read as NULL. Correct type, value lost; such
+  values are rare in real dumps, which is why it is the default.
+- **Untyped**: a column holding such a value is read as `Utf8View`, each value
+  its text. Correct value, type wider than the floor.
+- **Refuse**: today's behaviour, both type and value kept correct at the cost
+  of the answer — made deterministic, so it no longer depends on which rows a
+  read reached.
+
+**An unrepresentable value is one PostgreSQL accepts for the declared type
+and the column's Arrow type cannot hold**, one category the three modes treat
+alike: `±infinity` on a `date`, `timestamp`, `timestamptz` or `interval`,
+`NaN` on a `numeric(p,s)`, and an `interval` time part past Arrow's range, no
+special case among them. **Text that does not parse as its type is not one**:
+it is outside the input contract (`roadmap.md`, "The input contract is valid
+PostgreSQL, not `pg_dump`'s output") and refuses in every mode.
+
+**Under the typed mode the value is NULL for every purpose**, as though the
+dump held one: a pushed filter evaluates it in three-valued logic and
+`IS NULL` matches it, statistics' NULL counts include it and their bounds
+exclude it, `COUNT(<column>)` does not count it — so a pushed filter answered
+`Exact` ("D88") and DataFusion's own evaluation keep the same rows. Under the
+other two a filter keeps PostgreSQL's order, as today ("D56").
+
+**The refuse mode refuses at planning, by column**: a query materializing a
+column — projecting it, or handing DataFusion an expression over it — refuses
+wherever the map says the table holds such a value in it, in every block,
+before a row is read. A column read only by a filter the library answers is
+not materialized, its text compared in PostgreSQL's order. Over the groups a
+static filter keeps is refused: which survive depends on statistics, and
+statistics never change an answer. So `pgdt query` refuses a query whose
+filter excludes every such row, which it answers today. The refusal names the
+column and its count, and the other two modes.
+
+**Each block counts, per column, the values no Arrow type of the column's
+could hold, beside the array-shape census** ("D35"): a lexical test on the
+still-escaped bytes — exactly `infinity`, `-infinity` or `NaN`, or an hour
+part past the `interval` bound — never a decode, type-blind as the census
+is, and consulted only where the resolved type cannot hold the value. So it
+is not billed as a statistic, and a declined block ("D85") and `KD33`'s tail
+carry it.
+
+**`pgdt` serves two uses, named the *metadata* level and the *data*
+level**: information about a dump, and queries over it. The metadata level
+records a block's location and row count and nothing drawn from its data —
+**no census, no count, no statistics** — so it decodes and tests no field; a
+user choosing it has opted out of the query affordances, the correctness a
+census buys among them. Today's census under `none` ("D35", "every mapping
+pass censuses") is changed here, keeping the code the count joins coherent.
+**A table at the data level is censused and counted in every column**, the two
+being query affordances rather than statistics: a column selection governs
+only what is billed as one.
+
+**One option states the level, `--statistics-level`, replacing
+`--statistics all|none|<list>`**: a default for every table, first, then
+overrides — `data`, the default; `metadata`; `metadata,public.foo=data`,
+every table at the metadata level but `public.foo`; `metadata,public.foo.bar=data`,
+`public.foo` at the data level with statistics on `bar` alone. A target is
+spelled as today's selection spells one (`schema.table`, a bare `table`,
+`schema.table.column`). A data-level table without statistics is not offered,
+`all` and `none` going as a separate axis. Column opt-in is kept because it
+exists and serves wide tables, to be reconsidered before 1.0 against the
+simplicity of "data means every column"; table-level opt-in is expected to be
+the more used. The library's `StatisticsSelection` becomes the same shape, a
+default and overrides, "D77"'s reasoning intact. Re-parsing under a wider
+level re-reads only the blocks lacking what is now asked, as `--statistics`
+does, and never replaces anything.
+
+**The most specific entry wins, and every column has a level**: its own
+entry's, else its table's, else the default — a bare `table` less specific than
+`schema.table`, the order after the default immaterial. A table is censused and
+counted where any of its columns is at the data level, and a column gathers
+statistics where it is. So `data,public.big=metadata` opts a table out,
+`data,public.foo.blob=metadata` keeps `foo` at the data level with statistics
+on every column but `blob`, and `metadata,public.foo=data,public.foo.bar=metadata`
+says the same the other way. Two entries of one specificity naming the same
+column are refused; an entry restating what it would inherit is not.
+
+**A query over a table the map holds at the metadata level has a cold query's
+semantics**: `pgdt query` and the library map that table's blocks at the data
+level as a cold query does — census and count, no statistics — hold them for
+that query alone and write nothing, the cache keeping the level `parse` gave
+it; the cost is a second read of the table. Every mapping pass a query makes
+censuses and counts, so opting out at `parse` costs time, never correctness.
+The provider refuses, as it refuses anything but a complete map, naming the
+`parse` that puts the table at the data level. Refused: a typed query refusing
+at planning; degrading, which leaves arrays and the modes to timing. Without a
+census an array column keeps its DDL's one-level `List`
+(`resolve::retype_from_census`) and a deeper value refuses where a read reaches
+it, the defect this phase removes. `--schema-mode strings` needs neither, and
+`info` reports each table's level.
+
+**The mode is one option, stated where a dump is opened**, the provider
+fixing a table's schema when it builds it: `QueryOptions::unrepresentable`
+(`Null`, the default, `Text`, `Refuse`), `pgdt --unrepresentable
+null|text|refuse`, `PgDumpOptions`, and in the shell a `pgdump.unrepresentable`
+table option beside `pgdump.schema_mode` and a `--dump` suffix beside
+`:strings`. It is apart from `--schema-mode`, which is about ignoring the DDL,
+and moot under `strings`. The library's refusal names the modes, not any front
+end's flag.
+
+**The typed mode warns of a property of the table, never of the run**: once
+per materialized column holding such a value, at planning, a `Finding`
+through the library's `DiagnosticSink` as a collation note is — "`<table>.<col>`
+holds N values `<type>` cannot hold, read as NULL", naming the predicate term
+below. The count is the map's; what a run skipped depends on a `LIMIT` or a
+dynamic filter, so it is never stated. `pgdt` prints it to stderr, the shell
+through its sink, and `pgdt info --detail` shows the count per column.
+
+**A column the untyped mode widens is a `ColumnResolution` of its own**, and
+compares in each front end's semantics: in Arrow's (the DataFusion
+translators) by its bytes, the order DataFusion evaluates on a `Utf8View`, so
+a pushed filter stays `Exact` and statistics, stored in the declared type's
+order, prune nothing on it; in PostgreSQL's (`pgdt --where`) in the declared
+type's order, special values ranked ("D56"), `pgdt` having no second engine to
+disagree with. Refused: text everywhere, `pgdt --where` refusing its order as
+it does an unmapped column's (`predicate.rs`, `NOT_MAPPED`). `t_date` and
+`t_numeric` are fixture columns reaching the variant.
+
+**"D38" binds the typed mode.** The untyped mode, like `--schema-mode
+strings`, is the user asking for a type wider than the floor, and widens only
+a column the map says holds such a value; the entry gains that clause, and
+`floor_mapping.py` checks the typed mode alone.
+
+**A statistics group keeps two views where they differ**: its bounds over
+representable values, its count of unrepresentable values, and — only where
+that count is not zero — its bounds in PostgreSQL's order over every value.
+The typed mode reads the first pair and adds the count to the group's NULL
+count, so exact bounds, `IS NULL` truths, an `Exact` `COUNT(<column>)`
+("D89") and pruning survive it; the refuse mode and PostgreSQL's semantics
+read the second pair where it exists. Refused: PostgreSQL-order bounds and the
+count alone, the typed mode giving up a group's bounds wherever such a value
+occurs. Both are statistics, absent at the metadata level.
+
+**A dynamic filter's per-row evaluation ("D93") follows the static filter's**:
+under the typed mode it evaluates the value as NULL, so a row its state
+rejects before decoding hides no refusal, none being raised; under the refuse
+mode a materialized column holding one refused at planning. `pgdt query
+--statistics none`'s help, "`none` is also how to find one in data left
+unread", is superseded by the predicate term.
+
+**A user can ask which rows of a column held an unrepresentable value**, so
+that a NULL the dump holds is told apart from one the typed mode produced:
+**two operators, `IS UNREPRESENTABLE` and `IS NOT UNREPRESENTABLE`**,
+two-valued as `IS NULL` is and taking no value, reopening "D53"'s closed set.
+The library evaluates them on the text against the column's *declared* type —
+`pgdt --where '<column> is unrepresentable'`, and in DataFusion a scalar UDF,
+`pgdump_unrepresentable(<column>)`, `NOT` above it the negation, always pushed
+`Exact` and refusing at planning wherever DataFusion would have to evaluate it
+itself, a NULL no longer carrying its origin. It answers in the typed, untyped
+and refuse modes — in the last where the column is not materialized — and
+refuses under `--schema-mode strings`, which reads no declared type and makes
+no NULL of one; `IsNull`'s "matches only a NULL field (`\N`)" is amended for
+the typed mode. Refused: a table function listing each
+occurrence, which no row identity joins back to its row; a companion column
+per affected column, which DataFusion 55.1's lack of hidden columns puts in
+every `SELECT *`.
+
+
+## Evidence
+
+**The first slice is the harness, and today's tree fails it**, each case
+recorded as failing where it lands and turned green by the slice that fixes
+it. `M176`'s
+node running a scan's partitions in a stated order
+(`datafusion-pgdump/tests/in_order/`) runs each query shape in every order —
+a `LIMIT` one partition meets first, an ungrouped `MIN`/`MAX`, a TopK, a
+join, and `pgdump.dynamic_filter_rows`' row drop — under each mode, with
+statistics used and not, dynamic filters on and off, over majors 13, 16 and
+18, and asserts one outcome per query, the refuse mode's being one refusal.
+`statistics_never_change_an_answer` returns to DataFusion's own schedule,
+`M176` having pinned it to file order only until this phase.
+
+**The figures move with the metadata level.** `measure.py` times every parse
+whose subject is not statistics at `--statistics none` (`NO_STATISTICS`), a
+census included today. **Scan figures time the metadata level**, the scan
+alone, and are re-taken. **Query figures build a data-level cache untimed**
+and query with `--statistics none`, so no pruning enters the reading. **The
+census's price, the count now inside it, is an attribution**, read off a
+`perf` profile of a data-level parse (`roadmap.md`, "Attribution is
+introspective; only the gate is blind"): the `census-*` differencing figures
+and the pinned census-off build (`runs/pgdt-nocensus`) retire. Refused: a
+census-only level a user can reach, kept only for the harness to difference.
+
+## Slices
+
+**Evidence first, then the map, then each mode**, a rework of a tested core
+path never sharing a slice with a new mechanism:
+
+1. **The harness** (Evidence), no product code, its cases recorded failing.
+2. **The metadata and data levels**: `StatisticsLevel` and
+   `--statistics-level` with its overrides; the census gated on the level, the
+   metadata level splitting no field; `info` reporting each table's level; a
+   query's cold semantics over a metadata-level table, and the provider's
+   refusal of one. "D35" and "D77" amended — a rework of the mapping pass.
+3. **The count beside the census**: lexical, per block and column, in the
+   cache format; `info --detail` showing it per column.
+4. **Statistics' two views**: gathered, cached, and read by pruning under
+   each semantics.
+5. **The mode option and the typed mode**: `QueryOptions::unrepresentable`,
+   NULL for every purpose — decode, the static and dynamic filters, NULL
+   counts, "D89"'s statistics — the warning's `Finding`; `pgdt
+   --unrepresentable`, the provider's option, the shell's table option and
+   suffix; the refusal naming the modes.
+6. **The refuse mode**: by column, at planning, from the map.
+7. **The untyped mode**: the widening `ColumnResolution` and its comparison
+   in each semantics; "D38"'s clause and `floor_mapping.py`. The harness is
+   green here, and `KD8` closes.
+8. **The predicate term and its UDF**; "D53" amended.
+9. **The figures** (Evidence): scan figures at the metadata level, query
+   figures over a data-level cache, the census's price attributed by a `perf`
+   profile, the `census-*` figures and the census-off build retired.
+
+## Facts found while grilling
+
+- **The mode is fixed where a dump is opened, and covers every column.**
+  `pgdt query --schema-mode`, `QueryOptions::schema_mode`,
+  `PgDumpOptions::schema_mode`; in the shell the `--dump <src>:strings` suffix
+  or `CREATE EXTERNAL TABLE`'s `pgdump.schema_mode` option — a table option,
+  not a setting `SET` reaches (`datafusion-pgdump/src/settings.rs`). The
+  provider resolves a table's schema once, at `PgDumpTable::build`, so a mode
+  that changes a schema cannot be a per-statement setting there.
+- **The census is per block, gathered by every mapping pass** ("D35"),
+  `CopyBlock::array_shapes`, merged per column at query time
+  (`index::union_census`); statistics are the separate, optional
+  `CopyBlock::statistics`. A count the modes need can ride beside it.
+- **The library can query cold; the provider cannot.** `table_stream` maps
+  before it replays, so it has a map of the blocks it reached; the provider
+  refuses without a complete one and names `pgdt parse`
+  (`datafusion-pgdump/src/dump.rs`).
+- **Which values are reachable**: `±infinity` on `date`, `timestamp`,
+  `timestamptz` and (from PostgreSQL 17) `interval`; `NaN` on
+  `numeric(p,s)`, a typmod refusing `±Infinity` (`pgtype.rs`); an `interval`
+  time part past Arrow's nanoseconds. Bare `numeric`, and a precision past
+  76, is already `Utf8View`. Each decoder answers `None`
+  (`decode_date32`, `decode_timestamp_micros`, `decode_interval`,
+  `decimal_unscaled_digits`), and `RowBatcher::push_field` or
+  `ResolvedTerm::eval` raises `Error::FieldDecode`.
+- **A filter orders a special value by rank, not text** ("D56"):
+  `predicate::special_order_key`, `-infinity` below every finite value,
+  `infinity` above, `NaN` above that.
+- **Nothing counts a value that does not decode**; gathering only drops the
+  column's sums (`ColumnStatistics::sums`) and NULL counts are `\N`s
+  (`gather.rs`, `ColumnGatherer::observe`).
+- **No row identity exists** — no row id, no virtual column; DataFusion 55.1's
+  `virtual_columns` are file sources' alone and appear in `SELECT *`, and a
+  `TableProvider` has no hidden-column mechanism.
+- **The refusal's remedy is the library's text** (`error.rs`,
+  `Error::FieldDecode` and `Error::MetadataNotScanned`), passed through by
+  the provider unchanged, so the shell names `pgdt`'s flag.
+- **ADBC's floor does no better** (`fixtures/*/adbc/floor.tsv`, ADBC 1.12.0,
+  and upstream `main` at `616acfdfc`): every `numeric` is `arrow.opaque` over a
+  string, `NaN` and the infinities spelled `nan`, `inf`, `-inf`; a `date` or
+  `timestamp` infinity arrives as a wrong value, the epoch offset added to
+  PostgreSQL's sentinel unchecked (`c/driver/postgresql/copy/reader.h`). So
+  the typed mode matches the floor's type and does better on its data, and
+  only the untyped mode on a `date` or `timestamp` needs "D38"'s clause.
+- **The census is "D35"**, not "D43", which is resolution's
+  `MetadataNotScanned`.
