@@ -5,10 +5,10 @@ Inspect Postgres dumps and query them like they're parquet (with streaming Arrow
 Available as:
 - A Rust library: `pgdump_query`
 - A CLI: `pgdt`
-    - Parse metadata and statistics from your dump
-    - Inspect the metadata: `CREATE TABLE`, roles, row counts, etc.
-    - Execute single-table queries with SQL-like `WHERE` syntax
-- A DataFusion provider and shell: `datafusion-cli-pgdump`
+    - Parse & cache your dump's metadata
+    - Inspect it: tables, roles, functions, row counts, etc.
+    - Execute simple queries
+- A DataFusion shell: `datafusion-cli-pgdump`
     - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
     - Export to Parquet, etc
 
@@ -17,6 +17,9 @@ _Human author, LLM autocomplete._
 ## Quickstart
 
 ### `pgdt`
+
+Use case: you have a dump and you want to know what's in it.
+
 ```bash
 # Parse a dump (builds foo.xz.dtcache)
 pgdt parse --source=foo.xz
@@ -26,14 +29,22 @@ pgdt info --detail --source=foo.xz
 # Or as JSON
 pgdt info --json --source=foo.xz | jq '.roles[]'
 
-# Run a query.  Look ma, no daemons!
+# Run a simple query.  Look ma, no daemons!
 pgdt query --source=foo.xz --table=mytable --where='mycolumn = bar'
 ```
 
-See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
+See: [dump inspection docs](docs/manual/dump-inspection.md) for more.  Notably, if you're never
+going to query the data then you can speed up the parse and reduce the cache file size with:
 
+```bash
+# Parse a dump with only metadata-level statistics
+pgdt parse --source=foo.xz --statistics-level=metadata
+```
 
 ### `datafusion-cli-pgdump`
+
+Use case: you want to inspect your data and/or extract some portion of it.
+
 ```bash
 # Parse a dump (builds foo.xz.dtcache)
 pgdt parse --source=foo.xz
@@ -179,9 +190,9 @@ simply properties of our design).
 ## Documentation
 For humans:
 - [`docs/manual/`](docs/manual/) — user manual:
-    - [dump inspection](docs/manual/dump-inspection.md)
-    - [type handling](docs/manual/type-handling.md)
-    - [SQL over a dump](docs/manual/datafusion-cli-pgdump.md).
+    - [Dump inspection](docs/manual/dump-inspection.md)
+    - [Type handling](docs/manual/type-handling.md)
+    - [SQL over a dump](docs/manual/datafusion-cli-pgdump.md)
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
 
 Mostly for LLMs:
