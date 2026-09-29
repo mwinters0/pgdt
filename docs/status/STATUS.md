@@ -78,7 +78,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-unrepresentable-values.md).
 
-- [ ] **28.1** The evidence, no product code: every query shape the spec's "Evidence" names, run in every partition order under each mode, statistics and dynamic filters on and off, over majors 13, 16 and 18, one outcome asserted per query, each case recorded failing
+- [x] **28.1** The evidence, no product code: every query shape the spec's "Evidence" names, run in every partition order under each mode, statistics and dynamic filters on and off, over majors 13, 16 and 18, one outcome asserted per query, each case recorded failing; [notes](../design/roadmap-P28.1-harness-notes.md)
 - [ ] **28.2** The metadata and data levels: `StatisticsLevel` and `--statistics-level` with its overrides, the census gated on the level, `info` reporting each table's level, a query's cold semantics over a metadata-level table and the provider's refusal of one
 - [ ] **28.3** The unrepresentable count beside the census, lexical, per block and column, in the cache; `info --detail` showing it
 - [ ] **28.4** Statistics' two views: representable bounds, the unrepresentable count, and PostgreSQL-order bounds where they differ, gathered, cached and read by pruning under each semantics
@@ -117,4 +117,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The harness counts PostgreSQL's greatest timestamp as unrepresentable,
+  which the spec's list does not.** `datafusion-pgdump/tests/unrepresentable.rs`
+  takes every field the library's decoder refuses as one, so
+  `294276-12-31 23:59:59.999999` — past what `Timestamp(Microsecond)` counts
+  from 1970 (`decode.rs`,
+  `postgresqls_own_max_timestamp_overflows_the_unix_epoch_i64_range`), and in
+  `t_timestamp` at every major — is NULL in the typed mode's answers and
+  widens both timestamp columns in the untyped mode's. The spec's definition,
+  "one PostgreSQL accepts for the declared type and the column's Arrow type
+  cannot hold", covers it; its enumeration, `KD8`'s entry and 28.3's lexical
+  count ("exactly `infinity`, `-infinity` or `NaN`, or an hour part past the
+  `interval` bound") do not. **The decision to make:** whether it is in the
+  category. In, the spec's list, `KD8` and 28.3's count gain a year bound on
+  `timestamp` and `timestamptz`; out, it refuses wherever a read reaches it in
+  every mode, so whether a query refuses still depends on which rows it read,
+  and the harness's cases keep clear of `id` 7.
 

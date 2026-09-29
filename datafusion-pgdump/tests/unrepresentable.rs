@@ -1,0 +1,734 @@
+//! A value its column's Arrow type cannot hold (`KD8`), held to one outcome
+//! per query under each of the three ways of reading one.
+//!
+//! **A query's outcome never depends on which rows it read.** So each case
+//! runs in every configuration that changes which rows a
+//! scan reaches — its partitions in each order ([`in_order`]), the map's
+//! statistics gathered and not, DataFusion's dynamic filters off, on, and on
+//! with `pgdump.dynamic_filter_rows` dropping the rows they reject — over
+//! majors 13, 16 and 18, and each must give the one outcome its mode
+//! promises:
+//!
+//! - **[`Mode::Null`]** answers as DataFusion answers the same SQL over the
+//!   table with each such value NULL ([`Oracle`]), types as declared.
+//! - **[`Mode::Text`]** answers as DataFusion answers it over the table with
+//!   each column holding one read as `Utf8View`, each value its text.
+//! - **[`Mode::Refuse`]** refuses at planning, naming the column, wherever
+//!   the query materializes one holding such a value; a column read only by
+//!   a filter the library answers is not materialized, and there the case
+//!   states the answer PostgreSQL's order gives.
+//!
+//! **Each case records the modes it fails in** ([`Case::failing`]), and the
+//! test holds the record exact both ways: a recorded case that passes fails
+//! it as surely as an unrecorded one that fails, so the slice turning a mode
+//! green strikes that mode from the record in the same change.
+//!
+//! **And the sweep is held to having exercised the order**: every table a
+//! case reads is scanned by two partitions, so the two orders [`Order::ALL`]
+//! names are every order there is.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::num::NonZeroU64;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use arrow::array::{Array, ArrayRef, RecordBatch, new_null_array};
+use arrow::compute::{cast, concat};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::util::display::{ArrayFormatter, FormatOptions};
+use datafusion::catalog::TableProvider;
+use datafusion::common::DataFusionError;
+use datafusion::datasource::MemTable;
+use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::physical_plan::{ExecutionPlan, collect};
+use datafusion::prelude::{SessionConfig, SessionContext};
+use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
+use pgdump_query::cache::CacheMode;
+use pgdump_query::{
+    Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, StatisticsRequest,
+    StatisticsSelection, decode_field, map_file,
+};
+
+mod in_order;
+use in_order::{Order, RunScansInOrder};
+
+/// A sink for a registration whose findings this target is not about.
+fn ignore(_: &dyn Finding) {}
+
+/// The oldest major, the newest, and one between.
+const MAJORS: [u32; 3] = [13, 16, 18];
+
+/// The tables the cases read, each holding at least one value its typed
+/// column cannot: `NaN` on a `numeric(10,2)`; the infinities on a `date`, a
+/// `timestamp` and a `timestamptz`; and on the last two, PostgreSQL's
+/// greatest timestamp, past what `Timestamp(Microsecond)` counts from 1970.
+/// No fixture holds an `interval` one.
+const TABLES: [&str; 3] = ["t_numeric", "t_date", "t_timestamp"];
+
+/// How an unrepresentable value is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Mode {
+    /// The default: the declared type, the value NULL.
+    Null,
+    /// The column read as text wherever it holds such a value.
+    Text,
+    /// A query materializing such a column refuses at planning.
+    Refuse,
+}
+
+const MODES: [Mode; 3] = [Mode::Null, Mode::Text, Mode::Refuse];
+
+/// Every mode; a case failing in each.
+const EVERY_MODE: &[Mode] = &MODES;
+
+/// The options a dump is opened with under `mode`. **No mode exists yet**, so
+/// every mode opens today's provider, and each case is held to all three
+/// outcomes against it; the slice adding the option states it here.
+fn options(_mode: Mode) -> PgDumpOptions {
+    PgDumpOptions::default()
+}
+
+/// Whether the map a case reads carries statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Statistics {
+    /// Every statistic, in groups a few rows long: pruning, and an aggregate
+    /// answered from the map.
+    Gathered,
+    /// None: every aggregate reads rows, and nothing is pruned.
+    Absent,
+}
+
+/// DataFusion's dynamic filters, and how a scan consumes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Dynamic {
+    /// Every producer's flag off.
+    Off,
+    /// On, the scan pruning groups and blocks by them: the default.
+    On,
+    /// On, the scan also dropping each row a filter rejects before decoding
+    /// it (`pgdump.dynamic_filter_rows`).
+    OnWithRows,
+}
+
+const DYNAMIC: [Dynamic; 3] = [Dynamic::Off, Dynamic::On, Dynamic::OnWithRows];
+
+/// One way of running a case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Config {
+    statistics: Statistics,
+    dynamic: Dynamic,
+    order: Order,
+}
+
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}/{:?}/{:?}", self.statistics, self.dynamic, self.order)
+    }
+}
+
+fn every_config() -> Vec<Config> {
+    let mut configs = Vec::new();
+    for statistics in [Statistics::Gathered, Statistics::Absent] {
+        for dynamic in DYNAMIC {
+            for order in Order::ALL {
+                configs.push(Config { statistics, dynamic, order });
+            }
+        }
+    }
+    configs
+}
+
+/// Every producer's flag.
+const FLAGS: [&str; 3] = [
+    "datafusion.optimizer.enable_join_dynamic_filter_pushdown",
+    "datafusion.optimizer.enable_topk_dynamic_filter_pushdown",
+    "datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown",
+];
+
+/// Two partitions a scan, so the two orders are every order, and batches
+/// two rows long, so a filter tightens while a partition still streams.
+fn session(config: Config) -> SessionContext {
+    let rows = match config.dynamic {
+        Dynamic::OnWithRows => RowEvaluation::On,
+        Dynamic::Off | Dynamic::On => RowEvaluation::Off,
+    };
+    let settings = PgDumpSettings { dynamic_filter_rows: rows, ..PgDumpSettings::default() };
+    let mut options = SessionConfig::new()
+        .with_target_partitions(2)
+        .with_batch_size(2)
+        .with_option_extension(settings);
+    for flag in FLAGS {
+        options = options.set_bool(flag, config.dynamic != Dynamic::Off);
+    }
+    SessionContext::new_with_state(
+        SessionStateBuilder::new_with_default_features()
+            .with_config(options)
+            .with_physical_optimizer_rule(Arc::new(RunScansInOrder(config.order)))
+            .build(),
+    )
+}
+
+/// What the refuse mode does with a case.
+#[derive(Debug, Clone, Copy)]
+enum Refuse {
+    /// Refuses at planning, naming `table.column`.
+    Column(&'static str),
+    /// Answers these rows, each rendered as [`rendered_rows`] renders one: a
+    /// column read only by a filter the library answers, in PostgreSQL's
+    /// order, is not materialized.
+    Answers(&'static [&'static str]),
+}
+
+/// One query, and what each mode must make of it.
+struct Case {
+    /// Over the tables' bare names.
+    sql: &'static str,
+    /// Where the query ends in a `LIMIT` choosing no rows in particular: the
+    /// answer is any `n` rows of `sql`'s, and `sql` is run with `LIMIT n`.
+    pick: Option<usize>,
+    refuse: Refuse,
+    /// The modes this case fails in today, each struck by the change that
+    /// makes the mode give it its outcome.
+    failing: &'static [Mode],
+}
+
+const fn case(sql: &'static str, refuse: Refuse, failing: &'static [Mode]) -> Case {
+    Case { sql, pick: None, refuse, failing }
+}
+
+const fn picking(sql: &'static str, n: usize, refuse: Refuse, failing: &'static [Mode]) -> Case {
+    Case { sql, pick: Some(n), refuse, failing }
+}
+
+use Refuse::{Answers, Column};
+
+/// Every shape the spec's "Evidence" names — a `LIMIT` one partition meets
+/// first, an ungrouped `MIN`/`MAX`, a TopK, a join — and the filters and
+/// counts the typed mode's "NULL for every purpose" reaches. The row drop is
+/// [`Dynamic::OnWithRows`], under every case. Each table holds such a value
+/// in its first rows, so the file's order meets one first; `t_timestamp`
+/// holds one in its last row too.
+const CASES: &[Case] = &[
+    // A `LIMIT` one partition meets first.
+    picking("SELECT id, v_small FROM t_numeric", 3, Column("t_numeric.v_small"), EVERY_MODE),
+    picking("SELECT v_date FROM t_date", 2, Column("t_date.v_date"), EVERY_MODE),
+    picking(
+        "SELECT id, v_tstz FROM t_timestamp WHERE id > 1",
+        2,
+        Column("t_timestamp.v_tstz"),
+        EVERY_MODE,
+    ),
+    // Ungrouped `MIN`/`MAX`: answered from the map where it can be, and with
+    // a static filter keeping the map from answering, by the rows under an
+    // aggregate's dynamic filter.
+    case(
+        "SELECT MIN(v_small), MAX(v_small) FROM t_numeric",
+        Column("t_numeric.v_small"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT MIN(v_small) FROM t_numeric WHERE id > 0",
+        Column("t_numeric.v_small"),
+        EVERY_MODE,
+    ),
+    case("SELECT MAX(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), EVERY_MODE),
+    case("SELECT MIN(v_ts) FROM t_timestamp WHERE id > 0", Column("t_timestamp.v_ts"), EVERY_MODE),
+    // A count of the column: NULLs are not counted, so the typed mode's are.
+    case("SELECT COUNT(v_small) FROM t_numeric", Column("t_numeric.v_small"), EVERY_MODE),
+    case("SELECT COUNT(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), EVERY_MODE),
+    // TopK, the sort keys alone.
+    case("SELECT v_date FROM t_date ORDER BY v_date LIMIT 2", Column("t_date.v_date"), EVERY_MODE),
+    case(
+        "SELECT v_small FROM t_numeric ORDER BY v_small DESC NULLS LAST LIMIT 2",
+        Column("t_numeric.v_small"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT v_ts FROM t_timestamp ORDER BY v_ts LIMIT 3",
+        Column("t_timestamp.v_ts"),
+        EVERY_MODE,
+    ),
+    // Joins: a build side ruling out the probe rows holding the value, which
+    // a dynamic filter's row drop never decodes; a join on the column itself;
+    // and a join whose build side is filtered on one it never materializes.
+    case(
+        "SELECT n.id, n.v_small FROM (SELECT id FROM t_numeric WHERE id >= 4) b \
+         JOIN t_numeric n ON n.id = b.id",
+        Column("t_numeric.v_small"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT a.id, b.id FROM t_date a JOIN t_date b ON a.v_date = b.v_date",
+        Column("t_date.v_date"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT t.id, t.v_ts FROM t_date d JOIN t_timestamp t ON t.id = d.id \
+         WHERE d.v_date > '1000-01-01'",
+        Column("t_timestamp.v_ts"),
+        EVERY_MODE,
+    ),
+    // A static filter over the column alone, which the library answers: the
+    // refuse mode keeps PostgreSQL's order, where an infinity is above every
+    // date and no special value is NULL. Each literal is text, which the
+    // untyped mode compares as text: DataFusion reads a `Utf8View` against a
+    // number by casting each value to the number's type.
+    case(
+        "SELECT id FROM t_numeric WHERE v_small IS NOT NULL",
+        Answers(&["3", "4", "5"]),
+        &[Mode::Null],
+    ),
+    case(
+        "SELECT id FROM t_date WHERE v_date > '5000-01-01'",
+        Answers(&["1", "4", "6"]),
+        &[Mode::Null, Mode::Text],
+    ),
+    case("SELECT id FROM t_date WHERE v_date IS NULL", Answers(&["7"]), &[Mode::Null]),
+    case(
+        "SELECT COUNT(*) FROM t_timestamp WHERE v_tstz < '2000-01-01 00:00:00+00'",
+        Answers(&["3"]),
+        EVERY_MODE,
+    ),
+];
+
+/// Which step of a query a refusal came out of.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Stage {
+    /// Before a row is read: SQL to a physical plan.
+    Planning,
+    /// While the plan runs.
+    Execution,
+}
+
+/// What one run of a case gave.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Outcome {
+    Answered {
+        types: Vec<DataType>,
+        rows: Vec<String>,
+    },
+    /// A value its column's type cannot hold, named by its table and column
+    /// alone: which row a refusal reports is load's to choose.
+    Refused {
+        column: String,
+        stage: Stage,
+    },
+    /// Anything else, whole.
+    Failed(String),
+}
+
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Outcome::Answered { types, rows } => write!(f, "{types:?} {rows:?}"),
+            Outcome::Refused { column, stage } => write!(f, "refused {column} at {stage:?}"),
+            Outcome::Failed(err) => write!(f, "failed: {err}"),
+        }
+    }
+}
+
+impl Outcome {
+    fn of(err: &DataFusionError, stage: Stage) -> Outcome {
+        let mut cause: Option<&dyn std::error::Error> = Some(err);
+        while let Some(err) = cause {
+            if let Some(pgdump_query::Error::FieldDecode { table, column, .. }) = err.downcast_ref()
+            {
+                let table = table.rsplit('.').next().unwrap_or(table);
+                return Outcome::Refused { column: format!("{table}.{column}"), stage };
+            }
+            cause = err.source();
+        }
+        Outcome::Failed(err.to_string())
+    }
+
+    fn answered(batches: &[RecordBatch], schema: &Schema) -> Outcome {
+        let types = schema.fields().iter().map(|f| f.data_type().clone()).collect();
+        Outcome::Answered { types, rows: rendered_rows(batches) }
+    }
+}
+
+/// What a mode promises a case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Expected {
+    /// These rows, or where `pick` is stated, any that many of them.
+    Rows { types: Vec<DataType>, rows: Vec<String>, pick: Option<usize> },
+    /// A refusal at planning naming `table.column`.
+    Refused(String),
+}
+
+impl fmt::Display for Expected {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Expected::Rows { types, rows, pick: None } => write!(f, "{types:?} {rows:?}"),
+            Expected::Rows { types, rows, pick: Some(n) } => {
+                write!(f, "{types:?} any {n} of {rows:?}")
+            }
+            Expected::Refused(column) => write!(f, "refused {column} at Planning"),
+        }
+    }
+}
+
+impl Expected {
+    fn met_by(&self, outcome: &Outcome) -> bool {
+        match (self, outcome) {
+            (Expected::Refused(want), Outcome::Refused { column, stage: Stage::Planning }) => {
+                want == column
+            }
+            (Expected::Rows { types, rows, pick }, Outcome::Answered { types: got, rows: had }) => {
+                if types != got {
+                    return false;
+                }
+                match pick {
+                    None => rows == had,
+                    // Each row answered is taken out of the rows allowed.
+                    Some(n) => {
+                        let mut left: BTreeMap<&String, usize> = BTreeMap::new();
+                        for row in rows {
+                            *left.entry(row).or_default() += 1;
+                        }
+                        had.len() == (*n).min(rows.len())
+                            && had.iter().all(|row| match left.get_mut(row) {
+                                Some(count) if *count > 0 => {
+                                    *count -= 1;
+                                    true
+                                }
+                                _ => false,
+                            })
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Each row of `batches` as text, sorted: an answer as a multiset.
+fn rendered_rows(batches: &[RecordBatch]) -> Vec<String> {
+    let options = FormatOptions::default().with_null("NULL");
+    let mut out = Vec::new();
+    for batch in batches {
+        let columns: Vec<_> = batch
+            .columns()
+            .iter()
+            .map(|c| ArrayFormatter::try_new(c.as_ref(), &options).unwrap())
+            .collect();
+        for row in 0..batch.num_rows() {
+            out.push(
+                columns.iter().map(|c| c.value(row).to_string()).collect::<Vec<_>>().join("|"),
+            );
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `sql`'s outcome in `ctx`, and the plan it ran where it planned.
+async fn outcome(ctx: &SessionContext, sql: &str) -> (Outcome, Option<Arc<dyn ExecutionPlan>>) {
+    let frame = match ctx.sql(sql).await {
+        Ok(frame) => frame,
+        Err(err) => return (Outcome::of(&err, Stage::Planning), None),
+    };
+    let plan = match frame.create_physical_plan().await {
+        Ok(plan) => plan,
+        Err(err) => return (Outcome::of(&err, Stage::Planning), None),
+    };
+    let schema = plan.schema();
+    let outcome = match collect(Arc::clone(&plan), ctx.task_ctx()).await {
+        Ok(batches) => Outcome::answered(&batches, &schema),
+        Err(err) => Outcome::of(&err, Stage::Execution),
+    };
+    (outcome, Some(plan))
+}
+
+/// Every scan in `plan`, and the partitions each runs.
+fn scans(plan: &Arc<dyn ExecutionPlan>, found: &mut Vec<usize>) {
+    for child in plan.children() {
+        scans(child, found);
+    }
+    if plan.name() == "PgDumpExec" {
+        found.push(plan.properties().partitioning.partition_count());
+    }
+}
+
+fn fixture(major: u32) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../fixtures/{major}/types/default.sql"))
+}
+
+/// A group size a few rows of every case's table long.
+const SMALL_GROUP: u64 = 64;
+
+/// `fixture` copied into its own directory under `dir` beside a complete
+/// cache, gathering what `statistics` says, so the committed tree is never
+/// written into.
+async fn parsed_copy(fixture: &Path, dir: &Path, statistics: Statistics) -> PathBuf {
+    let dir = tempfile::tempdir_in(dir).unwrap().keep();
+    let copy = dir.join(fixture.file_name().unwrap());
+    std::fs::copy(fixture, &copy).unwrap();
+    let source = LocalFileSource::open(&copy).unwrap();
+    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
+    let request = match statistics {
+        Statistics::Gathered => StatisticsRequest {
+            selection: StatisticsSelection::All,
+            group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
+            ..StatisticsRequest::ALL
+        },
+        Statistics::Absent => StatisticsRequest::NONE,
+    };
+    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
+    copy
+}
+
+/// `dump`'s case tables registered in `ctx` under their bare names.
+fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
+    // The catalog is what installs the session's budget and settings.
+    register_dump(ctx, Some("dump"), dump, Arc::new(ignore)).unwrap();
+    for table in TABLES {
+        let provider: Arc<dyn TableProvider> = dump.table(None, None, table).unwrap();
+        ctx.register_table(table, provider).unwrap();
+    }
+}
+
+/// **The answers the typed and untyped modes promise**, from the dump's text
+/// and nothing the modes would change: each case table read as text, and
+/// each field decoded to its declared type by the library's one decoder, a
+/// field it cannot decode being an unrepresentable value — NULL in
+/// [`Mode::Null`]'s tables, and its whole column text in [`Mode::Text`]'s.
+/// A case's promise is DataFusion's answer to it over those tables, in one
+/// partition.
+struct Oracle {
+    null: SessionContext,
+    text: SessionContext,
+}
+
+impl Oracle {
+    async fn of(copy: &Path) -> Oracle {
+        let strings =
+            PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
+        let text_dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
+        let typed_dump =
+            PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+        let reader =
+            SessionContext::new_with_config(SessionConfig::new().with_target_partitions(1));
+        register(&reader, &text_dump);
+        let one = SessionConfig::new().with_target_partitions(1);
+        let (null, text) =
+            (SessionContext::new_with_config(one.clone()), SessionContext::new_with_config(one));
+        for table in TABLES {
+            let batches = reader
+                .sql(&format!("SELECT * FROM {table}"))
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            let resolved = typed_dump.table(None, None, table).unwrap().resolved_schema().clone();
+            let (mut null_columns, mut text_columns, mut text_fields) =
+                (Vec::new(), Vec::new(), Vec::new());
+            let mut unrepresentable = 0;
+            for (i, field) in resolved.schema.fields().iter().enumerate() {
+                let mut decoded: Vec<ArrayRef> = Vec::new();
+                let mut spelled: Vec<ArrayRef> = Vec::new();
+                let mut widened = false;
+                for batch in &batches {
+                    let column = cast(batch.column(i), &DataType::Utf8View).unwrap();
+                    let column = column.as_any().downcast_ref::<arrow::array::StringViewArray>();
+                    let column = column.unwrap();
+                    for row in 0..column.len() {
+                        spelled.push(Arc::new(column.slice(row, 1)));
+                        if column.is_null(row) {
+                            decoded.push(new_null_array(field.data_type(), 1));
+                            continue;
+                        }
+                        let text = column.value(row);
+                        match decode_field(field.data_type(), &resolved.plans[i], text) {
+                            Some(value) => decoded.push(value),
+                            None => {
+                                widened = true;
+                                unrepresentable += 1;
+                                decoded.push(new_null_array(field.data_type(), 1));
+                            }
+                        }
+                    }
+                }
+                let joined = |parts: &[ArrayRef]| {
+                    concat(&parts.iter().map(|a| a.as_ref()).collect::<Vec<_>>()).unwrap()
+                };
+                null_columns.push(joined(&decoded));
+                if widened {
+                    text_columns.push(joined(&spelled));
+                    text_fields.push(Field::new(field.name(), DataType::Utf8View, true));
+                } else {
+                    text_columns.push(joined(&decoded));
+                    text_fields.push(field.as_ref().clone().with_nullable(true));
+                }
+            }
+            assert!(unrepresentable > 0, "{table} holds no value its typed columns cannot");
+            let null_schema = Arc::new(Schema::new(
+                resolved
+                    .schema
+                    .fields()
+                    .iter()
+                    .map(|f| f.as_ref().clone().with_nullable(true))
+                    .collect::<Vec<_>>(),
+            ));
+            let text_schema = Arc::new(Schema::new(text_fields));
+            for (ctx, schema, columns) in
+                [(&null, null_schema, null_columns), (&text, text_schema, text_columns)]
+            {
+                let batch = RecordBatch::try_new(Arc::clone(&schema), columns).unwrap();
+                let table_provider = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
+                ctx.register_table(table, Arc::new(table_provider)).unwrap();
+            }
+        }
+        Oracle { null, text }
+    }
+
+    /// What `mode` promises `case`.
+    async fn expected(&self, case: &Case, mode: Mode) -> Expected {
+        let ctx = match (mode, case.refuse) {
+            (Mode::Refuse, Column(column)) => return Expected::Refused(column.to_string()),
+            (Mode::Text, _) => &self.text,
+            (Mode::Null | Mode::Refuse, _) => &self.null,
+        };
+        let (answer, _) = outcome(ctx, case.sql).await;
+        let Outcome::Answered { types, rows } = answer else {
+            panic!("the oracle refused `{}` under {mode:?}: {answer}", case.sql)
+        };
+        match (mode, case.refuse) {
+            (Mode::Refuse, Answers(rows)) => Expected::Rows {
+                types,
+                rows: rows.iter().map(|r| r.to_string()).collect(),
+                pick: case.pick,
+            },
+            _ => Expected::Rows { types, rows, pick: case.pick },
+        }
+    }
+}
+
+impl Case {
+    fn run_sql(&self) -> String {
+        match self.pick {
+            Some(n) => format!("{} LIMIT {n}", self.sql),
+            None => self.sql.to_string(),
+        }
+    }
+}
+
+/// One case under one mode that did not give the outcome promised.
+struct Miss {
+    major: u32,
+    config: Config,
+    got: Outcome,
+    expected: Expected,
+}
+
+/// Each case and mode's misses over one major, and the partition counts of
+/// every scan run.
+async fn sweep(major: u32) -> (BTreeMap<(usize, Mode), Vec<Miss>>, BTreeSet<usize>) {
+    let scratch = tempfile::tempdir().unwrap();
+    let fixture = fixture(major);
+    let mut copies = BTreeMap::new();
+    for statistics in [Statistics::Gathered, Statistics::Absent] {
+        copies.insert(statistics, parsed_copy(&fixture, scratch.path(), statistics).await);
+    }
+    let oracle = Oracle::of(&copies[&Statistics::Absent]).await;
+    let mut dumps = BTreeMap::new();
+    for (&statistics, copy) in &copies {
+        for mode in MODES {
+            let dump = PgDump::open(copy.to_str().unwrap(), options(mode)).await.unwrap();
+            dumps.insert((statistics, mode), dump);
+        }
+    }
+    let mut expected = BTreeMap::new();
+    for (i, case) in CASES.iter().enumerate() {
+        for mode in MODES {
+            expected.insert((i, mode), oracle.expected(case, mode).await);
+        }
+    }
+    let (mut misses, mut partitions) = (BTreeMap::<_, Vec<Miss>>::new(), BTreeSet::new());
+    for config in every_config() {
+        for mode in MODES {
+            let ctx = session(config);
+            register(&ctx, &dumps[&(config.statistics, mode)]);
+            for (i, case) in CASES.iter().enumerate() {
+                let (got, plan) = outcome(&ctx, &case.run_sql()).await;
+                if let Some(plan) = plan {
+                    let mut found = Vec::new();
+                    scans(&plan, &mut found);
+                    partitions.extend(found);
+                }
+                let want = &expected[&(i, mode)];
+                let misses = misses.entry((i, mode)).or_default();
+                if !want.met_by(&got) {
+                    misses.push(Miss { major, config, got, expected: want.clone() });
+                }
+            }
+        }
+    }
+    (misses, partitions)
+}
+
+/// **Every case gives its mode's one outcome in every configuration, but
+/// where its record says it fails today** — and there it fails in at least
+/// one, so a slice making it pass strikes it.
+#[test]
+fn every_query_has_one_outcome_per_mode() {
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let workers: Vec<_> = MAJORS
+            .iter()
+            .map(|&major| {
+                scope.spawn(move || {
+                    let runtime =
+                        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    runtime.block_on(sweep(major))
+                })
+            })
+            .collect();
+        workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+    });
+    let mut misses: BTreeMap<(usize, Mode), Vec<Miss>> = BTreeMap::new();
+    let mut partitions = BTreeSet::new();
+    for (major_misses, major_partitions) in results {
+        for (key, found) in major_misses {
+            misses.entry(key).or_default().extend(found);
+        }
+        partitions.extend(major_partitions);
+    }
+    assert_eq!(
+        partitions,
+        BTreeSet::from([2]),
+        "every scan runs two partitions, so the two orders are every order"
+    );
+
+    let mut wrong = Vec::new();
+    for (i, case) in CASES.iter().enumerate() {
+        for mode in MODES {
+            let found = &misses[&(i, mode)];
+            let recorded = case.failing.contains(&mode);
+            match (recorded, found.is_empty()) {
+                (true, true) => wrong.push(format!(
+                    "`{}` under {mode:?} gives its one outcome everywhere: strike {mode:?} from \
+                     its `failing`",
+                    case.run_sql()
+                )),
+                (false, false) => {
+                    let mut lines = format!(
+                        "`{}` under {mode:?} missed in {} runs, first:",
+                        case.run_sql(),
+                        found.len()
+                    );
+                    for miss in found.iter().take(4) {
+                        lines.push_str(&format!(
+                            "\n    {} {}: got {}\n      expected {}",
+                            miss.major, miss.config, miss.got, miss.expected
+                        ));
+                    }
+                    wrong.push(lines);
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
