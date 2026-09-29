@@ -2,8 +2,9 @@
 
 What the rest of 27.11 and the phase's wrap inherit. The spec is
 [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md), "Slices",
-item 11. **The instrument has landed; its readings have not**: a figure is
-taken from a commit, never from a tree carrying its own apparatus
+item 11. The instrument landed at `d6b3660` and both figures were taken from
+`aff3a0e`, a sitting of their own (`runs/measure-20260929T040546/`), a figure
+being taken from a commit and never from a tree carrying its own apparatus
 ([`measurements.md`](measurements.md), "A figure may be published outside the
 sweep").
 
@@ -39,18 +40,23 @@ sweep").
   `test_the_rows_leg_states_a_setting_the_provider_takes` holds the key
   against `settings.rs`.
 
-## What remains of the slice
+## What the pair read
 
-From a commit carrying this change:
+**"D93"'s refusal of on by default stands, now read off the pair the spec
+names**: the costing row's rows leg sits above the default's with the spreads
+apart, and the unclustered row's below it, apart too
+([`measurements.md`](measurements.md), "What DataFusion's dynamic filters buy
+a query", which states both). "D93"'s **Rejected** and **Reopens** cite the
+costing row alone, since the unclustered win is why the setting exists and
+not a condition of its default.
 
-```sh
-cd scripts && uv run measure.py --figure dynamic-filter-join
-cd scripts && uv run measure.py --figure dynamic-filter-topk
-```
+**Neither win is the setting's**: the clustered join's and the TopK's rows
+legs lie inside their on legs' spreads, group pruning doing both.
 
-Then fold both tables into `measurements.md`, "What DataFusion's dynamic
-filters buy a query", re-reading the prose after them, which argues from
-`5e02bf9`'s rows-evaluated readings; and rewrite "D93"'s **Rejected** and
-**Reopens** to read the costing row's and the unclustered row's `Δ, rows
-against on` against the spreads of the on and rows legs, as the spec's item 11
-states. Only then is the box ticked.
+**The rows leg reproduces `5e02bf9`'s on leg**, taken when rows were evaluated
+by default, so the account in that section, which argues from that sitting,
+holds for the setting as shipped.
+
+**The default's own Δ on the costing row resolves nothing**, its legs' spreads
+overlapping; the unattributed +0.021 s the `da05a72` sweep read there is not
+a finding to carry.
