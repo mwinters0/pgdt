@@ -68,7 +68,7 @@ carry it.
 **`pgdt` serves two uses, named the *metadata* level and the *data*
 level**: information about a dump, and queries over it. The metadata level
 records a block's location and row count and nothing drawn from its data —
-**no census, no count, no statistics** — so it decodes and tests no field; a
+**no census, no unrepresentable count, no statistics** — so it decodes and tests no field; a
 user choosing it has opted out of the query affordances, the correctness a
 census buys among them. Today's census under `none` ("D35", "every mapping
 pass censuses") is changed here, keeping the code the count joins coherent.
