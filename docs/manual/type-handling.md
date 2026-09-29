@@ -441,12 +441,14 @@ Each value is trimmed, or quoted to keep its spaces, a comma or a paren —
 list is the text `null`, as `=null` is. An empty list, an empty value and
 anything after the closing `)` are refused.
 
-Any run of whitespace separates the words and the case is free. Whichever
+In `IS [NOT] DISTINCT FROM` and `IN`, any run of whitespace separates the
+words and the case is free. Whichever
 operator comes first in the term wins, so `--filter 'note=a is distinct from
 b'` is the equality it reads as, and a column whose name really is
 `is distinct from` is still asked for as `--filter 'is distinct from=x'`.
-`IN` needs whitespace before it and a `(` after it, so `--filter 'note=x in
-(y)'` is an equality against `x in (y)`.
+`IN` needs whitespace before it and a `(` after it, so `--filter "note='x in
+(y)'"` is an equality against `x in (y)` — quoted, since a paren in a value is
+otherwise refused (below).
 
 **`--column` and `--table` take their names exactly as given** — there is no
 quoting to strip there, because the shell has already delimited the argument.

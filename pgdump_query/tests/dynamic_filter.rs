@@ -589,7 +589,8 @@ impl DynamicFilter for CutOnly {
 /// `ordered`'s ids 400 to 499 keeps a run of groups inside the middle
 /// sub-stream's third of the table, and the cut made at the first poll hands
 /// each sub-stream a third of that run, where the planned cut would leave the
-/// others nothing to read. Each is within a row of its share of the bytes, the
+/// others nothing to read. Each is within two of the widest row's bytes of
+/// its share, the
 /// rows are the kept groups' in file order, and each group ruled out is
 /// counted once.
 ///

@@ -1076,7 +1076,8 @@ back and overstates what a span costs among real work**, so a calibrated part
 under-reads and a short one reads near zero; what it is read for is its
 counts, which are exact, and its split among parts is the profile's ("What
 DataFusion's dynamic filters buy a query"). It is **blind to everything outside
-a row's evaluation** — the replay's row loop, DataFusion — which a sampling
+a row's evaluation and the replay's read of the state at each chunk** — the
+replay's row loop, DataFusion — which a sampling
 profile of the same run sees; `measure.py --profile-recipe` prints both, over
 one figure's legs.
 
@@ -2650,8 +2651,8 @@ unattributed**: the per-value work `gather.rs` does (unescaping the field,
 keying it, holding each group's bounds and the previous value, a dictionary's
 linear membership test) and writing what it gathered into the cache the `parse`
 saves are named by the code and priced by nothing here, and a
-`perf` profile of a gathering `parse` (`measure.py --profile-recipe`) is what
-would rank its terms. Warm is the only regime this table prices: nothing here
+`perf` profile of a gathering `parse`, which `measure.py --profile-recipe`
+does not take, is what would rank its terms. Warm is the only regime this table prices: nothing here
 says what the same CPU costs a device-bound cold scan.
 
 **Where no `COPY` row is observed, the request costs nothing this table
@@ -2894,7 +2895,8 @@ the lookup costing more than a term.
 two legs, taken at `e653505` on the host rather than in the figure's image,
 each an instrument reading and not a figure
 (`runs/p27.8-readings-20260928.log`, the `measure.py --profile-recipe` steps
-naming this row): a `perf` pair of the `profiling` build, taken twice
+as they stood at that commit, the flag off against on with rows evaluated by
+default, where the recipe now pairs the default leg with the rows leg): a `perf` pair of the `profiling` build, taken twice
 (`runs/profile-dfcli-join-costing-{off,on}{,-2}.data`), its samples bucketed
 by the frame that owns them, the bucketing inlined frames included; and three
 on-leg runs of the introspection build (`runs/introspect-dfcli-join-costing-*.txt`),
@@ -2918,7 +2920,7 @@ the figure's **+0.131 s** at `11e13f2`; the shares below are of the profile's ow
 | `at_row`'s group lookup on every row and `at_chunk`'s re-read | row, chunk | +30, +21 | 3.2% |
 | `DynamicRead::stop` and `reads_fields`, asked every row | row | +13, +16 | 1.8% |
 | `push_row` past its split | row | +20, +22 | 2.6% |
-| The byte cut: the state's truths over every group, the membership keying each group's bounds once per term (`ResolvedTerm::bounded`) | groups × list | +112, +112 | 14.1% |
+| The byte cut: the state's truths over every group, the membership keying each group's bounds once per term (`ResolvedTerm::bounded` at that commit, once a group since: `predicate::KeyedBounds`) | groups × list | +112, +112 | 14.1% |
 | Unattributed: sampling, over buckets nothing between the legs reaches — UTF-8 validation alone reads +33 and −55 | — | +12, −64 | −3.2% |
 
 The move is exact: the on leg's `push_row` loses **786 and 787 cycles a row**

@@ -165,7 +165,7 @@ fn the_render_path_allocation_budget_per_row() {
     assert_eq!(per_column.iter().sum::<usize>(), 20, "allocations to render one control row");
 
     // The buffer is what makes that a per-row number: a hundred rows cost a
-    // hundred times the same five, with nothing accumulating.
+    // hundred times the same twenty, with nothing accumulating.
     let counted = counting(|| {
         for _ in 0..100 {
             line.clear();

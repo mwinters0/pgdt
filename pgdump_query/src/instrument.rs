@@ -7,7 +7,8 @@
 //! feature does — `pgdt`'s and `datafusion-cli-pgdump`'s
 //! (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is an
 //! empty guard, [`timed!`] and [`row_evaluated!`] are what they wrap and
-//! nothing more, and every other function here does nothing.
+//! nothing more, and every function recording or reading a figure does
+//! nothing.
 //! The library still installs no allocator; the binary's counting allocator
 //! calls `allocated` and `freed`, and this module decides what counts.
 //!
@@ -213,7 +214,7 @@ impl Drop for StatisticsScope {
 }
 
 /// Record that a cache load handed a pass `bytes` of block statistics — the
-/// walk `crate::stream`'s `statistics_heap` does. Nothing without the
+/// walk [`crate::DumpIndex::statistics_heap_bytes`] does. Nothing without the
 /// instrument, and the call sites are `cfg`'d, so a shipped build does not walk
 /// the index for it.
 ///
@@ -376,8 +377,9 @@ mod evaluation {
         static IN_ROW: Cell<bool> = const { Cell::new(false) };
     }
 
-    /// An `Instant` and a tick count read together at the first span, which
-    /// a reading's own pair converts ticks to nanoseconds against.
+    /// An `Instant` and a tick count read together at the first span closed,
+    /// an earlier reading's calibration included, which a reading's own pair
+    /// converts ticks to nanoseconds against.
     static ORIGIN: OnceLock<(Instant, u64)> = OnceLock::new();
 
     /// What [`ticks`] reads, for the report.
@@ -470,8 +472,9 @@ mod evaluation {
         /// Each part's spans and the raw ticks they spent, in
         /// [`EvaluationPart::ALL`]'s order.
         counts: [(u64, u64); EvaluationPart::ALL.len()],
-        /// Nanoseconds a tick, from the first span to this reading — `NaN`
-        /// before any span.
+        /// Nanoseconds a tick, from the first span closed — an earlier
+        /// reading's calibration included — to this reading; `NaN` where no
+        /// span closed before it.
         pub nanos_per_tick: f64,
         /// What an empty span records of itself, in ticks.
         pub empty_span_ticks: f64,
@@ -510,8 +513,8 @@ mod evaluation {
             spent * self.nanos_per_tick
         }
 
-        /// A row's time outside every leaf part: the walk of the tree, the
-        /// dispatch of each leaf and the state's lookup.
+        /// A row's time outside every leaf part: the walk of the tree and the
+        /// dispatch of each leaf.
         pub fn tree_walk_nanos(&self) -> f64 {
             let leaves: f64 = EvaluationPart::ALL
                 .into_iter()

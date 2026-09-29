@@ -161,7 +161,8 @@ impl Truth {
 pub enum Expr {
     Term(Predicate),
     /// `column IN (…)`, answering exactly as the [`Expr::Or`] of one
-    /// [`PredicateOp::Eq`] term per value would, and `NOT IN` as [`Expr::Not`]
+    /// [`PredicateOp::Eq`] term per value would — a `None` value as SQL's
+    /// `= NULL`, which no [`Predicate`] spells — and `NOT IN` as [`Expr::Not`]
     /// over it — but finding and decoding its field once a row, and answering
     /// by one lookup however long the list (`docs/design/decisions.md`,
     /// "D53").
@@ -2774,8 +2775,9 @@ impl ResolvedTerm {
 /// non-NULL value resolves to, and the lookup the row path answers from.
 ///
 /// The terms are kept, in list order, because they are what the membership
-/// *is*: a row group's statistics and the divergence notes are read off them
-/// exactly as off the [`Expr::Or`] of them, and only the per-row answer is
+/// *is*: a row group's statistics are read off them exactly as off the
+/// [`Expr::Or`] of them, and the divergence notes off the first, every term's
+/// being the same; only the per-row answer is
 /// taken from [`Lookup`] instead — one decode and one probe where the `Or`
 /// would fetch, unescape and compare the field once per term
 /// (`docs/design/decisions.md`, "D53").
@@ -3376,9 +3378,9 @@ pub(crate) trait GroupStatistics {
 }
 
 /// One row group's bounds on one column in one kind, read as keys once for
-/// every term of a tree that reads them — a membership's `=` terms all read
-/// its column's, so a list is keyed against a group once rather than once per
-/// value. It holds the last column and kind asked for, and lives no longer
+/// each run of terms reading them one after another — a membership's `=`
+/// terms all read its column's, so a list is keyed against a group once
+/// rather than once per value. It holds the last column and kind asked for, and lives no longer
 /// than one group's answer, a group's bounds on a column in a kind being one
 /// pair of texts.
 #[derive(Default)]
@@ -3523,8 +3525,8 @@ impl ResolvedExpr {
     }
 
     /// [`Self::truths`], every term reading the group's bounds out of
-    /// `keyed`, so a column's are keyed once for the whole tree where its
-    /// terms read them in one kind.
+    /// `keyed`, so terms reading a column's in one kind one after another
+    /// key them once.
     fn truths_keyed<'a>(
         &'a self,
         group: &impl GroupStatistics,

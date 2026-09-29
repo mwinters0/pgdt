@@ -2162,8 +2162,8 @@ async fn main() -> Result<()> {
                 // including the empty conjunction that keeps every row.
                 None => pgdump_query::Expr::And(terms),
                 Some(spec) if terms.is_empty() => where_expr::parse_where(&spec)?,
-                // Both flags: one conjunction of the expression and the
-                // terms, flattened rather than nested.
+                // Both flags: one conjunction whose children are the
+                // expression and each term, the terms not nested a level down.
                 Some(spec) => pgdump_query::Expr::And(
                     std::iter::once(where_expr::parse_where(&spec)?).chain(terms).collect(),
                 ),

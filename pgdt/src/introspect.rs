@@ -36,9 +36,10 @@
 //!   their peaks, and the worst difference either way any update of the
 //!   account read (`docs/design/decisions.md`, "D81"). Where no pass returned
 //!   an account — a `query`, which loads a cache's statistics and bills them
-//!   only as held when its workers are carved — the lines are `statistics_account=none` and
+//!   only as held when its workers are carved — the lines are `statistics_account=none`,
 //!   `statistics_loaded_bytes`, the heap the cache handed the pass, which is
-//!   the only statistics term a query has.
+//!   the only statistics term a query has, and the counter's live bytes and
+//!   their peak.
 //!
 //! **The two families do not cover the same memory**, so the report labels
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
@@ -174,9 +175,7 @@ mod enabled {
     /// returns none — it loads the cache, bills it only as held when its
     /// workers are carved, and prints no `statistics held` line. The second shape says `statistics_account=none`
     /// and leans on `statistics_loaded_bytes`, the heap the cache handed the
-    /// pass: the scope counter is not that term, seeing the decode's frees
-    /// without its allocations, so a query reading it alone would understate
-    /// what it holds.
+    /// pass, beside the scope counter's live bytes and their peak.
     fn push_statistics(out: &mut String) {
         let Some((held, reading)) = RETURNED.lock().ok().and_then(|r| *r) else {
             let reading = pgdump_query::instrument::statistics_reading();

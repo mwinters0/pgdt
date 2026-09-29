@@ -1,8 +1,8 @@
 //! What a scan reports: what its plan settled, to the sink its table was
 //! registered with, when it is planned; the filter it answers, on its
-//! `EXPLAIN` line; and what it finds while reading — the groups statistics
-//! pruned, the bytes an early stop left unread — as the plan node's metrics
-//! under `EXPLAIN ANALYZE`.
+//! `EXPLAIN` line; and, as the plan node's metrics under `EXPLAIN ANALYZE`,
+//! the groups statistics pruned, counted when it is planned, and the bytes an
+//! early stop left unread, counted as it reads.
 //!
 //! **Over the statistics fixture gathered at a small group size**, so
 //! `public.ordered`'s ascending ids span many groups and a range filter on

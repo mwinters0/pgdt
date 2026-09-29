@@ -13,7 +13,8 @@
 //! group what the statistics can settle only between groups.
 //!
 //! **A dynamic filter is read against the same statistics** ([`DynamicPruning`]):
-//! every group once when the first sub-stream is polled, which is where they
+//! each group the static filter kept, once, when the first sub-stream is
+//! polled, which is where they
 //! are cut ([`DynamicPruning::kept_within`]), and after that a group at a time
 //! as the replay reaches it, or the group being read where a state moves
 //! inside it, rather than every group of the block at each move, since its
@@ -84,8 +85,9 @@ impl SortedStop {
     /// Whether `raw_row` is past the bound: some term is `False` of it. A
     /// filter's stop is asked only of a row that filter rejected, a kept row
     /// having made every term `True` — a dynamic filter's only in a group it
-    /// is armed in ([`DynamicPruning::arm`]), and of every row there the
-    /// static filter rejects, which its state is not evaluated on.
+    /// is armed in ([`DynamicPruning::arm`]), and there of every row the
+    /// static filter rejects, which its state is not evaluated on, and of
+    /// every kept row where rows are not evaluated at all.
     pub(crate) fn passed(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
         self.terms.iter().any(|term| term.is_false(raw_row, split))
     }
@@ -249,18 +251,20 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
 /// under it.
 ///
 /// **Past the cut, a group's verdict is reached only when the replay reaches
-/// the group**, and kept until the state moves. The cut asks every group once,
-/// under the state it reads ([`Self::kept_within`]), and a replay reading that
-/// state takes its verdicts ([`Self::seed`]). A state can move at any moment —
-/// a TopK tightens while the scan streams — so re-pruning the whole block on
-/// each move would evaluate its every group at each read; asked in order, each
-/// group is evaluated once per state the replay reads there.
+/// the group**, and kept until the state moves. The cut asks each group the
+/// static filter kept once, under the state it reads ([`Self::kept_within`]),
+/// and a replay reading that state takes its verdicts ([`Self::seed`]). A
+/// state can move at any moment — a TopK tightens while the scan streams — so
+/// re-pruning the whole block on each move would evaluate its every group at
+/// each read; asked in order, each group is evaluated once per state the
+/// replay reads there.
 ///
 /// **Its stop is asked only in a group whose statistics say a row there can
-/// pass it** ([`Self::stop`]). The state is evaluated on the rows the static
-/// filter keeps and on no others (`crate::stream`'s `DynamicRead::rejects`),
-/// so the stop is asked of every row the static filter rejects that it is
-/// asked of at all, and of each kept row the state rejects; asked in every
+/// pass it** ([`Self::stop`]). The state is evaluated, where rows are, on the
+/// rows the static filter keeps and on no others (`crate::stream`'s
+/// `DynamicRead::rejects`), so the stop is asked of every row the static
+/// filter rejects that it is asked of at all, and of each kept row the state
+/// rejects — of every kept row, where rows are not evaluated; asked in every
 /// kept group, it would evaluate its terms on such rows of each group before
 /// the one holding the bound, where none can pass it and what it could save
 /// is the rest of that one group, pruning skipping every group after it.
@@ -333,7 +337,7 @@ impl DynamicPruning {
     }
 
     /// The group whose rows include the one starting at `offset`, or `None`
-    /// past the last — the block's `\.` line, if nothing else.
+    /// before the block's data or past its last group's `group_size` bytes.
     pub(crate) fn group_of(&self, offset: u64) -> Option<usize> {
         let group = offset.checked_sub(self.extent.start)? / self.statistics.group_size;
         usize::try_from(group).ok().filter(|&group| group < self.groups())

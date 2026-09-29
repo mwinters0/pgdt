@@ -2374,11 +2374,13 @@ struct Segment {
 impl Segment {
     /// The piece of `block` from `start` to `limit`, entered as `entry`.
     ///
-    /// **The copy drops the block's statistics.** Nothing in a replay reads
-    /// them once [`ReplayPlan::new`] has pruned, and a copy keeping the `Arc`
-    /// would hold every matched block's resident for as long as the replay
-    /// runs, after the map that loaded them is gone — which is what lets a
-    /// caller carve a replay with nothing held for them.
+    /// **The copy drops the block's statistics.** Nothing reading a segment
+    /// needs them once [`ReplayPlan::new`] has pruned — a replay under a
+    /// [`DynamicFilter`] reads them from the [`TablePartitions`] holding them
+    /// — and a copy keeping the `Arc` would hold every matched block's
+    /// resident for as long as the replay runs, after the map that loaded
+    /// them is gone, which is what lets a caller of [`table_stream`] or
+    /// [`table_stream_partitions`] carve a replay with nothing held for them.
     fn new(block: &CopyBlock, start: u64, limit: u64, entry: SegmentEntry) -> Self {
         let block = CopyBlock { statistics: None, ..block.clone() };
         Segment { block, start, limit, entry }
@@ -5574,7 +5576,8 @@ mod tests {
         path
     }
 
-    /// **A replay keeps no block's statistics**: once its plan and segments
+    /// **A replay planned for `table_stream` or `table_stream_partitions`
+    /// keeps no block's statistics**: once its plan and segments
     /// exist, the matched blocks the map handed over are the only holders of
     /// each block's `Arc`, so dropping them frees the statistics before a row
     /// is read, on the partitioned path and the serial one alike.

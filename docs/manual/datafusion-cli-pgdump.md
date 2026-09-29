@@ -125,8 +125,8 @@ dump that is nearly every text column, so the dump gets one line saying how
 many there are, after its other lines — and a `CREATE EXTERNAL TABLE`
 statement one line naming its table.
 
-**Planning a query prints what its scan could not do as asked**, once per
-table it reads, before any row is: fewer readers than DataFusion's
+**Planning a query prints what its scan could not do as asked**, once for
+each scan of a table, before any row is: fewer readers than DataFusion's
 `target_partitions` because the memory the scans share could not seat them,
 one reader only because it could not seat even that, or an `.xz` dump read
 through its streaming decoder because one of its blocks would not fit

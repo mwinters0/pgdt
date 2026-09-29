@@ -193,7 +193,7 @@ than reading as a phase nobody has sliced.
   `MEMORY_RESERVE`) on a plain source whatever `--memory` states, so a plain
   `query`'s sub-stream count and batch size are fixed at the number D3 picked
   to decline block decode on an ordinary `.xz`: a stated allowance raises
-  neither, and only `--chunk-size`, which sizes both terms, moves them.
+  neither, and `--chunk-size` moves them only as far as `KD41` lets it.
   **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
   on a real device. Detail: `pgdump_query/src/stream.rs`.
 

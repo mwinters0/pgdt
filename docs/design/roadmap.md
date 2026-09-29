@@ -45,7 +45,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P27`** — nothing at or below it
+centering"). **Phase numbering continues from `P28`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.

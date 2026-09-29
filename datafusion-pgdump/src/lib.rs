@@ -31,11 +31,12 @@
 //! DataFusion observes, as for any of its sources, not `pgdt query`'s earliest
 //! in file order ("D52"), and a partitioned read is not resumable.
 //!
-//! **No figure times it.** Every `query` figure in
-//! `docs/design/measurements.md` times `pgdt`, its text rendering included and,
-//! cold, a mapping pass, neither of which an embedder holding a cache pays; one
-//! taken over the provider would have to name the allocator, which is the
-//! embedder's (`docs/design/decisions.md`, "D13").
+//! **Two figures time it, through `datafusion-cli-pgdump`**:
+//! `dynamic-filter-join` and `dynamic-filter-topk`, naming that shell's
+//! allocator, which is the embedder's (`docs/design/decisions.md`, "D13").
+//! Every other `query` figure in `docs/design/measurements.md` times `pgdt`,
+//! its text rendering included and, cold, a mapping pass, neither of which an
+//! embedder holding a cache pays.
 
 mod budget;
 mod catalog;
