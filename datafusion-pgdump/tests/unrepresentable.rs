@@ -48,10 +48,10 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::physical_plan::{ExecutionPlan, collect};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, StatisticsRequest,
-    StatisticsSelection, decode_field, map_file,
+    DataBlock, Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, SpanBody,
+    StatisticsRequest, decode_field, map_file,
 };
 
 mod in_order;
@@ -525,16 +525,27 @@ async fn parsed_copy(fixture: &Path, dir: &Path, statistics: Statistics) -> Path
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    let request = match statistics {
-        Statistics::Gathered => StatisticsRequest {
-            selection: StatisticsSelection::All,
-            group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-            ..StatisticsRequest::ALL
-        },
-        Statistics::Absent => StatisticsRequest::NONE,
+    let path = cache::colocated_path(&copy);
+    let cache = CacheMode::enabled(path.clone());
+    let request = StatisticsRequest {
+        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
+        ..StatisticsRequest::DATA
     };
     map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
+    // Absent is a data-level map holding none, as a query's own mapping pass
+    // leaves one: the provider refuses a metadata-level table outright.
+    if statistics == Statistics::Absent {
+        let CacheStatus::Valid { mut index, .. } = cache::load(&path, &source).await.unwrap()
+        else {
+            panic!("the parse left a complete cache")
+        };
+        for span in &mut index.spans {
+            if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+                block.statistics = None;
+            }
+        }
+        cache::save(&path, &source, &index).await.unwrap();
+    }
     copy
 }
 

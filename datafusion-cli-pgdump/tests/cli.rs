@@ -4,8 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use pgdump_query::cache::CacheMode;
-use pgdump_query::{LocalFileSource, ScanOptions, StatisticsRequest, map_file};
+use pgdump_query::cache::{self, CacheMode, CacheStatus};
+use pgdump_query::{
+    DataBlock, LocalFileSource, ScanOptions, SpanBody, StatisticsRequest, map_file,
+};
 
 fn fixture(schema: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16").join(schema).join("default.sql")
@@ -16,8 +18,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::NONE).await.unwrap();
+    map_ungathered(&source, &cache::colocated_path(&copy)).await;
     copy
 }
 
@@ -288,4 +289,22 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("n\n3"), "{}", text(&out.stdout));
     refused(&run(&["-q", "-c", &create("time")]));
+}
+
+/// Map `source` whole into the cache at `path` at the data level and keep no
+/// statistics: the census a typed plan needs and nothing gathered, as a
+/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
+/// "D35").
+async fn map_ungathered(source: &LocalFileSource, path: &Path) {
+    let cache = CacheMode::enabled(path.to_path_buf());
+    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
+        panic!("the parse left a complete cache")
+    };
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            block.statistics = None;
+        }
+    }
+    cache::save(path, source, &index).await.unwrap();
 }

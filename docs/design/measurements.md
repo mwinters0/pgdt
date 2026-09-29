@@ -179,10 +179,12 @@ Eighteen standing rules for reading anything below:
   the apparatus rather than replacing it; raising it
   is an apparatus change and obliges a re-sweep, exactly as changing the
   allocator would.
-- **Every `parse` states `--statistics none`, for the same reason.** `parse`
-  gathers per-row-group statistics by default, reading every value of every
-  column, so a shape inheriting that default would time the gathering rather
-  than the scan its figure names.
+- **Every `parse` states the metadata level (`measure.NO_STATISTICS`), for
+  the same reason.** `parse` records at the data level by default, reading
+  every value of every column, so a shape inheriting that default would time
+  the gathering rather than the scan its figure names. The register's figures
+  were taken under `--statistics none`, which censused every block and which
+  the metadata level does not; P28's figures slice re-takes them.
   `uv run measure.py --check` fails a shape whose `parse` omits it, and the
   profile, heaptrack and koji recipes state it too; `--preamble-only` reads no
   row and states none. What gathering costs, and what it buys a query, are the

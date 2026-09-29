@@ -105,9 +105,9 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
     copy

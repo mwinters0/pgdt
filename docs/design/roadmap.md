@@ -213,7 +213,8 @@ pgdt holds — pools, statistics, the reserve for everything unbilled — is car
 from it.
 
 **It governs what a person needs to state, not what exists.** A flag stating
-*intent* — `--statistics <selection>`, which columns to gather — is not a
+*intent* — `--statistics-level <levels>`, what to record of which tables and
+columns — is not a
 hardware knob, and neither is a threshold of the input contract such as
 `--max-line-bytes`. An expert override already shipped, `--chunk-size`, may
 stay; what the rule refuses is a default that is only right once a third knob
@@ -678,8 +679,8 @@ What it inherits:
   `statistics-gathering` at `da05a72` carries the heavier cache, and what it
   adds over `542fdfb`'s is unattributed.
 - **A default `parse` on NVMe may be CPU-bound, which is D10's reopen
-  condition.** Every `scan-throughput-*` and `chunk-size` run states
-  `--statistics none`, where the shipped `parse` gathers, and
+  condition.** Every `scan-throughput-*` and `chunk-size` run gathers
+  nothing, where the shipped `parse` gathers, and
   `statistics-gathering`'s warm gathering leg takes several times what the
   NVMe needs to deliver the same bytes (`measurements.md`,
   `statistics-gathering`, `scan-throughput-nvme`); no cold figure measures the

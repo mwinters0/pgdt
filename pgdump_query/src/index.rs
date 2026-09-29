@@ -111,14 +111,17 @@ impl ArrayShape {
 /// its columns in the leaf's own order, which need not be the root's or a
 /// sibling's. A name a block carries and `columns` does not contributes
 /// nothing, and so does a census entry past its header's list — a block
-/// naming no columns copies none (I5).
+/// naming no columns copies none (I5). A block holding no census contributes
+/// nothing either, so a caller believing the union has first made sure every
+/// block holds one.
 pub fn union_census<'a>(
     columns: &[String],
     blocks: impl IntoIterator<Item = &'a CopyBlock>,
 ) -> Vec<ArrayShape> {
     let mut out = vec![ArrayShape::default(); columns.len()];
     for block in blocks {
-        for (name, shape) in block.header.columns.iter().zip(&block.array_shapes) {
+        let census = block.array_shapes.iter().flatten();
+        for (name, shape) in block.header.columns.iter().zip(census) {
             let slot = columns.iter().position(|c| c == name);
             if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
                 slot.merge(shape);
@@ -177,13 +180,14 @@ pub struct CopyBlock {
     #[serde(default)]
     pub statistics_declined: Option<u64>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
-    /// `header.columns` order. Every mapping pass censuses
-    /// (`docs/design/decisions.md`, "D35"), so a block in the map always
-    /// carries one: a column that saw no array-shaped literal holds the default
-    /// shape, and the vector is empty only for a header naming no columns.
-    /// Shorter than `header.columns` never happens; *longer* only
-    /// where a row is wider than its header, which a query refuses.
-    pub array_shapes: Vec<ArrayShape>,
+    /// `header.columns` order, and `None` for a block mapped at the
+    /// [`crate::StatisticsLevel::Metadata`] level, which records nothing drawn
+    /// from its rows (`docs/design/decisions.md`, "D35"). A column that saw no
+    /// array-shaped literal holds the default shape, and the vector is empty
+    /// only for a header naming no columns. Shorter than `header.columns`
+    /// never happens; *longer* only where a row is wider than its header,
+    /// which a query refuses.
+    pub array_shapes: Option<Vec<ArrayShape>>,
 }
 
 /// One table as its `COPY` headers name it: the database whose `\connect`
@@ -333,7 +337,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
 
     scan(source, options, |event| {
         match event {
-            Event::CopyStart(start) => spans.on_copy_start(start),
+            Event::CopyStart(start) => spans.on_copy_start(start, true),
             Event::Row(row) => spans.on_row(row.offset, row.raw),
             Event::CopyEnd(end) => spans.on_copy_end(end),
             Event::Line(line) => spans.feed_line(line.offset, line.raw),

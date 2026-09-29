@@ -136,7 +136,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 /// the equality leg is pruned by the dictionary it is named for — and
 /// `v_smallint` bounded in every group with no dictionary in any, so the
 /// figure's filter on it consults every group's bounds and skips none — and,
-/// against a cache `parse --statistics none` wrote, asks for statistics and
+/// against a cache `parse --statistics-level metadata` wrote, asks for statistics and
 /// consults none, returning the same rows, which is what the figure's leg over
 /// that cache is refused without.
 ///
@@ -216,7 +216,7 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     // `measure.PRUNING_UNCARRIED`: the same query over a cache carrying none.
     let bare = dir.path().join("bare.dtcache");
     let bare = bare.to_str().unwrap();
-    pgdt(&["parse", "--source", dump, "--dtcache", bare, "--statistics", "none"]);
+    pgdt(&["parse", "--source", dump, "--dtcache", bare, "--statistics-level", "metadata"]);
     let uncarried = query(bare);
     assert!(!uncarried.contains("row-group statistics"), "{uncarried}");
     assert!(!uncarried.contains("reading stopped early"), "{uncarried}");

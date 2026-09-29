@@ -70,8 +70,8 @@ fn parse_takes_the_stated_limit_on_the_serial_scan_and_the_leader_split() {
             "8",
             "--chunk-size",
             "512",
-            "--statistics",
-            "none",
+            "--statistics-level",
+            "metadata",
         ]),
         "a split parse",
     );

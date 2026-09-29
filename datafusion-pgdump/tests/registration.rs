@@ -14,10 +14,11 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
     PgDump, PgDumpOptions, RefusedTable, register_dump, register_table_factory,
 };
-use pgdump_query::cache::{CacheMode, StrictIdentity};
+use pgdump_query::cache::{self, CacheMode, CacheStatus, StrictIdentity};
 use pgdump_query::{
-    ColumnNote, ComparisonNote, Diagnostic, DiagnosticSink, Finding, LocalFileSource, ScanOptions,
-    SchemaMode, Severity, StatisticsRequest, map_file,
+    ColumnNote, ComparisonNote, DataBlock, Diagnostic, DiagnosticSink, Finding, LocalFileSource,
+    ScanOptions, SchemaMode, Severity, SpanBody, StatisticsLevel, StatisticsRequest,
+    StatisticsSelection, StatisticsTarget, map_file,
 };
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
@@ -32,8 +33,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::NONE).await.unwrap();
+    map_ungathered(&source, &cache::colocated_path(&copy)).await;
     copy
 }
 
@@ -153,8 +153,7 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
     )
     .unwrap();
     let source = LocalFileSource::open(&dump_path).unwrap();
-    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&dump_path));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::NONE).await.unwrap();
+    map_ungathered(&source, &cache::colocated_path(&dump_path)).await;
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
@@ -178,6 +177,61 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
     assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
     let err = rows(&ctx, "SELECT * FROM shop.public.t").await.unwrap_err();
     assert!(err.contains("not found"), "{err}");
+}
+
+/// **A table the cache holds at the metadata level is not listed, and its
+/// refusal names the parse that puts it at the data level**; the table that
+/// parse leaves at the data level is listed and answers, and the strings
+/// schema mode, which reads no census, lists both
+/// (`docs/design/decisions.md`, "D35").
+#[tokio::test(flavor = "multi_thread")]
+async fn a_metadata_level_table_is_refused_naming_its_parse() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump_path = dir.path().join("levels.sql");
+    std::fs::write(
+        &dump_path,
+        "COPY public.meta (a) FROM stdin;\n1\n\\.\n\n\
+         COPY public.ok (a) FROM stdin;\n7\n\\.\n",
+    )
+    .unwrap();
+    let source = LocalFileSource::open(&dump_path).unwrap();
+    let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
+    let levels = StatisticsRequest {
+        selection: StatisticsSelection {
+            default: StatisticsLevel::Metadata,
+            overrides: vec![(StatisticsTarget::Table("public.ok".into()), StatisticsLevel::Data)],
+        },
+        ..StatisticsRequest::DATA
+    };
+    map_file(&source, &ScanOptions::default(), &cache, &levels).await.unwrap();
+    let location = dump_path.to_str().unwrap();
+
+    let dump = PgDump::open(location, PgDumpOptions::default()).await.unwrap();
+    let heard = Arc::new(Heard::default());
+    let ctx = SessionContext::new();
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
+    let refused: Vec<_> =
+        heard.take().into_iter().filter(|(_, _, channel)| *channel == "refused").collect();
+    let parse =
+        format!("pgdt parse --source {location} --statistics-level metadata,public.meta=data");
+    assert!(
+        matches!(refused.as_slice(), [(Severity::Error, message, _)]
+            if message.starts_with("shop.public.meta: ") && message.contains(&parse)),
+        "{refused:#?}"
+    );
+    let schema = ctx.catalog("shop").unwrap().schema("public").unwrap();
+    assert_eq!(schema.table_names(), ["ok"]);
+    let ok = rows(&ctx, "SELECT * FROM shop.public.ok").await.unwrap();
+    assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
+
+    let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
+    let dump = PgDump::open(location, strings).await.unwrap();
+    let ctx = SessionContext::new();
+    register_dump(&ctx, Some("shop"), &dump, Arc::new(Heard::default())).unwrap();
+    let schema = ctx.catalog("shop").unwrap().schema("public").unwrap();
+    assert_eq!(schema.table_names(), ["meta", "ok"]);
+    let meta = rows(&ctx, "SELECT * FROM shop.public.meta").await.unwrap();
+    assert_eq!(meta.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
 }
 
 /// **`STORED AS PGDUMP` registers the table its options name**, answering
@@ -321,4 +375,22 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     assert!(err.contains("`--strict-identity=time`"), "{err}");
     let err = rows(&advisory, &create("e", Some("tiem"))).await.unwrap_err();
     assert!(err.contains("pgdump.strict_identity `tiem`"), "{err}");
+}
+
+/// Map `source` whole into the cache at `path` at the data level and keep no
+/// statistics: the census a typed plan needs and nothing gathered, as a
+/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
+/// "D35").
+async fn map_ungathered(source: &LocalFileSource, path: &Path) {
+    let cache = CacheMode::enabled(path.to_path_buf());
+    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
+        panic!("the parse left a complete cache")
+    };
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            block.statistics = None;
+        }
+    }
+    cache::save(path, source, &index).await.unwrap();
 }

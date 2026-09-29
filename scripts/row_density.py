@@ -48,7 +48,8 @@ kept out of the criterion: its bound is under two groups, and no size is
 chosen by the minimum there at all.
 
 **`select`** answers the other half of the reading's recipe: the
-`--statistics` selection tracking one narrow column per table, so a gathering
+`--statistics-level` value putting one narrow column per table at the data
+level and everything else at the metadata level, so a gathering
 `parse` counts every block's groups for a fraction of full gathering's memory.
 It reads the tables' declared columns from `info --json` of any cache holding
 the preamble -- a `parse --preamble-only` is enough -- and picks each table's
@@ -323,8 +324,9 @@ def narrowest(columns: Sequence[dict]) -> dict:
 
 
 def selection(info: dict) -> str:
-    """The `--statistics` value tracking one narrow column of every table the
-    preamble declares."""
+    """The `--statistics-level` value putting one narrow column of every table
+    the preamble declares at the data level, and the rest at the metadata
+    level."""
     targets = []
     for database in (info.get("metadata") or {}).get("databases", []):
         for table, columns in database.get("tables", {}).items():
@@ -332,18 +334,18 @@ def selection(info: dict) -> str:
                 continue
             column = narrowest(columns)["name"]
             parts = table.split(".")
-            if len(parts) != 2 or "." in column or "," in column or "," in table:
-                raise ValueError(f"{table}.{column} cannot be named in a --statistics selection")
-            targets.append(f"{table}.{column}")
+            if len(parts) != 2 or any(c in column for c in ".,=") or any(c in table for c in ",="):
+                raise ValueError(f"{table}.{column} cannot be named in a --statistics-level value")
+            targets.append(f"{table}.{column}=data")
     if not targets:
         raise ValueError("the document declares no table; is it an index with its preamble read?")
-    return ",".join(sorted(set(targets)))
+    return ",".join(["metadata", *sorted(set(targets))])
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    sel = sub.add_parser("select", help="print a --statistics selection of one narrow column a table")
+    sel = sub.add_parser("select", help="print a --statistics-level value of one narrow column a table")
     sel.add_argument("info", type=Path, help="`pgdt info --json` of a cache holding the preamble")
     den = sub.add_parser("density", help="each block's rows per group at every size")
     den.add_argument("info", type=Path, nargs="+", help="`pgdt info --json` output")

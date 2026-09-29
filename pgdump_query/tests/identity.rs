@@ -193,7 +193,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -207,7 +207,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
         &shifting,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect_err("a run whose source moved underneath it does not finish");
@@ -234,7 +234,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
         &shifting,
         &ScanOptions::default(),
         &CacheMode::DISABLED,
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect_err("a disabled-cache run still says the file moved");
@@ -249,7 +249,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -307,7 +307,7 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     let cancel = Arc::new(Cancellation::new());
     let shifting = Shifting::dropping(dump, 1, 0, Arc::clone(&cancel));
     let options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
-    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::NONE)
+    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::METADATA)
         .await
         .expect_err("a dropped prepass read still says the file moved");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
@@ -332,7 +332,7 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::NONE)
+    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::METADATA)
         .await
         .expect_err("a dropped region read still says the file moved");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
@@ -366,7 +366,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     // fails, so the re-check is the first to see the move.
     let map = |source: Shifting, cache: CacheMode| {
         let options = options.clone();
-        async move { map_file(&source, &options, &cache, &StatisticsRequest::NONE).await }
+        async move { map_file(&source, &options, &cache, &StatisticsRequest::METADATA).await }
     };
     let err = map(Shifting::cut(dump.clone(), 1, cut), CacheMode::DISABLED).await.unwrap_err();
     assert!(changed(&err), "the mapping pass names the change: {err:?}");
@@ -386,7 +386,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     // baseline and the load are the two observations before it fails.
     let path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
-    map_file(&source, &options, &CacheMode::enabled(&path), &StatisticsRequest::NONE)
+    map_file(&source, &options, &CacheMode::enabled(&path), &StatisticsRequest::DATA)
         .await
         .unwrap();
     let last = |mut stream: pgdump_query::TableStream<'static>| async move {
@@ -449,7 +449,7 @@ async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(cache::colocated_path(&dump)),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect("the descriptor still reads the file this run opened");
@@ -480,7 +480,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -495,7 +495,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let strict =
         CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false));
     let source = LocalFileSource::open(&dump).unwrap();
-    let err = map_file(&source, &ScanOptions::default(), &strict, &StatisticsRequest::NONE)
+    let err = map_file(&source, &ScanOptions::default(), &strict, &StatisticsRequest::METADATA)
         .await
         .expect_err("`time` binds the modification time");
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {
@@ -513,7 +513,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect("an mtime is too weak to invalidate a cache by default");
@@ -527,7 +527,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &silent,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -536,7 +536,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &silent,
         &ScanOptions::default(),
         &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false)),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect_err("absence is a failure under a selected term");
@@ -560,7 +560,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -569,7 +569,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &silent,
         &ScanOptions::default(),
         &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false)),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect_err("a source that has gone silent cannot give the guarantee either");
@@ -595,7 +595,7 @@ async fn location_binds_nothing_on_a_local_source() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
@@ -607,7 +607,7 @@ async fn location_binds_nothing_on_a_local_source() {
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(false, true)),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect("`location` alone binds nothing a local source has");
@@ -675,7 +675,7 @@ async fn mapped(
         source,
         &ScanOptions::default(),
         &CacheMode::enabled(path).with_strict_identity(strict),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .map(drop)
@@ -712,7 +712,7 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
         &elsewhere,
         &ScanOptions::default(),
         &CacheMode::enabled(&path),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .expect("advisory by default");
@@ -978,7 +978,7 @@ async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
             &source,
             &ScanOptions::default(),
             &CacheMode::DISABLED.with_strict_identity(strict),
-            &StatisticsRequest::NONE,
+            &StatisticsRequest::METADATA,
         )
         .await
         .unwrap_err();

@@ -67,9 +67,9 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
     let (dir, copy) = sandboxed(dump, "dump.sql");
     let source = LocalFileSource::open(&copy).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
     let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
@@ -457,7 +457,7 @@ async fn check_fixture(
     // holding none, which loads in a fraction of the time.
     let plain = dir.path().join("plain.dtcache");
     let source = LocalFileSource::open(&dump).unwrap();
-    let request = StatisticsRequest::NONE;
+    let request = StatisticsRequest::METADATA;
     map_file(&source, &ScanOptions::default(), &CacheMode::enabled(plain.clone()), &request)
         .await
         .unwrap();

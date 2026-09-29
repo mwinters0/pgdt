@@ -59,9 +59,9 @@ static ALLOCATOR: Counting = Counting;
 
 fn request(group_size: u64) -> StatisticsRequest {
     StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     }
 }
 

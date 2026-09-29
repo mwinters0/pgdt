@@ -291,7 +291,9 @@ class Selection(unittest.TestCase):
             "public.flag": [{"name": "on", "declared_type": "boolean"}],
             "public.nothing": [],
         }
-        self.assertEqual(rd.selection(info(tables=tables)), "public.flag.on,public.task.id")
+        self.assertEqual(
+            rd.selection(info(tables=tables)), "metadata,public.flag.on=data,public.task.id=data"
+        )
 
     def test_a_name_a_selection_cannot_spell_is_refused(self):
         with self.assertRaises(ValueError):

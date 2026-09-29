@@ -108,7 +108,8 @@ pub(crate) struct PieceObserver {
 ///
 /// `columns` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list, and a row wider than it grows it
-/// (`crate::map::census_row`). Every row the piece owns is handed to `observer`, where the block
+/// (`crate::map::census_row`); `None` is a block at the metadata level, whose
+/// rows are counted and never split (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
@@ -117,12 +118,12 @@ pub(crate) fn scan_piece(
     base: u64,
     entry: PieceEntry,
     limit: u64,
-    columns: usize,
+    columns: Option<usize>,
     mut observer: Option<&mut PieceObserver>,
 ) -> Result<PieceScan> {
     let empty = |through: u64, next: PieceEntry| PieceScan {
         rows: 0,
-        census: vec![ArrayShape::default(); columns],
+        census: empty_census(columns),
         terminator: None,
         through,
         next,
@@ -153,7 +154,7 @@ pub(crate) fn scan_piece(
     // out of bytes reports no terminator rather than an unterminated block.
     // Deciding that is the leader's, the only party that knows.
     let mut scanner = CopyScanner::resume(start, Some((0, 0)));
-    let mut census = vec![ArrayShape::default(); columns];
+    let mut census = empty_census(columns);
     let mut rows = 0u64;
     let mut terminator = None;
 
@@ -161,7 +162,9 @@ pub(crate) fn scan_piece(
         match event {
             Event::Row(row) => {
                 rows += 1;
-                census_row(&mut census, row.raw);
+                if columns.is_some() {
+                    census_row(&mut census, row.raw);
+                }
                 if let Some(piece) = &mut observer {
                     piece.observer.observe_row(row.offset - piece.data_offset, row.raw);
                 }
@@ -196,6 +199,12 @@ pub(crate) fn scan_piece(
         through: scanner.position(),
         next: PieceEntry::RowStart,
     })
+}
+
+/// A census for a block `columns` wide, before a row is folded in — empty for
+/// a block at the metadata level, which folds none.
+fn empty_census(columns: Option<usize>) -> Vec<ArrayShape> {
+    columns.map_or_else(Vec::new, |columns| vec![ArrayShape::default(); columns])
 }
 
 /// Fold `pieces` — one open `COPY` block's interior, in file order — into the
@@ -333,7 +342,8 @@ pub(crate) struct Shortfall {
 /// licence for handing them out to workers that never parse structure
 /// (`docs/design/decisions.md`, "D52").
 ///
-/// **Where the file ends is `size`, and `columns` is the header's width.**
+/// **Where the file ends is `size`, and `columns` is the header's width**,
+/// `None` where the block is not censused ([`scan_piece`]).
 /// `header_offset` is carried only to name the block in
 /// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
 /// [`scan_piece`] never claims end of file, and the leader is the only party
@@ -382,7 +392,7 @@ pub(crate) async fn scan_region(
     options: &ScanOptions,
     header_offset: u64,
     data_offset: u64,
-    columns: usize,
+    columns: Option<usize>,
     size: u64,
     observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<RegionOutcome> {
@@ -481,12 +491,12 @@ async fn run_region(
     advice: &Partitioning,
     workers: usize,
     data_offset: u64,
-    columns: usize,
+    columns: Option<usize>,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<Interior>> {
     let mut rows = 0u64;
-    let mut census: Vec<ArrayShape> = vec![ArrayShape::default(); columns];
+    let mut census = empty_census(columns);
     let mut frontier = data_offset;
     let mut entry = PieceEntry::RowStart;
 
@@ -615,7 +625,7 @@ async fn scan_partition(
     read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
-    columns: usize,
+    columns: Option<usize>,
     size: u64,
     mut piece: Option<PieceObserver>,
 ) -> Result<(Vec<PieceScan>, Option<PieceObserver>)> {
@@ -695,7 +705,7 @@ mod tests {
         header_offset: u64,
         data_offset: u64,
         end_offset: u64,
-        columns: usize,
+        columns: Option<usize>,
         interior: Interior,
     }
 
@@ -715,7 +725,7 @@ mod tests {
                 match event {
                     Event::CopyStart(start) => {
                         columns.push(start.header.columns.len());
-                        builder.on_copy_start(start);
+                        builder.on_copy_start(start, true);
                     }
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => builder.on_copy_end(end),
@@ -738,9 +748,9 @@ mod tests {
                     header_offset: block.header_offset,
                     data_offset: block.data_offset,
                     end_offset: block.end_offset,
-                    columns: widths.next().expect("one header per block"),
+                    columns: Some(widths.next().expect("one header per block")),
                     interior: Interior {
-                        census: block.array_shapes,
+                        census: block.array_shapes.expect("every block is censused here"),
                         end: CopyEnd {
                             terminator_offset: block.terminator_offset,
                             end_offset: block.end_offset,
@@ -911,6 +921,20 @@ mod tests {
         assert_eq!(&split, &block.interior);
     }
 
+    /// **A block at the metadata level is counted and never censused**: its
+    /// pieces, handed no width, count the rows a censused split counts and
+    /// fold none of them (`docs/design/decisions.md`, "D35").
+    #[test]
+    fn a_split_handed_no_width_counts_its_rows_and_censuses_none() {
+        let file = b"COPY public.t (a) FROM stdin;\n{1}\n{{2}}\n{3}\n{4}\n\\.\n".to_vec();
+        let block = Reference { columns: None, ..reference(&file).remove(0) };
+        let (split, working) = cut_up(&file, &block, 2);
+        let split = split.unwrap();
+        assert_eq!(working, 2, "a real split");
+        assert!(split.census.is_empty());
+        assert_eq!(split.end, block.interior.end);
+    }
+
     /// **A piece never hands the scanner a mid-row byte**, and this is the row
     /// that would be misread if it did: `a\.`, which COPY TEXT writes as
     /// `a\\.`, so the tail from its second backslash is `\.` and an LF. I7's
@@ -926,9 +950,15 @@ mod tests {
         let cut = block.data_offset + 2;
         assert_eq!(&file[cut as usize..cut as usize + 3], b"\\.\n");
 
-        let piece =
-            scan_piece(&file[cut as usize..], cut, PieceEntry::Resync, block.end_offset, 1, None)
-                .unwrap();
+        let piece = scan_piece(
+            &file[cut as usize..],
+            cut,
+            PieceEntry::Resync,
+            block.end_offset,
+            Some(1),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             piece.terminator,
             Some((block.interior.end.terminator_offset, block.end_offset)),
@@ -1386,7 +1416,7 @@ mod tests {
 
         let source = LocalFileSource::open(&path).unwrap();
         let options = scheduled(&source, 4);
-        let err = scan_region(&source, &options, 0, data_offset, 1, file.len() as u64, None)
+        let err = scan_region(&source, &options, 0, data_offset, Some(1), file.len() as u64, None)
             .await
             .expect_err("a COPY block with no terminator");
         assert!(

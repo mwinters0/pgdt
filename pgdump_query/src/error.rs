@@ -218,6 +218,16 @@ pub enum Error {
         "the map covers {scanned_through} of the source's {size} byte(s); a replay over a caller's map needs one that reaches the end of the file"
     )]
     MapIncomplete { scanned_through: u64, size: u64 },
+    /// A typed plan over a map the caller holds was handed a table that map
+    /// holds at the metadata level, which records no census of its rows, so
+    /// no schema can be settled for it (`docs/design/decisions.md`, "D35").
+    /// Raised by `crate::TablePartitions::plan` and `crate::table_schema`
+    /// before a byte is read; a query that maps for itself reads the rows
+    /// again instead, and so never raises it.
+    #[error(
+        "table `{table}` is mapped at the metadata level, which records nothing drawn from its rows, and a typed query over a map it does not build needs the data level's census — map it again at the data level, or read it in the strings schema mode"
+    )]
+    TableAtMetadataLevel { table: String },
     #[error(
         "metadata for database {} was not scanned — run `pgdt parse` first, or use --schema-mode strings",
         database.as_deref().unwrap_or("(unnamed)")

@@ -95,9 +95,9 @@ async fn gathered(version: u32) -> (tempfile::TempDir, std::path::PathBuf, DumpI
 async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
     let source = LocalFileSource::open(dump).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(dump));
     let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();

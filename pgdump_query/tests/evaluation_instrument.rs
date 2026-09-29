@@ -77,9 +77,9 @@ async fn read(
     let (_dir, dump) = sandboxed(&statistics_fixture(version, "default"), "dump.sql");
     let source = LocalFileSource::open(&dump).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(1024).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let index = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap().index;

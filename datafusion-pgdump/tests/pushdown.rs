@@ -71,7 +71,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::ALL).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
     copy
 }
 

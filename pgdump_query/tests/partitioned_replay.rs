@@ -1094,7 +1094,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
         source.as_ref(),
         &ScanOptions::default(),
         &CacheMode::DISABLED,
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::DATA,
     )
     .await
     .unwrap();

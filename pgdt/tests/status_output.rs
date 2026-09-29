@@ -708,8 +708,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         compressed.to_str().unwrap(),
         "--dtcache",
         dir.path().join("declined.dtcache").to_str().unwrap(),
-        "--statistics",
-        "none",
+        "--statistics-level",
+        "metadata",
         "--jobs",
         "2",
         "--memory",
@@ -748,8 +748,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         compressed.to_str().unwrap(),
         "--dtcache",
         dir.path().join("afforded.dtcache").to_str().unwrap(),
-        "--statistics",
-        "none",
+        "--statistics-level",
+        "metadata",
         "--jobs",
         "2",
         "--memory",
@@ -766,8 +766,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         plain_dump().to_str().unwrap(),
         "--dtcache",
         dir.path().join("plain.dtcache").to_str().unwrap(),
-        "--statistics",
-        "none",
+        "--statistics-level",
+        "metadata",
         "--jobs",
         "2",
         "--memory",
@@ -783,12 +783,12 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
 
 /// **Gathering statistics corrects nothing**: a gathered table's interior is
 /// split across the workers like any other, so a gathering `parse` at a count
-/// the leader cuts at prints no `scan arrangement` line, exactly as one under
-/// `--statistics none` does. The chunk is stated so the leader really cuts.
+/// the leader cuts at prints no `scan arrangement` line, exactly as one at
+/// the metadata level does. The chunk is stated so the leader really cuts.
 #[test]
 fn a_gathering_parse_is_not_corrected() {
     let dir = tempfile::tempdir().unwrap();
-    for (leg, statistics) in [("gathered", "all"), ("none", "none")] {
+    for (leg, level) in [("gathered", "data"), ("metadata", "metadata")] {
         let out = run(&[
             "parse",
             "--source",
@@ -799,8 +799,8 @@ fn a_gathering_parse_is_not_corrected() {
             "2",
             "--chunk-size",
             "64",
-            "--statistics",
-            statistics,
+            "--statistics-level",
+            level,
         ]);
         assert!(out.status.success(), "{}", stderr_of(&out));
         assert!(arrangement_lines(&stderr_of(&out)).is_empty(), "{leg}: {}", stderr_of(&out));

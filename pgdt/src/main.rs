@@ -21,7 +21,7 @@ use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
     DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
     Parallelism, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized,
-    ScanOptions, Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection,
+    ScanOptions, Severity, Span, SpanBody, StatisticsLevel, StatisticsRequest, StatisticsSelection,
     StatisticsTarget, TypeKind, open, preamble_only, render_field_into,
 };
 use tracing::Instrument;
@@ -711,24 +711,39 @@ enum Command {
         /// memory.
         #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
         max_line_bytes: Option<usize>,
-        /// Which per-row-group column statistics to gather: `all`, the
-        /// default; `none`; or a comma-separated list of the tables
-        /// (`schema.table`, or a bare `table` in any schema) and columns
-        /// (`schema.table.column`) to gather them for alone. Statistics record,
-        /// for each stretch of a table's data, its row count and each column's
-        /// NULL count, and where a column's comparison allows, its least and
+        /// How much to record of each table: a level for every table, `data`
+        /// (the default) or `metadata`, then comma-separated overrides naming
+        /// a table (`schema.table`, or a bare `table` in any schema) or a
+        /// column (`schema.table.column`) and its own level. So
+        /// `metadata,public.foo=data` records every table at the metadata
+        /// level but `public.foo`, and `data,public.foo.blob=metadata` every
+        /// column of every table at the data level but `blob`. The most
+        /// specific entry naming a column decides its level — a column, then
+        /// a qualified table, then a bare one, then the first entry — and one
+        /// table or column named twice is refused.
+        ///
+        /// The data level is what queries are for. A table any of whose
+        /// columns is at it has its array columns' shapes recorded, which a
+        /// typed query needs, and each such column its statistics: for each
+        /// stretch of the table's data, its row count and the column's NULL
+        /// count, and where the column's comparison allows, its least and
         /// greatest value and its distinct values. Gathering reads every value
-        /// of every tracked column, which costs the scan time and memory;
-        /// `none` scans as fast as the file allows. A block an earlier `parse`
-        /// mapped without the statistics asked for here is re-read for them
-        /// once the rest of the file is scanned, keeping any it already had.
+        /// of every such column, which costs the scan time and memory.
+        ///
+        /// The metadata level records where a table's data lies and how many
+        /// rows it holds, and nothing drawn from those rows, so it scans as
+        /// fast as the file allows. A `query` of such a table reads its rows
+        /// once more first, every time, and the DataFusion provider refuses
+        /// it. A block an earlier `parse` recorded at a lower level than asked
+        /// here is re-read once the rest of the file is scanned, keeping
+        /// whatever it already had: nothing recorded is ever dropped.
         #[arg(
             long,
-            value_name = "SELECTION",
-            value_parser = parse_statistics,
+            value_name = "LEVELS",
+            value_parser = parse_statistics_level,
             conflicts_with = "preamble_only"
         )]
-        statistics: Option<StatisticsSelection>,
+        statistics_level: Option<StatisticsSelection>,
         /// The bytes of a table's data each row group of statistics covers, a
         /// power of two. The default, 1 MiB, is coarse, and doubles for a
         /// table whose data would take more than 4,096 groups until it takes
@@ -999,34 +1014,55 @@ fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, String> {
     }
 }
 
-/// A `--statistics` value: `none`, `all`, or a comma-separated list of tables
-/// and `schema.table.column`s. A name is split at its dots, so a quoted
-/// identifier holding one cannot be named here.
-fn parse_statistics(text: &str) -> std::result::Result<StatisticsSelection, String> {
-    match text {
-        "none" => return Ok(StatisticsSelection::None),
-        "all" => return Ok(StatisticsSelection::All),
-        _ => {}
+/// A `--statistics-level` value: a level, then comma-separated
+/// `target=level` overrides, a target being a table or a
+/// `schema.table.column`. A name is split at its dots, so a quoted identifier
+/// holding one cannot be named here. **One target named twice is refused**,
+/// whatever the two levels: the library reads the later of two equally
+/// specific entries, and a person writing both meant one of them.
+fn parse_statistics_level(text: &str) -> std::result::Result<StatisticsSelection, String> {
+    fn level(word: &str) -> std::result::Result<StatisticsLevel, String> {
+        match word.trim() {
+            "data" => Ok(StatisticsLevel::Data),
+            "metadata" => Ok(StatisticsLevel::Metadata),
+            other => Err(format!("{other:?} is not a level: `data` or `metadata`")),
+        }
     }
-    let targets = text
-        .split(',')
-        .map(|entry| {
-            let entry = entry.trim();
-            let parts: Vec<&str> = entry.split('.').collect();
-            if parts.iter().any(|part| part.is_empty()) {
-                return Err(format!("{entry:?} is not a table or a schema.table.column"));
-            }
-            match parts.as_slice() {
-                [_] | [_, _] => Ok(StatisticsTarget::Table(entry.to_string())),
-                [schema, table, column] => Ok(StatisticsTarget::Column {
-                    table: format!("{schema}.{table}"),
-                    column: (*column).to_string(),
-                }),
-                _ => Err(format!("{entry:?} has more parts than schema.table.column")),
-            }
-        })
-        .collect::<std::result::Result<Vec<_>, String>>()?;
-    Ok(StatisticsSelection::Only(targets))
+    let mut entries = text.split(',').map(str::trim);
+    let first = entries.next().unwrap_or_default();
+    if first.contains('=') {
+        return Err(format!(
+            "{first:?} is an override, and the first entry is the level of every table: start \
+             with `data` or `metadata`"
+        ));
+    }
+    let default = level(first)?;
+    let mut overrides: Vec<(StatisticsTarget, StatisticsLevel)> = Vec::new();
+    for entry in entries {
+        let Some((name, stated)) = entry.split_once('=') else {
+            return Err(format!(
+                "{entry:?} states no level: write `{entry}=data` or `{entry}=metadata`"
+            ));
+        };
+        let name = name.trim();
+        let parts: Vec<&str> = name.split('.').collect();
+        if parts.iter().any(|part| part.is_empty()) {
+            return Err(format!("{name:?} is not a table or a schema.table.column"));
+        }
+        let target = match parts.as_slice() {
+            [_] | [_, _] => StatisticsTarget::Table(name.to_string()),
+            [schema, table, column] => StatisticsTarget::Column {
+                table: format!("{schema}.{table}"),
+                column: (*column).to_string(),
+            },
+            _ => return Err(format!("{name:?} has more parts than schema.table.column")),
+        };
+        if overrides.iter().any(|(named, _)| *named == target) {
+            return Err(format!("{name:?} is named twice — give each table or column one level"));
+        }
+        overrides.push((target, level(stated)?));
+    }
+    Ok(StatisticsSelection { default, overrides })
 }
 
 /// A `--row-group-size` value: a byte count, never zero, which would
@@ -1043,19 +1079,24 @@ fn parse_row_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
     }
 }
 
-/// What `parse` gathers, from its four statistics flags: `--statistics`
-/// absent is every column, a size or a bound beside `none` is refused rather
-/// than ignored, and so is a maximum below the minimum in force — the stated
-/// one, or the default where none was stated, which is the minimum the run
-/// would apply.
+/// What `parse` records, from its four statistics flags: `--statistics-level`
+/// absent is the data level everywhere, a size or a bound beside a level
+/// gathering nothing is refused rather than ignored, and so is a maximum below
+/// the minimum in force — the stated one, or the default where none was
+/// stated, which is the minimum the run would apply.
 fn statistics_request(
     selection: Option<StatisticsSelection>,
     group_size: Option<NonZeroU64>,
     min_rows: Option<u64>,
     max_rows: Option<u64>,
 ) -> Result<StatisticsRequest> {
-    let selection = selection.unwrap_or_default();
-    if selection == StatisticsSelection::None {
+    let request = StatisticsRequest {
+        selection: selection.unwrap_or_default(),
+        group_size,
+        min_rows,
+        max_rows,
+    };
+    if !request.gathers() {
         let sizing = [
             (group_size.is_some(), "--row-group-size"),
             (min_rows.is_some(), "--row-group-min-rows"),
@@ -1063,7 +1104,8 @@ fn statistics_request(
         ];
         if let Some((_, flag)) = sizing.iter().find(|(stated, _)| *stated) {
             anyhow::bail!(
-                "{flag} sizes the statistics `--statistics none` turns off — drop one of them"
+                "{flag} sizes statistics, and `--statistics-level` puts every table at the \
+                 metadata level, which gathers none — drop one of them"
             );
         }
     }
@@ -1076,7 +1118,7 @@ fn statistics_request(
             max_rows.expect("read above")
         );
     }
-    Ok(StatisticsRequest { selection, group_size, min_rows, max_rows })
+    Ok(request)
 }
 
 /// The two read flags every scanning command carries, as given.
@@ -1553,6 +1595,10 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         // A caller's map short of the file's end names neither. `pgdt` hands
         // the library no map of its own, so it never meets this one.
         Lib::MapIncomplete { .. } => true,
+        // A caller's map holding the table at the metadata level: `pgdt`'s
+        // query maps for itself and reads such a table again, so it never
+        // meets this one either.
+        Lib::TableAtMetadataLevel { .. } => true,
         // Named by the library itself: each of these carries the origin or
         // the URL in its own sentence.
         Lib::SourceNotReadable { .. } | Lib::Remote { .. } => false,
@@ -1935,7 +1981,7 @@ async fn main() -> Result<()> {
             preamble_only: preamble_only_flag,
             chunk_size,
             max_line_bytes,
-            statistics,
+            statistics_level,
             row_group_size,
             row_group_min_rows,
             row_group_max_rows,
@@ -1945,7 +1991,7 @@ async fn main() -> Result<()> {
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
             let statistics = statistics_request(
-                statistics,
+                statistics_level,
                 row_group_size,
                 row_group_min_rows,
                 row_group_max_rows,
@@ -2750,7 +2796,9 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 /// census may be believed: a *mapped* block's census is total for that block,
 /// but one table's data can occupy several blocks (I2), so a map that stopped
 /// short cannot speak for a block past its frontier and every column resolves
-/// optimistically until it can (`docs/design/decisions.md`, "D35").
+/// optimistically until it can (`docs/design/decisions.md`, "D35"). A block
+/// mapped at the metadata level holds no census, and resolves optimistically
+/// too.
 ///
 /// A header-less block copies no columns (I5) and resolves to an empty
 /// schema. It is still listed, so the export's shape does not vary per
@@ -2762,7 +2810,10 @@ fn block_resolutions(
     index
         .blocks()
         .map(|block| {
-            let census: &[ArrayShape] = if complete { &block.array_shapes } else { &[] };
+            let census: &[ArrayShape] = match &block.array_shapes {
+                Some(census) if complete => census,
+                _ => &[],
+            };
             let resolved = resolve_columns(
                 &block.header.qualified_name(),
                 &block.header.columns,
@@ -2876,8 +2927,9 @@ fn print_index_json(
 /// nothing below it qualified (`docs/design/decisions.md`, "D67").
 ///
 /// A partial index lacks *records*, not confidence: a block enters the map
-/// only at a `CopyEnd` watermark and every mapping pass censuses, so every
-/// record it holds is complete in itself, and there is no half-known block.
+/// only at a `CopyEnd` watermark, holding what its level records of every
+/// row, so every record it holds is complete in itself, and there is no
+/// half-known block.
 /// The percentage floors, so it reads 100% only for a finished scan.
 fn completion_line(scanned_through: u64, total_size: u64) -> String {
     // A zero-byte file is trivially covered in full, and has no ratio.
@@ -2978,6 +3030,7 @@ fn print_index(
     for (block, resolved) in &blocks {
         headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
+        println!("    level: {}", level_label(block));
         if block.header.columns.is_empty() {
             println!("    columns: none (every column dropped or generated, or none declared)");
         } else {
@@ -3041,6 +3094,16 @@ fn print_index(
         println!(
             "{total_unmapped} of {total_columns} columns unmapped — run with --detail for details"
         );
+    }
+}
+
+/// The level a block was mapped at, as `--statistics-level` spells it: `data`
+/// where it holds a census, `metadata` where it holds nothing drawn from its
+/// rows (`docs/design/decisions.md`, "D35").
+fn level_label(block: &pgdump_query::CopyBlock) -> &'static str {
+    match block.array_shapes {
+        Some(_) => "data",
+        None => "metadata",
     }
 }
 
@@ -3331,7 +3394,7 @@ mod tests {
     /// same reason: the two lists together are what makes the numeric one
     /// exhaustive.
     const NON_NUMERIC_VALUE_NAMES: &[&str] = &[
-        "SELECTION",
+        "LEVELS",
         "EXPR",
         "NAME",
         "USE",

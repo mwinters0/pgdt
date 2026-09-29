@@ -561,14 +561,14 @@ pub(crate) struct Builder {
     /// and `None` for `Framing`/`Connect`/`VersionHeader`. Reset fresh by
     /// every new `Builder`.
     governing_toc: Option<TocHeader>,
-    /// The census accumulating for the open `COPY` block (`ArrayShape`).
-    /// Sized at `CopyStart` from the header's column list, and grown by any
-    /// row that turns out to have more fields, the mapping pass never
-    /// refusing a row's width (`docs/design/decisions.md`, "D28"); a query
-    /// refuses that row, so nothing reads the extra entries. Every mapping pass censuses, a block
-    /// reaching the map only once walked end to end
-    /// (`docs/design/decisions.md`, "D35").
-    pending_census: Vec<ArrayShape>,
+    /// The census accumulating for the open `COPY` block (`ArrayShape`), and
+    /// `None` for a block at the metadata level, whose rows are not split
+    /// (`docs/design/decisions.md`, "D35"). Sized at `CopyStart` from the
+    /// header's column list, and grown by any row that turns out to have more
+    /// fields, the mapping pass never refusing a row's width
+    /// (`docs/design/decisions.md`, "D28"); a query refuses that row, so
+    /// nothing reads the extra entries.
+    pending_census: Option<Vec<ArrayShape>>,
     /// The statistics observer for the open `COPY` block, when the mapping
     /// pass asked for one ([`Builder::observe_block`]). Handed every row and
     /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
@@ -712,7 +712,7 @@ impl Builder {
             roles: BTreeSet::new(),
             tablespaces: BTreeSet::new(),
             governing_toc: None,
-            pending_census: Vec::new(),
+            pending_census: None,
             pending_observer: None,
         }
     }
@@ -1154,7 +1154,9 @@ impl Builder {
         }
     }
 
-    pub(crate) fn on_copy_start(&mut self, event: CopyStart) {
+    /// A `COPY` header opened a block, censused where `census` says its
+    /// table is at the data level.
+    pub(crate) fn on_copy_start(&mut self, event: CopyStart, census: bool) {
         // I12 puts the large-object region after every `COPY` block, so a
         // pending one here means non-`pg_dump` input — flushed rather than
         // silently absorbing whatever follows into it.
@@ -1179,18 +1181,20 @@ impl Builder {
                 (event.header_offset, None)
             }
         };
-        self.pending_census = vec![Default::default(); event.header.columns.len()];
+        self.pending_census = census.then(|| vec![Default::default(); event.header.columns.len()]);
         self.pending_observer = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
     /// Fold one data row of the open `COPY` block into its array-shape
-    /// census — see [`census_row`], shared with the interior workers a split
-    /// `COPY` block is scanned by (`crate::leader`) — and hand it to the
-    /// block's statistics observer, if it has one. `offset` is the row's
-    /// absolute file offset.
+    /// census, where it has one — see [`census_row`], shared with the interior
+    /// workers a split `COPY` block is scanned by (`crate::leader`) — and hand
+    /// it to the block's statistics observer, if it has one. `offset` is the
+    /// row's absolute file offset.
     pub(crate) fn on_row(&mut self, offset: u64, raw: &[u8]) {
-        census_row(&mut self.pending_census, raw);
+        if let Some(census) = self.pending_census.as_mut() {
+            census_row(census, raw);
+        }
         if let (Some(observer), Some((_, start, ..))) =
             (self.pending_observer.as_mut(), self.pending_data.as_ref())
         {
@@ -1221,12 +1225,14 @@ impl Builder {
     ///
     /// Length-tolerant because a row wider than its header grows a census
     /// ([`census_row`]), so the workers' union can be wider than what
-    /// [`on_copy_start`](Self::on_copy_start) sized.
+    /// [`on_copy_start`](Self::on_copy_start) sized. A block holding no
+    /// census absorbs nothing.
     pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
-        if census.len() > self.pending_census.len() {
-            self.pending_census.resize(census.len(), ArrayShape::default());
+        let Some(pending) = self.pending_census.as_mut() else { return };
+        if census.len() > pending.len() {
+            pending.resize(census.len(), ArrayShape::default());
         }
-        for (slot, shape) in self.pending_census.iter_mut().zip(census) {
+        for (slot, shape) in pending.iter_mut().zip(census) {
             slot.merge(shape);
         }
     }
@@ -1259,7 +1265,7 @@ impl Builder {
             partition_root,
             statistics,
             statistics_declined,
-            array_shapes: std::mem::take(&mut self.pending_census),
+            array_shapes: self.pending_census.take(),
         };
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
@@ -1473,7 +1479,7 @@ pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> R
 
     scan(source, options, |event| {
         match event {
-            Event::CopyStart(start) => builder.on_copy_start(start),
+            Event::CopyStart(start) => builder.on_copy_start(start, true),
             Event::Row(row) => builder.on_row(row.offset, row.raw),
             Event::CopyEnd(end) => builder.on_copy_end(end),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
@@ -1631,15 +1637,18 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
+        builder.on_copy_start(
+            CopyStart {
+                header: CopyHeader {
+                    schema: Some("public".to_string()),
+                    table: "t".to_string(),
+                    columns: vec!["id".to_string()],
+                },
+                header_offset,
+                data_offset: header_offset + 32,
             },
-            header_offset,
-            data_offset: header_offset + 32,
-        });
+            true,
+        );
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -1824,15 +1833,18 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
+        builder.on_copy_start(
+            CopyStart {
+                header: CopyHeader {
+                    schema: Some("public".to_string()),
+                    table: "t".to_string(),
+                    columns: vec!["id".to_string()],
+                },
+                header_offset,
+                data_offset: header_offset + 32,
             },
-            header_offset,
-            data_offset: header_offset + 32,
-        });
+            true,
+        );
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -1969,15 +1981,18 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
+        builder.on_copy_start(
+            CopyStart {
+                header: CopyHeader {
+                    schema: Some("public".to_string()),
+                    table: "t".to_string(),
+                    columns: vec!["id".to_string()],
+                },
+                header_offset,
+                data_offset: header_offset + 32,
             },
-            header_offset,
-            data_offset: header_offset + 32,
-        });
+            true,
+        );
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -2119,15 +2134,18 @@ mod tests {
         assert!(check_tiling(&builder.snapshot(offset), offset).is_empty());
 
         let header_offset = offset;
-        builder.on_copy_start(CopyStart {
-            header: CopyHeader {
-                schema: Some("public".to_string()),
-                table: "t".to_string(),
-                columns: vec!["id".to_string()],
+        builder.on_copy_start(
+            CopyStart {
+                header: CopyHeader {
+                    schema: Some("public".to_string()),
+                    table: "t".to_string(),
+                    columns: vec!["id".to_string()],
+                },
+                header_offset,
+                data_offset: header_offset + 32,
             },
-            header_offset,
-            data_offset: header_offset + 32,
-        });
+            true,
+        );
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });

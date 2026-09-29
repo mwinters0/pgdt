@@ -43,18 +43,16 @@ Options:
                                    of megabytes — needs a larger limit stated here. A row is held
                                    whole while it is scanned, so this is also what one row may cost
                                    in memory
-      --statistics <SELECTION>     Which per-row-group column statistics to gather: `all`, the
-                                   default; `none`; or a comma-separated list of the tables
-                                   (`schema.table`, or a bare `table` in any schema) and columns
-                                   (`schema.table.column`) to gather them for alone. Statistics
-                                   record, for each stretch of a table's data, its row count and
-                                   each column's NULL count, and where a column's comparison allows,
-                                   its least and greatest value and its distinct values. Gathering
-                                   reads every value of every tracked column, which costs the scan
-                                   time and memory; `none` scans as fast as the file allows. A block
-                                   an earlier `parse` mapped without the statistics asked for here
-                                   is re-read for them once the rest of the file is scanned, keeping
-                                   any it already had
+      --statistics-level <LEVELS>  How much to record of each table: a level for every table, `data`
+                                   (the default) or `metadata`, then comma-separated overrides
+                                   naming a table (`schema.table`, or a bare `table` in any schema)
+                                   or a column (`schema.table.column`) and its own level. So
+                                   `metadata,public.foo=data` records every table at the metadata
+                                   level but `public.foo`, and `data,public.foo.blob=metadata` every
+                                   column of every table at the data level but `blob`. The most
+                                   specific entry naming a column decides its level — a column, then
+                                   a qualified table, then a bare one, then the first entry — and
+                                   one table or column named twice is refused
       --row-group-size <BYTES>     The bytes of a table's data each row group of statistics covers,
                                    a power of two. The default, 1 MiB, is coarse, and doubles for a
                                    table whose data would take more than 4,096 groups until it takes

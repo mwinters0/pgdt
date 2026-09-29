@@ -2,21 +2,25 @@
 //! (`docs/design/decisions.md`, "D35").
 //!
 //! `src/index.rs`'s unit tests pin what a single field contributes. These
-//! pin the three things only a real dump can show: that the shapes recorded
+//! pin the four things only a real dump can show: that the shapes recorded
 //! for `fixtures/*/types/default.sql` are the ones its literals actually
-//! carry, that every mapping pass records them whatever its
-//! `ScanExtent`, and that a query's schema is retyped from them before its
-//! first batch.
+//! carry, that every mapping pass a query makes records them whatever its
+//! `ScanExtent`, that a query's schema is retyped from them before its
+//! first batch, and that a table mapped at the metadata level, which records
+//! none, is censused by the query that reads it.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use futures::StreamExt;
 
-use pgdump_query::cache::{CacheLoad, CacheMode};
+use pgdump_query::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
 use pgdump_query::index::ArrayShape;
-use pgdump_query::resolve::ColumnResolution;
+use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    LocalFileSource, QueryOptions, ScanExtent, ScanOptions, build_index, table_stream, union_census,
+    ByteRangeSource, Error, LocalFileSource, QueryOptions, ScanExtent, ScanOptions,
+    StatisticsRequest, TablePartitions, build_index, map_file, table_schema, table_stream,
+    union_census,
 };
 
 mod common;
@@ -27,7 +31,7 @@ async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let block = index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"));
-    block.header.columns.iter().cloned().zip(block.array_shapes.iter().copied()).collect()
+    block.header.columns.iter().cloned().zip(block.array_shapes.iter().flatten().copied()).collect()
 }
 
 fn shape(census: &[(String, ArrayShape)], column: &str) -> ArrayShape {
@@ -103,7 +107,7 @@ async fn a_composite_column_contributes_no_dimensionality() {
     assert_eq!(shape(&census, "v_points").dims, Some((1, 1)));
 }
 
-/// **Every mapping pass censuses, under either `ScanExtent`.** A cold query
+/// **Every mapping pass a query makes censuses, under either `ScanExtent`.** A cold query
 /// that stops at its target already receives every row of every block it
 /// maps, so the census rides a read that happens anyway — and the block it
 /// leaves in the map is indistinguishable from the one a full scan leaves,
@@ -136,11 +140,20 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
             panic!("the query wrote a cache: {extent:?}")
         };
         let block = index.blocks_for("public.t_array").next().unwrap();
-        assert_eq!(block.array_shapes.len(), block.header.columns.len(), "{extent:?}");
+        assert_eq!(
+            block.array_shapes.as_ref().map(Vec::len),
+            Some(block.header.columns.len()),
+            "{extent:?}"
+        );
         // `v_empty` holds `{}` then `{1,2,3}`: a real shape, recorded by a
         // pass that stopped at this table as much as by one that ran to EOF.
-        let census: Vec<(String, ArrayShape)> =
-            block.header.columns.iter().cloned().zip(block.array_shapes.iter().copied()).collect();
+        let census: Vec<(String, ArrayShape)> = block
+            .header
+            .columns
+            .iter()
+            .cloned()
+            .zip(block.array_shapes.iter().flatten().copied())
+            .collect();
         assert_eq!(shape(&census, "v_empty").dims, Some((1, 1)), "{extent:?}");
     }
 }
@@ -201,4 +214,69 @@ async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
     // nothing — which is the answer that leaves every column optimistically
     // typed.
     assert!(union.iter().all(|s| *s == ArrayShape::default()));
+}
+
+/// **A table the cache holds at the metadata level is censused by the query
+/// that reads it, for that query alone, and refused by a plan over a map the
+/// caller holds** (`docs/design/decisions.md`, "D35"). `parse` at the
+/// metadata level records no block's census; a query of `t_array_shape` reads
+/// its rows once more and retypes as a data-level map would, writing nothing,
+/// where a census-less union would leave every array column optimistically
+/// typed and the two-dimensional values refusing where a read reached them.
+/// `SchemaMode::Strings` reads no census, and is planned over either.
+#[tokio::test]
+async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::copy(types_fixture(16, "default"), &dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let path = cache::colocated_path(&dump);
+    let mode = CacheMode::enabled(path.clone());
+    let metadata = StatisticsRequest::METADATA;
+    let run = map_file(source.as_ref(), &ScanOptions::default(), &mode, &metadata).await.unwrap();
+    assert!(run.index.blocks().all(|block| block.array_shapes.is_none()));
+    let written = std::fs::read(&path).unwrap();
+
+    let mut stream = table_stream(
+        source.as_ref(),
+        "public.t_array_shape",
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
+        mode.clone(),
+    );
+    while let Some(batch) = stream.next().await {
+        batch.unwrap();
+    }
+    assert_eq!(
+        &stream.resolved_schema().columns[1..],
+        &[
+            ColumnResolution::Mapped,
+            ColumnResolution::VaryingArrayShape,
+            ColumnResolution::VaryingArrayShape,
+        ]
+    );
+    drop(stream);
+    assert_eq!(std::fs::read(&path).unwrap(), written, "the query wrote nothing");
+
+    let table = run.index.tables().into_iter().find(|t| t.qualified() == "public.t_array_shape");
+    let table = table.expect("the map holds the table");
+    let refused = |result: pgdump_query::Result<_>| matches!(result, Err(Error::TableAtMetadataLevel { table }) if table == "public.t_array_shape");
+    assert!(refused(table_schema(&run.index, &table, &QueryOptions::default()).map(|_| ())));
+    let watch =
+        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
+    let plan = |options: QueryOptions| {
+        TablePartitions::plan(
+            Arc::clone(&source),
+            &run.index,
+            Arc::clone(&watch),
+            &table,
+            ScanOptions::default(),
+            options,
+        )
+    };
+    assert!(refused(plan(QueryOptions::default()).await.map(|_| ())));
+    let strings = QueryOptions { schema_mode: SchemaMode::Strings, ..QueryOptions::default() };
+    table_schema(&run.index, &table, &strings).unwrap();
+    plan(strings).await.unwrap();
 }

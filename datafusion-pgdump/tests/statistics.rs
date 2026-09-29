@@ -109,7 +109,7 @@ fn planned_fixtures() -> Vec<PathBuf> {
 /// leaves, so the committed tree is never written into and the map carries
 /// the statistics this target is about.
 async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    parsed_copy_gathering(fixture, dir, &StatisticsRequest::ALL).await
+    parsed_copy_gathering(fixture, dir, &StatisticsRequest::DATA).await
 }
 
 /// A group size several rows of every fixture table long, so a pushed filter
@@ -119,9 +119,9 @@ const SMALL_GROUP: u64 = 1024;
 /// [`parsed_copy`], gathering every statistic at [`SMALL_GROUP`].
 async fn parsed_copy_in_small_groups(fixture: &Path, dir: &Path) -> PathBuf {
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     parsed_copy_gathering(fixture, dir, &request).await
 }

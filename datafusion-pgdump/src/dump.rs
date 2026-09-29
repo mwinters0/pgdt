@@ -63,6 +63,8 @@ pub struct PgDump {
     index: DumpIndex,
     tables: Vec<TableName>,
     schema_mode: SchemaMode,
+    /// The `pgdt parse` that builds this dump's cache, which a refusal names.
+    parse: String,
     statistics_bytes: u64,
     /// One per budget this dump's statistics are billed to.
     holds: Mutex<Vec<Hold>>,
@@ -144,6 +146,7 @@ impl PgDump {
             index,
             tables,
             schema_mode: options.schema_mode,
+            parse: parse_command(location, options.cache_path.as_deref()),
             statistics_bytes,
             holds: Mutex::default(),
         }))
@@ -217,6 +220,12 @@ impl PgDump {
 
     pub(crate) fn schema_mode(&self) -> SchemaMode {
         self.schema_mode
+    }
+
+    /// The `pgdt parse` that puts `table` at the data level, keeping every
+    /// other table's level: a parse never records less than a cache holds.
+    pub(crate) fn parse_at_data_level(&self, table: &TableName) -> String {
+        format!("{} --statistics-level metadata,{}=data", self.parse, table.qualified())
     }
 }
 

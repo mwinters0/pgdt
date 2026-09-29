@@ -591,7 +591,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 index.metadata.as_ref(),
                 block.database.as_deref(),
                 SchemaMode::Typed,
-                &block.array_shapes,
+                block.array_shapes.as_deref().unwrap_or_default(),
             );
             for note in &resolved.notes {
                 witnesses

@@ -42,9 +42,9 @@ async fn gathered_copy(dir: &Path) -> PathBuf {
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
     map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();

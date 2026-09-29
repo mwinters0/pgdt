@@ -130,9 +130,9 @@ async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
     let (dir, copy) = sandboxed(dump, "dump.sql");
     let source = LocalFileSource::open(&copy).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::All,
+        selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
-        ..StatisticsRequest::ALL
+        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
     let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
@@ -299,7 +299,7 @@ async fn check_fixture(
         &source,
         &ScanOptions::default(),
         &CacheMode::enabled(plain.clone()),
-        &StatisticsRequest::NONE,
+        &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();

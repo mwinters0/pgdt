@@ -45,7 +45,7 @@ Resuming is the default, and there is no flag for the opposite: **delete the
 cache file** if you want a scan from byte 0. Running `parse` against a file
 that is already fully cached costs nothing and says so — unless it asks for
 statistics the cache does not hold, which re-reads only the tables lacking them
-(see "`--statistics`" below).
+(see "`--statistics-level`" below).
 
 The finished result is identical either way — a resumed scan and a
 straight-through one produce the same index, byte for byte.
@@ -415,9 +415,27 @@ needs rather than as far as it goes. It is checked as each read completes, so a
 line can run past the limit by up to one read chunk (`--chunk-size`) before it
 is refused.
 
-### `--statistics`: what `parse` records for later queries
+### `--statistics-level`: what `parse` records for later queries
 
-By default `parse` also gathers **statistics**: for every stretch of each
+`parse` records every table at one of two levels. **The metadata level** is
+where the table's data lies and how many rows it holds, and nothing drawn from
+those rows. **The data level**, the default, is what queries use: the shapes of
+the table's array values — how many dimensions each array column's values
+have, which its declared type cannot say — and **statistics**. A table at the
+metadata level can still be queried: `query` reads its rows once more first,
+every time, to learn those shapes, holds what it learned for that query alone
+and writes nothing, printing one line to stderr as it starts —
+
+```
+2026-07-23T15:10:02.114820317Z  INFO table mapped at the metadata level: reading its rows again for this query's census table="public.orders" blocks=1
+```
+
+— and the DataFusion provider does not list it, naming the `parse` that would
+record it at the data level. `--schema-mode strings` reads neither, so it
+reads a metadata-level table as it reads any other. `info` says which level
+each table's data was recorded at, on a `level:` line under it.
+
+At the data level `parse` gathers statistics: for every stretch of each
 table's data — a **row group**, one mebibyte of it, doubled for a table whose
 data would take more than 4,096 groups until it takes no more, doubled
 again for a table whose rows are wide, and halved for one too dense for a
@@ -458,21 +476,29 @@ things differ.
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
 and cache space that grow with the dump; the workers `--jobs` asks for gather
-as they read, and record exactly what one worker would. `--statistics none`
-turns it off:
+as they read, and record exactly what one worker would. The metadata level
+reads no value at all, and scans as fast as the file allows:
 
 ```sh
-pgdt parse --source big.sql --statistics none                        # nothing gathered
-pgdt parse --source big.sql --statistics public.orders,public.items.sku
-pgdt parse --source big.sql --row-group-size 65536                   # finer groups
-pgdt parse --source big.sql --row-group-min-rows 4096                # fewer, fuller groups
-pgdt parse --source big.sql --row-group-max-rows 4096                # more, emptier groups
+pgdt parse --source big.sql --statistics-level metadata                  # nothing drawn from the rows
+pgdt parse --source big.sql --statistics-level metadata,public.orders=data
+pgdt parse --source big.sql --statistics-level data,public.items.blob=metadata
+pgdt parse --source big.sql --row-group-size 65536                       # finer groups
+pgdt parse --source big.sql --row-group-min-rows 4096                    # fewer, fuller groups
+pgdt parse --source big.sql --row-group-max-rows 4096                    # more, emptier groups
 ```
 
-A selection is a comma-separated list of tables (`schema.table`, or a bare
-`table` matching any schema) and single columns (`schema.table.column`); every
-other table gathers nothing and is read as `--statistics none` reads it. A name
-is split at its dots, so a quoted identifier containing one cannot be named.
+The value is a level for every table, then comma-separated overrides, each a
+table (`schema.table`, or a bare `table` matching any schema) or a single
+column (`schema.table.column`) and its own level. The second line records
+every table at the metadata level but `public.orders`; the third records every
+table at the data level, `public.items` gathering statistics on every column
+but `blob`. **The most specific entry naming a column decides its level** — a
+column entry, then a qualified table, then a bare one, then the first entry —
+so `metadata,public.items=data,public.items.blob=metadata` says the same as the
+third line, and a table any of whose columns is at the data level has its
+array shapes recorded. One table or column named twice is refused. A name is
+split at its dots, so a quoted identifier containing one cannot be named.
 `--row-group-size` states the bytes of data each group covers, a power of
 two kept exactly however long the table: a smaller group records more finely
 where values lie and costs memory and cache space in proportion.
@@ -503,14 +529,14 @@ every run under that maximum says so on stderr:
 
 A stated `--row-group-size` is exact, so it is refused beside
 `--row-group-min-rows` and `--row-group-max-rows`, a maximum below the
-minimum in force is refused, and none of the three is accepted beside
-`--statistics none`. No statistics flag combines with `--preamble-only`, which
-reads no row.
+minimum in force is refused, and none of the three is accepted where every
+table is at the metadata level. No statistics flag combines with
+`--preamble-only`, which reads no row.
 
 **Asking for statistics the cache lacks re-reads what lacks them.** Once the
 rest of the file is scanned, `parse` re-reads each table's data an earlier run
-mapped without the statistics this one asks for — gathered with `--statistics
-none`, left out of a selection, without the least and greatest values this
+mapped without the statistics this one asks for — at the metadata level,
+recording its array shapes as well, without the least and greatest values this
 build keeps for a column, at a group size other than a
 `--row-group-size` stated now, or under bounds other than a
 `--row-group-min-rows` or `--row-group-max-rows` stated now — one `COPY`
@@ -521,7 +547,9 @@ cannot deliver. A block an earlier run gathered under other bounds can be read
 twice in one run for that reason: first at a mebibyte a group, as a table is
 gathered cold, then at the finer size that read's groups predict. A re-read keeps every column the block already had, and a
 group size and bounds left unstated keep the size a block was gathered at, so
-a flagless `parse` over a cache gathered at 65536 re-reads nothing. It prints
+a flagless `parse` over a cache gathered at 65536 re-reads nothing. **Nothing
+recorded is ever dropped**: a `parse` at the metadata level over a cache holding
+the data level leaves it there. It prints
 its count to stderr:
 
 ```
@@ -553,8 +581,8 @@ add up to `peak_bytes=`:
 - `interned_peak_bytes=` — a second copy of each distinct value, kept while a
   table is read and let go when its data ends.
 
-A `parse` with no statistics to hold — `--statistics none` over a cache holding
-none — prints no such line, and `query` never prints one.
+A `parse` with no statistics to hold — at the metadata level over a cache
+holding none — prints no such line, and `query` never prints one.
 
 **A table whose statistics will not fit the memory you allowed is skipped, not
 gathered badly, and pgdt says which.** What the statistics of one run may hold
@@ -647,7 +675,7 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   the cache held no statistics at all.
 - **What is left under that fifth is what a gathering `parse`'s statistics may
   hold**, the cache's own included, and a table whose statistics will not fit
-  it is skipped rather than gathered — see "`--statistics`: what `parse`
+  it is skipped rather than gathered — see "`--statistics-level`: what `parse`
   records for later queries" above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
 So `--memory 1073741824` in a 1 GiB container asks for exactly what that
@@ -1003,7 +1031,7 @@ from the same allowance once `memory_bytes` is spent, with where the allowance
 came from beside it: `(stated)` for a `--memory` you typed, `(discovered)` for
 a cgroup limit, and `half of what the machine reports available` for a host
 that set none. A block whose statistics would pass it declines, and says so
-(above, "`--statistics`: what `parse` records for later queries"); on the one
+(above, "`--statistics-level`: what `parse` records for later queries"); on the one
 host that states no limit and reports no free memory it reads `(none: …)` and
 nothing declines. `query` gathers nothing, so the number binds nothing there.
 
@@ -1060,7 +1088,7 @@ A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file
 that is already fully cached is not a scan and prints neither pass, matching
 "costs nothing and says so" above; one re-reading blocks for statistics they
-lack prints the two `statistics back-fill` lines shown under "`--statistics`",
+lack prints the two `statistics back-fill` lines shown under "`--statistics-level`",
 and one holding statistics at all ends on the `statistics held` line described
 there.
 
@@ -1101,8 +1129,10 @@ object kinds:
     ...
 
 public.accounts (12345 rows)
+    level: data
     columns: id integer, name text, balance numeric(10,2)
 public.events (98765 rows)
+    level: metadata
     columns: id integer, occurred_at timestamp with time zone, payload jsonb
 
 2 COPY block(s), 111110 row(s)
@@ -1134,7 +1164,8 @@ public.events (98765 rows)
   (`TABLE`, `INDEX`, `FK CONSTRAINT`, `MATERIALIZED VIEW`, ...) are
   `pg_dump`'s own vocabulary, not ours.
 - **The table listing** is one entry per `COPY` block, in file order, with its
-  row count and column list. This is the view to read when you're deciding
+  row count, the level `parse` recorded it at (see "`--statistics-level`"
+  above) and its column list. This is the view to read when you're deciding
   what to query.
 
 Add `--detail` to also see each block's byte offsets and, per column that has
@@ -1178,6 +1209,7 @@ line beneath — the same list, repeated where you are already looking:
 
 ```
 public.t_enum_domain (4 rows)
+    level: data
     columns: id integer, v_mood public.mood
     id: Int32
     v_mood: Dictionary(Int32, Utf8)
@@ -1196,7 +1228,7 @@ Labels are listed for a plain enum column and for a domain over one. An enum
 filter cannot compare against a single label there anyway.
 
 `--detail` closes its listing, above the totals, with what `parse` gathered
-(see "`--statistics`" above), one line per table and one beneath it per column:
+(see "`--statistics-level`" above), one line per table and one beneath it per column:
 
 ```
 statistics:
@@ -1224,8 +1256,8 @@ statistics:
   `--data-only` dump. A second
   set, in a DataFusion query's order, is not summed here. Last, how many groups carry a list of
   distinct values, or `no dictionary` where it does not compare them exactly.
-  A group holding only NULLs carries no bounds. `not gathered` is a column a
-  `--statistics` selection left out.
+  A group holding only NULLs carries no bounds. `not gathered` is a column
+  `--statistics-level` left at the metadata level.
 
 A cache whose blocks carry no statistics at all prints `statistics: none gathered`. No
 group's own values are shown here; `--json` carries every one of them.
@@ -1280,6 +1312,7 @@ Scan completion: 63% (494022873 bytes)
 
 ...
 public.accounts (12345 rows)
+    level: data
     columns: id integer, name text, balance numeric(10,2)
 
 1 COPY block(s), 12345 row(s)
@@ -1385,11 +1418,12 @@ carries three things the text views state differently:
   several `COPY` blocks, and pgdt does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
 
-The file map's own `COPY` blocks carry **`statistics`**, exactly as the cache
-holds them — `null` for a block `parse` gathered nothing for. Each has its
-`group_size`, a `groups` array giving every group's `rows` and `bytes`, and one
-entry per column of the block's header, `null` for a column a `--statistics`
-selection left out: the column's `declared_type` and `collation`, its
+The file map's own `COPY` blocks carry their **`array_shapes`**, one per
+column, `null` for a block recorded at the metadata level, and their
+**`statistics`**, exactly as the cache holds them — `null` for a block `parse`
+gathered nothing for. Each has its `group_size`, a `groups` array giving every
+group's `rows` and `bytes`, and one entry per column of the block's header,
+`null` for a column `--statistics-level` left at the metadata level: the column's `declared_type` and `collation`, its
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
 `min`, `max`, `min_exact` and `max_exact`, or `null` — an `_exact` flag is
 `false` where a value too long to store was cut to a prefix below it or a
@@ -1410,7 +1444,7 @@ with the dump — every group of every column is in it.
 
 Beside it is **`statistics_declined`**, `null` for a block that declined
 nothing and otherwise the statistics allowance the block's statistics would not
-fit (above, "`--statistics`: what `parse` records for later queries"). It is
+fit (above, "`--statistics-level`: what `parse` records for later queries"). It is
 how a script tells a table nobody asked statistics for from one that asked and
 was refused the memory, and the number in it is the one to parse with more
 than.

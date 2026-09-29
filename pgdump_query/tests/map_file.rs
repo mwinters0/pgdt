@@ -8,13 +8,14 @@
 //! span, mis-seamed a boundary, or lost a census would still print a plausible
 //! listing.
 //!
-//! **Every scan here gathers nothing** (`StatisticsRequest::NONE`): the eager
-//! producer gathers no statistics to compare against. A gathering scan's
-//! parallel map is compared against a serial one instead, by
-//! `tests/statistics.rs` and `pgdt/tests/determinism.rs`. The exceptions are
-//! the back-fill tests, which ask for `StatisticsRequest::ALL` over a dropping
-//! or a cancelling source to see what an interrupted back-fill banks and
-//! reports.
+//! **Every scan here is at the data level** (`StatisticsRequest::DATA`), so
+//! it censuses as the eager producer does, and its statistics are dropped
+//! before the two are compared, the eager producer gathering none
+//! ([`assert_matches_eager`]). A gathering scan's statistics are compared
+//! against a serial one's instead, by `tests/statistics.rs` and
+//! `pgdt/tests/determinism.rs`. The back-fill tests start from a map at the
+//! metadata level (`StatisticsRequest::METADATA`) over a dropping or a
+//! cancelling source, to see what an interrupted back-fill banks and reports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,9 +25,9 @@ use futures::StreamExt;
 use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, DumpIndex, LocalFileSource, Parallelism,
-    QueryOptions, ScanOptions, StatisticsRequest, build_index, cache, map_file, preamble_only,
-    table_stream,
+    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, DataBlock, DumpIndex, LocalFileSource,
+    Parallelism, QueryOptions, ScanOptions, SpanBody, StatisticsRequest, build_index, cache,
+    map_file, preamble_only, table_stream,
 };
 
 /// A cancellation already asked for, so the scan under it stops at its first
@@ -44,10 +45,23 @@ fn already_cancelled() -> Arc<Cancellation> {
 mod common;
 use common::sandboxed_edge_cases as sandboxed;
 
-/// Assert that a resumed/finished index is what a single eager pass produces.
+/// `index` with every block's statistics dropped, as the eager pass leaves it.
+fn without_statistics(index: &DumpIndex) -> DumpIndex {
+    let mut index = index.clone();
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            block.statistics = None;
+        }
+    }
+    index
+}
+
+/// Assert that a resumed/finished index is what a single eager pass produces,
+/// once the statistics the eager pass never gathers are dropped from it.
 /// Field by field before the whole-struct comparison, so a failure names which
 /// half drifted rather than dumping two entire indexes.
 fn assert_matches_eager(actual: &DumpIndex, eager: &DumpIndex, label: &str) {
+    let actual = &without_statistics(actual);
     assert_eq!(actual.scanned_through, eager.scanned_through, "{label}: scanned_through");
     assert_eq!(actual.spans.len(), eager.spans.len(), "{label}: span count");
     for (i, (a, e)) in actual.spans.iter().zip(&eager.spans).enumerate() {
@@ -78,7 +92,7 @@ async fn a_cold_map_file_matches_build_index() {
             let source = LocalFileSource::open(&dump).unwrap();
             let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-            let run = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
+            let run = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
                 .await
                 .unwrap();
             assert_eq!(run.resumed_from, 0, "{schema_dir}/{flag_set}: nothing to resume from");
@@ -133,7 +147,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                         ..ScanOptions::default()
                     };
                     let run =
-                        map_file(&source, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+                        map_file(&source, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
                     assert!(!run.interrupted, "{label}");
                     assert_matches_eager(&run.index, &eager, &label);
                 }
@@ -169,7 +183,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     assert!(partial.scanned_through < size, "sanity: the query really did stop short");
 
     let run =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert_eq!(run.resumed_from, partial.scanned_through, "resumed at the cache's own frontier");
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(
@@ -183,7 +197,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
         panic!("the map wrote a cache")
     };
     assert_eq!(reloaded.scanned_through, size);
-    assert_eq!(reloaded.spans, eager.spans);
+    assert_eq!(without_statistics(&reloaded).spans, eager.spans);
 }
 
 /// A block-rich dump with one three-row `COPY` block per table, the schema
@@ -255,7 +269,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     assert_eq!(banked.blocks().count(), 40, "every block before it is in the map too");
 
     let run =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert_matches_eager(&run.index, &eager, "finished from a gated query's cache");
 }
 
@@ -277,7 +291,7 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     assert!(preamble_cache.blocks().next().is_none(), "the prepass stops before the first block");
 
     let run =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert_eq!(run.resumed_from, preamble_cache.scanned_through);
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert_matches_eager(&run.index, &eager, "resumed from a preamble-only cache");
@@ -295,12 +309,12 @@ async fn a_complete_cache_is_reported_without_rescanning() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    let first = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
+    let first = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
         .await
         .unwrap()
         .index;
     let second =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
 
     assert_eq!(second.resumed_from, size, "the cache already covered the file");
     assert_eq!(first, second.index);
@@ -379,7 +393,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
 
     let dying = FailsPast { inner: &source, fail_at: first_block_end };
     let slow = ScanOptions { chunk_size_bytes: 1, ..ScanOptions::default() };
-    let err = map_file(&dying, &slow, &mode, &StatisticsRequest::NONE)
+    let err = map_file(&dying, &slow, &mode, &StatisticsRequest::DATA)
         .await
         .expect_err("the source dies mid-scan");
     assert!(matches!(err, pgdump_query::Error::Io(_)), "{err:?}");
@@ -395,7 +409,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     // Finishing it from there agrees with one eager pass, like any other
     // partial cache.
     let run =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert_eq!(run.resumed_from, first_block_end);
     assert_matches_eager(&run.index, &eager, "resumed from an interrupted scan");
 }
@@ -420,7 +434,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         let source = LocalFileSource::open(&dump).unwrap();
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-        let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
+        let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
             .await
             .unwrap()
             .index;
@@ -589,7 +603,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
         ..ScanOptions::default()
     };
 
-    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(run.interrupted, "a cancelled region interrupts the scan");
     assert_eq!(run.index.scanned_through, 0, "the abandoned block banks nothing");
     assert_eq!(run.index.blocks().count(), 0);
@@ -597,7 +611,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     // And it resumes into the index one eager pass builds.
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(!resumed.interrupted);
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled parallel region");
 }
@@ -706,7 +720,7 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
         ..ScanOptions::default()
     };
 
-    let err = map_file(&failing, &options, &mode, &StatisticsRequest::NONE)
+    let err = map_file(&failing, &options, &mode, &StatisticsRequest::DATA)
         .await
         .expect_err("every worker's read fails");
     assert_eq!(
@@ -750,7 +764,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
         ..ScanOptions::default()
     };
 
-    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(run.interrupted, "a cancelled scan says so");
     assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
@@ -764,7 +778,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
 
     // And it is a resume point like any other.
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, first_block_end);
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled scan");
@@ -797,7 +811,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
         ..ScanOptions::default()
     };
 
-    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::NONE)
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::DATA)
         .await
         .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a dropped read says so");
@@ -811,7 +825,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     assert_eq!(index.scanned_through, first_block_end);
 
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, first_block_end);
     assert_matches_eager(&resumed.index, &eager, "resumed from a dropped read");
@@ -840,7 +854,7 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
     let dropping = DropsPast { inner: &source, trip: 0, cancel: Arc::clone(&cancel) };
     let options = ScanOptions { cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
 
-    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::NONE)
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::DATA)
         .await
         .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a dropped prepass read says so");
@@ -850,7 +864,7 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
 
     // And the next run is a cold scan, not a resume onto an empty prefix.
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, 0);
     assert_matches_eager(&resumed.index, &eager, "scanned cold after a dropped prepass read");
@@ -866,8 +880,9 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
-    let bare =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    let bare = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::METADATA)
+        .await
+        .unwrap();
     let blocks = bare.index.blocks().count();
     let second = bare.index.blocks().nth(1).unwrap().data_offset;
 
@@ -878,7 +893,7 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::ALL)
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::DATA)
         .await
         .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a cancelled back-fill says so");
@@ -898,8 +913,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
-    let bare =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    let bare = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::METADATA)
+        .await
+        .unwrap();
     let blocks = bare.index.blocks().count();
     assert!(blocks > 2, "sanity: blocks are left after the second");
     let second = bare.index.blocks().nth(1).unwrap().data_offset;
@@ -911,7 +927,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::ALL).await.unwrap();
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 
@@ -924,11 +940,11 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(gathered[0], "the first block is the one banked: {gathered:?}");
 
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::ALL).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(!resumed.interrupted);
     assert_eq!((resumed.lacking_statistics, resumed.backfilled), (blocks - 1, blocks - 1));
     let straight =
-        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &StatisticsRequest::ALL)
+        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &StatisticsRequest::DATA)
             .await
             .unwrap();
     assert_eq!(resumed.index.spans, straight.index.spans);
@@ -955,7 +971,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
-    let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+    let run = map_file(&source, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
 
     assert!(run.interrupted);
     assert_eq!(run.resumed_from, 0, "the prepass is this run's work, not a resume point");
@@ -1058,7 +1074,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
 
     assert!(run.interrupted);
     assert!(!run.index.is_complete(source.size().await.unwrap()));
@@ -1101,7 +1117,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(run.interrupted, "{label}");
 
     // Every database that banked a block has that database's own DDL — not
@@ -1132,7 +1148,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 
     // And finishing it is still span for span what one eager pass gives.
     let resumed =
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await.unwrap();
     assert_matches_eager(&resumed.index, &eager, &format!("{label}: resumed"));
 }
 
@@ -1177,7 +1193,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
             &source,
             &ScanOptions::default(),
             &CacheMode::DISABLED,
-            &StatisticsRequest::NONE,
+            &StatisticsRequest::DATA,
         )
         .await
         .unwrap()

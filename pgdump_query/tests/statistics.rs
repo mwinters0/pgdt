@@ -23,8 +23,8 @@ use pgdump_query::{
     BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, CopyBlock, DEFAULT_MEMORY_BUDGET,
     DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
     MapRun, Parallelism, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions,
-    Sortedness, StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    bounded_columns, gather_block_statistics, map_file,
+    Sortedness, StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -38,6 +38,14 @@ const SMALL_GROUP: u64 = 4096;
 /// The `default` flag set's blocks: one per table
 /// `scripts/fixture_schema_statistics.sql` fills.
 const BLOCKS: usize = 9;
+
+/// Every table at the metadata level but `targets`, at the data level.
+fn only(targets: Vec<StatisticsTarget>) -> StatisticsSelection {
+    StatisticsSelection {
+        default: StatisticsLevel::Metadata,
+        overrides: targets.into_iter().map(|target| (target, StatisticsLevel::Data)).collect(),
+    }
+}
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
     let group_size = Some(NonZeroU64::new(group_size).unwrap());
@@ -297,7 +305,7 @@ fn sortedness(block: &CopyBlock, column: &str) -> Option<Sortedness> {
 async fn every_statistic_describes_the_file() {
     for version in VERSIONS {
         let dump = statistics_fixture(version, "default");
-        let index = gathered(&dump, &request(StatisticsSelection::All, SMALL_GROUP)).await;
+        let index = gathered(&dump, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
         assert_eq!(index.blocks().count(), BLOCKS);
         for block in index.blocks() {
             assert_describes_the_file(
@@ -326,7 +334,7 @@ async fn sortedness_is_the_blocks_row_order() {
     use Sortedness::{Ascending, Descending, Unsorted};
     for version in VERSIONS {
         let dump = statistics_fixture(version, "default");
-        let index = gathered(&dump, &request(StatisticsSelection::All, SMALL_GROUP)).await;
+        let index = gathered(&dump, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
         let ordered = block(&index, "public.ordered");
         for (column, expected) in [
             ("id", Ascending),
@@ -383,7 +391,7 @@ async fn sortedness_is_the_blocks_row_order() {
 async fn a_long_value_is_bounded_by_truncated_texts() {
     for version in VERSIONS {
         let dump = statistics_fixture(version, "default");
-        let index = gathered(&dump, &request(StatisticsSelection::All, 64)).await;
+        let index = gathered(&dump, &request(StatisticsSelection::DATA, 64)).await;
         let long = block(&index, "public.long_value");
         assert_describes_the_file(&dump, long, &format!("long_value on {version}"));
         let stats = statistics(long);
@@ -411,7 +419,7 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
 #[tokio::test]
 async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let dump = statistics_fixture(16, "default");
-    assert_eq!(StatisticsRequest::default(), StatisticsRequest::ALL);
+    assert_eq!(StatisticsRequest::default(), StatisticsRequest::DATA);
     let index = gathered(&dump, &StatisticsRequest::default()).await;
     let default_sizing =
         GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
@@ -427,7 +435,7 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let long_value = statistics(block(&index, "public.long_value"));
     assert!(long_value.group_size > pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
 
-    let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::ALL };
+    let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::DATA };
     let index = gathered(&dump, &uncoarsened).await;
     let long_value = statistics(block(&index, "public.long_value"));
     assert_eq!(long_value.group_size, pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
@@ -441,7 +449,7 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
 #[tokio::test]
 async fn a_selection_gathers_only_what_it_names() {
     let dump = statistics_fixture(16, "default");
-    let selection = StatisticsSelection::Only(vec![
+    let selection = only(vec![
         StatisticsTarget::Table("specials".to_string()),
         StatisticsTarget::Column { table: "public.ordered".to_string(), column: "id".to_string() },
     ]);
@@ -457,7 +465,7 @@ async fn a_selection_gathers_only_what_it_names() {
 /// asks.
 #[tokio::test]
 async fn a_request_stating_none_gathers_nothing() {
-    let index = gathered(&statistics_fixture(16, "default"), &StatisticsRequest::NONE).await;
+    let index = gathered(&statistics_fixture(16, "default"), &StatisticsRequest::METADATA).await;
     assert!(index.blocks().all(|b| b.statistics.is_none()));
 }
 
@@ -468,7 +476,7 @@ async fn statistics_round_trip_through_the_cache() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "statistics.sql");
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
-    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
+    let wanted = request(StatisticsSelection::DATA, SMALL_GROUP);
     let index = map_file(&source, &ScanOptions::default(), &mode, &wanted).await.unwrap().index;
     let clone = index.clone();
     for (a, b) in index.blocks().zip(clone.blocks()) {
@@ -503,7 +511,7 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
-    let wanted = request(StatisticsSelection::All, 256);
+    let wanted = request(StatisticsSelection::DATA, 256);
     let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let serial_index = gathered_with(&dump, &serial, &wanted).await;
     for jobs in [2, 4, 8] {
@@ -538,7 +546,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
     std::fs::write(&dump, &text).unwrap();
     // Sixteen bytes a group: the first two rows, then `x`, the NULL and `0003`,
     // then the last two.
-    let index = gathered(&dump, &request(StatisticsSelection::All, 16)).await;
+    let index = gathered(&dump, &request(StatisticsSelection::DATA, 16)).await;
     let id = statistics(block(&index, "public.t")).columns[0].as_ref().unwrap();
     let bounds = id.bounds.as_ref().unwrap();
     assert_eq!(bounds.sortedness, Sortedness::Unsorted);
@@ -567,7 +575,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
 
     let mut index = gathered(
         &statistics_fixture(16, "default"),
-        &request(StatisticsSelection::All, SMALL_GROUP),
+        &request(StatisticsSelection::DATA, SMALL_GROUP),
     )
     .await;
     let name = TableName::of(block(&index, "public.ordered"));
@@ -618,7 +626,7 @@ async fn a_character_dictionary_entry_drops_its_padding() {
     }
     text.push_str("\\.\n\n");
     std::fs::write(&dump, &text).unwrap();
-    let index = gathered(&dump, &request(StatisticsSelection::All, 1 << 20)).await;
+    let index = gathered(&dump, &request(StatisticsSelection::DATA, 1 << 20)).await;
     let columns = &statistics(block(&index, "public.t")).columns;
     let c = columns[0].as_ref().unwrap();
     let dictionary = c.dictionary.as_ref().expect("equality on `character` is exact");
@@ -707,24 +715,15 @@ async fn mapped_recording(
 /// nothing.
 #[tokio::test]
 async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_gathers() {
-    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
+    let wanted = request(StatisticsSelection::DATA, SMALL_GROUP);
     let ordered = || "public.ordered".to_string();
     let earlier = [
-        (StatisticsRequest::NONE, BLOCKS),
-        (StatisticsRequest::ALL, BLOCKS),
+        (StatisticsRequest::METADATA, BLOCKS),
+        (StatisticsRequest::DATA, BLOCKS),
+        (request(only(vec![StatisticsTarget::Table(ordered())]), SMALL_GROUP), BLOCKS - 1),
         (
             request(
-                StatisticsSelection::Only(vec![StatisticsTarget::Table(ordered())]),
-                SMALL_GROUP,
-            ),
-            BLOCKS - 1,
-        ),
-        (
-            request(
-                StatisticsSelection::Only(vec![StatisticsTarget::Column {
-                    table: ordered(),
-                    column: "id".to_string(),
-                }]),
+                only(vec![StatisticsTarget::Column { table: ordered(), column: "id".to_string() }]),
                 SMALL_GROUP,
             ),
             BLOCKS,
@@ -764,7 +763,7 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
 async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     let dump_of = || statistics_fixture(16, "default");
     let one_column = request(
-        StatisticsSelection::Only(vec![StatisticsTarget::Column {
+        only(vec![StatisticsTarget::Column {
             table: "public.ordered".to_string(),
             column: "id".to_string(),
         }]),
@@ -772,10 +771,10 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     );
     let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
     mapped_into_cache(&dump, &ScanOptions::default(), &one_column).await;
-    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::DATA).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (BLOCKS, BLOCKS));
-    let small = gathered(&dump_of(), &request(StatisticsSelection::All, SMALL_GROUP)).await;
-    let default = gathered(&dump_of(), &StatisticsRequest::ALL).await;
+    let small = gathered(&dump_of(), &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
+    let default = gathered(&dump_of(), &StatisticsRequest::DATA).await;
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &small } else { &default };
         assert_eq!(
@@ -786,8 +785,9 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     }
 
     let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
-    mapped_into_cache(&dump, &ScanOptions::default(), &request(StatisticsSelection::All, 64)).await;
-    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::ALL).await;
+    mapped_into_cache(&dump, &ScanOptions::default(), &request(StatisticsSelection::DATA, 64))
+        .await;
+    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::DATA).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (0, 0));
 }
 
@@ -799,9 +799,9 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
     let dump_of = || statistics_fixture(16, "default");
     let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
     let options = ScanOptions::default();
-    mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, SMALL_GROUP)).await;
+    mapped_into_cache(&dump, &options, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
     let one_column = request(
-        StatisticsSelection::Only(vec![StatisticsTarget::Column {
+        only(vec![StatisticsTarget::Column {
             table: "public.ordered".to_string(),
             column: "id".to_string(),
         }]),
@@ -809,8 +809,8 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
     );
     let run = mapped_into_cache(&dump, &options, &one_column).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
-    let whole_at_64 = gathered(&dump_of(), &request(StatisticsSelection::All, 64)).await;
-    let small = gathered(&dump_of(), &request(StatisticsSelection::All, SMALL_GROUP)).await;
+    let whole_at_64 = gathered(&dump_of(), &request(StatisticsSelection::DATA, 64)).await;
+    let small = gathered(&dump_of(), &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &whole_at_64 } else { &small };
         assert_eq!(
@@ -833,7 +833,7 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
     use pgdump_query::map::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "unbounded.sql");
     let options = ScanOptions::default();
-    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await.index;
+    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await.index;
     let ordered = block(&fresh, "public.ordered");
     let bounded = bounded_columns(ordered, fresh.metadata.as_ref());
     assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
@@ -850,23 +850,23 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
         }
     }
     let unbounded = block(&older, "public.ordered");
-    let backfill = StatisticsRequest::ALL
+    let backfill = StatisticsRequest::DATA
         .backfill(unbounded, &bounded, None)
         .expect("a bounded column held without bounds lacks them");
     let held = statistics(unbounded);
     assert_eq!((backfill.group_size, backfill.sizing), (held.group_size, held.sizing));
     assert_eq!(
-        StatisticsRequest::ALL.backfill(unbounded, &vec![false; bounded.len()], None),
+        StatisticsRequest::DATA.backfill(unbounded, &vec![false; bounded.len()], None),
         None,
         "a column bounded nowhere lacks nothing"
     );
     let source = LocalFileSource::open(&dump).unwrap();
     cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
-    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
     assert_eq!(run.index.spans, fresh.spans);
-    let again = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let again = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     assert_eq!((again.lacking_statistics, again.backfilled), (0, 0));
 }
 
@@ -881,7 +881,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     use pgdump_query::map::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&types_fixture(16, "data-only"), "undeclared.sql");
     let options = ScanOptions::default();
-    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await.index;
+    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await.index;
     let mut older = fresh.clone();
     let mut blocks = 0;
     for span in &mut older.spans {
@@ -901,7 +901,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     let source = LocalFileSource::open(&dump).unwrap();
     cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
-    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, blocks));
     assert_eq!(run.index.spans, fresh.spans);
 }
@@ -912,17 +912,17 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
 async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "s.sql");
     let options = ScanOptions::default();
-    mapped_into_cache(&dump, &options, &StatisticsRequest::NONE).await;
+    mapped_into_cache(&dump, &options, &StatisticsRequest::METADATA).await;
     let specials = StatisticsRequest {
-        selection: StatisticsSelection::Only(vec![StatisticsTarget::Table("specials".to_string())]),
-        ..StatisticsRequest::ALL
+        selection: only(vec![StatisticsTarget::Table("specials".to_string())]),
+        ..StatisticsRequest::DATA
     };
     let run = mapped_into_cache(&dump, &options, &specials).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
     assert!(block(&run.index, "public.specials").statistics.is_some());
     assert!(block(&run.index, "public.ordered").statistics.is_none());
 
-    let none = mapped_into_cache(&dump, &options, &StatisticsRequest::NONE).await;
+    let none = mapped_into_cache(&dump, &options, &StatisticsRequest::METADATA).await;
     assert_eq!((none.lacking_statistics, none.backfilled), (0, 0));
     assert_eq!(none.index.spans, run.index.spans);
 }
@@ -933,8 +933,8 @@ async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
 #[tokio::test]
 async fn one_block_is_gathered_on_its_own() {
     let dump = statistics_fixture(16, "default");
-    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
-    let bare = gathered(&dump, &StatisticsRequest::NONE).await;
+    let wanted = request(StatisticsSelection::DATA, SMALL_GROUP);
+    let bare = gathered(&dump, &StatisticsRequest::METADATA).await;
     let reference = gathered(&dump, &wanted).await;
     let source = LocalFileSource::open(&dump).unwrap();
     let ordered = block(&bare, "public.ordered");
@@ -951,6 +951,7 @@ async fn one_block_is_gathered_on_its_own() {
     .await
     .unwrap()
     .expect("nothing cancelled it")
+    .gathered
     .gathered()
     .expect("an unbounded allowance declines nothing");
     assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
@@ -975,7 +976,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "sized.sql");
     let options = ScanOptions::default();
     let with_min =
-        |min_rows| StatisticsRequest { min_rows: Some(min_rows), ..StatisticsRequest::ALL };
+        |min_rows| StatisticsRequest { min_rows: Some(min_rows), ..StatisticsRequest::DATA };
     let records = |run: &MapRun| {
         ["public.ordered", "public.specials", "public.long_value"]
             .map(|table| statistics(block(&run.index, table)).sizing)
@@ -983,7 +984,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let density = |min_rows| GroupSizing::Density { min_rows, max_rows: None };
     let default = density(ROW_GROUP_DEFAULT_MIN_ROWS);
     let only_id = StatisticsRequest {
-        selection: StatisticsSelection::Only(vec![StatisticsTarget::Column {
+        selection: only(vec![StatisticsTarget::Column {
             table: "public.ordered".to_string(),
             column: "id".to_string(),
         }]),
@@ -992,7 +993,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
 
     let run = mapped_into_cache(&dump, &options, &only_id).await;
     assert_eq!(statistics(block(&run.index, "public.ordered")).sizing, density(0));
-    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     assert_eq!(run.backfilled, BLOCKS, "ordered lacks columns, the others everything");
     assert_eq!(records(&run), [density(0), default, default], "ordered kept its record");
 
@@ -1006,18 +1007,18 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [density(0); 3]);
     assert!(long_value(&run).groups.len() > coarse.groups.len());
-    for request in [StatisticsRequest::ALL, with_min(0)] {
+    for request in [StatisticsRequest::DATA, with_min(0)] {
         let run = mapped_into_cache(&dump, &options, &request).await;
         assert_eq!(run.backfilled, 0, "{request:?}");
     }
 
-    let at_default_size = request(StatisticsSelection::All, ROW_GROUP_DEFAULT_SIZE_BYTES);
+    let at_default_size = request(StatisticsSelection::DATA, ROW_GROUP_DEFAULT_SIZE_BYTES);
     let run = mapped_into_cache(&dump, &options, &at_default_size).await;
     assert_eq!(run.backfilled, 0, "every block is at the size stated, whatever sized it");
-    let run = mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, 4096)).await;
+    let run = mapped_into_cache(&dump, &options, &request(StatisticsSelection::DATA, 4096)).await;
     assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [GroupSizing::Stated; 3]);
-    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     assert_eq!(run.backfilled, 0, "an unstated minimum keeps a stated size");
     let run = mapped_into_cache(&dump, &options, &with_min(ROW_GROUP_DEFAULT_MIN_ROWS)).await;
     assert_eq!(run.backfilled, BLOCKS);
@@ -1073,14 +1074,14 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
-    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
+    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::DATA };
     let sizing =
         GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: Some(MAX_ROWS) };
     let tables = ["public.dense", "public.clustered"];
 
     // Flagless first: both blocks are at the default size, and both break the
     // maximum nobody has stated yet.
-    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await;
     for table in tables {
         let held = statistics(block(&run.index, table));
         assert_eq!(held.group_size, ROW_GROUP_DEFAULT_SIZE_BYTES, "{table}");
@@ -1126,7 +1127,7 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     // What the re-read gathered is what gathering exactly at that size
     // gathers, and what a split scan gathers.
     for (table, held) in tables.iter().zip([&dense, &clustered]) {
-        let exact = gathered(&dump, &request(StatisticsSelection::All, held.group_size)).await;
+        let exact = gathered(&dump, &request(StatisticsSelection::DATA, held.group_size)).await;
         let exact = statistics(block(&exact, table));
         assert_eq!((&exact.groups, &exact.columns), (&held.groups, &held.columns), "{table}");
     }
@@ -1152,8 +1153,8 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
-    assert_eq!(StatisticsRequest::ALL.group_cap(), Some(BLOCK_MAX_ROW_GROUPS));
-    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
+    assert_eq!(StatisticsRequest::DATA.group_cap(), Some(BLOCK_MAX_ROW_GROUPS));
+    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::DATA };
     assert_eq!(bounded.group_cap(), None, "a stated maximum is a size a caller asked for");
 
     let run = mapped_into_cache(&dump, &options, &bounded).await;
@@ -1163,7 +1164,7 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     rows.sort_unstable();
     let median = rows[rows.len() / 2];
     assert!(median < ROW_GROUP_DEFAULT_MIN_ROWS, "the minimum is unmet at {median} rows");
-    let flagless = gathered(&dump, &StatisticsRequest::ALL).await;
+    let flagless = gathered(&dump, &StatisticsRequest::DATA).await;
     let coarse = statistics(block(&flagless, "public.dense"));
     assert!(
         held.groups.len() > coarse.groups.len(),
@@ -1189,12 +1190,12 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
-    let wanted = request(StatisticsSelection::All, 256);
+    let wanted = request(StatisticsSelection::DATA, 256);
     let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let reference = gathered_with(&dump, &serial, &wanted).await;
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        mapped_into_cache(&dump, &serial, &StatisticsRequest::NONE).await;
+        mapped_into_cache(&dump, &serial, &StatisticsRequest::METADATA).await;
         let parallel = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
             ..serial.clone()
@@ -1216,14 +1217,15 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
 async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() {
     const BASE: u64 = 8;
     const CAP: usize = 2;
-    let unstated = StatisticsRequest::ALL;
-    let stated = request(StatisticsSelection::All, BASE);
+    let unstated = StatisticsRequest::DATA;
+    let stated = request(StatisticsSelection::DATA, BASE);
     let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let (mut blocks, mut merged) = (0, 0);
     for fixture in common::all_fixtures() {
         let source = LocalFileSource::open(&fixture).unwrap();
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
-        let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
+        let metadata = StatisticsRequest::METADATA;
+        let run = map_file(&source, &options, &mode, &metadata);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
             let backfill = unstated
@@ -1250,6 +1252,7 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
                         .await
                         .unwrap()
                         .expect("nothing cancels the re-read")
+                        .gathered
                         .gathered()
                         .expect("an unbounded allowance declines nothing")
                 }
@@ -1304,14 +1307,15 @@ fn chosen_merges(rows: &[u64], min_rows: u64) -> u32 {
 async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_gathers() {
     const BASE: u64 = 8;
     const MIN_ROWS: u64 = 3;
-    let unstated = StatisticsRequest::ALL;
-    let stated = request(StatisticsSelection::All, BASE);
+    let unstated = StatisticsRequest::DATA;
+    let stated = request(StatisticsSelection::DATA, BASE);
     let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let (mut blocks, mut coarsened) = (0, 0);
     for fixture in common::all_fixtures() {
         let source = LocalFileSource::open(&fixture).unwrap();
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
-        let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
+        let metadata = StatisticsRequest::METADATA;
+        let run = map_file(&source, &options, &mode, &metadata);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
             let backfill = unstated
@@ -1338,6 +1342,7 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
                         .await
                         .unwrap()
                         .expect("nothing cancels the re-read")
+                        .gathered
                         .gathered()
                         .expect("an unbounded allowance declines nothing")
                 }
@@ -1387,7 +1392,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     assert_eq!(before.len(), after.len());
     std::fs::write(&dump, before).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mapped = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
+    let mapped = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::METADATA)
         .await
         .unwrap()
         .index;
@@ -1395,7 +1400,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     let header_offset = mapped_block.header_offset;
     std::fs::write(&dump, after).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let err = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::ALL)
+    let err = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
         .await
         .expect_err("the block moved");
     assert!(
@@ -1408,7 +1413,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     );
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
-    let backfill = StatisticsRequest::ALL
+    let backfill = StatisticsRequest::DATA
         .backfill(mapped_block, &bounded_columns(mapped_block, mapped.metadata.as_ref()), None)
         .expect("it holds no statistics");
     let err = gather_block_statistics(
@@ -1486,7 +1491,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
     // A group size well under the block, so most of what the account sees
     // grows as the rows arrive rather than at the block's close: the decline
     // this exercises is the mid-scan one.
-    let wanted = request(StatisticsSelection::All, 256);
+    let wanted = request(StatisticsSelection::DATA, 256);
     let source = LocalFileSource::open(&dump).unwrap();
 
     // The control: no allowance, so nothing declines, and the peak the

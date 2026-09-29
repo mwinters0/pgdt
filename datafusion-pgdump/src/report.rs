@@ -131,7 +131,7 @@ pub struct RefusedTable {
     /// The table, as the dump names it.
     pub table: TableName,
     /// What planning it raised.
-    pub error: pgdump_query::Error,
+    pub error: crate::Error,
 }
 
 impl Finding for RefusedTable {

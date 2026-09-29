@@ -728,9 +728,10 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     });
 
     let started = Instant::now();
-    let run = pgdump_query::map_file(source.as_ref(), &options, &mode, &StatisticsRequest::NONE)
-        .await
-        .expect("a cancelled read is not an error");
+    let run =
+        pgdump_query::map_file(source.as_ref(), &options, &mode, &StatisticsRequest::METADATA)
+            .await
+            .expect("a cancelled read is not an error");
     asker.await.unwrap();
 
     assert!(run.interrupted, "the run says it stopped short");

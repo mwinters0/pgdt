@@ -12,7 +12,9 @@ use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
-use pgdump_query::{ComparisonSemantics, QueryOptions, ResolvedSchema, TableName, TablePartitions};
+use pgdump_query::{
+    ComparisonSemantics, QueryOptions, ResolvedSchema, SchemaMode, TableName, TablePartitions,
+};
 
 use crate::budget::{ScanBudget, pool_limit};
 use crate::dump::PgDump;
@@ -54,11 +56,24 @@ impl PgDumpTable {
     /// `name`, which must be one of `dump`'s own [`PgDump::tables`], or the
     /// refusal its plan would raise.
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
-        Self::build(dump, name).map_err(external)
+        Self::build(dump, name).map_err(|err| match err {
+            crate::Error::Library(err) => external(err),
+            err => DataFusionError::External(Box::new(err)),
+        })
     }
 
-    /// [`PgDumpTable::new`], its refusal the library's own.
-    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> pgdump_query::Result<Self> {
+    /// [`PgDumpTable::new`], its refusal the library's own, bar a table the
+    /// cache holds at the metadata level under a typed schema, which the
+    /// library refuses too and this names the parse for
+    /// ([`crate::Error::MetadataLevel`]).
+    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, crate::Error> {
+        let unmapped = dump.index().blocks_of(&name).any(|block| block.array_shapes.is_none());
+        if unmapped && dump.schema_mode() == SchemaMode::Typed {
+            return Err(crate::Error::MetadataLevel {
+                table: crate::describe(&name),
+                parse: dump.parse_at_data_level(&name),
+            });
+        }
         let resolved = pgdump_query::table_schema(dump.index(), &name, &query_options(&dump))?;
         Ok(Self { dump, name, resolved, statistics: OnceLock::new(), reporting: Mutex::default() })
     }

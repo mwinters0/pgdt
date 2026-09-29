@@ -76,7 +76,7 @@ use crate::io::{
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
 };
 use crate::leader::{self, RegionScan};
-use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
+use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, census_row};
 use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{
@@ -509,6 +509,18 @@ fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool {
     matches!(error, Error::ScanCancelled { .. }) && scan_options.cancelled()
 }
 
+/// What a mapping pass records of each block it maps
+/// (`docs/design/decisions.md`, "D77").
+#[derive(Clone, Copy)]
+enum Pass<'a> {
+    /// [`map_file`]'s: each block at the level `.0` gives its table, censused
+    /// where that is the data level, and its data-level columns gathered.
+    Parse(&'a StatisticsRequest),
+    /// A query's: every block censused, nothing gathered, whatever level a
+    /// parse would have given it (`docs/design/decisions.md`, "D35").
+    Query,
+}
+
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or the scan is
 /// cancelled. Emits no rows — see the module docs. `target` is the
@@ -529,10 +541,11 @@ fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool {
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
 ///
-/// **`statistics` is what to gather, and only [`map_file`] passes one that
-/// gathers**: a query's pass is [`StatisticsRequest::NONE`]. A block it tracks
-/// is observed row by row on this loop, or piece by piece where the leader
-/// takes it, every observer charging `account`.
+/// **`mapping` says what to record of each block** ([`Pass`]): [`map_file`]'s
+/// records what its request's levels ask, a query's censuses every block and
+/// gathers nothing. A block gathering statistics is observed row by row on
+/// this loop, or piece by piece where the leader takes it, every observer
+/// charging `account`.
 #[allow(clippy::too_many_arguments)]
 async fn map_forward(
     source: &dyn ByteRangeSource,
@@ -541,7 +554,7 @@ async fn map_forward(
     watch: &SourceWatch,
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
-    statistics: &StatisticsRequest,
+    mapping: Pass<'_>,
     account: &Arc<StatisticsAccount>,
     size: u64,
 ) -> Result<MapStop> {
@@ -662,9 +675,17 @@ async fn map_forward(
                         // Read off the header, for the offer below.
                         let header_offset = start.header_offset;
                         let data_offset = start.data_offset;
-                        let columns = start.header.columns.len();
-                        let header = statistics.gathers().then(|| start.header.clone());
-                        builder.on_copy_start(start);
+                        // The block's level: censused, and gathering where
+                        // a statistics request tracks its columns.
+                        let (census, request) = match mapping {
+                            Pass::Query => (true, None),
+                            Pass::Parse(request) => {
+                                (request.tracked_columns(&start.header).is_some(), Some(request))
+                            }
+                        };
+                        let columns = census.then_some(start.header.columns.len());
+                        let header = (census && request.is_some()).then(|| start.header.clone());
+                        builder.on_copy_start(start, census);
                         // **Once per database, not once per block**:
                         // recomputing at every `CopyStart` would put a third
                         // whole-index-sized cost in this loop.
@@ -682,15 +703,16 @@ async fn map_forward(
                         }
                         // After the restatement, so the observer resolves the
                         // block against its own database's DDL.
-                        let observer = header.as_ref().and_then(|header| {
-                            gather::observer_for(
-                                statistics,
-                                header,
-                                index.metadata.as_ref(),
-                                db.as_deref(),
-                                account,
-                            )
-                        });
+                        let observer =
+                            header.as_ref().zip(request).and_then(|(header, request)| {
+                                gather::observer_for(
+                                    request,
+                                    header,
+                                    index.metadata.as_ref(),
+                                    db.as_deref(),
+                                    account,
+                                )
+                            });
                         if let Some(observer) = observer {
                             builder.observe_block(observer);
                         }
@@ -775,8 +797,9 @@ async fn map_forward(
                     }
                     // This pass needs only the block's extent; row bytes
                     // become batches in the replay phase. Rows are read here
-                    // for the array-shape census (`docs/design/decisions.md`,
-                    // "D35") and a gathering block's statistics.
+                    // for a data-level block's array-shape census
+                    // (`docs/design/decisions.md`, "D35") and a gathering
+                    // block's statistics.
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
@@ -1092,16 +1115,19 @@ pub struct MapRun {
 /// — its spans *are* the prefix, so running it over a resumed map would
 /// discard one.
 ///
-/// **It gathers what `statistics` asks for**, over the blocks this run maps,
-/// and then **re-reads every block that lacks it** — one the cache already
-/// held, or one this run gathered too coarsely for a stated maximum
-/// ([`StatisticsRequest::backfill`]) — one at a time in file order through the
+/// **It records what `statistics`' levels ask for**, over the blocks this run
+/// maps — a data-level table's census and its data-level columns' statistics,
+/// and of a metadata-level table nothing drawn from its rows — and then
+/// **re-reads every block that lacks it** — one the cache already held,
+/// a metadata-level one among them, or one this run gathered too coarsely for
+/// a stated maximum ([`StatisticsRequest::backfill`]) — never replacing what a
+/// block holds with less, one at a time in file order through the
 /// same per-block re-read [`gather_block_statistics`] exposes, saving as it
 /// goes and charging the run's own account. The back-fill runs once the
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking
-/// being counted afresh. [`StatisticsRequest::default`] gathers every
-/// statistic.
+/// being counted afresh. [`StatisticsRequest::default`] is the data level
+/// everywhere.
 ///
 /// **The three finishing steps are this function's.**
 ///
@@ -1235,7 +1261,7 @@ async fn map_file_watched(
         watch,
         &mut index,
         None,
-        statistics,
+        Pass::Parse(statistics),
         &account,
         size,
     )
@@ -1333,8 +1359,8 @@ fn interrupted_run(
 /// Read `account` whole as a pass returns, and say what it held on the status
 /// output — the total now, the peak and each term's own peak — unless it
 /// never held anything: a pass that gathered, loaded or back-filled no
-/// statistic prints nothing (`docs/manual/dump-inspection.md`, "`--statistics`:
-/// what `parse` records for later queries").
+/// statistic prints nothing (`docs/manual/dump-inspection.md`,
+/// "`--statistics-level`: what `parse` records for later queries").
 fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
     let held = account.held();
     if held.peak > 0 {
@@ -1454,12 +1480,15 @@ async fn backfill_statistics(
                 &mut shortfall_reported,
             )
             .await?;
-            let Some(gathered) = gathered else {
+            let Some(BlockReread { gathered, census }) = gathered else {
                 cache.save(watch, source, index).await?;
                 run.interrupted = true;
                 return Ok(run);
             };
             if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
+                // Every row was read, so the block is at the data level
+                // whether its statistics fitted or not.
+                block.array_shapes = Some(census);
                 let _attributed = StatisticsScope::enter();
                 match gathered {
                     // **A re-read that declined keeps what the block already
@@ -1590,15 +1619,29 @@ pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Ve
     gather::bounded_columns(&block.header, metadata, block.database.as_deref())
 }
 
+/// What re-reading one block the map already holds yields
+/// ([`gather_block_statistics`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockReread {
+    /// What the block gathered, or the allowance it declined under.
+    pub gathered: BlockGathered,
+    /// The block's census, which every re-read takes, having read every row —
+    /// a declined one included.
+    pub census: Vec<ArrayShape>,
+}
+
 /// Re-read one block the map already holds and gather what `backfill` names —
 /// the public entry point onto the same per-block re-read [`map_file`]'s
 /// back-fill runs over every block lacking what its request asks for, this one
 /// charging no account and naming no cache. `metadata` is the map's, whole-file where
 /// it can be, which the block's columns are resolved against as a mapping pass
 /// resolves them; `backfill` is [`StatisticsRequest::backfill`]'s answer for
-/// `block`. The caller stores the result in [`CopyBlock::statistics`], or —
-/// for [`BlockGathered::Declined`] — the allowance in
-/// [`CopyBlock::statistics_declined`] (`docs/design/decisions.md`, "D85").
+/// `block`. The caller stores the result's `gathered` in
+/// [`CopyBlock::statistics`], or — for [`BlockGathered::Declined`] — the
+/// allowance in [`CopyBlock::statistics_declined`]
+/// (`docs/design/decisions.md`, "D85"), and its `census` in
+/// [`CopyBlock::array_shapes`], which puts a block mapped at the metadata
+/// level at the data level.
 ///
 /// **The block is scanned as a mapping pass scans it**: offered to the leader
 /// under `scan_options`' parallelism, and read serially where it declines, so
@@ -1615,7 +1658,7 @@ pub async fn gather_block_statistics(
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
-) -> Result<Option<BlockGathered>> {
+) -> Result<Option<BlockReread>> {
     let size = source.size().await?;
     announce_read_loop(source, scan_options);
     let mut shortfall_reported = false;
@@ -1648,7 +1691,49 @@ async fn reread_block(
     account: &Arc<StatisticsAccount>,
     size: u64,
     shortfall_reported: &mut bool,
-) -> Result<Option<BlockGathered>> {
+) -> Result<Option<BlockReread>> {
+    let mut observer = gather::observer_tracking(
+        backfill,
+        &block.header,
+        metadata,
+        block.database.as_deref(),
+        account,
+    );
+    let read = reread_rows(
+        source,
+        scan_options,
+        cache_path,
+        block,
+        size,
+        Some(observer.as_mut()),
+        shortfall_reported,
+    )
+    .await?;
+    let Some(census) = read else { return Ok(None) };
+    // The observer's own allocation is freed as `finish` returns, attributed
+    // as it was allocated (`crate::instrument`).
+    let _attributed = StatisticsScope::enter();
+    let gathered = observer.finish(block.terminator_offset - block.data_offset);
+    Ok(Some(BlockReread { gathered, census }))
+}
+
+/// Read every row of `block` again, as a mapping pass reads them — offered
+/// to the leader, and serially where it declines — censusing them and
+/// handing each to `observer` where there is one, and answer the census:
+/// what a back-fill ([`reread_block`]) and a query's census of a block mapped
+/// at the metadata level ([`census_metadata_level`]) both read. `None` is
+/// [`ScanOptions::cancel`] stopping it first; a block no longer ending where
+/// the map says is [`Error::CachedBlockChanged`], naming `cache_path`.
+#[allow(clippy::too_many_arguments)]
+async fn reread_rows(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    cache_path: Option<&Path>,
+    block: &CopyBlock,
+    size: u64,
+    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
+    shortfall_reported: &mut bool,
+) -> Result<Option<Vec<ArrayShape>>> {
     let moved = || Error::CachedBlockChanged {
         path: cache_path.map(Path::to_path_buf),
         header_offset: block.header_offset,
@@ -1658,30 +1743,23 @@ async fn reread_block(
     if block.end_offset > size {
         return Err(moved());
     }
-    let mut observer = gather::observer_tracking(
-        backfill,
-        &block.header,
-        metadata,
-        block.database.as_deref(),
-        account,
-    );
     let outcome = leader::scan_region(
         source,
         scan_options,
         block.header_offset,
         block.data_offset,
-        block.header.columns.len(),
+        Some(block.header.columns.len()),
         size,
-        Some(observer.as_mut()),
+        observer.as_deref_mut(),
     )
     .await?;
     report_shortfall(shortfall_reported, outcome.shortfall);
-    let end = match outcome.scan {
-        RegionScan::Closed(interior) => interior.end,
+    let (end, census) = match outcome.scan {
+        RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
         RegionScan::Declined => {
-            match observe_rows(source, scan_options, block, size, observer.as_mut()).await? {
-                Some(end) => end,
+            match observe_rows(source, scan_options, block, size, observer).await? {
+                Some(read) => read,
                 None => return Ok(None),
             }
         }
@@ -1690,26 +1768,25 @@ async fn reread_block(
     if (end.terminator_offset, end.end_offset, end.row_count) != recorded {
         return Err(moved());
     }
-    // The observer's own allocation is freed as `finish` returns, attributed
-    // as it was allocated (`crate::instrument`).
-    let _attributed = StatisticsScope::enter();
-    Ok(Some(observer.finish(block.terminator_offset - block.data_offset)))
+    Ok(Some(census))
 }
 
-/// Hand `observer` every row of `block`, read serially from its first data
-/// byte to its terminator, and answer the `CopyEnd` the scanner met — `None`
-/// where [`ScanOptions::cancel`] was set first, read once per chunk as
+/// Census every row of `block`, read serially from its first data byte to its
+/// terminator, handing each to `observer` where there is one, and answer the
+/// `CopyEnd` the scanner met with the census — `None` where
+/// [`ScanOptions::cancel`] was set first, read once per chunk as
 /// [`map_forward`] reads it.
 async fn observe_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     block: &CopyBlock,
     size: u64,
-    observer: &mut dyn BlockObserver,
-) -> Result<Option<CopyEnd>> {
+    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
+) -> Result<Option<(CopyEnd, Vec<ArrayShape>)>> {
     let mut scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
     let mut carry = ChunkCarry::new();
     let mut read_pos = block.data_offset;
+    let mut census = vec![ArrayShape::default(); block.header.columns.len()];
     loop {
         if scan_options.cancelled() {
             return Ok(None);
@@ -1737,9 +1814,12 @@ async fn observe_rows(
             while let Some(event) = scanner.next_event(span, span_eof)? {
                 match event {
                     Event::Row(row) => {
-                        observer.observe_row(row.offset - block.data_offset, row.raw)
+                        census_row(&mut census, row.raw);
+                        if let Some(observer) = observer.as_deref_mut() {
+                            observer.observe_row(row.offset - block.data_offset, row.raw);
+                        }
                     }
-                    Event::CopyEnd(end) => return Ok(Some(end)),
+                    Event::CopyEnd(end) => return Ok(Some((end, census))),
                     // A scanner inside a block's rows emits nothing else
                     // before its `CopyEnd`.
                     _ => {}
@@ -1964,6 +2044,22 @@ fn resolve_block(
     ))
 }
 
+/// Refuse a typed plan over a block holding no census — one a map the caller
+/// holds records at the metadata level ([`Error::TableAtMetadataLevel`]),
+/// whose union ([`union_census`]) would read as a table holding no array
+/// deeper than its DDL says (`docs/design/decisions.md`, "D35"). A query that
+/// maps for itself has censused every block before it plans
+/// ([`census_metadata_level`]); [`SchemaMode::Strings`] reads no census.
+fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) -> Result<()> {
+    if query_options.schema_mode != SchemaMode::Typed {
+        return Ok(());
+    }
+    match matches.iter().find(|block| block.array_shapes.is_none()) {
+        Some(block) => Err(Error::TableAtMetadataLevel { table: block.header.qualified_name() }),
+        None => Ok(()),
+    }
+}
+
 /// **One table, one schema**: the column order every batch of a table
 /// carries, whichever of its blocks the rows came from, and the census keyed
 /// to it.
@@ -2124,6 +2220,7 @@ impl ReplayPlan {
         matches: &[CopyBlock],
         metadata: Option<DumpMetadata>,
     ) -> Result<Self> {
+        refuse_metadata_level(matches, &query_options)?;
         let table = TableColumns::settle(matches, metadata.as_ref())?;
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
@@ -2664,7 +2761,7 @@ async fn map_for_query(
         watch,
         &mut index,
         target,
-        &StatisticsRequest::NONE,
+        Pass::Query,
         &account,
         size,
     )
@@ -2686,7 +2783,7 @@ async fn map_for_query(
     // given, filters candidates first rather than picking among them after
     // the fact. An ambiguous name among the blocks mapped errors before a
     // single row goes out; one past an early stop is never seen (`KD6`).
-    let matches: Vec<CopyBlock> = index
+    let mut matches: Vec<CopyBlock> = index
         .blocks_for(table)
         .filter(|b| selector.is_none() || b.database.as_deref() == selector)
         .cloned()
@@ -2706,12 +2803,78 @@ async fn map_for_query(
         }
     }
 
+    census_metadata_level(
+        source,
+        scan_options,
+        query_options,
+        cache,
+        &mut matches,
+        index.scanned_through,
+        size,
+    )
+    .await?;
+
     // **A streamed schema needs no completeness test**
     // (`docs/design/decisions.md`, "D34"): the mapping pass has finished and
     // `matches` is fixed, so the census the plan unions over them is the
     // evidence for exactly the rows this stream will hand back
     // (`docs/design/decisions.md`, "D35").
     Ok(MappedTable { matches, metadata })
+}
+
+/// **A query's cold semantics over a table the map holds at the metadata
+/// level** (`docs/design/decisions.md`, "D35"): each of `matches` holding no
+/// census is read again for one, as a query's own mapping pass would have
+/// censused it, and holds it for this query alone — the map and the cache
+/// keep the level `parse` gave them, so the price is a second read of the
+/// table on every such query. Under [`SchemaMode::Strings`], which reads no
+/// census, nothing is read. A cancelled read is
+/// [`Error::ScanCancelled`] at `scanned_through`, as a cancelled mapping pass
+/// is.
+#[allow(clippy::too_many_arguments)]
+async fn census_metadata_level(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    query_options: &QueryOptions,
+    cache: &CacheMode,
+    matches: &mut [CopyBlock],
+    scanned_through: u64,
+    size: u64,
+) -> Result<()> {
+    if query_options.schema_mode != SchemaMode::Typed {
+        return Ok(());
+    }
+    let lacking: Vec<usize> =
+        (0..matches.len()).filter(|&i| matches[i].array_shapes.is_none()).collect();
+    let Some(&first) = lacking.first() else { return Ok(()) };
+    tracing::info!(
+        table = matches[first].header.qualified_name(),
+        blocks = lacking.len(),
+        "table mapped at the metadata level: reading its rows again for this query's census",
+    );
+    announce_read_loop(source, scan_options);
+    let cache_path = match cache {
+        CacheMode::Enabled { path, .. } => Some(path.as_path()),
+        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
+    };
+    let mut shortfall_reported = false;
+    for at in lacking {
+        let read = reread_rows(
+            source,
+            scan_options,
+            cache_path,
+            &matches[at],
+            size,
+            None,
+            &mut shortfall_reported,
+        )
+        .await?;
+        let Some(census) = read else {
+            return Err(Error::ScanCancelled { scanned_through });
+        };
+        matches[at].array_shapes = Some(census);
+    }
+    Ok(())
 }
 
 /// How many sub-streams a caller's [`Parallelism`] and a source's per-partition
@@ -4553,6 +4716,7 @@ pub fn table_schema(
     query_options: &QueryOptions,
 ) -> Result<ResolvedSchema> {
     let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
+    refuse_metadata_level(&matches, query_options)?;
     let metadata = index.metadata.as_ref();
     let columns = TableColumns::settle(&matches, metadata)?;
     let blocks = plan_blocks(&matches, query_options, metadata, &columns)?;
@@ -5193,7 +5357,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
-            array_shapes: Vec::new(),
+            array_shapes: Some(Vec::new()),
         };
         // Nothing is read: the plan prices the chunk the source was last told.
         let planned = |chunk: usize, parallelism, span| {
@@ -5478,7 +5642,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
-            array_shapes: Vec::new(),
+            array_shapes: Some(Vec::new()),
         };
         let piece = |start: u64, limit: u64| Segment {
             block: block.clone(),
@@ -5524,7 +5688,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
-            array_shapes: Vec::new(),
+            array_shapes: Some(Vec::new()),
         };
         let whole = Segment::over(&block, 39..403);
         assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));
@@ -5654,9 +5818,9 @@ mod tests {
         .unwrap();
         let source = LocalFileSource::open(&path).unwrap();
         let request = StatisticsRequest {
-            selection: StatisticsSelection::All,
+            selection: StatisticsSelection::DATA,
             group_size: Some(std::num::NonZeroU64::new(64).unwrap()),
-            ..StatisticsRequest::ALL
+            ..StatisticsRequest::DATA
         };
         let run = map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request)
             .await

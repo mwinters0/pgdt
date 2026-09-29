@@ -52,10 +52,11 @@ use common::{all_fixtures, run, stderr_of};
 /// source's stored size and mtime, so every leg of a comparison has to be
 /// looking at one file. Only the cache path moves.
 ///
-/// **These legs gather no statistics**, so a difference in the map is not
-/// hidden among them; [`gathered_cache_of`] is the same run gathering.
+/// **These legs are at the metadata level**, so a difference in the map is not
+/// hidden among statistics or a census; [`gathered_cache_of`] is the same run
+/// at the data level.
 fn cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
-    parse_cache(dump, out, &["--statistics", "none"], extra)
+    parse_cache(dump, out, &["--statistics-level", "metadata"], extra)
 }
 
 /// `pgdt parse` gathering every statistic at [`TINY_GROUP`] bytes a group, so
@@ -165,15 +166,15 @@ fn every_fixture_gathers_the_same_statistics_at_every_stated_parallelism() {
 }
 
 /// **A cache back-filled with statistics is the cache one gathering `parse`
-/// writes, byte for byte.** Each fixture is parsed without them, or at the
-/// default group size, and then parsed again asking for every statistic at
+/// writes, byte for byte.** Each fixture is parsed at the metadata level, or
+/// at the default group size, and then parsed again asking for every statistic at
 /// [`TINY_GROUP`] bytes into the same cache, which re-reads every block —
 /// serially, and split by workers at a chunk the leader cuts at.
 #[test]
 fn every_fixture_backfills_to_the_cache_one_gathering_parse_writes() {
     let dir = tempfile::tempdir().unwrap();
     let legs: [(&[&str], &[&str]); 2] = [
-        (&["--statistics", "none"], &["--jobs", "1"]),
+        (&["--statistics-level", "metadata"], &["--jobs", "1"]),
         (&[], &["--jobs", "8", "--chunk-size", "64"]),
     ];
     for (n, fixture) in all_fixtures().iter().enumerate() {

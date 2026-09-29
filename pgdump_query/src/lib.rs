@@ -72,13 +72,14 @@ pub use statistics::{
     BLOCK_MAX_ROW_GROUPS, BlockGathered, BlockStatistics, Bounds, BoundsSet, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     GroupSizing, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, RowGroup, Sortedness,
-    StatisticsBackfill, StatisticsHeld, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    StatisticsTerms,
+    StatisticsBackfill, StatisticsHeld, StatisticsLevel, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{
-    BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, MapRun, PlanLever, PlanNote,
-    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, bounded_columns,
-    gather_block_statistics, map_file, table_schema, table_stream, table_stream_partitions,
+    BlockReread, BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, MapRun, PlanLever,
+    PlanNote, PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream,
+    bounded_columns, gather_block_statistics, map_file, table_schema, table_stream,
+    table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};
 

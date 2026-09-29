@@ -16,10 +16,10 @@ use datafusion::physical_plan::{ExecutionPlan, execute_stream_partitioned};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    ComparisonSemantics, DiagnosticKind, Finding, LocalFileSource, QueryOptions, ScanOptions,
-    SchemaMode, StatisticsRequest, TableName, map_file, table_stream,
+    ComparisonSemantics, DataBlock, DiagnosticKind, Finding, LocalFileSource, QueryOptions,
+    ScanOptions, SchemaMode, SpanBody, StatisticsRequest, TableName, map_file, table_stream,
 };
 
 /// A sink for a registration whose findings this target is not about.
@@ -64,8 +64,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::NONE).await.unwrap();
+    map_ungathered(&source, &cache::colocated_path(&copy)).await;
     copy
 }
 
@@ -402,7 +401,7 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     std::fs::copy(&fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::ALL).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let statistics = dump.statistics_bytes();
     assert!(statistics > 0, "a parse gathering statistics leaves some resident");
@@ -478,4 +477,22 @@ async fn a_single_table_registers_on_its_own() {
         concat_batches(&schema, &alone).unwrap(),
         concat_batches(&schema, &catalogued).unwrap()
     );
+}
+
+/// Map `source` whole into the cache at `path` at the data level and keep no
+/// statistics: the census a typed plan needs and nothing gathered, as a
+/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
+/// "D35").
+async fn map_ungathered(source: &LocalFileSource, path: &Path) {
+    let cache = CacheMode::enabled(path.to_path_buf());
+    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
+        panic!("the parse left a complete cache")
+    };
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            block.statistics = None;
+        }
+    }
+    cache::save(path, source, &index).await.unwrap();
 }

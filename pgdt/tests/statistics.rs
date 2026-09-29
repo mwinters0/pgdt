@@ -1,4 +1,4 @@
-//! `pgdt parse --statistics` / `--row-group-size` /
+//! `pgdt parse --statistics-level` / `--row-group-size` /
 //! `--row-group-min-rows` / `--row-group-max-rows`, and what `info` reports
 //! of them.
 //!
@@ -104,8 +104,9 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
 }
 
 #[test]
-fn none_gathers_nothing_and_a_stated_size_is_recorded() {
-    assert!(blocks_after(&["--statistics", "none"]).iter().all(|(_, b)| b["statistics"].is_null()));
+fn the_metadata_level_records_nothing_and_a_stated_size_is_recorded() {
+    let metadata = blocks_after(&["--statistics-level", "metadata"]);
+    assert!(metadata.iter().all(|(_, b)| b["statistics"].is_null() && b["array_shapes"].is_null()));
     for (table, block) in blocks_after(&["--row-group-size", "4096"]) {
         assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
         assert_eq!(block["statistics"]["sizing"], "Stated", "{table}");
@@ -114,7 +115,8 @@ fn none_gathers_nothing_and_a_stated_size_is_recorded() {
 
 #[test]
 fn a_selection_gathers_its_tables_and_columns_alone() {
-    let blocks = blocks_after(&["--statistics", "specials,public.ordered.id"]);
+    let blocks =
+        blocks_after(&["--statistics-level", "metadata,specials=data,public.ordered.id=data"]);
     for (table, block) in blocks {
         let statistics = &block["statistics"];
         match table.as_str() {
@@ -359,7 +361,7 @@ fn the_detail_listing_rolls_up_the_exports_groups() {
     assert!(expected.iter().any(|l| l.ends_with(" empty")), "an empty group is exercised");
     assert_eq!(section, expected);
 
-    let (_dir, dump, _) = info_after(&["--statistics", "none"]);
+    let (_dir, dump, _) = info_after(&["--statistics-level", "metadata"]);
     let detail = run_ok(&["info", "--source", dump.to_str().unwrap(), "--detail"]);
     assert!(detail.lines().any(|l| l == "statistics: none gathered"), "{detail}");
     let plain = run_ok(&["info", "--source", dump.to_str().unwrap()]);
@@ -411,10 +413,11 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     };
     let backfill_lines = |stderr: &str| stderr.lines().filter(|l| l.contains("back-fill")).count();
 
-    let (_, stderr) = parse(&["--statistics", "none"]);
+    let (_, stderr) = parse(&["--statistics-level", "metadata"]);
     assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
 
-    let (stdout, stderr) = parse(&["--statistics", "specials,public.ordered"]);
+    let (stdout, stderr) =
+        parse(&["--statistics-level", "metadata,specials=data,public.ordered=data"]);
     assert!(stderr.contains("statistics back-fill started blocks=2"), "{stderr}");
     assert!(stderr.contains("statistics back-fill complete blocks=2"), "{stderr}");
     assert!(!stdout.contains("nothing to scan"), "{stdout}");
@@ -465,7 +468,8 @@ fn a_parse_says_what_its_statistics_held() {
         value.unwrap_or_else(|| panic!("{line}: no {key}")).parse().unwrap()
     };
 
-    assert_eq!(held(&["parse", "--source", source, "--statistics", "none"]), Vec::<String>::new());
+    let metadata = held(&["parse", "--source", source, "--statistics-level", "metadata"]);
+    assert_eq!(metadata, Vec::<String>::new());
 
     let gathered = held(&["parse", "--source", source]);
     let [line] = gathered.as_slice() else { panic!("{gathered:?}") };
@@ -492,9 +496,9 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
     let (_dir, dump) = sandboxed(DUMP, "refused.sql");
     let source = dump.to_str().unwrap();
     for (extra, says) in [
-        (&["--statistics", "none", "--row-group-size", "64"][..], "drop one of them"),
-        (&["--statistics", "none", "--row-group-min-rows", "64"][..], "drop one of them"),
-        (&["--statistics", "none", "--row-group-max-rows", "64"][..], "drop one of them"),
+        (&["--statistics-level", "metadata", "--row-group-size", "64"][..], "drop one of them"),
+        (&["--statistics-level", "metadata", "--row-group-min-rows", "64"][..], "drop one of them"),
+        (&["--statistics-level", "metadata", "--row-group-max-rows", "64"][..], "drop one of them"),
         (&["--row-group-max-rows", "64"][..], "1024 rows --row-group-min-rows asks for by default"),
         (
             &["--row-group-min-rows", "64", "--row-group-max-rows", "8"][..],
@@ -506,9 +510,14 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
         (&["--row-group-size", "1000"][..], "a power of two"),
         (&["--row-group-size", "4096", "--row-group-min-rows", "8"][..], "cannot be used with"),
         (&["--preamble-only", "--row-group-min-rows", "8"][..], "cannot be used with"),
-        (&["--statistics", "public..id"][..], "is not a table"),
-        (&["--statistics", "a.b.c.d"][..], "more parts"),
-        (&["--preamble-only", "--statistics", "none"][..], "cannot be used with"),
+        (&["--statistics-level", "data,public..id=data"][..], "is not a table"),
+        (&["--statistics-level", "data,a.b.c.d=data"][..], "more parts"),
+        (&["--statistics-level", "public.t=data"][..], "start with `data` or `metadata`"),
+        (&["--statistics-level", "all"][..], "is not a level"),
+        (&["--statistics-level", "data,public.t"][..], "states no level"),
+        (&["--statistics-level", "data,public.t=none"][..], "is not a level"),
+        (&["--statistics-level", "data,public.t=data,public.t=metadata"][..], "is named twice"),
+        (&["--preamble-only", "--statistics-level", "metadata"][..], "cannot be used with"),
     ] {
         let mut args = vec!["parse", "--source", source];
         args.extend_from_slice(extra);
@@ -639,4 +648,65 @@ fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
             "--jobs {jobs}: {whole}"
         );
     }
+}
+
+/// **The most specific entry decides a column's level, and a table is
+/// censused where any of its columns is at the data level.** A column entry
+/// outranks its table's, and a table's the first entry, either way round.
+#[test]
+fn the_most_specific_entry_decides_a_columns_level() {
+    for levels in [
+        "data,public.ordered.id=metadata,specials=metadata",
+        "metadata,public.ordered=data,public.ordered.id=metadata,public.specials=metadata,long_value=data",
+    ] {
+        for (table, block) in blocks_after(&["--statistics-level", levels]) {
+            let statistics = &block["statistics"];
+            match table.as_str() {
+                "public.ordered" => {
+                    let columns = array(&statistics["columns"]);
+                    assert!(columns[0].is_null(), "{levels}: `id` is at the metadata level");
+                    assert!(columns[1..].iter().all(|c| !c.is_null()), "{levels}");
+                    assert!(!block["array_shapes"].is_null(), "{levels}: censused");
+                }
+                "public.specials" => {
+                    assert!(statistics.is_null(), "{levels}");
+                    assert!(block["array_shapes"].is_null(), "{levels}: not censused");
+                }
+                "public.long_value" => assert!(!statistics.is_null(), "{levels}"),
+                _ if levels.starts_with("data") => assert!(!statistics.is_null(), "{table}"),
+                _ => assert!(block["array_shapes"].is_null(), "{levels}: {table}"),
+            }
+        }
+    }
+}
+
+/// **A query of a table the cache holds at the metadata level reads its rows
+/// once more for the census, answers what it answers over the data level, and
+/// writes nothing**: `t_array_shape` holds two-dimensional arrays, which its
+/// DDL cannot say, and the cache keeps the level `parse` gave it. `info` says
+/// which level each block is at.
+#[test]
+fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
+    let query = |dump: &Path| {
+        let out =
+            run(&["query", "--source", dump.to_str().unwrap(), "--table", "public.t_array_shape"]);
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        (common::stdout_of(&out), stderr_of(&out))
+    };
+    let (_data_dir, data) = sandboxed("16/types/default.sql", "data.sql");
+    run_ok(&["parse", "--source", data.to_str().unwrap()]);
+    let (expected, said) = query(&data);
+    assert!(!said.contains("metadata level"), "{said}");
+
+    let (_dir, dump) = sandboxed("16/types/default.sql", "metadata.sql");
+    run_ok(&["parse", "--source", dump.to_str().unwrap(), "--statistics-level", "metadata"]);
+    let listing = run_ok(&["info", "--source", dump.to_str().unwrap()]);
+    assert!(listing.lines().any(|l| l == "    level: metadata"), "{listing}");
+    assert!(!listing.lines().any(|l| l == "    level: data"), "{listing}");
+    let cache = dump.with_extension("sql.dtcache");
+    let written = std::fs::read(&cache).unwrap();
+    let (got, said) = query(&dump);
+    assert_eq!(got, expected);
+    assert!(said.contains("table mapped at the metadata level"), "{said}");
+    assert_eq!(std::fs::read(&cache).unwrap(), written, "the query wrote nothing");
 }

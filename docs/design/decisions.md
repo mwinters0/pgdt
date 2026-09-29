@@ -243,10 +243,13 @@ unless a stated bound it did not record moves it, a maximum it breaks re-reading
 groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries, keyed alike but
 past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
-### D35 The census is type-blind, records both dimension bounds, and always runs
+### D35 The census is type-blind, records both dimension bounds, and runs at the data level
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
-max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. Every mapping pass censuses:
-gating on a full scan left early blocks uncensused. Evidence: `census-brace-free`, `census-arrays`.
+max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at
+the data level is censused, and so is every block a query's pass maps: gating on a full scan left
+early blocks uncensused. The metadata level records `None` and splits no field; a typed query re-reads
+such a table for itself, writing nothing, and a plan over a held map refuses it. Rejected: degrading
+to the DDL's `List`; a census-only level a user can reach. Evidence: `census-brace-free`, `census-arrays`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on
@@ -363,7 +366,7 @@ plan (D54). Across a DataFusion query's partitions the first refusal wins, each 
 ### D93 A dynamic filter's rows are evaluated only under `pgdump.dynamic_filter_rows`, off by default; its state is read at each group entered and each chunk
 Off, a state still prunes groups, cuts the sub-streams and stops a sorted block, its stop asked of each kept row where armed; the setting states intent,
 which "Two tunables" does not refuse, and is the one way to the unclustered join's win, DataFusion's flag taking pruning with it. On, rows are evaluated
-in every block, statistics or not (`--statistics none`, D85's declined block, `KD33`'s tail), less each bound an `IN` beside it implies, no `Not` above
+in every block, statistics or not (a column at the metadata level, D85's declined block, `KD33`'s tail), less each bound an `IN` beside it implies, no `Not` above
 (D54). The state is read where its generation moved; a read mid-group judges that group again, skipping its rest with each later group it rules out.
 Rejected: on by default (`dynamic-filter-join`'s costing row); no switch; evaluating only where statistics delimit groups; reading per row (a shared lock),
 per batch (aging) or at group entry alone (older where groups merge); ceasing where nothing is rejected (D77); dropping a static filter's implied bounds,
@@ -454,13 +457,13 @@ order is lost (`Unsorted`), where a decoded-kind value past the cap loses its gr
 last character by the next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte successor for text,
 which can end mid-character. Evidence: `gather.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
-### D77 The statistics request is the mapping pass's argument, and gathering nothing is a selection
-`map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is
-handed reads as a request it ignores. `StatisticsSelection::None` is a variant, so the type's
-`Default` gathers everything. Rejected: a `ScanOptions` field; `Option<&StatisticsRequest>`, whose
-`None` either contradicts that default or spells it twice; refusing a size beside `NONE` in the
-library, which closes one instance of a size sizing nothing (the CLI refuses it, a person's intent
-being ambiguous there). Code: `statistics::StatisticsRequest`.
+### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
+`map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is handed
+reads as a request it ignores; a query's pass censuses and gathers nothing, which no selection spells.
+A selection is a default level and overrides, the most specific winning, so the type's `Default` is
+the data level everywhere. Rejected: a `ScanOptions` field; `Option<&StatisticsRequest>`, whose `None`
+contradicts that default or spells it twice; refusing a size beside `METADATA`, or two equally specific
+entries, in the library (the CLI refuses both, a person's intent being ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
 None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21) so

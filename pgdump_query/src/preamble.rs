@@ -1738,7 +1738,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
-            array_shapes: Vec::new(),
+            array_shapes: Some(Vec::new()),
         })))
     }
 

@@ -58,17 +58,20 @@ pub const DICTIONARY_ENTRY_MAX_BYTES: usize = 256;
 /// has none on that column.
 pub const DICTIONARY_MAX_ENTRIES: usize = 64;
 
-/// What a mapping pass is asked to gather: which columns, at what group size
-/// and between what density bounds (`docs/design/decisions.md`, "D77").
-/// An argument of [`crate::stream::map_file`] alone — a query never gathers.
+/// What a mapping pass is asked to record: each table's and column's level,
+/// at what group size and between what density bounds
+/// (`docs/design/decisions.md`, "D77"). An argument of
+/// [`crate::stream::map_file`] alone — a query never gathers.
 ///
-/// **The default gathers every statistic** ([`Self::ALL`]), a parse carrying
-/// the intent to do all work a later query could use; gathering less is stated,
-/// [`Self::NONE`] gathering nothing (`docs/design/roadmap.md`, "A parse does
-/// all the work a later query could use").
+/// **The default is the data level everywhere** ([`Self::DATA`]), a parse
+/// carrying the intent to do all work a later query could use; recording less
+/// is stated, [`Self::METADATA`] recording nothing drawn from any block's
+/// rows (`docs/design/roadmap.md`, "A parse does all the work a later query
+/// could use").
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StatisticsRequest {
-    /// The columns statistics are gathered for.
+    /// Each table's and column's level: which blocks are censused, and which
+    /// columns statistics are gathered for.
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
     /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
@@ -77,7 +80,7 @@ pub struct StatisticsRequest {
     /// Kept apart from the default because a stated size and an unstated one
     /// are different requests to a block already gathered at another. In a
     /// block the request does not track ([`Self::tracked_columns`] answering
-    /// `None`, as it always does for [`StatisticsSelection::None`]) it sizes
+    /// `None`, as it always does under [`StatisticsSelection::METADATA`]) it sizes
     /// nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
     /// The fewest rows a block's median group should hold, `None` when the
@@ -101,27 +104,28 @@ pub struct StatisticsRequest {
 }
 
 impl StatisticsRequest {
-    /// Every column of every table, at the default group size and minimum and
-    /// under no maximum — the default.
-    pub const ALL: Self = Self {
-        selection: StatisticsSelection::All,
+    /// Every table and column at the data level, at the default group size
+    /// and minimum and under no maximum — the default.
+    pub const DATA: Self = Self {
+        selection: StatisticsSelection::DATA,
         group_size: None,
         min_rows: None,
         max_rows: None,
     };
 
-    /// Nothing gathered: what a query's mapping pass always asks.
-    pub const NONE: Self = Self {
-        selection: StatisticsSelection::None,
+    /// Every table at the metadata level: no block censused, nothing gathered.
+    pub const METADATA: Self = Self {
+        selection: StatisticsSelection::METADATA,
         group_size: None,
         min_rows: None,
         max_rows: None,
     };
 
-    /// Whether this request may track a column at all — false for
-    /// [`StatisticsSelection::None`] alone.
+    /// Whether this request may track a column at all — false where no table
+    /// or column is at the data level.
     pub fn gathers(&self) -> bool {
-        self.selection != StatisticsSelection::None
+        self.selection.default == StatisticsLevel::Data
+            || self.selection.overrides.iter().any(|(_, level)| *level == StatisticsLevel::Data)
     }
 
     /// The group size this request gathers at, before any merge.
@@ -172,35 +176,22 @@ impl StatisticsRequest {
         }
     }
 
-    /// Which of `header`'s columns this request tracks, positionally — `None`
-    /// when it tracks nothing in the block, which then gathers no statistics
-    /// at all. A block whose header names no columns is tracked with no
-    /// column, its groups still counted — under [`StatisticsSelection::All`],
-    /// or where a [`StatisticsTarget::Table`] names it; an `Only` selection
-    /// reaching it by column alone tracks nothing there, there being no column
-    /// to match.
+    /// Which of `header`'s columns this request tracks, positionally — each
+    /// column at the data level ([`StatisticsSelection::level`]) — and `None`
+    /// when it tracks nothing in the block, which is then at the metadata
+    /// level: neither censused nor gathered. A block whose header names no
+    /// columns is tracked with no column, its groups still counted, where its
+    /// table is at the data level.
+    ///
+    /// **This is also whether the block is censused**: a table is at the data
+    /// level where any of its columns is (`docs/design/decisions.md`, "D35").
     pub fn tracked_columns(&self, header: &CopyHeader) -> Option<Vec<bool>> {
-        let targets = match &self.selection {
-            StatisticsSelection::All => return Some(vec![true; header.columns.len()]),
-            StatisticsSelection::None => return None,
-            StatisticsSelection::Only(targets) => targets,
-        };
-        let mut whole_table = false;
-        let mut tracked = vec![false; header.columns.len()];
-        for target in targets {
-            match target {
-                StatisticsTarget::Table(table) if header.matches(table) => whole_table = true,
-                StatisticsTarget::Column { table, column } if header.matches(table) => {
-                    if let Some(i) = header.columns.iter().position(|c| c == column) {
-                        tracked[i] = true;
-                    }
-                }
-                _ => {}
-            }
+        let data =
+            |column: Option<&str>| self.selection.level(header, column) == StatisticsLevel::Data;
+        if header.columns.is_empty() {
+            return data(None).then(Vec::new);
         }
-        if whole_table {
-            return Some(vec![true; header.columns.len()]);
-        }
+        let tracked: Vec<bool> = header.columns.iter().map(|c| data(Some(c))).collect();
         tracked.contains(&true).then_some(tracked)
     }
 
@@ -208,7 +199,9 @@ impl StatisticsRequest {
     /// what this request asks of it — `None` when it holds that already, or
     /// when the request tracks nothing in it.
     ///
-    /// **A block lacks the requested statistics** where it holds none, where a
+    /// **A block lacks the requested statistics** where it holds none — every
+    /// block mapped at the metadata level that this request puts at the data
+    /// level among them, the re-read censusing it too — where a
     /// column the request tracks was not gathered or was gathered without the
     /// bounds `bounded` says gathering keeps for it, positionally to the
     /// block's header (`crate::stream::bounded_columns`;
@@ -336,20 +329,68 @@ pub struct StatisticsBackfill {
     pub sizing: GroupSizing,
 }
 
-/// The columns a [`StatisticsRequest`] names.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum StatisticsSelection {
-    /// Every column of every table.
+/// How much a mapping pass records of a table or a column
+/// (`docs/design/decisions.md`, "D35").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatisticsLevel {
+    /// A block's location and row count, and nothing drawn from its rows: no
+    /// census, no statistics, no field split. A query of such a table maps
+    /// its blocks again for itself ([`crate::stream::table_stream`]), and a
+    /// replay over a caller's map refuses one.
+    Metadata,
+    /// The census, for a table any of whose columns is at this level, and
+    /// statistics, for each column that is — the default.
     #[default]
-    All,
-    /// Only these tables and columns.
-    Only(Vec<StatisticsTarget>),
-    /// No column of any table.
-    None,
+    Data,
 }
 
-/// One entry of a narrowed selection. A table is named as
-/// [`CopyHeader::matches`] reads it, qualified or bare.
+/// Each table's and column's [`StatisticsLevel`]: a default for every one,
+/// then overrides, **the most specific entry naming a column deciding its
+/// level** — a column entry, then a qualified table, then a bare one, then
+/// the default; among equally specific entries naming one column, the last.
+/// The type's `Default` is the data level everywhere
+/// (`docs/design/decisions.md`, "D77").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StatisticsSelection {
+    /// The level of every table and column no override names.
+    pub default: StatisticsLevel,
+    /// Tables and columns at a level of their own.
+    pub overrides: Vec<(StatisticsTarget, StatisticsLevel)>,
+}
+
+impl StatisticsSelection {
+    /// Every table and column at the data level.
+    pub const DATA: Self = Self { default: StatisticsLevel::Data, overrides: Vec::new() };
+
+    /// Every table at the metadata level.
+    pub const METADATA: Self = Self { default: StatisticsLevel::Metadata, overrides: Vec::new() };
+
+    /// The level of `column` of `header`'s table, or with `None` of the table
+    /// itself, which no column entry reaches.
+    pub fn level(&self, header: &CopyHeader, column: Option<&str>) -> StatisticsLevel {
+        let mut level = (0, self.default);
+        for (target, stated) in &self.overrides {
+            let rank = match target {
+                StatisticsTarget::Column { table, column: named }
+                    if column == Some(named.as_str()) && header.matches(table) =>
+                {
+                    3 + u8::from(table.contains('.'))
+                }
+                StatisticsTarget::Table(table) if header.matches(table) => {
+                    1 + u8::from(table.contains('.'))
+                }
+                _ => continue,
+            };
+            if rank >= level.0 {
+                level = (rank, *stated);
+            }
+        }
+        level.1
+    }
+}
+
+/// What one override names. A table is named as [`CopyHeader::matches`]
+/// reads it, qualified or bare.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatisticsTarget {
     /// Every column of the table.
