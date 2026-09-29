@@ -121,22 +121,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`M179` published its first sweep, where the job's handoff named the
-  second.** `runs/m179-sweeps-20260928-2035/HANDOFF.md` said to fold the
-  second sweep (`runs/measure-20260928T222848/`) and call the first
-  `session-drift`'s first leg; `measurements.md`, "The apparatus", "Which sweep
-  is published is fixed before either runs", says the first of a pair is the
-  publishable one. Both were fixed before either ran, so the standing rule
-  decided it and `runs/measure-20260928T203548/` is the stamp. **The decision
-  to make:** whether the rule stands, or a handoff may pre-register the other
-  leg. Reconsidering it re-folds every table from the second sweep, a paste,
-  and changes no `session-drift` reading.
-- **The warm resolution floor stays ~8%, though this pair's warm figures moved
-  past it.** `measurements.md`'s standing rule reads "a warm absolute compared
-  across sessions resolves to no better than ~8%" off `session-drift` and says
-  a re-derivation re-reads it; the `da05a72` pair moved warm figures up to
-  16.1% (the large-object scan, three reps) and 15.5% (`control`'s four-worker
-  `parse`), none attributed. The number is a standing rule, so it was left for
-  you. **The decision to make:** keep ~8% as bounding the warm *figures*,
-  raise it, or scope it (for example to figures of five or more reps).
-  Reconsidering it changes which warm moves the doc may call "reproduces".

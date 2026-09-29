@@ -212,14 +212,17 @@ Eighteen standing rules for reading anything below:
 - **A move smaller than the apparatus resolves is not a finding.** The floor is
   per regime, and each number below is read off "What a session's own drift
   costs" rather than asserted: a **warm absolute compared across sessions**
-  resolves to no better than **~8%**, a **cold device-bound one** to **~0.5%**,
+  resolves to no better than **~16%**, a **cold device-bound one** to **~0.5%**,
   and a **cross-file per-row difference** to **~0.5 µs/row**. The warm number is
-  the one with an observation outside it: one pair moved a file's warm
-  tmpfs `dd` floor 15.9%, so ~8% bounds the warm *figures* and not every warm
-  reading — the floors themselves move further, which is why each warm table
-  co-measures its own, and why a **floor** is judged against a number of its
-  own ("The floor is read directionally") rather than against this one. A move
-  inside its regime's floor is apparatus. Write it up as *reproduces*, never
+  the largest move a warm figure has made in any pair, planned against as
+  `session-drift`'s largest median is, so it bounds rather than describes: most
+  warm figures reproduce far tighter, and more reps do not tighten it, a
+  nine-rep reading having moved 11%
+  ([`../status/history/2026-09-29.md`](../status/history/2026-09-29.md), "The
+  warm resolution floor is ~16%, settled with the maintainer"). A reading of a
+  few milliseconds is read in milliseconds rather than against it, and a
+  **floor** is judged against a number of its own ("The floor is read
+  directionally"). A move inside its regime's floor is apparatus. Write it up as *reproduces*, never
   as a change. Two consequences: a warm table's third decimal carries no
   information across sweeps, and the way to resolve something finer is a
   difference taken **inside** one sweep, not more reps. The three numbers are
@@ -363,7 +366,7 @@ readings of the same three shapes.
 **A figure may be re-taken on its own, and its apparatus line is what says so.**
 Selection is per figure, so a table can be replaced between sweeps; what a
 reader then cannot do is set one sitting's **absolute** beside another's, which
-costs the ~8% a warm absolute resolves to across sessions. The rules that keep
+costs what a warm absolute resolves to across sessions. The rules that keep
 that legible:
 
 - **An apparatus line names the figures its table was taken with**, so a reader
@@ -887,8 +890,9 @@ produce it, and a symmetric check would have rejected whichever of the two it
 happened to see second.
 
 **The threshold is ~15%, and it is measured on floors rather than on figures.**
-The warm resolution floor (~8%) does not serve here: it is read off warm
-*figures*, and floors move further than the figures riding on them. The two
+The warm resolution floor does not serve here: it is read off warm
+*figures*, and this threshold gates floors, whose drift is a population of its
+own. The two
 populations this threshold has to separate **overlap**:
 pure drift has moved a warm floor by **15.9%** within a single pair and put one
 sweep's `control` floor **22.4% above** the stamp before it ("What a
@@ -938,6 +942,13 @@ faster-floored of the pair on `control` (0.293–0.300 s against 0.326–0.330 s
 and level on `arrays`; under `ba2fc12`'s it was paid visibly, the published
 sweep the slower-floored on `control` (+22.4% against the stamp before, where
 its partner sat at +2.9%).
+
+*Rejected:* **a handoff pre-registering the other leg.** Either leg fixed
+before both run removes the selection, so what the rule is worth is being one
+rule: a per-job override makes the leg a per-job decision again. The first leg
+does absorb one-time setup — `M179`'s generated an input and built an
+instrument just before `xz-decode-scaling`'s reps — but none reached a median,
+that figure reproducing within 1.9% (`runs/m179-sweeps-20260928-2035/drift.md`).
 
 *Rejected:* a **symmetric** tolerance, disqualifying a floor move beyond the
 envelope in either direction. A faster floor does mean something about staging
@@ -2577,7 +2588,7 @@ end, which makes the losses read off this table **upper bounds**.
 
 **The table reproduces the `5e02bf9` sitting**: its paired differences lie
 within 0.03 µs a row of that sitting's, and its absolutes 4–8% lower, inside
-the ~8% a warm absolute resolves across sessions.
+what a warm absolute resolves across sessions.
 
 **This sitting ran at ≤5% busy** with per-rep spreads inside 17% of their
 medians, one rep of the two-term deep row reading 15% above its median and
@@ -2717,7 +2728,7 @@ text equality on the last column slowest; that is the filter's own cost,
 `predicate-terms`' subject, and is not attributed here.
 
 **Every leg reproduces the `5e02bf9` sitting**: each median lies within 6%
-of that sitting's, inside the ~8% a warm absolute resolves across sessions.
+of that sitting's, inside what a warm absolute resolves across sessions.
 
 Per-rep readings (s):
 - Range on the sorted `id`, `--statistics none`: 0.533, 0.551, 0.510, 0.576, 0.508, 0.517
@@ -3015,8 +3026,9 @@ Three of them move, and each says something different:
 
 What is left after those is the part a counter cannot see — memory layout,
 cache and TLB luck — which is why the remedy is to re-take a comparison whole
-rather than to correct a reading. **Warm figures moved further than the
-standing rules' ~8% in this pair**: the large-object scan +16.1% (0.410 s
+rather than to correct a reading. **Warm figures moved further in this pair
+than in any before it**, which is what sets the standing rules' warm
+resolution floor: the large-object scan +16.1% (0.410 s
 against 0.476 s, three reps, its second sweep's spread 0.381–0.513 s) with its
 own floor at −1.0%, and `control_xz128`'s eight- and twelve-worker resident
 legs +9.7% and +8.9%, besides the `control` readings above; none is
