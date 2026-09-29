@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 4oHSALn9OLcdCgJ5EUzUZUCwcrYC6iLfLwnWjPBU3ezqyIX4ECVObecqGRgi3xh
+\restrict iuqtanzeuhJAmKaPAalhTehuX1a4iaBLM4fDKp8frRG5sc9IV3ilkxKadztbo0C
 
 -- Dumped from database version 15.19 (Debian 15.19-1.pgdg13+2)
 -- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg13+2)
@@ -182,6 +182,30 @@ CREATE TYPE public.collated_pair AS (
 
 
 ALTER TYPE public.collated_pair OWNER TO postgres;
+
+--
+-- Name: dated; Type: TYPE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16647'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16646'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16645'::pg_catalog.oid);
+
+CREATE TYPE public.dated AS (
+	label text,
+	d date
+);
+
+
+ALTER TYPE public.dated OWNER TO postgres;
 
 --
 -- Name: derived_domain; Type: DOMAIN; Schema: public; Owner: postgres
@@ -884,6 +908,103 @@ WHERE oid = 'public.t_enum_domain'::pg_catalog.regclass;
 
 
 ALTER TABLE public.t_enum_domain OWNER TO postgres;
+
+--
+-- Name: t_extremes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16640'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16639'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16638'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16638'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16641'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16641'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16642'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16642'::pg_catalog.oid);
+
+CREATE TABLE public.t_extremes (
+    id integer NOT NULL,
+    v_smallint smallint,
+    v_integer integer,
+    v_bigint bigint,
+    v_oid oid,
+    v_boolean boolean,
+    v_real real,
+    v_double double precision,
+    v_numeric38 numeric(38,0),
+    v_numeric76 numeric(76,0),
+    v_date date,
+    v_ts timestamp without time zone,
+    v_tstz timestamp with time zone,
+    v_time time without time zone,
+    v_interval interval,
+    v_uuid uuid,
+    v_bytea bytea,
+    v_int2vector int2vector
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '806', relminmxid = '1'
+WHERE oid = 'public.t_extremes'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '806', relminmxid = '1'
+WHERE oid = '16641';
+
+
+ALTER TABLE public.t_extremes OWNER TO postgres;
+
+--
+-- Name: t_extremes_nested; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16650'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16649'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16648'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16648'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16651'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16651'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16652'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16652'::pg_catalog.oid);
+
+CREATE TABLE public.t_extremes_nested (
+    id integer NOT NULL,
+    v_date_array date[],
+    v_daterange daterange,
+    v_dated public.dated,
+    v_interval_array interval[]
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '814', relminmxid = '1'
+WHERE oid = 'public.t_extremes_nested'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '814', relminmxid = '1'
+WHERE oid = '16651';
+
+
+ALTER TABLE public.t_extremes_nested OWNER TO postgres;
 
 --
 -- Name: t_float; Type: TABLE; Schema: public; Owner: postgres
@@ -1662,6 +1783,41 @@ COPY public.t_enum_domain (id, v_mood, v_domain, v_empty_enum) FROM stdin;
 
 
 --
+-- Data for Name: t_extremes; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_extremes (id, v_smallint, v_integer, v_bigint, v_oid, v_boolean, v_real, v_double, v_numeric38, v_numeric76, v_date, v_ts, v_tstz, v_time, v_interval, v_uuid, v_bytea, v_int2vector) FROM stdin;
+1	-32768	-2147483648	-9223372036854775808	0	f	-3.4028235e+38	-1.7976931348623157e+308	-99999999999999999999999999999999999999	-9999999999999999999999999999999999999999999999999999999999999999999999999999	4714-11-24 BC	4714-11-24 00:00:00 BC	4714-11-24 00:00:00+00 BC	00:00:00	-178956970 years -8 mons	00000000-0000-0000-0000-000000000000	\\x	-32768
+2	32767	2147483647	9223372036854775807	4294967295	t	3.4028235e+38	1.7976931348623157e+308	99999999999999999999999999999999999999	9999999999999999999999999999999999999999999999999999999999999999999999999999	5874897-12-31	294276-12-31 23:59:59.999999	294276-12-31 23:59:59.999999+00	24:00:00	178956970 years 7 mons	ffffffff-ffff-ffff-ffff-ffffffffffff	\\xff	32767
+3	\N	\N	\N	\N	\N	-Infinity	-Infinity	\N	\N	-infinity	-infinity	-infinity	\N	-2147483648 days	\N	\N	\N
+4	\N	\N	\N	\N	\N	Infinity	Infinity	\N	\N	infinity	infinity	infinity	\N	2147483647 days	\N	\N	\N
+5	\N	\N	\N	\N	\N	NaN	NaN	NaN	NaN	\N	\N	\N	\N	\N	\N	\N	\N
+6	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047788:00:54.775807	\N	\N	\N
+7	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047788:00:54.775807	\N	\N	\N
+8	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047:47:16.854776	\N	\N	\N
+9	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047:47:16.854775	\N	\N	\N
+10	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047:47:16.854776	\N	\N	\N
+11	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047:47:16.854775	\N	\N	\N
+12	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	294247-01-10 04:00:54.775807	294247-01-10 04:00:54.775807+00	\N	\N	\N	\N	\N
+13	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	294247-01-10 04:00:54.775808	294247-01-10 04:00:54.775808+00	\N	\N	\N	\N	\N
+14	\N	\N	\N	\N	\N	\N	\N	\N	\N	262142-12-31	262142-12-31 23:59:59.999999	262142-12-31 23:59:59.999999+00	\N	\N	\N	\N	\N
+15	\N	\N	\N	\N	\N	\N	\N	\N	\N	262143-01-01	262143-01-01 00:00:00	262143-01-01 00:00:00+00	\N	\N	\N	\N	\N
+16	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: t_extremes_nested; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_extremes_nested (id, v_date_array, v_daterange, v_dated, v_interval_array) FROM stdin;
+1	{2024-01-01,infinity}	[2024-01-01,infinity)	(x,infinity)	{"1 day",2562047:47:16.854776}
+2	{2024-01-01}	[2024-01-01,2024-02-01)	(infinity,2024-01-01)	{2562047:47:16.854775}
+3	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_float; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -2013,6 +2169,32 @@ ALTER TABLE ONLY public.t_enum_domain
 
 
 --
+-- Name: t_extremes_nested t_extremes_nested_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16653'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16653'::pg_catalog.oid);
+
+ALTER TABLE ONLY public.t_extremes_nested
+    ADD CONSTRAINT t_extremes_nested_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: t_extremes t_extremes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16643'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16643'::pg_catalog.oid);
+
+ALTER TABLE ONLY public.t_extremes
+    ADD CONSTRAINT t_extremes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_float t_float_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -2250,5 +2432,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 4oHSALn9OLcdCgJ5EUzUZUCwcrYC6iLfLwnWjPBU3ezqyIX4ECVObecqGRgi3xh
+\unrestrict iuqtanzeuhJAmKaPAalhTehuX1a4iaBLM4fDKp8frRG5sc9IV3ilkxKadztbo0C
 

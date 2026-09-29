@@ -677,3 +677,124 @@ INSERT INTO public.t_nested_array VALUES
         ARRAY[NULL::public.myrange],
         NULL),
     (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- The extremes: PostgreSQL's least and greatest value of every type
+-- `builtin_scalar` maps to an Arrow type other than `Utf8View`, one column per
+-- such arm, and the special values each admits. Each must decode to a value
+-- its Arrow type holds or be counted unrepresentable, and which is decided by
+-- DataFusion's own path rather than by a bound written here
+-- (roadmap-P28-unrepresentable-values.md, "Evidence"); the ones that are not
+-- held are recorded in datafusion-pgdump/tests/unrepresentable.rs.
+-- `floor_mapping.py` holds the columns to the arms both ways, so a newly
+-- typed arm arrives with its extremes.
+--
+-- Rows are kinds, not types: 1 is each column's least and 2 its greatest,
+-- 3 and 4 the negative and positive specials, 5 NaN, and the rest walk an
+-- edge from both sides -- `interval`'s time part, `timestamp`'s `i64`, and
+-- the calendar `arrow-cast` displays a date through. PostgreSQL keeps no
+-- catalog of a type's least and greatest, so each is written by hand: `date`
+-- and the timestamps run from Julian day 0 to `datetime.h`'s END_*, and an
+-- `interval`'s three fields are taken one at a time -- from 17, all three at
+-- their bound at once is the infinity.
+--
+-- Do not "fix" a value into one Arrow holds: the ones that are not are the
+-- evidence.
+CREATE TABLE public.t_extremes (
+    id integer PRIMARY KEY,
+    v_smallint smallint,
+    v_integer integer,
+    v_bigint bigint,
+    v_oid oid,
+    v_boolean boolean,
+    v_real real,
+    v_double double precision,
+    v_numeric38 numeric(38,0),
+    v_numeric76 numeric(76,0),
+    v_date date,
+    v_ts timestamp without time zone,
+    v_tstz timestamp with time zone,
+    v_time time without time zone,
+    v_interval interval,
+    v_uuid uuid,
+    v_bytea bytea,
+    v_int2vector int2vector
+);
+INSERT INTO public.t_extremes VALUES
+    (1, -32768, -2147483648, -9223372036854775808, 0, false,
+        '-3.4028235e+38', '-1.7976931348623157e+308',
+        -99999999999999999999999999999999999999,
+        -9999999999999999999999999999999999999999999999999999999999999999999999999999,
+        '4714-11-24 BC', '4714-11-24 00:00:00 BC', '4714-11-24 00:00:00+00 BC',
+        '00:00:00', '-178956970 years -8 months',
+        '00000000-0000-0000-0000-000000000000', '', '-32768'),
+    (2, 32767, 2147483647, 9223372036854775807, 4294967295, true,
+        '3.4028235e+38', '1.7976931348623157e+308',
+        99999999999999999999999999999999999999,
+        9999999999999999999999999999999999999999999999999999999999999999999999999999,
+        '5874897-12-31', '294276-12-31 23:59:59.999999', '294276-12-31 23:59:59.999999+00',
+        '24:00:00', '178956970 years 7 months',
+        'ffffffff-ffff-ffff-ffff-ffffffffffff', '\xff', '32767'),
+    (3, NULL, NULL, NULL, NULL, NULL, '-Infinity', '-Infinity', NULL, NULL,
+        '-infinity', '-infinity', '-infinity', NULL, '-2147483648 days', NULL, NULL, NULL),
+    (4, NULL, NULL, NULL, NULL, NULL, 'Infinity', 'Infinity', NULL, NULL,
+        'infinity', 'infinity', 'infinity', NULL, '2147483647 days', NULL, NULL, NULL),
+    (5, NULL, NULL, NULL, NULL, NULL, 'NaN', 'NaN', 'NaN', 'NaN',
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+-- `interval`'s time part: the longest either way a dump can hold, then a
+-- microsecond past Arrow's nanosecond `i64` and the last microsecond inside
+-- it, either way. The longest is `i64` microseconds from 15; before it
+-- `interval2tm` puts the hours in an `int` and `interval_out` refuses past
+-- one, so a table can hold a longer value than `pg_dump` can write.
+SELECT current_setting('server_version_num')::int >= 150000 AS has_int64_hours \gset
+\if :has_int64_hours
+INSERT INTO public.t_extremes (id, v_interval) VALUES
+    (6, '-2562047788:00:54.775807'),
+    (7, '2562047788:00:54.775807');
+\else
+INSERT INTO public.t_extremes (id, v_interval) VALUES
+    (6, '-2147483647:59:59.999999'),
+    (7, '2147483647:59:59.999999');
+\endif
+INSERT INTO public.t_extremes (id, v_interval) VALUES
+    (8, '2562047:47:16.854776'),
+    (9, '2562047:47:16.854775'),
+    (10, '-2562047:47:16.854776'),
+    (11, '-2562047:47:16.854775');
+-- The last microsecond `Timestamp(Microsecond)` counts from 1970, and the next.
+INSERT INTO public.t_extremes (id, v_ts, v_tstz) VALUES
+    (12, '294247-01-10 04:00:54.775807', '294247-01-10 04:00:54.775807+00'),
+    (13, '294247-01-10 04:00:54.775808', '294247-01-10 04:00:54.775808+00');
+-- The last day `arrow-cast` can display, and the next: it formats a date
+-- through `chrono`, whose calendar ends before `Date32`'s `i32` does.
+INSERT INTO public.t_extremes (id, v_date, v_ts, v_tstz) VALUES
+    (14, '262142-12-31', '262142-12-31 23:59:59.999999', '262142-12-31 23:59:59.999999+00'),
+    (15, '262143-01-01', '262143-01-01 00:00:00', '262143-01-01 00:00:00+00');
+INSERT INTO public.t_extremes (id) VALUES (16);
+-- PostgreSQL 17 admits an infinite interval, every field at its bound.
+SELECT current_setting('server_version_num')::int >= 170000 AS has_interval_infinity \gset
+\if :has_interval_infinity
+INSERT INTO public.t_extremes (id, v_interval) VALUES
+    (17, '-infinity'),
+    (18, 'infinity');
+\endif
+
+-- A nested value holding one is one (roadmap-P28-unrepresentable-values.md,
+-- "Scope"): an array element, a range bound, a composite's field. Row 2 is
+-- the same shapes holding none, and its composite's `text` field reads
+-- `infinity` beside a finite `date` -- a leaf is its own type's, so that one
+-- is text and counts for nothing.
+CREATE TYPE public.dated AS (label text, d date);
+
+CREATE TABLE public.t_extremes_nested (
+    id integer PRIMARY KEY,
+    v_date_array date[],
+    v_daterange daterange,
+    v_dated public.dated,
+    v_interval_array interval[]
+);
+INSERT INTO public.t_extremes_nested VALUES
+    (1, '{2024-01-01,infinity}', '[2024-01-01,infinity)',
+        ROW('x', 'infinity')::public.dated, '{"1 day","2562047:47:16.854776"}'),
+    (2, '{2024-01-01}', '[2024-01-01,2024-02-01)',
+        ROW('infinity', '2024-01-01')::public.dated, '{"2562047:47:16.854775"}'),
+    (3, NULL, NULL, NULL, NULL);

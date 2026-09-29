@@ -130,6 +130,7 @@ our API, CLI, or data until we reach v1.0.
                 column
                 - [ ] An `interval` past Arrow's range
                 - [ ] A `timestamp` in PostgreSQL's last three decades, past `294247-01-10`
+                - [ ] A `date` or `timestamp` past `262142-12-31`, which DataFusion cannot display
                 - [ ] `time` `24:00:00`
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.

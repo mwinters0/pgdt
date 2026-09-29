@@ -26,6 +26,10 @@
 //! **And the sweep is held to having exercised the order**: every table a
 //! case reads is scanned by two partitions, so the two orders [`Order::ALL`]
 //! names are every order there is.
+//!
+//! **Which values are unrepresentable is read, not listed**: the `types`
+//! fixture's extremes, at every major, each decode to a value
+//! [`arrow_holds`] admits or are recorded in [`UNREPRESENTABLE`], exactly.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -34,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arrow::array::{Array, ArrayRef, RecordBatch, new_null_array};
-use arrow::compute::{cast, concat};
+use arrow::compute::{CastOptions, can_cast_types, cast, cast_with_options, concat};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::catalog::TableProvider;
@@ -63,8 +67,9 @@ const MAJORS: [u32; 3] = [13, 16, 18];
 /// column cannot: `NaN` on a `numeric(10,2)`; the infinities on a `date`, a
 /// `timestamp` and a `timestamptz`; and on the last two, PostgreSQL's
 /// greatest timestamp, past what `Timestamp(Microsecond)` counts from 1970.
-/// No fixture holds an `interval` one.
-const TABLES: [&str; 3] = ["t_numeric", "t_date", "t_timestamp"];
+/// Then the extremes, [`UNREPRESENTABLE`]'s values, `interval`'s and the
+/// nested shapes among them.
+const TABLES: [&str; 5] = ["t_numeric", "t_date", "t_timestamp", "t_extremes", "t_extremes_nested"];
 
 /// How an unrepresentable value is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -290,6 +295,60 @@ const CASES: &[Case] = &[
         Answers(&["3"]),
         EVERY_MODE,
     ),
+    // The extremes: a value the decoder refuses, and one it decodes to a
+    // value `arrow-cast` cannot display — `24:00:00`, a date or timestamp
+    // past `chrono`'s calendar — in each shape above, and the nested ones.
+    picking(
+        "SELECT id, v_interval FROM t_extremes WHERE v_interval IS NOT NULL",
+        3,
+        Column("t_extremes.v_interval"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT MIN(v_interval), MAX(v_interval) FROM t_extremes",
+        Column("t_extremes.v_interval"),
+        EVERY_MODE,
+    ),
+    case("SELECT MAX(v_time) FROM t_extremes", Column("t_extremes.v_time"), EVERY_MODE),
+    case(
+        "SELECT MAX(v_date) FROM t_extremes WHERE id > 0",
+        Column("t_extremes.v_date"),
+        EVERY_MODE,
+    ),
+    case("SELECT MAX(v_numeric76) FROM t_extremes", Column("t_extremes.v_numeric76"), EVERY_MODE),
+    case("SELECT COUNT(v_ts) FROM t_extremes", Column("t_extremes.v_ts"), EVERY_MODE),
+    case(
+        "SELECT v_tstz FROM t_extremes ORDER BY v_tstz DESC NULLS LAST LIMIT 2",
+        Column("t_extremes.v_tstz"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT e.id, e.v_interval FROM t_extremes_nested n JOIN t_extremes e ON e.id = n.id",
+        Column("t_extremes.v_interval"),
+        EVERY_MODE,
+    ),
+    case("SELECT id FROM t_extremes WHERE v_time > '12:00:00'", Answers(&["2"]), &[Mode::Null]),
+    picking(
+        "SELECT id, v_date_array FROM t_extremes_nested",
+        2,
+        Column("t_extremes_nested.v_date_array"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT id, v_dated FROM t_extremes_nested WHERE id = 2",
+        Column("t_extremes_nested.v_dated"),
+        &[Mode::Text, Mode::Refuse],
+    ),
+    case(
+        "SELECT MAX(v_interval_array) FROM t_extremes_nested",
+        Column("t_extremes_nested.v_interval_array"),
+        EVERY_MODE,
+    ),
+    case(
+        "SELECT id FROM t_extremes_nested WHERE v_daterange IS NULL",
+        Answers(&["3"]),
+        &[Mode::Null],
+    ),
 ];
 
 /// Which step of a query a refusal came out of.
@@ -492,7 +551,8 @@ fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
 /// **The answers the typed and untyped modes promise**, from the dump's text
 /// and nothing the modes would change: each case table read as text, and
 /// each field decoded to its declared type by the library's one decoder, a
-/// field it cannot decode being an unrepresentable value — NULL in
+/// field it cannot decode, or decodes to a value [`arrow_holds`] refuses,
+/// being an unrepresentable value — NULL in
 /// [`Mode::Null`]'s tables, and its whole column text in [`Mode::Text`]'s.
 /// A case's promise is DataFusion's answer to it over those tables, in one
 /// partition.
@@ -542,8 +602,8 @@ impl Oracle {
                         }
                         let text = column.value(row);
                         match decode_field(field.data_type(), &resolved.plans[i], text) {
-                            Some(value) => decoded.push(value),
-                            None => {
+                            Some(value) if arrow_holds(&value).is_ok() => decoded.push(value),
+                            _ => {
                                 widened = true;
                                 unrepresentable += 1;
                                 decoded.push(new_null_array(field.data_type(), 1));
@@ -727,6 +787,196 @@ fn every_query_has_one_outcome_per_mode() {
                     wrong.push(lines);
                 }
                 _ => {}
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// **Whether `value`, one row long, is one its Arrow type holds**, read off
+/// DataFusion's own path rather than a bound written per type: `arrow-cast`'s
+/// display formats it and its cast to `Utf8` spells it, an error in either
+/// — or a cast answering NULL — being a value the type cannot hold. A type
+/// the cast does not reach is held to its display alone, which formats each
+/// leaf of a nested value; so is a binary type, whose cast to `Utf8` reads
+/// the bytes as UTF-8 rather than spelling them, and so refuses `bytea`'s
+/// `\xff`, a value `Binary` holds.
+fn arrow_holds(value: &ArrayRef) -> Result<(), String> {
+    let options = FormatOptions::default();
+    let formatter = ArrayFormatter::try_new(value.as_ref(), &options).map_err(|e| e.to_string())?;
+    formatter.value(0).try_to_string().map_err(|e| e.to_string())?;
+    let binary = matches!(
+        value.data_type(),
+        DataType::Binary
+            | DataType::LargeBinary
+            | DataType::BinaryView
+            | DataType::FixedSizeBinary(_)
+    );
+    if !binary && can_cast_types(value.data_type(), &DataType::Utf8) {
+        let strict = CastOptions { safe: false, format_options: options };
+        let spelled =
+            cast_with_options(value, &DataType::Utf8, &strict).map_err(|e| e.to_string())?;
+        if spelled.is_null(0) {
+            return Err("its cast to Utf8 answered NULL".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Every major the fixture tree holds.
+const EVERY_MAJOR: [u32; 6] = [13, 14, 15, 16, 17, 18];
+
+/// The `types` fixture's extremes: each typed arm's least, greatest and
+/// special values, and the nested shapes holding one
+/// (`scripts/fixture_schema_types.sql`).
+const EXTREMES: [&str; 2] = ["t_extremes", "t_extremes_nested"];
+
+/// Why a value is outside its column's Arrow type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Why {
+    /// The library's decoder refuses the text.
+    Decoder,
+    /// The decoder answers a value `arrow-cast` cannot display or spell.
+    Arrow,
+}
+
+/// **Every extreme outside its column's Arrow type**, as `table.column`, the
+/// row's `id` and why, at every major whose fixture holds that row.
+const UNREPRESENTABLE: &[(&str, i32, Why)] = &[
+    // `NaN` under a typmod.
+    ("t_extremes.v_numeric38", 5, Why::Decoder),
+    ("t_extremes.v_numeric76", 5, Why::Decoder),
+    // A date past `chrono`'s calendar, which `arrow-cast` displays through:
+    // PostgreSQL's greatest, and the day after `262142-12-31`, the last one
+    // that displays. And the infinities.
+    ("t_extremes.v_date", 2, Why::Arrow),
+    ("t_extremes.v_date", 15, Why::Arrow),
+    ("t_extremes.v_date", 3, Why::Decoder),
+    ("t_extremes.v_date", 4, Why::Decoder),
+    // The timestamps alike: PostgreSQL's greatest and the microsecond past
+    // `i64`'s are refused by the decoder; `i64`'s last, and the first instant
+    // past `chrono`'s calendar, decode to values `arrow-cast` cannot display.
+    ("t_extremes.v_ts", 2, Why::Decoder),
+    ("t_extremes.v_ts", 3, Why::Decoder),
+    ("t_extremes.v_ts", 4, Why::Decoder),
+    ("t_extremes.v_ts", 12, Why::Arrow),
+    ("t_extremes.v_ts", 13, Why::Decoder),
+    ("t_extremes.v_ts", 15, Why::Arrow),
+    ("t_extremes.v_tstz", 2, Why::Decoder),
+    ("t_extremes.v_tstz", 3, Why::Decoder),
+    ("t_extremes.v_tstz", 4, Why::Decoder),
+    ("t_extremes.v_tstz", 12, Why::Arrow),
+    ("t_extremes.v_tstz", 13, Why::Decoder),
+    ("t_extremes.v_tstz", 15, Why::Arrow),
+    // `24:00:00`, past `Time64`'s day.
+    ("t_extremes.v_time", 2, Why::Arrow),
+    // A time part past Arrow's nanoseconds either way, the longest a dump
+    // holds included, and from 17 the infinities.
+    ("t_extremes.v_interval", 6, Why::Decoder),
+    ("t_extremes.v_interval", 7, Why::Decoder),
+    ("t_extremes.v_interval", 8, Why::Decoder),
+    ("t_extremes.v_interval", 10, Why::Decoder),
+    ("t_extremes.v_interval", 17, Why::Decoder),
+    ("t_extremes.v_interval", 18, Why::Decoder),
+    // A nested value holding one is one.
+    ("t_extremes_nested.v_date_array", 1, Why::Decoder),
+    ("t_extremes_nested.v_daterange", 1, Why::Decoder),
+    ("t_extremes_nested.v_dated", 1, Why::Decoder),
+    ("t_extremes_nested.v_interval_array", 1, Why::Decoder),
+];
+
+/// Each extreme's `(table.column, id)`, and why it is unrepresentable where
+/// it is, over one major.
+async fn extremes(major: u32) -> (BTreeSet<(String, i32)>, BTreeMap<(String, i32), (Why, String)>) {
+    let scratch = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture(major), scratch.path(), Statistics::Absent).await;
+    let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
+    let text_dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
+    let typed_dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let reader = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(1));
+    let (mut present, mut outside) = (BTreeSet::new(), BTreeMap::new());
+    for table in EXTREMES {
+        let provider: Arc<dyn TableProvider> = text_dump.table(None, None, table).unwrap();
+        reader.register_table(table, provider).unwrap();
+        let batches = reader
+            .sql(&format!("SELECT * FROM {table} ORDER BY id"))
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let resolved = typed_dump.table(None, None, table).unwrap().resolved_schema().clone();
+        for batch in &batches {
+            let ids = cast(batch.column(0), &DataType::Int32).unwrap();
+            let ids = ids.as_any().downcast_ref::<arrow::array::Int32Array>().unwrap();
+            for (i, field) in resolved.schema.fields().iter().enumerate().skip(1) {
+                let column = cast(batch.column(i), &DataType::Utf8View).unwrap();
+                let column =
+                    column.as_any().downcast_ref::<arrow::array::StringViewArray>().unwrap();
+                for row in 0..column.len() {
+                    if column.is_null(row) {
+                        continue;
+                    }
+                    let key = (format!("{table}.{}", field.name()), ids.value(row));
+                    present.insert(key.clone());
+                    let text = column.value(row);
+                    match decode_field(field.data_type(), &resolved.plans[i], text) {
+                        None => {
+                            outside.insert(key, (Why::Decoder, text.to_string()));
+                        }
+                        Some(value) => {
+                            if let Err(err) = arrow_holds(&value) {
+                                outside.insert(key, (Why::Arrow, format!("{text}: {err}")));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (present, outside)
+}
+
+/// **The category is what Arrow cannot hold**: every extreme the `types`
+/// fixture holds, at every major, decodes to a value [`arrow_holds`] admits
+/// or is recorded in [`UNREPRESENTABLE`], with why — the record exact both
+/// ways, so a value the category gains or loses is a change to it.
+#[test]
+fn every_extreme_is_held_by_arrow_or_recorded() {
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let workers: Vec<_> = EVERY_MAJOR
+            .iter()
+            .map(|&major| {
+                scope.spawn(move || {
+                    let runtime =
+                        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    (major, runtime.block_on(extremes(major)))
+                })
+            })
+            .collect();
+        workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+    });
+    let mut wrong = Vec::new();
+    for (major, (present, outside)) in results {
+        let recorded: BTreeMap<(String, i32), Why> = UNREPRESENTABLE
+            .iter()
+            .map(|&(column, id, why)| ((column.to_string(), id), why))
+            .filter(|(key, _)| present.contains(key))
+            .collect();
+        for (key, (why, detail)) in &outside {
+            if recorded.get(key) != Some(why) {
+                wrong.push(format!(
+                    "{major}: {} id {} is outside ({why:?}), unrecorded: {detail}",
+                    key.0, key.1
+                ));
+            }
+        }
+        for (key, why) in &recorded {
+            if !outside.contains_key(key) {
+                wrong.push(format!(
+                    "{major}: {} id {} is recorded {why:?} and Arrow holds it",
+                    key.0, key.1
+                ));
             }
         }
     }

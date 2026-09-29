@@ -415,6 +415,96 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
         self.assertTrue(any("both sides are real" in p for p in problems))
 
 
+def write_extremes(root: Path, version: str, columns: str) -> None:
+    """A `types` dump holding only `t_extremes`, its columns as `pg_dump`
+    writes them."""
+    dump = root / version / "types" / "default.sql"
+    dump.parent.mkdir(parents=True, exist_ok=True)
+    dump.write_text(
+        "CREATE TABLE public.t_other (\n    id integer,\n    v_x money\n);\n\n"
+        f"CREATE TABLE {fm.EXTREMES_TABLE} (\n    id integer NOT NULL,\n{columns}\n);\n"
+    )
+
+
+class TheExtremes(unittest.TestCase):
+    """Every typed arm has an extremes column, and every column a typed arm."""
+
+    COLUMNS = (
+        "    v_integer integer,\n"
+        "    v_tstz timestamp with time zone,\n"
+        "    v_numeric numeric(76,0)"
+    )
+
+    def setUp(self) -> None:
+        self.dir = TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+        path = self.root / "pgtype.rs"
+        path.write_text(MAPPING_RS)
+        self.mapping = fm.parse_mapping(path)
+
+    def problems(self, columns: str = COLUMNS) -> list[str]:
+        write_extremes(self.root, "18", columns)
+        return fm.extremes_problems(self.mapping, self.root, ["18"])
+
+    def test_the_typed_arms_are_those_not_falling_back_to_text(self) -> None:
+        """`numeric` is among them: its typmod decides, and a decimal is one
+        answer it gives."""
+        self.assertEqual(
+            fm.typed_arms(self.mapping),
+            ["integer", "numeric", "timestamp with time zone"],
+        )
+
+    def test_a_typmod_is_dropped_and_id_is_not_a_column(self) -> None:
+        write_extremes(self.root, "18", self.COLUMNS)
+        self.assertEqual(
+            fm.extremes_columns(self.root / "18" / "types" / "default.sql"),
+            {
+                "v_integer": "integer",
+                "v_tstz": "timestamp with time zone",
+                "v_numeric": "numeric",
+            },
+        )
+
+    def test_every_typed_arm_answered_is_no_problem(self) -> None:
+        self.assertEqual(self.problems(), [])
+
+    def test_a_typed_arm_no_column_declares_is_a_problem(self) -> None:
+        problems = self.problems(self.COLUMNS.replace("    v_integer integer,\n", ""))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("`integer`", problems[0])
+
+    def test_a_column_no_typed_arm_answers_is_a_problem(self) -> None:
+        """`text` falls back to text, so its extremes would test nothing."""
+        problems = self.problems(self.COLUMNS + ",\n    v_text text")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("v_text", problems[0])
+
+    def test_a_major_without_the_table_is_a_problem(self) -> None:
+        dump = self.root / "17" / "types" / "default.sql"
+        dump.parent.mkdir(parents=True)
+        dump.write_text("CREATE TABLE public.t_int (\n    id integer\n);\n")
+        problems = fm.extremes_problems(self.mapping, self.root, ["17"])
+        self.assertTrue(any("holds no" in p for p in problems))
+
+    def test_the_check_fails_on_it(self) -> None:
+        write_tree(self.root / "fixtures", {"18": [floor_row("integer", "int32")]})
+        write_extremes(self.root / "fixtures", "18", "    v_text text")
+        (self.root / "pyproject.toml").write_text(PYPROJECT_TOML)
+        (self.root / "STATUS.md").write_text(STATUS_MD)
+        (self.root / "deficiencies.md").write_text(REGISTER_MD)
+        out = io.StringIO()
+        fm.check(
+            self.root / "pgtype.rs",
+            self.root / "fixtures",
+            self.root / "pyproject.toml",
+            self.root / "STATUS.md",
+            out=out,
+            register=self.root / "deficiencies.md",
+        )
+        self.assertIn("do not answer each other", out.getvalue())
+
+
 class CommittedTree(unittest.TestCase):
     """The real mapping, the real fixtures and the real status files."""
 
@@ -430,6 +520,12 @@ class CommittedTree(unittest.TestCase):
         self.assertEqual(mapping.problems, [])
         unreadable = sorted(n for n, a in mapping.arms.items() if a is None)
         self.assertEqual(unreadable, ["numeric"])
+
+    def test_every_major_holds_the_extremes_of_every_typed_arm(self) -> None:
+        found = fm.reconcile()
+        self.assertEqual(found.extremes, [])
+        columns = fm.extremes_columns(fm.FIXTURES / "18" / "types" / "default.sql")
+        self.assertEqual(sorted(set(columns.values())), fm.typed_arms(found.mapping))
 
     def test_the_stances_are_the_three_the_doc_states(self) -> None:
         """Three, since `interval` and `int2vector` were `waiting` rows and

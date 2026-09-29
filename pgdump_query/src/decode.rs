@@ -342,9 +342,11 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// `NaN` on a `Decimal128`, and a timestamp past `i64` microseconds from 1970,
 /// which PostgreSQL's range outlasts by three decades): a typed column cannot
 /// hold the value, so materializing one is an `Error::FieldDecode` and there is
-/// no typed way to read it. `24:00:00` is the case that does not refuse:
+/// no typed way to read it. `24:00:00` is a case that does not refuse:
 /// [`decode_time64_micros`] writes a `Time64` past Arrow's day, which
-/// DataFusion reads as an error wherever it formats or casts the value.
+/// DataFusion reads as an error wherever it formats or casts the value. So is
+/// a `date`, or a timestamp short of `i64`'s end, past `262142-12-31`: each
+/// decodes, and `arrow-cast` formats it through a calendar ending there.
 /// `--schema-mode strings` returns the literal verbatim. A DataFusion query
 /// need not read every row — a `LIMIT` one partition meets
 /// first, a dynamic filter another partition tightened — so whether it

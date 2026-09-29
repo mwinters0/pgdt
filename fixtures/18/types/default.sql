@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict MukvA49VRCuLAXDhTswG37IDR2hM7T1Clwl4rG1sVJeu8C5MS7ygHhhBah1Wa9G
+\restrict GeFGpCMh3ed04M2uIUZSRTzBgibFBgaMpLDLIxelMmkzgvG32IkCnLe3b2VE7MA
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -111,6 +111,18 @@ CREATE TYPE public.collated_pair AS (
 
 
 ALTER TYPE public.collated_pair OWNER TO postgres;
+
+--
+-- Name: dated; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.dated AS (
+	label text,
+	d date
+);
+
+
+ALTER TYPE public.dated OWNER TO postgres;
 
 --
 -- Name: derived_domain; Type: DOMAIN; Schema: public; Owner: postgres
@@ -423,6 +435,49 @@ CREATE TABLE public.t_enum_domain (
 
 
 ALTER TABLE public.t_enum_domain OWNER TO postgres;
+
+--
+-- Name: t_extremes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_extremes (
+    id integer NOT NULL,
+    v_smallint smallint,
+    v_integer integer,
+    v_bigint bigint,
+    v_oid oid,
+    v_boolean boolean,
+    v_real real,
+    v_double double precision,
+    v_numeric38 numeric(38,0),
+    v_numeric76 numeric(76,0),
+    v_date date,
+    v_ts timestamp without time zone,
+    v_tstz timestamp with time zone,
+    v_time time without time zone,
+    v_interval interval,
+    v_uuid uuid,
+    v_bytea bytea,
+    v_int2vector int2vector
+);
+
+
+ALTER TABLE public.t_extremes OWNER TO postgres;
+
+--
+-- Name: t_extremes_nested; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_extremes_nested (
+    id integer NOT NULL,
+    v_date_array date[],
+    v_daterange daterange,
+    v_dated public.dated,
+    v_interval_array interval[]
+);
+
+
+ALTER TABLE public.t_extremes_nested OWNER TO postgres;
 
 --
 -- Name: t_float; Type: TABLE; Schema: public; Owner: postgres
@@ -787,6 +842,43 @@ COPY public.t_enum_domain (id, v_mood, v_domain, v_empty_enum) FROM stdin;
 
 
 --
+-- Data for Name: t_extremes; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_extremes (id, v_smallint, v_integer, v_bigint, v_oid, v_boolean, v_real, v_double, v_numeric38, v_numeric76, v_date, v_ts, v_tstz, v_time, v_interval, v_uuid, v_bytea, v_int2vector) FROM stdin;
+1	-32768	-2147483648	-9223372036854775808	0	f	-3.4028235e+38	-1.7976931348623157e+308	-99999999999999999999999999999999999999	-9999999999999999999999999999999999999999999999999999999999999999999999999999	4714-11-24 BC	4714-11-24 00:00:00 BC	4714-11-24 00:00:00+00 BC	00:00:00	-178956970 years -8 mons	00000000-0000-0000-0000-000000000000	\\x	-32768
+2	32767	2147483647	9223372036854775807	4294967295	t	3.4028235e+38	1.7976931348623157e+308	99999999999999999999999999999999999999	9999999999999999999999999999999999999999999999999999999999999999999999999999	5874897-12-31	294276-12-31 23:59:59.999999	294276-12-31 23:59:59.999999+00	24:00:00	178956970 years 7 mons	ffffffff-ffff-ffff-ffff-ffffffffffff	\\xff	32767
+3	\N	\N	\N	\N	\N	-Infinity	-Infinity	\N	\N	-infinity	-infinity	-infinity	\N	-2147483648 days	\N	\N	\N
+4	\N	\N	\N	\N	\N	Infinity	Infinity	\N	\N	infinity	infinity	infinity	\N	2147483647 days	\N	\N	\N
+5	\N	\N	\N	\N	\N	NaN	NaN	NaN	NaN	\N	\N	\N	\N	\N	\N	\N	\N
+6	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047788:00:54.775807	\N	\N	\N
+7	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047788:00:54.775807	\N	\N	\N
+8	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047:47:16.854776	\N	\N	\N
+9	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2562047:47:16.854775	\N	\N	\N
+10	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047:47:16.854776	\N	\N	\N
+11	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-2562047:47:16.854775	\N	\N	\N
+12	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	294247-01-10 04:00:54.775807	294247-01-10 04:00:54.775807+00	\N	\N	\N	\N	\N
+13	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	294247-01-10 04:00:54.775808	294247-01-10 04:00:54.775808+00	\N	\N	\N	\N	\N
+14	\N	\N	\N	\N	\N	\N	\N	\N	\N	262142-12-31	262142-12-31 23:59:59.999999	262142-12-31 23:59:59.999999+00	\N	\N	\N	\N	\N
+15	\N	\N	\N	\N	\N	\N	\N	\N	\N	262143-01-01	262143-01-01 00:00:00	262143-01-01 00:00:00+00	\N	\N	\N	\N	\N
+16	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+17	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	-infinity	\N	\N	\N
+18	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	infinity	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: t_extremes_nested; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_extremes_nested (id, v_date_array, v_daterange, v_dated, v_interval_array) FROM stdin;
+1	{2024-01-01,infinity}	[2024-01-01,infinity)	(x,infinity)	{"1 day",2562047:47:16.854776}
+2	{2024-01-01}	[2024-01-01,2024-02-01)	(infinity,2024-01-01)	{2562047:47:16.854775}
+3	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_float; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1088,6 +1180,22 @@ ALTER TABLE ONLY public.t_enum_domain
 
 
 --
+-- Name: t_extremes_nested t_extremes_nested_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_extremes_nested
+    ADD CONSTRAINT t_extremes_nested_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: t_extremes t_extremes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_extremes
+    ADD CONSTRAINT t_extremes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_float t_float_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1235,5 +1343,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict MukvA49VRCuLAXDhTswG37IDR2hM7T1Clwl4rG1sVJeu8C5MS7ygHhhBah1Wa9G
+\unrestrict GeFGpCMh3ed04M2uIUZSRTzBgibFBgaMpLDLIxelMmkzgvG32IkCnLe3b2VE7MA
 

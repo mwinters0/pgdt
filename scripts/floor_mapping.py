@@ -51,6 +51,16 @@ same value space, and a floor is a claim about values. A `DataType` this table
 does not carry is reported rather than guessed at, which is what makes a new
 arm arrive loudly.
 
+**Every typed arm has its extremes, and every extremes column an arm.** The
+`types` fixture's `public.t_extremes` holds PostgreSQL's least, greatest and
+special values of each type an arm maps to an Arrow type other than
+`Utf8View`, one column per arm, and the category of values an Arrow type
+cannot hold is read off those values rather than written per type
+(`roadmap-P28-unrepresentable-values.md`, "Evidence"). So a floor row a new
+major brings forces a mapping decision above, and a typed mapping forces its
+extremes here: a typed arm no column declares, a column no typed arm answers,
+and a major whose `types` dump holds no such table are each a problem.
+
 **The pin is asserted here** (the spec's D8): the driver version every floor
 row records must equal `scripts/pyproject.toml`'s. The floor is a claim about
 one release, and bumping the pin is what obliges re-taking the oracle -- so the
@@ -103,6 +113,9 @@ STATUS = deficiencies.STATUS
 #: raw binary plus a type name; ours is the file's own text, and the two are
 #: incomparable rather than one being below the other.
 OPAQUE = "arrow.opaque"
+
+#: The table holding each typed arm's extremes, in each major's `types` dump.
+EXTREMES_TABLE = "public.t_extremes"
 
 #: What our fallback is for a declared type `builtin_scalar` does not name.
 #: Stated once here because the join needs it for two thirds of the file:
@@ -454,6 +467,70 @@ def verdict_for(row: dict[str, str | None], mapping: Mapping) -> Verdict:
 
 
 # --------------------------------------------------------------------------
+# The extremes
+# --------------------------------------------------------------------------
+
+_TYPMOD_RE = re.compile(r"\(\s*-?\d+(?:\s*,\s*-?\d+)?\s*\)")
+
+
+def extremes_columns(dump: Path, table: str = EXTREMES_TABLE) -> dict[str, str] | None:
+    """Each column of `table`'s `CREATE TABLE` in `dump` but `id`, and the
+    base name of the type it declares -- a typmod dropped, the way
+    `builtin_scalar` is keyed. `None` where the dump holds no such table."""
+    if not dump.is_file():
+        return None
+    lines = dump.read_text().splitlines()
+    head = f"CREATE TABLE {table} ("
+    try:
+        start = lines.index(head)
+    except ValueError:
+        return None
+    columns: dict[str, str] = {}
+    for line in lines[start + 1 :]:
+        if line.startswith(")"):
+            break
+        name, _, declared = line.strip().rstrip(",").partition(" ")
+        if name != "id":
+            columns[name] = " ".join(_TYPMOD_RE.sub("", declared).split())
+    return columns
+
+
+def typed_arms(mapping: Mapping) -> list[str]:
+    """Every arm whose type is not our fallback's -- `numeric` among them,
+    whose `map_numeric` answers a decimal wherever a typmod allows one."""
+    return sorted(name for name, arrow in mapping.arms.items() if arrow != FALLBACK)
+
+
+def extremes_problems(mapping: Mapping, fixtures: Path, versions: Sequence[str]) -> list[str]:
+    """Both directions between the typed arms and each major's extremes."""
+    typed = set(typed_arms(mapping))
+    problems: list[str] = []
+    for version in versions:
+        dump = fixtures / version / "types" / "default.sql"
+        columns = extremes_columns(dump)
+        if columns is None:
+            problems.append(
+                f"{version}: {dump.relative_to(fixtures)} holds no {EXTREMES_TABLE} — "
+                "regenerate the `types` fixture"
+            )
+            continue
+        declared = set(columns.values())
+        for arm in sorted(typed - declared):
+            problems.append(
+                f"{version}: the arm `{arm}` maps to an Arrow type and "
+                f"{EXTREMES_TABLE} declares no column of it — add its least, "
+                "greatest and special values to fixture_schema_types.sql"
+            )
+        for column, base in sorted(columns.items()):
+            if base not in typed:
+                problems.append(
+                    f"{version}: {EXTREMES_TABLE}.{column} declares `{base}`, which "
+                    "no typed arm answers — its extremes test nothing"
+                )
+    return problems
+
+
+# --------------------------------------------------------------------------
 # The reconciliation
 # --------------------------------------------------------------------------
 
@@ -470,6 +547,8 @@ class Reconciliation:
     mapping: Mapping = field(default_factory=Mapping)
     #: `builtin_scalar` arms no major's floor has a row for.
     unevidenced: list[str] = field(default_factory=list)
+    #: Where the extremes table and the typed arms disagree, per major.
+    extremes: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -590,6 +669,9 @@ def reconcile(
     # The direction that decays: an arm mapping a type no major declares.
     out.unevidenced = sorted(name for name in out.mapping.arms if name not in present)
 
+    # And the direction a typed mapping forces: its extremes.
+    out.extremes = extremes_problems(out.mapping, fixtures, seen_versions)
+
     # The direction that makes a waiting row close itself.
     for declared, disposition in out.dispositions.items():
         verdict = out.verdicts.get(declared)
@@ -674,6 +756,15 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
             print(f"  {name}", file=out)
         print(file=out)
 
+    if found.extremes:
+        print(
+            f"Typed arms and {EXTREMES_TABLE}'s columns that do not answer each other:",
+            file=out,
+        )
+        for problem in found.extremes:
+            print(f"  {problem}", file=out)
+        print(file=out)
+
     unanswered = found.unanswered
     if unanswered:
         print(
@@ -693,11 +784,12 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
         print("Problems:", file=out)
         for problem in found.problems:
             print(f"  {problem}", file=out)
-    elif not unanswered and not found.unevidenced:
+    elif not unanswered and not found.unevidenced and not found.extremes:
         print(
             f"Every floor row the rule reaches is answered (bar "
-            f"{len(found.dispositions)} carrying a stance), and every "
-            "builtin_scalar arm has a floor row.",
+            f"{len(found.dispositions)} carrying a stance), every "
+            "builtin_scalar arm has a floor row, and every typed arm its "
+            "extremes.",
             file=out,
         )
 
@@ -713,7 +805,8 @@ def check(
 ) -> int:
     found = reconcile(mapping_path, fixtures, pyproject, status, manual, register)
     report(found, out=out)
-    return 1 if found.problems or found.unanswered or found.unevidenced else 0
+    failing = found.problems or found.unanswered or found.unevidenced or found.extremes
+    return 1 if failing else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

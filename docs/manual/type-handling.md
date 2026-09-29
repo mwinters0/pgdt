@@ -85,13 +85,15 @@ and maps to `Timestamp(Microsecond, None)`.
 Fractional seconds are trailing-trimmed, so the same column can hold
 `…35.456696+00` and `…10.41925+00` and `…52+00`. That is normal.
 
-Two values PostgreSQL accepts do not fit their Arrow types. A `timestamp` or
-`timestamptz` from `294247-01-10 04:00:54.775807` UTC to PostgreSQL's last,
-`294276-12-31 23:59:59.999999`, is past what Arrow counts from 1970, and a
-column holding one fails to build the way a `date` holding `infinity` does.
-`time` `24:00:00`, PostgreSQL's end of day, is past Arrow's: `pgdt query`
-prints it, and DataFusion shows `ERROR: Cast error` where it formats or casts
-it. Either reads back verbatim under `--schema-mode strings`.
+Three kinds of value PostgreSQL accepts do not fit their Arrow types. A
+`timestamp` or `timestamptz` from `294247-01-10 04:00:54.775808` UTC to
+PostgreSQL's last, `294276-12-31 23:59:59.999999`, is past what Arrow counts
+from 1970, and a column holding one fails to build the way a `date` holding
+`infinity` does. `time` `24:00:00`, PostgreSQL's end of day, is past Arrow's,
+and a `date`, `timestamp` or `timestamptz` after `262142-12-31` is past the
+calendar Arrow's formatting reads it through: `pgdt query` prints each, and
+DataFusion shows `ERROR: Cast error` where it formats or casts one. Every one
+reads back verbatim under `--schema-mode strings`.
 
 ### `interval` keeps its three fields, and two kinds of value do not fit
 

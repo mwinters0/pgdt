@@ -79,7 +79,7 @@ instrument can see").
 Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-unrepresentable-values.md).
 
 - [x] **28.1** The evidence, no product code: every query shape the spec's "Evidence" names, run in every partition order under each mode, statistics and dynamic filters on and off, over majors 13, 16 and 18, one outcome asserted per query, each case recorded failing; [notes](../design/roadmap-P28.1-harness-notes.md)
-- [ ] **28.10** The extremes, no product code: every typed arm's least and greatest, the special values, `24:00:00`, `interval`'s and nested cases in the `types` fixture at every major; a reconciliation holding each typed `builtin_scalar` arm to an extremes row; the DataFusion-path validity test and the harness over the new rows, each failing value recorded
+- [x] **28.10** The extremes, no product code: every typed arm's least and greatest, the special values, `24:00:00`, `interval`'s and nested cases in the `types` fixture at every major; a reconciliation holding each typed `builtin_scalar` arm to an extremes row; the DataFusion-path validity test and the harness over the new rows, each failing value recorded; [notes](../design/roadmap-P28.10-extremes-notes.md)
 - [ ] **28.2** The metadata and data levels: `StatisticsLevel` and `--statistics-level` with its overrides, the census gated on the level, `info` reporting each table's level, a query's cold semantics over a metadata-level table and the provider's refusal of one
 - [ ] **28.3** The unrepresentable count beside the census, lexical, per block and column, each leaf walked by the declared type, in the cache; `info --detail` showing it; `24:00:00` refused by its decoder
 - [ ] **28.4** Statistics' two views: representable bounds, the unrepresentable count, and PostgreSQL-order bounds where they differ, gathered, cached and read by pruning under each semantics
@@ -118,3 +118,20 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The category is wider than the spec's list, and 28.3's lexical test is
+  written to the narrower one.** The call: 28.10 records a `date` or timestamp
+  past `262142-12-31` as unrepresentable, and leaves the spec as it stands.
+  `arrow-cast` displays `Date32` and `Timestamp` through `chrono`, whose
+  calendar ends there, so `5874897-12-31` and `294247-01-10 04:00:54.775807`
+  decode and DataFusion prints `ERROR: Cast error` for each
+  (`datafusion-pgdump/tests/unrepresentable.rs`, `UNREPRESENTABLE`,
+  `t_extremes` ids 2, 12 and 15). The spec's "Scope" defines the category by
+  "DataFusion's own path" ("Evidence"), which puts them in; its list, its
+  lexical test ("a year part past the `timestamp` one, only a year of exactly
+  294247 taking arithmetic") and "every finite `date` fits `Date32`" ("Facts
+  found while grilling") leave them out. Reconsidering means amending those
+  three to a year past `262142` for `date`, `timestamp` and `timestamptz`
+  before 28.3 writes the count — or reading "Arrow's validity" as Arrow's
+  spec, the `i32` and `i64` ranges, which keeps the list and leaves DataFusion
+  printing an error for a value the typed mode keeps.

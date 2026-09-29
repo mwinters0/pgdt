@@ -100,11 +100,12 @@ than reading as a phase nobody has sliced.
 
 - **KD8** — a typed column cannot hold `±infinity`, `NaN`, an `interval` time
   part past Arrow's or a `timestamp` past `294247-01-10`, so materializing one
-  raises `Error::FieldDecode`, and `time` `24:00:00` becomes a `Time64` Arrow
-  forbids, which DataFusion reads as an error; whether a query reaches such a
-  value can depend on how its partitions run, so it may answer on one run and
-  refuse on the next. **(b) owned by P28**, whose three modes never depend on
-  which rows a read reached; slice 28.7 closes it. Detail: `pgdump_query/src/decode.rs`.
+  raises `Error::FieldDecode`, and `time` `24:00:00`, or a `date` or timestamp
+  past `262142-12-31`, decodes to a value DataFusion reads as an error; whether
+  a query reaches such a value can depend on how its partitions run, so it may
+  answer on one run and refuse on the next. **(b) owned by P28**, whose three
+  modes never depend on which rows a read reached; slice 28.7 closes it.
+  Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
   warm and most of a cold NVMe scan's time (`measurements.md`,
