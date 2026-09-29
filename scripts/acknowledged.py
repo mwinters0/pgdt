@@ -112,4 +112,19 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "and profile hunks only; each of the 87 prior command_shapes() _script() equal"
         ),
     ),
+    Acknowledged(
+        commit="186399e",
+        figures=("dynamic-filter-join", "dynamic-filter-topk"),
+        why=(
+            "28.2's levels: the figures' builder still parses at the data level with "
+            "census and statistics, so the query path gains only the provider's "
+            "planning-time check of the table's blocks for a missing census, a "
+            "census_metadata_level pass that is a no-op over a data-level cache, and "
+            "about a byte per block in the cache encoding"
+        ),
+        verified=(
+            "git show 186399e -- datafusion-pgdump/src/table.rs datafusion-pgdump/src/dump.rs  "
+            "# build() adds one blocks_of() scan before planning; nothing on the scan path"
+        ),
+    ),
 )
