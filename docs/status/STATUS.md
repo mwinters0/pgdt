@@ -118,16 +118,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **28.2 translated the harness's `parse` flag ahead of 28.9.**
-  `measure.NO_STATISTICS` states `--statistics-level metadata` and
-  `GATHER_STATISTICS` `--statistics-level data`, `parse --statistics` having
-  gone. Why: left stating a removed flag, every sweep fails at its first
-  `parse`, and the metadata level is what the spec has scan figures time
-  ("Evidence"). What it costs until 28.9 re-points the builders: a query
-  figure over a cache a `NO_STATISTICS` builder wrote times a census re-read
-  of its table, and the `census-*` figures difference two builds neither of
-  which censuses — so none of those is taken before 28.9
-  ([`history/2026-09-29.md`](history/2026-09-29.md), "28.2 leaves the harness
-  mid-way to 28.9"). Reconsidering means 28.9's builder choices landing now,
-  or `measure.py` refusing those figures outright until they do.

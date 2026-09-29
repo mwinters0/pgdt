@@ -47,13 +47,14 @@ What the slices after this one inherit. The spec is
   metadata-level map would be refused before any case ran.
 - **`measure.NO_STATISTICS` is `--statistics-level metadata`**, the flag it
   stated having gone, and `GATHER_STATISTICS` states the data level. So until
-  28.9 re-points them, a figure whose query reads a cache a `NO_STATISTICS`
-  builder wrote — `statistics-pruning`'s uncarried leg among them — reads the
-  table once more for the census inside its timer, `statistics-gathering`'s
-  `none` leg no longer censuses, and the `census-*` figures difference two
-  builds of which neither censuses. No register figure was re-taken and no
-  table was edited; 28.9 decides each builder before any query figure is taken
-  again.
+  28.9 re-points them, `statistics-pruning`'s `uncarried` leg, the one query
+  over a cache a `NO_STATISTICS` builder wrote, reads the table once more for
+  the census inside its timer; `statistics-gathering`'s `none` leg no longer
+  censuses; and `census-brace-free` and `census-arrays` difference two builds
+  of which neither censuses. Those four are barred until 28.9
+  ([`../status/history/2026-09-29.md`](../status/history/2026-09-29.md),
+  "28.2 leaves the harness mid-way to 28.9"). No register figure was re-taken
+  and no table was edited.
 - **`query --statistics all|none` is not the level**: it says whether a query
   uses the statistics a cache holds.
 

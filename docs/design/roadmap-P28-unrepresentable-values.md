@@ -388,3 +388,12 @@ path never sharing a slice with a new mechanism:
   only the untyped mode on a `date` or `timestamp` needs "D38"'s clause.
 - **The census is "D35"**, not "D43", which is resolution's
   `MetadataNotScanned`.
+- **No `parse` writes a cache with a census and no statistics**, a data-level
+  table without statistics not being offered ("Scope"). `statistics-pruning`'s
+  `uncarried` leg (`measure.PRUNING_UNCARRIED`) prices carrying statistics
+  against exactly that cache, so 28.9 decides what replaces it.
+- **Two `parse` flags no longer isolate the statistics' price**:
+  `statistics-gathering`'s legs (`measure.STATISTICS_LEGS`) are now the
+  metadata and data levels, so their Δ is census, count and statistics
+  together, under a caption naming statistics alone. 28.9 decides what the
+  figure prices.
