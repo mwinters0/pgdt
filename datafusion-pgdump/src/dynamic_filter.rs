@@ -1,6 +1,5 @@
 //! DataFusion's dynamic filters: what a scan holds of them, and each one's
-//! state as the library's filter tree
-//! (`docs/design/roadmap-P27-dynamic-filters.md`).
+//! state as the library's filter tree (`docs/design/decisions.md`, "D94").
 //!
 //! A hash join's build side, a TopK's heap and an ungrouped `MIN`/`MAX` each
 //! publish a filter into the scan below them, pushed in the `Post` phase of

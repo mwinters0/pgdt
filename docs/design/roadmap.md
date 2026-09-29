@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P27 — DataFusion's dynamic filters | **Current** | [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P27 — DataFusion's dynamic filters | **Complete** | [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md); [notes](roadmap-P27-dynamic-filters-notes.md) |
 | P28 — unrepresentable values | Sketched; not grilled | this file, below; [inbox](roadmap-P28-unrepresentable-values-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |

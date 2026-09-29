@@ -4024,7 +4024,8 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 /// chunk: what a stream emits lies between the rows its static filter keeps
 /// and those the states it read keep, and depends on when each was read. So a
 /// replay is handed one by the one entry point that never resumes, a resume
-/// token counting rows being meaningless under it. Where the query does not
+/// token counting rows being meaningless under it
+/// (`docs/design/decisions.md`, "D95"). Where the query does not
 /// use statistics it skips no group on its account, and still drops each row
 /// a state rejects where it evaluates rows. A consumer needing an exact answer
 /// re-checks its own rows.
@@ -4902,6 +4903,9 @@ fn block_runs(groups: &[Vec<Segment>]) -> Vec<Vec<u64>> {
 /// sub-stream that nothing proves in an order [`TablePartitions::orders`]
 /// declared. The groups the cut rules out are counted by the first sub-stream
 /// to take it.
+///
+/// Why one handle, and the cut at the first poll: `docs/design/decisions.md`,
+/// "D95".
 ///
 /// **The cut lasts as long as the handle, not one run**: a sub-stream
 /// streamed again takes the cut already made, which the filter's contract

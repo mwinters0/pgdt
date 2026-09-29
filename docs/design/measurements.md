@@ -2842,8 +2842,8 @@ byte cut keyed each group's bounds once per list value: **the costing row's
 on leg from 0.779 s to 0.688 s**, its Δ from −0.179 s to −0.279 s. Every join
 off leg lies inside its `11e13f2` spread, and `dd` moved 0.007 s.
 
-- **The costing row lands inside the band 27.8's account predicts**
-  ([`roadmap-P27.9-implied-bounds-notes.md`](roadmap-P27.9-implied-bounds-notes.md)):
+- **The costing row lands inside the band 27.8's account predicts** (the
+  account below):
   the bounds' share, 25.6% to 60.9% of the Δ, plus the cut's 14.1%, so
   between 40% and 75% gone. At 43% it sits at the band's low end, which is
   what the bounds' removal saving near its lower bound — the unescapes, keys
@@ -2926,9 +2926,7 @@ the figure's **+0.131 s** at `11e13f2`; the shares below are of the profile's ow
 The move is exact: the on leg's `push_row` loses **786 and 787 cycles a row**
 of split walk, and the first `Locate` takes it. **Every term the on leg adds
 has a row here and the rows sum to its Δ, the sampling's own remainder
-named**; the code's own account
-([`roadmap-P27.8-per-row-account-notes.md`](roadmap-P27.8-per-row-account-notes.md))
-having missed two terms the profile names: the cut's per-group keying, paid
+named**; the code's own account, drawn before the profile, having missed two terms the profile names: the cut's per-group keying, paid
 per query whether or not a row is evaluated, and `at_row`'s lookup, asked on
 every row rather than only on a row entering a group.
 

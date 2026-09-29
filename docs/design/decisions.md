@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D93 -->
+<!-- decision-watermark: D95 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -369,6 +369,15 @@ Rejected: on by default (`dynamic-filter-join`'s costing row); no switch; evalua
 per batch (aging) or at group entry alone (older where groups merge); ceasing where nothing is rejected (D77); dropping a static filter's implied bounds,
 which raise. Reopens: that row's rows leg within its on leg's spreads (`KD55`); the per-chunk check priced. Code: `stream::RowEvaluation`, `DynamicRead`.
 
+### D95 A dynamic filter enters by `TablePartitions::under` alone, and the byte cut is made once per handle, at the first poll
+A replay may drop any row a state it read rejects, so the filter is no `QueryOptions` field: the one entry point that never resumes takes it (D77's
+reasoning), with the row evaluation it runs under (D93). Planning stays at `scan()`; the first sub-stream polled cuts them all over the groups the
+static filter and the state then keep, a join's filter being complete by then, so D51's balance holds over what is read, at the plan's count; the
+planned cut stands where nothing is ruled out or an order would be lost (`KD53`). A group is asked once per state, the cut's verdicts seeding a replay.
+Rejected: the cut held by `TablePartitions`, outliving the filter a reset discards; keyed by the filter's `Arc`; the count re-planned (read at planning);
+re-pruning a whole block per generation; the filter handed through the plan node, whose clones share it; seeking the scanner in place at a skip.
+Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `pgdump_query/tests/dynamic_filter.rs`, `datafusion-pgdump/tests/dynamic_filters.rs`.
+
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
@@ -420,6 +429,15 @@ Rejected: a formatter per type in the provider, a second grammar to drift; pushi
 answered from a set with no `-0` made `0`; `Exact` where the library agrees with PostgreSQL, which answers an enum `<`
 in declaration order pushed and in label order kept; `Inexact`, promising a superset another semantics can break.
 Evidence: `datafusion-pgdump/tests/pushdown.rs`.
+
+### D94 A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`
+Every producer re-checks its rows, so the scan answers `No` and only ever skips. The state is translated as a static filter is (D88), a part with no
+term standing as whatever keeps every row beneath its `NOT`s, so no state refuses; a `CASE` is the `Or` of its branches. A float compared with a zero
+has no term: a TopK and `MIN`/`MAX` order the zeros apart where evaluation equates them, and this holds whichever order a producer keeps. Held filters
+are dropped at `reset_state`. Rejected: `PruningPredicate` (bounds decoded to scalars, pruned in DataFusion's semantics, nothing on a `CASE`, a long
+`IN` or a sorted block); a narrower zero rule, sound only as far as each producer's shape is followed; keeping filters across a reset as Parquet does,
+a recursive query's next iteration needing rows the last one's ruled out. Reopens: a release whose producers hold with the zeros equal, then an `RT<n>`.
+Code: `datafusion-pgdump`'s `dynamic_filter::loosened`, `exec.rs`. Evidence: `dynamic_filter/tests.rs`, `tests/dynamic_filters.rs`, `tests/statistics.rs`.
 
 ## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`, `summary.rs`)
 ### D75 Pruning takes only what each operator family proves
