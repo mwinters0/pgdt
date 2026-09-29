@@ -98,4 +98,18 @@ class Acknowledged:
 #: path and `--stale` skips the commit without being told — which is what the
 #: three entries that used to stand here were doing by hand, at one extra
 #: commit apiece.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="d6b3660",
+        figures=("session-drift",),
+        why=(
+            "27.11's instrument adds a rows leg to the two dynamic-filter figures and "
+            "moves `--profile-recipe`'s pair; every command shape the stamped pair ran "
+            "builds a byte-identical script, and no drift, emit or timing path moved"
+        ),
+        verified=(
+            "git show --format= -U0 d6b3660 -- scripts/measure.py  # dfcli, dynfilter "
+            "and profile hunks only; each of the 87 prior command_shapes() _script() equal"
+        ),
+    ),
+)
