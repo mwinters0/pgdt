@@ -52,7 +52,7 @@ What the slices after this one inherit. The spec is
   the census inside its timer; `statistics-gathering`'s `none` leg no longer
   censuses; and `census-brace-free` and `census-arrays` difference two builds
   of which neither censuses. Those four are barred until 28.9
-  ([`../status/history/2026-09-29.md`](../status/history/2026-09-29.md),
+  (`measure.BARRED`; [`../status/history/2026-09-29.md`](../status/history/2026-09-29.md),
   "28.2 leaves the harness mid-way to 28.9"). No register figure was re-taken
   and no table was edited.
 - **`query --statistics all|none` is not the level**: it says whether a query

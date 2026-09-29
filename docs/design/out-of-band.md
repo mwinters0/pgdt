@@ -73,4 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M180 | | `measure.py` refuses `census-brace-free`, `census-arrays`, `statistics-gathering` and `statistics-pruning`, naming 28.9, until 28.9 re-points their builders and lifts it | P28 | [2026-09-29](../status/history/2026-09-29.md) |
+| M180 | 2026-09-29 | `measure.py` refuses `census-brace-free`, `census-arrays`, `statistics-gathering` and `statistics-pruning`, naming 28.9, until 28.9 re-points their builders and lifts it | | [2026-09-29](../status/history/2026-09-29.md) |

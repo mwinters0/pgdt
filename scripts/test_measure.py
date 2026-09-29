@@ -5140,20 +5140,62 @@ class Sittings(unittest.TestCase):
                 measure.main(argv)
         return err.getvalue()
 
+    def test_each_barred_figure_is_refused_by_name_naming_the_slice_that_lifts_it(self):
+        self.assertEqual(
+            set(measure.BARRED),
+            {"census-brace-free", "census-arrays", "statistics-gathering", "statistics-pruning"},
+        )
+        for fid in measure.BARRED:
+            with self.subTest(fid):
+                err = self._cli_stderr(["--figure", fid])
+                self.assertIn(f"{fid} is barred until {measure.BAR_LIFTED_BY}", err)
+
+    def test_a_sweep_and_a_stage_reach_a_barred_figure_and_are_refused(self):
+        for argv in (["--all"], ["--stage", "warm"], ["--all", "--dry-run"]):
+            with self.subTest(argv):
+                self.assertIn("is barred until", self._cli_stderr(argv))
+
+    def test_a_diagnostic_sitting_is_no_exemption_from_the_bar(self):
+        self.assertIn(
+            "statistics-gathering is barred until",
+            self._cli_stderr(["--figure", "statistics-gathering", "--alone"]),
+        )
+
+    def test_a_figure_borrowing_a_barred_one_is_refused_naming_the_borrow(self):
+        err = self._cli_stderr(["--figure", "scan-throughput-warm"])
+        self.assertIn("census-brace-free (borrowed by scan-throughput-warm) is barred", err)
+
+    def test_the_bar_refuses_nothing_else(self):
+        self.assertEqual(measure.barred_problems([measure.ALL_BY_ID["map-only"]]), [])
+        self.assertNotIn("is barred", self._cli_stderr(["--figure", "map-only"]))
+
+    def test_the_bar_is_held_while_the_slice_that_lifts_it_is_unticked(self):
+        """Ticking the slice with a figure still barred leaves a refusal nobody
+        owns, so it fails here; a lifted bar empties `BARRED` and this with it."""
+        if not measure.BARRED:
+            return
+        status = (measure.REPO / "docs/status/STATUS.md").read_text()
+        self.assertIn(f"- [ ] **{measure.BAR_LIFTED_BY}**", status)
+        for fid in measure.BARRED:
+            self.assertIn(fid, measure.SELECTABLE_BY_ID)
+
+    # The two below clear `BARRED`: `allocator` borrows from a barred figure,
+    # and the bar, asked first, would make the second assertion vacuous.
+    @unittest.mock.patch.dict(measure.BARRED, clear=True)
     def test_an_entangled_figure_is_refused_before_the_measurement_is_spent(self):
         self.assertIn(
             "publish outside the document's session stamp",
             self._cli_stderr(["--figure", "allocator"]),
         )
 
+    @unittest.mock.patch.dict(measure.BARRED, clear=True)
     def test_the_refusal_stops_firing_for_a_diagnostic_sitting(self):
         # Not an exemption clause: `--alone` marks the run unpublishable, so
         # the guard -- which asks only of a publishable run -- has no
         # publication left to refuse.
-        self.assertNotIn(
-            "publish outside the document's session stamp",
-            self._cli_stderr(["--figure", "allocator", "--alone"]),
-        )
+        err = self._cli_stderr(["--figure", "allocator", "--alone"])
+        self.assertNotIn("publish outside the document's session stamp", err)
+        self.assertNotIn("is barred", err)
 
     def test_a_diagnostic_sitting_is_not_told_to_fold_its_tables_in(self):
         reason = measure.Config(alone=True).unpublishable_reason

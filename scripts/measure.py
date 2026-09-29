@@ -80,7 +80,7 @@ Usage:
 
     cd scripts
     uv run measure.py --list
-    uv run measure.py --figure census-brace-free
+    uv run measure.py --figure map-only
     uv run measure.py --stage warm
     uv run measure.py --all
     uv run measure.py --stale --since <rev>
@@ -9243,6 +9243,58 @@ SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
 EVERY_FIGURE = FIGURES + UNTAKEN + DERIVED
 EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 
+#: The slice that lifts `BARRED`, and the only one that may: it re-points the
+#: barred figures' builders, and `test_measure` holds the bar to that slice's
+#: box being unticked in `STATUS.md`, so ticking it with a figure still barred
+#: fails the suite rather than leaving a refusal nobody owns.
+BAR_LIFTED_BY = "28.9"
+
+#: Figures the harness refuses to take, each with what its reading would say
+#: that its caption does not. P28's metadata level left each one's legs timing
+#: something other than what its table names
+#: (`docs/design/roadmap-P28-unrepresentable-values.md`, "Facts found while
+#: grilling"); what each should price is `BAR_LIFTED_BY`'s to decide, so until
+#: then the harness refuses them by name rather than publishing a table that
+#: misreads. A selection reaching one through a borrow edge is refused too, and
+#: `--alone` and `--dry-run` are no exemption: the bar is about what the reading
+#: means, not whether it is published or measured.
+BARRED: dict[str, str] = {
+    "census-brace-free": (
+        "it differences the census-off build against a `parse` stating "
+        f"`{NO_STATISTICS}`, which censuses nothing either"
+    ),
+    "census-arrays": (
+        "it differences the census-off build against a `parse` stating "
+        f"`{NO_STATISTICS}`, which censuses nothing either"
+    ),
+    "statistics-gathering": (
+        "its legs are the metadata and data levels, so its Δ is the census, the count and "
+        "the statistics together, under a caption naming the statistics alone"
+    ),
+    "statistics-pruning": (
+        f"its `{PRUNING_UNCARRIED}` leg reads a cache `parse {NO_STATISTICS}` wrote, "
+        "which holds no census, so it times a census re-read of its table, and its prose "
+        "reads the legs as one comparison"
+    ),
+}
+
+
+def barred_problems(figures: Iterable[Figure]) -> list[str]:
+    """Why each barred figure in a selection may not be taken, borrowed ones
+    included; empty where none is."""
+    figures = list(figures)
+    problems = []
+    for fig in figures:
+        if fig.id not in BARRED:
+            continue
+        borrowers = [f.id for f in figures if fig.id in f.requires]
+        pulled = f" (borrowed by {', '.join(borrowers)})" if borrowers else ""
+        problems.append(
+            f"{fig.id}{pulled} is barred until {BAR_LIFTED_BY} re-points its builder: "
+            f"{BARRED[fig.id]}"
+        )
+    return problems
+
 
 # --------------------------------------------------------------------------
 # Consumers: who repeats a figure, computed from who names it.
@@ -11303,6 +11355,8 @@ def cmd_list() -> None:
     print("Figures (run order; one figure is one table):\n")
     for fig in ALL_FIGURES:
         print(f"  {fig.id:<24} [{fig.stage}]  {fig.section}")
+        if fig.id in BARRED:
+            print(f"  {'':<24}  barred until {BAR_LIFTED_BY}: {BARRED[fig.id]}")
         if fig.requires:
             print(f"  {'':<24}  borrows readings from: {', '.join(fig.requires)}")
         closure = sharing_closure(fig.id)
@@ -12705,7 +12759,8 @@ def cmd_stale(since: str | None) -> int:
     for fig, hits in stale:
         base = bases[fig.id]
         own = "" if base == stamp or since else f" (since its own sitting {base})"
-        print(f"  {fig.id:<24} stale — {', '.join(hits)}{own}")
+        bar = f"; barred until {BAR_LIFTED_BY}" if fig.id in BARRED else ""
+        print(f"  {fig.id:<24} stale — {', '.join(hits)}{own}{bar}")
         by_path = by_base[base]
         for path, excused, blocking in inert_excuses(fig.id, hits, by_path, acks):
             names = ", ".join(c[:7] for c in excused)
@@ -12723,12 +12778,24 @@ def cmd_stale(since: str | None) -> int:
     # `--figure` is what takes one on its own, so a derived figure is not in
     # this list however few edges it stands in: `--drift` is how it moves.
     alone = sorted(
-        fig.id for fig, _ in stale if fig.id in SELECTABLE_BY_ID and not entangled_with(fig.id)
+        fig.id
+        for fig, _ in stale
+        if fig.id in SELECTABLE_BY_ID and fig.id not in BARRED and not entangled_with(fig.id)
     )
-    print(
-        "\nA stale figure is re-taken with the whole doc: one sweep replaces every table "
-        "(`uv run measure.py --all`), because the doc differences across tables."
-    )
+    if BARRED:
+        # `--all` reaches every barred figure and is refused, so recommending it
+        # here would be a trap.
+        print(
+            f"\nNo sweep is taken until {BAR_LIFTED_BY} lifts the bar on "
+            f"{', '.join(sorted(BARRED))}: `--all` reaches them and is refused, and a stale "
+            "figure stays red with its reason written down (measurements.md, \"A stale "
+            "figure does not oblige a sweep\")."
+        )
+    else:
+        print(
+            "\nA stale figure is re-taken with the whole doc: one sweep replaces every table "
+            "(`uv run measure.py --all`), because the doc differences across tables."
+        )
     if alone:
         print(
             "These stand in no borrow edge, so each may instead be re-taken on its own and "
@@ -12902,6 +12969,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if problem:
             parser.error(problem)
     figures = resolve_selection(ids, alone=args.alone)
+    # First, since no other answer matters for a figure whose reading would not
+    # mean what its table says: a sweep, a stage and a borrow edge all reach one.
+    barred = barred_problems(figures)
+    if barred:
+        parser.error(
+            "; ".join(barred)
+            + f". Only {BAR_LIFTED_BY} lifts the bar; until it lands, name the figures "
+            "wanted without these, and one borrowing from them is not taken either."
+        )
     # A sitting short of the sweep publishes outside the session stamp, which
     # only a figure standing in no borrow edge may do. Asked here, before the
     # measurement is spent, rather than at `--check` after it -- and asked only
