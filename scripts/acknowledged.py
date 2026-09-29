@@ -127,4 +127,17 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "# build() adds one blocks_of() scan before planning; nothing on the scan path"
         ),
     ),
+    Acknowledged(
+        commit="8b4db51",
+        figures=("session-drift",),
+        why=(
+            "M180's bar: measure.py gains a table of barred figures, a refusal in main() "
+            "before any figure is taken, and text in --list and --stale; which figures a "
+            "sitting may select changes, and nothing a timed run executes does"
+        ),
+        verified=(
+            "git show 8b4db51 -- scripts/measure.py  "
+            "# hunks: usage docstring, BARRED, cmd_list, cmd_stale, main()'s selection guard"
+        ),
+    ),
 )
