@@ -365,9 +365,9 @@ Off, a state still prunes groups, cuts the sub-streams and stops a sorted block,
 which "Two tunables" does not refuse, and is the one way to the unclustered join's win, DataFusion's flag taking pruning with it. On, rows are evaluated
 in every block, statistics or not (`--statistics none`, D85's declined block, `KD33`'s tail), less each bound an `IN` beside it implies, no `Not` above
 (D54). The state is read where its generation moved; a read mid-group judges that group again, skipping its rest with each later group it rules out.
-Rejected: on by default (`dynamic-filter-join`'s costing row); no switch; evaluating only where statistics delimit groups; reading per row (a shared
-lock), per batch (aging) or at group entry alone (older where groups merge); ceasing where nothing is rejected (D77); dropping a static filter's implied
-bounds, which raise. Reopens: the costing row's Δ within its legs' spreads (`KD55`); the per-chunk check priced. Code: `stream::RowEvaluation`, `DynamicRead`.
+Rejected: on by default (`dynamic-filter-join`'s costing row, rows evaluated); no switch; evaluating only where statistics delimit groups; reading per row (a
+shared lock), per batch (aging) or at group entry alone (older where groups merge); ceasing where nothing is rejected (D77); dropping a static filter's
+implied bounds, which raise. Reopens: its Δ within its legs' spreads (`KD55`); the per-chunk check priced. Code: `stream::RowEvaluation`, `DynamicRead`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership

@@ -359,7 +359,7 @@ ahead of 1 MiB; that is the per-chunk work rather than anything a disk
 does, and it is not what the default is chosen on.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
-64 KiB costs about 40% more CPU than 1 MiB, because the per-chunk work is paid
+64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
 sixteen times as often. **Large costs memory, and the cost levels off**: read
 buffers are reused at whatever size you ask for, and the pool holds four of
 them or the read-buffer budget's worth, whichever is fewer — so under a 64 MiB

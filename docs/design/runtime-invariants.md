@@ -658,7 +658,7 @@ Before `glibc-2.44` the same branch reads `NARENAS_FROM_NCORES (n)`; the change
 is commit `93e6135`, "malloc: Reduce maximum arenas". `malloc/malloc.c`,
 `do_set_arena_max`, writes `mp_.arena_max` and nothing else, which is also what
 `MALLOC_ARENA_MAX` sets at startup. Observed, not proved: the `reserve` figure's
-instrument legs read the readers plus one or two arenas from 1 to 24 readers,
+instrument legs read the readers plus one to three arenas from 1 to 24 readers,
 under the `postgres:16` image's glibc — below its ceiling of 192 on this host.
 
 **Scope limit.** glibc only: `jemalloc` and `mimalloc` (D13) have no such
