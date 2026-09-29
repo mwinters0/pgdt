@@ -94,6 +94,17 @@ our API, CLI, or data until we reach v1.0.
         - [x] local
         - [x] http / https ranged requests (unauthenticated)
         - [ ] object store
+- Output
+    - [x] Streaming Arrow batches, with typed columns aiming for "at least as good as ADBC".
+    - [x] CLI text / TSV
+    - [x] Parquet, CSV, etc via `datafusion-cli-pgdump`
+- Consumers
+    - [x] Rust library
+    - [x] DataFusion provider + shell
+    - [ ] Python
+    - [ ] DuckDB
+    - [ ] Trino (?)
+    - [ ] Spark (?)
 - Metadata collection:
     - [x] A full byte-exact file map and DDL object inventory.
     - [x] Row groups with per-column statistics.
@@ -108,8 +119,8 @@ our API, CLI, or data until we reach v1.0.
                 column
                 - [ ] An `interval` past Arrow's range
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
-        - [ ] Common extension types, e.g. PostGIS
         it yourself.
+        - [ ] Common extension types, e.g. PostGIS
     - [ ] Encodings other than UTF-8
     - [ ] Large object (BLOB) contents
     - Collation
@@ -134,18 +145,14 @@ our API, CLI, or data until we reach v1.0.
           sums and byte sizes. `COUNT(*)`, `MIN`, `MAX` and `SUM` can answer without reading a row,
           and joins are ordered by size.
         - [x] Sort order: `ORDER BY` skips when a column is detected as sorted
-        - [ ] Dynamic filters from joins and `ORDER BY … LIMIT`
-- Output
-    - [x] Streaming Arrow batches, with typed columns aiming for "at least as good as ADBC".
-    - [x] CLI text
-    - [x] Parquet, CSV, etc via `datafusion-cli-pgdump`
-- Consumers
-    - [x] Rust library
-    - [x] DataFusion provider + shell
-    - [ ] Python
-    - [ ] Trino
-    - [ ] DuckDB
-    - [ ] Spark
+        - [x] Dynamic filters from joins, `ORDER BY … LIMIT` and ungrouped `MIN`/`MAX`: the filter
+          updates as the scan proceeds. It skips row groups and stops reading a sorted block past
+          the bound.
+            - Dropping rejected rows before decoding them is opt-in (see: [scan
+            settings](docs/manual/datafusion-cli-pgdump.md#scan-settings)).
+            - [ ] Membership pruning for a join with more distinct keys than DataFusion lists (150 by
+            default), several key columns, or a key column with no dictionary. These prune by the
+            join's key bounds alone.
 - Parallelism
     - [x] Parallel I/O, parallel scan, parallel query (where the input is suitable)
     - [ ] Perform full `parse` and `query` in one file pass
@@ -179,7 +186,7 @@ For humans:
 
 Mostly for LLMs:
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not); [`docs/status/deficiencies.md`](docs/status/deficiencies.md) beside it indexes the known deficiencies. [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
-- [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 500 lines; how the system works is the code and its rustdoc.
+- [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 700 lines; how the system works is the code and its rustdoc.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.
 - [`docs/design/out-of-band.md`](docs/design/out-of-band.md) — the ledger of one-session work belonging to no phase: the admission rule, the watermark of spent `M<k>` numbers, and the rows still outstanding.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
