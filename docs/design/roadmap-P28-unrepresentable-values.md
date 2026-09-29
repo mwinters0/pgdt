@@ -35,8 +35,16 @@ the mode is chosen after the cache is written.
 **An unrepresentable value is one PostgreSQL accepts for the declared type
 and the column's Arrow type cannot hold**, one category the three modes treat
 alike: `±infinity` on a `date`, `timestamp`, `timestamptz` or `interval`,
-`NaN` on a `numeric(p,s)`, and an `interval` time part past Arrow's range, no
-special case among them. **Text that does not parse as its type is not one**:
+`NaN` on a `numeric(p,s)`, an `interval` time part past Arrow's range, a
+`timestamp` or `timestamptz` past `Timestamp(Microsecond)`'s bound — the last
+three decades PostgreSQL admits, to `294276-12-31` — and `time` `24:00:00`,
+past `Time64`'s, no special case among them. **The definition governs and
+this list follows from it**; what Arrow's own spec forbids a type to hold
+counts, not only what a decoder refuses. **A nested value holding one is
+one**: an array element, a range bound or a composite's field makes the whole
+value unrepresentable, and each mode acts on the whole — the typed mode's NULL
+being the array, range or composite, since a NULL range bound would mean
+unbounded. **Text that does not parse as its type is not one**:
 it is outside the input contract (`roadmap.md`, "The input contract is valid
 PostgreSQL, not `pg_dump`'s output") and refuses in every mode.
 
@@ -59,11 +67,19 @@ column and its count, and the other two modes.
 
 **Each block counts, per column, the values no Arrow type of the column's
 could hold, beside the array-shape census** ("D35"): a lexical test on the
-still-escaped bytes — exactly `infinity`, `-infinity` or `NaN`, or an hour
-part past the `interval` bound — never a decode, type-blind as the census
-is, and consulted only where the resolved type cannot hold the value. So it
-is not billed as a statistic, and a declined block ("D85") and `KD33`'s tail
-carry it.
+still-escaped bytes of each leaf — exactly `infinity`, `-infinity`, `NaN` or
+`24:00:00`, an hour part past the `interval` bound, or a year part past the
+`timestamp` one, only a year of exactly 294247 taking arithmetic, a
+`timestamptz`'s offset moving the bound within it — and never otherwise a
+decode. **The leaves are the column's declared type's**: a nested value is
+walked by its declared PostgreSQL type, which the dump's DDL states, and a
+leaf is tested against its own type's spellings, so a `text` field reading
+`infinity` beside a `date` one is never counted. The cache so stays a
+function of the dump, not of the mapping, which is what the census's
+type-blindness protects; the census itself stays type-blind. The count is
+consulted only where the resolved type cannot hold the value, so it is not
+billed as a statistic, and a declined block ("D85") and `KD33`'s tail carry
+it.
 
 **`pgdt` serves two uses, named the *metadata* level and the *data*
 level**: information about a dump, and queries over it. The metadata level
@@ -196,6 +212,26 @@ statistics used and not, dynamic filters on and off, over majors 13, 16 and
 `statistics_never_change_an_answer` returns to DataFusion's own schedule,
 `M176` having pinned it to file order only until this phase.
 
+**The category's list is held complete by a test, not by review**: the
+`types` fixture holds PostgreSQL's extremes of every type the floor maps —
+least and greatest, the infinities, `NaN`, `24:00:00`, `interval`'s included
+— and each must decode to a value its Arrow type's spec admits or be counted
+unrepresentable, Arrow's validity rather than a decoder's refusal being the
+test. **Arrow's validity is DataFusion's own path**: the column built, each
+value formatted by `arrow-cast`'s display and cast to `Utf8`, an error in
+either being unrepresentable — no bound written per type, which would be the
+list again. **A base type a later PostgreSQL major introduces is held to the
+same test**, by a reconciliation beside `floor_mapping.py`'s: every
+`builtin_scalar` arm to a type other than `Utf8View` has an extremes row and
+every row an arm, so a new major's `floor.tsv` forces a mapping decision
+("D38") and a typed mapping forces its extremes. The values are written by
+hand, PostgreSQL keeping no catalog of a type's least and greatest.
+**`interval`'s extremes**, at every major: the time parts
+`±2562047788:00:54.775807`, PostgreSQL's longest; `2562047:47:16.854776`, a
+microsecond past Arrow's; `2562047:47:16.854775`, inside it; and an
+`interval[]` holding one — and from 17, gated as the fixture gates a
+multirange, `infinity` and `-infinity`.
+
 **The figures move with the metadata level.** `measure.py` times every parse
 whose subject is not statistics at `--statistics none` (`NO_STATISTICS`), a
 census included today. **Scan figures time the metadata level**, the scan
@@ -218,8 +254,9 @@ path never sharing a slice with a new mechanism:
    metadata level splitting no field; `info` reporting each table's level; a
    query's cold semantics over a metadata-level table, and the provider's
    refusal of one. "D35" and "D77" amended — a rework of the mapping pass.
-3. **The count beside the census**: lexical, per block and column, in the
-   cache format; `info --detail` showing it per column.
+3. **The count beside the census**: lexical, per block and column, each
+   leaf walked by the declared type, in the cache format; `info --detail`
+   showing it per column; `decode_time64_micros` refusing `24:00:00`.
 4. **Statistics' two views**: gathered, cached, and read by pruning under
    each semantics.
 5. **The mode option and the typed mode**: `QueryOptions::unrepresentable`,
@@ -235,6 +272,13 @@ path never sharing a slice with a new mechanism:
 9. **The figures** (Evidence): scan figures at the metadata level, query
    figures over a data-level cache, the census's price attributed by a `perf`
    profile, the `census-*` figures and the census-off build retired.
+10. **The extremes** (Evidence), no product code, admitted after the spec
+    and landing after 1 and before 2, its fixture being what 3's count is
+    tested against: an extremes table in `fixture_schema_types.sql` — every
+    typed arm's least and greatest, the special values, `24:00:00`,
+    `interval`'s, nested cases — every major's fixtures regenerated; the
+    reconciliation beside `floor_mapping.py`; the DataFusion-path validity
+    test, its failing values recorded; the harness extended over the new rows.
 
 ## Facts found while grilling
 
@@ -256,11 +300,34 @@ path never sharing a slice with a new mechanism:
 - **Which values are reachable**: `±infinity` on `date`, `timestamp`,
   `timestamptz` and (from PostgreSQL 17) `interval`; `NaN` on
   `numeric(p,s)`, a typmod refusing `±Infinity` (`pgtype.rs`); an `interval`
-  time part past Arrow's nanoseconds. Bare `numeric`, and a precision past
-  76, is already `Utf8View`. Each decoder answers `None`
-  (`decode_date32`, `decode_timestamp_micros`, `decode_interval`,
-  `decimal_unscaled_digits`), and `RowBatcher::push_field` or
-  `ResolvedTerm::eval` raises `Error::FieldDecode`.
+  time part past Arrow's nanoseconds; a `timestamp` or `timestamptz` from
+  `294247-01-10 04:00:54.775807` UTC, where `i64` microseconds from 1970 end,
+  to PostgreSQL's `294276-12-31 23:59:59.999999`, which counts from 2000
+  (`decode.rs`,
+  `postgresqls_own_max_timestamp_overflows_the_unix_epoch_i64_range`;
+  `t_timestamp`'s `id` 7 at every major); and `time` `24:00:00`. Bare
+  `numeric`, and a precision past 76, is already `Utf8View`; every finite
+  `date` fits `Date32`, and PostgreSQL's earliest `timestamp` fits Arrow's.
+  Each decoder but `time`'s answers `None` (`decode_date32`,
+  `decode_timestamp_micros`, `decode_interval`, `decimal_unscaled_digits`), and
+  `RowBatcher::push_field` or `ResolvedTerm::eval` raises `Error::FieldDecode`.
+- **`time` `24:00:00` decodes to a value Arrow forbids**:
+  `decode_time64_micros` answers `86_400_000_000` by design, where Arrow's
+  `Time64` holds `[0, 86400 s)` (`Schema.fbs`, `Time`; `arrow-ipc` 59.2.0's
+  `gen/Schema.rs`). DataFusion 55.1 prints the cell as `ERROR: Cast error:
+  Failed to convert 86400000000 to temporal for Time64(µs)`, and `MAX` over
+  it answers that error, over `fixtures/16/types/default.sql`'s `t_time`
+  `id` 1. So "the one decoder refuses it" was never the whole category.
+- **A new major's base types already reach the floor mechanically**:
+  `scripts/adbc_floor.py` sweeps every declarable `pg_catalog` type into
+  `fixtures/<major>/adbc/floor.tsv`, and `floor_mapping.py` fails on a floor
+  row the driver types that `builtin_scalar` does not answer, or an arm no
+  row backs ("D38"). A type left `Utf8View` holds any text, so only a typed
+  arm can hold an unrepresentable value.
+- **A nested value carries the same values**: a `date[]` element, a
+  `daterange` bound or a composite's field may be `infinity`, decoded by the
+  same scalar decoders beneath `append_typed`'s nested arms; the category's
+  list names none, and a lexical test on the whole field matches none.
 - **A filter orders a special value by rank, not text** ("D56"):
   `predicate::special_order_key`, `-infinity` below every finite value,
   `infinity` above, `NaN` above that.

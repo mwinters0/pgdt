@@ -49,8 +49,8 @@ What the slices after this one inherit. The spec is
   so the oracle NULLs it and widens both timestamp columns for it. A pushed
   `v_tstz < '2000-01-01 00:00:00+00'` under `COUNT(*)`, which projects
   nothing, refuses on it at execution: the filter ranks the infinities
-  (`predicate.rs`, `special_order_key`) and decodes every other value. STATUS's "Decisions
-  worth another look" carries what that asks of the spec.
+  (`predicate.rs`, `special_order_key`) and decodes every other value. It is in the
+  category, as is `time` `24:00:00` (the spec, "Scope").
 - **A `Utf8View` column against a number is DataFusion casting each value to
   the number's type**: `v_small > -5` over the widened column errors on the
   first value not an integer. The untyped mode's cases compare against text

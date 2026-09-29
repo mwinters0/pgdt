@@ -337,12 +337,16 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// decode failure by construction, not by accident) and for anything out of
 /// `Date32`'s `i32` day range.
 ///
-/// Deficiency register: `deficiency: KD8` — the anchor for all three of these
-/// refusals ([`decode_interval`]'s infinities and overflowing time part, and
-/// `NaN` on a `Decimal128`): a typed column cannot hold the value, so
-/// materializing one is an `Error::FieldDecode` and there is no typed way to
-/// read it. `--schema-mode strings` returns the literal verbatim. A
-/// DataFusion query need not read every row — a `LIMIT` one partition meets
+/// Deficiency register: `deficiency: KD8` — the anchor for every one of these
+/// refusals ([`decode_interval`]'s infinities and overflowing time part,
+/// `NaN` on a `Decimal128`, and a timestamp past `i64` microseconds from 1970,
+/// which PostgreSQL's range outlasts by three decades): a typed column cannot
+/// hold the value, so materializing one is an `Error::FieldDecode` and there is
+/// no typed way to read it. `24:00:00` is the case that does not refuse:
+/// [`decode_time64_micros`] writes a `Time64` past Arrow's day, which
+/// DataFusion reads as an error wherever it formats or casts the value.
+/// `--schema-mode strings` returns the literal verbatim. A DataFusion query
+/// need not read every row — a `LIMIT` one partition meets
 /// first, a dynamic filter another partition tightened — so whether it
 /// reaches the value, and refuses, can differ from run to run. **(b) owned by
 /// P28**, whose modes read the value as NULL, its column as text, or refuse

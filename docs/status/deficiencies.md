@@ -98,12 +98,13 @@ than reading as a phase nobody has sliced.
   Future item "collation-aware comparison", intent without a phase. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, nor —
-  on an `interval` — a time part past `2562047:47:16.854775807`, so
-  materializing one raises `Error::FieldDecode`, and whether a DataFusion query
-  reaches it can depend on how its partitions run: the same query may answer on
-  one run and refuse on the next. **(b) owned by P28**, whose three modes never
-  depend on which rows a read reached; slice 28.7 closes it. Detail: `pgdump_query/src/decode.rs`.
+- **KD8** — a typed column cannot hold `±infinity`, `NaN`, an `interval` time
+  part past Arrow's or a `timestamp` past `294247-01-10`, so materializing one
+  raises `Error::FieldDecode`, and `time` `24:00:00` becomes a `Time64` Arrow
+  forbids, which DataFusion reads as an error; whether a query reaches such a
+  value can depend on how its partitions run, so it may answer on one run and
+  refuse on the next. **(b) owned by P28**, whose three modes never depend on
+  which rows a read reached; slice 28.7 closes it. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
   warm and most of a cold NVMe scan's time (`measurements.md`,

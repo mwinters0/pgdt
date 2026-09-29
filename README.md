@@ -125,18 +125,20 @@ our API, CLI, or data until we reach v1.0.
     - Data types
         - [x] Almost all common base types parsed into Arrow types (see: [type
         handling](docs/manual/type-handling.md))
-            - Notable exceptions which lack an Arrow equivalent:
+            - [ ] User-configurable handling for Postgres types which cannot be represented in Arrow:
                 - [ ] `infinity`, `-infinity` and `NaN` in a `numeric`, `date` or `timestamp`
                 column
                 - [ ] An `interval` past Arrow's range
+                - [ ] A `timestamp` in PostgreSQL's last three decades, past `294247-01-10`
+                - [ ] `time` `24:00:00`
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.
         - [ ] Common extension types, e.g. PostGIS
-    - [ ] Encodings other than UTF-8
-    - [ ] Large object (BLOB) contents
     - Collation
         - [x] `C` / `POSIX`
         - [ ] Everything else.  Text compares bytewise, with a warning.  (See: KD7)
+    - [ ] Encodings other than UTF-8
+    - [ ] Large object (BLOB) contents
 - Query handling
     - [x] Pushdown:
         - [x] Column projection
@@ -182,6 +184,11 @@ routinely hundreds of gigabytes, so the local-file reader aims to stay device-bo
 CPU-bound, with a flat RSS profile.
 
 ### Next
+Prior to v1.0 we must provide:
+- Support for all pg_dump formats and compression methods
+- Postgres-equivalent collation, at minimum for the common default of `en_US.utf8`.
+- A Python library interface
+
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (aka epics)
 - [`docs/status/deficiencies.md`](docs/status/deficiencies.md) - Known deficiencies (some TODO, some
 simply properties of our design).
