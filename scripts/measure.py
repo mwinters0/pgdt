@@ -2506,14 +2506,16 @@ DFCLI_PARTITIONS = "DATAFUSION_EXECUTION_TARGET_PARTITIONS"
 #: `dynamic-filter-join` and `dynamic-filter-topk`'s shapes,
 #: `<family><figure>-<query>-<leg>`: one untimed `pgdt parse` stating
 #: `GATHER_STATISTICS` writes the cache where `--dump` looks for it, beside
-#: the dump, and the timed `datafusion-cli-pgdump -c` runs one query with its
-#: producer's dynamic filter off or on. What the query returned is hashed
-#: outside the timer, so the two legs are held to one answer.
+#: the dump, and the timed `datafusion-cli-pgdump -c` runs one query under
+#: one of `DYNFILTER_LEGS`. What the query returned is hashed outside the
+#: timer, so the three legs are held to one answer.
 #:
-#: **The figure's producer flag is the only lever**
-#: (`docs/design/roadmap-P27-dynamic-filters.md`, "Evidence"): one binary,
-#: DataFusion's own switch off against on, so the `on` leg is DataFusion's own
-#: filtering over whatever the scan does with the filter it is handed.
+#: **One binary, two levers, three legs**: DataFusion's own producer flag
+#: (`docs/design/roadmap-P27-dynamic-filters.md`, "Evidence") and the
+#: provider's `pgdump.dynamic_filter_rows`, stated by a `SET` run ahead of the
+#: query in the same process. So each table prices what ships — the filter on
+#: against off — and what the setting buys and costs — rows evaluated against
+#: the filter on, which `decisions.md`, "D93" reads.
 DYNFILTER_FAMILY = "dfcli-dynamic-filter-"
 #: Each figure's queries, in its table's row order: the SQL and what the row
 #: calls it. **Every join counts one payload column over the probe's rows it
@@ -2570,8 +2572,15 @@ DYNFILTER_FLAGS = {
     "join": "DATAFUSION_OPTIMIZER_ENABLE_JOIN_DYNAMIC_FILTER_PUSHDOWN",
     "topk": "DATAFUSION_OPTIMIZER_ENABLE_TOPK_DYNAMIC_FILTER_PUSHDOWN",
 }
-#: The legs, in the table's column order, and the flag's value in each.
-DYNFILTER_LEGS = {"off": "false", "on": "true"}
+#: The legs, in the table's column order, and the producer flag's value in
+#: each: `off`, the filter off; `on`, the filter on at the provider's default;
+#: `rows`, on with `DYNFILTER_ROWS_SQL` run first.
+DYNFILTER_LEGS = {"off": "false", "on": "true", "rows": "true"}
+#: The leg stating the setting, and the statement it runs ahead of its query:
+#: its own `-c`, which prints nothing under `--format csv`, so the answer
+#: read back is the query's alone.
+DYNFILTER_ROWS_LEG = "rows"
+DYNFILTER_ROWS_SQL = "SET pgdump.dynamic_filter_rows = true"
 #: **The startup leg**: the builder as every leg runs it, then
 #: `datafusion-cli-pgdump` registering the dump and answering `STARTUP_SQL`
 #: under the timer, so what loading the program, its runtime and the
@@ -2596,13 +2605,17 @@ def dfcli_invocation(figure: str, name: str, leg: str, dump: str) -> tuple[list[
         f"{DFCLI_PARTITIONS}={SWEEP_JOBS}",
         f"{DYNFILTER_FLAGS[figure]}={DYNFILTER_LEGS[leg]}",
     ]
-    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q", "-c"]
-    return env, [*argv, DYNFILTER_QUERIES[figure][name][0]]
+    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q"]
+    if leg == DYNFILTER_ROWS_LEG:
+        argv += ["-c", DYNFILTER_ROWS_SQL]
+    return env, [*argv, "-c", DYNFILTER_QUERIES[figure][name][0]]
 
 
 def dfcli_shell(env: list[str], program: str, argv: list[str]) -> str:
-    """`dfcli_invocation`'s run as one shell line, its SQL single-quoted."""
-    return f"{' '.join(env)} {program} {' '.join(argv[:-1])} '{argv[-1]}'"
+    """`dfcli_invocation`'s run as one shell line, each statement
+    single-quoted."""
+    words = (f"'{a}'" if " " in a else a for a in argv)
+    return f"{' '.join(env)} {program} {' '.join(words)}"
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3719,7 +3732,7 @@ def _script(command: str) -> str:
 
 def dynfilter_shapes(figure: str | None = None) -> tuple[str, ...]:
     """The dynamic-filter figures' command shapes, or one figure's, in its
-    table's order: each query, off then on."""
+    table's order: each query, in `DYNFILTER_LEGS`' order."""
     return tuple(
         f"{DYNFILTER_FAMILY}{fig}-{name}-{leg}"
         for fig, queries in DYNFILTER_QUERIES.items()
@@ -8515,24 +8528,33 @@ def dynfilter_problems(figure: str, reported: Mapping[str, Mapping[str, str]]) -
     """Why a dynamic-filter sitting's legs do not price what it claims, keyed
     by `<query>-<leg>`.
 
-    **The two legs of a row must return one answer**, byte for byte: they
-    differ by a flag the spec says changes no row, so a difference is the
-    phase's correctness check failing under the timer, and a table beside it
-    would price a wrong answer. An answer with no row proves nothing either
+    **The legs of a row must return one answer**, byte for byte: they differ
+    by a flag and a setting the spec says change no row, so a difference is
+    the phase's correctness check failing under the timer, and a table beside
+    it would price a wrong answer. An answer with no row proves nothing either
     way."""
     bad = []
     for name in DYNFILTER_QUERIES[figure]:
-        off, on = (reported.get(f"{name}-{leg}", {}) for leg in DYNFILTER_LEGS)
-        if not off.get("result_digest") or off.get("result_digest") != on.get("result_digest"):
-            bad.append(f"{name}: the two legs answered differently, or not at all")
-        elif int(off.get("result_rows", "0")) == 0:
+        legs = [reported.get(f"{name}-{leg}", {}) for leg in DYNFILTER_LEGS]
+        digests = {leg.get("result_digest") for leg in legs}
+        if None in digests or "" in digests or len(digests) != 1:
+            bad.append(f"{name}: the legs answered differently, or not at all")
+        elif int(legs[0].get("result_rows", "0")) == 0:
             bad.append(f"{name}: the query returned no row")
     return bad
 
 
+#: What each leg's per-rep line calls it.
+DYNFILTER_LEG_NAMES = {
+    "off": "filter off",
+    "on": "filter on",
+    DYNFILTER_ROWS_LEG: "rows evaluated",
+}
+
+
 def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
-    """One dynamic-filter figure: each of `kind`'s queries, the producer's flag
-    off and on, warm, and the `dd` floor."""
+    """One dynamic-filter figure: each of `kind`'s queries under each of
+    `DYNFILTER_LEGS`, warm, and the `dd` floor."""
     specs = _dynfilter_specs(kind)
     startup = RunSpec("dfcli", "dynfilter", DYNFILTER_STARTUP, "warm", "startup")
     session.sweep(figure, [*specs, startup], session.cfg.reps(6))
@@ -8570,11 +8592,13 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
                 fmt_median_spread(walls["off"]),
                 fmt_median_spread(walls["on"]),
                 fmt_delta(median(walls["off"]), median(walls["on"])),
+                fmt_median_spread(walls[DYNFILTER_ROWS_LEG]),
+                fmt_delta(median(walls["on"]), median(walls[DYNFILTER_ROWS_LEG])),
                 answered,
             ]
         )
         for leg in DYNFILTER_LEGS:
-            per_rep.append(f"- {label}, flag {leg}: {fmt_readings(walls[leg])}")
+            per_rep.append(f"- {label}, {DYNFILTER_LEG_NAMES[leg]}: {fmt_readings(walls[leg])}")
     started = session.get(figure, startup)
     per_rep.append(f"- startup, `{STARTUP_SQL}`: {fmt_readings(started)}")
     per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
@@ -8584,7 +8608,9 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
             "Query",
             "Filter off",
             "Filter on",
-            "Δ",
+            "Δ, on against off",
+            "Rows evaluated",
+            "Δ, rows against on",
             "Rows the join matched" if kind == "join" else "Rows returned",
         ],
         rows,
@@ -8595,10 +8621,12 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         + f"\n\nOne file — the control's rows with `u_key` and `bucket` appended, and three "
         f"small build tables, {profile['rows']:,} rows in all — queried warm by "
         f"`datafusion-cli-pgdump -c` at `{DFCLI_PARTITIONS}={SWEEP_JOBS}`, against a cache one "
-        f"untimed `pgdt parse` stating `{GATHER_STATISTICS}` wrote in the same container, so "
-        "the two legs of a row differ by the producer's flag alone and answer alike, "
-        f"byte for byte: `{flag}` is `false` off and `true` on, and the on leg's filter is "
-        "whatever the scan makes of it. **The binary is not the register's**: `datafusion-cli`'s own "
+        f"untimed `pgdt parse` stating `{GATHER_STATISTICS}` wrote in the same container, and "
+        "the legs of a row answer alike, byte for byte: `Filter off` and `Filter on` differ by "
+        f"the producer's flag alone, `{flag}` `false` and `true`, the on leg's filter being "
+        "whatever the scan makes of it at the provider's default, and `Rows evaluated` differs "
+        f"from `Filter on` by `-c '{DYNFILTER_ROWS_SQL}'` alone, run ahead of the query in the "
+        "same process. **The binary is not the register's**: `datafusion-cli`'s own "
         "`mimalloc`, in the "
         f"`{image_name(session.cfg.dfcli_image)}` image rather than "
         f"`{image_name(session.cfg.image)}`, whose glibc "
@@ -8616,13 +8644,13 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
 def run_dynamic_filter_join(session: Session) -> str:
     """A selective join on a clustered key and on an unclustered one, and a
     join whose filter rejects nothing, each with DataFusion's join dynamic
-    filter off and on."""
+    filter off, on, and on with its rows evaluated."""
     return _run_dynfilter(session, "dynamic-filter-join", "join")
 
 
 def run_dynamic_filter_topk(session: Session) -> str:
     """An `ORDER BY … LIMIT` over an unsorted column, with DataFusion's TopK
-    dynamic filter off and on."""
+    dynamic filter off, on, and on with its rows evaluated."""
     return _run_dynfilter(session, "dynamic-filter-topk", "topk")
 
 
@@ -11504,16 +11532,18 @@ PROFILE_AXIS: tuple[tuple[str, str], ...] = (
     ("parse-jobs-2", "control"),
 )
 
-#: The row of a `datafusion-cli-pgdump` figure whose two legs are profiled as
-#: a pair and read by the introspection build, as `(figure, query)`:
-#: `dynamic-filter-join`'s costing row, whose on leg's cost a row
-#: `docs/design/roadmap-P27-dynamic-filters.md`, "Slices", item 8 accounts
-#: for. **A pair for the axis pair's reason**: what the on leg adds is a
-#: difference, read bucket by bucket, and the off leg is the flag alone
-#: removed. Its input is `dynfilter`, its cache the figure's own
-#: `GATHER_STATISTICS`, and each leg's command `dfcli_invocation`'s, so the
-#: profiled run is the timed one.
+#: The row of a `datafusion-cli-pgdump` figure whose legs are profiled as a
+#: pair and read by the introspection build, as `(figure, query)`:
+#: `dynamic-filter-join`'s costing row, where evaluating rows rejects none.
+#: **A pair for the axis pair's reason**: what one leg adds over the other is
+#: a difference, read bucket by bucket. Its input is `dynfilter`, its cache
+#: the figure's own `GATHER_STATISTICS`, and each leg's command
+#: `dfcli_invocation`'s, so the profiled run is the timed one.
 DFCLI_ACCOUNT: tuple[str, str] = ("join", "costing")
+#: The pair's legs: the filter on at the provider's default against rows
+#: evaluated, so the setting alone separates them — the comparison
+#: `decisions.md`, "D93" is refused and reopened on.
+DFCLI_ACCOUNT_LEGS: tuple[str, str] = ("on", DYNFILTER_ROWS_LEG)
 #: How many times the introspection build runs each of those legs. Its
 #: spans are summed within a run; three runs say how far one moves.
 DFCLI_INTROSPECT_REPS = 3
@@ -11743,16 +11773,17 @@ def profile_recipe(cfg: Config) -> str:
         record(shape, name)
     lines.append("")
     head(
-        f"The pair `{figure}`'s `{query}` row is read as: its two legs, flag off and",
-        "on, over a cache the figure's own `pgdt parse` writes beside the dump,",
-        "where `--dump` looks. Read as a difference, bucket by bucket.",
+        f"The pair `{figure}`'s `{query}` row is read as: its legs",
+        f"{' and '.join(DFCLI_ACCOUNT_LEGS)}, the setting alone apart, over a cache the",
+        "figure's own `pgdt parse` writes beside the dump, where `--dump` looks.",
+        "Read as a difference, bucket by bucket.",
     )
     lines += [
         f"rm -f {account_cache}",
         f"{binary} parse --source {account_dump} --dtcache {account_cache} "
         f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null",
     ]
-    for leg in DYNFILTER_LEGS:
+    for leg in DFCLI_ACCOUNT_LEGS:
         env, argv = dfcli_invocation(figure, query, leg, str(account_dump))
         stem = f"profile-dfcli-{figure}-{query}-{leg}"
         lines.extend(
@@ -11768,10 +11799,10 @@ def profile_recipe(cfg: Config) -> str:
     lines.append("")
     head(
         "The per-term reading: the same legs on the introspection build, each run",
-        "writing what it timed of its row evaluation. The off leg holds no filter,",
-        "so it reads no span at all: the control that only the filter is timed.",
+        "writing what it timed of its row evaluation. The default leg evaluates no",
+        "row, so it times no span but `Chunk`: the control that only rows are timed.",
     )
-    for leg in DYNFILTER_LEGS:
+    for leg in DFCLI_ACCOUNT_LEGS:
         env, argv = dfcli_invocation(figure, query, leg, str(account_dump))
         for rep in range(1, DFCLI_INTROSPECT_REPS + 1):
             report = out / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"

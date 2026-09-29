@@ -2791,8 +2791,9 @@ Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤5.28%, 
 ([`decisions.md`](decisions.md), "D93"), so each on leg is what a query pays
 with `pgdump.dynamic_filter_rows` unset, and **the rows-evaluated readings the
 account below argues from are `5e02bf9`'s** (`runs/measure-20260928T023528/`
-and `…T024013/`), which these tables no longer hold; 27.11 gives both figures a
-leg stating the setting. Both wins stand, being group pruning: the clustered
+and `…T024013/`), which these tables no longer hold. `measure.py` now times a
+third leg stating the setting, `Rows evaluated`, which these tables were taken
+before. Both wins stand, being group pruning: the clustered
 join's on leg reads 0.038 s and the TopK's 0.065 s, each at or below its
 `5e02bf9` spread. **The unclustered join no longer wins**, +0.013 s with its
 legs' spreads overlapping, where rows evaluated read −0.279 s; **the costing

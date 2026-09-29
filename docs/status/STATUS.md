@@ -60,7 +60,7 @@ the session stamp and its own account of what stands outside it; `cd scripts
 figure was re-taken at `da05a72`, with its binaries staged on tmpfs**, and
 `session-drift` with them from a second sweep on that commit; `reserve`'s
 stated axis is a reading `KD34` names. The dynamic-filter figures time the
-default, rows not evaluated, until 27.11 gives them a leg stating the setting.
+default, rows not evaluated; the leg stating the setting is built and not yet taken.
 What only something other than a sweep clears: `session-drift`, which only a
 second sweep on a first's commit re-takes, and the koji section, outside the
 register and red, which only a run on the HDD clears. Red with the reason
@@ -89,7 +89,7 @@ Spec: [`../design/roadmap-P27-dynamic-filters.md`](../design/roadmap-P27-dynamic
 - [x] **27.8** The per-row account of the costing input, no product code: its on leg's cost a row attributed among evaluating a row at all, each leaf's decode, each comparison and the `IN` lookup, by a `perf` profile and a per-term reading from an `introspect` build, summing to the measured Δ within its spread, what each shape of removing duplicate decoding saves, and the mechanisms beyond it named; [notes](../design/roadmap-P27.8-per-row-account-notes.md)
 - [x] **27.9** The bounds an `IN` implies dropped from row evaluation and the byte cut keying each group's bounds once, every figure the change could move re-taken, and the spec's criterion applied: it fails on the costing input, so row evaluation goes off, delivered by 27.10; [notes](../design/roadmap-P27.9-implied-bounds-notes.md)
 - [x] **27.10** The `pgdump.*` switch for row evaluation, taken since 27.9 turned it off: the setting off by default, its manual entry, "D93" rewritten, and the result-equality harness run with it on; [notes](../design/roadmap-P27.10-switch-notes.md)
-- [ ] **27.11** The figures price the switch: `dynamic-filter-join` and `dynamic-filter-topk` timing the filter off, on at the default and on with `pgdump.dynamic_filter_rows` set, `--profile-recipe`'s costing pair the default against the rows leg, "D93" rewritten to read that pair, and both figures re-taken
+- [ ] **27.11** The figures price the switch: `dynamic-filter-join` and `dynamic-filter-topk` timing the filter off, on at the default and on with `pgdump.dynamic_filter_rows` set, `--profile-recipe`'s costing pair the default against the rows leg, "D93" rewritten to read that pair, and both figures re-taken. Landed: the third leg and the recipe's pair; remaining: both figures re-taken from a commit carrying them, and "D93" rewritten on what they read; [notes](../design/roadmap-P27.11-pricing-notes.md)
 
 ## Not started
 

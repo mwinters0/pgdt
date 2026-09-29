@@ -747,16 +747,33 @@ class DynamicFilterFigures(unittest.TestCase):
                     for other in set(measure.DYNFILTER_FLAGS.values()) - {flag}:
                         self.assertNotIn(other, script)
 
-    def test_the_two_legs_of_a_row_differ_by_the_flag_alone(self):
+    def test_each_leg_of_a_row_differs_from_the_next_by_one_lever(self):
+        # Off to on is the producer's flag alone; on to rows the setting's
+        # `SET` alone, run before the query so the answer read back is the
+        # query's. A third difference would price something no column names.
+        self.assertEqual(list(measure.DYNFILTER_LEGS), ["off", "on", measure.DYNFILTER_ROWS_LEG])
         for figure, queries in measure.DYNFILTER_QUERIES.items():
             flag = measure.DYNFILTER_FLAGS[figure]
             for name in queries:
                 with self.subTest(figure=figure, query=name):
-                    off, on = (
+                    off, on, rows = (
                         measure._script(f"{measure.DYNFILTER_FAMILY}{figure}-{name}-{leg}")
                         for leg in measure.DYNFILTER_LEGS
                     )
                     self.assertEqual(off.replace(f"{flag}=false", f"{flag}=true"), on)
+                    self.assertNotIn(measure.DYNFILTER_ROWS_SQL, on)
+                    stated = f"-q -c '{measure.DYNFILTER_ROWS_SQL}' -c "
+                    self.assertEqual(rows.replace(stated, "-q -c "), on)
+
+    def test_the_rows_leg_states_a_setting_the_provider_takes(self):
+        # `SET` of a key the provider does not register fails the run rather
+        # than timing the default under the rows leg's name; held against the
+        # provider's own source, as the allocator is below.
+        settings = (measure.REPO / "datafusion-pgdump/src/settings.rs").read_text()
+        key, _, value = measure.DYNFILTER_ROWS_SQL.removeprefix("SET ").partition(" = ")
+        self.assertEqual(key.partition(".")[0], "pgdump")
+        self.assertIn(f'"{key.partition(".")[2]}" => {{', settings)
+        self.assertEqual(value, "true")
 
     def test_the_builder_is_untimed_and_writes_where_dump_looks(self):
         # `--dump` reads the cache beside the dump, and `datafusion-cli-pgdump`
@@ -796,11 +813,11 @@ class DynamicFilterFigures(unittest.TestCase):
         self.assertTrue(any(f"{measure.DFCLI_PARTITIONS}=4" in line for line in got), got)
 
     def test_the_sql_survives_the_shells_quoting(self):
-        # The query is single-quoted into `bash -c`.
-        for queries in measure.DYNFILTER_QUERIES.values():
-            for sql, _ in queries.values():
-                with self.subTest(sql=sql):
-                    self.assertNotIn("'", sql)
+        # Each statement is single-quoted into `bash -c`.
+        statements = [sql for q in measure.DYNFILTER_QUERIES.values() for sql, _ in q.values()]
+        for sql in [*statements, measure.DYNFILTER_ROWS_SQL, measure.STARTUP_SQL]:
+            with self.subTest(sql=sql):
+                self.assertNotIn("'", sql)
 
     def test_the_queries_name_the_generators_tables_and_columns(self):
         import generate_dynamic_filter_bench as gen
@@ -856,11 +873,19 @@ class DynamicFilterFigures(unittest.TestCase):
         self.assertTrue(got[0].startswith("costing: "), got)
         got = measure.dynfilter_problems("topk", self._reported("topk", **{"unsorted-off": {}}))
         self.assertEqual(len(got), 1, got)
+        # The rows leg is held to the answer too, not only the two the flag
+        # separates.
+        got = measure.dynfilter_problems(
+            "topk",
+            self._reported("topk", **{"unsorted-rows": {"result_rows": "1", "result_digest": "x"}}),
+        )
+        self.assertEqual(len(got), 1, got)
 
     def test_an_empty_answer_is_refused(self):
         empty = {"result_rows": "0", "result_digest": "e"}
         got = measure.dynfilter_problems(
-            "join", self._reported("join", **{"clustered-off": empty, "clustered-on": empty})
+            "join",
+            self._reported("join", **{f"clustered-{leg}": empty for leg in measure.DYNFILTER_LEGS}),
         )
         self.assertEqual(got, ["clustered: the query returned no row"])
 
@@ -5429,7 +5454,7 @@ class ProfileRecipe(unittest.TestCase):
             len(recorded),
             len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)
             + len(measure.PROFILE_AXIS)
-            + len(measure.DYNFILTER_LEGS),
+            + len(measure.DFCLI_ACCOUNT_LEGS),
         )
         axis = {f"--jobs {s.rpartition('-jobs-')[2]}" for s, _ in measure.PROFILE_AXIS}
         for record, line in recorded:
@@ -5523,7 +5548,11 @@ class ProfileRecipe(unittest.TestCase):
         introspected = str(
             cfg.alloc_build_root / "dfcli-introspect/release/datafusion-cli-pgdump"
         )
-        for leg in measure.DYNFILTER_LEGS:
+        # The default leg against the rows leg: the setting alone apart, the
+        # comparison "D93" reads.
+        self.assertEqual(measure.DFCLI_ACCOUNT_LEGS, ("on", measure.DYNFILTER_ROWS_LEG))
+        self.assertNotIn(f"{figure}-{query}-off", recipe)
+        for leg in measure.DFCLI_ACCOUNT_LEGS:
             with self.subTest(leg=leg):
                 timed = measure._script(f"{measure.DYNFILTER_FAMILY}{figure}-{query}-{leg}")
                 run = timed.split(" && time ", 1)[1].split(" >/tmp/result.csv", 1)[0]
