@@ -888,3 +888,84 @@ In each case you get a string column and a diagnostic that names which of these
 happened — they are distinguished on purpose, because "we have not implemented
 this yet" and "the dump does not contain the information" are different answers
 to "will this improve later?"
+
+## Appendix: value ranges, from PostgreSQL to pandas
+
+The least and greatest value of every PostgreSQL type that maps to a typed
+Arrow column, and how far each consumer downstream of us can carry it. The
+infinities and `NaN` are left out. Years are written BC/AD; Arrow's and
+`chrono`'s own year numbering is astronomical (year 0 is 1 BC), so their
+negative years read one less than the BC year.
+
+Where each column comes from:
+
+- **PostgreSQL**: values PostgreSQL 13 to 18 accept, held in our `types` test
+  fixture.
+- **Arrow**: the storage range of the Arrow type the column maps to, per
+  Arrow's format specification.
+- **DataFusion**: what DataFusion 55.1 can display or cast to a string
+  (`arrow-cast` 59.2.0, `chrono` 0.4.45). Outside this range it holds, compares
+  and writes the value, but printing it gives `ERROR: Cast error`.
+- **Python**: the standard library, as `pyarrow`'s `as_py()` hands values to
+  it (Python 3.13.7, `pyarrow` 25.0.1).
+- **pandas**: `pyarrow`'s `to_pandas()` with its default options (pandas
+  3.0.6, numpy 2.5.3), options that change a cell noted in it.
+
+### Dates and times
+
+| Type | PostgreSQL | Arrow | DataFusion | Python | pandas |
+|---|---|---|---|---|---|
+| `date` → `Date32` | 4714-11-24 BC … 5874897-12-31 | 5877642-06-23 BC … 5881580-07-11 (`i32` days) | 262144-01-01 BC … 262142-12-31 | 0001-01-01 … 9999-12-31 | 0001-01-01 … 9999-12-31, as `datetime.date` objects; with `date_as_object=False`, `datetime64[ms]`, all of Arrow's |
+| `timestamp` → `Timestamp(µs)` | 4714-11-24 00:00:00 BC … 294276-12-31 23:59:59.999999 | 290309-12-21 19:59:05.224192 BC … 294247-01-10 04:00:54.775807 (`i64` µs) | 262144-01-01 BC … 262142-12-31 23:59:59.999999 | 0001-01-01 00:00:00 … 9999-12-31 23:59:59.999999 | `datetime64[us]`, all of Arrow's but its least value; with `coerce_temporal_nanoseconds=True`, `datetime64[ns]`, 1677-09-21 00:12:43.145224193 … 2262-04-11 23:47:16.854775807 |
+| `timestamptz` → `Timestamp(µs, "UTC")` | as `timestamp`, in UTC | as `timestamp` | as `timestamp` | as `timestamp` | as `timestamp`, `datetime64[us, UTC]` |
+| `time` → `Time64(µs)` | 00:00:00 … 24:00:00 | 00:00:00 … 23:59:59.999999 | 00:00:00 … 23:59:59.999999 | 00:00:00 … 23:59:59.999999 | 00:00:00 … 23:59:59.999999, as `datetime.time` objects |
+
+### `interval` → `Interval(MonthDayNano)`
+
+| Field | PostgreSQL | Arrow | DataFusion | Python | pandas |
+|---|---|---|---|---|---|
+| months | −178956970 years −8 months … 178956970 years 7 months (`i32`) | `i32` | all of Arrow's | all of Arrow's, as `pyarrow`'s `MonthDayNano` | all of Arrow's, as `DateOffset` objects |
+| days | ±2147483647 days (`i32`) | `i32` | all of Arrow's | all of Arrow's | all of Arrow's |
+| time part | ±2562047788:00:54.775807 from PostgreSQL 15; ±2147483647:59:59.999999 in a 13 or 14 dump | ±2562047:47:16.854775807 (`i64` ns), ±2562047:47:16.854775 at PostgreSQL's microseconds | all of Arrow's | all of Arrow's | all of Arrow's |
+
+### Numbers
+
+| Type | PostgreSQL | Arrow | DataFusion | Python | pandas |
+|---|---|---|---|---|---|
+| `smallint` → `Int16` | −32768 … 32767 | same | same | unbounded `int` | `int16`; `float64` if the column holds a NULL |
+| `integer` → `Int32` | −2147483648 … 2147483647 | same | same | unbounded `int` | `int32`; `float64` if the column holds a NULL |
+| `bigint` → `Int64` | −9223372036854775808 … 9223372036854775807 | same | same | unbounded `int` | `int64`; `float64` if the column holds a NULL, exact only to ±2⁵³ |
+| `oid` → `UInt32` | 0 … 4294967295 | same | same | unbounded `int` | `uint32`; `float64` if the column holds a NULL |
+| `real` → `Float32` | ±3.4028235e+38 | same | same | widened exactly to `float` | `float32` |
+| `double precision` → `Float64` | ±1.7976931348623157e+308 | same | same | same | `float64` |
+| `numeric(p≤38, s)` → `Decimal128(p, s)` | ±(10³⁸ − 1) at `(38,0)` | ±(10³⁸ − 1) at precision 38 | same | `Decimal`, exact | `Decimal` objects, exact |
+| `numeric(39–76, s)` → `Decimal256(p, s)` | ±(10⁷⁶ − 1) at `(76,0)` | ±(10⁷⁶ − 1) at precision 76 | same | `Decimal`, exact | `Decimal` objects, exact |
+
+`uuid` (`FixedSizeBinary(16)`), `bytea` (`Binary`), `boolean` and
+`int2vector` (`List<Int16>`) have no range to compare; every consumer above
+carries their least and greatest values.
+
+### Where the consumers part company
+
+- **DataFusion's calendar ends at `262142-12-31`**, long before Arrow's
+  integers do: it formats dates and timestamps through `chrono`, whose calendar
+  ends there. A later value is still a valid Arrow value, and DataFusion
+  compares, sorts and writes it; it cannot print it.
+- **Python's calendar is the narrowest**: 0001 to 9999. `as_py()` raises
+  `OverflowError` for any `Date32` or `Timestamp` outside it.
+- **`time` `24:00:00`** decodes to a value past Arrow's day. DataFusion raises
+  `Cast error` on it, `to_pandas()` raises `ValueError` for the whole column,
+  and **`as_py()` silently returns `00:00:00`** — as does reading it out of a
+  `pd.ArrowDtype` column. Read such a column with `SchemaMode::Strings` if it
+  may hold one.
+- **pandas fails whole, not per value.** A `date` column holding one value past
+  9999, or before year 1, makes `to_pandas()` raise for the entire table; pass
+  `date_as_object=False` to get `datetime64[ms]` instead, which holds every
+  `Date32`. Timestamps come across as `datetime64[us]`, which holds everything
+  Arrow does; only asking for nanoseconds shrinks the range to 1677–2262.
+- **pandas turns an integer column with a NULL into `float64`** by default,
+  which loses `bigint` values past ±2⁵³. `types_mapper=pd.ArrowDtype` keeps
+  every column in its Arrow type, NULLs included; values then cross into
+  Python objects only as they are read, under Python's limits above.
+- **An `interval` never becomes a `timedelta`**, which has no months field:
+  `pyarrow` returns its own `MonthDayNano`, and pandas a `DateOffset`.
