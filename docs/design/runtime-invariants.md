@@ -1065,3 +1065,33 @@ PY
 ```
 
 The trapping child must print `continued`, the killed one `stopped`.
+
+## RT21 — `arrow-cast` formats a `date` or timestamp only to `262142-12-31`
+
+**Claim.** `arrow-cast`'s display, and its cast to `Utf8`, of a `Date32` or
+`Timestamp` value after `262142-12-31 23:59:59.999999` fails, though the
+value is a valid `i32` or `i64`; every value up to it formats.
+
+**Proof.** `chrono` 0.4.45, `src/naive/date/mod.rs`: `MAX_YEAR = (i32::MAX >>
+13) - 1`, the year packed into `NaiveDate`'s high 19 bits, and `NaiveDate::MAX`
+its last day; `arrow-cast` converts through `chrono` to format. Observed by
+`every_extreme_is_held_by_arrow_or_recorded`
+(`datafusion-pgdump/tests/unrepresentable.rs`), `t_extremes` ids 14 and 15.
+
+**Scope limit.** The upper end only: `chrono`'s lower end lies far below
+PostgreSQL's 4713 BC. Other Arrow consumers are not claimed.
+
+**Verified against:** `chrono` 0.4.45, `arrow-cast` 59.2.0.
+
+**Relied on by:** [`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
+"Scope" — the provider's tier of unrepresentable values and the calendar
+bound its count records.
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p datafusion-pgdump --test unrepresentable every_extreme_is_held_by_arrow_or_recorded
+grep -n 'MAX_YEAR: i32' ~/.cargo/registry/src/*/chrono-$(cargo tree -i chrono -e normal --depth 0 | awk '{print substr($2,2)}')/src/naive/date/mod.rs
+```
+
+The test passes only while ids 14 and 15 sit either side of the bound.

@@ -40,7 +40,19 @@ alike: `±infinity` on a `date`, `timestamp`, `timestamptz` or `interval`,
 three decades PostgreSQL admits, to `294276-12-31` — and `time` `24:00:00`,
 past `Time64`'s, no special case among them. **The definition governs and
 this list follows from it**; what Arrow's own spec forbids a type to hold
-counts, not only what a decoder refuses. **A nested value holding one is
+counts, not only what a decoder refuses.
+
+**"Cannot hold" is decided by layer, each limit where it is owned.** The
+library and `pgdt` hold a value to **Arrow's format spec** — the list above —
+the one line neutral across consumers they cannot know. **The DataFusion
+provider adds its engine's**: `arrow-cast` formats a `date` or timestamp
+through `chrono`, whose calendar ends at `262142-12-31` (`RT21`), so there a
+`date`, `timestamp` or `timestamptz` past it is one as well, each mode acting
+on it as on the rest; `pgdt query` prints it. Refused: `chrono`'s bound in
+every layer, which binds every library consumer to one engine's limit while
+Python's `datetime` stops at 9999 and `java.time` far past it; and the format
+spec alone, which leaves DataFusion's display refusing the value wherever a
+read reached it, the outcome the Premise removes. **A nested value holding one is
 one**: an array element, a range bound or a composite's field makes the whole
 value unrepresentable, and each mode acts on the whole — the typed mode's NULL
 being the array, range or composite, since a NULL range bound would mean
@@ -71,7 +83,13 @@ still-escaped bytes of each leaf — exactly `infinity`, `-infinity`, `NaN` or
 `24:00:00`, an hour part past the `interval` bound, or a year part past the
 `timestamp` one, only a year of exactly 294247 taking arithmetic, a
 `timestamptz`'s offset moving the bound within it — and never otherwise a
-decode. **The leaves are the column's declared type's**: a nested value is
+decode. **It is two tiers per column**: past Arrow's format spec, which every
+layer reads, and within it but past `chrono`'s calendar — a `date` or
+timestamp year past 262142, only 262142 and 262143 taking a `timestamptz`'s
+offset — which only the provider adds. **The cache records the calendar bound
+it counted under**, and a cache counted under another is refused, naming
+`parse`, never read as current nor replaced ("D20").
+**The leaves are the column's declared type's**: a nested value is
 walked by its declared PostgreSQL type, which the dump's DDL states, and a
 leaf is tested against its own type's spellings, so a `text` field reading
 `infinity` beside a `date` one is never counted. The cache so stays a
@@ -160,8 +178,10 @@ it does an unmapped column's (`predicate.rs`, `NOT_MAPPED`). `t_date` and
 
 **"D38" binds the typed mode.** The untyped mode, like `--schema-mode
 strings`, is the user asking for a type wider than the floor, and widens only
-a column the map says holds such a value; the entry gains that clause, and
-`floor_mapping.py` checks the typed mode alone.
+a column the map says holds such a value, in the tiers its front end reads —
+so the provider widens a column holding only the engine tier's where `pgdt`
+keeps it typed; the entry gains that clause, and `floor_mapping.py` checks the
+typed mode alone.
 
 **A statistics group keeps two views where they differ**: its bounds over
 representable values, its count of unrepresentable values, and — only where
@@ -171,7 +191,12 @@ count, so exact bounds, `IS NULL` truths, an `Exact` `COUNT(<column>)`
 ("D89") and pruning survive it; the refuse mode and PostgreSQL's semantics
 read the second pair where it exists. Refused: PostgreSQL-order bounds and the
 count alone, the typed mode giving up a group's bounds wherever such a value
-occurs. Both are statistics, absent at the metadata level.
+occurs. Both are statistics, absent at the metadata level. **The engine tier
+adds a view of its own**: where a group's count of it is not zero, its bounds
+over values at or before the calendar end, which the provider's typed mode
+reads, adding that count to the NULL count as well. Refused: dropping a bound
+past the calendar end in the provider, which gives up pruning and an `Exact`
+`MIN`/`MAX` on the group to save a field.
 
 **A dynamic filter's per-row evaluation ("D93") follows the static filter's**:
 under the typed mode it evaluates the value as NULL, so a row its state
@@ -188,7 +213,9 @@ The library evaluates them on the text against the column's *declared* type —
 `pgdt --where '<column> is unrepresentable'`, and in DataFusion a scalar UDF,
 `pgdump_unrepresentable(<column>)`, `NOT` above it the negation, always pushed
 `Exact` and refusing at planning wherever DataFusion would have to evaluate it
-itself, a NULL no longer carrying its origin. It answers in the typed, untyped
+itself, a NULL no longer carrying its origin. Each tests the tiers its front
+end reads, `pgdt` the format spec's and the UDF both, so each tells apart
+exactly the NULLs its own typed mode made. It answers in the typed, untyped
 and refuse modes — in the last where the column is not materialized — and
 refuses under `--schema-mode strings`, which reads no declared type and makes
 no NULL of one; `IsNull`'s "matches only a NULL field (`\N`)" is amended for
@@ -220,7 +247,10 @@ unrepresentable, Arrow's validity rather than a decoder's refusal being the
 test. **Arrow's validity is DataFusion's own path**: the column built, each
 value formatted by `arrow-cast`'s display and cast to `Utf8`, an error in
 either being unrepresentable — no bound written per type, which would be the
-list again. **A base type a later PostgreSQL major introduces is held to the
+list again. The record states each value's tier, format spec or engine, and
+**28.3's count is held to it tier by tier over the same rows**, so the
+fixture's rows either side of `chrono`'s calendar end fail `mise run check`
+the moment a `chrono` or `arrow-cast` upgrade moves it. **A base type a later PostgreSQL major introduces is held to the
 same test**, by a reconciliation beside `floor_mapping.py`'s: every
 `builtin_scalar` arm to a type other than `Utf8View` has an extremes row and
 every row an arm, so a new major's `floor.tsv` forces a mapping decision
@@ -255,10 +285,12 @@ path never sharing a slice with a new mechanism:
    query's cold semantics over a metadata-level table, and the provider's
    refusal of one. "D35" and "D77" amended — a rework of the mapping pass.
 3. **The count beside the census**: lexical, per block and column, each
-   leaf walked by the declared type, in the cache format; `info --detail`
-   showing it per column; `decode_time64_micros` refusing `24:00:00`.
-4. **Statistics' two views**: gathered, cached, and read by pruning under
-   each semantics.
+   leaf walked by the declared type, in two tiers, in the cache format with
+   the calendar bound it counted under; `info --detail` showing it per
+   column; `decode_time64_micros` refusing `24:00:00`; the count and the
+   extremes record held to each other by tier.
+4. **Statistics' views**: gathered, cached, and read by pruning under
+   each semantics, the engine tier's included.
 5. **The mode option and the typed mode**: `QueryOptions::unrepresentable`,
    NULL for every purpose — decode, the static and dynamic filters, NULL
    counts, "D89"'s statistics — the warning's `Finding`; `pgdt
@@ -311,6 +343,13 @@ path never sharing a slice with a new mechanism:
   Each decoder but `time`'s answers `None` (`decode_date32`,
   `decode_timestamp_micros`, `decode_interval`, `decimal_unscaled_digits`), and
   `RowBatcher::push_field` or `ResolvedTerm::eval` raises `Error::FieldDecode`.
+- **DataFusion displays a `date` or timestamp only to `262142-12-31`**:
+  `arrow-cast` converts through `chrono`, whose `NaiveDate` packs the year
+  into an `i32`'s high 19 bits (`RT21`), so `5874897-12-31` and `i64`'s last
+  microsecond decode and print `ERROR: Cast error` (`t_extremes` ids 2, 12,
+  15). `pgdt query` prints them, its renderer (`decode.rs`,
+  `render_date32_into`) holding no `chrono`. The bound lies below `i64`'s, so
+  the provider's tier needs no second timestamp bound.
 - **`time` `24:00:00` decodes to a value Arrow forbids**:
   `decode_time64_micros` answers `86_400_000_000` by design, where Arrow's
   `Time64` holds `[0, 86400 s)` (`Schema.fbs`, `Time`; `arrow-ipc` 59.2.0's
