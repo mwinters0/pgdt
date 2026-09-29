@@ -48,7 +48,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M172 are struck**, and nothing at or below `M172` is reused. That is a
+**M1–M179 are struck**, and nothing at or below `M179` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -73,10 +73,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M173 | 2026-09-27 | An enum's `MIN`/`MAX` handed over as `Dictionary` scalars off the label-order bounds, closing `KD45` | | [2026-09-26](../status/history/2026-09-26.md) |
-| M174 | 2026-09-27 | `measure.py`'s two images pinned by digest, and the glibc each figure ran under named in the stamp or its own marker | | [2026-09-27](../status/history/2026-09-27.md) |
-| M175 | 2026-09-27 | A scan's `EXPLAIN` line prints its static filter and its dynamic ones as one `predicate=`, as Parquet does | | [2026-09-26](../status/history/2026-09-26.md) |
-| M176 | 2026-09-27 | A test-only node running a scan's partitions in a stated order: `statistics_never_change_an_answer` in file order, `dynamic_filters.rs` gaining the zeros' extremes in both, both targets re-run under load | | [2026-09-27](../status/history/2026-09-27.md) |
-| M177 | 2026-09-28 | `render_allocations`' counting allocator counts only its own thread, so a stray allocation elsewhere in the process cannot fail the per-row budget | | [2026-09-28](../status/history/2026-09-28.md) |
-| M178 | 2026-09-28 | `measure.py --pin-cpus`, off by default, placing a leg on one or two L3 groups by its thread count; binaries staged on tmpfs; `time` read to the microsecond with user and sys; a startup leg; and three sittings deciding whether pinning halves drift and pricing what staging moves | | [2026-09-28](../status/history/2026-09-28.md) |
-| M179 | 2026-09-29 | Binaries staged on tmpfs in every regime as the apparatus, `measurements.md`'s rule saying so, then a full sweep and a second on its commit re-taking `session-drift` | | [2026-09-28](../status/history/2026-09-28.md), [2026-09-29](../status/history/2026-09-29.md) |

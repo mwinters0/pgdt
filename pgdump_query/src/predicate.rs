@@ -2989,14 +2989,20 @@ impl ResolvedMembership {
     /// Every value this membership could take over a row of `group`: its
     /// terms' sets combined as [`ResolvedExpr::Or`] combines them, a NULL in
     /// the list adding `Unknown` over any group a row starts in — the answer
-    /// the `Or` of `=` over the same list gives, not a tighter one.
+    /// the `Or` of `=` over the same list gives, not a tighter one. Tighter,
+    /// though a row equals at most one value, would break the per-group
+    /// agreement with the `Or` its generated check proves, for pruning
+    /// nobody has measured; so only the row path is constant in the list's
+    /// length, a group being answered term by term.
     #[cfg(test)]
     fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
         self.truths_keyed(group, &mut KeyedBounds::default())
     }
 
     /// [`Self::truths`], every term reading the group's bounds out of
-    /// `keyed`, so they are keyed once for the whole list.
+    /// `keyed`, so they are keyed once for the whole list. The sorted list is
+    /// not searched within the bounds, which would stop the cost scaling with
+    /// the list: what remains per term is a key comparison, no parse.
     fn truths_keyed<'a>(
         &'a self,
         group: &impl GroupStatistics,
@@ -3047,6 +3053,8 @@ impl ResolvedMembership {
                 )
             }),
             Lookup::Decoded { kind, keys } => kind == ordered && keys.iter().all(meets),
+            // So a join over `character(n)` keys keeps its bounds per row:
+            // speed, not rows.
             Lookup::Trimmed(_) | Lookup::Nested { .. } | Lookup::Each => false,
         }
     }

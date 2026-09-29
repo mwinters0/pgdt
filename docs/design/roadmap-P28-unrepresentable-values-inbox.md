@@ -47,7 +47,7 @@ group: the typed mode's diagnostic must not count rows a scan decoded.
 **Origin.** 27.5, 2026-09-27;
 `pgdump_query/tests/dynamic_filter.rs`,
 `a_row_the_state_rejects_is_dropped_before_it_decodes`. *Contingent on*
-the setting existing; off by default since 27.10, the path is reached only
+the setting existing; off by default, the path is reached only
 where a session turns it on.
 
 ## A third option: the refusal made deterministic
@@ -94,7 +94,7 @@ states. The diagnostic's number is deterministic only when read from the map,
 over the groups the plan keeps, never from the rows a scan decoded, which a
 `LIMIT` or a dynamic filter varies.
 
-**Why P28 cares.** Each is a decision the typed mode forces, and 27.5's
+**Why P28 cares.** Each is a decision the typed mode forces, and the
 per-row evaluation of a dynamic filter is one more place it lands.
 
 **Origin.** 2026-09-27.

@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P27 — DataFusion's dynamic filters | **Complete** | [`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md); [notes](roadmap-P27-dynamic-filters-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P28 — unrepresentable values | Sketched; not grilled | this file, below; [inbox](roadmap-P28-unrepresentable-values-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -567,7 +566,7 @@ column holding a value its Arrow type cannot hold refuses wherever a read
 reaches that value (`KD8`), and a DataFusion query need not read every row, so
 the same query answers on one run and refuses on the next
 ([`../status/history/2026-09-27.md`](../status/history/2026-09-27.md)).
-Sketched to corner-avoidance depth, and after P27.
+Sketched to corner-avoidance depth.
 
 **Correctness of type or correctness of data — only a wider type gives the
 second — is the user's choice, made at query time**, between two modes, neither
@@ -588,9 +587,9 @@ written.
 What it must decide: how a query states its mode; the diagnostic's shape;
 the filter's semantics for such a value under the typed mode, and the
 statistics' NULL counts; the exception "D38" takes for the untyped mode;
-`interval`'s overflowing time part, which is no special value; and where the
-count lives in the cache. It runs after P27 because P27's last slice settles
-the per-row evaluation the typed mode must then change.
+`interval`'s overflowing time part, which is no special value; where the
+count lives in the cache; and what the typed mode changes of a dynamic
+filter's per-row evaluation ([`decisions.md`](decisions.md), "D93").
 
 ## P22 — The third tunable
 
@@ -722,7 +721,10 @@ corner-avoidance depth. What it starts from:
 - **A per-group bloom filter**, for equality and `IN` on an unsorted column of
   many distinct values — the one shape measured to prune nothing today
   ([`measurements.md`](measurements.md), `statistics-pruning`, the `v_smallint`
-  row), and the membership a hash join's dynamic filter would test.
+  row), and the membership a hash join's dynamic filter would test: past the
+  `IN` list's limit (`hash_lookup`) or on several keys (`struct(…) IN`) a join
+  prunes by its bounds alone, and an `IN` over a column with no dictionary by
+  nothing.
 - **A per-block distinct-count sketch**, refused as a gathered count by "D79";
   "D89" derives an exact count from complete dictionaries instead, so what is
   left is the estimate for columns whose dictionaries overflow.

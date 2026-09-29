@@ -1,6 +1,5 @@
 //! DataFusion's dynamic filters, flags on against flags off, over the
-//! statistics fixtures (`docs/design/roadmap-P27-dynamic-filters.md`,
-//! "Evidence").
+//! statistics fixtures (`docs/design/decisions.md`, "D94").
 //!
 //! **No row may be lost, and the flags are the oracle.** A hash join's build
 //! side, a TopK's heap and an ungrouped `MIN`/`MAX` each publish a filter

@@ -2511,7 +2511,7 @@ DFCLI_PARTITIONS = "DATAFUSION_EXECUTION_TARGET_PARTITIONS"
 #: timer, so the three legs are held to one answer.
 #:
 #: **One binary, two levers, three legs**: DataFusion's own producer flag
-#: (`docs/design/roadmap-P27-dynamic-filters.md`, "Evidence") and the
+#: (`optimizer.enable_{join,topk}_dynamic_filter_pushdown`) and the
 #: provider's `pgdump.dynamic_filter_rows`, stated by a `SET` run ahead of the
 #: query in the same process. So each table prices what ships — the filter on
 #: against off — and what the setting buys and costs — rows evaluated against

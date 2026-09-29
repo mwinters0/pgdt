@@ -137,6 +137,10 @@ impl fmt::Debug for ReplayFilter {
 }
 
 impl DynamicFilter for ReplayFilter {
+    /// Each filter's generation read under its own lock, summed. Not
+    /// `DynamicFilterTracker`, whose one-load "moved?" sits behind a
+    /// `changed(&mut self)` subscribing one consumer, so a scan's sub-streams
+    /// sharing it would share a lock.
     fn generation(&self) -> u64 {
         self.held.0.iter().fold(0, |sum, filter| sum.wrapping_add(snapshot_generation(filter)))
     }
@@ -344,7 +348,9 @@ fn in_list(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
 /// does in the library's membership too. **A float's is loosened only where a
 /// row needs it true**: DataFusion answers it from a set of the values' bits,
 /// so `-0` is not in a list holding `0` there, where the library's `=`
-/// equates them ([`is_float`]).
+/// equates them ([`is_float`]). That is asked before the list is read, so a
+/// float's `NOT IN` holding a `NULL`, which keeps no row, keeps every row
+/// here; no producer publishes one.
 fn membership(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
     let Some(index) = column_at(list.expr(), table) else { return parity.anything() };
     if parity == Parity::Odd && is_float(index, table) {

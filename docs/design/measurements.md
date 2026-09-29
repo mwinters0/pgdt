@@ -2842,8 +2842,8 @@ byte cut keyed each group's bounds once per list value: **the costing row's
 on leg from 0.779 s to 0.688 s**, its Δ from −0.179 s to −0.279 s. Every join
 off leg lies inside its `11e13f2` spread, and `dd` moved 0.007 s.
 
-- **The costing row lands inside the band 27.8's account predicts** (the
-  account below):
+- **The costing row lands inside the band the per-row account predicts**
+  (below):
   the bounds' share, 25.6% to 60.9% of the Δ, plus the cut's 14.1%, so
   between 40% and 75% gone. At 43% it sits at the band's low end, which is
   what the bounds' removal saving near its lower bound — the unescapes, keys
@@ -2862,22 +2862,21 @@ off leg lies inside its `11e13f2` spread, and `dd` moved 0.007 s.
   0.058–0.068 s, the spreads overlapping — and its off leg, which holds no
   filter and which nothing between the two commits reaches, rose further**,
   0.966 s against 0.913–0.949 s. Its metrics count what they counted, and all
-  27.9 adds to its on leg is the row form rebuilt at each state read, a
+  `5e02bf9` adds to its on leg is the row form rebuilt at each state read, a
   clone per block per generation; the move is the TopK table's own sitting
   (taken apart from the join's, whose off legs did not move), and is
   **unattributed**. It makes no figure slower by its spreads, so nothing is
   taken out for it. Re-taken at `aff3a0e`, the off leg reads 0.925 s,
   back inside the `11e13f2` spread.
 
-**The spec's criterion fails, so row evaluation goes off**
-([`roadmap-P27-dynamic-filters.md`](roadmap-P27-dynamic-filters.md),
-"Slices", item 9). At `5e02bf9` the unclustered join wins, its legs' spreads apart,
+**The criterion for keeping row evaluation on fails, so it goes off**
+([`decisions.md`](decisions.md), "D93"). At `5e02bf9` the unclustered join wins, its legs' spreads apart,
 0.955–0.973 s off against 0.681–0.770 s on; the costing input's Δ does not
 lie within its legs' overlapping spreads, the spreads not overlapping at all,
 0.939–0.963 s off against 1.002–1.033 s on.
 
-**27.5's cost a term did not account for the costing row's cost a row at
-`11e13f2`.** At `28e804f` each costing row stopped at the equality naming
+**The cost a term measured at `28e804f` did not account for the costing
+row's cost a row at `11e13f2`.** At `28e804f` each costing row stopped at the equality naming
 its `bucket`, which cycles through the list in order, so 2 + 75.5 terms on
 average, and the +0.973 s over 811,470 rows came to **15.5 ns a term**; the
 unclustered row's +1.451 s over 811.4 K rows of 102 terms each came to at

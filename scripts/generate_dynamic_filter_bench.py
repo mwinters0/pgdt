@@ -4,8 +4,7 @@ taken on: a probe table, the perf generator's control rows with two keys
 appended, and three small build tables to join it against.
 
 Backs docs/design/measurements.md's two figures pricing what DataFusion's
-dynamic filters buy a query over `datafusion-cli-pgdump`
-(`docs/design/roadmap-P27-dynamic-filters.md`, "Evidence"). Every byte of a
+dynamic filters buy a query over `datafusion-cli-pgdump`. Every byte of a
 probe row but the two appended fields is the control's own
 (`generate_perf_data.random_row`, same seed, same draws).
 

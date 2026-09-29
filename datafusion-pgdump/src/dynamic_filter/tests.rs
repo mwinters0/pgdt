@@ -19,6 +19,12 @@
 //! of parts with no library term, standing in for `hash_lookup` and
 //! `struct(…) IN`: one column compared with another, and an `IN` whose list
 //! holds a column.
+//!
+//! **It cannot catch a producer's unsoundness**: DataFusion's evaluation of a
+//! filter equates the zeros as the library does, so this passes with
+//! [`loosened`]'s zero rule removed. Only a check against a producer's own
+//! answer fails without it — `tests/dynamic_filters.rs`' flags-on-against-off
+//! sweep and `tests/statistics.rs`' blind session.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;

@@ -410,7 +410,9 @@ impl DynamicPruning {
     }
 
     /// Ask [`Self::stop`] of `group`'s rows where a row of it can pass the
-    /// stop of the state last read, and of none where no row can.
+    /// stop of the state last read, and of none where no row can. Asked in
+    /// every kept group, the stop cost a row's evaluation over every group
+    /// before the bound's, to save at most the rest of one.
     pub(crate) fn arm(&mut self, group: usize) {
         let view =
             Believed { statistics: &self.statistics, believed: &self.believed, kinds: &self.kinds };

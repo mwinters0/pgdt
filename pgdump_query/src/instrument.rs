@@ -368,6 +368,8 @@ mod evaluation {
         }
     }
 
+    /// Shared by every thread: at one partition a relaxed atomic is
+    /// uncontended, so per-thread accumulators buy nothing.
     static SLOTS: [Slot; EvaluationPart::ALL.len()] =
         [const { Slot::new() }; EvaluationPart::ALL.len()];
 
@@ -391,7 +393,9 @@ mod evaluation {
     /// The time now, in ticks: the time-stamp counter where there is one, a
     /// read unordered against the work around it, so a span shorter than the
     /// pipeline is smeared across its neighbours and only a sum over many is
-    /// read — nanoseconds since the first read elsewhere.
+    /// read — nanoseconds since the first read elsewhere. `Instant` is a vDSO
+    /// call around the same counter; `rdtscp` or a fence would price a span
+    /// as if the pipeline held nothing else.
     #[inline(always)]
     #[allow(unused_unsafe)]
     fn ticks() -> u64 {
