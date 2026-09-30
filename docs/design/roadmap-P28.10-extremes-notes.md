@@ -40,8 +40,9 @@ What the slices after this one inherit. The spec is
   `date`, `5874897-12-31`, decodes to a value DataFusion displays as `ERROR:
   Cast error`, and so does `i64`'s last microsecond, `294247-01-10
   04:00:54.775807`; `262142-12-31` and its last microsecond display. The
-  record's `Why::Arrow` does not yet split this tier from `24:00:00`'s; 28.3
-  holds its count to the record by tier.
+  record's `Why` is that tier, `Engine`, or the format spec's, `Format`, and
+  the library's count is held to it tier by tier
+  ([`roadmap-P28.3-count-notes.md`](roadmap-P28.3-count-notes.md)).
 - **`interval`'s longest time part is not the same at every major.** From 15
   it is `±2562047788:00:54.775807`; at 13 and 14 `interval2tm` holds the hours
   in an `int` and `interval_out` refuses past one, so a table can hold a value

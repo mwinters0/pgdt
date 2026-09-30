@@ -1980,7 +1980,8 @@ that puts a `{` or `[` into the default rows invalidates both.
 it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
 census_row` in `map.rs` — the pre-filter and everything after it, and nothing
 else. That is the fold itself rather than `Builder::on_row`, which delegates
-to it, so the patch isolates the census for **every** caller, the interior
+to it, so the patch isolates the census, and the unrepresentable count beside
+it ([`decisions.md`](decisions.md), "D96"), for **every** caller, the interior
 workers included ([`decisions.md`](decisions.md), "D52"). Then
 
 ```sh

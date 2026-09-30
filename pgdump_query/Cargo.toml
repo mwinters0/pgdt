@@ -32,6 +32,11 @@ arrow-schema = { version = "59.2.0", default-features = false, features = [
 async-stream = "0.3"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1.12.1"
+# The calendar `arrow-cast` formats a `date` or timestamp through, whose last
+# day bounds the engine tier of the unrepresentable count (RT21) and is
+# recorded by the cache that counted under it (`index::calendar_end`). No
+# features: only `NaiveDate`'s range is read, and the version is `arrow`'s own.
+chrono = { version = "0.4.45", default-features = false }
 futures = "0.3.34"
 memchr = "2.8.3"
 # `http` only, and `default-features = false` to leave out the `fs` backend:

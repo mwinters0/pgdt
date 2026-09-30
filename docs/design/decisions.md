@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D95 -->
+<!-- decision-watermark: D96 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -250,6 +250,15 @@ the data level is censused, and so is every block a query's pass maps: gating on
 early blocks uncensused. The metadata level records `None` and splits no field; a typed query re-reads
 such a table for itself, writing nothing, and a plan over a held map refuses it. Rejected: degrading
 to the DDL's `List`; a census-only level a user can reach. Evidence: `census-brace-free`, `census-arrays`.
+
+### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
+Every census-taking read counts per block and column what the declared type's typed pair (no census) cannot hold, a leaf
+by its own type, lexically, the boundary years alone by arithmetic; a nested value once, in its worst leaf's tier:
+`format` past Arrow's spec, `engine` past `calendar_end` (RT21). It persists as counts (D74); a type holding more or
+less bumps `CACHE_FORMAT_VERSION`, as D78's order does, and a cache counted under another calendar is refused (D20).
+Rejected: a decode per field; a type-blind test (a `text` field reading `infinity`); counting as a query reads
+(timing decides); one tier. Code: `unrepresentable::Counter`, `map::FieldCount`. Evidence:
+`every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on

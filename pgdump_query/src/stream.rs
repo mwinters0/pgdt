@@ -63,8 +63,8 @@ use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Finding, Severity};
 use crate::gather;
 use crate::index::{
-    ArrayShape, CopyBlock, DumpIndex, TableName, scan_preamble, tiling_diagnostics,
-    toc_coverage_diagnostic, union_census,
+    ArrayShape, BlockCensus, CopyBlock, DumpIndex, TableName, non_seekable_compression_diagnostic,
+    scan_preamble, tiling_diagnostics, toc_coverage_diagnostic, union_census,
 };
 #[cfg(feature = "introspect")]
 use crate::instrument::statistics_loaded;
@@ -75,7 +75,7 @@ use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
 };
-use crate::leader::{self, RegionScan};
+use crate::leader::{self, CensusPlan, RegionScan};
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, census_row};
 use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
@@ -86,12 +86,14 @@ use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
+    scan as scan_events,
 };
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Sortedness, StatisticsAccount,
     StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
+use crate::unrepresentable::counter_for;
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -521,6 +523,75 @@ enum Pass<'a> {
     Query,
 }
 
+/// Scan `source` end to end and build its full file map, every block
+/// censused and counted and none gathering statistics — the eager, serial
+/// pass the incremental one ([`map_file`]) is held to. One pass:
+/// [`crate::map::Builder`] is fed the whole [`Event`] stream, and
+/// `DumpIndex::metadata` is [`dump_metadata_from_spans`] over the result and
+/// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
+/// "D34").
+///
+/// **Here rather than beside the index**, which is L1: counting a block's
+/// values resolves its columns' declared types, so the pass states each
+/// database's DDL at its first `COPY` block as [`map_forward`] does
+/// (`docs/design/decisions.md`, "D96").
+pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
+    let builder = eager_pass(source, options).await?;
+    let size = source.size().await?;
+    let roles = builder.roles().clone();
+    let tablespaces = builder.tablespaces().clone();
+    let mut spans = builder.finish(size);
+    let metadata = Some(dump_metadata_from_spans(&spans));
+    attach_text(source, &mut spans).await?;
+    let mut diagnostics = tiling_diagnostics(&spans, size);
+    diagnostics.push(toc_coverage_diagnostic(&spans));
+    diagnostics.extend(non_seekable_compression_diagnostic(source.seek_table().as_ref()));
+    Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
+}
+
+/// Scan `source` end to end and build its full file map as a span list —
+/// [`build_index`]'s spans, alone. Always scans to EOF, so
+/// [`SpanBody::Unscanned`] never appears in the result.
+pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
+    let builder = eager_pass(source, options).await?;
+    let mut spans = builder.finish(source.size().await?);
+    attach_text(source, &mut spans).await?;
+    Ok(spans)
+}
+
+/// [`build_index`] and [`build_map`]'s one scan: every event to one builder,
+/// each block counted against the DDL above it, restated once per database.
+async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Builder> {
+    let mut builder = Builder::new();
+    // The database the metadata in hand was stated for, and that metadata.
+    let mut stated: Option<(Option<String>, DumpMetadata)> = None;
+    scan_events(source, options, |event| {
+        match event {
+            Event::CopyStart(start) => {
+                let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
+                let header = start.header.clone();
+                builder.on_copy_start(start, true);
+                let db = builder.database().map(str::to_owned);
+                if stated.as_ref().is_none_or(|(covers, _)| *covers != db) {
+                    let metadata = dump_metadata_from_spans(&builder.snapshot(boundary));
+                    stated = Some((db.clone(), metadata));
+                }
+                let metadata = stated.as_ref().map(|(_, metadata)| metadata);
+                builder.count_block(counter_for(&header, metadata, db.as_deref()));
+            }
+            Event::Row(row) => builder.on_row(row.offset, row.raw),
+            Event::CopyEnd(end) => builder.on_copy_end(end),
+            Event::Line(line) => builder.feed_line(line.offset, line.raw),
+            Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+            Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
+            Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
+        }
+        std::ops::ControlFlow::Continue(())
+    })
+    .await?;
+    Ok(builder)
+}
+
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or the scan is
 /// cancelled. Emits no rows — see the module docs. `target` is the
@@ -683,8 +754,7 @@ async fn map_forward(
                                 (request.tracked_columns(&start.header).is_some(), Some(request))
                             }
                         };
-                        let columns = census.then_some(start.header.columns.len());
-                        let header = (census && request.is_some()).then(|| start.header.clone());
+                        let header = census.then(|| start.header.clone());
                         builder.on_copy_start(start, census);
                         // **Once per database, not once per block**:
                         // recomputing at every `CopyStart` would put a third
@@ -701,8 +771,15 @@ async fn map_forward(
                             index.metadata = Some(dump_metadata_from_spans(&spans));
                             metadata_covers = Some(db.clone());
                         }
-                        // After the restatement, so the observer resolves the
-                        // block against its own database's DDL.
+                        // After the restatement, so the count and the
+                        // observer resolve the block against its own
+                        // database's DDL.
+                        let plan = header.as_ref().map(|header| {
+                            let counter =
+                                counter_for(header, index.metadata.as_ref(), db.as_deref());
+                            builder.count_block(Arc::clone(&counter));
+                            CensusPlan { width: header.columns.len(), counter }
+                        });
                         let observer =
                             header.as_ref().zip(request).and_then(|(header, request)| {
                                 gather::observer_for(
@@ -730,7 +807,7 @@ async fn map_forward(
                             scan_options,
                             header_offset,
                             data_offset,
-                            columns,
+                            plan,
                             size,
                             builder.block_observer(),
                         )
@@ -797,9 +874,9 @@ async fn map_forward(
                     }
                     // This pass needs only the block's extent; row bytes
                     // become batches in the replay phase. Rows are read here
-                    // for a data-level block's array-shape census
-                    // (`docs/design/decisions.md`, "D35") and a gathering
-                    // block's statistics.
+                    // for a data-level block's census and count
+                    // (`docs/design/decisions.md`, "D35", "D96") and a
+                    // gathering block's statistics.
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
@@ -1488,7 +1565,7 @@ async fn backfill_statistics(
             if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
                 // Every row was read, so the block is at the data level
                 // whether its statistics fitted or not.
-                block.array_shapes = Some(census);
+                block.set_census(census);
                 let _attributed = StatisticsScope::enter();
                 match gathered {
                     // **A re-read that declined keeps what the block already
@@ -1625,9 +1702,9 @@ pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Ve
 pub struct BlockReread {
     /// What the block gathered, or the allowance it declined under.
     pub gathered: BlockGathered,
-    /// The block's census, which every re-read takes, having read every row —
-    /// a declined one included.
-    pub census: Vec<ArrayShape>,
+    /// The block's census and count, which every re-read takes, having read
+    /// every row — a declined one included.
+    pub census: BlockCensus,
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —
@@ -1639,8 +1716,8 @@ pub struct BlockReread {
 /// `block`. The caller stores the result's `gathered` in
 /// [`CopyBlock::statistics`], or — for [`BlockGathered::Declined`] — the
 /// allowance in [`CopyBlock::statistics_declined`]
-/// (`docs/design/decisions.md`, "D85"), and its `census` in
-/// [`CopyBlock::array_shapes`], which puts a block mapped at the metadata
+/// (`docs/design/decisions.md`, "D85"), and its `census` through
+/// [`CopyBlock::set_census`], which puts a block mapped at the metadata
 /// level at the data level.
 ///
 /// **The block is scanned as a mapping pass scans it**: offered to the leader
@@ -1703,6 +1780,7 @@ async fn reread_block(
         source,
         scan_options,
         cache_path,
+        metadata,
         block,
         size,
         Some(observer.as_mut()),
@@ -1718,8 +1796,9 @@ async fn reread_block(
 }
 
 /// Read every row of `block` again, as a mapping pass reads them — offered
-/// to the leader, and serially where it declines — censusing them and
-/// handing each to `observer` where there is one, and answer the census:
+/// to the leader, and serially where it declines — censusing and counting
+/// them against the DDL `metadata` states for the block, handing each to
+/// `observer` where there is one, and answer the census and count:
 /// what a back-fill ([`reread_block`]) and a query's census of a block mapped
 /// at the metadata level ([`census_metadata_level`]) both read. `None` is
 /// [`ScanOptions::cancel`] stopping it first; a block no longer ending where
@@ -1729,11 +1808,12 @@ async fn reread_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache_path: Option<&Path>,
+    metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
     shortfall_reported: &mut bool,
-) -> Result<Option<Vec<ArrayShape>>> {
+) -> Result<Option<BlockCensus>> {
     let moved = || Error::CachedBlockChanged {
         path: cache_path.map(Path::to_path_buf),
         header_offset: block.header_offset,
@@ -1743,12 +1823,16 @@ async fn reread_rows(
     if block.end_offset > size {
         return Err(moved());
     }
+    let plan = CensusPlan {
+        width: block.header.columns.len(),
+        counter: counter_for(&block.header, metadata, block.database.as_deref()),
+    };
     let outcome = leader::scan_region(
         source,
         scan_options,
         block.header_offset,
         block.data_offset,
-        Some(block.header.columns.len()),
+        Some(plan.clone()),
         size,
         observer.as_deref_mut(),
     )
@@ -1758,7 +1842,7 @@ async fn reread_rows(
         RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
         RegionScan::Declined => {
-            match observe_rows(source, scan_options, block, size, observer).await? {
+            match observe_rows(source, scan_options, block, &plan, size, observer).await? {
                 Some(read) => read,
                 None => return Ok(None),
             }
@@ -1771,22 +1855,24 @@ async fn reread_rows(
     Ok(Some(census))
 }
 
-/// Census every row of `block`, read serially from its first data byte to its
-/// terminator, handing each to `observer` where there is one, and answer the
-/// `CopyEnd` the scanner met with the census — `None` where
+/// Census and count every row of `block` as `plan` says, read serially from
+/// its first data byte to its terminator, handing each to `observer` where
+/// there is one, and answer the `CopyEnd` the scanner met with the census —
+/// `None` where
 /// [`ScanOptions::cancel`] was set first, read once per chunk as
 /// [`map_forward`] reads it.
 async fn observe_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     block: &CopyBlock,
+    plan: &CensusPlan,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
-) -> Result<Option<(CopyEnd, Vec<ArrayShape>)>> {
+) -> Result<Option<(CopyEnd, BlockCensus)>> {
     let mut scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
     let mut carry = ChunkCarry::new();
     let mut read_pos = block.data_offset;
-    let mut census = vec![ArrayShape::default(); block.header.columns.len()];
+    let mut census = BlockCensus::new(plan.width);
     loop {
         if scan_options.cancelled() {
             return Ok(None);
@@ -1814,7 +1900,7 @@ async fn observe_rows(
             while let Some(event) = scanner.next_event(span, span_eof)? {
                 match event {
                     Event::Row(row) => {
-                        census_row(&mut census, row.raw);
+                        census_row(&mut census, plan.counter.as_ref(), row.raw);
                         if let Some(observer) = observer.as_deref_mut() {
                             observer.observe_row(row.offset - block.data_offset, row.raw);
                         }
@@ -2808,6 +2894,7 @@ async fn map_for_query(
         scan_options,
         query_options,
         cache,
+        metadata.as_ref(),
         &mut matches,
         index.scanned_through,
         size,
@@ -2837,6 +2924,7 @@ async fn census_metadata_level(
     scan_options: &ScanOptions,
     query_options: &QueryOptions,
     cache: &CacheMode,
+    metadata: Option<&DumpMetadata>,
     matches: &mut [CopyBlock],
     scanned_through: u64,
     size: u64,
@@ -2863,6 +2951,7 @@ async fn census_metadata_level(
             source,
             scan_options,
             cache_path,
+            metadata,
             &matches[at],
             size,
             None,
@@ -2872,7 +2961,7 @@ async fn census_metadata_level(
         let Some(census) = read else {
             return Err(Error::ScanCancelled { scanned_through });
         };
-        matches[at].array_shapes = Some(census);
+        matches[at].set_census(census);
     }
     Ok(())
 }
@@ -5358,6 +5447,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             array_shapes: Some(Vec::new()),
+            unrepresentable: Some(Vec::new()),
         };
         // Nothing is read: the plan prices the chunk the source was last told.
         let planned = |chunk: usize, parallelism, span| {
@@ -5643,6 +5733,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             array_shapes: Some(Vec::new()),
+            unrepresentable: Some(Vec::new()),
         };
         let piece = |start: u64, limit: u64| Segment {
             block: block.clone(),
@@ -5689,6 +5780,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             array_shapes: Some(Vec::new()),
+            unrepresentable: Some(Vec::new()),
         };
         let whole = Segment::over(&block, 39..403);
         assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));

@@ -142,7 +142,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 }
 
 /// Inverse of [`days_from_civil`].
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097; // [0, 146096]
@@ -339,14 +339,16 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 ///
 /// Deficiency register: `deficiency: KD8` — the anchor for every one of these
 /// refusals ([`decode_interval`]'s infinities and overflowing time part,
-/// `NaN` on a `Decimal128`, and a timestamp past `i64` microseconds from 1970,
-/// which PostgreSQL's range outlasts by three decades): a typed column cannot
-/// hold the value, so materializing one is an `Error::FieldDecode` and there is
-/// no typed way to read it. `24:00:00` is a case that does not refuse:
-/// [`decode_time64_micros`] writes a `Time64` past Arrow's day, which
-/// DataFusion reads as an error wherever it formats or casts the value. So is
-/// a `date`, or a timestamp short of `i64`'s end, past `262142-12-31`: each
-/// decodes, and `arrow-cast` formats it through a calendar ending there.
+/// `NaN` on a `Decimal128`, a timestamp past `i64` microseconds from 1970,
+/// which PostgreSQL's range outlasts by three decades, and
+/// [`decode_time64_micros`]'s `24:00:00`): a typed column cannot hold the
+/// value, so materializing one is an `Error::FieldDecode` and there is no
+/// typed way to read it. A `date`, or a timestamp short of `i64`'s end, past
+/// `262142-12-31` does not refuse: each decodes, and `arrow-cast` formats it
+/// through a calendar ending there, which DataFusion reads as an error
+/// wherever it formats or casts the value. The map counts both kinds per
+/// block and column (`crate::index::Unrepresentable`), and nothing reads the
+/// count yet.
 /// `--schema-mode strings` returns the literal verbatim. A DataFusion query
 /// need not read every row — a `LIMIT` one partition meets
 /// first, a dynamic filter another partition tightened — so whether it
@@ -432,12 +434,24 @@ fn format_hms_frac_into(out: &mut String, total_micros: i64) {
     }
 }
 
-/// `None` for anything unparseable. `24:00:00` is a real, valid boundary
-/// value (PostgreSQL's inclusive upper bound for `time`) and decodes to
-/// exactly `86_400_000_000` with no special-casing needed.
-pub fn decode_time64_micros(s: &str) -> Option<i64> {
+/// Arrow's `Time64` day, in microseconds: the first value past it.
+const DAY_MICROS: i64 = 86_400_000_000;
+
+/// A `time`'s microseconds since midnight as PostgreSQL holds it, its
+/// inclusive upper bound `24:00:00` included — what its comparison orders
+/// (`crate::predicate`), where [`decode_time64_micros`] is what Arrow holds.
+pub(crate) fn time_of_day_micros(s: &str) -> Option<i64> {
     let (seconds, micros) = parse_time_of_day(s)?;
     Some(seconds * 1_000_000 + micros)
+}
+
+/// `None` for anything unparseable, and for `24:00:00`: a real, valid
+/// boundary value (PostgreSQL's inclusive upper bound for `time`) that
+/// Arrow's `Time64`, holding `[0, 86400 s)`, cannot, so it is refused as
+/// every other unrepresentable value is (the `KD8` anchor on
+/// [`decode_date32`]).
+pub fn decode_time64_micros(s: &str) -> Option<i64> {
+    time_of_day_micros(s).filter(|&micros| micros < DAY_MICROS)
 }
 
 pub fn render_time64_micros(v: i64) -> String {
@@ -484,6 +498,14 @@ pub(crate) fn extract_offset(s: &str) -> Option<(&str, i64)> {
 /// PostgreSQL values, but `Timestamp` has no sentinel for them, same
 /// reasoning as [`decode_date32`].
 pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
+    i64::try_from(timestamp_micros_wide(s, with_tz)?).ok()
+}
+
+/// [`decode_timestamp_micros`] before it narrows to `i64`: microseconds from
+/// the 1970 UTC epoch for any finite value the grammar reads, so a value past
+/// what `Timestamp(Microsecond)` holds is told from one that does not parse
+/// (`crate::unrepresentable`).
+pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
     if s == "infinity" || s == "-infinity" {
         return None;
     }
@@ -498,8 +520,7 @@ pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
 
     let local_micros =
         i128::from(days) * 86_400_000_000 + i128::from(seconds) * 1_000_000 + i128::from(micros);
-    let utc_micros = local_micros - i128::from(offset_secs) * 1_000_000;
-    i64::try_from(utc_micros).ok()
+    Some(local_micros - i128::from(offset_secs) * 1_000_000)
 }
 
 pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
@@ -1135,7 +1156,11 @@ mod tests {
 
     #[test]
     fn time_boundary_and_fraction_trimming() {
-        assert_eq!(decode_time64_micros("24:00:00"), Some(86_400_000_000));
+        // PostgreSQL's inclusive bound, past Arrow's day: refused by the
+        // decoder, ordered by the comparison, and rendered back all the same.
+        assert_eq!(decode_time64_micros("24:00:00"), None);
+        assert_eq!(time_of_day_micros("24:00:00"), Some(86_400_000_000));
+        assert_eq!(decode_time64_micros("23:59:59.999999"), Some(86_399_999_999));
         assert_eq!(render_time64_micros(86_400_000_000), "24:00:00");
         assert_eq!(decode_time64_micros("00:00:00.000001"), Some(1));
         assert_eq!(render_time64_micros(1), "00:00:00.000001");

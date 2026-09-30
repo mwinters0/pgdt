@@ -304,6 +304,7 @@ mod tests {
                 statistics: statistics.map(Arc::new),
                 statistics_declined: None,
                 array_shapes: Some(Vec::new()),
+                unrepresentable: Some(Vec::new()),
             })),
         }
     }

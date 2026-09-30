@@ -20,7 +20,7 @@ use crate::scan::{Event, ScanOptions, scan};
 use crate::statistics::{BlockStatistics, deserialize_block_statistics};
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
-/// list, user-defined type definitions. Populated by [`build_index`] via
+/// list, user-defined type definitions. Populated by `crate::stream::build_index` via
 /// `crate::preamble` (`docs/design/decisions.md`, "D36").
 pub use crate::preamble::DumpMetadata;
 
@@ -99,6 +99,106 @@ impl ArrayShape {
             (some, None) | (None, some) => some,
         };
         self.lower_bound_prefix |= other.lower_bound_prefix;
+    }
+}
+
+/// Which limit a value is past, where its column's Arrow type cannot hold it
+/// (`docs/design/decisions.md`, "D96").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnrepresentableTier {
+    /// Within Arrow's format spec, and past the calendar [`calendar_end`]
+    /// ends — a `date` or timestamp a DataFusion query cannot display, which
+    /// only the provider reads as unrepresentable.
+    Engine,
+    /// Past what Arrow's format spec lets the type hold, which every layer
+    /// reads: `±infinity`, `NaN` under a typmod, `time` `24:00:00`, an
+    /// `interval` time part past nanoseconds, a timestamp past `i64`
+    /// microseconds from 1970.
+    Format,
+}
+
+/// One column's count of values its Arrow type cannot hold in one `COPY`
+/// block, each value in the one tier it is past — the format spec's
+/// dominating (`docs/design/decisions.md`, "D96"). Beside the array-shape
+/// census, and at the same level: a block mapped at the metadata level holds
+/// neither.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unrepresentable {
+    /// Values past Arrow's format spec.
+    pub format: u64,
+    /// Values within it and past the engine's calendar.
+    pub engine: u64,
+}
+
+impl Unrepresentable {
+    /// Count one value past `tier`.
+    pub(crate) fn add(&mut self, tier: UnrepresentableTier) {
+        match tier {
+            UnrepresentableTier::Format => self.format += 1,
+            UnrepresentableTier::Engine => self.engine += 1,
+        }
+    }
+
+    /// Fold another block's, or a piece's, count for the same column in.
+    pub fn merge(&mut self, other: &Unrepresentable) {
+        self.format += other.format;
+        self.engine += other.engine;
+    }
+
+    /// Whether no value was counted in either tier.
+    pub fn is_zero(&self) -> bool {
+        self.format == 0 && self.engine == 0
+    }
+}
+
+/// **The last day of the calendar `arrow-cast` formats a `date` or timestamp
+/// through**, as a `Date32` day count from 1970 — `chrono`'s, whose end is the
+/// engine tier's bound (RT21). A cache records the bound it counted under and
+/// is refused by a build whose bound is another
+/// (`crate::cache::Unusable::CalendarChanged`), so a `chrono` upgrade moving
+/// it reaches no count taken before it.
+pub fn calendar_end() -> i32 {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the Unix epoch is a date");
+    let days = chrono::NaiveDate::MAX.signed_duration_since(epoch).num_days();
+    i32::try_from(days).expect("chrono's calendar ends inside Date32's range")
+}
+
+/// What one pass over a block's rows records beside its rows' extent: the
+/// array-shape census and the unrepresentable count, one entry each per
+/// column in `header.columns` order — the data level's two query affordances
+/// (`docs/design/decisions.md`, "D35", "D96"). The census grows for a row
+/// wider than its header; the count never does, a column past the header
+/// having no declared type to be tested against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockCensus {
+    pub shapes: Vec<ArrayShape>,
+    pub unrepresentable: Vec<Unrepresentable>,
+}
+
+impl BlockCensus {
+    /// Nothing folded yet, for a block `columns` wide.
+    pub(crate) fn new(columns: usize) -> Self {
+        BlockCensus {
+            shapes: vec![ArrayShape::default(); columns],
+            unrepresentable: vec![Unrepresentable::default(); columns],
+        }
+    }
+
+    /// Fold another piece's, or another read's, census of the same block in —
+    /// length-tolerant, since a row wider than its header grows the census.
+    pub(crate) fn merge(&mut self, other: &BlockCensus) {
+        if other.shapes.len() > self.shapes.len() {
+            self.shapes.resize(other.shapes.len(), ArrayShape::default());
+        }
+        for (slot, shape) in self.shapes.iter_mut().zip(&other.shapes) {
+            slot.merge(shape);
+        }
+        if other.unrepresentable.len() > self.unrepresentable.len() {
+            self.unrepresentable.resize(other.unrepresentable.len(), Unrepresentable::default());
+        }
+        for (slot, count) in self.unrepresentable.iter_mut().zip(&other.unrepresentable) {
+            slot.merge(count);
+        }
     }
 }
 
@@ -188,6 +288,20 @@ pub struct CopyBlock {
     /// never happens; *longer* only where a row is wider than its header,
     /// which a query refuses.
     pub array_shapes: Option<Vec<ArrayShape>>,
+    /// This block's unrepresentable count, one [`Unrepresentable`] per column
+    /// in `header.columns` order, and `None` exactly where `array_shapes` is:
+    /// every pass that censuses a block counts it
+    /// (`docs/design/decisions.md`, "D96").
+    pub unrepresentable: Option<Vec<Unrepresentable>>,
+}
+
+impl CopyBlock {
+    /// Record `census` — what a pass reading every row of this block found —
+    /// which puts the block at the data level.
+    pub fn set_census(&mut self, census: BlockCensus) {
+        self.array_shapes = Some(census.shapes);
+        self.unrepresentable = Some(census.unrepresentable);
+    }
 }
 
 /// One table as its `COPY` headers name it: the database whose `\connect`
@@ -243,7 +357,7 @@ pub struct DumpIndex {
     /// eager scan.
     pub scanned_through: u64,
     /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` only for
-    /// a `DumpIndex` built by hand rather than by [`build_index`]. A derived
+    /// a `DumpIndex` built by hand rather than by `crate::stream::build_index`. A derived
     /// view over `spans` (`crate::preamble::dump_metadata_from_spans`),
     /// computed once (`docs/design/decisions.md`, "D34").
     pub metadata: Option<DumpMetadata>,
@@ -326,41 +440,6 @@ impl DumpIndex {
     }
 }
 
-/// Scan `source` end to end and build its full file map — [`crate::map::Builder`]
-/// is fed the same [`Event`] stream as `CopyBlock` discovery, so this is one
-/// pass. `DumpIndex::metadata` is then
-/// [`crate::preamble::dump_metadata_from_spans`] over the result and
-/// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
-/// "D34").
-pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
-    let mut spans = Builder::new();
-
-    scan(source, options, |event| {
-        match event {
-            Event::CopyStart(start) => spans.on_copy_start(start, true),
-            Event::Row(row) => spans.on_row(row.offset, row.raw),
-            Event::CopyEnd(end) => spans.on_copy_end(end),
-            Event::Line(line) => spans.feed_line(line.offset, line.raw),
-            Event::DollarQuoteEnd(end) => spans.on_dollar_quote_end(end.offset),
-            Event::LargeObjectStart(start) => spans.on_large_object_start(start.start_offset),
-            Event::LargeObjectEnd(end) => spans.on_large_object_end(end.end_offset),
-        }
-        ControlFlow::Continue(())
-    })
-    .await?;
-
-    let size = source.size().await?;
-    let roles = spans.roles().clone();
-    let tablespaces = spans.tablespaces().clone();
-    let mut spans = spans.finish(size);
-    let metadata = Some(dump_metadata_from_spans(&spans));
-    attach_text(source, &mut spans).await?;
-    let mut diagnostics = tiling_diagnostics(&spans, size);
-    diagnostics.push(toc_coverage_diagnostic(&spans));
-    diagnostics.extend(non_seekable_compression_diagnostic(source.seek_table().as_ref()));
-    Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
-}
-
 /// Run the tiling check over a finished map and turn any failure into a
 /// diagnostic; the map is still returned
 /// (`docs/design/decisions.md`, "D30").
@@ -383,7 +462,7 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// D19's warning for a `.xz` source with no usable seek structure — `None`
 /// when there is no compression layer at all (`table` is `None`) or the table
 /// already has more than one block. One function for both callers: a live
-/// [`ByteRangeSource`] ([`build_index`], [`preamble_only`]) and a persisted
+/// [`ByteRangeSource`] (`crate::stream::build_index`, [`preamble_only`]) and a persisted
 /// cache (`crate::cache::status_from_file`).
 pub(crate) fn non_seekable_compression_diagnostic(
     table: Option<&xz_seek::SeekTable>,

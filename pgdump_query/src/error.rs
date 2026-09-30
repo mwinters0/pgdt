@@ -307,6 +307,13 @@ pub enum Unusable {
     /// (`crate::Recognized::Mismatch`) wherever the cache's claim was handed
     /// to it; `crate::cache::load` answers it for a source opened without one.
     CompressionContradicted,
+    /// A cache whose unrepresentable counts were taken under a calendar
+    /// ending on another day than this build's — `crate::index::calendar_end`,
+    /// each a `Date32` day count — so a count of what a DataFusion query
+    /// cannot display may be wrong either way (`docs/design/decisions.md`,
+    /// "D96"). Never read as current and never replaced unasked: a `parse`
+    /// told it may overwrite the cache counts again.
+    CalendarChanged { counted_under: i32, build: i32 },
 }
 
 impl Unusable {
@@ -316,6 +323,18 @@ impl Unusable {
     pub fn overwritable(&self) -> bool {
         !matches!(self, Unusable::NotACache)
     }
+}
+
+/// A `Date32` day count as the date it names, for a refusal to state.
+fn calendar_day(days: i32) -> String {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the Unix epoch is a date");
+    epoch.checked_add_signed(chrono::TimeDelta::days(i64::from(days))).map_or_else(
+        || format!("day {days} from 1970"),
+        |day| {
+            use chrono::Datelike;
+            format!("{}-{:02}-{:02}", day.year(), day.month(), day.day())
+        },
+    )
 }
 
 /// What a user can do about a cache that is recognisably ours and cannot be
@@ -351,6 +370,12 @@ fn cache_unusable(path: &Path, unusable: &Unusable) -> String {
         Unusable::CompressionContradicted => format!(
             "the cache at {path} records compression details this source contradicts, so it was \
              written for another file"
+        ),
+        Unusable::CalendarChanged { counted_under, build } => format!(
+            "the cache at {path} counted the values a query cannot display against a calendar \
+             ending {}, where this build's ends {}, so a `parse` must count them again",
+            calendar_day(*counted_under),
+            calendar_day(*build),
         ),
     };
     format!("{found}{}", OVERWRITE_WAYS_OUT)

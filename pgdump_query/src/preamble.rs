@@ -1739,6 +1739,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             array_shapes: Some(Vec::new()),
+            unrepresentable: Some(Vec::new()),
         })))
     }
 

@@ -1,7 +1,7 @@
 //! The full file map: an ordered, tiling set of [`Span`]s covering every byte
 //! of a `pg_dump` plain-format file (`docs/design/decisions.md`, "D30").
 //!
-//! [`build_map`] classifies DDL statements directly. A TOC comment block is
+//! [`Builder`] classifies DDL statements directly. A TOC comment block is
 //! recognized both as a **boundary** — see below — and as an **enrichment
 //! layer** read off the same lines: owner, kind label, the `Tablespace:`
 //! field, and a per-file TOC-coverage count.
@@ -37,10 +37,10 @@
 //! ## What this module owns
 //!
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
-//!   driven directly by [`crate::index::build_index`],
-//!   [`crate::index::scan_preamble`] and `crate::stream`'s mapping pass, fed
-//!   the same [`crate::scan::Event`] stream those already walk. [`build_map`]
-//!   is a thin wrapper for callers that just want a span list.
+//!   driven directly by [`crate::index::scan_preamble`] and `crate::stream`'s
+//!   mapping passes, fed the same [`crate::scan::Event`] stream those already
+//!   walk. `crate::stream::build_map` is a thin wrapper for callers that just
+//!   want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading;
@@ -87,14 +87,13 @@
 //! rather than generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
 use std::collections::BTreeSet;
-use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
 use crate::copy::split_fields;
-use crate::index::{ArrayShape, CopyBlock};
+use crate::index::{BlockCensus, CopyBlock, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::io::ByteRangeSource;
 use crate::preamble::{
@@ -103,7 +102,7 @@ use crate::preamble::{
     insert_tablespace, parse_alter_type_add_value_body, parse_connect, parse_qualified_name,
     push_stmt_line, statement_complete, strip_kw,
 };
-use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
+use crate::scan::{CopyEnd, CopyStart};
 use crate::statistics::{BlockGathered, BlockObserver};
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
@@ -397,7 +396,7 @@ pub enum SpanBody {
     /// into its owning entry's span (the module docs' "no grouping").
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span
-    /// (`docs/design/decisions.md`, "D30"). Never produced by [`build_map`],
+    /// (`docs/design/decisions.md`, "D30"). Never produced by `crate::stream::build_map`,
     /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
 }
@@ -515,8 +514,8 @@ enum Mode {
 }
 
 /// The statement-driven boundary/classification pass, shared by
-/// [`build_map`] (a standalone, always-to-EOF scan) and
-/// [`crate::index::build_index`]/[`crate::index::scan_preamble`], which drive
+/// `crate::stream::build_map` (a standalone, always-to-EOF scan) and
+/// `crate::stream::build_index`/[`crate::index::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub(crate) struct Builder {
@@ -561,46 +560,75 @@ pub(crate) struct Builder {
     /// and `None` for `Framing`/`Connect`/`VersionHeader`. Reset fresh by
     /// every new `Builder`.
     governing_toc: Option<TocHeader>,
-    /// The census accumulating for the open `COPY` block (`ArrayShape`), and
-    /// `None` for a block at the metadata level, whose rows are not split
-    /// (`docs/design/decisions.md`, "D35"). Sized at `CopyStart` from the
-    /// header's column list, and grown by any row that turns out to have more
-    /// fields, the mapping pass never refusing a row's width
-    /// (`docs/design/decisions.md`, "D28"); a query refuses that row, so
-    /// nothing reads the extra entries.
-    pending_census: Option<Vec<ArrayShape>>,
+    /// The census and count accumulating for the open `COPY` block
+    /// ([`BlockCensus`]), and `None` for a block at the metadata level, whose
+    /// rows are not split (`docs/design/decisions.md`, "D35"). Sized at
+    /// `CopyStart` from the header's column list, and its census grown by any
+    /// row that turns out to have more fields, the mapping pass never refusing
+    /// a row's width (`docs/design/decisions.md`, "D28"); a query refuses that
+    /// row, so nothing reads the extra entries.
+    pending_census: Option<BlockCensus>,
+    /// What the open block's values are counted against
+    /// ([`Builder::count_block`]); a censused block counts nothing without it.
+    pending_counter: Option<Arc<dyn FieldCount>>,
     /// The statistics observer for the open `COPY` block, when the mapping
     /// pass asked for one ([`Builder::observe_block`]). Handed every row and
     /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
     pending_observer: Option<Box<dyn BlockObserver>>,
 }
 
-/// Fold one data row of a `COPY` block into `census`, one [`ArrayShape`] per
-/// column, growing it for a row that turns out to have more fields than the
-/// header named — a malformed row, which the mapping pass does not refuse.
+/// **What a data-level block's values are counted against**: whether a field
+/// holds a value no Arrow type of its column's could hold, and past which
+/// limit (`docs/design/decisions.md`, "D96"). Defined here and implemented by
+/// `crate::unrepresentable`, which walks each leaf by the column's declared
+/// type — a cross-layer trait, as [`BlockObserver`] is
+/// (`docs/design/decisions.md`, "D74").
+pub(crate) trait FieldCount: Send + Sync {
+    /// Whether any column is tested, so a row is split for its count.
+    fn counts_any(&self) -> bool;
+    /// The tier `field` — column `column`'s still-escaped bytes — is past,
+    /// `None` for a value its column holds and for a column past the header.
+    fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier>;
+}
+
+/// Fold one data row of a `COPY` block into `census`: its fields into the
+/// array-shape census, one [`crate::index::ArrayShape`] per column, growing it for a row
+/// that turns out to have more fields than the header named — a malformed
+/// row, which the mapping pass does not refuse — and each field `counter`
+/// tests into the unrepresentable count.
 ///
-/// The row is rejected wholesale before it is split: an array literal always
-/// contains a `{`, the only other thing that can start one is an `[lb:ub]=`
-/// prefix, so a row holding neither byte costs one `memchr2` pass.
+/// The row is rejected wholesale before it is split where neither needs it:
+/// an array literal always contains a `{`, the only other thing that can
+/// start one is an `[lb:ub]=` prefix, so a row holding neither byte in a
+/// block whose counter tests no column costs one `memchr2` pass.
 ///
 /// **Two measurements are regenerated by patching this function**, and for
 /// every caller, which is why the patch point is here rather than in
 /// [`Builder::on_row`]: `census-brace-free` and `census-arrays` take their
-/// census-off column from this body preceded by a bare `return;`. Renaming
-/// it, splitting it, or moving the pre-filter out breaks that recipe.
+/// census-off column from this body preceded by a bare `return;`, which
+/// turns the count off with it. Renaming it, splitting it, or moving the
+/// pre-filter out breaks that recipe.
 ///
-/// A free function because its two callers hold their census in different
+/// A free function because its callers hold their census in different
 /// places: the serial mapping pass on the [`Builder`], an interior worker
-/// (`crate::leader`) its own.
-pub(crate) fn census_row(census: &mut Vec<ArrayShape>, raw: &[u8]) {
-    if memchr::memchr2(b'{', b'[', raw).is_none() {
+/// (`crate::leader`) and a re-read (`crate::stream`) their own.
+pub(crate) fn census_row(census: &mut BlockCensus, counter: &dyn FieldCount, raw: &[u8]) {
+    let shaped = memchr::memchr2(b'{', b'[', raw).is_some();
+    if !shaped && !counter.counts_any() {
         return;
     }
     for (i, field) in split_fields(raw).enumerate() {
-        if i >= census.len() {
-            census.resize(i + 1, Default::default());
+        if shaped {
+            if i >= census.shapes.len() {
+                census.shapes.resize(i + 1, Default::default());
+            }
+            census.shapes[i].observe(field);
         }
-        census[i].observe(field);
+        if let Some(tier) = counter.tier(i, field)
+            && let Some(count) = census.unrepresentable.get_mut(i)
+        {
+            count.add(tier);
+        }
     }
 }
 
@@ -713,6 +741,7 @@ impl Builder {
             tablespaces: BTreeSet::new(),
             governing_toc: None,
             pending_census: None,
+            pending_counter: None,
             pending_observer: None,
         }
     }
@@ -1154,8 +1183,9 @@ impl Builder {
         }
     }
 
-    /// A `COPY` header opened a block, censused where `census` says its
-    /// table is at the data level.
+    /// A `COPY` header opened a block, censused and counted where `census`
+    /// says its table is at the data level — counted against what
+    /// [`count_block`](Self::count_block) hands it next.
     pub(crate) fn on_copy_start(&mut self, event: CopyStart, census: bool) {
         // I12 puts the large-object region after every `COPY` block, so a
         // pending one here means non-`pg_dump` input — flushed rather than
@@ -1181,19 +1211,22 @@ impl Builder {
                 (event.header_offset, None)
             }
         };
-        self.pending_census = census.then(|| vec![Default::default(); event.header.columns.len()]);
+        self.pending_census = census.then(|| BlockCensus::new(event.header.columns.len()));
+        self.pending_counter = None;
         self.pending_observer = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
-    /// Fold one data row of the open `COPY` block into its array-shape
-    /// census, where it has one — see [`census_row`], shared with the interior
+    /// Fold one data row of the open `COPY` block into its census and count,
+    /// where it has them — see [`census_row`], shared with the interior
     /// workers a split `COPY` block is scanned by (`crate::leader`) — and hand
     /// it to the block's statistics observer, if it has one. `offset` is the
     /// row's absolute file offset.
     pub(crate) fn on_row(&mut self, offset: u64, raw: &[u8]) {
-        if let Some(census) = self.pending_census.as_mut() {
-            census_row(census, raw);
+        if let (Some(census), Some(counter)) =
+            (self.pending_census.as_mut(), self.pending_counter.as_deref())
+        {
+            census_row(census, counter, raw);
         }
         if let (Some(observer), Some((_, start, ..))) =
             (self.pending_observer.as_mut(), self.pending_data.as_ref())
@@ -1209,6 +1242,15 @@ impl Builder {
         self.pending_observer = Some(observer);
     }
 
+    /// Count the values of the `COPY` block [`on_copy_start`](Self::on_copy_start)
+    /// just opened at the data level against `counter`, which the caller
+    /// resolves from the DDL above the block once it has stated it
+    /// (`docs/design/decisions.md`, "D96"). A block at the metadata level
+    /// ignores it.
+    pub(crate) fn count_block(&mut self, counter: Arc<dyn FieldCount>) {
+        self.pending_counter = Some(counter);
+    }
+
     /// The open `COPY` block's statistics observer, for the interior workers
     /// that observe its rows in pieces instead of [`on_row`](Self::on_row)
     /// (`crate::leader::scan_region`).
@@ -1216,24 +1258,16 @@ impl Builder {
         self.pending_observer.as_deref_mut()
     }
 
-    /// Union an already-folded census into the open `COPY` block's own — what
-    /// a block whose rows were counted by interior workers states instead of
-    /// the [`on_row`](Self::on_row) calls it never made
-    /// (`crate::leader::scan_region`). Takes `&[ArrayShape]` rather than the
-    /// leader's `Interior`: this module is L1 and the leader L4, so the shape
-    /// vector is the L1 value they share (`docs/design/decisions.md`, "D68").
-    ///
-    /// Length-tolerant because a row wider than its header grows a census
-    /// ([`census_row`]), so the workers' union can be wider than what
-    /// [`on_copy_start`](Self::on_copy_start) sized. A block holding no
-    /// census absorbs nothing.
-    pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
-        let Some(pending) = self.pending_census.as_mut() else { return };
-        if census.len() > pending.len() {
-            pending.resize(census.len(), ArrayShape::default());
-        }
-        for (slot, shape) in pending.iter_mut().zip(census) {
-            slot.merge(shape);
+    /// Union an already-folded census and count into the open `COPY` block's
+    /// own — what a block whose rows were counted by interior workers states
+    /// instead of the [`on_row`](Self::on_row) calls it never made
+    /// (`crate::leader::scan_region`). Takes the L1 [`BlockCensus`] rather
+    /// than the leader's `Interior`: this module is L1 and the leader L4
+    /// (`docs/design/decisions.md`, "D68"). A block holding no census absorbs
+    /// nothing.
+    pub(crate) fn absorb_census(&mut self, census: &BlockCensus) {
+        if let Some(pending) = self.pending_census.as_mut() {
+            pending.merge(census);
         }
     }
 
@@ -1254,7 +1288,7 @@ impl Builder {
             Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
             None => (None, None),
         };
-        let block = CopyBlock {
+        let mut block = CopyBlock {
             header: copy_start.header,
             database: self.database.clone(),
             header_offset: copy_start.header_offset,
@@ -1265,8 +1299,17 @@ impl Builder {
             partition_root,
             statistics,
             statistics_declined,
-            array_shapes: self.pending_census.take(),
+            array_shapes: None,
+            unrepresentable: None,
         };
+        debug_assert!(
+            self.pending_census.is_none() || self.pending_counter.is_some(),
+            "a censused block is counted too (D96)"
+        );
+        self.pending_counter = None;
+        if let Some(census) = self.pending_census.take() {
+            block.set_census(census);
+        }
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
     }
@@ -1471,36 +1514,24 @@ fn classify(stmt: &str) -> SpanBody {
     }
 }
 
-/// Scan `source` end to end and build its full file map — see the module
-/// docs for what is and is not classified. Always scans to EOF, so
-/// [`SpanBody::Unscanned`] never appears in the result.
-pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
-    let mut builder = Builder::new();
-
-    scan(source, options, |event| {
-        match event {
-            Event::CopyStart(start) => builder.on_copy_start(start, true),
-            Event::Row(row) => builder.on_row(row.offset, row.raw),
-            Event::CopyEnd(end) => builder.on_copy_end(end),
-            Event::Line(line) => builder.feed_line(line.offset, line.raw),
-            Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
-            Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
-            Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
-        }
-        ControlFlow::Continue(())
-    })
-    .await?;
-
-    let end = source.size().await?;
-    let mut spans = builder.finish(end);
-    attach_text(source, &mut spans).await?;
-    Ok(spans)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::copy::CopyHeader;
+
+    /// A block's count where no column is tested: what a `COPY` with no DDL
+    /// above it is counted against.
+    struct NoCount;
+
+    impl FieldCount for NoCount {
+        fn counts_any(&self) -> bool {
+            false
+        }
+
+        fn tier(&self, _column: usize, _field: &[u8]) -> Option<UnrepresentableTier> {
+            None
+        }
+    }
 
     /// Feed `lines` (each with a synthetic offset — `\n`-joined, matching
     /// how a real scan would number them) through a fresh [`Builder`] and
@@ -1649,6 +1680,7 @@ mod tests {
             },
             true,
         );
+        builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -1845,6 +1877,7 @@ mod tests {
             },
             true,
         );
+        builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -1993,6 +2026,7 @@ mod tests {
             },
             true,
         );
+        builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
@@ -2146,6 +2180,7 @@ mod tests {
             },
             true,
         );
+        builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
         builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });

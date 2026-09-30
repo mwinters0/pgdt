@@ -1285,7 +1285,7 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         // over a label list, a handful of entries in practice.
         CompareKind::Enum(labels) => OrderKey::Int(labels.iter().position(|l| l == text)? as i64),
         CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
-        CompareKind::Time => OrderKey::Int(decode::decode_time64_micros(text)?),
+        CompareKind::Time => OrderKey::Int(decode::time_of_day_micros(text)?),
         CompareKind::Timestamp { with_tz } => {
             OrderKey::Int(decode::decode_timestamp_micros(text, *with_tz)?)
         }
@@ -1986,7 +1986,7 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         // column.
         K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
-        K::Time => decode::render_time64_micros(decode::decode_time64_micros(text)?),
+        K::Time => decode::render_time64_micros(decode::time_of_day_micros(text)?),
         K::Timestamp { with_tz } => decode::render_timestamp_micros(
             decode::decode_timestamp_micros(text, *with_tz)?,
             *with_tz,
@@ -6891,7 +6891,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (30, 2_008_420_983_373_127_703);
+        const GOLDEN_ORDER: (u32, u64) = (31, 2_008_420_983_373_127_703);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

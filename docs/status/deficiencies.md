@@ -98,10 +98,10 @@ than reading as a phase nobody has sliced.
   Future item "collation-aware comparison", intent without a phase. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD8** — a typed column cannot hold `±infinity`, `NaN`, an `interval` time
-  part past Arrow's or a `timestamp` past `294247-01-10`, so materializing one
-  raises `Error::FieldDecode`, and `time` `24:00:00`, or a `date` or timestamp
-  past `262142-12-31`, decodes to a value DataFusion reads as an error; whether
+- **KD8** — a typed column cannot hold `±infinity`, `NaN`, `time` `24:00:00`,
+  an `interval` time part past Arrow's or a `timestamp` past `294247-01-10`,
+  so materializing one raises `Error::FieldDecode`, and a `date` or timestamp
+  past `262142-12-31` decodes to a value DataFusion reads as an error; whether
   a query reaches such a value can depend on how its partitions run, so it may
   answer on one run and refuse on the next. **(b) owned by P28**, whose three
   modes never depend on which rows a read reached; slice 28.7 closes it.

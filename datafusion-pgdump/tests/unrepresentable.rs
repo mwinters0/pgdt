@@ -29,7 +29,8 @@
 //!
 //! **Which values are unrepresentable is read, not listed**: the `types`
 //! fixture's extremes, at every major, each decode to a value
-//! [`arrow_holds`] admits or are recorded in [`UNREPRESENTABLE`], exactly.
+//! [`arrow_holds`] admits or are recorded in [`UNREPRESENTABLE`], exactly,
+//! and the library's count of them is the record's, tier by tier.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -51,7 +52,7 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     DataBlock, Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, SpanBody,
-    StatisticsRequest, decode_field, map_file,
+    StatisticsRequest, Unrepresentable, decode_field, map_file,
 };
 
 mod in_order;
@@ -842,65 +843,97 @@ const EVERY_MAJOR: [u32; 6] = [13, 14, 15, 16, 17, 18];
 /// (`scripts/fixture_schema_types.sql`).
 const EXTREMES: [&str; 2] = ["t_extremes", "t_extremes_nested"];
 
-/// Why a value is outside its column's Arrow type.
+/// Which limit a value is past: the tier the library's count records it in
+/// (`pgdump_query::UnrepresentableTier`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Why {
-    /// The library's decoder refuses the text.
-    Decoder,
-    /// The decoder answers a value `arrow-cast` cannot display or spell.
-    Arrow,
+    /// Arrow's format spec: the library's decoder refuses the text.
+    Format,
+    /// The engine's calendar: the decoder answers a value `arrow-cast`
+    /// cannot display or spell.
+    Engine,
 }
 
 /// **Every extreme outside its column's Arrow type**, as `table.column`, the
-/// row's `id` and why, at every major whose fixture holds that row.
+/// row's `id` and the tier it is past, at every major whose fixture holds
+/// that row.
 const UNREPRESENTABLE: &[(&str, i32, Why)] = &[
     // `NaN` under a typmod.
-    ("t_extremes.v_numeric38", 5, Why::Decoder),
-    ("t_extremes.v_numeric76", 5, Why::Decoder),
+    ("t_extremes.v_numeric38", 5, Why::Format),
+    ("t_extremes.v_numeric76", 5, Why::Format),
     // A date past `chrono`'s calendar, which `arrow-cast` displays through:
     // PostgreSQL's greatest, and the day after `262142-12-31`, the last one
     // that displays. And the infinities.
-    ("t_extremes.v_date", 2, Why::Arrow),
-    ("t_extremes.v_date", 15, Why::Arrow),
-    ("t_extremes.v_date", 3, Why::Decoder),
-    ("t_extremes.v_date", 4, Why::Decoder),
+    ("t_extremes.v_date", 2, Why::Engine),
+    ("t_extremes.v_date", 15, Why::Engine),
+    ("t_extremes.v_date", 3, Why::Format),
+    ("t_extremes.v_date", 4, Why::Format),
     // The timestamps alike: PostgreSQL's greatest and the microsecond past
     // `i64`'s are refused by the decoder; `i64`'s last, and the first instant
     // past `chrono`'s calendar, decode to values `arrow-cast` cannot display.
-    ("t_extremes.v_ts", 2, Why::Decoder),
-    ("t_extremes.v_ts", 3, Why::Decoder),
-    ("t_extremes.v_ts", 4, Why::Decoder),
-    ("t_extremes.v_ts", 12, Why::Arrow),
-    ("t_extremes.v_ts", 13, Why::Decoder),
-    ("t_extremes.v_ts", 15, Why::Arrow),
-    ("t_extremes.v_tstz", 2, Why::Decoder),
-    ("t_extremes.v_tstz", 3, Why::Decoder),
-    ("t_extremes.v_tstz", 4, Why::Decoder),
-    ("t_extremes.v_tstz", 12, Why::Arrow),
-    ("t_extremes.v_tstz", 13, Why::Decoder),
-    ("t_extremes.v_tstz", 15, Why::Arrow),
+    ("t_extremes.v_ts", 2, Why::Format),
+    ("t_extremes.v_ts", 3, Why::Format),
+    ("t_extremes.v_ts", 4, Why::Format),
+    ("t_extremes.v_ts", 12, Why::Engine),
+    ("t_extremes.v_ts", 13, Why::Format),
+    ("t_extremes.v_ts", 15, Why::Engine),
+    ("t_extremes.v_tstz", 2, Why::Format),
+    ("t_extremes.v_tstz", 3, Why::Format),
+    ("t_extremes.v_tstz", 4, Why::Format),
+    ("t_extremes.v_tstz", 12, Why::Engine),
+    ("t_extremes.v_tstz", 13, Why::Format),
+    ("t_extremes.v_tstz", 15, Why::Engine),
     // `24:00:00`, past `Time64`'s day.
-    ("t_extremes.v_time", 2, Why::Arrow),
+    ("t_extremes.v_time", 2, Why::Format),
     // A time part past Arrow's nanoseconds either way, the longest a dump
     // holds included, and from 17 the infinities.
-    ("t_extremes.v_interval", 6, Why::Decoder),
-    ("t_extremes.v_interval", 7, Why::Decoder),
-    ("t_extremes.v_interval", 8, Why::Decoder),
-    ("t_extremes.v_interval", 10, Why::Decoder),
-    ("t_extremes.v_interval", 17, Why::Decoder),
-    ("t_extremes.v_interval", 18, Why::Decoder),
+    ("t_extremes.v_interval", 6, Why::Format),
+    ("t_extremes.v_interval", 7, Why::Format),
+    ("t_extremes.v_interval", 8, Why::Format),
+    ("t_extremes.v_interval", 10, Why::Format),
+    ("t_extremes.v_interval", 17, Why::Format),
+    ("t_extremes.v_interval", 18, Why::Format),
     // A nested value holding one is one.
-    ("t_extremes_nested.v_date_array", 1, Why::Decoder),
-    ("t_extremes_nested.v_daterange", 1, Why::Decoder),
-    ("t_extremes_nested.v_dated", 1, Why::Decoder),
-    ("t_extremes_nested.v_interval_array", 1, Why::Decoder),
+    ("t_extremes_nested.v_date_array", 1, Why::Format),
+    ("t_extremes_nested.v_daterange", 1, Why::Format),
+    ("t_extremes_nested.v_dated", 1, Why::Format),
+    ("t_extremes_nested.v_interval_array", 1, Why::Format),
 ];
 
-/// Each extreme's `(table.column, id)`, and why it is unrepresentable where
-/// it is, over one major.
-async fn extremes(major: u32) -> (BTreeSet<(String, i32)>, BTreeMap<(String, i32), (Why, String)>) {
+/// What one major's extremes show: each value's `(table.column, id)`, the
+/// tier each unrepresentable one is past and why, and the library's count
+/// of each column, as the parse recorded it.
+struct Extremes {
+    present: BTreeSet<(String, i32)>,
+    outside: BTreeMap<(String, i32), (Why, String)>,
+    counted: BTreeMap<String, Unrepresentable>,
+}
+
+/// The library's count of each column of [`EXTREMES`]' blocks in the cache
+/// beside `copy`, as `table.column`.
+async fn counted(copy: &Path) -> BTreeMap<String, Unrepresentable> {
+    let source = LocalFileSource::open(copy).unwrap();
+    let CacheStatus::Valid { index, .. } =
+        cache::load(&cache::colocated_path(copy), &source).await.unwrap()
+    else {
+        panic!("the parse left a complete cache")
+    };
+    let mut out = BTreeMap::new();
+    for block in index.blocks().filter(|b| EXTREMES.contains(&b.header.table.as_str())) {
+        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        for (column, count) in block.header.columns.iter().zip(counts) {
+            let key = format!("{}.{column}", block.header.table);
+            out.entry(key).or_insert_with(Unrepresentable::default).merge(count);
+        }
+    }
+    out
+}
+
+/// Each extreme, and the library's count of it, over one major.
+async fn extremes(major: u32) -> Extremes {
     let scratch = tempfile::tempdir().unwrap();
     let copy = parsed_copy(&fixture(major), scratch.path(), Statistics::Absent).await;
+    let counted = counted(&copy).await;
     let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let text_dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
     let typed_dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
@@ -933,11 +966,11 @@ async fn extremes(major: u32) -> (BTreeSet<(String, i32)>, BTreeMap<(String, i32
                     let text = column.value(row);
                     match decode_field(field.data_type(), &resolved.plans[i], text) {
                         None => {
-                            outside.insert(key, (Why::Decoder, text.to_string()));
+                            outside.insert(key, (Why::Format, text.to_string()));
                         }
                         Some(value) => {
                             if let Err(err) = arrow_holds(&value) {
-                                outside.insert(key, (Why::Arrow, format!("{text}: {err}")));
+                                outside.insert(key, (Why::Engine, format!("{text}: {err}")));
                             }
                         }
                     }
@@ -945,13 +978,18 @@ async fn extremes(major: u32) -> (BTreeSet<(String, i32)>, BTreeMap<(String, i32
             }
         }
     }
-    (present, outside)
+    Extremes { present, outside, counted }
 }
 
 /// **The category is what Arrow cannot hold**: every extreme the `types`
 /// fixture holds, at every major, decodes to a value [`arrow_holds`] admits
-/// or is recorded in [`UNREPRESENTABLE`], with why — the record exact both
-/// ways, so a value the category gains or loses is a change to it.
+/// or is recorded in [`UNREPRESENTABLE`], with its tier — the record exact
+/// both ways, so a value the category gains or loses is a change to it.
+///
+/// **And the library's count is the record, tier by tier**: each column's
+/// count in the map equals the record's values of that column in each tier,
+/// so a `chrono` or `arrow-cast` upgrade moving the calendar's end moves
+/// the fixture's rows either side of it out of one or the other.
 #[test]
 fn every_extreme_is_held_by_arrow_or_recorded() {
     let results: Vec<_> = std::thread::scope(|scope| {
@@ -968,7 +1006,7 @@ fn every_extreme_is_held_by_arrow_or_recorded() {
         workers.into_iter().map(|worker| worker.join().unwrap()).collect()
     });
     let mut wrong = Vec::new();
-    for (major, (present, outside)) in results {
+    for (major, Extremes { present, outside, counted }) in results {
         let recorded: BTreeMap<(String, i32), Why> = UNREPRESENTABLE
             .iter()
             .map(|&(column, id, why)| ((column.to_string(), id), why))
@@ -989,6 +1027,21 @@ fn every_extreme_is_held_by_arrow_or_recorded() {
                     key.0, key.1
                 ));
             }
+        }
+        let mut by_tier: BTreeMap<String, Unrepresentable> = BTreeMap::new();
+        for ((column, _), why) in &recorded {
+            let count = by_tier.entry(column.clone()).or_default();
+            match why {
+                Why::Format => count.format += 1,
+                Why::Engine => count.engine += 1,
+            }
+        }
+        let counted: BTreeMap<String, Unrepresentable> =
+            counted.into_iter().filter(|(_, count)| !count.is_zero()).collect();
+        if counted != by_tier {
+            wrong.push(format!(
+                "{major}: the library counts {counted:?}, where the record says {by_tier:?}"
+            ));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));

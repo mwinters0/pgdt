@@ -585,6 +585,56 @@ async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
     );
 }
 
+/// **A column holding values its type cannot hold says how many, beneath its
+/// type, in each tier** (`docs/design/decisions.md`, "D96"): `t_date`'s two
+/// infinities, and `t_extremes.v_date`'s greatest date and the day past the
+/// calendar beside its two infinities. A column holding none says nothing,
+/// and `--json` carries each block's count as the cache holds it.
+#[tokio::test]
+async fn a_columns_unrepresentable_count_is_stated_beneath_it() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+
+    let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
+    let lines: Vec<&str> = detail.lines().collect();
+    let beneath = |table: &str, column: &str| {
+        let block = lines.iter().position(|l| l.starts_with(&format!("{table} ("))).unwrap();
+        let at = block
+            + lines[block..]
+                .iter()
+                .position(|l| l.starts_with(&format!("    {column}: ")))
+                .unwrap();
+        lines[at + 1]
+    };
+    assert_eq!(
+        beneath("public.t_date", "v_date"),
+        "        unrepresentable: 2 value(s) Arrow cannot hold"
+    );
+    assert_eq!(
+        beneath("public.t_extremes", "v_date"),
+        "        unrepresentable: 2 value(s) Arrow cannot hold; 2 past 262142-12-31, which a \
+         DataFusion query cannot display"
+    );
+    assert!(!beneath("public.t_extremes", "v_integer").contains("unrepresentable"));
+
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[
+        "info",
+        "--source",
+        dump.to_str().unwrap(),
+        "--json",
+    ])))
+    .expect("--json emits JSON");
+    let block = json["spans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|span| span["body"]["Data"]["Copy"].as_object())
+        .find(|block| block["header"]["table"] == "t_date")
+        .expect("t_date's block");
+    assert_eq!(block["unrepresentable"][1], serde_json::json!({"format": 2, "engine": 0}));
+    assert!(json["calendar_end"].is_i64(), "the calendar the counts were taken against");
+}
+
 /// The `kind` of every user-defined type the export names, keyed by name —
 /// `metadata.databases[].types[]` flattened across databases, which is
 /// unambiguous here because a type name is schema-qualified.

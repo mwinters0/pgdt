@@ -1084,8 +1084,10 @@ PostgreSQL's 4713 BC. Other Arrow consumers are not claimed.
 **Verified against:** `chrono` 0.4.45, `arrow-cast` 59.2.0.
 
 **Relied on by:** [`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
-"Scope" — the provider's tier of unrepresentable values and the calendar
-bound its count records.
+"Scope" — the provider's tier of unrepresentable values; and
+[`decisions.md`](decisions.md), "D96" — the count's engine tier, read off
+`chrono::NaiveDate::MAX` by `pgdump_query::calendar_end`, which a cache
+records and a build whose calendar ends elsewhere refuses.
 
 **Re-verify:**
 

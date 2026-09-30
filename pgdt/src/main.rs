@@ -2526,6 +2526,12 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Ori
              written for another file",
             live()
         ),
+        CacheStatus::Unusable(Unusable::CalendarChanged { counted_under, build }) => format!(
+            "the cache at {shown} counted the values a query cannot display against a calendar \
+             ending {}, where this build's ends {}, so it cannot be read",
+            pgdump_query::decode::render_date32(*counted_under),
+            pgdump_query::decode::render_date32(*build),
+        ),
         CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
             unreachable!("a usable cache is reported, not refused")
         }
@@ -3069,6 +3075,12 @@ fn print_index(
                     if let Some(labels) = enum_labels(&resolved.comparisons[i]) {
                         println!("        labels: {}", label_list(labels));
                     }
+                    let count = block.unrepresentable.as_deref().and_then(|c| c.get(i));
+                    if let Some(count) = count.filter(|c| !c.is_zero())
+                        && *data_type != DataType::Utf8View
+                    {
+                        println!("        unrepresentable: {}", unrepresentable_line(count));
+                    }
                 }
             }
             total_columns += resolved.notes.len();
@@ -3095,6 +3107,24 @@ fn print_index(
             "{total_unmapped} of {total_columns} columns unmapped — run with --detail for details"
         );
     }
+}
+
+/// A column's unrepresentable count, as `info --detail` states it beneath the
+/// column's type: each tier it holds a value in, the engine's with the day
+/// its calendar ends (`docs/design/decisions.md`, "D96").
+fn unrepresentable_line(count: &pgdump_query::Unrepresentable) -> String {
+    let mut parts = Vec::new();
+    if count.format > 0 {
+        parts.push(format!("{} value(s) Arrow cannot hold", count.format));
+    }
+    if count.engine > 0 {
+        parts.push(format!(
+            "{} past {}, which a DataFusion query cannot display",
+            count.engine,
+            pgdump_query::decode::render_date32(pgdump_query::calendar_end())
+        ));
+    }
+    parts.join("; ")
 }
 
 /// The level a block was mapped at, as `--statistics-level` spells it: `data`

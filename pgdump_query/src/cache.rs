@@ -52,7 +52,8 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::Diagnostic;
 pub use crate::error::{OVERWRITE_WAYS_OUT, Unusable};
 use crate::index::{
-    DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
+    DumpIndex, calendar_end, non_seekable_compression_diagnostic, tiling_diagnostics,
+    toc_coverage_diagnostic,
 };
 use crate::instrument::StatisticsScope;
 use crate::io::{ByteRangeSource, KnownCompression, Origin, is_weak_tag};
@@ -71,7 +72,7 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub const CACHE_FORMAT_VERSION: u32 = 30;
+pub const CACHE_FORMAT_VERSION: u32 = 31;
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read
@@ -728,6 +729,11 @@ struct CacheFile {
     /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
     /// `total_size` for the coverage arithmetic.
     total_size: u64,
+    /// The last day of the calendar the index's unrepresentable counts were
+    /// taken under ([`crate::index::calendar_end`]): a build whose calendar
+    /// ends elsewhere refuses a cache holding one
+    /// ([`Unusable::CalendarChanged`]; `docs/design/decisions.md`, "D96").
+    calendar_end: i32,
     index: DumpIndex,
 }
 
@@ -749,6 +755,7 @@ pub struct CacheEnvelope {
     container_kind: ContainerKind,
     seek_table: Option<CompressionIndex>,
     identity: SourceIdentity,
+    calendar_end: i32,
 }
 
 /// What a load says about a cache's identity without refusing it: a
@@ -942,7 +949,19 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
     if found != CACHE_FORMAT_VERSION {
         return unusable(Unusable::UnsupportedVersion { found });
     }
-    match bincode::serde::decode_from_reader(reader, bincode::config::standard()) {
+    match bincode::serde::decode_from_reader::<CacheFile, _, _>(reader, bincode::config::standard())
+    {
+        // Counts taken under another calendar are not this build's, and a
+        // cache holding none has nothing to be wrong about.
+        Ok(file)
+            if file.calendar_end != calendar_end()
+                && file.index.blocks().any(|block| block.unrepresentable.is_some()) =>
+        {
+            unusable(Unusable::CalendarChanged {
+                counted_under: file.calendar_end,
+                build: calendar_end(),
+            })
+        }
         Ok(file) => Ok(Ok(file)),
         Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
             Err(Error::Io(inner))
@@ -1091,6 +1110,7 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
         container_kind: file.container_kind,
         seek_table: file.compression,
         identity: file.identity,
+        calendar_end: file.calendar_end,
     };
     if index.is_complete(total_size) {
         CacheStatus::Valid { index, weak, origin, total_size, compression, envelope }
@@ -1108,6 +1128,7 @@ struct CacheFileRef<'a> {
     compression: Option<CompressionIndex>,
     identity: SourceIdentity,
     total_size: u64,
+    calendar_end: i32,
     index: &'a DumpIndex,
 }
 
@@ -1138,6 +1159,7 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
         compression: source.seek_table().map(CompressionIndex::Xz),
         identity,
         total_size,
+        calendar_end: calendar_end(),
         index,
     };
     write_beside(path, |writer| {
@@ -1550,6 +1572,7 @@ mod tests {
                 compression: source.seek_table().map(CompressionIndex::Xz),
                 identity: SourceIdentity::observe(source).await.unwrap(),
                 total_size: source.size().await.unwrap(),
+                calendar_end: calendar_end(),
                 index: run.index.clone(),
             };
             let bytes = std::fs::read(&path).unwrap();
@@ -1599,6 +1622,64 @@ mod tests {
 
     /// A kill mid-save leaves the previous cache whole. No test races a
     /// signal (`docs/design/decisions.md`, "D73"), so the save is stopped at
+    /// **A cache counted under another calendar is refused, and one holding
+    /// no count is not**: counts past a calendar's end are the calendar's, so
+    /// a build whose calendar ends elsewhere reads none of them as current,
+    /// while a map at the metadata level counted nothing to be wrong about
+    /// (`docs/design/decisions.md`, "D96"). The refusal is ours, so a `parse`
+    /// told it may overwrite the cache replaces it.
+    #[tokio::test]
+    async fn a_cache_counted_under_another_calendar_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let dump = dir.path().join("dump.sql");
+        std::fs::copy(statistics_fixture(), &dump).unwrap();
+        let source = LocalFileSource::open(&dump).unwrap();
+        let mode = CacheMode::enabled(dir.path().join("scratch.dtcache"));
+        let options = ScanOptions::default();
+        let data = map_file(&source, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
+        let metadata =
+            map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::METADATA)
+                .await
+                .unwrap();
+
+        let other = calendar_end() - 1;
+        for (name, index, refused) in
+            [("data", &data.index, true), ("metadata", &metadata.index, false)]
+        {
+            let path = dir.path().join(format!("{name}.dtcache"));
+            let file = CacheFileRef {
+                container_kind: ContainerKind::Plain,
+                compression: None,
+                identity: SourceIdentity::observe(&source).await.unwrap(),
+                total_size: source.size().await.unwrap(),
+                calendar_end: other,
+                index,
+            };
+            write_beside(&path, |writer| {
+                writer.write_all(&CACHE_MAGIC)?;
+                writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
+                bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
+                    .map(drop)
+                    .map_err(Error::CacheEncode)
+            })
+            .unwrap();
+            let status = load(&path, &source).await.unwrap();
+            if refused {
+                let why = Unusable::CalendarChanged { counted_under: other, build: calendar_end() };
+                assert_eq!(status, CacheStatus::Unusable(why.clone()), "{name}");
+                assert!(why.overwritable());
+                let message =
+                    Error::CacheUnusable { path: path.clone(), unusable: why }.to_string();
+                assert!(
+                    message.contains("262142-12-30") && message.contains("262142-12-31"),
+                    "{message}"
+                );
+            } else {
+                assert!(matches!(status, CacheStatus::Valid { .. }), "{name}: {status:?}");
+            }
+        }
+    }
+
     /// the moment a kill would land — partway through its encoding — and what
     /// it leaves on disk is read there: the previous cache, untouched, and the
     /// partial file beside it. A save that fails removes that file, and one

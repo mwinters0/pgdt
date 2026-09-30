@@ -100,7 +100,6 @@ async fn round_trip_matches_strings_mode_for_every_always_decodable_table() {
             "public.t_text",
             "public.t_uuid",
             "public.t_bytea",
-            "public.t_time",
             "public.t_json",
             "public.t_net",
             "public.t_interval",
@@ -449,6 +448,35 @@ async fn date_infinity_is_a_field_decode_error_naming_its_context() {
                 assert_eq!(column, "v_date", "pg_dump {version}");
                 assert_eq!(declared_type, "date", "pg_dump {version}");
                 assert_eq!(value, "infinity", "pg_dump {version}");
+            }
+            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
+        }
+    }
+}
+
+/// **`time` `24:00:00` is refused as the infinities are**: PostgreSQL's
+/// inclusive bound, past the day Arrow's `Time64` holds, so the decoder
+/// names it rather than writing a value Arrow forbids.
+#[tokio::test]
+async fn time_24_00_00_is_a_field_decode_error_naming_its_context() {
+    for version in [13, 16, 18] {
+        let path = types_fixture(version, "default");
+        let source = LocalFileSource::open(&path).unwrap();
+        let err = read_table(
+            &source,
+            "public.t_time",
+            &ScanOptions::default(),
+            &QueryOptions::default(),
+            CacheMode::DISABLED,
+            |_| ControlFlow::Continue(()),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            Error::FieldDecode { column, declared_type, value, .. } => {
+                assert_eq!(column, "v_time", "pg_dump {version}");
+                assert_eq!(declared_type, "time without time zone", "pg_dump {version}");
+                assert_eq!(value, "24:00:00", "pg_dump {version}");
             }
             other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
         }

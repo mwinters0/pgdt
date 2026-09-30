@@ -30,6 +30,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("resolve", 2),
     ("decode", 2),
     ("nested", 2),
+    ("unrepresentable", 2),
     ("batch", 3),
     ("stream", 4),
     ("predicate", 4),

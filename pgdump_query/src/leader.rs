@@ -29,10 +29,11 @@
 //! a serial `CopyEnd` takes, then puts the serial scanner back down past it.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use crate::index::ArrayShape;
+use crate::index::BlockCensus;
 use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy};
-use crate::map::census_row;
+use crate::map::{FieldCount, census_row};
 use crate::scan::{CopyEnd, CopyScanner, Event, ScanOptions};
 use crate::statistics::BlockObserver;
 use crate::stream::{cut, worker_count};
@@ -50,16 +51,26 @@ pub(crate) enum PieceEntry {
     Resync,
 }
 
+/// **How a data-level block is censused and counted**: its header's width,
+/// which sizes both, and what its values are counted against
+/// (`docs/design/decisions.md`, "D35", "D96"). `None` wherever one is taken
+/// is a block at the metadata level, whose rows are counted and never split.
+#[derive(Clone)]
+pub(crate) struct CensusPlan {
+    pub(crate) width: usize,
+    pub(crate) counter: Arc<dyn FieldCount>,
+}
+
 /// What one worker found in its piece of a `COPY` block's interior.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PieceScan {
     /// Data rows this piece owns: every line it consumed before the
     /// terminator, or every line it consumed at all.
     pub rows: u64,
-    /// This piece's own array-shape census, one [`ArrayShape`] per column,
-    /// merged with its siblings' by [`merge`]: nothing may read it before the
-    /// block closes (`docs/design/decisions.md`, "D34").
-    pub census: Vec<ArrayShape>,
+    /// This piece's own census and count, merged with its siblings' by
+    /// [`merge`]: nothing may read it before the block closes
+    /// (`docs/design/decisions.md`, "D34").
+    pub census: BlockCensus,
     /// `(terminator_offset, end_offset)` where this piece held the `\.` line.
     ///
     /// **A piece past the block's end can report one too**, having scanned DDL
@@ -84,9 +95,9 @@ pub(crate) struct PieceScan {
 /// The block's totals, as the leader states them at `CopyEnd`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Interior {
-    /// The union of the pieces' censuses, through the one that held the
-    /// terminator.
-    pub census: Vec<ArrayShape>,
+    /// The union of the pieces' censuses and counts, through the one that
+    /// held the terminator.
+    pub census: BlockCensus,
     /// The `CopyEnd` the serial scanner would have emitted, byte for byte
     /// (`docs/design/decisions.md`, "D52").
     pub end: CopyEnd,
@@ -106,7 +117,7 @@ pub(crate) struct PieceObserver {
 /// — the caller's job. A piece handed exactly `[base, limit)` is one whose
 /// last line was cut short and therefore not counted.
 ///
-/// `columns` sizes the census the way `map::Builder::on_copy_start` does, from
+/// `census` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list, and a row wider than it grows it
 /// (`crate::map::census_row`); `None` is a block at the metadata level, whose
 /// rows are counted and never split (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
@@ -118,12 +129,12 @@ pub(crate) fn scan_piece(
     base: u64,
     entry: PieceEntry,
     limit: u64,
-    columns: Option<usize>,
+    census: Option<&CensusPlan>,
     mut observer: Option<&mut PieceObserver>,
 ) -> Result<PieceScan> {
     let empty = |through: u64, next: PieceEntry| PieceScan {
         rows: 0,
-        census: empty_census(columns),
+        census: empty_census(census),
         terminator: None,
         through,
         next,
@@ -154,7 +165,8 @@ pub(crate) fn scan_piece(
     // out of bytes reports no terminator rather than an unterminated block.
     // Deciding that is the leader's, the only party that knows.
     let mut scanner = CopyScanner::resume(start, Some((0, 0)));
-    let mut census = empty_census(columns);
+    let plan = census;
+    let mut census = empty_census(plan);
     let mut rows = 0u64;
     let mut terminator = None;
 
@@ -162,8 +174,8 @@ pub(crate) fn scan_piece(
         match event {
             Event::Row(row) => {
                 rows += 1;
-                if columns.is_some() {
-                    census_row(&mut census, row.raw);
+                if let Some(plan) = plan {
+                    census_row(&mut census, plan.counter.as_ref(), row.raw);
                 }
                 if let Some(piece) = &mut observer {
                     piece.observer.observe_row(row.offset - piece.data_offset, row.raw);
@@ -201,10 +213,10 @@ pub(crate) fn scan_piece(
     })
 }
 
-/// A census for a block `columns` wide, before a row is folded in — empty for
-/// a block at the metadata level, which folds none.
-fn empty_census(columns: Option<usize>) -> Vec<ArrayShape> {
-    columns.map_or_else(Vec::new, |columns| vec![ArrayShape::default(); columns])
+/// A census for a block as `plan` sizes it, before a row is folded in —
+/// empty for a block at the metadata level, which folds none.
+fn empty_census(plan: Option<&CensusPlan>) -> BlockCensus {
+    plan.map_or_else(BlockCensus::default, |plan| BlockCensus::new(plan.width))
 }
 
 /// Fold `pieces` — one open `COPY` block's interior, in file order — into the
@@ -212,15 +224,16 @@ fn empty_census(columns: Option<usize>) -> Vec<ArrayShape> {
 /// `None` where none of them did: the leader's window did not reach the end of
 /// the block and must hand out more of the interior.
 ///
-/// **The fold is order-dependent only in where it stops.** Row counts sum and
-/// censuses union, `ArrayShape`'s merge being a bounded semilattice. What the
+/// **The fold is order-dependent only in where it stops.** Row counts and
+/// unrepresentable counts sum and censuses union, `ArrayShape`'s merge being
+/// a bounded semilattice. What the
 /// order decides is which pieces are *in* the fold, everything past the
 /// terminator not being part of the block at all.
 pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
-    let mut census: Vec<ArrayShape> = Vec::new();
+    let mut census = BlockCensus::default();
     let mut row_count = 0u64;
     for piece in pieces {
-        absorb_census(&mut census, &piece.census);
+        census.merge(&piece.census);
         row_count += piece.rows;
         if let Some((terminator_offset, end_offset)) = piece.terminator {
             return Some(Interior {
@@ -230,20 +243,6 @@ pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
         }
     }
     None
-}
-
-/// Union `from` into `into`, growing `into` where the piece saw more columns
-/// than anything before it — the census fold, in one place because [`merge`]
-/// and the window accumulator in [`scan_region`] must not be two rules.
-/// Length-tolerant because a row wider than its header grows a census, so two
-/// pieces of one block can report different lengths.
-fn absorb_census(into: &mut Vec<ArrayShape>, from: &[ArrayShape]) {
-    if from.len() > into.len() {
-        into.resize(from.len(), ArrayShape::default());
-    }
-    for (slot, shape) in into.iter_mut().zip(from) {
-        slot.merge(shape);
-    }
 }
 
 /// What the leader made of one open `COPY` region.
@@ -342,8 +341,8 @@ pub(crate) struct Shortfall {
 /// licence for handing them out to workers that never parse structure
 /// (`docs/design/decisions.md`, "D52").
 ///
-/// **Where the file ends is `size`, and `columns` is the header's width**,
-/// `None` where the block is not censused ([`scan_piece`]).
+/// **Where the file ends is `size`, and `census` is how the block is censused
+/// and counted**, `None` where it is not ([`scan_piece`]).
 /// `header_offset` is carried only to name the block in
 /// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
 /// [`scan_piece`] never claims end of file, and the leader is the only party
@@ -392,7 +391,7 @@ pub(crate) async fn scan_region(
     options: &ScanOptions,
     header_offset: u64,
     data_offset: u64,
-    columns: Option<usize>,
+    census: Option<CensusPlan>,
     size: u64,
     observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<RegionOutcome> {
@@ -417,7 +416,7 @@ pub(crate) async fn scan_region(
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
     let scanned =
-        run_region(source, options, &advice, workers, data_offset, columns, size, observer).await;
+        run_region(source, options, &advice, workers, data_offset, census, size, observer).await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
@@ -491,12 +490,12 @@ async fn run_region(
     advice: &Partitioning,
     workers: usize,
     data_offset: u64,
-    columns: Option<usize>,
+    plan: Option<CensusPlan>,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<Interior>> {
     let mut rows = 0u64;
-    let mut census = empty_census(columns);
+    let mut census = empty_census(plan.as_ref());
     let mut frontier = data_offset;
     let mut entry = PieceEntry::RowStart;
 
@@ -526,7 +525,7 @@ async fn run_region(
                     advice.partition_read(),
                     entry,
                     range,
-                    columns,
+                    plan.clone(),
                     size,
                     piece,
                 )
@@ -561,7 +560,7 @@ async fn run_region(
         }
 
         if let Some(interior) = merge(&scans) {
-            absorb_census(&mut census, &interior.census);
+            census.merge(&interior.census);
             return Ok(Some(Interior {
                 census,
                 end: CopyEnd { row_count: rows + interior.end.row_count, ..interior.end },
@@ -569,7 +568,7 @@ async fn run_region(
         }
         for piece in &scans {
             rows += piece.rows;
-            absorb_census(&mut census, &piece.census);
+            census.merge(&piece.census);
         }
         // The last piece's `through` is where the window's last complete line
         // ended, so the next window begins there rather than at the window's
@@ -625,7 +624,7 @@ async fn scan_partition(
     read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
-    columns: Option<usize>,
+    census: Option<CensusPlan>,
     size: u64,
     mut piece: Option<PieceObserver>,
 ) -> Result<(Vec<PieceScan>, Option<PieceObserver>)> {
@@ -644,8 +643,9 @@ async fn scan_partition(
         let bytes = source.read_range(start, len).await?;
         // The observer goes to the blocking pool with the bytes and comes back
         // with the scan, one read of the piece at a time.
+        let plan = census.clone();
         let (scan, returned) = tokio::task::spawn_blocking(move || {
-            let scan = scan_piece(&bytes, start, entry, limit, columns, piece.as_mut());
+            let scan = scan_piece(&bytes, start, entry, limit, plan.as_ref(), piece.as_mut());
             (scan, piece)
         })
         .await?;
@@ -683,9 +683,9 @@ async fn scan_partition(
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
 
     use super::*;
+    use crate::index::UnrepresentableTier;
     use crate::io::{LocalFileSource, Parallelism};
     use crate::map::{Builder, DataBlock, SpanBody};
     use crate::scan::{Cancellation, ChunkCarry};
@@ -696,6 +696,27 @@ mod tests {
         let cancel = Arc::new(Cancellation::new());
         cancel.cancel();
         cancel
+    }
+
+    /// Counts every field spelled `infinity` past the format spec, as a
+    /// `date` column's count would: what a split must count exactly as the
+    /// serial pass does.
+    struct Infinities;
+
+    impl FieldCount for Infinities {
+        fn counts_any(&self) -> bool {
+            true
+        }
+
+        fn tier(&self, _column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
+            (field == b"infinity").then_some(UnrepresentableTier::Format)
+        }
+    }
+
+    /// How a block `columns` wide is censused and counted here, `None` at
+    /// the metadata level.
+    fn plan(columns: Option<usize>) -> Option<CensusPlan> {
+        columns.map(|width| CensusPlan { width, counter: Arc::new(Infinities) })
     }
 
     /// One `COPY` block as the **serial** pass states it: the reference every
@@ -726,6 +747,7 @@ mod tests {
                     Event::CopyStart(start) => {
                         columns.push(start.header.columns.len());
                         builder.on_copy_start(start, true);
+                        builder.count_block(Arc::new(Infinities));
                     }
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => builder.on_copy_end(end),
@@ -750,7 +772,10 @@ mod tests {
                     end_offset: block.end_offset,
                     columns: Some(widths.next().expect("one header per block")),
                     interior: Interior {
-                        census: block.array_shapes.expect("every block is censused here"),
+                        census: BlockCensus {
+                            shapes: block.array_shapes.expect("every block is censused here"),
+                            unrepresentable: block.unrepresentable.expect("and counted"),
+                        },
                         end: CopyEnd {
                             terminator_offset: block.terminator_offset,
                             end_offset: block.end_offset,
@@ -780,8 +805,15 @@ mod tests {
             let limit = block.data_offset + len * (i + 1) / pieces as u64;
             let entry = if i == 0 { PieceEntry::RowStart } else { PieceEntry::Resync };
             scans.push(
-                scan_piece(&file[start as usize..], start, entry, limit, block.columns, None)
-                    .expect("a piece of a scannable file"),
+                scan_piece(
+                    &file[start as usize..],
+                    start,
+                    entry,
+                    limit,
+                    plan(block.columns).as_ref(),
+                    None,
+                )
+                .expect("a piece of a scannable file"),
             );
         }
         let working = scans.iter().filter(|p| p.rows > 0).count();
@@ -866,7 +898,7 @@ mod tests {
             block.data_offset,
             PieceEntry::RowStart,
             block.data_offset + 1,
-            block.columns,
+            plan(block.columns).as_ref(),
             None,
         )
         .unwrap();
@@ -888,7 +920,7 @@ mod tests {
             block.data_offset,
             PieceEntry::RowStart,
             block.end_offset,
-            block.columns,
+            plan(block.columns).as_ref(),
             None,
         )
         .unwrap();
@@ -898,7 +930,7 @@ mod tests {
             block.end_offset,
             PieceEntry::RowStart,
             file.len() as u64,
-            block.columns,
+            plan(block.columns).as_ref(),
             None,
         )
         .unwrap();
@@ -914,11 +946,29 @@ mod tests {
     fn the_census_unions_across_pieces() {
         let file = b"COPY public.t (a) FROM stdin;\n{1,2}\n{{1,2},{3,4}}\n\\.\n".to_vec();
         let block = &reference(&file)[0];
-        assert_eq!(block.interior.census[0].dims, Some((1, 2)));
+        assert_eq!(block.interior.census.shapes[0].dims, Some((1, 2)));
 
         let split = split(&file, block, 2).unwrap();
-        assert_eq!(split.census[0].dims, Some((1, 2)));
+        assert_eq!(split.census.shapes[0].dims, Some((1, 2)));
         assert_eq!(&split, &block.interior);
+    }
+
+    /// **The count sums across pieces**, each value counted by the one piece
+    /// that owns its row, so a split counts what the serial pass counts.
+    #[test]
+    fn the_count_sums_across_pieces() {
+        let file =
+            b"COPY public.t (a, b) FROM stdin;\ninfinity\tx\n1\tinfinity\ninfinity\tinfinity\n2\t3\n\\.\n"
+                .to_vec();
+        let block = &reference(&file)[0];
+        let counts: Vec<u64> =
+            block.interior.census.unrepresentable.iter().map(|c| c.format).collect();
+        assert_eq!(counts, [2, 2]);
+        for pieces in 2..=4 {
+            let (split, working) = cut_up(&file, block, pieces);
+            assert!(working > 1, "a real split");
+            assert_eq!(split.as_ref(), Some(&block.interior), "{pieces} pieces");
+        }
     }
 
     /// **A block at the metadata level is counted and never censused**: its
@@ -931,7 +981,7 @@ mod tests {
         let (split, working) = cut_up(&file, &block, 2);
         let split = split.unwrap();
         assert_eq!(working, 2, "a real split");
-        assert!(split.census.is_empty());
+        assert_eq!(split.census, BlockCensus::default());
         assert_eq!(split.end, block.interior.end);
     }
 
@@ -955,7 +1005,7 @@ mod tests {
             cut,
             PieceEntry::Resync,
             block.end_offset,
-            Some(1),
+            plan(Some(1)).as_ref(),
             None,
         )
         .unwrap();
@@ -1021,7 +1071,7 @@ mod tests {
                         &options,
                         block.header_offset,
                         block.data_offset,
-                        block.columns,
+                        plan(block.columns),
                         size,
                         None,
                     )
@@ -1120,7 +1170,7 @@ mod tests {
                     &options,
                     block.header_offset,
                     block.data_offset,
-                    block.columns,
+                    plan(block.columns),
                     size,
                     None,
                 )
@@ -1195,7 +1245,7 @@ mod tests {
                     &options,
                     block.header_offset,
                     block.data_offset,
-                    block.columns,
+                    plan(block.columns),
                     size,
                     None,
                 )
@@ -1255,7 +1305,7 @@ mod tests {
             &serial,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1273,7 +1323,7 @@ mod tests {
             &shipped,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1297,7 +1347,7 @@ mod tests {
             &options,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1330,7 +1380,7 @@ mod tests {
             &options,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1368,7 +1418,7 @@ mod tests {
             &serial,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1390,7 +1440,7 @@ mod tests {
             &shipped,
             block.header_offset,
             block.data_offset,
-            block.columns,
+            plan(block.columns),
             size,
             None,
         )
@@ -1416,9 +1466,10 @@ mod tests {
 
         let source = LocalFileSource::open(&path).unwrap();
         let options = scheduled(&source, 4);
-        let err = scan_region(&source, &options, 0, data_offset, Some(1), file.len() as u64, None)
-            .await
-            .expect_err("a COPY block with no terminator");
+        let err =
+            scan_region(&source, &options, 0, data_offset, plan(Some(1)), file.len() as u64, None)
+                .await
+                .expect_err("a COPY block with no terminator");
         assert!(
             matches!(err, Error::UnterminatedCopyBlock { header_offset: 0 }),
             "unexpected error: {err}"
@@ -1447,7 +1498,7 @@ mod tests {
                 &options,
                 block.header_offset,
                 block.data_offset,
-                block.columns,
+                plan(block.columns),
                 file.len() as u64,
                 None,
             )

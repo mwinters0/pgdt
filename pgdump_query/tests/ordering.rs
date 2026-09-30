@@ -60,7 +60,8 @@ async fn kept_ids(table: &str, filters: Vec<Predicate>) -> Vec<Option<String>> {
 /// A spread of the register's agreeing rows, each through its own decoder
 /// against the fixture's own values: a negative integer and a negative
 /// decimal, `NaN` as PostgreSQL's largest float rather than an incomparable
-/// one, a `uuid` as its 16 bytes, and `24:00:00`, a real boundary value.
+/// one, a `uuid` as its 16 bytes, and `24:00:00`, a real boundary value
+/// ordered where no column materializes it.
 #[tokio::test]
 async fn each_agreeing_type_orders_by_its_own_decoder() {
     assert_eq!(
@@ -86,9 +87,11 @@ async fn each_agreeing_type_orders_by_its_own_decoder() {
         .await,
         [Some("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11".to_string())]
     );
+    // Its row's `id`, `Time64` holding no `24:00:00` to print: the filter
+    // orders PostgreSQL's value, which the decoder refuses.
     assert_eq!(
-        kept("public.t_time", "v_time", vec![term("v_time", PredicateOp::Ge, "24:00:00")]).await,
-        [Some("24:00:00".to_string())],
+        kept_ids("public.t_time", vec![term("v_time", PredicateOp::Ge, "24:00:00")]).await,
+        [Some("1".to_string())],
         "`24:00:00` is a real boundary value, not an overflow"
     );
 }

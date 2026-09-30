@@ -88,12 +88,14 @@ Fractional seconds are trailing-trimmed, so the same column can hold
 Three kinds of value PostgreSQL accepts do not fit their Arrow types. A
 `timestamp` or `timestamptz` from `294247-01-10 04:00:54.775808` UTC to
 PostgreSQL's last, `294276-12-31 23:59:59.999999`, is past what Arrow counts
-from 1970, and a column holding one fails to build the way a `date` holding
-`infinity` does. `time` `24:00:00`, PostgreSQL's end of day, is past Arrow's,
-and a `date`, `timestamp` or `timestamptz` after `262142-12-31` is past the
-calendar Arrow's formatting reads it through: `pgdt query` prints each, and
+from 1970, and `time` `24:00:00`, PostgreSQL's end of day, is past Arrow's:
+a column holding either fails to build the way a `date` holding `infinity`
+does. A `date`, `timestamp` or `timestamptz` after `262142-12-31` is past the
+calendar Arrow's formatting reads it through: `pgdt query` prints it, and
 DataFusion shows `ERROR: Cast error` where it formats or casts one. Every one
-reads back verbatim under `--schema-mode strings`.
+reads back verbatim under `--schema-mode strings`, and `pgdt info --detail`
+counts them per column ([dump inspection](dump-inspection.md), "Values a
+column's type cannot hold").
 
 ### `interval` keeps its three fields, and two kinds of value do not fit
 
@@ -953,11 +955,12 @@ carries their least and greatest values.
   compares, sorts and writes it; it cannot print it.
 - **Python's calendar is the narrowest**: 0001 to 9999. `as_py()` raises
   `OverflowError` for any `Date32` or `Timestamp` outside it.
-- **`time` `24:00:00`** decodes to a value past Arrow's day. DataFusion raises
-  `Cast error` on it, `to_pandas()` raises `ValueError` for the whole column,
-  and **`as_py()` silently returns `00:00:00`** — as does reading it out of a
-  `pd.ArrowDtype` column. Read such a column with `SchemaMode::Strings` if it
-  may hold one.
+- **`time` `24:00:00`** is past Arrow's day, so reading it is refused rather
+  than handed to a consumer that would misread it: DataFusion raises `Cast
+  error` on such a value, `to_pandas()` raises `ValueError` for the whole
+  column, and `as_py()` silently returns `00:00:00` — as does reading it out
+  of a `pd.ArrowDtype` column. Read such a column with `SchemaMode::Strings`
+  if it may hold one.
 - **pandas fails whole, not per value.** A `date` column holding one value past
   9999, or before year 1, makes `to_pandas()` raise for the entire table; pass
   `date_as_object=False` to get `datetime64[ms]` instead, which holds every

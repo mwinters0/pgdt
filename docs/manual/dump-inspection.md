@@ -1227,6 +1227,32 @@ Labels are listed for a plain enum column and for a domain over one. An enum
 *inside* an array or a composite does not get them, and does not need them — a
 filter cannot compare against a single label there anyway.
 
+#### Values a column's type cannot hold
+
+A typed column can hold a value PostgreSQL accepts and its Arrow type cannot:
+`infinity` or `-infinity` in a `date`, `timestamp`, `timestamptz` or
+`interval`, `NaN` in a `numeric(p,s)`, `time` `24:00:00`, an `interval` whose
+time part is longer than about 2562047 hours, or a timestamp past
+`294247-01-10`. A table recorded at the data level counts them, per column,
+and `--detail` says how many beneath the column's type:
+
+```
+public.t_date (7 rows)
+    level: data
+    columns: id integer, v_date date
+    id: Int32
+    v_date: Date32
+        unrepresentable: 2 value(s) Arrow cannot hold
+```
+
+A `date` or timestamp past `262142-12-31` is held by its Arrow type and
+cannot be displayed by a DataFusion query, which formats dates through a
+calendar ending there; the line counts those apart, as `N past 262142-12-31,
+which a DataFusion query cannot display`. A value inside an array, a range or a
+composite makes the whole value one such value, counted once. The line appears
+only where the column holds one. Reading such a column in a query refuses
+where the read reaches the value, naming it.
+
 `--detail` closes its listing, above the totals, with what `parse` gathered
 (see "`--statistics-level`" above), one line per table and one beneath it per column:
 
@@ -1264,8 +1290,8 @@ group's own values are shown here; `--json` carries every one of them.
 
 ### When `info` says it cannot answer
 
-`info` exits non-zero rather than scanning. Six things can go wrong, and they
-are six different messages because they mean six different things:
+`info` exits non-zero rather than scanning. Seven things can go wrong, and they
+are seven different messages because they mean seven different things:
 
 | Message | What happened |
 |---|---|
@@ -1275,13 +1301,14 @@ are six different messages because they mean six different things:
 | `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens after an upgrade; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
 | `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
+| `… counted the values a query cannot display against a calendar ending …` | The cache counts the dates a DataFusion query cannot display (below, "Values a column's type cannot hold") against a calendar that ends on another day than this build's, which only a library upgrade moves. Its counts are not this build's. |
 
 **Only the first sends you straight to `pgdt parse`.** `parse` and `query`
 refuse every other one too, before reading more of the dump than its first
 bytes, rather than scanning and
 writing over what they found: each is almost always a wrong path or a file that
 changed, and a cache that does not describe this file is a valid index for
-*some* file. So the last four name three ways out — **remove it, name a
+*some* file. So the last five name three ways out — **remove it, name a
 different cache path, or pass `--overwrite-unusable-cache`** — and `parse`
 builds a fresh one once you have taken any of them.
 
@@ -1393,8 +1420,10 @@ itself and the dump it was written from: `format_version`, the cache's on-disk
 version; `container_kind`; `identity`, holding under `LocalFile` the dump's
 `stored_size` in bytes on disk and its `mtime` as `[seconds, nanoseconds]` when
 the cache was saved, which a dump is checked against before its cache is used;
-and `seek_table`, holding under `Xz` an `.xz` dump's every stream and block
-with their offsets and sizes, or `null` for a plain dump. On top of that it
+`seek_table`, holding under `Xz` an `.xz` dump's every stream and block
+with their offsets and sizes, or `null` for a plain dump; and `calendar_end`,
+the last day, as days from 1970, of the calendar its unrepresentable counts
+were taken against (below). On top of that it
 carries three things the text views state differently:
 
 - **Coverage as components**, not as the rendered percentage —
@@ -1419,7 +1448,11 @@ carries three things the text views state differently:
   that disagree, so grouping them is left to you.
 
 The file map's own `COPY` blocks carry their **`array_shapes`**, one per
-column, `null` for a block recorded at the metadata level, and their
+column, `null` for a block recorded at the metadata level, their
+**`unrepresentable`** counts, one `{format, engine}` pair per column and
+`null` exactly where `array_shapes` is — `format` counting the values the
+column's Arrow type cannot hold and `engine` those it holds past the calendar
+end the cache's `calendar_end` states, as days from 1970 — and their
 **`statistics`**, exactly as the cache holds them — `null` for a block `parse`
 gathered nothing for. Each has its `group_size`, a `groups` array giving every
 group's `rows` and `bytes`, and one entry per column of the block's header,

@@ -449,7 +449,8 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
         ("SELECT id FROM t_net WHERE v_macaddr = '08:00:2B:01:02:03'", true),
         ("SELECT id FROM t_net WHERE v_macaddr8 > '08:00:2B:01:02:03:04:04'", true),
         ("SELECT id FROM t_oid WHERE v_oid > 2147483647", true),
-        ("SELECT id FROM t_time WHERE v_time > '12:00:00'", true),
+        // No `v_time` case: the column holds `24:00:00`, which the side not
+        // pushing it has to materialize and cannot (`KD8`).
         ("SELECT id FROM t_time WHERE v_timetz = '24:00:00+00'", true),
     ];
     let mut misplaced = Vec::new();
