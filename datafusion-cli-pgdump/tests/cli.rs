@@ -192,6 +192,31 @@ async fn a_scan_setting_is_set_by_sql() {
     }
 }
 
+/// **An ungrouped aggregate's dynamic filter is off unless the environment
+/// states it**, and `SET` turns it on like any other setting.
+// upstream: UF1
+#[test]
+fn the_aggregate_dynamic_filter_is_off_unless_stated() {
+    const KEY: &str = "datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown";
+    let show = format!("SHOW {KEY}");
+    let value = |out: Output| {
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        text(&out.stdout).lines().last().unwrap().to_owned()
+    };
+
+    assert_eq!(value(run(&["-q", "-c", &show])), format!("{KEY},false"));
+    assert_eq!(
+        value(run(&["-q", "-c", &format!("SET {KEY} = true"), "-c", &show])),
+        format!("{KEY},true")
+    );
+    let stated = Command::new(env!("CARGO_BIN_EXE_datafusion-cli-pgdump"))
+        .env("DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN", "true")
+        .args(["--format", "csv", "-q", "-c", &show])
+        .output()
+        .unwrap();
+    assert_eq!(value(stated), format!("{KEY},true"));
+}
+
 /// **A dump with no complete cache ends the run before any SQL**, naming the
 /// parse that builds it.
 #[tokio::test]

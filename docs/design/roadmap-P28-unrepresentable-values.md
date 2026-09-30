@@ -300,7 +300,9 @@ path never sharing a slice with a new mechanism:
    past `i64` microseconds keyed, filling every value's view.
 7. **The untyped mode**: the widening `ColumnResolution` and its comparison
    in each semantics; "D38"'s clause and `floor_mapping.py`. The harness is
-   green here, and `KD8` closes.
+   green here, bar the configurations `KD56` meets, excluded naming it until
+   a DataFusion pin carries the fix (`../status/upstream.md`, "UF1"); and
+   `KD8` closes.
 8. **The predicate term and its UDF**; "D53" amended.
 9. **The figures** (Evidence): scan figures at the metadata level, query
    figures over a data-level cache, the census's price attributed by a `perf`

@@ -381,6 +381,13 @@ fn get_session_config(args: &Args) -> Result<SessionConfig> {
         config_options.format.null = String::from("NULL");
     }
 
+    // pgdump: an ungrouped aggregate's dynamic filter off unless the
+    // environment states it, its bounds losing a side in DataFusion 55.1.
+    // upstream: UF1
+    if env::var_os("DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN").is_none() {
+        config_options.optimizer.enable_aggregate_dynamic_filter_pushdown = false;
+    }
+
     let mut session_config = SessionConfig::from(config_options).with_information_schema(true);
 
     if args.reads_sql_from_stdin() {

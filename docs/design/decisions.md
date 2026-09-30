@@ -395,8 +395,9 @@ Under `UnrepresentableMode::Null` a value past the tiers the query's semantics c
 too under Arrow's, DataFusion's comparison being DataFusion's front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a
 dictionary entry) and the statistics' view (D97), a sum leaving it out; a nested value holding one is the NULL whole. It is tested lexically (D96)
 before decoding, only in a column whose block counts one in those tiers. Rejected: nulling what fails to decode (an engine-tier value decodes, and
-text that does not parse must still refuse); a tier option beside the semantics, always set with them; testing every block. Reopens: a library
-consumer comparing in Arrow's order and displaying past the calendar. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
+unparsable text must still refuse); a tier option beside the semantics, two fields for one fact, the semantics naming DataFusion, whose display is
+the calendar's; testing every block. Reopens: a front end besides DataFusion, taking semantics of its own; `arrow-cast` displaying past `chrono`
+(`upstream.md`, "UF2"), retiring the calendar tier. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership

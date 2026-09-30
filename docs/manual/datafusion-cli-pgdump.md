@@ -193,12 +193,15 @@ statistics answer or the rows are read, so a query answers the same however
 its partitions run. Each scan says on stderr how many a column it reads
 holds. `:strings` reads it as its text instead.
 
-One exception is DataFusion's own, and not particular to these values: **an
-ungrouped `MIN` beside a `MAX` can answer a `MIN` too high** once a batch it
-aggregates holds no value of the `MIN`'s column — a NULL, or a value read as
-one — because DataFusion 55.1 then drops the `MIN` side of the filter the
-aggregate hands the scan, which may skip rows below it. Turning off
-`datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` avoids it.
+**The shell starts with
+`datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` off**, unless
+`DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN` states it:
+DataFusion 55.1's filter for an ungrouped `MIN` and `MAX` can lose a column's
+bounds once a batch holds no value of it — a NULL, or a value read as one —
+and a scan skipping rows under what is left answers a `MIN` too high, or
+another column's `MIN` and `MAX` as NULL. Turning it on, directly or by
+setting or resetting `datafusion.optimizer.enable_dynamic_filter_pushdown`,
+which sets it too, brings that back.
 
 **`:unrepresentable=refuse` refuses where a scan reads one** — and whether a
 query reads it can change from run to run: a scan's partitions run

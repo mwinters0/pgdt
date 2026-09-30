@@ -147,6 +147,7 @@ fn usize_bytes(key: &str, value: &str, zero: &str) -> Result<usize> {
     }
 }
 
+// upstream: UF3
 impl ExtensionOptions for PgDumpSettings {
     fn as_any(&self) -> &dyn Any {
         self

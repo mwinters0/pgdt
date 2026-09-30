@@ -157,6 +157,7 @@ impl Unrepresentable {
 /// is refused by a build whose bound is another
 /// (`crate::cache::Unusable::CalendarChanged`), so a `chrono` upgrade moving
 /// it reaches no count taken before it.
+// upstream: UF2
 pub fn calendar_end() -> i32 {
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the Unix epoch is a date");
     let days = chrono::NaiveDate::MAX.signed_duration_since(epoch).num_days();

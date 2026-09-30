@@ -359,6 +359,7 @@ high-water mark, unlanded items' numbers being spent too.
 | A call made unattended, reviewed, and **affirmed with nothing changed** | the `D<k>` entry it governs, as its `Rejected` line — then the STATUS entry is deleted |
 | Why we changed our mind, and the evidence | a **history** entry, cited from the doc holding the decision — never inlined into it |
 | Something outside our control that we now depend on | the **assumptions register** |
+| A dependency's defect or limit we wait on upstream to fix | the **upstream register**, `docs/status/upstream.md`; rules in `.claude/skills/upstream-issue/SKILL.md` |
 | A rule that will still apply three phases from now | a **standing-constraint** doc, or a named roadmap section |
 | Something a *distant, unspecified* phase will need to know | that phase's **inbox** |
 | A one-session change that belongs to no phase | the **out-of-band ledger**, one line, pointing at a history entry |

@@ -31,6 +31,13 @@
 //! DataFusion observes, as for any of its sources, not `pgdt query`'s earliest
 //! in file order ("D52"), and a partitioned read is not resumable.
 //!
+//! **An embedder should turn
+//! `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` off**, as
+//! `datafusion-cli-pgdump` does: DataFusion 55.1's ungrouped-aggregate filter
+//! can lose a column's bounds, and a scan pruning under what is left then
+//! answers a `MIN` or `MAX` wrongly (`KD56`).
+// upstream: UF1
+//!
 //! **Two figures time it, through `datafusion-cli-pgdump`**:
 //! `dynamic-filter-join` and `dynamic-filter-topk`, naming that shell's
 //! allocator, which is the embedder's (`docs/design/decisions.md`, "D13").

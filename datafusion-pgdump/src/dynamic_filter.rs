@@ -44,17 +44,16 @@ mod tests;
 
 // deficiency: KD56 — an ungrouped aggregate's filter is the `OR` of `col < min`
 // for each `MIN` and `col > max` for each `MAX`, each bound shared across its
-// partitions and folded with `scalar_min`/`scalar_max`, whose NULL test
-// (`aggregate_stream.rs`, `scalar_cmp_null_short_circuit`, DataFusion 55.1 and
-// `main` at `0576a0b40`) reads only the untyped `ScalarValue::Null` as no
-// bound. A partition's first batch holding no value of a `MIN`'s column
-// evaluates to a typed NULL, which then orders below every value, is kept as
-// the bound and is skipped as NULL when the filter is built: the `MIN` side
-// is gone for the rest of the query while each `MAX` side still tightens, so
-// a group or row this scan skips under it can hold a value below every `MIN`
-// the aggregate has seen. The harness's typed mode meets it
-// (`tests/unrepresentable.rs`, the unfiltered `MIN`/`MAX` pairs). **(c)
-// unowned**; the fix is upstream's, a typed NULL read as no bound.
+// partitions and folded with `scalar_min`/`scalar_max`, which in DataFusion
+// 55.1 (`aggregate_stream.rs`) read only the untyped `ScalarValue::Null` as no
+// bound. A partition's batch holding no value of a column evaluates to a typed
+// NULL, which orders below every value, is kept as the `MIN` and is then
+// skipped as NULL when the filter is built, so the `MIN` side is gone for the
+// rest of the query; and a column with no bound yet is skipped while the
+// others' sides are published, so rows its aggregates still need are cut. A
+// group or row this scan skips under either is lost to the answer, with
+// statistics gathered and rows left undropped, the defaults
+// (`tests/aggregate_bounds.rs`). **(c) unowned**; the fix is upstream's.
 /// The dynamic filters a scan's plan node holds, in the order they reached
 /// it, none twice.
 #[derive(Debug, Clone, Default)]

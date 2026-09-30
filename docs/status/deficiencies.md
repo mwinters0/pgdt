@@ -314,12 +314,12 @@ than reading as a phase nobody has sliced.
   promoted by row evaluation going on by default, or a figure pricing
   `pgdt --where`'s `in (…)`. Detail: `pgdump_query/src/predicate.rs`.
 
-- **KD56** — an ungrouped aggregate holding a `MIN` and a `MAX` publishes a
-  dynamic filter that loses its `MIN` side once a batch of that column holds
-  no value, DataFusion 55.1 reading only an untyped NULL as no bound, so a
-  scan skipping groups or rows under it can answer a `MIN` above the column's
-  least value. **(c) unowned**; promoted by the typed mode's harness, which
-  meets it where rows are evaluated, the fix being upstream's. Detail:
+- **KD56** — an ungrouped aggregate's dynamic filter drops a column's bounds
+  in DataFusion 55.1 while a batch of it holds no value, so a scan pruning
+  under it answers a `MIN`, or another column's `MIN` and `MAX`, wrongly under
+  default settings. **(c) unowned**; promoted by a DataFusion release carrying
+  the fix, the shell meanwhile defaulting the filter off
+  ([`upstream.md`](upstream.md), "UF1"). Detail:
   `datafusion-pgdump/src/dynamic_filter.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above

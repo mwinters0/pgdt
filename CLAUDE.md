@@ -23,6 +23,7 @@ cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--ren
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
+cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run python -m unittest test_<script>   # one script's own tests
@@ -64,6 +65,10 @@ Never edit a `runs/` orchestration script while it is running.
 - `docs/status/deficiencies.md` — the `KD<k>` register. **Read it before
   grilling or specifying a phase, admitting an `M<k>`, or proposing a change
   to a mechanism**; each entry's detail is at its code marker.
+- `docs/status/upstream.md` — the `UF<k>` register: dependency defects and
+  limits we wait on upstream to fix. **Invoke `upstream-issue` before working
+  around a dependency's defect, and `upgrade-deps` before any dependency
+  upgrade**; the first holds the register's rules.
 - `docs/design/postgres-invariants.md` (`I<n>`) and
   `docs/design/runtime-invariants.md` (`RT<n>`) — properties of `pg_dump`
   output and of the process's environment that decisions depend on. **Add an

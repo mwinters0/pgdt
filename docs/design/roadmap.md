@@ -1123,10 +1123,7 @@ which is what makes the difference worth minding at the moment one is found.
   resident ([`decisions.md`](decisions.md), "D23"), and the parse already paid
   it. It moves the cache format.
 
-- **`RESET` for a provider's session settings, upstream.** DataFusion 55's
-  `ConfigOptions::reset` refuses any key outside `datafusion.`, and
-  `ExtensionOptions` has no `reset`, so `RESET pgdump.memory` fails and a
-  session returns to its budget's own allowance only by `SET pgdump.memory = 0`.
-  A `reset` on `ExtensionOptions` that `ConfigOptions::reset` routes to is an
-  upstream change; taken at the pin that carries it, beside `0` rather than in
-  place of it.
+- **`RESET` for a provider's session settings, upstream.** It waits on
+  DataFusion ([`../status/upstream.md`](../status/upstream.md), "UF3"), and is
+  taken at the pin that carries the fix, beside `SET pgdump.memory = 0` rather
+  than in place of it.

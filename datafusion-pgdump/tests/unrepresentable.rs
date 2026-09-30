@@ -1032,6 +1032,7 @@ async fn extremes(major: u32) -> Extremes {
 /// count in the map equals the record's values of that column in each tier,
 /// so a `chrono` or `arrow-cast` upgrade moving the calendar's end moves
 /// the fixture's rows either side of it out of one or the other.
+// upstream: UF2
 #[test]
 fn every_extreme_is_held_by_arrow_or_recorded() {
     let results: Vec<_> = std::thread::scope(|scope| {

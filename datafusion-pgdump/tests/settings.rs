@@ -126,6 +126,7 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
 /// own, and the setting reads as unstated again. `RESET` still reaches none
 /// of it, which is why `0` is the way back; `pgdt --memory 0` stays refused
 /// (`pgdt/tests/parallelism.rs`), absence being how a flag asks.
+// upstream: UF3
 #[tokio::test(flavor = "multi_thread")]
 async fn a_zero_allowance_returns_to_the_budgets_own() {
     let dir = tempfile::tempdir().unwrap();
