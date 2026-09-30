@@ -119,14 +119,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **M182 stopped at the semantics' name, not at Arrow's order's.** The call:
-  the variant, prose saying "Arrow('s) semantics" and the identifiers built on
-  that phrase became `DataFusion`, while `CompareKind::arrow_order`,
-  `arrow_divergence(s)`, `BoundsSet::Arrow`, `ColumnStatistics::arrow_bounds`
-  and `ComparisonDivergence::NestedArrowOrder` kept "arrow". Why: each names
-  the order of Arrow's kernels over the emitted value, still literally what it
-  computes, and the row asked for the variant and its citations. Reconsidering
-  renames those too — `predicate.rs`'s private `arrow_divergences`, dispatched
-  from the variant alone, is the closest case — and the P28 spec's "in
-  Arrow's (the DataFusion translators)" with a history entry.

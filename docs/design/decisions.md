@@ -290,7 +290,7 @@ every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field`
 
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
-sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. Arrow
+sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. DataFusion
 semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`); no
 term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
 text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column
