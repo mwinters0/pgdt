@@ -1168,7 +1168,7 @@ impl ColumnGatherer {
     }
 
     fn finish(self) -> ColumnStatistics {
-        let [primary, arrow] = self.bounds;
+        let [primary, datafusion] = self.bounds;
         ColumnStatistics {
             declared_type: self.declared_type,
             collation: self.collation,
@@ -1176,7 +1176,7 @@ impl ColumnGatherer {
             sums: self.sums,
             value_bytes: self.value_bytes,
             bounds: primary.map(BoundsGatherer::finish),
-            arrow_bounds: arrow.map(BoundsGatherer::finish),
+            datafusion_bounds: datafusion.map(BoundsGatherer::finish),
             dictionary: self.dictionary.map(DictionaryGatherer::finish),
             unrepresentable: self
                 .unrepresentable
@@ -2703,7 +2703,7 @@ mod tests {
                 collation: None,
                 null_counts: vec![0; groups.len()],
                 bounds: Some(bounds),
-                arrow_bounds: None,
+                datafusion_bounds: None,
                 dictionary: None,
                 sums: None,
                 value_bytes: vec![0; groups.len()],

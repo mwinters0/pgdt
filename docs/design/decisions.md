@@ -291,7 +291,7 @@ every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field`
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
 sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. DataFusion
-semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`); no
+semantics, one per query lest rows depend on what a plan pushes, maps each kind (`datafusion_order`); no
 term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
 text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column
 ordered as DataFusion does — a `TODO` there; for `macaddr`, refusing a literal not in lowercase, or
@@ -493,8 +493,8 @@ statistics file; its own semantics version; the copy charged; one beside name tw
 Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go in each order a semantics compares by exactly, a dictionary where it equates exactly
-A scalar column keeps bounds and row order per exact order, one set where two coincide: the register's where exact, else Arrow's
-(bytewise: text in any collation, `jsonb`, off-`C` `character(n)`, no plan, no DDL), and Arrow's beside an exact one it differs from
+A scalar column keeps bounds and row order per exact order, one set where two coincide: the register's where exact, else DataFusion's
+(bytewise: text in any collation, `jsonb`, off-`C` `character(n)`, no plan, no DDL), and DataFusion's beside an exact one it differs from
 (a D78 bump); `macaddr`'s serves both (I40), and a float's, its tie of `-0` and `0` broken as `total_cmp` breaks it. A term reads
 the set keyed by its compared kind as gathering resolved the column, not by its plan. A dictionary needs equality alone, reaching
 `KD7`'s text, never an Arrow encoding (D37); nested columns get neither. Rejected: gathering a distinct count (D89 derives one);

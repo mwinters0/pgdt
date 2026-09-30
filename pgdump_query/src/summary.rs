@@ -389,7 +389,7 @@ fn believed(column: &ColumnStatistics, declared: Option<&[ColumnDef]>, name: &st
 /// A column is proved `Ascending` or `Descending` only where all three hold:
 ///
 /// - **Every block holding a row recorded that order**, in the stored set
-///   keyed by the kind Arrow orders the column by and under the DDL it was
+///   keyed by the kind DataFusion orders the column by and under the DDL it was
 ///   gathered under, as [`table_summary`] reads its bounds.
 /// - **No group of any block holds a NULL.** A block's row order skips its
 ///   NULLs, and an ordering says where they fall.

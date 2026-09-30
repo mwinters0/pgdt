@@ -167,7 +167,7 @@ dynamic filter, so it is never stated. `pgdt` prints it to stderr, the shell
 through its sink, and `pgdt info --detail` shows the count per column.
 
 **A column the untyped mode widens is a `ColumnResolution` of its own**, and
-compares in each front end's semantics: in Arrow's (the DataFusion
+compares in each front end's semantics: in DataFusion's (the provider's
 translators) by its bytes, the order DataFusion evaluates on a `Utf8View`, so
 a pushed filter stays `Exact` and statistics, stored in the declared type's
 order, prune nothing on it; in PostgreSQL's (`pgdt --where`) in the declared

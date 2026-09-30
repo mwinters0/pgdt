@@ -274,7 +274,7 @@ mod tests {
                 every: None,
                 displayable: None,
             }),
-            arrow_bounds: None,
+            datafusion_bounds: None,
             dictionary: Some(ColumnDictionary {
                 entries: vec!["1".into()],
                 groups: bounded.iter().map(|_| Some(vec![0])).collect(),

@@ -13,7 +13,7 @@ use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
-    NestedCompare, NestedPlan, UnanswerableReason, arrow_position_divergences,
+    NestedCompare, NestedPlan, UnanswerableReason, datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::unrepresentable::UnrepresentableRead;
@@ -313,7 +313,7 @@ impl Finding for ComparisonNote {
                  PostgreSQL ignores trailing blanks on both sides — so a literal matches only \
                  when padded to the column's width (`'abc'` misses `abc  ` in a character(5))",
             ),
-            ComparisonDivergence::NestedArrowOrder => format!(
+            ComparisonDivergence::NestedOrder => format!(
                 "{subject} is ordered as DataFusion orders the emitted list or struct, a NULL \
                  element or field first where PostgreSQL puts it last — an order that is not \
                  the type's and not one this build promises to match; equality is the \
@@ -346,11 +346,11 @@ impl Finding for ComparisonNote {
 /// comparison of the emitted value differs from the server's, whether or not
 /// this build answers a term on the column — `ORDER BY`, `MIN`/`MAX` and every
 /// filter a plan keeps reach it too, so a nested column whose every term is
-/// refused here still reports [`ComparisonDivergence::NestedArrowOrder`] for
+/// refused here still reports [`ComparisonDivergence::NestedOrder`] for
 /// its order, and each position inside it its own divergence under its path
-/// ([`crate::pgtype::NestedCompare::arrow_divergences`]). A
-/// kind [`CompareKind::arrow_order`] moves reports
-/// [`CompareKind::arrow_divergence`], beside any collation the register
+/// ([`crate::pgtype::NestedCompare::datafusion_divergences`]). A
+/// kind [`CompareKind::datafusion_order`] moves reports
+/// [`CompareKind::datafusion_divergence`], beside any collation the register
 /// already announced; `jsonb`'s string collation is dropped, the whole value
 /// being compared as text. A column that fell back to text reports nothing,
 /// its `Warning` column note being the finding.
@@ -363,7 +363,7 @@ pub fn column_divergences(
         let declared = note.declared.clone().unwrap_or_default();
         let positions = match semantics {
             ComparisonSemantics::Postgres => postgres_divergences(resolved, index, &declared),
-            ComparisonSemantics::DataFusion => arrow_divergences(resolved, index, &declared),
+            ComparisonSemantics::DataFusion => datafusion_divergences(resolved, index, &declared),
         };
         out.extend(positions.into_iter().map(|(path, declared_type, divergence)| ComparisonNote {
             column: note.column.clone(),
@@ -420,7 +420,7 @@ fn postgres_divergences(
 /// A column that did not resolve says nothing here: its fall-back
 /// [`crate::resolve::ColumnNote`] is already a `Warning` saying the value is
 /// the file's text, which is all DataFusion compares.
-fn arrow_divergences(
+fn datafusion_divergences(
     resolved: &ResolvedSchema,
     index: usize,
     declared: &str,
@@ -433,21 +433,21 @@ fn arrow_divergences(
         // The container's order, then each position's own divergence; a
         // plan with no tree has no position to name.
         let positions = match &resolved.comparisons[index] {
-            ComparisonPlan::Nested(tree) => tree.arrow_divergences(),
+            ComparisonPlan::Nested(tree) => tree.datafusion_divergences(),
             _ => Vec::new(),
         };
-        return std::iter::once(column(ComparisonDivergence::NestedArrowOrder))
+        return std::iter::once(column(ComparisonDivergence::NestedOrder))
             .chain(positions.into_iter().map(|(path, declared, d)| (Some(path), declared, d)))
             .collect();
     }
     match &resolved.comparisons[index] {
         ComparisonPlan::Compared { kind, divergence } => {
-            arrow_position_divergences(kind, *divergence).into_iter().map(column).collect()
+            datafusion_position_divergences(kind, *divergence).into_iter().map(column).collect()
         }
         // A scalar column's register never answers either; kept rather than
         // assumed away, the fallback being the emitted text.
         ComparisonPlan::Nested(_) | ComparisonPlan::Unanswerable(_) => {
-            vec![column(ComparisonDivergence::NestedArrowOrder)]
+            vec![column(ComparisonDivergence::NestedOrder)]
         }
         // A mapped scalar with no comparison, which no declared type reaches
         // today: DataFusion compares its text, as the note's `=` clause says;
@@ -2382,7 +2382,7 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// [`ResolvedSchema::comparisons`].
 ///
 /// **Under [`ComparisonSemantics::DataFusion`]** a scalar compares by its kind's
-/// [`CompareKind::arrow_order`], a column with no plan — every one of which
+/// [`CompareKind::datafusion_order`], a column with no plan — every one of which
 /// emits `Utf8View` — compares bytewise under every operator, every
 /// comparing operator on a nested column is refused, statistics are read only where they are ordered or equated
 /// that way, and no term announces a divergence from PostgreSQL, which is a
@@ -2484,7 +2484,7 @@ pub(crate) fn resolve_term(
         Some(compared @ ComparisonPlan::Compared { kind, divergence }) => {
             let kind = &match semantics {
                 ComparisonSemantics::Postgres => kind.clone(),
-                ComparisonSemantics::DataFusion => kind.arrow_order(),
+                ComparisonSemantics::DataFusion => kind.datafusion_order(),
             };
             let comparison = if ordering {
                 Comparison::Ordered {
@@ -4985,12 +4985,12 @@ mod tests {
             [
                 (c(1), None, D::UnknownCollation),
                 (c(2), None, D::IntervalFields),
-                (c(3), None, D::NestedArrowOrder),
-                (c(6), None, D::NestedArrowOrder),
+                (c(3), None, D::NestedOrder),
+                (c(6), None, D::NestedOrder),
                 (c(6), element(), D::ValueAsText),
-                (c(7), None, D::NestedArrowOrder),
+                (c(7), None, D::NestedOrder),
                 (c(7), element(), D::UnknownCollation),
-                (c(8), None, D::NestedArrowOrder),
+                (c(8), None, D::NestedOrder),
                 (c(8), element(), D::UnnormalizedZero),
             ]
         );
@@ -5119,13 +5119,13 @@ mod tests {
     /// Which statistics a term reads, per semantics: `(the set of bounds
     /// under <, dictionary under =)`. **Each semantics reads the set gathered
     /// in its own order** — the primary set where one order serves both, the
-    /// Arrow set where the register's exact order is another, and a divergent
-    /// column's one set, Arrow's, in DataFusion's alone — and a dictionary
+    /// DataFusion set where the register's exact order is another, and a
+    /// divergent column's one set, DataFusion's, in DataFusion's alone — and a dictionary
     /// wherever its entries are the field's own text, which `character(n)`'s,
     /// stored unpadded, are not.
     #[test]
     fn datafusion_semantics_reads_only_the_statistics_that_hold_there() {
-        use BoundsSet::{Arrow as A, Primary as P};
+        use BoundsSet::{DataFusion as F, Primary as P};
         let read = |declared: &str, literal: &str, semantics| {
             let believed = |op| {
                 let p = order_predicate(op, literal);
@@ -5137,19 +5137,19 @@ mod tests {
             let set = lt.bounds.and_then(|b| bounds_set_keyed_by(&stored, &b.0));
             (set, believed(PredicateOp::Eq).0.dictionary)
         };
-        for (declared, literal, postgres, arrow) in [
+        for (declared, literal, postgres, datafusion) in [
             ("integer", "1", (Some(P), true), (Some(P), true)),
             ("uuid", "00000000-0000-0000-0000-000000000000", (Some(P), true), (Some(P), true)),
             ("real", "1", (Some(P), true), (Some(P), true)),
             ("macaddr", "08:00:2b:01:02:03", (Some(P), true), (Some(P), true)),
-            ("numeric", "1", (Some(P), true), (Some(A), true)),
-            ("interval", "1 day", (Some(P), true), (Some(A), true)),
-            ("public.mood", "ok", (Some(P), true), (Some(A), true)),
+            ("numeric", "1", (Some(P), true), (Some(F), true)),
+            ("interval", "1 day", (Some(P), true), (Some(F), true)),
+            ("public.mood", "ok", (Some(P), true), (Some(F), true)),
             // On the database's collation, so bounded bytewise, which is
-            // Arrow's order and not known to be the server's.
+            // DataFusion's order and not known to be the server's.
             ("text", "a", (None, true), (Some(P), true)),
             ("json", "{}", (None, false), (Some(P), false)),
-            // Diverging, so bounded in Arrow's order alone, as text.
+            // Diverging, so bounded in DataFusion's order alone, as text.
             ("jsonb", "{}", (None, true), (Some(P), true)),
             ("character(3)", "a", (None, true), (Some(P), false)),
         ] {
@@ -5160,7 +5160,7 @@ mod tests {
             );
             assert_eq!(
                 read(declared, literal, ComparisonSemantics::DataFusion),
-                arrow,
+                datafusion,
                 "{declared}"
             );
         }
@@ -7098,7 +7098,7 @@ mod tests {
 
         /// A stable name per [`CompareKind`] variant, exhaustive so a new kind
         /// cannot go unrecorded in [`ARROW_AGREEMENT`]. The one only
-        /// [`CompareKind::arrow_order`] produces is named and never walked.
+        /// [`CompareKind::datafusion_order`] produces is named and never walked.
         fn kind_name(kind: &CompareKind) -> &'static str {
             match kind {
                 CompareKind::Bool => "Bool",
@@ -7341,7 +7341,7 @@ mod tests {
         ///
         /// It also holds the rule for which stored bounds DataFusion's semantics
         /// reads ([`ComparisonPlan::bounds_ordered_in`]) to the evidence
-        /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::arrow_order`]
+        /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::datafusion_order`]
         /// leaves alone is one whose order and gathered bounds were found
         /// to be DataFusion's. And **every kind emitted as text —
         /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text`]
@@ -7371,7 +7371,7 @@ mod tests {
             };
             let mut kinds: BTreeMap<&'static str, CompareKind> = BTreeMap::new();
             let (mut answered, mut nested_refused, mut text_emitted) = (0usize, 0usize, 0usize);
-            let (mut arrow_bounds_checked, mut primary_in_both) = (0usize, 0usize);
+            let (mut datafusion_bounds_checked, mut primary_in_both) = (0usize, 0usize);
             for major in MAJORS {
                 let types = types_of(major).await;
                 let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -7414,9 +7414,9 @@ mod tests {
                         _ => false,
                     };
                     assert!(
-                        !emitted_as_text || kind.arrow_order() == CompareKind::Text,
+                        !emitted_as_text || kind.datafusion_order() == CompareKind::Text,
                         "{major} {declared}: emitted as text, compared as {:?}",
-                        kind.arrow_order()
+                        kind.datafusion_order()
                     );
                     text_emitted += usize::from(emitted_as_text);
                     let plan = &resolved.plans[0];
@@ -7441,10 +7441,11 @@ mod tests {
                         assert_eq!(one, agrees, "{major} {declared}: one set read in both");
                         primary_in_both += usize::from(one);
                     }
-                    let set = set.unwrap_or_else(|| panic!("{major} {declared}: no Arrow bounds"));
+                    let set =
+                        set.unwrap_or_else(|| panic!("{major} {declared}: no DataFusion bounds"));
                     let stored_kind = resolved.bounds_kinds(0)[match set {
                         BoundsSet::Primary => 0,
-                        BoundsSet::Arrow => 1,
+                        BoundsSet::DataFusion => 1,
                     }]
                     .clone()
                     .expect("a set read is gathered");
@@ -7462,7 +7463,7 @@ mod tests {
                             .unwrap_or_else(|v| panic!("{major} {declared}: bound {v:?}"));
                         arrow_extremes(&array, &group, &stored)
                             .unwrap_or_else(|e| panic!("{major} {declared}: {e}"));
-                        arrow_bounds_checked += 1;
+                        datafusion_bounds_checked += 1;
                     }
                     let array = crate::batch::column_of(data_type, plan, &held).unwrap();
                     for (j, b) in held.iter().enumerate() {
@@ -7501,11 +7502,11 @@ mod tests {
             assert_eq!(walked, recorded, "every kind the register compares is walked");
             for (name, order, bounds) in ARROW_AGREEMENT {
                 assert_eq!(
-                    kinds[name].arrow_divergence().is_none(),
-                    kinds[name].arrow_order() == kinds[name],
+                    kinds[name].datafusion_divergence().is_none(),
+                    kinds[name].datafusion_order() == kinds[name],
                     "{name}: a kind DataFusion semantics moves reports a divergence, and only one"
                 );
-                if kinds[name].arrow_order() == kinds[name] {
+                if kinds[name].datafusion_order() == kinds[name] {
                     assert!(*order && *bounds, "{name} keeps its kind and disagrees with Arrow");
                 }
             }
@@ -7514,8 +7515,8 @@ mod tests {
                 "{answered} {nested_refused} {text_emitted}"
             );
             assert!(
-                arrow_bounds_checked > 400 && primary_in_both > 0,
-                "{arrow_bounds_checked} {primary_in_both}"
+                datafusion_bounds_checked > 400 && primary_in_both > 0,
+                "{datafusion_bounds_checked} {primary_in_both}"
             );
         }
 
@@ -7599,7 +7600,7 @@ mod tests {
         /// report is allowed to announce a divergence this population never
         /// exercises.
         #[tokio::test]
-        async fn a_column_reporting_no_arrow_divergence_answers_as_the_server() {
+        async fn a_column_reporting_no_datafusion_divergence_answers_as_the_server() {
             let (mut asserted, mut disagreed) = (0usize, BTreeSet::new());
             let mut nested_asserted = 0usize;
             for major in MAJORS {
@@ -7622,7 +7623,7 @@ mod tests {
                         assert!(
                             report
                                 .iter()
-                                .any(|n| n.divergence == ComparisonDivergence::NestedArrowOrder),
+                                .any(|n| n.divergence == ComparisonDivergence::NestedOrder),
                             "{major} {declared}: {report:?}"
                         );
                     }

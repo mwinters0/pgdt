@@ -522,13 +522,13 @@ pub struct ColumnStatistics {
     /// NULLs per group.
     pub null_counts: Vec<u64>,
     /// Present for a scalar column, in the register's order where that is
-    /// exact and Arrow's otherwise — as its text for a column nothing
-    /// declared ([`crate::ResolvedSchema::bounds_kinds`]).
+    /// exact and DataFusion semantics' otherwise — as its text for a column
+    /// nothing declared ([`crate::ResolvedSchema::bounds_kinds`]).
     pub bounds: Option<ColumnBounds>,
-    /// A second set in Arrow's order, present only where the register's
-    /// order is exact and Arrow's is another (`docs/design/decisions.md`,
-    /// "D79").
-    pub arrow_bounds: Option<ColumnBounds>,
+    /// A second set in DataFusion semantics' order, present only where the
+    /// register's order is exact and DataFusion's is another
+    /// (`docs/design/decisions.md`, "D79").
+    pub datafusion_bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,
     /// Per group, its values the column's Arrow type cannot hold, in each tier
@@ -560,11 +560,11 @@ pub struct ColumnStatistics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsSet {
     /// [`ColumnStatistics::bounds`]: the register's order where it is
-    /// exact, Arrow's otherwise.
+    /// exact, DataFusion semantics' otherwise.
     Primary,
-    /// [`ColumnStatistics::arrow_bounds`]: Arrow's order, kept beside
-    /// an exact register order that is not it.
-    Arrow,
+    /// [`ColumnStatistics::datafusion_bounds`]: DataFusion semantics' order,
+    /// kept beside an exact register order that is not it.
+    DataFusion,
 }
 
 /// Which values a reading of a column's statistics takes as its values, and
@@ -766,7 +766,7 @@ impl ColumnStatistics {
     pub fn bounds_in(&self, set: BoundsSet) -> Option<&ColumnBounds> {
         match set {
             BoundsSet::Primary => self.bounds.as_ref(),
-            BoundsSet::Arrow => self.arrow_bounds.as_ref(),
+            BoundsSet::DataFusion => self.datafusion_bounds.as_ref(),
         }
     }
 
@@ -832,7 +832,7 @@ impl ColumnStatistics {
                     .map(|b| text_heap(&b.min) + text_heap(&b.max))
                     .sum::<u64>()
         };
-        let bounds = [&self.bounds, &self.arrow_bounds].into_iter().flatten().map(|bounds| {
+        let bounds = [&self.bounds, &self.datafusion_bounds].into_iter().flatten().map(|bounds| {
             let views = [&bounds.every, &bounds.displayable].into_iter().flatten();
             listed(&bounds.groups) + views.map(|view| listed(&view.groups)).sum::<u64>()
         });

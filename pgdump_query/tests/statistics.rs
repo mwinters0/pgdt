@@ -204,7 +204,7 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let declared = column.declared_type.as_deref().unwrap();
             let values: Vec<&str> = members.iter().filter_map(|r| r.fields[c].as_deref()).collect();
             // A blank-padded column's own set, and its dictionary, hold a value
-            // without its padding; its Arrow set holds the text it emits.
+            // without its padding; its DataFusion set holds the text it emits.
             let unpadded: Vec<&str> = values.iter().map(|v| held(declared, v)).collect();
             let what = format!("{label}: group {k}, column {c} ({declared})");
             assert_eq!(column.null_counts[k], (members.len() - values.len()) as u64, "{what}");
@@ -220,9 +220,11 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let length = values.iter().map(|v| v.len() as u64).sum::<u64>();
             assert_eq!(column.value_bytes[k], length, "{what}: text bytes");
             // The fixture's columns keeping a second set are a bare `numeric`
-            // and an enum, whose Arrow order is their text's.
-            let sets =
-                [(declared, &column.bounds, &unpadded), ("text", &column.arrow_bounds, &values)];
+            // and an enum, whose DataFusion order is their text's.
+            let sets = [
+                (declared, &column.bounds, &unpadded),
+                ("text", &column.datafusion_bounds, &values),
+            ];
             for (declared, bounds, values) in sets {
                 let Some(bounds) = bounds else { continue };
                 match &bounds.groups[k] {
@@ -375,12 +377,16 @@ async fn sortedness_is_the_blocks_row_order() {
             assert_eq!(sortedness(zeros, column), Some(expected), "{column} on {version}");
         }
 
-        // An enum descends in its declared order and ascends in Arrow's, its
+        // An enum descends in its declared order and ascends in DataFusion's, its
         // labels' text.
         let moods = block(&index, "public.moods");
         let m = statistics(moods).columns[1].as_ref().unwrap();
         assert_eq!(m.bounds.as_ref().map(|b| b.sortedness), Some(Descending), "m on {version}");
-        assert_eq!(m.arrow_bounds.as_ref().map(|b| b.sortedness), Some(Ascending), "{version}");
+        assert_eq!(
+            m.datafusion_bounds.as_ref().map(|b| b.sortedness),
+            Some(Ascending),
+            "{version}"
+        );
     }
 }
 
@@ -598,7 +604,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
             let first = held.groups[0].rows;
             let c = block.header.columns.iter().position(|c| c == "id").unwrap();
             let column = held.columns[c].as_mut().unwrap();
-            for set in [&mut column.bounds, &mut column.arrow_bounds].into_iter().flatten() {
+            for set in [&mut column.bounds, &mut column.datafusion_bounds].into_iter().flatten() {
                 set.groups[0] = None;
             }
             column.null_counts[0] = first;
@@ -893,7 +899,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
             let mut held = BlockStatistics::clone(held);
             for column in held.columns.iter_mut().flatten() {
                 assert!(column.bounds.is_some(), "{}", block.header.table);
-                assert!(column.declared_type.is_none() && column.arrow_bounds.is_none());
+                assert!(column.declared_type.is_none() && column.datafusion_bounds.is_none());
                 column.bounds = None;
             }
             block.statistics = Some(Arc::new(held));

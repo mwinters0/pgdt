@@ -265,7 +265,7 @@ fn compared_as_text(table: &ResolvedSchema, index: usize) -> bool {
         return true;
     }
     match &table.comparisons[index] {
-        ComparisonPlan::Compared { kind, .. } => kind.arrow_order() == CompareKind::Text,
+        ComparisonPlan::Compared { kind, .. } => kind.datafusion_order() == CompareKind::Text,
         ComparisonPlan::Refused => true,
         _ => false,
     }

@@ -28,7 +28,7 @@ What the slices after this one inherit. The spec is
   provider's summary (`summary.rs`, "D89") and `pgdt info --detail`'s bounds
   and order counts read `Every` too. So no answer moved.
 - **Only a keyed set holds views**: a bytewise kind's type holds every value.
-  Both of an `interval`'s sets do, the Arrow set (`IntervalFields`) among them.
+  Both of an `interval`'s sets do, the DataFusion set (`IntervalFields`) among them.
 
 ## What the next slices inherit
 

@@ -85,7 +85,7 @@ pub struct QueryOptions {
     /// decides what is *built*, never what may be tested.
     pub filter: Expr,
     /// Which order `filter`'s comparisons answer in: PostgreSQL's, by
-    /// default, or Arrow's order of the value each column emits, which a
+    /// default, or DataFusion's order of the value each column emits, which a
     /// comparison this build cannot make that way refuses
     /// ([`ComparisonSemantics`]). Statistics prune a query in either, read
     /// only where they were gathered in its order.

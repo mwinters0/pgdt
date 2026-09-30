@@ -371,7 +371,7 @@ async fn check(
 /// bytes; for every table, terms under every operator over each column
 /// carrying statistics, and seeded random `And`/`Or`/`Not` trees over them —
 /// in PostgreSQL's semantics, and again over the terms that resolve in
-/// Arrow's, where statistics are read only as far as they hold there. One
+/// DataFusion's, where statistics are read only as far as they hold there. One
 /// thread per major, each with its own seed.
 ///
 /// **It runs whole, in the default suite**, though no other test here costs
@@ -734,7 +734,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
     }
 }
 
-/// **An enum keeps a second set of bounds in Arrow's order, and each
+/// **An enum keeps a second set of bounds in DataFusion's order, and each
 /// semantics reads its own**: `v_mood` holds `sad`, `has space`, `has,comma`
 /// and `has'quote`, declared in that order, so its one group is bounded
 /// `sad`–`has'quote` by declaration and `has space`–`sad` by label text. Each
@@ -755,7 +755,7 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
             (group.min, group.max)
         };
         assert_eq!(extremes(column.bounds.as_ref()), ("sad".into(), "has'quote".into()));
-        assert_eq!(extremes(column.arrow_bounds.as_ref()), ("has space".into(), "sad".into()));
+        assert_eq!(extremes(column.datafusion_bounds.as_ref()), ("has space".into(), "sad".into()));
 
         for (semantics, op, literal, rows, skipped) in [
             (Postgres, PredicateOp::Gt, "sad", 3, 0),

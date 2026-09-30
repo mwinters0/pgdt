@@ -149,7 +149,7 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
                     !census[c].is_zero(),
                     "{what}: a count kept only where one is not zero"
                 );
-                for bounds in [&column.bounds, &column.arrow_bounds].into_iter().flatten() {
+                for bounds in [&column.bounds, &column.datafusion_bounds].into_iter().flatten() {
                     assert_eq!(bounds.every.is_some(), summed.format > 0, "{what}");
                     assert_eq!(bounds.displayable.is_some(), summed.engine > 0, "{what}");
                     viewed += usize::from(bounds.every.is_some() || bounds.displayable.is_some());
@@ -217,7 +217,7 @@ async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
         // A time part past Arrow's nanoseconds keys in both orders, the span
         // and the fields being 128 bits, so every value's view keeps bounds.
         let interval = column("t_extremes", "v_interval");
-        for set in [BoundsSet::Primary, BoundsSet::Arrow] {
+        for set in [BoundsSet::Primary, BoundsSet::DataFusion] {
             let every = interval.group_bounds(set, Every, 0);
             assert!(every.is_some(), "{what}: {set:?}'s every-value interval bounds");
         }

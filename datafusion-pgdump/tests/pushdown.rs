@@ -513,7 +513,7 @@ fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
     };
 
     let integers = one_column("integer[]");
-    assert!(announced(&integers, ComparisonDivergence::NestedArrowOrder));
+    assert!(announced(&integers, ComparisonDivergence::NestedOrder));
     let with_null = list(&integers, Arc::new(Int32Array::from(vec![None])));
     let one = list(&integers, Arc::new(Int32Array::from(vec![Some(1)])));
     assert!(compare_op_for_nested(Operator::Lt, &with_null, &one).unwrap().value(0));

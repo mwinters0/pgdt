@@ -216,7 +216,7 @@ pub enum CompareKind {
     /// `interval` under Arrow's order of `Interval(MonthDayNano)`: months,
     /// then days, then the time part, each compared alone, so `30 days` is
     /// below `1 mon` where [`Self::Interval`] equates them. Produced only by
-    /// [`Self::arrow_order`].
+    /// [`Self::datafusion_order`].
     IntervalFields,
 }
 
@@ -253,7 +253,7 @@ impl CompareKind {
     ///
     /// A special value the emitted type cannot hold (`KD8`) keeps its rank in
     /// the key, which no Arrow value contradicts.
-    pub fn arrow_order(&self) -> CompareKind {
+    pub fn datafusion_order(&self) -> CompareKind {
         match self {
             Self::Interval => Self::IntervalFields,
             Self::Enum(_)
@@ -267,10 +267,10 @@ impl CompareKind {
         }
     }
 
-    /// How [`Self::arrow_order`]'s comparison differs from this kind's —
+    /// How [`Self::datafusion_order`]'s comparison differs from this kind's —
     /// `None` exactly where it leaves the kind alone. A float inside a nested
-    /// column differs besides ([`NestedCompare::arrow_divergences`]).
-    pub fn arrow_divergence(&self) -> Option<ComparisonDivergence> {
+    /// column differs besides ([`NestedCompare::datafusion_divergences`]).
+    pub fn datafusion_divergence(&self) -> Option<ComparisonDivergence> {
         match self {
             Self::Enum(_) => Some(ComparisonDivergence::LabelText),
             Self::Numeric { .. }
@@ -286,14 +286,14 @@ impl CompareKind {
 }
 
 /// What a position of `kind` diverges in under [`ComparisonSemantics::DataFusion`],
-/// given the register's own `divergence` for it: [`CompareKind::arrow_divergence`],
+/// given the register's own `divergence` for it: [`CompareKind::datafusion_divergence`],
 /// then the register's, but for `jsonb`'s string collation, the whole value
 /// being compared as text there.
-pub(crate) fn arrow_position_divergences(
+pub(crate) fn datafusion_position_divergences(
     kind: &CompareKind,
     divergence: Option<ComparisonDivergence>,
 ) -> Vec<ComparisonDivergence> {
-    kind.arrow_divergence()
+    kind.datafusion_divergence()
         .into_iter()
         .chain(divergence.filter(|d| *d != ComparisonDivergence::JsonbStringCollation))
         .collect()
@@ -390,11 +390,11 @@ pub enum ComparisonDivergence {
     /// by declaration (I33). Equality agrees, a label being unique.
     ///
     /// This and the five variants after it are DataFusion semantics' own:
-    /// produced by [`CompareKind::arrow_divergence`],
-    /// [`NestedCompare::arrow_divergences`] and
+    /// produced by [`CompareKind::datafusion_divergence`],
+    /// [`NestedCompare::datafusion_divergences`] and
     /// `crate::predicate::column_divergences`, never by the register — as
     /// [`CompareKind::IntervalFields`] is produced by
-    /// [`CompareKind::arrow_order`] alone.
+    /// [`CompareKind::datafusion_order`] alone.
     LabelText,
     /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
     /// a bare `numeric` or one past 76 digits, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
@@ -426,7 +426,7 @@ pub enum ComparisonDivergence {
     /// last, and both call two NULLs equal (`array_eq`, `record_eq`), so what
     /// reaches equality is a position's own divergence, reported under its
     /// path beside this one.
-    NestedArrowOrder,
+    NestedOrder,
     /// A float position inside a nested column, which `make_comparator`
     /// orders by IEEE `totalOrder` with no `-0` made `0` — the normalization
     /// DataFusion's `apply_cmp` gives a float column and not one nested in a
@@ -472,7 +472,7 @@ impl ComparisonDivergence {
                 false
             }
             // A label is unique, and a NULL equals a NULL on both sides.
-            Self::LabelText | Self::NestedArrowOrder => false,
+            Self::LabelText | Self::NestedOrder => false,
             // A literal matches only the emitted text: a spelling other than
             // the server's own (`'12:00+00'`, an unpadded `character(n)`)
             // misses a value PostgreSQL matches, and some members also write
@@ -644,16 +644,16 @@ impl NestedCompare {
     /// position's own comparison differs in from the server's when DataFusion
     /// compares the emitted value with `make_comparator`, in walk order. A
     /// leaf reports what a column of its kind would
-    /// ([`arrow_position_divergences`]) plus [`ComparisonDivergence::UnnormalizedZero`]
+    /// ([`datafusion_position_divergences`]) plus [`ComparisonDivergence::UnnormalizedZero`]
     /// for a float, and an [`Self::Uncomparable`] position keeps what its
     /// bytewise `=` costs. The container's own order is the column's
-    /// [`ComparisonDivergence::NestedArrowOrder`], not a position's.
-    pub fn arrow_divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
+    /// [`ComparisonDivergence::NestedOrder`], not a position's.
+    pub fn datafusion_divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
         let mut out = Vec::new();
         self.walk(&mut String::new(), &mut |path, leaf| {
             let divergences = match leaf {
                 Self::Leaf { kind, divergence, .. } => {
-                    let mut found = arrow_position_divergences(kind, *divergence);
+                    let mut found = datafusion_position_divergences(kind, *divergence);
                     if matches!(kind, CompareKind::Float32 | CompareKind::Float64) {
                         found.push(ComparisonDivergence::UnnormalizedZero);
                     }
@@ -782,7 +782,7 @@ pub fn bounds_set_keyed_by(
         stored == kind
             || (*kind == CompareKind::Text && matches!(stored, CompareKind::MacAddr { .. }))
     };
-    [BoundsSet::Primary, BoundsSet::Arrow]
+    [BoundsSet::Primary, BoundsSet::DataFusion]
         .into_iter()
         .zip(stored)
         .find_map(|(set, stored)| stored.as_ref().is_some_and(serves).then_some(set))
@@ -807,22 +807,22 @@ impl ComparisonPlan {
     /// (`docs/design/decisions.md`, "D79").
     ///
     /// The primary set is the register's kind where its order is exact,
-    /// which is PostgreSQL's, and otherwise Arrow's ([`CompareKind::arrow_order`]),
+    /// which is PostgreSQL's, and otherwise DataFusion's ([`CompareKind::datafusion_order`]),
     /// which is always exact over the text the column emits: a divergent text
     /// column's bytewise order, `jsonb`'s and a `character(n)`'s off `C`
     /// (padded) as text, and a column with no plan bytewise, as DataFusion
-    /// semantics compares it. The Arrow set is a second one, for an exact kind
-    /// whose Arrow order is another — but `macaddr`, whose field text orders
+    /// semantics compares it. The DataFusion set is a second one, for an exact
+    /// kind whose DataFusion order is another — but `macaddr`, whose field text orders
     /// as its octets do (I40), so its one set serves both.
     pub fn bounds_kinds(&self) -> [Option<CompareKind>; 2] {
         match self {
             Self::Compared { kind, divergence: None } => {
-                let arrow = kind.arrow_order();
-                let second = (arrow != *kind && !matches!(kind, CompareKind::MacAddr { .. }))
-                    .then_some(arrow);
+                let datafusion = kind.datafusion_order();
+                let second = (datafusion != *kind && !matches!(kind, CompareKind::MacAddr { .. }))
+                    .then_some(datafusion);
                 [Some(kind.clone()), second]
             }
-            Self::Compared { kind, divergence: Some(_) } => [Some(kind.arrow_order()), None],
+            Self::Compared { kind, divergence: Some(_) } => [Some(kind.datafusion_order()), None],
             Self::Refused => [Some(CompareKind::Text), None],
             Self::Nested(_) | Self::Unanswerable(_) => [None, None],
         }
@@ -838,7 +838,7 @@ impl ComparisonPlan {
     /// Which stored set of bounds and row order is ordered as `semantics`
     /// orders the column, if any — `None` where gathering keeps none in that
     /// order. PostgreSQL's reads the primary set where the register's order
-    /// is exact; Arrow's reads the second set where one is kept, and the
+    /// is exact; DataFusion's reads the second set where one is kept, and the
     /// primary set otherwise ([`Self::bounds_kinds`]): the set
     /// [`bounds_set_keyed_by`] finds for the kind a term compares by in
     /// `semantics`, of the sets gathered under this plan.
@@ -858,7 +858,7 @@ impl ComparisonPlan {
                 Some(kind.clone())
             }
             (Self::Compared { kind, .. }, ComparisonSemantics::DataFusion) => {
-                Some(kind.arrow_order())
+                Some(kind.datafusion_order())
             }
             (Self::Refused, ComparisonSemantics::DataFusion) => Some(CompareKind::Text),
             _ => None,
@@ -2909,13 +2909,13 @@ mod tests {
 
     /// **A scalar column is bounded in every semantics whose order over its
     /// text is exact, one set where two coincide**: a divergent plan's one set
-    /// is Arrow's and read there alone, a column with no plan is bounded
-    /// bytewise for Arrow, and an exact kind Arrow orders otherwise keeps a
-    /// second set in Arrow's order — but `macaddr`, whose one set is read in
+    /// is DataFusion's and read there alone, a column with no plan is bounded
+    /// bytewise for DataFusion, and an exact kind DataFusion orders otherwise
+    /// keeps a second set in DataFusion's order — but `macaddr`, whose one set is read in
     /// both (`docs/design/decisions.md`, "D79").
     #[test]
     fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
-        use BoundsSet::{Arrow as A, Primary as P};
+        use BoundsSet::{DataFusion as F, Primary as P};
         use ComparisonDivergence::*;
         use ComparisonSemantics::{DataFusion, Postgres};
         let text = || Some(CompareKind::Text);
@@ -2951,11 +2951,11 @@ mod tests {
             CompareKind::Jsonb,
         ] {
             let plan = ComparisonPlan::agrees(kind.clone());
-            assert_eq!(read(&plan), ([Some(kind.clone()), text()], Some(P), Some(A)), "{kind:?}");
+            assert_eq!(read(&plan), ([Some(kind.clone()), text()], Some(P), Some(F)), "{kind:?}");
         }
         assert_eq!(
             read(&ComparisonPlan::agrees(CompareKind::Interval)),
-            ([Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], Some(P), Some(A))
+            ([Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], Some(P), Some(F))
         );
         for kind in [CompareKind::MacAddr { octets: 6 }, CompareKind::Int, CompareKind::Bytea] {
             let plan = ComparisonPlan::agrees(kind.clone());
@@ -2976,7 +2976,7 @@ mod tests {
     /// (`docs/design/decisions.md`, "D79").
     #[test]
     fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
-        use BoundsSet::{Arrow as A, Primary as P};
+        use BoundsSet::{DataFusion as F, Primary as P};
         let text = CompareKind::Text;
         let refused = ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::DataFusion);
         assert_eq!(refused.as_ref(), Some(&text));
@@ -2984,7 +2984,7 @@ mod tests {
         let labels: Arc<[String]> = Arc::from(vec!["b".to_string()]);
         for (declared, stored, want) in [
             ("text", [Some(text.clone()), None], Some(P)),
-            ("an enum", [Some(CompareKind::Enum(labels)), Some(text.clone())], Some(A)),
+            ("an enum", [Some(CompareKind::Enum(labels)), Some(text.clone())], Some(F)),
             ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
             ("integer", [Some(CompareKind::Int), None], None),
             ("interval", [Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], None),

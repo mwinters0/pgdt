@@ -1468,7 +1468,7 @@ beside them `every`, the same over every value in PostgreSQL's order, where
 some group holds one the type cannot, and `displayable`, over the values
 within the calendar end as well, where some group holds one past it, each
 `null` otherwise and, where present, `null` for every group holding no such
-value, whose bounds are `bounds`' own), `arrow_bounds` (the same, in a
+value, whose bounds are `bounds`' own), `datafusion_bounds` (the same, in a
 DataFusion query's order, for a column whose PostgreSQL order is another, and
 `null` for every other column), `unrepresentable` (per group, the block's
 `{format, engine}` count above, for a column some group of which holds such

@@ -284,10 +284,13 @@ fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
     let default_text = column(ordered, "default_text");
     assert_eq!(default_text["bounds"]["sortedness"], "Unsorted", "bytewise, not the server's");
     assert!(!default_text["dictionary"].is_null());
-    assert!(default_text["arrow_bounds"].is_null(), "one set where the two orders coincide");
+    assert!(default_text["datafusion_bounds"].is_null(), "one set where the two orders coincide");
     let specials = &blocks.iter().find(|(t, _)| t == "public.specials").unwrap().1;
     let n = column(specials, "n");
-    assert!(!n["bounds"].is_null() && !n["arrow_bounds"].is_null(), "a bare numeric's two sets");
+    assert!(
+        !n["bounds"].is_null() && !n["datafusion_bounds"].is_null(),
+        "a bare numeric's two sets"
+    );
 
     let long_value = &blocks.iter().find(|(t, _)| t == "public.long_value").unwrap().1;
     let groups = array(&long_value["statistics"]["groups"]);
