@@ -140,4 +140,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "# hunks: usage docstring, BARRED, cmd_list, cmd_stale, main()'s selection guard"
         ),
     ),
+    Acknowledged(
+        commit="4c0399d",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "preamble-prepass",
+            "parallel-scan-throughput",
+            "per-block-quadratic",
+        ),
+        why=(
+            "28.3's count: each figure times only `parse --statistics-level metadata` (or "
+            "`--preamble-only`), where map_forward and the leader build no counter since both "
+            "gate it on the census, and the eager pass that counts unconditionally is reached "
+            "only by build_index/build_map, which only tests call; what is left is about a byte "
+            "per block and four per file in the cache encoding"
+        ),
+        verified=(
+            "git show 4c0399d -- pgdump_query/src/stream.rs  "
+            "# map_forward: header = census.then(..); leader plan = header.map(..); "
+            "graft callers build_index  # tests only"
+        ),
+    ),
 )
