@@ -116,3 +116,13 @@ Run it after rewriting a heading.
   final 1.0 design is all that matters.
 - **Memories** go in this project, not user memory; development may move
   machines.
+- **The session scratchpad is not a home.** Before a session or round
+  reports, whatever a later one needs moves to `runs/` or to a data directory
+  `CLAUDE.local.md` names, and the record (notes doc, history entry, handoff
+  doc) names it there; everything else in `scratchpad/` is deleted. A file
+  the record does not name is one no later session can find, so it is
+  transient by definition. Nothing expected past ~100 MiB — a build of
+  another commit, its target dir, a generated dump — is written to the
+  scratchpad even briefly; it goes to its data directory from the start. A
+  `SessionEnd` hook (`.claude/helpers/scratchpad-end.sh`) removes the
+  session's directory as a backstop, not as the protocol.

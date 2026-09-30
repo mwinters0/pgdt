@@ -81,7 +81,9 @@ in, clear its Blocks column, and write that entry.
 ## Before you finish
 
 Hunt every copy of any fact the change moved, by handle and by wording
-(`docs/process.md`, "Repointing": subtract as you add). Run `mise run check
+(`docs/process.md`, "Repointing": subtract as you add). Empty the scratchpad
+(`CLAUDE.md`, "The session scratchpad is not a home"): move what a later round
+needs to where the record names it, delete the rest. Run `mise run check
 --affected` once, as the last thing that touches the tree, and report its
 summary verbatim — it names every failing test, and the log it names answers
 anything more, so it is never piped or re-run to read it. A cap `repoint.py` names fails it and is

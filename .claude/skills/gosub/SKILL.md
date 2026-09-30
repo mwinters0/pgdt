@@ -66,6 +66,10 @@ where the report says no reading can move and the diff bears that out, add an
 entry to `scripts/acknowledged.py` shaped like its neighbours, check `--stale`
 drops the figure, and commit `Acknowledge <sha> against <figure>`. This loop's
 own commits owe the same; a figure left red is named in the final report.
+**Then empty the scratchpad**, which the round's subagent shares with you: it was
+told to empty it (`CLAUDE.md`, "The session scratchpad is not a home"), so what
+is left is named by nothing. Delete it, reporting what went and any round that
+left more than logs.
 
 **5. Triage a new "Decisions worth another look" entry** (below). **6. Decide.**
 Stop, or start the next round from step 1.
