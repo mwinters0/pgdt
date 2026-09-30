@@ -243,22 +243,18 @@ pub enum Error {
         declared_type: String,
         value: String,
     },
-    /// A value PostgreSQL accepts for the column's declared type and its
-    /// Arrow type cannot hold, met by a query under
-    /// [`crate::UnrepresentableMode::Refuse`] where its read reached it — a
-    /// value of the type, where [`Self::FieldDecode`]'s is not
-    /// (`docs/design/decisions.md`, "D98"). The remedy is a mode, which the
+    /// A column the query materializes holds values PostgreSQL accepts for
+    /// its declared type and its Arrow type cannot hold, and the query is
+    /// under [`crate::UnrepresentableMode::Refuse`]: refused at planning,
+    /// before a row is read, wherever the map counts one in the table, not
+    /// only in the groups a filter keeps. `values` is the map's count in the
+    /// tiers the query's front end cannot hold (`docs/design/decisions.md`,
+    /// "D99"). The remedy is a mode, which the
     /// sentence names in the library's words.
     #[error(
-        "{table}.{column} at row offset {row_offset}: `{value}` is a `{declared_type}` value the column's Arrow type cannot hold, and this query refuses such values — read them in the null mode, as NULL, or leave the column unmaterialized"
+        "{table}.{column} holds {values} `{declared_type}` value(s) the column's Arrow type cannot hold, and this query refuses a column holding one — read them in the null mode, as NULL, or leave the column unmaterialized, read only by a filter the library answers"
     )]
-    Unrepresentable {
-        table: String,
-        column: String,
-        row_offset: u64,
-        declared_type: String,
-        value: String,
-    },
+    Unrepresentable { table: String, column: String, declared_type: String, values: u64 },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
     /// refuses rather than writing something the file could not have held

@@ -67,8 +67,8 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
     refused for one of several. :strings reads every column as its text, \
-    :unrepresentable=refuse refuses a value a column's type cannot hold where the default, `null`, \
-    reads it as NULL, and :strict-identity=TERMS states this dump's strictness where \
+    :unrepresentable=refuse refuses at planning a query needing the values of a column holding \
+    one its type cannot hold, where the default, `null`, reads such a value as NULL, and :strict-identity=TERMS states this dump's strictness where \
     --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \

@@ -2307,7 +2307,9 @@ impl ReplayPlan {
     /// The plan for replaying `matches`: the table's columns
     /// ([`TableColumns::settle`]), and every one of its blocks resolved
     /// against them and the DDL before any sub-stream exists — or the table's
-    /// refusal, or else the first refusing block's ([`plan_blocks`]).
+    /// refusal, or else the first refusing block's ([`plan_blocks`]), or else,
+    /// under the refuse mode, its first materialized column holding a value
+    /// the query cannot hold ([`materialized_unrepresentable`]).
     fn new(
         scan_options: ScanOptions,
         query_options: QueryOptions,
@@ -2317,9 +2319,17 @@ impl ReplayPlan {
         refuse_metadata_level(matches, &query_options)?;
         let table = TableColumns::settle(matches, metadata.as_ref())?;
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
+        let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
+        if query_options.unrepresentable == UnrepresentableMode::Refuse
+            && !unrepresentable.is_empty()
+        {
+            let MaterializedUnrepresentable { table, column, declared_type, values } =
+                unrepresentable.swap_remove(0);
+            return Err(Error::Unrepresentable { table, column, declared_type, values });
+        }
+        let read_as_null = read_as_null(unrepresentable, &query_options);
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
-        let read_as_null = read_as_null(matches, &blocks, &query_options);
         Ok(Self {
             scan_options,
             query_options,
@@ -2430,19 +2440,28 @@ fn prune_blocks(
     Pruned { kept, stops, note, rows, value_bytes }
 }
 
-/// **Each column the query materializes that holds a value it reads as
-/// NULL**, with the map's count of them over every block of the table in the
-/// tiers the query's semantics cannot hold ([`PlanNoteKind::ReadAsNull`]) —
-/// under [`crate::UnrepresentableMode::Null`] and typed, and never for a
-/// column read as `Utf8View`, whose text holds every value.
-fn read_as_null(
+/// A column the query materializes that holds values its front end cannot
+/// hold, with the map's count of them in the tiers the query's semantics
+/// cannot hold over every block of the table, not the groups a filter keeps.
+struct MaterializedUnrepresentable {
+    table: String,
+    column: String,
+    declared_type: String,
+    values: u64,
+}
+
+/// **Each column the query materializes that holds a value its front end
+/// cannot hold**, in the order the query emits them — typed, and never a
+/// column read as `Utf8View`, whose text holds every value. What the refuse
+/// mode refuses at planning ([`Error::Unrepresentable`],
+/// `docs/design/decisions.md`, "D99") and the null mode warns of
+/// ([`read_as_null`]).
+fn materialized_unrepresentable(
     matches: &[CopyBlock],
     blocks: &BTreeMap<u64, PlannedBlock>,
     query_options: &QueryOptions,
-) -> Vec<PlanNote> {
-    if query_options.unrepresentable != UnrepresentableMode::Null
-        || query_options.schema_mode != SchemaMode::Typed
-    {
+) -> Vec<MaterializedUnrepresentable> {
+    if query_options.schema_mode != SchemaMode::Typed {
         return Vec::new();
     }
     let (Some(first), Some(planned)) = (matches.first(), blocks.values().next()) else {
@@ -2451,7 +2470,7 @@ fn read_as_null(
     let reach = query_options.unrepresentable_reach();
     let table = first.header.qualified_name();
     let fields = planned.resolved.schema.fields();
-    let mut notes = Vec::new();
+    let mut found = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         if matches!(field.data_type(), arrow::datatypes::DataType::Utf8View) {
             continue;
@@ -2470,17 +2489,33 @@ fn read_as_null(
         if values == 0 {
             continue;
         }
-        notes.push(PlanNote {
-            kind: PlanNoteKind::ReadAsNull {
-                table: table.clone(),
-                column: field.name().clone(),
-                declared_type: planned.resolved.notes[i].declared.clone().unwrap_or_default(),
-                values,
-            },
-            levers: Vec::new(),
+        found.push(MaterializedUnrepresentable {
+            table: table.clone(),
+            column: field.name().clone(),
+            declared_type: planned.resolved.notes[i].declared.clone().unwrap_or_default(),
+            values,
         });
     }
-    notes
+    found
+}
+
+/// **Each column the query materializes that holds a value it reads as
+/// NULL**, with the map's count ([`PlanNoteKind::ReadAsNull`]) — under
+/// [`crate::UnrepresentableMode::Null`] alone.
+fn read_as_null(
+    columns: Vec<MaterializedUnrepresentable>,
+    query_options: &QueryOptions,
+) -> Vec<PlanNote> {
+    if query_options.unrepresentable != UnrepresentableMode::Null {
+        return Vec::new();
+    }
+    columns
+        .into_iter()
+        .map(|MaterializedUnrepresentable { table, column, declared_type, values }| PlanNote {
+            kind: PlanNoteKind::ReadAsNull { table, column, declared_type, values },
+            levers: Vec::new(),
+        })
+        .collect()
 }
 
 /// Per field of `planned`, the text bytes `block`'s statistics count of its

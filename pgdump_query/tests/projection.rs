@@ -133,7 +133,7 @@ async fn a_repeated_name_is_refused_without_reading_the_file() {
 
 /// **Whether a refusing query succeeds depends on its projection.**
 /// `t_numeric.v_small` carries a `NaN` that `Decimal128` cannot represent, so
-/// under the refuse mode the whole table is a hard `Error::Unrepresentable`;
+/// under the refuse mode the whole table is `Error::Unrepresentable`, at planning;
 /// projecting that column away is a per-column escape beside `--schema-mode
 /// strings`, and it leaves every other column typed.
 #[tokio::test]

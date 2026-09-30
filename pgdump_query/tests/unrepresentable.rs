@@ -163,8 +163,8 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
 /// **Each view bounds the values it takes**: `t_date`'s infinities are its
 /// every-value extremes and NULLs in the representable view; `t_extremes`'
 /// greatest `date` is representable and past the calendar, and its every-value
-/// timestamp bounds are lost to a value past `i64`, which keys in no order;
-/// its intervals past Arrow's nanoseconds key, and keep theirs.
+/// timestamp bounds are its infinities, a value past what `i64` counts from
+/// 1970 keying; its intervals past Arrow's nanoseconds key, and keep theirs.
 #[tokio::test]
 async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
     use StatisticsView::{Displayable, Every, Representable};
@@ -201,8 +201,12 @@ async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
         );
         assert_eq!(extremes(&date, Displayable), pair("4714-11-24 BC", "262142-12-31"), "{what}");
 
+        // PostgreSQL's greatest timestamp is past what `i64` counts from 1970
+        // and keys all the same, counted from PostgreSQL's epoch (I49).
         let ts = column("t_extremes", "v_ts");
-        assert_eq!(extremes(&ts, Every), None, "{what}: lost to a value keying in no order");
+        assert_eq!(extremes(&ts, Every), pair("-infinity", "infinity"), "{what}");
+        let tstz = column("t_extremes", "v_tstz");
+        assert_eq!(extremes(&tstz, Every), pair("-infinity", "infinity"), "{what}");
         assert_eq!(
             extremes(&ts, Representable),
             pair("4714-11-24 00:00:00 BC", "294247-01-10 04:00:54.775807"),

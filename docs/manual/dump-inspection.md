@@ -1252,9 +1252,10 @@ which a DataFusion query cannot display`. A value inside an array, a range or a
 composite makes the whole value one such value, counted once. The line appears
 only where the column holds one. A query reads each such value as NULL, the
 dates past that calendar too in a DataFusion query, and says how many a column
-it prints holds; `pgdt query --unrepresentable refuse` refuses where the read
-reaches one instead, naming it ([type handling](type-handling.md), "A value
-its column cannot hold reads as NULL").
+it prints holds; `pgdt query --unrepresentable refuse` instead refuses a query
+printing such a column before a row is read, naming it and the count
+([type handling](type-handling.md), "A value its column cannot hold reads as
+NULL").
 
 `--detail` closes its listing, above the totals, with what `parse` gathered
 (see "`--statistics-level`" above), one line per table and one beneath it per column:

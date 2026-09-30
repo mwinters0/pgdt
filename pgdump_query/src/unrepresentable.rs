@@ -189,14 +189,16 @@ pub enum UnrepresentableMode {
     /// count and bound. The default.
     #[default]
     Null,
-    /// A query materializing such a value refuses where its read reaches it.
+    /// A query materializing a column holding such a value refuses at
+    /// planning, from the map's count, before a row is read; a column only a
+    /// filter the library answers reads is not materialized, and compares in
+    /// PostgreSQL's order.
     Refuse,
 }
 
-/// **How one query reads one column's values its type cannot hold**: the
-/// column's tier test, the tiers the query's front end cannot hold, and
-/// whether it reads them as NULL or refuses them (`docs/design/decisions.md`,
-/// "D98").
+/// **How one query reads one column's values its type cannot hold as NULL**:
+/// the column's tier test and the tiers the query's front end cannot hold
+/// (`docs/design/decisions.md`, "D98").
 #[derive(Debug, Clone)]
 pub(crate) struct UnrepresentableRead {
     tier: ColumnTier,
@@ -204,19 +206,13 @@ pub(crate) struct UnrepresentableRead {
     /// calendar either, [`Format`] where it holds every value Arrow's format
     /// spec does.
     reach: UnrepresentableTier,
-    null: bool,
 }
 
 impl UnrepresentableRead {
     /// Whether `text`, one unescaped value of the column, is one this query
-    /// reads as NULL.
+    /// reads as NULL: one its front end cannot hold.
     #[inline]
     pub(crate) fn nulls(&self, text: &str) -> bool {
-        self.null && self.past(text)
-    }
-
-    /// Whether `text` is one the query's front end cannot hold.
-    pub(crate) fn past(&self, text: &str) -> bool {
         match self.tier.of(text) {
             Some(Format) => true,
             Some(Engine) => self.reach == Engine,
@@ -227,16 +223,17 @@ impl UnrepresentableRead {
 
 /// Per column of `resolved` — one block's schema as a query resolves it, in
 /// the block's own column order — how that query reads its values their type
-/// cannot hold: `None` for a column read as `Utf8View`, which holds every
-/// value, and for one whose declared type's leaves all hold every value.
+/// cannot hold as NULL: `None` for a column read as `Utf8View`, which holds
+/// every value, for one whose declared type's leaves all hold every value,
+/// and for every column under [`UnrepresentableMode::Refuse`], whose plan
+/// has refused any column it materializes holding one (`ReplayPlan::new`),
+/// and whose filter orders every such value in PostgreSQL's order.
 ///
-/// **Under [`UnrepresentableMode::Null`] a column is tested only where
-/// `counts`, the block's own count ([`crate::index::CopyBlock::unrepresentable`]),
-/// says it holds such a value in the tiers `reach` reads**, the count being
-/// the map's exact record of them (`docs/design/decisions.md`, "D96"); a
-/// block with no count is tested throughout. Under the refuse mode the test
-/// is asked only of a value that failed to decode, so every column that can
-/// hold one carries it.
+/// **A column is tested only where `counts`, the block's own count
+/// ([`crate::index::CopyBlock::unrepresentable`]), says it holds such a value
+/// in the tiers `reach` reads**, the count being the map's exact record of
+/// them (`docs/design/decisions.md`, "D96"); a block with no count is tested
+/// throughout.
 ///
 /// The leaves are the declared type's, resolved typed against no census as
 /// [`counter_for`] resolves them, so a column a census deepens is tested as
@@ -253,7 +250,7 @@ pub(crate) fn unrepresentable_reads(
     let width = resolved.schema.fields().len();
     let read_as_text =
         |i: usize| matches!(resolved.schema.field(i).data_type(), DataType::Utf8View);
-    if (0..width).all(read_as_text) {
+    if mode == UnrepresentableMode::Refuse || (0..width).all(read_as_text) {
         return vec![None; width];
     }
     let declared = resolve_columns(
@@ -265,7 +262,6 @@ pub(crate) fn unrepresentable_reads(
         &[],
     );
     let tiers = column_tiers(&declared);
-    let null = mode == UnrepresentableMode::Null;
     (0..width)
         .map(|i| {
             let tier = tiers.get(i)?.clone()?;
@@ -275,10 +271,10 @@ pub(crate) fn unrepresentable_reads(
             let held = counts
                 .and_then(|counts| counts.get(i))
                 .is_some_and(|count| count.format == 0 && (reach == Format || count.engine == 0));
-            if null && held {
+            if held {
                 return None;
             }
-            Some(UnrepresentableRead { tier, reach, null })
+            Some(UnrepresentableRead { tier, reach })
         })
         .collect()
 }

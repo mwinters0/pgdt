@@ -342,19 +342,15 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// `NaN` on a `Decimal128`, a timestamp past `i64` microseconds from 1970,
 /// which PostgreSQL's range outlasts by three decades, and
 /// [`decode_time64_micros`]'s `24:00:00`): a typed column cannot hold the
-/// value. A query in the null mode reads it as NULL before any of these is
-/// asked (`docs/design/decisions.md`, "D98"); in the refuse mode
-/// materializing one is `Error::Unrepresentable` where a read reaches it,
-/// and a `date`, or a timestamp short of `i64`'s end, past `262142-12-31`
-/// decodes, and `arrow-cast` formats it through a calendar ending there,
-/// which DataFusion reads as an error wherever it formats or casts the
-/// value. A DataFusion query need not read every row — a `LIMIT` one
-/// partition meets first, a dynamic filter another partition tightened — so
-/// in the refuse mode whether it reaches the value, and refuses, can differ
-/// from run to run; and no mode yet reads the column as its text, which
-/// `--schema-mode strings` does for every column. **(b) owned by P28**,
-/// whose refuse mode refuses at planning from the map's count and whose
-/// untyped mode reads such a column as text.
+/// value, nor DataFusion display a `date`, or a timestamp short of `i64`'s
+/// end, past `262142-12-31`, which decodes and which `arrow-cast` formats
+/// through a calendar ending there. A query in the null mode reads either as
+/// NULL before any of these is asked (`docs/design/decisions.md`, "D98"),
+/// and in the refuse mode a query materializing a column holding one is
+/// refused at planning ("D99"); but no mode yet reads the column as its
+/// text, keeping both its values and every other column typed, which
+/// `--schema-mode strings` does only for every column at once. **(b) owned
+/// by P28**, whose untyped mode reads such a column as text.
 pub fn decode_date32(s: &str) -> Option<i32> {
     if s == "infinity" || s == "-infinity" {
         return None;
@@ -518,6 +514,31 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
     Some(local_micros - i128::from(offset_secs) * 1_000_000)
 }
 
+/// PostgreSQL's epoch, 2000-01-01 00:00:00 UTC, in microseconds from the
+/// Unix epoch.
+const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
+
+/// A finite timestamp's microseconds from PostgreSQL's epoch, 2000-01-01 UTC —
+/// the `int64` PostgreSQL stores it as (I49), so every value it admits fits,
+/// the three decades [`decode_timestamp_micros`] cannot count from 1970
+/// included. What its comparison orders (`crate::predicate`), where
+/// [`decode_timestamp_micros`] is what Arrow holds; `None` as that is for the
+/// infinities and for text that is not a timestamp.
+pub(crate) fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Option<i64> {
+    i64::try_from(timestamp_micros_wide(s, with_tz)? - POSTGRES_EPOCH_UNIX_MICROS).ok()
+}
+
+/// [`render_timestamp_micros`] of a [`timestamp_postgres_micros`] value, so a
+/// timestamp past what `i64` counts from 1970 is written as the dump writes it.
+pub(crate) fn render_timestamp_postgres_micros(v: i64, with_tz: bool) -> String {
+    let unix = i128::from(v) + POSTGRES_EPOCH_UNIX_MICROS;
+    let days = i64::try_from(unix.div_euclid(86_400_000_000)).expect("an i64 of micros is days");
+    let of_day = i64::try_from(unix.rem_euclid(86_400_000_000)).expect("under a day");
+    let mut out = String::with_capacity(32);
+    push_timestamp(days, of_day, with_tz, &mut out);
+    out
+}
+
 pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
     // `YYYY-MM-DD HH:MM:SS.ffffff+00`, with room for the era marker.
     let mut out = String::with_capacity(32);
@@ -527,9 +548,15 @@ pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
 
 /// [`render_timestamp_micros`] appending to a caller's buffer.
 pub fn render_timestamp_micros_into(v: i64, with_tz: bool, out: &mut String) {
-    let bc = push_civil_date(out, v.div_euclid(86_400_000_000));
+    push_timestamp(v.div_euclid(86_400_000_000), v.rem_euclid(86_400_000_000), with_tz, out);
+}
+
+/// A timestamp's text out of its day count from 1970 and its microseconds
+/// into that day.
+fn push_timestamp(days: i64, of_day: i64, with_tz: bool, out: &mut String) {
+    let bc = push_civil_date(out, days);
     out.push(' ');
-    format_hms_frac_into(out, v.rem_euclid(86_400_000_000));
+    format_hms_frac_into(out, of_day);
     if with_tz {
         out.push_str("+00");
     }

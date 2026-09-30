@@ -163,7 +163,9 @@ fn a_special_value_is_ordered_rather_than_ending_the_query() {
 }
 
 /// **The null mode says on stderr how many values each column it prints
-/// reads as NULL**, the map's count over the table, and prints them as NULL.
+/// reads as NULL**, the map's count over the table, and prints them as NULL;
+/// the refuse mode refuses to print the column, with the same count, even
+/// where its filter keeps no row holding one.
 #[test]
 fn values_read_as_null_are_counted_on_stderr() {
     let out = query("public.t_date", "v_date", &[]);
@@ -175,9 +177,14 @@ fn values_read_as_null_are_counted_on_stderr() {
         ),
         "{stderr}"
     );
-    let refused = query("public.t_date", "v_date", &["--unrepresentable", "refuse"]);
-    assert!(!refused.status.success());
-    assert!(stderr_of(&refused).contains("refuses such values"), "{}", stderr_of(&refused));
+    let refusal = "public.t_date.v_date holds 2 `date` value(s) the column's Arrow type cannot \
+                   hold, and this query refuses a column holding one";
+    for filter in [&[][..], &["--filter", "v_date=0001-01-01"]] {
+        let args = [&["--unrepresentable", "refuse"][..], filter].concat();
+        let refused = query("public.t_date", "v_date", &args);
+        assert!(!refused.status.success());
+        assert!(stderr_of(&refused).contains(refusal), "{}", stderr_of(&refused));
+    }
 }
 
 /// A literal that is not a value of the column's type is refused by name,

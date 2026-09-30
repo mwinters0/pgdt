@@ -86,62 +86,25 @@ type Answer = Result<(Option<RecordBatch>, Vec<PlanNote>, Resolved, Vec<EarlySto
 /// query` announces.
 type Resolved = (pgdump_query::ResolvedSchema, Vec<pgdump_query::ComparisonNote>);
 
-/// One query as far as it got: its rows and schema or its error, beside the
-/// plan's notes and the early stops its sub-streams reached — which say,
-/// whichever it ended in, whether it left a row unread.
-struct Attempt {
-    outcome: Result<(Option<RecordBatch>, Resolved), String>,
-    notes: Vec<PlanNote>,
-    stops: Vec<EarlyStop>,
-}
-
 /// `options` against `table`, its sub-streams drained in the order the split
-/// handed them back, which is file order (`docs/design/decisions.md`, "D51"),
-/// up to the first error.
-async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Attempt {
+/// handed them back, which is file order (`docs/design/decisions.md`, "D51").
+async fn answer(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Answer {
     let source = LocalFileSource::open(dump).unwrap();
     let cache = CacheMode::enabled(cache.to_path_buf());
     let mut streams =
-        match table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await
-        {
-            Ok(streams) => streams,
-            Err(e) => {
-                return Attempt {
-                    outcome: Err(e.to_string()),
-                    notes: Vec::new(),
-                    stops: Vec::new(),
-                };
-            }
-        };
+        table_stream_partitions(&source, table, ScanOptions::default(), options, cache)
+            .await
+            .map_err(|e| e.to_string())?;
     let notes = streams[0].plan_notes();
-    let (mut batches, mut failure) = (Vec::new(), None);
-    'drain: for stream in &mut *streams {
+    let mut batches = Vec::new();
+    for stream in &mut *streams {
         while let Some(batch) = stream.next().await {
-            match batch {
-                Ok(batch) => batches.push(batch),
-                Err(e) => {
-                    failure = Some(e.to_string());
-                    break 'drain;
-                }
-            }
+            batches.push(batch.map_err(|e| e.to_string())?);
         }
     }
+    let rows = batches.first().map(|first| concat_batches(&first.schema(), &batches).unwrap());
     let stops = streams.iter().flat_map(|stream| stream.early_stops()).collect();
-    let outcome = match failure {
-        Some(e) => Err(e),
-        None => {
-            let rows =
-                batches.first().map(|first| concat_batches(&first.schema(), &batches).unwrap());
-            Ok((rows, (streams[0].resolved_schema(), streams[0].comparison_notes())))
-        }
-    };
-    Attempt { outcome, notes, stops }
-}
-
-/// [`attempt`], its notes and stops kept only where it answers.
-async fn answer(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Answer {
-    let Attempt { outcome, notes, stops } = attempt(dump, cache, table, options).await;
-    outcome.map(|(rows, resolved)| (rows, notes, resolved, stops))
+    Ok((rows, notes, (streams[0].resolved_schema(), streams[0].comparison_notes()), stops))
 }
 
 /// Per block, what `stops` — gathered over sub-streams — left unread, a block
@@ -265,20 +228,13 @@ struct Tally {
     pruning: usize,
     stopping: usize,
     skipped_groups: u64,
-    unpruned_errors: usize,
-    /// Unpruned errors whose pruned query read every row, so raised too.
-    errors_raised_pruned: usize,
 }
 
 /// `filter` pruned against unpruned, serially and split: **identical rows in
-/// file order** wherever the unpruned query answers. Where it raises, the
-/// pruned query may answer instead, a value in a group it skipped or past a
-/// sorted block's stop being one it never reads (`docs/design/decisions.md`,
-/// "D54") — but **one whose note skips no row's bytes and whose stops left no
-/// row unread raises the same error**, having read every row the unpruned
-/// query reads, in the same order. Not "skips no group": at [`TINY_GROUP`] a
-/// block of rows longer than a group lists groups no row starts in, which
-/// every filter reading a field skips.
+/// file order**, and **neither raises**: every fixture is valid PostgreSQL, so
+/// the refuse mode's refusals are the plan's, before a row is read, and every
+/// value a type accepts keys in the filter's order
+/// (`docs/design/decisions.md`, "D54", "D99").
 ///
 /// The unpruned query reads `plain`, a cache holding no statistic, whose rows
 /// are the gathered cache's under `use_statistics: false` and which loads in a
@@ -302,12 +258,13 @@ async fn check(
             parallelism: Parallelism::workers(jobs, 1 << 30),
             ..base.clone()
         };
-        let reference = attempt(dump, plain, table, options(false)).await;
-        let got = attempt(dump, gathered, table, options(true)).await;
-        let (notes, stops) = (&reference.notes, &reference.stops);
-        let (pruned_notes, pruned_stops) = (&got.notes, &got.stops);
-        match (&reference.outcome, &got.outcome) {
-            (Ok((rows, resolved)), Ok((pruned_rows, pruned_resolved))) => {
+        let reference = answer(dump, plain, table, options(false)).await;
+        let got = answer(dump, gathered, table, options(true)).await;
+        match (&reference, &got) {
+            (
+                Ok((rows, notes, resolved, stops)),
+                Ok((pruned_rows, pruned_notes, pruned_resolved, pruned_stops)),
+            ) => {
                 assert!(pruned(notes).is_none(), "{notes:?}");
                 assert!(stops.is_empty(), "{stops:?}");
                 assert_eq!(
@@ -342,27 +299,9 @@ async fn check(
                     );
                 }
             }
-            (Err(e), pruned_outcome) => {
-                tally.unpruned_errors += 1;
-                // A group no row starts in lists no bytes (`RowGroup::bytes`),
-                // so a note skipping none skipped no row.
-                let read_every_row = pruned(pruned_notes).is_none_or(|p| p.2 == 0)
-                    && pruned_stops.iter().all(|stop| stop.unread_bytes.is_none());
-                if read_every_row {
-                    tally.errors_raised_pruned += 1;
-                    assert_eq!(
-                        pruned_outcome.as_ref().err(),
-                        Some(e),
-                        "{}: {table} under {filter:?} at {jobs} job(s) skips nothing pruned",
-                        dump.display()
-                    );
-                }
+            (Err(e), _) | (_, Err(e)) => {
+                panic!("{}: {table} under {filter:?} at {jobs} job(s) raises: {e}", dump.display())
             }
-            (Ok(_), Err(e)) => panic!(
-                "{}: {table} under {filter:?} at {jobs} job(s) answers unpruned and raises \
-                 pruned: {e}",
-                dump.display()
-            ),
         }
     }
 }
@@ -418,8 +357,6 @@ fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
             sum.pruning += t.pruning;
             sum.stopping += t.stopping;
             sum.skipped_groups += t.skipped_groups;
-            sum.unpruned_errors += t.unpruned_errors;
-            sum.errors_raised_pruned += t.errors_raised_pruned;
             sum
         })
     };
@@ -431,8 +368,6 @@ fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
     assert!(tally.compared > 40_000, "{tally:?}");
     assert!(tally.pruning > tally.compared / 3, "{tally:?}");
     assert!(tally.stopping > 20, "{tally:?}");
-    assert!(tally.unpruned_errors < tally.compared / 100, "{tally:?}");
-    assert!(tally.errors_raised_pruned > 0, "{tally:?}");
 }
 
 const OPERATORS: [PredicateOp; 8] = [
@@ -478,7 +413,7 @@ async fn check_fixture(
         }
         // Only the columns every row of the table decodes are built, so a
         // value the build cannot hold (`KD8`) ends no comparison — in the
-        // refuse mode, which reaches the error path, and in the typed mode,
+        // refuse mode, which refuses a column holding one, and in the typed mode,
         // which reads such a value as NULL and so builds more.
         let mut bases = Vec::new();
         for unrepresentable in [UnrepresentableMode::Null, UnrepresentableMode::Refuse] {

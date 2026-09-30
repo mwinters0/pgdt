@@ -194,22 +194,23 @@ pgdt query --source dump.sql --table public.t_date
 # hold, read as NULL
 ```
 
-**`--unrepresentable refuse` refuses instead**, where the query reads such a
-value in a column it prints; one only a filter reads is compared in
-PostgreSQL's order, `-infinity` below every finite value, `infinity` above
-every one and `NaN` above `infinity`, so `--filter 'v_date<2020-01-01'
---column id` selects the `-infinity` row:
+**`--unrepresentable refuse` refuses instead**, before a row is read, a
+query printing a column that holds such a value anywhere in the table —
+whatever its filter keeps, so the answer never depends on which rows a
+statistic let it skip. One only a filter reads is compared in PostgreSQL's
+order, `-infinity` below every finite value, `infinity` above every one and
+`NaN` above `infinity`, so `--filter 'v_date<2020-01-01' --column id`
+selects the `-infinity` row:
 
 ```sh
 pgdt query --source dump.sql --table public.t_date --unrepresentable refuse
-# Error: public.t_date.v_date at row offset …: `-infinity` is a `date` value
-# the column's Arrow type cannot hold, and this query refuses such values —
-# read them in the null mode, as NULL, or leave the column unmaterialized
+# Error: public.t_date.v_date holds 2 `date` value(s) the column's Arrow type
+# cannot hold, and this query refuses a column holding one — read them in the
+# null mode, as NULL, or leave the column unmaterialized, read only by a
+# filter the library answers
 ```
 
-Where the query refuses depends on the rows it reads first, which is not
-yet fixed. Read the column with `--schema-mode strings` to get the text the
-dump holds.
+Read the column with `--schema-mode strings` to get the text the dump holds.
 
 ### Text ordering is bytewise, and your server's may not be
 

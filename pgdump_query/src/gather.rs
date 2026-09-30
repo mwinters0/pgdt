@@ -2491,7 +2491,8 @@ mod tests {
                 2 => format!("{}-01-0{}", 262142 + rng.below(3), 1 + rng.below(9)),
                 _ => format!("20{:02}-0{}-1{}", rng.below(30), 1 + rng.below(9), rng.below(10)),
             },
-            // As a date, and past `i64` microseconds too, which does not key.
+            // As a date, and past `i64` microseconds from 1970 too, which
+            // keys from PostgreSQL's epoch (I49).
             CompareKind::Timestamp { .. } => match rng.below(12) {
                 0 => "infinity".into(),
                 1 => "-infinity".into(),

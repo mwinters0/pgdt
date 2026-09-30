@@ -101,11 +101,10 @@ than reading as a phase nobody has sliced.
 - **KD8** — a typed column cannot hold `±infinity`, `NaN`, `time` `24:00:00`,
   an `interval` time part past Arrow's or a timestamp past `294247-01-10`, nor
   DataFusion display a `date` or timestamp past `262142-12-31`: the null mode
-  reads them as NULL, but the refuse mode refuses only where a read reaches
-  one, so it may answer on one run and refuse on the next, and no mode reads
-  the column as text. **(b) owned by P28**, whose refuse mode refuses at
-  planning and whose untyped mode reads the text; slice 28.7 closes it.
-  Detail: `pgdump_query/src/decode.rs`.
+  reads them as NULL and the refuse mode refuses a column holding one at
+  planning, but no mode reads that column as its text while keeping the rest
+  typed. **(b) owned by P28**, whose untyped mode reads the text; slice 28.7
+  closes it. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
   warm and most of a cold NVMe scan's time (`measurements.md`,

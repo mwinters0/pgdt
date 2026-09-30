@@ -51,9 +51,9 @@ which is left out and named on stderr with why
 - **`:strings` reads every column as its text**, the escape from a type
   mapping you do not trust, and the way to keep a value a typed column cannot
   hold (below).
-- **`:unrepresentable=refuse` refuses a value a typed column cannot hold**
-  where a query reads one, where the default, `:unrepresentable=null`, reads
-  it as NULL (below).
+- **`:unrepresentable=refuse` refuses a query needing a column that holds a
+  value its type cannot hold**, before it reads a row, where the default,
+  `:unrepresentable=null`, reads such a value as NULL (below).
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
   in place of the session's. The suffixes may come in any order.
@@ -203,12 +203,14 @@ another column's `MIN` and `MAX` as NULL. Turning it on, directly or by
 setting or resetting `datafusion.optimizer.enable_dynamic_filter_pushdown`,
 which sets it too, brings that back.
 
-**`:unrepresentable=refuse` refuses where a scan reads one** — and whether a
-query reads it can change from run to run: a scan's partitions run
-concurrently, and a `LIMIT` another partition fills first, or a `MIN`, `MAX`,
-join or `ORDER BY … LIMIT` whose running bound lets a partition skip the rows
-holding it, can finish without reaching the value — so the same query may
-answer on one run and error on the next.
+**`:unrepresentable=refuse` refuses when the query is planned**, before a
+row is read, wherever it needs the values of a column the dump holds such a
+value in — anywhere in the table, whatever its `WHERE` keeps — naming the
+column and how many. A column only a `WHERE` the scan answers itself reads is
+not needed, and its values compare in PostgreSQL's order, `-infinity` below
+every finite value and `infinity` above; a scan does not answer a filter it
+leaves to DataFusion, so it plans as though the column were selected.
+The same query refuses on every run, or answers on every run.
 
 ## Memory
 

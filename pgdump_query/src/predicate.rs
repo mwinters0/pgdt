@@ -1287,8 +1287,10 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Enum(labels) => OrderKey::Int(labels.iter().position(|l| l == text)? as i64),
         CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
         CompareKind::Time => OrderKey::Int(decode::time_of_day_micros(text)?),
+        // From PostgreSQL's epoch, not Arrow's: every value the server admits
+        // keys, those past what `i64` counts from 1970 among them (I49).
         CompareKind::Timestamp { with_tz } => {
-            OrderKey::Int(decode::decode_timestamp_micros(text, *with_tz)?)
+            OrderKey::Int(decode::timestamp_postgres_micros(text, *with_tz)?)
         }
         CompareKind::Interval => OrderKey::Interval(interval_span(text)?),
         CompareKind::IntervalFields => {
@@ -1988,8 +1990,8 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
         K::Time => decode::render_time64_micros(decode::time_of_day_micros(text)?),
-        K::Timestamp { with_tz } => decode::render_timestamp_micros(
-            decode::decode_timestamp_micros(text, *with_tz)?,
+        K::Timestamp { with_tz } => decode::render_timestamp_postgres_micros(
+            decode::timestamp_postgres_micros(text, *with_tz)?,
             *with_tz,
         ),
         K::MacAddr { octets } => render_macaddr(text, *octets)?,
@@ -2655,20 +2657,17 @@ impl ResolvedTerm {
     }
 
     /// The `Error::FieldDecode` a comparing term raises over a `value` that
-    /// is not of its column's type — `Error::Unrepresentable` over one that
-    /// is and the column's Arrow type cannot hold, where the query refuses
-    /// those (`docs/design/decisions.md`, "D98").
+    /// is not of its column's type. A value of the type its column's Arrow
+    /// type cannot hold keys in PostgreSQL's order, or is read as NULL, and
+    /// never reaches here (`docs/design/decisions.md`, "D56", "D98").
     fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
         let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
-        let (table, column) = (table.to_string(), compared.column.clone());
-        let declared_type = compared.declared_type.clone();
-        let refused = value.is_some_and(|value| {
-            self.unrepresentable.as_ref().is_some_and(|read| read.past(value))
-        });
-        let value = value.unwrap_or_default().to_string();
-        match refused {
-            true => Error::Unrepresentable { table, column, row_offset, declared_type, value },
-            false => Error::FieldDecode { table, column, row_offset, declared_type, value },
+        Error::FieldDecode {
+            table: table.to_string(),
+            column: compared.column.clone(),
+            row_offset,
+            declared_type: compared.declared_type.clone(),
+            value: value.unwrap_or_default().to_string(),
         }
     }
 

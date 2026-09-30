@@ -14,11 +14,9 @@
 //! **A value its column's type cannot hold is read here as the scan reads
 //! it**, in the view its mode states (`docs/design/decisions.md`, "D98"): as
 //! NULL by default, counted with the NULLs and outside the bounds, the
-//! distinct count and the sum. **Under the refuse mode an answer from here
-//! does not raise what reading the column would** (`KD8`): the row holding
-//! the value refuses, while a NULL count read off the text and a bound that
-//! decodes both describe the column truthfully, so a `COUNT` of such a column
-//! answers here and refuses when read ("D89").
+//! distinct count and the sum. Under the refuse mode a scan materializing a
+//! column holding one is refused at planning (`docs/design/decisions.md`,
+//! "D99"), so nothing here is read over it.
 
 use std::sync::Arc;
 

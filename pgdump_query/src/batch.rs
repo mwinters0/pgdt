@@ -1047,8 +1047,9 @@ impl RowBatcher {
     /// **A value the query reads as NULL is NULL before it is decoded**, as a
     /// whole: an array, range or composite holding one leaf its type cannot
     /// hold is the NULL, a NULL range bound meaning unbounded
-    /// (`docs/design/decisions.md`, "D98"). One refused is named as such,
-    /// where a value that does not parse is [`Error::FieldDecode`].
+    /// (`docs/design/decisions.md`, "D98"). The refuse mode's plan refused
+    /// any column holding one before a row was read, so a value that does not
+    /// decode here does not parse: [`Error::FieldDecode`].
     fn push_field(
         &mut self,
         col: usize,
@@ -1082,17 +1083,12 @@ impl RowBatcher {
                 if let Err(value) = append_typed(builder, &text) {
                     let (table, column) = (table.clone(), schema.field(col).name().clone());
                     let declared_type = declared_types[col].clone().unwrap_or_default();
-                    return Err(match read.is_some_and(|read| read.past(&text)) {
-                        true => Error::Unrepresentable {
-                            table,
-                            column,
-                            row_offset,
-                            declared_type,
-                            value,
-                        },
-                        false => {
-                            Error::FieldDecode { table, column, row_offset, declared_type, value }
-                        }
+                    return Err(Error::FieldDecode {
+                        table,
+                        column,
+                        row_offset,
+                        declared_type,
+                        value,
                     });
                 }
             }

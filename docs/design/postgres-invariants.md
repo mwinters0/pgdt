@@ -3573,3 +3573,53 @@ grep -rniE 'SET +(TIME +ZONE|timezone)|PGTZ' src/bin/pg_dump/*.c
 ```
 
 The first two print one line each; the third prints nothing.
+
+## I49 — A `timestamp` is an `int64` of microseconds from 2000-01-01, and every value the server admits fits one
+
+**Claim.** `timestamp` and `timestamptz` are stored as a signed 64-bit count
+of microseconds from PostgreSQL's epoch, `2000-01-01 00:00:00` (UTC for
+`timestamptz`), and every finite value the server accepts lies in
+`[MIN_TIMESTAMP, END_TIMESTAMP)` of that count — `4714-11-24 00:00:00 BC` to
+`294276-12-31 23:59:59.999999`. So a key of `i64` microseconds from that epoch
+orders every finite value a dump can hold, where one counted from 1970, as
+Arrow's `Timestamp(Microsecond)` counts, overflows over the last three decades
+PostgreSQL admits. The infinities are `int64`'s two extremes, spelled apart
+(I34).
+
+**Proof.** `src/include/datatype/timestamp.h`: `typedef int64 Timestamp;`,
+`typedef int64 TimestampTz;`, `POSTGRES_EPOCH_JDATE` `== date2j(2000, 1, 1)`,
+`MIN_TIMESTAMP` and `END_TIMESTAMP` defined as the day bounds less
+`POSTGRES_EPOCH_JDATE` times `USECS_PER_DAY`, and `IS_VALID_TIMESTAMP(t)` as
+`MIN_TIMESTAMP <= t && t < END_TIMESTAMP`. `tm2timestamp` in
+`src/backend/utils/adt/timestamp.c` subtracts `POSTGRES_EPOCH_JDATE` and
+fails where `!IS_VALID_TIMESTAMP`, and `timestamp_in` and `timestamptz_in`
+raise `timestamp out of range` on that failure, so no stored value lies
+outside it.
+
+**Observed.** `fixtures/<13–18>/types/default.sql`'s `t_timestamp` `id` 7
+and `t_extremes`' timestamps hold `294276-12-31 23:59:59.999999`, and
+`pgdump_query/tests/ordering.rs`,
+`a_timestamp_past_i64_is_ordered_by_the_refuse_mode_s_filter`, orders it.
+
+**Scope limit.** Integer datetimes, which every supported major is built
+with unconditionally: `src/include/c.h` defines `HAVE_INT64_TIMESTAMP` for
+backward compatibility with no alternative left to select.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
+carry both typedefs and the same two limits.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D97" and "D99" — a
+timestamp's comparison key (`predicate.rs`, `order_key`, through
+`decode::timestamp_postgres_micros`), so every value's view bounds such a
+value and the refuse mode's filter orders it.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -nE 'typedef int64 Timestamp(Tz)?;|^#define (MIN|END)_TIMESTAMP|^#define POSTGRES_EPOCH_JDATE' src/include/datatype/timestamp.h
+awk '/^tm2timestamp\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n 'POSTGRES_EPOCH_JDATE\|IS_VALID_TIMESTAMP'
+```
+
+The first prints five lines, `MIN_TIMESTAMP` `-211813488000000000` and
+`END_TIMESTAMP` `9223371331200000000`; the second two.

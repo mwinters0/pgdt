@@ -856,52 +856,62 @@ async fn the_typed_mode_compares_a_special_value_as_null() {
 }
 
 /// **The refuse mode's filter is exact where the batch still cannot hold the
-/// value.** The same `date` column that answers `>` above refuses to
-/// *build*, because `Date32` has no infinity — two paths with different
-/// powers.
+/// value.** The same `date` column that answers `>` above refuses to be
+/// *materialized*, because `Date32` has no infinity — refused at planning,
+/// from the map's count of both, whatever the filter keeps: a filter keeping
+/// no row holding one, or none at all, refuses as surely
+/// (`docs/design/decisions.md`, "D99").
 #[tokio::test]
 async fn a_selected_special_value_still_cannot_be_materialized() {
-    let err = drain(
-        "public.t_date",
-        QueryOptions {
-            filter: Expr::all([term("v_date", PredicateOp::Gt, "9999-12-31")]),
-            projection: Some(vec!["v_date".to_string()]),
-            unrepresentable: UnrepresentableMode::Refuse,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        matches!(&err, Error::Unrepresentable { column, value, .. }
-            if column == "v_date" && value == "infinity"),
-        "{err:?}"
-    );
+    for keeps in [
+        term("v_date", PredicateOp::Gt, "9999-12-31"),
+        term("v_date", PredicateOp::Eq, "0001-01-01"),
+        term("id", PredicateOp::Gt, "100"),
+    ] {
+        let err = drain(
+            "public.t_date",
+            QueryOptions {
+                filter: Expr::all([keeps.clone()]),
+                projection: Some(vec!["v_date".to_string()]),
+                unrepresentable: UnrepresentableMode::Refuse,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, Error::Unrepresentable { column, values: 2, .. } if column == "v_date"),
+            "{keeps:?}: {err:?}"
+        );
+    }
 }
 
-/// A value no key orders is refused by the refuse mode's filter, and
-/// projecting the column away does **not** escape it: the filter named it.
-/// `t_timestamp` holds PostgreSQL's own documented maximum, which overflows
-/// `i64` micros counted from the Unix epoch — a representation limit, unlike
-/// an infinity, with no order to fall back on. The typed mode reads it as
+/// **A timestamp past what `i64` counts from 1970 is keyed**, from
+/// PostgreSQL's epoch as the server stores it (I49), so the refuse mode's
+/// filter orders `t_timestamp`'s greatest — PostgreSQL's own documented
+/// maximum — above every finite value and below `infinity`, as the server
+/// does, where the column is not materialized. The typed mode reads it as
 /// NULL, which no ordering term keeps.
 #[tokio::test]
-async fn a_field_no_key_orders_is_refused_by_the_refuse_mode_s_filter() {
-    let options = |mode| QueryOptions {
-        filter: Expr::all([term("v_ts", PredicateOp::Gt, "2000-01-01 00:00:00")]),
+async fn a_timestamp_past_i64_is_ordered_by_the_refuse_mode_s_filter() {
+    let options = |mode, op, literal| QueryOptions {
+        filter: Expr::all([term("v_ts", op, literal)]),
         projection: Some(vec!["id".to_string()]),
         unrepresentable: mode,
         ..Default::default()
     };
-    let err = drain("public.t_timestamp", options(UnrepresentableMode::Refuse)).await.unwrap_err();
-    assert!(
-        matches!(&err, Error::Unrepresentable { column, value, .. }
-            if column == "v_ts" && value == "294276-12-31 23:59:59.999999"),
-        "{err:?}"
-    );
-    let rows = drain("public.t_timestamp", options(UnrepresentableMode::Null)).await.unwrap();
-    let ids: Vec<Option<String>> = rows.into_iter().map(|row| row[0].clone()).collect();
-    assert_eq!(ids, [Some("3".to_string()), Some("4".to_string())]);
+    let ids = |rows: Vec<Vec<Option<String>>>| -> Vec<String> {
+        rows.into_iter().map(|row| row[0].clone().unwrap()).collect()
+    };
+    let refuse = UnrepresentableMode::Refuse;
+    let after = options(refuse, PredicateOp::Gt, "2000-01-01 00:00:00");
+    assert_eq!(ids(drain("public.t_timestamp", after).await.unwrap()), ["1", "3", "4", "7"]);
+    let last = options(refuse, PredicateOp::Ge, "294276-12-31 23:59:59.999999");
+    assert_eq!(ids(drain("public.t_timestamp", last).await.unwrap()), ["1", "7"]);
+    let equal = options(refuse, PredicateOp::Eq, "294276-12-31 23:59:59.999999");
+    assert_eq!(ids(drain("public.t_timestamp", equal).await.unwrap()), ["7"]);
+    let null = options(UnrepresentableMode::Null, PredicateOp::Gt, "2000-01-01 00:00:00");
+    assert_eq!(ids(drain("public.t_timestamp", null).await.unwrap()), ["3", "4"]);
 }
 
 /// The literal is decoded once, when the block's schema resolves, so a

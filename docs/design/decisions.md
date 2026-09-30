@@ -399,6 +399,14 @@ unparsable text must still refuse); a tier option beside the semantics, two fiel
 the calendar's; testing every block. Reopens: a front end besides DataFusion, taking semantics of its own; `arrow-cast` displaying past `chrono`
 (`upstream.md`, "UF2"), retiring the calendar tier. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
 
+### D99 The refuse mode refuses at planning, per materialized column, from the map's count over every block
+Under `UnrepresentableMode::Refuse` a plan refuses the first column it materializes — projects, or hands DataFusion — whose blocks count a
+value in the tiers its semantics cannot hold (D96, D98), before a row is read: over every block, not the groups a filter keeps, which
+survive by statistics, and statistics never change an answer. A column only a filter the library answers reads is not materialized, and
+compares every value in PostgreSQL's order (D56), so no read refuses one. Rejected: refusing where a read reaches one (timing decides);
+over the kept groups; a read-time refusal beside it, the count being exact (D96). Code: `stream::materialized_unrepresentable`.
+Evidence: the refuse mode's cases, `a_selected_special_value_still_cannot_be_materialized`.
+
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
@@ -546,7 +554,7 @@ sizing an attribution input by row width. Evidence: `statistics-gathering`.
 parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block contributed and the stored text
 is the value, else `Inexact`; a distinct count the dictionaries' union — derived, not gathered (D79) — where every group kept one of emitted text
 (I48), else `Absent`; all `Inexact` under a fetch below the exact rows or a pushed filter, whose rows are the kept groups' plus each unconsulted
-block's. It reads each value in the query's view (D98), and answers over one the refuse mode refuses (`KD8`), as D54. Rejected: `Absent` for a partial
+block's. It reads each value in the query's view (D98); the refuse mode plans no scan over a column holding one (D99). Rejected: `Absent` for a partial
 bound, giving up cardinality; the union as `Inexact`, a floor inflating a join's estimate; NULL counts withheld where a bound fails to decode; under a
 filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
@@ -564,9 +572,9 @@ A column whose type cannot hold every value counts them per group and bounds and
 group holds one past the format spec, every value in PostgreSQL's order, and where one past the calendar, the values within it, for
 that group alone, read in a `StatisticsView` that adds what it takes as NULL to the NULL count, believed only under D78's DDL. The
 base is kept apart from each tier's extremes, allocated at a group's first such value, so a view folds the base with the tiers it
-takes, exactly across pieces and merges (D82); a value no key orders (a timestamp past `i64`) leaves every value's view unbounded.
-Rejected: every value's bounds and the count alone (the spec's); a set per view per column from its first row; a key widened for it
-here, which moves the filter's answers too. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
+takes, exactly across pieces and merges (D82); every value PostgreSQL admits keys, a timestamp from PostgreSQL's epoch (I49).
+Rejected: every value's bounds and the count alone (the spec's); a set per view per column from its first row; a timestamp key of
+`i128` from 1970, a width chosen where PostgreSQL's is inherited. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

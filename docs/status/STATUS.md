@@ -26,13 +26,13 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), and a value a typed column cannot hold reads as NULL by default or is refused where a read reaches it (`KD8`) | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), and a value a typed column cannot hold reads as NULL by default or, told to refuse, refuses a query materializing its column at planning (`KD8`) | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed, decoded and compared structurally; two shapes stay text (`KD3`) and an array inside a composite is decided optimistically (`KD2`) | `nested.rs`, `pgtype.rs`; D39, D41, D45, D58 |
 | Array shape census | recorded at the data level by every mapping pass and read back before a query's first batch; a table `parse` recorded at the metadata level holds none, and a query of it reads the table again for one, writing nothing | `map.rs`, `stream.rs`; D35, D43 |
-| Unrepresentable count | beside the census, per block and column, in two tiers — past Arrow's format spec, and past the calendar DataFusion displays through — under a calendar the cache records and a build ending elsewhere refuses; shown by `info --detail`; statistics count it per group and keep each view of a group's values apart where it differs — the values the type holds, every value, and those within the calendar; a query reads such a value as NULL for every purpose — its batch, its filters, its pruning and the provider's statistics — in the tiers its front end cannot hold, and says per column how many, unless told to refuse (`--unrepresentable`, `PgDumpOptions::unrepresentable`, `pgdump.unrepresentable`, `:unrepresentable=`) | `unrepresentable.rs`, `index.rs`, `cache.rs`, `gather.rs`, `prune.rs`, `batch.rs`, `summary.rs`; D96–D98 |
+| Unrepresentable count | beside the census, per block and column, in two tiers — past Arrow's format spec, and past the calendar DataFusion displays through — under a calendar the cache records and a build ending elsewhere refuses; shown by `info --detail`; statistics count it per group and keep each view of a group's values apart where it differs — the values the type holds, every value, and those within the calendar; a query reads such a value as NULL for every purpose — its batch, its filters, its pruning and the provider's statistics — in the tiers its front end cannot hold, and says per column how many, unless told to refuse, when a query materializing such a column refuses at planning, naming it and how many, whatever its filter keeps (`--unrepresentable`, `PgDumpOptions::unrepresentable`, `pgdump.unrepresentable`, `:unrepresentable=`) | `unrepresentable.rs`, `index.rs`, `cache.rs`, `gather.rs`, `prune.rs`, `batch.rs`, `stream.rs`, `summary.rs`; D96–D99 |
 | CLI `pgdt parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdt/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
 | Partial reporting | `info` reports an unfinished scan's cache with its completion stated once at the top; an interrupted cache is typed for every database segment the scan finished (I1) | D67 |
 | Column projection | working, library and CLI; an unprojected column is never decoded unless a filter term names it | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
@@ -85,7 +85,7 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.3** The unrepresentable count beside the census, lexical, per block and column, each leaf walked by the declared type, in two tiers, in the cache with the calendar bound it counted under; `info --detail` showing it; `24:00:00` refused by its decoder; count and extremes record held to each other by tier; [notes](../design/roadmap-P28.3-count-notes.md)
 - [x] **28.4** Statistics' views: representable bounds, the unrepresentable count, PostgreSQL-order bounds where they differ, and the engine tier's bounds where it is not empty, gathered, cached and read by pruning under each semantics; [notes](../design/roadmap-P28.4-views-notes.md)
 - [x] **28.5** The mode option and the typed mode: NULL for every purpose — decode, static and dynamic filters, NULL counts, the provider's statistics — its warning, and the option in `pgdt`, the provider and the shell; [notes](../design/roadmap-P28.5-typed-notes.md)
-- [ ] **28.6** The refuse mode: by column, at planning, from the map; a timestamp past `i64` microseconds keyed, filling every value's view
+- [x] **28.6** The refuse mode: by column, at planning, from the map; a timestamp past `i64` microseconds keyed, filling every value's view; [notes](../design/roadmap-P28.6-refuse-notes.md)
 - [ ] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`
 - [ ] **28.8** `IS [NOT] UNREPRESENTABLE` and `pgdump_unrepresentable`, "D53" amended
 - [ ] **28.9** The figures: scan figures at the metadata level, query figures over a data-level cache, the census's price attributed by a `perf` profile, the `census-*` figures and the census-off build retired
@@ -119,3 +119,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The generated pruning check lost its error leg, having no error left to
+  compare** (`pgdump_query/tests/pruning.rs`, `check`). The leg asserted that
+  a pruned query reading every row raises the unpruned query's error; its
+  whole population was the refuse mode's read-time refusals and the one
+  timestamp no key ordered, both gone with 28.6, so the sweep raised none. The
+  check now asserts neither query raises over any fixture, and the leg and its
+  floor are deleted rather than left comparing nothing. What that gives up:
+  D54's clause that text which does not parse surfaces only where evaluation
+  reaches it is no longer under a generated check, every fixture being valid
+  PostgreSQL. Reconsidering means a hand-built dump holding such text beside
+  the fixtures — outside the input contract, so nothing `pg_dump` writes —
+  giving the leg a population back.

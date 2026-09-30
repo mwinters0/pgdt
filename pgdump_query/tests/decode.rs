@@ -387,9 +387,10 @@ async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
 /// **A value its column's type cannot hold, through the real pipeline**:
 /// read as NULL by default — each row whose `column` the text spells `value`
 /// is NULL there in the typed read — and in the refuse mode
-/// `Error::Unrepresentable`, naming the table, the column, its declared type
-/// and the value (`docs/design/decisions.md`, "D98"). `Strings` mode never
-/// looks at the DDL, so the value passes through as its text.
+/// `Error::Unrepresentable` before a row is read, naming the table, the
+/// column, its declared type and how many values the typed read nulls
+/// (`docs/design/decisions.md`, "D98", "D99"). `Strings` mode never looks at
+/// the DDL, so the value passes through as its text.
 async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, value: &str) {
     for version in [13, 16, 18] {
         let path = types_fixture(version, "default");
@@ -403,6 +404,9 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         for row in spelled {
             assert_eq!(typed[row][index], None, "pg_dump {version}: {table} row {row}");
         }
+        let nulled = (0..strings.len())
+            .filter(|&row| strings[row][index].is_some() && typed[row][index].is_none())
+            .count() as u64;
 
         let source = LocalFileSource::open(&path).unwrap();
         let refuse =
@@ -418,13 +422,11 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         .await
         .unwrap_err();
         match err {
-            Error::Unrepresentable {
-                table: named, column: at, declared_type, value: held, ..
-            } => {
+            Error::Unrepresentable { table: named, column: at, declared_type, values } => {
                 assert_eq!(named, table, "pg_dump {version}");
                 assert_eq!(at, column, "pg_dump {version}");
                 assert_eq!(declared_type, declared, "pg_dump {version}");
-                assert_eq!(held, value, "pg_dump {version}");
+                assert_eq!(values, nulled, "pg_dump {version}");
             }
             other => panic!("pg_dump {version}: expected Unrepresentable, got {other:?}"),
         }

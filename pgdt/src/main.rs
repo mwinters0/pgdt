@@ -982,9 +982,10 @@ enum Command {
         /// type and the column's type cannot hold — `infinity` in a `date`,
         /// `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`: `null`, the
         /// default, reads each as NULL, for filtering too, and says on stderr
-        /// how many each column printed holds; `refuse` stops the query where
-        /// it reads one. `--schema-mode strings` reads every value as its
-        /// text.
+        /// how many each column printed holds; `refuse` refuses, before a row
+        /// is read, a query printing a column that holds one, whatever its
+        /// filter keeps, and compares one a filter reads in PostgreSQL's
+        /// order. `--schema-mode strings` reads every value as its text.
         #[arg(long, value_name = "MODE", value_enum, default_value_t)]
         unrepresentable: CliUnrepresentable,
         /// Bytes requested per read from the dump — the same knob `parse`

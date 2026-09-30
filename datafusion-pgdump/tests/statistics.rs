@@ -12,9 +12,8 @@
 //!   optimizer does not carry `aggregate_statistics` reads every row instead,
 //!   and the two must agree wherever reading the column answers at all —
 //!   everywhere in the typed mode, which reads a value its column's type
-//!   cannot hold as NULL. Where the refuse mode's read refuses (`KD8`), a
-//!   count is still checked: read as text, no value refuses, and a
-//!   `COUNT(<column>)` counts values without their meaning.
+//!   cannot hold as NULL; the refuse mode refuses a column holding one at
+//!   planning, with the statistics and without them alike.
 //! - **An estimate** — a row count, a byte size — is checked as the bound it
 //!   claims to be: never below what the scan emits, over generated filters,
 //!   and equal to it wherever it says `Exact`.
@@ -204,10 +203,11 @@ fn register_in(
     databases.into_iter().zip(catalogs).collect()
 }
 
-/// What refused a query. A value its column's type cannot hold (`KD8`) is
-/// named by its table, column and type alone: no query promises which of its
-/// partitions' refusals it reports (`docs/design/decisions.md`, "D52"), so
-/// the row offset and the value are load's to choose. Anything else keeps its
+/// What refused a query. A value its column's type cannot hold (`KD8`), or
+/// one that does not parse, is named by its table, column and type alone: no
+/// query promises which of its partitions' refusals it reports
+/// (`docs/design/decisions.md`, "D52"), so a row offset and a value are
+/// load's to choose. Anything else keeps its
 /// whole text.
 #[derive(Debug, PartialEq, Eq)]
 enum Refusal {
@@ -254,48 +254,25 @@ fn rendered(batches: &Result<Vec<RecordBatch>, Refusal>) -> String {
 }
 
 /// The aggregate's answer with and without the statistics, and a note of
-/// whether the statistics actually answered it. `text` is a session reading
-/// the same dump as text without its statistics, the oracle for a count over
-/// a column the typed read refuses.
-async fn agrees(
-    reading: &SessionContext,
-    blind: &SessionContext,
-    text: Option<&SessionContext>,
-    sql: &str,
-) -> Answer {
+/// whether the statistics actually answered it. A query the refuse mode
+/// refuses is refused at planning in both sessions alike, before anything
+/// is asked of the statistics (`docs/design/decisions.md`, "D99").
+async fn agrees(reading: &SessionContext, blind: &SessionContext, sql: &str) -> Answer {
     let from_statistics = rows(reading, sql).await;
     let from_rows = rows(blind, sql).await;
+    if matches!(&from_statistics, Err(Refusal::Unreadable { .. })) {
+        assert_eq!(
+            rendered(&from_statistics),
+            rendered(&from_rows),
+            "`{sql}` refused with the statistics, and otherwise without them"
+        );
+        return Answer::Refused;
+    }
     let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
     let answered = !datafusion::physical_plan::displayable(plan.as_ref())
         .indent(false)
         .to_string()
         .contains("PgDumpExec");
-    // The one divergence the phase allows: a column holding a value its Arrow
-    // type cannot represent (`KD8`) refuses when it is read, and the map
-    // answers over it without reading it — the trade a pruned replay already
-    // makes (`docs/design/decisions.md`, "D54").
-    let unreadable = matches!(&from_rows, Err(Refusal::Unreadable { .. }));
-    if unreadable && answered {
-        assert!(
-            from_statistics.is_ok(),
-            "`{sql}` was answered from statistics and still refused: {}",
-            rendered(&from_statistics)
-        );
-        // A sum cannot leave out the value the read refuses, as a count or a
-        // bound can: a column holding one keeps none.
-        assert!(!sql.starts_with("SELECT SUM("), "`{sql}` summed a column its type cannot hold");
-        // A distinct count read as text counts spellings, not values.
-        if !sql.starts_with("SELECT COUNT(") || sql.starts_with("SELECT COUNT(DISTINCT") {
-            return Answer::FromStatistics;
-        }
-        let text = text.unwrap_or_else(|| panic!("`{sql}` refused with no text session to count"));
-        assert_eq!(
-            rendered(&from_statistics),
-            rendered(&rows(text, sql).await),
-            "`{sql}` counted differently from the statistics than read as text"
-        );
-        return Answer::CountedAsText;
-    }
     assert_eq!(
         rendered(&from_statistics),
         rendered(&from_rows),
@@ -309,16 +286,15 @@ async fn agrees(
 enum Answer {
     /// The plan read the rows; nothing was asked of the statistics.
     FromRows,
-    /// The statistics answered, and the rows agreed or could not be read.
+    /// The statistics answered, and the rows agreed.
     FromStatistics,
-    /// The statistics counted a column the typed read refuses, and the count
-    /// read as text agreed.
-    CountedAsText,
+    /// Both sessions refused, at planning, alike.
+    Refused,
 }
 
 impl Answer {
     fn answered(self) -> bool {
-        self != Answer::FromRows
+        self == Answer::FromStatistics
     }
 }
 
@@ -334,7 +310,7 @@ struct Seen {
     text_min: bool,
     distinct: bool,
     sum: bool,
-    counted_as_text: bool,
+    refused: bool,
 }
 
 impl Seen {
@@ -346,7 +322,7 @@ impl Seen {
             text_min: self.text_min || other.text_min,
             distinct: self.distinct || other.distinct,
             sum: self.sum || other.sum,
-            counted_as_text: self.counted_as_text || other.counted_as_text,
+            refused: self.refused || other.refused,
         }
     }
 }
@@ -409,25 +385,23 @@ async fn every_aggregate(
     dump: &Arc<PgDump>,
     (reading, blind): (&SessionContext, &SessionContext),
     catalogs: &[(Option<String>, String)],
-    text: &SessionContext,
     seen: &mut Seen,
 ) {
     for table in dump.tables() {
         let catalog =
             catalogs.iter().find(|(database, _)| *database == table.database).unwrap().1.clone();
         let from = from(&catalog, table);
-        seen.count |= agrees(reading, blind, Some(text), &format!("SELECT COUNT(*) FROM {from}"))
-            .await
-            .answered();
+        seen.count |=
+            agrees(reading, blind, &format!("SELECT COUNT(*) FROM {from}")).await.answered();
         let provider = dump.table(table.database.as_deref(), None, &table.table).unwrap();
         for field in provider.resolved_schema().schema.fields() {
             let column = quoted(field.name());
             // `COUNT(c)` is the table's rows less the column's NULLs, so it
             // reads the null count rather than a bound.
             let sql = format!("SELECT COUNT({column}) FROM {from}");
-            let answer = agrees(reading, blind, Some(text), &sql).await;
+            let answer = agrees(reading, blind, &sql).await;
             seen.null_count |= answer.answered();
-            seen.counted_as_text |= answer == Answer::CountedAsText;
+            seen.refused |= answer == Answer::Refused;
             // DataFusion plans no `MIN`/`MAX` over a list or a struct, in
             // either session, so there is nothing to compare.
             if matches!(
@@ -442,7 +416,7 @@ async fn every_aggregate(
             );
             for op in ["MIN", "MAX"] {
                 let sql = format!("SELECT {op}({column}) FROM {from}");
-                let answer = agrees(reading, blind, Some(text), &sql).await;
+                let answer = agrees(reading, blind, &sql).await;
                 seen.bound |= answer.answered();
                 seen.text_min |= bytes && op == "MIN" && answer.answered();
             }
@@ -453,19 +427,20 @@ async fn every_aggregate(
             // `Exact`, so it is asked beside `COUNT(*)`, which keeps it an
             // aggregate of its own.
             let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM {from}");
-            seen.distinct |= agrees(reading, blind, Some(text), &sql).await.answered();
+            seen.distinct |= agrees(reading, blind, &sql).await.answered();
             if field.data_type().is_numeric() {
                 let sql = format!("SELECT SUM({column}) FROM {from}");
-                seen.sum |= agrees(reading, blind, Some(text), &sql).await.answered();
+                seen.sum |= agrees(reading, blind, &sql).await.answered();
             }
         }
     }
 }
 
 /// **Typed, typed refusing, and as text**, as the provider's other targets
-/// are: the text pass is the refusing one's oracle wherever its read refuses
-/// (`KD8`), and is itself read against the rows, bounds included (D89); the
-/// typed mode, reading such a value as NULL, refuses nothing (D98).
+/// are, each read against the rows, bounds included (D89): the refusing pass
+/// refuses a column holding a value its type cannot hold at planning, with
+/// the statistics and without them alike (D99); the typed mode, reading such
+/// a value as NULL, and the text pass refuse nothing (D98).
 #[test]
 fn statistics_never_change_an_answer() {
     let seen = per_major(every_fixture(), |fixtures| async move {
@@ -477,21 +452,15 @@ fn statistics_never_change_an_answer() {
             let (text_dump, text_reading, text_blind, text_catalogs) =
                 opened(&copy, SchemaMode::Strings).await;
             let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
-            every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut typed).await;
+            every_aggregate(&dump, (&reading, &blind), &catalogs, &mut typed).await;
             let refuse = UnrepresentableMode::Refuse;
             let (dump, reading, blind, catalogs) =
                 opened_in(&copy, SchemaMode::Typed, refuse).await;
-            every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut refusing).await;
-            every_aggregate(
-                &text_dump,
-                (&text_reading, &text_blind),
-                &text_catalogs,
-                &text_blind,
-                &mut strings,
-            )
-            .await;
+            every_aggregate(&dump, (&reading, &blind), &catalogs, &mut refusing).await;
+            every_aggregate(&text_dump, (&text_reading, &text_blind), &text_catalogs, &mut strings)
+                .await;
         }
-        (typed, strings, refusing.counted_as_text)
+        (typed, strings, refusing.refused)
     });
     let (typed, strings, refused) = seen
         .into_iter()
@@ -516,12 +485,9 @@ fn statistics_never_change_an_answer() {
     }
     // A text column has no `SUM`, so only the typed pass asks one.
     assert!(typed.sum, "no `SUM` was answered from the statistics");
-    assert!(
-        refused,
-        "no refusing `COUNT(<column>)` over a refusing column was checked against the text"
-    );
-    assert!(!typed.counted_as_text, "a typed read refused: {typed:?}");
-    assert!(!strings.counted_as_text, "a text read refused: {strings:?}");
+    assert!(refused, "no refusing `COUNT(<column>)` over a refusing column was checked");
+    assert!(!typed.refused, "a typed read refused: {typed:?}");
+    assert!(!strings.refused, "a text read refused: {strings:?}");
 }
 
 /// **An extreme answers exactly where its stored bound is the value**: a text
@@ -552,7 +518,7 @@ async fn an_extreme_answers_where_its_stored_bound_is_the_value() {
     for (op, column, table, answer) in expected {
         let aggregate = format!("{op}({column})");
         let sql = format!("SELECT {aggregate} FROM \"dump\".public.{table}");
-        assert_eq!(agrees(&reading, &blind, None, &sql).await, answer, "{sql}");
+        assert_eq!(agrees(&reading, &blind, &sql).await, answer, "{sql}");
     }
 }
 
@@ -583,7 +549,7 @@ async fn an_enum_s_extremes_answer_in_label_text_order() {
     let copy = parsed_copy(&fixture, scratch.path()).await;
     let (dump, reading, blind, _) = opened(&copy, SchemaMode::Typed).await;
     let both = "SELECT MIN(m), MAX(m) FROM \"dump\".public.moods";
-    assert_eq!(agrees(&reading, &blind, None, both).await, Answer::FromStatistics, "{both}");
+    assert_eq!(agrees(&reading, &blind, both).await, Answer::FromStatistics, "{both}");
 
     let table = dump.table(None, Some("public"), "moods").unwrap();
     let m = table.schema().index_of("m").unwrap();
@@ -627,7 +593,7 @@ async fn an_enum_s_extremes_answer_in_label_text_order() {
     }
 
     let filtered = "SELECT id, m FROM \"dump\".public.moods WHERE id % 2 = 1 ORDER BY id";
-    agrees(&reading, &blind, None, filtered).await;
+    agrees(&reading, &blind, filtered).await;
     let plan = reading.sql(filtered).await.unwrap().create_physical_plan().await.unwrap();
     let shown = displayable(plan.as_ref()).indent(false).to_string();
     assert!(shown.contains("FilterExec"), "the filter was not left above the scan:\n{shown}");
@@ -652,14 +618,14 @@ async fn a_filtered_scan_answers_nothing_from_the_table_s_statistics() {
     register_in((&reading, &blind), &dump);
     let unfiltered = "SELECT COUNT(*), MIN(id), MAX(id) FROM \"dump\".public.t_int";
     assert!(
-        agrees(&reading, &blind, None, unfiltered).await.answered(),
+        agrees(&reading, &blind, unfiltered).await.answered(),
         "the unfiltered aggregate is the control, and it must answer from the statistics"
     );
     for filtered in
         [format!("{unfiltered} WHERE id > 0"), format!("{unfiltered} WHERE v_integer < 100")]
     {
         assert!(
-            !agrees(&reading, &blind, None, &filtered).await.answered(),
+            !agrees(&reading, &blind, &filtered).await.answered(),
             "`{filtered}` was answered from statistics describing the unfiltered table"
         );
     }
@@ -753,18 +719,12 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
         for (name, count) in exact {
             assert_eq!(distinct(name), Precision::Exact(count), "{name} ({schema_mode:?})");
             let sql = format!("SELECT COUNT(DISTINCT {name}), COUNT(*) FROM \"dump\".public.spans");
-            assert!(
-                agrees(&reading, &blind, None, &sql).await.answered(),
-                "{sql} ({schema_mode:?})"
-            );
+            assert!(agrees(&reading, &blind, &sql).await.answered(), "{sql} ({schema_mode:?})");
         }
         for name in absent {
             assert_eq!(distinct(name), Precision::Absent, "{name} ({schema_mode:?})");
             let sql = format!("SELECT COUNT(DISTINCT {name}), COUNT(*) FROM \"dump\".public.spans");
-            assert!(
-                !agrees(&reading, &blind, None, &sql).await.answered(),
-                "{sql} ({schema_mode:?})"
-            );
+            assert!(!agrees(&reading, &blind, &sql).await.answered(), "{sql} ({schema_mode:?})");
         }
     }
     // An enum's `COUNT(DISTINCT)` is an `Int64` and counts labels, so it
@@ -773,7 +733,7 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
     let (_dump, reading, blind, _) = opened(&types, SchemaMode::Typed).await;
     for (column, table) in [("v_mood", "t_enum_domain"), ("v_interval", "t_interval")] {
         let sql = format!("SELECT COUNT(DISTINCT {column}), COUNT(*) FROM \"dump\".public.{table}");
-        assert!(agrees(&reading, &blind, None, &sql).await.answered(), "{sql}");
+        assert!(agrees(&reading, &blind, &sql).await.answered(), "{sql}");
     }
 }
 
@@ -817,7 +777,7 @@ async fn a_sum_answers_where_every_group_kept_one() {
         if column == "stamp" {
             continue;
         }
-        assert_eq!(agrees(&reading, &blind, None, &sql).await.answered(), answers, "{sql}");
+        assert_eq!(agrees(&reading, &blind, &sql).await.answered(), answers, "{sql}");
     }
 }
 
@@ -1525,7 +1485,7 @@ async fn a_join_builds_the_side_its_statistics_call_smaller() {
     register_in((&reading, &blind), &dump);
     let sql = "SELECT o.id, length(l.v) AS v_length FROM \"dump\".public.ordered AS o \
                JOIN \"dump\".public.long_value AS l ON o.id = l.id ORDER BY o.id";
-    agrees(&reading, &blind, None, sql).await;
+    agrees(&reading, &blind, sql).await;
     let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
     let shape = build_side(&plan, "v");
     assert_eq!(
@@ -1564,7 +1524,7 @@ async fn a_filtered_side_s_bound_moves_a_join_s_build_side() {
     let sql = "SELECT a.unsorted, b.stepped FROM \"dump\".public.ordered AS a \
                JOIN \"dump\".public.ordered AS b ON a.id = b.id \
                WHERE b.reversed <= 10 ORDER BY a.unsorted";
-    agrees(&reading, &blind, None, sql).await;
+    agrees(&reading, &blind, sql).await;
     let plan = reading.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
     let shape = build_side(&plan, "stepped");
     assert!(
