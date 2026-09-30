@@ -121,22 +121,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`statistics-gathering` prices the data level whole, and gains an arrays
-  row.** The call: its legs are `--statistics-level metadata` against `data`
-  (`measure.STATISTICS_LEGS`), so its Δ is the census, the unrepresentable
-  count and the statistics together, apportioned by a profile of the `data`
-  leg; `arrays` joins its rows. Its id stays. Why: those are the only two
-  levels a `parse` offers ("D77"), the spec refusing a census-only one, and
-  without the arrays row no figure times a `parse` where the census inspects
-  array shapes. Reconsidering adds a leg stating a column override
-  (`metadata,public.perf.<column>=data`), which censuses and counts the table
-  with one column's statistics, or renames the id.
-- **`statistics-pruning` loses its `uncarried` leg, with nothing in its
-  place.** The call: the unnarrowed filter runs over the gathering cache
-  alone. Why: no `parse` writes a table's census without its statistics, and
-  the figure's own prose read the leg's Δ as unresolved, bounded above by the
-  pruned legs' floor, and said another subtraction would not price it
-  (`measurements.md`, `statistics-pruning`). Reconsidering keeps the leg over
-  a cache carrying one other column's statistics
-  (`--statistics-level metadata,public.perf.id=data`).

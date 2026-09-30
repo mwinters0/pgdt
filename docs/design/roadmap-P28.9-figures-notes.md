@@ -42,7 +42,9 @@ blind". The instrument has landed and its readings have not: nothing in
 - **The fold renames `measurements.md`'s statistics-gathering section** to
   the harness's caption, re-running `citations.py`, and rewrites the prose of
   both statistics sections against their new legs. D35's Evidence already
-  cites `statistics-gathering`.
+  cites `statistics-gathering`. **`statistics-pruning`'s rewritten prose
+  keeps the upper bound** on decoding the cache's statistics, the pruned legs'
+  floor, so the figure does not stop saying what carrying them costs.
 - **The arrays row is where the census inspects array shapes**; the
   control's rows, holding counted columns and no array, are split too at the
   data level, since the count joined the census
@@ -53,6 +55,6 @@ blind". The instrument has landed and its readings have not: nothing in
 
 - **No builder writes a table's census without its statistics**, so a leg
   pricing what carrying statistics costs a query has no cache to read: a
-  metadata-level one times a census re-read, and a column-level override
-  still carries a column's statistics (`measure.py`, beside
-  `PRUNING_LEGS`).
+  metadata-level one times a census re-read, and a column override's repeats
+  the subtraction the retired leg's reading left unresolved (`measure.py`,
+  beside `PRUNING_LEGS`).

@@ -2408,6 +2408,12 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 #: count and the statistics together, the only two levels a `parse` offers
 #: (`docs/design/decisions.md`, "D77"), and which of the three costs what is
 #: an attribution, read off a profile of the `data` leg (`PROFILE_SHAPES`).
+#: That is the shipped default `parse`, which no scan figure times. **No leg
+#: states a column override** (`metadata,<table>.<column>=data`): it censuses
+#: and counts the whole table with one column's statistics, so subtracted from
+#: these it would difference the census back out, which the P28 spec retired
+#: for the profile ("The figures move with the metadata level"). The id stays
+#: `statistics-gathering`, `data` being a value of `--statistics-level`.
 #: **Both legs are the family's own**, the `metadata` leg included, though
 #: its argv is `parse-rss`'s: the figure's container is not the register's, so
 #: it is not that run, and a leg borrowed from `peak-rss` would stand this
@@ -2465,9 +2471,12 @@ PRUNING_LEGS = ("none", "all")
 #: the query states (`cache::read_cache_file`), so every leg pays the
 #: statistics' decode, and no `parse` writes a cache that holds its table's
 #: census without its statistics: a metadata-level one leaves the query to
-#: re-read the table for its census inside the timer, and a column-level
-#: override still carries some column's statistics. The pruned legs bound the
-#: decode from above, each decoding the whole cache inside its wall.
+#: re-read the table for its census inside the timer. A column override's
+#: cache, carrying one column's statistics, would time nearly the subtraction
+#: the retired leg took, whose reading the spreads left unresolved; what would
+#: resolve it is the query timing its own cache load, which no decision asks
+#: for. The pruned legs bound the decode from above, each decoding the whole
+#: cache inside its wall, and the figure's prose states that bound.
 
 #: The second timed program: `datafusion-cli-pgdump`, mounted beside `/pgdt`,
 #: which builds the cache it reads (`ensure_dfcli_binary`).

@@ -1127,3 +1127,13 @@ which is what makes the difference worth minding at the moment one is found.
   DataFusion ([`../status/upstream.md`](../status/upstream.md), "UF3"), and is
   taken at the pin that carries the fix, beside `SET pgdump.memory = 0` rather
   than in place of it.
+
+- **Column opt-in at the data level, reconsidered.** `--statistics-level`
+  keeps `metadata,<table>.<column>=data`, which censuses and counts the whole
+  table while gathering one column's statistics, because it serves wide
+  tables; whether it earns its place against "data means every column" is
+  weighed before 1.0 ([`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
+  "Scope"). The evidence it wants is a data-level `parse` of a wide table with
+  one column opted in against every column, read as a gate for that choice,
+  never subtracted to price the census. It is also a user's lever on the
+  statistics volume P23 bounds.
