@@ -206,10 +206,10 @@ class BenchConstants(unittest.TestCase):
 
 class Scripts(unittest.TestCase):
     #: The timer, where a timed command can start: the whole script, or after a
-    #: `;`. Not a bare `time ` anywhere in the string — the perf table has a
-    #: column named `v_time`, so a projection's flags carry that substring
-    #: without timing anything.
-    TIMER = re.compile(r"(?:\A|; )time ")
+    #: `;` or an `&&`. Not a bare `time ` anywhere in the string — the perf
+    #: table has a column named `v_time`, so a projection's flags carry that
+    #: substring without timing anything.
+    TIMER = re.compile(r"(?:\A|; |&& )time ")
 
     def test_every_command_times_exactly_one_thing(self):
         for command in (
@@ -522,7 +522,12 @@ class StatisticsFigures(unittest.TestCase):
         script = f"time /pgdt parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             reported = measure.statistics_flag_problems()
-        families = (measure.STATISTICS_FAMILY, measure.PRUNING_FAMILY, measure.DYNFILTER_FAMILY)
+        families = (
+            measure.STATISTICS_FAMILY,
+            measure.PRUNING_FAMILY,
+            measure.DYNFILTER_FAMILY,
+            *measure.DATA_LEVEL_QUERIES,
+        )
         self.assertEqual(
             sorted(reported),
             sorted(c for c in measure.command_shapes() if not c.startswith(families)),
@@ -679,6 +684,87 @@ class StatisticsFigures(unittest.TestCase):
         }
         got = self._refused(**{"unnarrowed-all": stopped})
         self.assertTrue(got.startswith("unnarrowed: "), got)
+
+
+class DataLevelQueries(unittest.TestCase):
+    """The query figures time a `pgdt query` over a data-level cache one
+    untimed `parse` wrote in the same container, with `--statistics none`
+    (`measure.DATA_LEVEL_QUERIES`), so neither a mapping pass nor pruning
+    enters the reading."""
+
+    #: The figures whose rows are those shapes, `allocator`'s query rows and
+    #: `parallel-scan-throughput`'s typed-`query` legs included.
+    FIGURES = (
+        "nested-end-to-end",
+        "cross-file-floor",
+        "projection-widths",
+        "predicate-terms",
+        "allocator",
+        "parallel-scan-throughput",
+    )
+
+    def shapes(self) -> list[str]:
+        return [
+            c for c in measure.command_shapes() if c.startswith(measure.DATA_LEVEL_QUERIES)
+        ]
+
+    def test_every_one_queries_the_cache_its_builder_wrote_ahead_of_the_timer(self):
+        for command in self.shapes():
+            script = measure._script(command)
+            with self.subTest(command=command):
+                self.assertTrue(script.startswith(measure.DATA_LEVEL_BUILDER), script)
+                builder, _, timed = script.partition(" && ")
+                self.assertNotIn("time ", builder)
+                self.assertIn(measure.GATHER_STATISTICS, builder)
+                self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
+                self.assertTrue(timed.startswith("time /pgdt query "), timed)
+                self.assertIn(measure.DATA_LEVEL_QUERY, timed)
+                self.assertNotIn("--dtcache none", script)
+
+    def test_a_builder_that_fails_leaves_nothing_timed(self):
+        # Joined by `&&`: a `;` would let the query map the table cold and save
+        # it, inside the timer, over a cache the builder never wrote.
+        for command in self.shapes():
+            with self.subTest(command=command):
+                script = measure._script(command)
+                self.assertEqual(script.count(" && "), 1)
+                self.assertNotIn("; ", script)
+
+    def test_every_query_figure_row_is_one_of_them(self):
+        specs = [
+            *measure._nested_specs(),
+            *(measure.RunSpec("pgdt", "arrays", f"query-project-{w}", "warm", "")
+              for w in measure.PROJECTION_WIDTHS),
+            *(measure.RunSpec("pgdt", "control", f"query-where-{s}", "warm", "")
+              for s in measure.PREDICATE_SHAPES),
+            *(s for s in measure._parallel_specs() if "query" in s.command),
+            *(measure.RunSpec("pgdt", "control", c, "warm", "")
+              for c, _, _ in measure._ALLOCATOR_SHAPES if c.startswith("query")),
+        ]
+        for spec in specs:
+            with self.subTest(command=spec.command):
+                self.assertIn(spec.command, self.shapes())
+
+    def test_only_the_map_shapes_keep_no_cache(self):
+        # `query-nomatch*` times the map and its saves, which a built cache
+        # would leave nothing of.
+        uncached = {
+            c for c in measure.command_shapes() if "--dtcache none" in measure._script(c)
+        }
+        self.assertEqual(uncached, {"query-nomatch", "query-nomatch-rss"})
+
+    def test_every_row_of_the_jobs_axis_reads_one_cache(self):
+        scripts = [measure._script(f"query-typed-jobs-{n}") for n in measure.PARALLEL_JOBS]
+        builders = {script.partition(" && ")[0] for script in scripts}
+        self.assertEqual(len(builders), 1)
+        self.assertEqual(len({script.partition(" && ")[2] for script in scripts}), len(scripts))
+
+    def test_every_query_figure_declares_what_its_cache_holds(self):
+        for fid in self.FIGURES:
+            with self.subTest(figure=fid):
+                depends = measure.SELECTABLE_BY_ID[fid].depends
+                self.assertLessEqual(set(measure.CACHED_QUERY), set(depends))
+                self.assertEqual(len(depends), len(set(depends)))
 
 
 class DynamicFilterFigures(unittest.TestCase):
@@ -5301,13 +5387,44 @@ class ProfileRecipe(unittest.TestCase):
             with self.subTest(shape=shape):
                 # A resident leg's wrapper is a second process a profile leaves
                 # off, and nothing else of the timed line.
-                timed = measure._script(shape).replace(f"{wrapper} ", "", 1).split()
+                # A query shape's cache builder runs ahead of the timer, and
+                # is held to `profile_builder_argv` below.
+                script = measure._script(shape).rpartition(" && ")[2]
+                timed = script.replace(f"{wrapper} ", "", 1).split()
                 # Drop `time /pgdt`, the trailing redirect, and the container's
                 # own paths; what is left is the flags both must agree on.
                 self.assertEqual(timed[:2], ["time", "/pgdt"])
                 timed = [w for w in timed[2:] if w != ">/dev/null"]
                 profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
                 self.assertEqual(profiled, timed)
+
+    def test_a_profiled_query_is_preceded_by_the_builder_its_figure_runs(self):
+        """A query shape is timed over a data-level cache, so its profile is
+        taken over one too: the builder `_script` runs ahead of the timer,
+        flag for flag, written after the cache is removed and before `perf
+        record`, and never recorded itself."""
+        cfg = measure.Config()
+        lines = measure.profile_recipe(cfg).splitlines()
+        binary = measure.REPO / "target/profiling/pgdt"
+        for shape in measure.PROFILE_SHAPES:
+            builder = measure.profile_builder_argv(shape, "/dump.sql", "/tmp/x.dtcache")
+            with self.subTest(shape=shape):
+                if not shape.startswith(measure.DATA_LEVEL_QUERIES):
+                    self.assertIsNone(builder)
+                    continue
+                timed = measure._script(shape).partition(" && ")[0].split()
+                self.assertEqual(timed[0], "/pgdt")
+                self.assertEqual(builder, [w for w in timed[1:] if w != ">/dev/null"])
+                for name in measure.PROFILE_INPUTS:
+                    source = cfg.warm_dir / f"{name}.sql"
+                    built = measure.profile_builder_argv(shape, source, cfg.warm_dir / "profile.dtcache")
+                    record = next(
+                        i for i, ln in enumerate(lines)
+                        if ln.startswith(f"{measure.PERF} record")
+                        and f"profile-{shape}-{name}.data" in ln
+                    )
+                    self.assertEqual(lines[record - 1], f"{binary} {' '.join(built)} >/dev/null")
+                    self.assertTrue(lines[record - 2].startswith("rm -f "), lines[record - 2])
 
     def test_the_dfcli_pair_and_its_reading_run_the_timed_legs(self):
         """The costing row's pair, and the introspection build's runs of it,

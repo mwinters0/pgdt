@@ -191,7 +191,10 @@ Eighteen standing rules for reading anything below:
   figures whose subject it is — `statistics-gathering` and
   `statistics-pruning`, and the dynamic-filter figures, whose untimed builder
   leaves the statistics their scans prune by — and they are the one
-  exemption: a `parse` of theirs that gathers states
+  exemption, with the query figures' untimed builder
+  (`measure.DATA_LEVEL_QUERIES`): each of their `pgdt query` runs reads a
+  data-level cache written ahead of its timer and states `--statistics none`,
+  so it times neither a mapping pass nor pruning. A `parse` of theirs that gathers states
   `measure.GATHER_STATISTICS`, the request and the group size alike, and
   `--check` holds them to that rather than to nothing.
 - **Never quote a standard error or a *t* from one sweep — give the median and

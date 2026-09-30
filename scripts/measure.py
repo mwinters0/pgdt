@@ -2392,15 +2392,49 @@ NO_STATISTICS = "--statistics-level metadata"
 ROW_GROUP_SIZE = 1 << 20
 
 #: **What the statistics figures state instead, where they gather**, and the
-#: dynamic-filter figures' untimed builder with them. Their subject is the
-#: data level the rule above keeps out of every other figure, or what its
-#: statistics buy a query, so they are its one exemption, and they state the request rather
+#: untimed builders of the dynamic-filter figures and the query figures
+#: (`DATA_LEVEL_QUERIES`) with them. Their subject is the
+#: data level the rule above keeps out of every other figure, what its
+#: statistics buy a query, or a query over the cache it writes, so they are its one exemption, and they state the request rather
 #: than inherit it for the rule's own reason: the selection and the group size
 #: are both defaults that can move, and a shape inheriting either would re-time
 #: its figure the day one did. The size stated is the default's base size, and a
 #: stated size is gathered exactly, so what is priced is gathering at a
 #: mebibyte, which a flagless `parse` coarsens where rows are wide.
 GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
+
+#: **The query figures query a data-level cache one untimed `parse` wrote in
+#: the same container**, as `statistics-pruning` does, stating `--statistics
+#: none` so no pruning enters the reading (the P28 spec, "Evidence"). A query
+#: over no cache (`--dtcache none`) maps inside the timer, timing the census
+#: and the count with the rows, and one over a metadata-level cache reads its
+#: table once more for a census, inside the timer (`NO_STATISTICS`). These are the
+#: prefixes `_script` dispatches on, `query-typed` covering
+#: `parallel-scan-throughput`'s `query-typed-jobs-` too. `query-nomatch*` is
+#: not here: it times the map and its saves, which a built cache would leave
+#: nothing of.
+#:
+#: **Every row of a figure reads one cache**: the builder states `SWEEP_JOBS`
+#: whatever its query states, so a row of the `--jobs` axis differs from
+#: another by the query's count alone. **Builder and query are joined by
+#: `&&`**: a builder that failed would leave the query to map the table cold
+#: and save it inside the timer, published as a read over a cache. What the
+#: query reads carries decoding the whole cache, statistics included
+#: (`PRUNING_LEGS`), which a query after a default `parse` pays too.
+DATA_LEVEL_QUERIES: tuple[str, ...] = (
+    "query-typed",
+    "query-strings",
+    "query-project-",
+    "query-where-",
+)
+#: That builder, ahead of the timer.
+DATA_LEVEL_BUILDER = (
+    f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs {SWEEP_JOBS} "
+    f"{GATHER_STATISTICS} >/dev/null && "
+)
+#: What the timed query states: the builder's cache, and no use of its
+#: statistics.
+DATA_LEVEL_QUERY = "--dtcache /tmp/x.dtcache --statistics none"
 
 #: `statistics-gathering`'s shapes: one whole-file `parse` under the resident
 #: wrapper, at the metadata level and at the data level, `<family><leg>-rss`.
@@ -3500,10 +3534,11 @@ def _script(command: str) -> str:
             f"{q} parse --source /dump.sql --dtcache /out/measure.dtcache {j} {ns} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
+        # Over a data-level cache built ahead of the timer (`DATA_LEVEL_QUERIES`).
         mode = command.split("-")[1]
         return (
-            f"{q} query --source /dump.sql --table public.perf --dtcache none "
-            f"--schema-mode {mode} {j} >/dev/null"
+            f"{DATA_LEVEL_BUILDER}{q} query --source /dump.sql --table public.perf "
+            f"{DATA_LEVEL_QUERY} --schema-mode {mode} {j} >/dev/null"
         )
     if command.startswith("query-project-"):
         # Typed, always: the figure is about what building a column costs, and
@@ -3512,8 +3547,9 @@ def _script(command: str) -> str:
         if not width.isdigit():
             raise ValueError(f"unknown command shape {command!r}")
         return (
-            f"{q} query --source /dump.sql --table public.perf --dtcache none "
-            f"--schema-mode typed {projection_flags(int(width))} {j} >/dev/null"
+            f"{DATA_LEVEL_BUILDER}{q} query --source /dump.sql --table public.perf "
+            f"{DATA_LEVEL_QUERY} --schema-mode typed {projection_flags(int(width))} {j} "
+            ">/dev/null"
         )
     if command.startswith("query-where-"):
         # `strings`, always, for two reasons that agree. The typed `=` decodes
@@ -3525,8 +3561,8 @@ def _script(command: str) -> str:
         # mode).
         expr = predicate_expr(command.removeprefix("query-where-"))
         return (
-            f"{q} query --source /dump.sql --table public.perf --dtcache none "
-            f"--schema-mode strings --where '{expr}' {j} >/dev/null"
+            f"{DATA_LEVEL_BUILDER}{q} query --source /dump.sql --table public.perf "
+            f"{DATA_LEVEL_QUERY} --schema-mode strings --where '{expr}' {j} >/dev/null"
         )
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
@@ -3688,9 +3724,11 @@ def _script(command: str) -> str:
                 f"--dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
             )
         if shape == "query-typed":
+            # The builder states `SWEEP_JOBS`, not the row's count, so every
+            # row reads one cache (`DATA_LEVEL_QUERIES`).
             return (
-                f"{q} query --source /dump.sql --table public.perf --dtcache none "
-                f"--schema-mode typed {p} >/dev/null"
+                f"{DATA_LEVEL_BUILDER}{q} query --source /dump.sql --table public.perf "
+                f"{DATA_LEVEL_QUERY} --schema-mode typed {p} >/dev/null"
             )
         raise ValueError(f"unknown command shape {command!r}")
     if command.startswith("decode-"):
@@ -3870,10 +3908,11 @@ def statistics_flag_problems() -> list[str]:
 
     **The families whose subject is the gathering or what it buys may state
     `GATHER_STATISTICS` instead**, and only that — the two statistics
-    figures', and the dynamic-filter figures', whose scans prune by what the
-    untimed builder gathered — and a `parse` of theirs that inherits the
+    figures', the dynamic-filter figures', whose scans prune by what the
+    untimed builder gathered, and the query figures', which read the cache it
+    wrote (`DATA_LEVEL_QUERIES`) — and a `parse` of theirs that inherits the
     request is reported exactly as anyone else's is."""
-    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY, DYNFILTER_FAMILY)
+    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY, DYNFILTER_FAMILY, *DATA_LEVEL_QUERIES)
     return [
         command
         for command in command_shapes()
@@ -5376,6 +5415,17 @@ STATISTICS = (
     "pgdump_query/src/resolve.rs",
     *PREDICATE,
 )
+#: What a query figure's reading carries beyond its rows, its query timed over
+#: a data-level cache (`DATA_LEVEL_QUERIES`): the cache, decoded whole inside
+#: the timer, and the census and statistics the untimed builder left in it.
+#: Merged into a figure's own paths with `_declare`, which drops a repeat.
+CACHED_QUERY = (*MAP, *CACHE, *STATISTICS)
+
+
+def _declare(*paths: str) -> tuple[str, ...]:
+    """`paths` in order, each once: a path declared twice is printed twice by
+    `--list`."""
+    return tuple(dict.fromkeys(paths))
 
 
 # -- scan throughput --------------------------------------------------------
@@ -5521,6 +5571,18 @@ def run_chunk_size(session: Session) -> str:
 
 # -- nested end to end ------------------------------------------------------
 
+
+def _cached_query_note(subject: str) -> str:
+    """What a query figure's notes say of the cache `subject` reads, generated
+    from the shape so the sentence cannot outlive it (`DATA_LEVEL_QUERIES`)."""
+    return (
+        f"{subject} reads a cache one untimed `pgdt parse` stating `{GATHER_STATISTICS}` "
+        "wrote in the same container, and states `--statistics none`, so no row group is "
+        "skipped: its reading carries decoding that cache whole, statistics included, and "
+        "no mapping pass.\n"
+    )
+
+
 _NESTED_FILES = (
     ("control", "control — 16 scalar columns"),
     ("composite", "`--composite` — the same 16 plus one composite"),
@@ -5561,7 +5623,14 @@ def run_nested_end_to_end(session: Session) -> str:
     table = md_table(
         ["File", "Rows", "`strings`", "`typed`", "`typed` − `strings`", "Ratio"], rows
     )
-    return table + "\n\nPer-rep readings (s):\n" + "\n".join(per_rep) + "\n"
+    return (
+        table
+        + "\n\n"
+        + _cached_query_note("Each `query`")
+        + "\nPer-rep readings (s):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
 
 
 # -- the cross-file floor ---------------------------------------------------
@@ -5610,7 +5679,8 @@ def run_cross_file_floor(session: Session) -> str:
             ", ".join(f"{v:+.2f}" for v in sorted(floor)),
         ],
     ]
-    return md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
+    table = md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
+    return table + "\n\n" + _cached_query_note("Each `query`")
 
 
 # -- projection widths ------------------------------------------------------
@@ -5676,7 +5746,9 @@ def run_projection_widths(session: Session) -> str:
         + f"\n\nOne file — `--arrays --composite`, {profile['rows']:,} rows of "
         f"{profile['columns']} columns — read {len(_PROJECTION_ROWS)} ways, warm and typed, "
         "through the CLI. Per-row differences are paired rep by rep and then taken as a "
-        "median.\n\nPer-rep readings (s):\n"
+        "median.\n\n"
+        + _cached_query_note("Each `query`")
+        + "\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
         + "\n"
     )
@@ -5751,7 +5823,9 @@ def run_predicate_terms(session: Session) -> str:
         "`--schema-mode strings`, through the CLI. Every term is an equality against a "
         "literal no value of the column can equal, so every row is walked, every term is "
         "evaluated, and no row is decoded, built or rendered. Per-row differences are "
-        "paired rep by rep and then taken as a median.\n\nAs written:\n"
+        "paired rep by rep and then taken as a median.\n\n"
+        + _cached_query_note("Each `query`")
+        + "\nAs written:\n"
         + written
         + "\n\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
@@ -6310,7 +6384,16 @@ def run_allocator(session: Session) -> str:
             f"{legs} — so a leg whose build silently dropped its feature cannot be "
             "published as a comparison of two identical binaries.\n"
         )
-    return table + "\n\n" + provenance + note + "\n" + _per_rep(figure, session, specs)
+    return (
+        table
+        + "\n\n"
+        + provenance
+        + "\n"
+        + _cached_query_note("Each `query` row")
+        + note
+        + "\n"
+        + _per_rep(figure, session, specs)
+    )
 
 
 # -- xz decode scaling ------------------------------------------------------
@@ -6530,6 +6613,8 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "wait costs the rows above four is not separated from anything else they pay "
         '(`docs/design/decisions.md`, "D25").\n\n'
         + _substream_note()
+        + _cached_query_note("Each typed-`query` leg, at every `--jobs`,")
+        + "\n"
         + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
         "budget-clamped;** a plain source stays on the library's default budget whatever is "
         'stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
@@ -8456,7 +8541,7 @@ FIGURES: list[Figure] = [
         id="nested-end-to-end",
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
         stage="warm",
-        depends=(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=_declare(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "composite", "arrays"),
         run=run_nested_end_to_end,
     ),
@@ -8464,7 +8549,7 @@ FIGURES: list[Figure] = [
         id="cross-file-floor",
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
         stage="warm",
-        depends=(*NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=_declare(*NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "control43"),
         shares=(
             #: Consumed, not republished: row 1 is `_per_row_diffs` over the
@@ -8559,7 +8644,7 @@ FIGURES: list[Figure] = [
         id="projection-widths",
         section="What a column costs: five projection widths over one file",
         stage="warm",
-        depends=(*SCAN, *NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=_declare(*SCAN, *NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("arrays",),
         run=run_projection_widths,
     ),
@@ -8573,7 +8658,7 @@ FIGURES: list[Figure] = [
         id="predicate-terms",
         section="What a filter term costs, and how much of it is the walk to its field",
         stage="warm",
-        depends=(*PREDICATE, *SCAN, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=_declare(*PREDICATE, *SCAN, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control",),
         run=run_predicate_terms,
     ),
@@ -8595,6 +8680,9 @@ FIGURES: list[Figure] = [
             *READ,
             *QUERY_CLI,
             *GEN_PERF,
+            # Its two `query` shapes read a data-level cache (`CACHED_QUERY`).
+            *CACHE,
+            *STATISTICS,
             # Where the legs are declared and where the shipped default lives,
             # so a change to it changes what this figure is a figure of.
             # `src/alloc.rs` needs no line of its own: `QUERY_CLI` is the
@@ -8644,6 +8732,9 @@ FIGURES: list[Figure] = [
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
+            # Its typed-`query` legs read a data-level cache (`CACHED_QUERY`).
+            *CACHE,
+            *STATISTICS,
         ),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,
@@ -11184,7 +11275,8 @@ PERF_FREQ = 4999
 #: read against the scan-throughput tables and `statistics-gathering`'s
 #: `metadata` leg; `query-strings` is row extraction
 #: before a column is typed and `query-typed` the whole path, read against
-#: `nested-end-to-end`. **The data level's `parse`**, `statistics-gathering`'s
+#: `nested-end-to-end`, each over the data-level cache its figure reads
+#: (`profile_builder_argv`). **The data level's `parse`**, `statistics-gathering`'s
 #: `data` leg run without its resident wrapper, is what attributes that
 #: figure's Δ among the census, the unrepresentable count and the statistics
 #: (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
@@ -11277,12 +11369,14 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             *flags[leg].split(),
         ]
     if command in ("query-strings", "query-typed"):
+        # Over the cache `profile_builder_argv` writes first, unprofiled.
         mode = command.split("-")[1]
         return [
             "query",
             "--source", str(source),
             "--table", "public.perf",
-            "--dtcache", "none",
+            "--dtcache", str(cache),
+            "--statistics", "none",
             "--schema-mode", mode,
             "--jobs", str(SWEEP_JOBS),
         ]
@@ -11304,6 +11398,25 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
                 *NO_STATISTICS.split(),
             ]
     raise ValueError(f"unknown profile shape {command!r}")
+
+
+def profile_builder_argv(command: str, source: Path | str, cache: Path | str) -> list[str] | None:
+    """The `pgdt parse` a profiled shape's cache is written by first, outside
+    the profile, or `None` for a shape that reads none.
+
+    `DATA_LEVEL_BUILDER`'s flags, as `profile_argv` is `_script`'s: a query
+    shape is timed over a data-level cache, so a profile of it over none would
+    attribute a mapping pass the figure never times. `test_measure.py`'s
+    `ProfileRecipe` holds the two builders together."""
+    if not command.startswith(DATA_LEVEL_QUERIES):
+        return None
+    return [
+        "parse",
+        "--source", str(source),
+        "--dtcache", str(cache),
+        "--jobs", str(SWEEP_JOBS),
+        *GATHER_STATISTICS.split(),
+    ]
 
 
 def profile_recipe(cfg: Config) -> str:
@@ -11453,10 +11566,12 @@ def profile_recipe(cfg: Config) -> str:
     def record(shape: str, name: str) -> None:
         stem = f"profile-{shape}-{name}"
         argv = " ".join(profile_argv(shape, warm / f"{name}.sql", cache))
+        builder = profile_builder_argv(shape, warm / f"{name}.sql", cache)
         lines.extend(
             [
                 "",
                 f"rm -f {cache}",
+                *([f"{binary} {' '.join(builder)} >/dev/null"] if builder else []),
                 f"{PERF} record -F {PERF_FREQ} --call-graph fp "
                 f"-o {out / (stem + '.data')} \\",
                 f"  -- {binary} {argv} >/dev/null",
