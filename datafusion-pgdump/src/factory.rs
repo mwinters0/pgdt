@@ -47,8 +47,8 @@ pub struct PgDumpTableOptions {
     /// as the file's text — the escape hatch from a wrong type mapping.
     pub schema_mode: SchemaMode,
     /// `pgdump.unrepresentable`: `null`, the default, reading a value the
-    /// column's type cannot hold as NULL, or `refuse`
-    /// ([`PgDumpOptions::unrepresentable`]).
+    /// column's type cannot hold as NULL, `text`, reading a column holding
+    /// one as its text, or `refuse` ([`PgDumpOptions::unrepresentable`]).
     pub unrepresentable: UnrepresentableMode,
     /// `pgdump.strict_identity`: which identity signals bind for this dump,
     /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
@@ -94,10 +94,11 @@ impl ExtensionOptions for PgDumpTableOptions {
             "unrepresentable" => {
                 self.unrepresentable = match value.to_ascii_lowercase().as_str() {
                     "null" => UnrepresentableMode::Null,
+                    "text" => UnrepresentableMode::Text,
                     "refuse" => UnrepresentableMode::Refuse,
                     _ => {
                         return plan_err!(
-                            "pgdump.unrepresentable is `null` or `refuse`, not `{value}`"
+                            "pgdump.unrepresentable is `null`, `text` or `refuse`, not `{value}`"
                         );
                     }
                 }
@@ -129,6 +130,7 @@ impl ExtensionOptions for PgDumpTableOptions {
         };
         let unrepresentable = match self.unrepresentable {
             UnrepresentableMode::Null => "null",
+            UnrepresentableMode::Text => "text",
             UnrepresentableMode::Refuse => "refuse",
         };
         vec![

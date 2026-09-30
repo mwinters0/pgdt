@@ -1,4 +1,4 @@
-//! A value its column's Arrow type cannot hold (`KD8`), held to one outcome
+//! A value its column's Arrow type cannot hold (D96), held to one outcome
 //! per query under each of the three ways of reading one.
 //!
 //! **A query's outcome never depends on which rows it read.** So each case
@@ -18,10 +18,11 @@
 //!   a filter the library answers is not materialized, and there the case
 //!   states the answer PostgreSQL's order gives.
 //!
-//! **Each case records the modes it fails in** ([`Case::failing`]), and the
-//! test holds the record exact both ways: a recorded case that passes fails
-//! it as surely as an unrecorded one that fails, so the slice turning a mode
-//! green strikes that mode from the record in the same change.
+//! **Every case gives its outcome but where DataFusion's own defect meets
+//! it** (`KD56`): a case marked as one it meets ([`Case::meets_kd56`]) is
+//! excluded in the configurations it meets it in ([`Config::meets_kd56`]),
+//! and held to still failing there, so the pin carrying the fix strikes the
+//! exclusion.
 //!
 //! **And the sweep is held to having exercised the order**: every table a
 //! case reads is scanned by two partitions, so the two orders [`Order::ALL`]
@@ -86,13 +87,12 @@ enum Mode {
 
 const MODES: [Mode; 3] = [Mode::Null, Mode::Text, Mode::Refuse];
 
-/// The options a dump is opened with under `mode`. **The untyped mode does
-/// not exist yet**, so it opens the refuse mode, and each case is held to the
-/// untyped outcome against it; the slice adding that mode states it here.
+/// The options a dump is opened with under `mode`.
 fn options(mode: Mode) -> PgDumpOptions {
     let unrepresentable = match mode {
         Mode::Null => UnrepresentableMode::Null,
-        Mode::Text | Mode::Refuse => UnrepresentableMode::Refuse,
+        Mode::Text => UnrepresentableMode::Text,
+        Mode::Refuse => UnrepresentableMode::Refuse,
     };
     PgDumpOptions { unrepresentable, ..PgDumpOptions::default() }
 }
@@ -127,6 +127,18 @@ struct Config {
     statistics: Statistics,
     dynamic: Dynamic,
     order: Order,
+}
+
+impl Config {
+    /// **Where `KD56` meets a case that it can**: rows evaluated under the
+    /// aggregate's dynamic filter and dropped before decoding, which is
+    /// where the filter's lost `MIN` side cuts rows the answer needs —
+    /// whatever the mode, as it is not particular to unrepresentable values.
+    /// Excluded until a DataFusion pin carries the fix.
+    // upstream: UF1
+    fn meets_kd56(&self) -> bool {
+        self.dynamic == Dynamic::OnWithRows
+    }
 }
 
 impl fmt::Display for Config {
@@ -196,17 +208,23 @@ struct Case {
     /// answer is any `n` rows of `sql`'s, and `sql` is run with `LIMIT n`.
     pick: Option<usize>,
     refuse: Refuse,
-    /// The modes this case fails in today, each struck by the change that
-    /// makes the mode give it its outcome.
-    failing: &'static [Mode],
+    /// Whether DataFusion's own defect `KD56` meets this case
+    /// ([`Config::meets_kd56`]), whose configurations are then excluded.
+    meets_kd56: bool,
 }
 
-const fn case(sql: &'static str, refuse: Refuse, failing: &'static [Mode]) -> Case {
-    Case { sql, pick: None, refuse, failing }
+const fn case(sql: &'static str, refuse: Refuse) -> Case {
+    Case { sql, pick: None, refuse, meets_kd56: false }
 }
 
-const fn picking(sql: &'static str, n: usize, refuse: Refuse, failing: &'static [Mode]) -> Case {
-    Case { sql, pick: Some(n), refuse, failing }
+const fn picking(sql: &'static str, n: usize, refuse: Refuse) -> Case {
+    Case { sql, pick: Some(n), refuse, meets_kd56: false }
+}
+
+/// `case`, which `KD56` meets: an ungrouped `MIN` beside a `MAX` whose
+/// column is NULL in a partition's first batch.
+const fn kd56(case: Case) -> Case {
+    Case { meets_kd56: true, ..case }
 }
 
 use Refuse::{Answers, Column};
@@ -219,56 +237,32 @@ use Refuse::{Answers, Column};
 /// holds one in its last row too.
 const CASES: &[Case] = &[
     // A `LIMIT` one partition meets first.
-    picking("SELECT id, v_small FROM t_numeric", 3, Column("t_numeric.v_small"), &[Mode::Text]),
-    picking("SELECT v_date FROM t_date", 2, Column("t_date.v_date"), &[Mode::Text]),
-    picking(
-        "SELECT id, v_tstz FROM t_timestamp WHERE id > 1",
-        2,
-        Column("t_timestamp.v_tstz"),
-        &[Mode::Text],
-    ),
+    picking("SELECT id, v_small FROM t_numeric", 3, Column("t_numeric.v_small")),
+    picking("SELECT v_date FROM t_date", 2, Column("t_date.v_date")),
+    picking("SELECT id, v_tstz FROM t_timestamp WHERE id > 1", 2, Column("t_timestamp.v_tstz")),
     // Ungrouped `MIN`/`MAX`: answered from the map where it can be, and with
     // a static filter keeping the map from answering, by the rows under an
     // aggregate's dynamic filter.
-    // The typed mode misses both unfiltered pairs where rows are evaluated and
-    // no statistics answer: a partition's first batch holding no value of the
-    // column leaves DataFusion's shared `MIN` bound a typed NULL it reads as no
-    // bound, so the aggregate's filter keeps only `> max` (`KD56`).
-    case(
-        "SELECT MIN(v_small), MAX(v_small) FROM t_numeric",
-        Column("t_numeric.v_small"),
-        &[Mode::Null, Mode::Text],
-    ),
-    case(
-        "SELECT MIN(v_small) FROM t_numeric WHERE id > 0",
-        Column("t_numeric.v_small"),
-        &[Mode::Text],
-    ),
-    case("SELECT MAX(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), &[Mode::Text]),
-    case(
-        "SELECT MIN(v_ts) FROM t_timestamp WHERE id > 0",
-        Column("t_timestamp.v_ts"),
-        &[Mode::Text],
-    ),
+    // Both unfiltered pairs miss where rows are dropped under the aggregate's
+    // filter and no statistics answer — the untyped mode's text column has no
+    // bound to answer from, gathered or not: a partition's first batch holding
+    // no value of the column leaves DataFusion's shared `MIN` bound a typed
+    // NULL it reads as no bound, so the filter keeps only `> max` (`KD56`),
+    // and those configurations are excluded.
+    kd56(case("SELECT MIN(v_small), MAX(v_small) FROM t_numeric", Column("t_numeric.v_small"))),
+    case("SELECT MIN(v_small) FROM t_numeric WHERE id > 0", Column("t_numeric.v_small")),
+    case("SELECT MAX(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date")),
+    case("SELECT MIN(v_ts) FROM t_timestamp WHERE id > 0", Column("t_timestamp.v_ts")),
     // A count of the column: NULLs are not counted, so the typed mode's are.
-    case("SELECT COUNT(v_small) FROM t_numeric", Column("t_numeric.v_small"), &[Mode::Text]),
-    case("SELECT COUNT(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), &[Mode::Text]),
+    case("SELECT COUNT(v_small) FROM t_numeric", Column("t_numeric.v_small")),
+    case("SELECT COUNT(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date")),
     // TopK, the sort keys alone.
-    case(
-        "SELECT v_date FROM t_date ORDER BY v_date LIMIT 2",
-        Column("t_date.v_date"),
-        &[Mode::Text],
-    ),
+    case("SELECT v_date FROM t_date ORDER BY v_date LIMIT 2", Column("t_date.v_date")),
     case(
         "SELECT v_small FROM t_numeric ORDER BY v_small DESC NULLS LAST LIMIT 2",
         Column("t_numeric.v_small"),
-        &[Mode::Text],
     ),
-    case(
-        "SELECT v_ts FROM t_timestamp ORDER BY v_ts LIMIT 3",
-        Column("t_timestamp.v_ts"),
-        &[Mode::Text],
-    ),
+    case("SELECT v_ts FROM t_timestamp ORDER BY v_ts LIMIT 3", Column("t_timestamp.v_ts")),
     // Joins: a build side ruling out the probe rows holding the value, which
     // a dynamic filter's row drop never decodes; a join on the column itself;
     // and a join whose build side is filtered on one it never materializes.
@@ -276,35 +270,27 @@ const CASES: &[Case] = &[
         "SELECT n.id, n.v_small FROM (SELECT id FROM t_numeric WHERE id >= 4) b \
          JOIN t_numeric n ON n.id = b.id",
         Column("t_numeric.v_small"),
-        &[Mode::Text],
     ),
     case(
         "SELECT a.id, b.id FROM t_date a JOIN t_date b ON a.v_date = b.v_date",
         Column("t_date.v_date"),
-        &[Mode::Text],
     ),
     case(
         "SELECT t.id, t.v_ts FROM t_date d JOIN t_timestamp t ON t.id = d.id \
          WHERE d.v_date > '1000-01-01'",
         Column("t_timestamp.v_ts"),
-        &[Mode::Text],
     ),
     // A static filter over the column alone, which the library answers: the
     // refuse mode keeps PostgreSQL's order, where an infinity is above every
     // date and no special value is NULL. Each literal is text, which the
     // untyped mode compares as text: DataFusion reads a `Utf8View` against a
     // number by casting each value to the number's type.
-    case("SELECT id FROM t_numeric WHERE v_small IS NOT NULL", Answers(&["3", "4", "5"]), &[]),
-    case(
-        "SELECT id FROM t_date WHERE v_date > '5000-01-01'",
-        Answers(&["1", "4", "6"]),
-        &[Mode::Text],
-    ),
-    case("SELECT id FROM t_date WHERE v_date IS NULL", Answers(&["7"]), &[]),
+    case("SELECT id FROM t_numeric WHERE v_small IS NOT NULL", Answers(&["3", "4", "5"])),
+    case("SELECT id FROM t_date WHERE v_date > '5000-01-01'", Answers(&["1", "4", "6"])),
+    case("SELECT id FROM t_date WHERE v_date IS NULL", Answers(&["7"])),
     case(
         "SELECT COUNT(*) FROM t_timestamp WHERE v_tstz < '2000-01-01 00:00:00+00'",
         Answers(&["3"]),
-        &[],
     ),
     // The extremes: a value the decoder refuses, and one it decodes to a
     // value `arrow-cast` cannot display — `24:00:00`, a date or timestamp
@@ -313,53 +299,38 @@ const CASES: &[Case] = &[
         "SELECT id, v_interval FROM t_extremes WHERE v_interval IS NOT NULL",
         3,
         Column("t_extremes.v_interval"),
-        &[Mode::Text],
     ),
-    case(
+    kd56(case(
         "SELECT MIN(v_interval), MAX(v_interval) FROM t_extremes",
         Column("t_extremes.v_interval"),
-        &[Mode::Null, Mode::Text],
-    ),
-    case("SELECT MAX(v_time) FROM t_extremes", Column("t_extremes.v_time"), &[Mode::Text]),
-    case(
-        "SELECT MAX(v_date) FROM t_extremes WHERE id > 0",
-        Column("t_extremes.v_date"),
-        &[Mode::Text],
-    ),
-    case(
-        "SELECT MAX(v_numeric76) FROM t_extremes",
-        Column("t_extremes.v_numeric76"),
-        &[Mode::Text],
-    ),
-    case("SELECT COUNT(v_ts) FROM t_extremes", Column("t_extremes.v_ts"), &[Mode::Text]),
+    )),
+    case("SELECT MAX(v_time) FROM t_extremes", Column("t_extremes.v_time")),
+    case("SELECT MAX(v_date) FROM t_extremes WHERE id > 0", Column("t_extremes.v_date")),
+    case("SELECT MAX(v_numeric76) FROM t_extremes", Column("t_extremes.v_numeric76")),
+    case("SELECT COUNT(v_ts) FROM t_extremes", Column("t_extremes.v_ts")),
     case(
         "SELECT v_tstz FROM t_extremes ORDER BY v_tstz DESC NULLS LAST LIMIT 2",
         Column("t_extremes.v_tstz"),
-        &[Mode::Text],
     ),
     case(
         "SELECT e.id, e.v_interval FROM t_extremes_nested n JOIN t_extremes e ON e.id = n.id",
         Column("t_extremes.v_interval"),
-        &[Mode::Text],
     ),
-    case("SELECT id FROM t_extremes WHERE v_time > '12:00:00'", Answers(&["2"]), &[]),
+    case("SELECT id FROM t_extremes WHERE v_time > '12:00:00'", Answers(&["2"])),
     picking(
         "SELECT id, v_date_array FROM t_extremes_nested",
         2,
         Column("t_extremes_nested.v_date_array"),
-        &[Mode::Text],
     ),
     case(
         "SELECT id, v_dated FROM t_extremes_nested WHERE id = 2",
         Column("t_extremes_nested.v_dated"),
-        &[Mode::Text],
     ),
     case(
         "SELECT MAX(v_interval_array) FROM t_extremes_nested",
         Column("t_extremes_nested.v_interval_array"),
-        &[Mode::Text],
     ),
-    case("SELECT id FROM t_extremes_nested WHERE v_daterange IS NULL", Answers(&["3"]), &[]),
+    case("SELECT id FROM t_extremes_nested WHERE v_daterange IS NULL", Answers(&["3"])),
 ];
 
 /// Which step of a query a refusal came out of.
@@ -706,6 +677,8 @@ struct Miss {
     config: Config,
     got: Outcome,
     expected: Expected,
+    /// In a configuration `KD56` meets, of a case it meets.
+    excluded: bool,
 }
 
 /// Each case and mode's misses over one major, and the partition counts of
@@ -746,7 +719,8 @@ async fn sweep(major: u32) -> (BTreeMap<(usize, Mode), Vec<Miss>>, BTreeSet<usiz
                 let want = &expected[&(i, mode)];
                 let misses = misses.entry((i, mode)).or_default();
                 if !want.met_by(&got) {
-                    misses.push(Miss { major, config, got, expected: want.clone() });
+                    let excluded = case.meets_kd56 && config.meets_kd56();
+                    misses.push(Miss { major, config, got, expected: want.clone(), excluded });
                 }
             }
         }
@@ -755,8 +729,8 @@ async fn sweep(major: u32) -> (BTreeMap<(usize, Mode), Vec<Miss>>, BTreeSet<usiz
 }
 
 /// **Every case gives its mode's one outcome in every configuration, but
-/// where its record says it fails today** — and there it fails in at least
-/// one, so a slice making it pass strikes it.
+/// where `KD56` meets it** — and there it fails in at least one, so the pin
+/// carrying the fix strikes the exclusion.
 #[test]
 fn every_query_has_one_outcome_per_mode() {
     let results: Vec<_> = std::thread::scope(|scope| {
@@ -788,31 +762,34 @@ fn every_query_has_one_outcome_per_mode() {
 
     let mut wrong = Vec::new();
     for (i, case) in CASES.iter().enumerate() {
+        let mut kd56_met = false;
         for mode in MODES {
-            let found = &misses[&(i, mode)];
-            let recorded = case.failing.contains(&mode);
-            match (recorded, found.is_empty()) {
-                (true, true) => wrong.push(format!(
-                    "`{}` under {mode:?} gives its one outcome everywhere: strike {mode:?} from \
-                     its `failing`",
-                    case.run_sql()
-                )),
-                (false, false) => {
-                    let mut lines = format!(
-                        "`{}` under {mode:?} missed in {} runs, first:",
-                        case.run_sql(),
-                        found.len()
-                    );
-                    for miss in found.iter().take(4) {
-                        lines.push_str(&format!(
-                            "\n    {} {}: got {}\n      expected {}",
-                            miss.major, miss.config, miss.got, miss.expected
-                        ));
-                    }
-                    wrong.push(lines);
-                }
-                _ => {}
+            let (excluded, found): (Vec<&Miss>, Vec<&Miss>) =
+                misses[&(i, mode)].iter().partition(|miss| miss.excluded);
+            kd56_met |= !excluded.is_empty();
+            if found.is_empty() {
+                continue;
             }
+            let mut lines = format!(
+                "`{}` under {mode:?} missed in {} runs, first:",
+                case.run_sql(),
+                found.len()
+            );
+            for miss in found.iter().take(4) {
+                lines.push_str(&format!(
+                    "\n    {} {}: got {}\n      expected {}",
+                    miss.major, miss.config, miss.got, miss.expected
+                ));
+            }
+            wrong.push(lines);
+        }
+        // upstream: UF1
+        if case.meets_kd56 && !kd56_met {
+            wrong.push(format!(
+                "`{}` gives its one outcome where `KD56` met it: if the DataFusion pin carries \
+                 the fix, strike the exclusion",
+                case.run_sql()
+            ));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));

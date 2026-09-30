@@ -68,7 +68,8 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
     refused for one of several. :strings reads every column as its text, \
     :unrepresentable=refuse refuses at planning a query needing the values of a column holding \
-    one its type cannot hold, where the default, `null`, reads such a value as NULL, and :strict-identity=TERMS states this dump's strictness where \
+    one its type cannot hold, where the default, `null`, reads such a value as NULL and `text` \
+    reads such a column as its text, and :strict-identity=TERMS states this dump's strictness where \
     --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
@@ -85,8 +86,8 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
 /// `./a=b.sql`. **The suffixes are stripped from the right, in any order**,
-/// each at most once: TERMS hold `,` and never `:`, and MODE is `null` or
-/// `refuse`.
+/// each at most once: TERMS hold `,` and never `:`, and MODE is `null`,
+/// `text` or `refuse`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
@@ -117,10 +118,11 @@ impl DumpArg {
             {
                 let mode = match mode {
                     "null" => UnrepresentableMode::Null,
+                    "text" => UnrepresentableMode::Text,
                     "refuse" => UnrepresentableMode::Refuse,
                     _ => {
                         return Err(format!(
-                            "--dump {UNREPRESENTABLE}{mode}: the mode is `null` or `refuse`"
+                            "--dump {UNREPRESENTABLE}{mode}: the mode is `null`, `text` or `refuse`"
                         ));
                     }
                 };
@@ -393,6 +395,7 @@ mod tests {
         let mode = |arg: &str| DumpArg::parse(arg).unwrap().unrepresentable;
         assert_eq!(mode("koji.dump"), UnrepresentableMode::Null);
         assert_eq!(mode("koji.dump:unrepresentable=null"), UnrepresentableMode::Null);
+        assert_eq!(mode("koji.dump:unrepresentable=text"), UnrepresentableMode::Text);
         for arg in [
             "koji.dump:unrepresentable=refuse:strings:strict-identity=none",
             "koji.dump:strict-identity=none:unrepresentable=refuse:strings",
@@ -416,7 +419,7 @@ mod tests {
             );
         }
         for refused in [
-            "koji.dump:unrepresentable=text",
+            "koji.dump:unrepresentable=typed",
             "koji.dump:unrepresentable=",
             "koji.dump:unrepresentable=null:unrepresentable=refuse",
         ] {

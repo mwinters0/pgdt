@@ -84,7 +84,9 @@ use crate::predicate::{
     ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_membership, resolve_term,
 };
 use crate::prune::{DynamicPruning, SortedStop, prune_block};
-use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
+use crate::resolve::{
+    ResolvedSchema, SchemaMode, database_for_name, read_as_text, resolve_columns,
+};
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
     scan as scan_events,
@@ -2112,12 +2114,18 @@ impl<'a> TableStream<'a> {
 /// pass marks that database's DDL complete. `table_schema` and
 /// `TablePartitions::plan` take a caller's `DumpIndex`, whose fields are
 /// public, so a hand-built one can. The check is pinned by a unit test.
+///
+/// `text` marks, as `census` is taken, each column the untyped mode reads as
+/// its text ([`TableColumns::text_for`]), compared in `semantics`
+/// ([`read_as_text`]).
 fn resolve_block(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     schema_mode: SchemaMode,
     census: &[ArrayShape],
+    text: &[bool],
+    semantics: ComparisonSemantics,
 ) -> Result<ResolvedSchema> {
     if schema_mode == SchemaMode::Typed
         && let Some(meta) = metadata
@@ -2125,14 +2133,16 @@ fn resolve_block(
     {
         return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
     }
-    Ok(resolve_columns(
+    let mut resolved = resolve_columns(
         &header.qualified_name(),
         &header.columns,
         metadata,
         database,
         schema_mode,
         census,
-    ))
+    );
+    read_as_text(&mut resolved, text, semantics);
+    Ok(resolved)
 }
 
 /// Refuse a typed plan over a block holding no census — one a map the caller
@@ -2181,14 +2191,27 @@ struct TableColumns {
     /// One entry per name in `order`, its census unioned over every block
     /// ([`union_census`]).
     census: Vec<(String, ArrayShape)>,
+    /// **The columns the untyped mode reads as their text**: under
+    /// [`UnrepresentableMode::Text`], each whose blocks count, over every one
+    /// of them, a value in the tiers the query's front end cannot hold — the
+    /// count the refuse mode refuses by ([`materialized_unrepresentable`]),
+    /// settled once for the table as its census is, so no two blocks of it
+    /// disagree on a column's type (`docs/design/decisions.md`, "D100").
+    /// Empty under every other mode.
+    text: Vec<String>,
 }
 
 impl TableColumns {
     /// The table `matches` are the blocks of — one `(database, table)`
-    /// target, already narrowed (`docs/design/decisions.md`, "D49").
-    fn settle(matches: &[CopyBlock], metadata: Option<&DumpMetadata>) -> Result<Self> {
+    /// target, already narrowed (`docs/design/decisions.md`, "D49") — as
+    /// `query_options` reads it.
+    fn settle(
+        matches: &[CopyBlock],
+        metadata: Option<&DumpMetadata>,
+        query_options: &QueryOptions,
+    ) -> Result<Self> {
         let Some(first) = matches.first() else {
-            return Ok(Self { order: Vec::new(), census: Vec::new() });
+            return Ok(Self { order: Vec::new(), census: Vec::new(), text: Vec::new() });
         };
         fn set(b: &CopyBlock) -> Vec<&String> {
             let mut names: Vec<&String> = b.header.columns.iter().collect();
@@ -2213,7 +2236,23 @@ impl TableColumns {
         let rank = |name: &String| declared.as_ref().and_then(|d| d.iter().position(|c| c == name));
         order.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
         let census = order.iter().cloned().zip(union_census(&order, matches)).collect();
-        Ok(Self { order, census })
+        let text = match (query_options.schema_mode, query_options.unrepresentable) {
+            (SchemaMode::Typed, UnrepresentableMode::Text) => {
+                let reach = query_options.unrepresentable_reach();
+                order
+                    .iter()
+                    .filter(|name| unrepresentable_values(matches, name, reach) > 0)
+                    .cloned()
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        Ok(Self { order, census, text })
+    }
+
+    /// Which of `names` the untyped mode reads as text, in `names`' order.
+    fn text_for(&self, names: &[String]) -> Vec<bool> {
+        names.iter().map(|name| self.text.contains(name)).collect()
     }
 
     /// `names`' census, one entry per name, in `names`' order.
@@ -2317,7 +2356,7 @@ impl ReplayPlan {
         metadata: Option<DumpMetadata>,
     ) -> Result<Self> {
         refuse_metadata_level(matches, &query_options)?;
-        let table = TableColumns::settle(matches, metadata.as_ref())?;
+        let table = TableColumns::settle(matches, metadata.as_ref(), &query_options)?;
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
         let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
         if query_options.unrepresentable == UnrepresentableMode::Refuse
@@ -2475,17 +2514,7 @@ fn materialized_unrepresentable(
         if matches!(field.data_type(), arrow::datatypes::DataType::Utf8View) {
             continue;
         }
-        let values: u64 = matches
-            .iter()
-            .filter_map(|block| {
-                let c = block.header.columns.iter().position(|name| name == field.name())?;
-                let count = block.unrepresentable.as_ref()?.get(c)?;
-                Some(
-                    count.format
-                        + if reach == UnrepresentableTier::Engine { count.engine } else { 0 },
-                )
-            })
-            .sum();
+        let values = unrepresentable_values(matches, field.name(), reach);
         if values == 0 {
             continue;
         }
@@ -2497,6 +2526,19 @@ fn materialized_unrepresentable(
         });
     }
     found
+}
+
+/// The map's count of column `name`'s values past the tiers `reach` names,
+/// over every one of `matches`, the blocks of one table.
+fn unrepresentable_values(matches: &[CopyBlock], name: &str, reach: UnrepresentableTier) -> u64 {
+    matches
+        .iter()
+        .filter_map(|block| {
+            let c = block.header.columns.iter().position(|column| column == name)?;
+            let count = block.unrepresentable.as_ref()?.get(c)?;
+            Some(count.format + if reach == UnrepresentableTier::Engine { count.engine } else { 0 })
+        })
+        .sum()
 }
 
 /// **Each column the query materializes that holds a value it reads as
@@ -2585,7 +2627,16 @@ fn resolve_for_query(
     counts: Option<&[Unrepresentable]>,
 ) -> Result<PlannedBlock> {
     let census = table.census_for(&header.columns);
-    let full = resolve_block(header, metadata, database, query_options.schema_mode, &census)?;
+    let text = table.text_for(&header.columns);
+    let full = resolve_block(
+        header,
+        metadata,
+        database,
+        query_options.schema_mode,
+        &census,
+        &text,
+        query_options.semantics,
+    )?;
     let unrepresentable = query_reads(header, metadata, database, &full, counts, query_options);
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
@@ -4519,9 +4570,20 @@ impl DynamicBlock {
     ) -> Option<Self> {
         let metadata = plan.metadata.as_ref();
         let census = plan.table.census_for(&block.header.columns);
-        let schema_mode = plan.query_options.schema_mode;
+        let text = plan.table.text_for(&block.header.columns);
+        let (schema_mode, semantics) =
+            (plan.query_options.schema_mode, plan.query_options.semantics);
         let database = block.database.as_deref();
-        let full = resolve_block(&block.header, metadata, database, schema_mode, &census).ok()?;
+        let full = resolve_block(
+            &block.header,
+            metadata,
+            database,
+            schema_mode,
+            &census,
+            &text,
+            semantics,
+        )
+        .ok()?;
         let counts = block.unrepresentable.as_deref();
         let unrepresentable =
             query_reads(&block.header, metadata, database, &full, counts, &plan.query_options);
@@ -4974,7 +5036,7 @@ pub fn table_schema(
     let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
     refuse_metadata_level(&matches, query_options)?;
     let metadata = index.metadata.as_ref();
-    let columns = TableColumns::settle(&matches, metadata)?;
+    let columns = TableColumns::settle(&matches, metadata, query_options)?;
     let blocks = plan_blocks(&matches, query_options, metadata, &columns)?;
     Ok(blocks.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
 }
@@ -5781,8 +5843,16 @@ mod tests {
         };
         let metadata = DumpMetadata { databases: vec![first] };
 
-        let err = resolve_block(&header, Some(&metadata), Some("second"), SchemaMode::Typed, &[])
-            .expect_err("the metadata has no entry for `second`");
+        let err = resolve_block(
+            &header,
+            Some(&metadata),
+            Some("second"),
+            SchemaMode::Typed,
+            &[],
+            &[],
+            ComparisonSemantics::Postgres,
+        )
+        .expect_err("the metadata has no entry for `second`");
         assert!(
             matches!(&err, Error::MetadataNotScanned { database } if database.as_deref() == Some("second")),
             "{err:?}"
@@ -5791,13 +5861,30 @@ mod tests {
         // The same block in a database the metadata covers resolves, so the
         // refusal is about coverage and not about the lookup failing.
         assert!(
-            resolve_block(&header, Some(&metadata), Some("first"), SchemaMode::Typed, &[]).is_ok()
+            resolve_block(
+                &header,
+                Some(&metadata),
+                Some("first"),
+                SchemaMode::Typed,
+                &[],
+                &[],
+                ComparisonSemantics::Postgres
+            )
+            .is_ok()
         );
 
         // `Strings` never looks, so it is never refused.
         assert!(
-            resolve_block(&header, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
-                .is_ok()
+            resolve_block(
+                &header,
+                Some(&metadata),
+                Some("second"),
+                SchemaMode::Strings,
+                &[],
+                &[],
+                ComparisonSemantics::Postgres
+            )
+            .is_ok()
         );
     }
 
@@ -6096,8 +6183,16 @@ mod tests {
         let statistics = Arc::clone(block.statistics.as_ref().unwrap());
         let metadata = run.index.metadata.as_ref();
         let census = vec![ArrayShape::default(); block.header.columns.len()];
-        let full =
-            resolve_block(&block.header, metadata, None, SchemaMode::Typed, &census).unwrap();
+        let full = resolve_block(
+            &block.header,
+            metadata,
+            None,
+            SchemaMode::Typed,
+            &census,
+            &[],
+            ComparisonSemantics::Postgres,
+        )
+        .unwrap();
         let below = Expr::all([Predicate {
             column: "id".into(),
             op: PredicateOp::Lt,
@@ -6165,8 +6260,16 @@ mod tests {
         let filter = |table: &str, op: PredicateOp, value: Option<&str>| {
             let block = run.index.blocks_for(table).next().unwrap();
             let census = vec![ArrayShape::default(); block.header.columns.len()];
-            let full =
-                resolve_block(&block.header, metadata, None, SchemaMode::Typed, &census).unwrap();
+            let full = resolve_block(
+                &block.header,
+                metadata,
+                None,
+                SchemaMode::Typed,
+                &census,
+                &[],
+                ComparisonSemantics::Postgres,
+            )
+            .unwrap();
             let term = Predicate { column: "d".into(), op, value: value.map(str::to_string) };
             let expr = Expr::all([term]);
             (

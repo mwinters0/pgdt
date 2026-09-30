@@ -45,8 +45,10 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
 - **When it lands.** Drop the shell's default and its test; turn
   `aggregate_bounds.rs`'s filter-on cases into ones asserting the answer;
   strike `KD56`, index and marker; drop the crate docs' and the manual's
-  paragraphs; and remove any
-  harness case excluded on `KD56` (`datafusion-pgdump/tests/unrepresentable.rs`).
+  paragraphs; remove the harness's `KD56` exclusion
+  (`datafusion-pgdump/tests/unrepresentable.rs`, `Config::meets_kd56`); and
+  turn the aggregate filter back on in
+  `datafusion-pgdump/tests/statistics.rs`'s `sessions()`.
 
 ## UF2 — `arrow-cast` prints a `date` or timestamp only to `262142-12-31`
 
@@ -54,7 +56,7 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   `chrono::NaiveDate`, whose calendar ends at `262142-12-31`, so DataFusion
   cannot print, or cast to text, a valid value past it (`RT21` in
   [`../design/runtime-invariants.md`](../design/runtime-invariants.md)). Ours:
-  the engine tier of the unrepresentable count, and part of `KD8`.
+  the engine tier of the unrepresentable count.
 - **Upstream.** No issue or discussion found for the display side (searched
   2026-09-30: apache/arrow-rs issues and PRs for "Date32 display", "262143",
   "extended year", "chrono out of range display"; chronotope/chrono for "year

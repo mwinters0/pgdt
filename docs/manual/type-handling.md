@@ -206,11 +206,28 @@ selects the `-infinity` row:
 pgdt query --source dump.sql --table public.t_date --unrepresentable refuse
 # Error: public.t_date.v_date holds 2 `date` value(s) the column's Arrow type
 # cannot hold, and this query refuses a column holding one — read them in the
-# null mode, as NULL, or leave the column unmaterialized, read only by a
-# filter the library answers
+# null mode, as NULL, or in the text mode, the column as its text, or leave
+# the column unmaterialized, read only by a filter the library answers
 ```
 
-Read the column with `--schema-mode strings` to get the text the dump holds.
+**`--unrepresentable text` prints such a column as its text**, the text the
+dump holds, every other column keeping its type. A filter still compares it
+as its declared type, in the order above, so `--filter 'v_date>9999-12-31'`
+selects both `infinity` and `10000-01-01`:
+
+```sh
+pgdt query --source dump.sql --table public.t_date --unrepresentable text \
+    --filter 'v_date>9999-12-31'
+# id	v_date
+# 1	infinity
+# 6	10000-01-01
+```
+
+Which columns are read as text is decided by the whole table, never by the
+rows a query reads. In the DataFusion provider such a column is a `Utf8View`
+and DataFusion compares it as text, `10000-01-01` below `9999-12-31`
+([`datafusion-cli-pgdump`](datafusion-cli-pgdump.md), "Types").
+`--schema-mode strings` reads every column as its text.
 
 ### Text ordering is bytewise, and your server's may not be
 
@@ -916,7 +933,8 @@ Where each column comes from:
 - **DataFusion**: what DataFusion 55.1 can display or cast to a string
   (`arrow-cast` 59.2.0, `chrono` 0.4.45). Outside this range it holds, compares
   and writes the value, but printing it gives `ERROR: Cast error`, so the
-  DataFusion provider reads such a value as NULL, or refuses it.
+  DataFusion provider reads such a value as NULL, or its column as text, or
+  refuses it.
 - **Python**: the standard library, as `pyarrow`'s `as_py()` hands values to
   it (Python 3.13.7, `pyarrow` 25.0.1).
 - **pandas**: `pyarrow`'s `to_pandas()` with its default options (pandas

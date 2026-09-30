@@ -190,6 +190,12 @@ pub enum UnrepresentableMode {
     /// count and bound. The default.
     #[default]
     Null,
+    /// A column holding such a value is read as `Utf8View`, each value its
+    /// text, and every other column keeps its type: the value kept, the type
+    /// wider than the floor. It compares by its bytes where DataFusion
+    /// compares it, and in its declared type's order in PostgreSQL's
+    /// semantics ([`crate::ColumnResolution::UnrepresentableValues`]).
+    Text,
     /// A query materializing a column holding such a value refuses at
     /// planning, from the map's count, before a row is read; a column only a
     /// filter the library answers reads is not materialized, and compares in
@@ -228,7 +234,9 @@ impl UnrepresentableRead {
 /// every value, for one whose declared type's leaves all hold every value,
 /// and for every column under [`UnrepresentableMode::Refuse`], whose plan
 /// has refused any column it materializes holding one (`ReplayPlan::new`),
-/// and whose filter orders every such value in PostgreSQL's order.
+/// and whose filter orders every such value in PostgreSQL's order — and
+/// under [`UnrepresentableMode::Text`], whose plan reads every column
+/// holding one as its text, the rest holding none.
 ///
 /// **A column is tested only where `counts`, the block's own count
 /// ([`crate::index::CopyBlock::unrepresentable`]), says it holds such a value
@@ -251,7 +259,7 @@ pub(crate) fn unrepresentable_reads(
     let width = resolved.schema.fields().len();
     let read_as_text =
         |i: usize| matches!(resolved.schema.field(i).data_type(), DataType::Utf8View);
-    if mode == UnrepresentableMode::Refuse || (0..width).all(read_as_text) {
+    if mode != UnrepresentableMode::Null || (0..width).all(read_as_text) {
         return vec![None; width];
     }
     let declared = resolve_columns(

@@ -319,7 +319,7 @@ async fn check_fixture(
             continue;
         }
         // Only the columns every row decodes are built, so a value the build
-        // cannot hold (`KD8`) ends no comparison.
+        // cannot hold (D96) ends no comparison.
         let everything = QueryOptions { database: database.clone(), ..Default::default() };
         let decodes = |options: QueryOptions| {
             let (dump, plain, table) = (&dump, &plain, &table);

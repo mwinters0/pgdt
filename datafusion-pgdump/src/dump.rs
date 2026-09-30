@@ -28,8 +28,8 @@ pub struct PgDumpOptions {
     /// How a value PostgreSQL accepts for a column's declared type and the
     /// column's Arrow type cannot hold is read, the calendar DataFusion
     /// displays a `date` or timestamp through included: as NULL, the default,
-    /// or refused (`docs/design/decisions.md`, "D98"). Moot under
-    /// [`SchemaMode::Strings`].
+    /// its column read as its text, or refused (`docs/design/decisions.md`,
+    /// "D98", "D99"). Moot under [`SchemaMode::Strings`].
     pub unrepresentable: UnrepresentableMode,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:
     /// between runs, what the cache is checked against at open; during one,

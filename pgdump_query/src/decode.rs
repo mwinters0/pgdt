@@ -337,20 +337,17 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// decode failure by construction, not by accident) and for anything out of
 /// `Date32`'s `i32` day range.
 ///
-/// Deficiency register: `deficiency: KD8` — the anchor for every one of these
-/// refusals ([`decode_interval`]'s infinities and overflowing time part,
-/// `NaN` on a `Decimal128`, a timestamp past `i64` microseconds from 1970,
-/// which PostgreSQL's range outlasts by three decades, and
-/// [`decode_time64_micros`]'s `24:00:00`): a typed column cannot hold the
-/// value, nor DataFusion display a `date`, or a timestamp short of `i64`'s
-/// end, past `262142-12-31`, which decodes and which `arrow-cast` formats
-/// through a calendar ending there. A query in the null mode reads either as
-/// NULL before any of these is asked (`docs/design/decisions.md`, "D98"),
-/// and in the refuse mode a query materializing a column holding one is
-/// refused at planning ("D99"); but no mode yet reads the column as its
-/// text, keeping both its values and every other column typed, which
-/// `--schema-mode strings` does only for every column at once. **(b) owned
-/// by P28**, whose untyped mode reads such a column as text.
+/// **The anchor for every one of these refusals** ([`decode_interval`]'s
+/// infinities and overflowing time part, `NaN` on a `Decimal128`, a
+/// timestamp past `i64` microseconds from 1970, which PostgreSQL's range
+/// outlasts by three decades, and [`decode_time64_micros`]'s `24:00:00`): a
+/// typed column cannot hold the value, nor DataFusion display a `date`, or a
+/// timestamp short of `i64`'s end, past `262142-12-31`, which decodes and
+/// which `arrow-cast` formats through a calendar ending there. No query asks
+/// a decoder for one: the null mode reads it as NULL first
+/// (`docs/design/decisions.md`, "D98"), the untyped mode reads its column as
+/// text ("D100"), and the refuse mode refuses at planning a query
+/// materializing its column ("D99").
 pub fn decode_date32(s: &str) -> Option<i32> {
     if s == "infinity" || s == "-infinity" {
         return None;
@@ -439,8 +436,7 @@ pub(crate) fn time_of_day_micros(s: &str) -> Option<i64> {
 /// `None` for anything unparseable, and for `24:00:00`: a real, valid
 /// boundary value (PostgreSQL's inclusive upper bound for `time`) that
 /// Arrow's `Time64`, holding `[0, 86400 s)`, cannot, so it is refused as
-/// every other unrepresentable value is (the `KD8` anchor on
-/// [`decode_date32`]).
+/// every other unrepresentable value is (the anchor on [`decode_date32`]).
 pub fn decode_time64_micros(s: &str) -> Option<i64> {
     time_of_day_micros(s).filter(|&micros| micros < DAY_MICROS)
 }

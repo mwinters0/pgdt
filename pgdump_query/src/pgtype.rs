@@ -251,7 +251,7 @@ impl CompareKind {
     /// as its octets do (`docs/design/decisions.md`, "D40"). `interval`
     /// becomes its field-wise variant.
     ///
-    /// A special value the emitted type cannot hold (`KD8`) keeps its rank in
+    /// A special value the emitted type cannot hold (D96) keeps its rank in
     /// the key, which no Arrow value contradicts.
     pub fn datafusion_order(&self) -> CompareKind {
         match self {

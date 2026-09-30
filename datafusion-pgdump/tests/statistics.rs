@@ -55,9 +55,6 @@ use pgdump_query::{
     StatisticsSelection, TableName, UnrepresentableMode, map_file,
 };
 
-mod in_order;
-use in_order::{Order, RunScansInOrder};
-
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
 
@@ -137,23 +134,28 @@ async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsR
 }
 
 /// A session that reads the provider's statistics, and one that cannot, each
-/// running a scan's partitions in file order. **The blind session's answer is
-/// the oracle, so it must be one answer**: which partition an ungrouped
-/// aggregate's dynamic filter hears from first decides whether a partition
-/// holding a value its column's type cannot hold is read, and so whether the
-/// query refuses (`KD8`) — in file order the same one on every run.
+/// running a scan's partitions however DataFusion schedules them. **The blind
+/// session's answer is the oracle, so it must be one answer**: no read
+/// refuses a value its column's type cannot hold, so which partition runs
+/// first moves only DataFusion's own ungrouped-aggregate dynamic filter,
+/// which can lose a `MIN` the rows hold (`KD56`) and is off in both.
 fn sessions() -> (SessionContext, SessionContext) {
-    sessions_in(2, Some(Order::File))
+    // upstream: UF1
+    sessions_in(2, false)
 }
 
-/// [`sessions`], planning `partitions` partitions to a scan and running them
-/// however DataFusion schedules them.
+/// [`sessions`], planning `partitions` partitions to a scan, every dynamic
+/// filter DataFusion makes by default on.
 fn sessions_at(partitions: usize) -> (SessionContext, SessionContext) {
-    sessions_in(partitions, None)
+    sessions_in(partitions, true)
 }
 
-fn sessions_in(partitions: usize, order: Option<Order>) -> (SessionContext, SessionContext) {
-    let config = SessionConfig::new().with_target_partitions(partitions).with_batch_size(64);
+fn sessions_in(partitions: usize, aggregate_filter: bool) -> (SessionContext, SessionContext) {
+    let config =
+        SessionConfig::new().with_target_partitions(partitions).with_batch_size(64).set_bool(
+            "datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown",
+            aggregate_filter,
+        );
     let defaults = SessionContext::new_with_config(config.clone());
     let all = defaults.state().physical_optimizers().to_vec();
     let blind: Vec<_> =
@@ -163,10 +165,7 @@ fn sessions_in(partitions: usize, order: Option<Order>) -> (SessionContext, Sess
         all.len(),
         "`aggregate_statistics` is the rule that reads a source's statistics"
     );
-    let session = |mut rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>>| {
-        if let Some(order) = order {
-            rules.push(Arc::new(RunScansInOrder(order)));
-        }
+    let session = |rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>>| {
         SessionContext::new_with_state(
             SessionStateBuilder::new_with_default_features()
                 .with_config(config.clone())
@@ -203,7 +202,7 @@ fn register_in(
     databases.into_iter().zip(catalogs).collect()
 }
 
-/// What refused a query. A value its column's type cannot hold (`KD8`), or
+/// What refused a query. A value its column's type cannot hold (D96), or
 /// one that does not parse, is named by its table, column and type alone: no
 /// query promises which of its partitions' refusals it reports
 /// (`docs/design/decisions.md`, "D52"), so a row offset and a value are
@@ -436,17 +435,19 @@ async fn every_aggregate(
     }
 }
 
-/// **Typed, typed refusing, and as text**, as the provider's other targets
-/// are, each read against the rows, bounds included (D89): the refusing pass
-/// refuses a column holding a value its type cannot hold at planning, with
-/// the statistics and without them alike (D99); the typed mode, reading such
-/// a value as NULL, and the text pass refuse nothing (D98).
+/// **Typed, typed refusing, untyped, and as text**, as the provider's other
+/// targets are, each read against the rows, bounds included (D89): the
+/// refusing pass refuses a column holding a value its type cannot hold at
+/// planning, with the statistics and without them alike (D99); the typed
+/// mode, reading such a value as NULL, the untyped mode, reading such a
+/// column as its text and none of its bounds, and the text pass refuse
+/// nothing (D98).
 #[test]
 fn statistics_never_change_an_answer() {
     let seen = per_major(every_fixture(), |fixtures| async move {
         let scratch = tempfile::tempdir().unwrap();
-        let (mut typed, mut refusing, mut strings) =
-            (Seen::default(), Seen::default(), Seen::default());
+        let (mut typed, mut refusing, mut untyped, mut strings) =
+            (Seen::default(), Seen::default(), Seen::default(), Seen::default());
         for fixture in fixtures {
             let copy = parsed_copy(&fixture, scratch.path()).await;
             let (text_dump, text_reading, text_blind, text_catalogs) =
@@ -457,16 +458,20 @@ fn statistics_never_change_an_answer() {
             let (dump, reading, blind, catalogs) =
                 opened_in(&copy, SchemaMode::Typed, refuse).await;
             every_aggregate(&dump, (&reading, &blind), &catalogs, &mut refusing).await;
+            let text = UnrepresentableMode::Text;
+            let (dump, reading, blind, catalogs) = opened_in(&copy, SchemaMode::Typed, text).await;
+            every_aggregate(&dump, (&reading, &blind), &catalogs, &mut untyped).await;
             every_aggregate(&text_dump, (&text_reading, &text_blind), &text_catalogs, &mut strings)
                 .await;
         }
-        (typed, strings, refusing.refused)
+        (typed, strings, refusing.refused, untyped.refused)
     });
-    let (typed, strings, refused) = seen
-        .into_iter()
-        .fold((Seen::default(), Seen::default(), false), |(typed, strings, refused), (t, s, r)| {
-            (typed.or(t), strings.or(s), refused || r)
-        });
+    let (typed, strings, refused, untyped_refused) = seen.into_iter().fold(
+        (Seen::default(), Seen::default(), false, false),
+        |(typed, strings, refused, untyped), (t, s, r, u)| {
+            (typed.or(t), strings.or(s), refused || r, untyped || u)
+        },
+    );
     for (mode, seen) in [(SchemaMode::Typed, &typed), (SchemaMode::Strings, &strings)] {
         assert!(seen.count, "no `COUNT(*)` was answered from the statistics ({mode:?})");
         assert!(
@@ -487,6 +492,7 @@ fn statistics_never_change_an_answer() {
     assert!(typed.sum, "no `SUM` was answered from the statistics");
     assert!(refused, "no refusing `COUNT(<column>)` over a refusing column was checked");
     assert!(!typed.refused, "a typed read refused: {typed:?}");
+    assert!(!untyped_refused, "an untyped read refused");
     assert!(!strings.refused, "a text read refused: {strings:?}");
 }
 
@@ -816,7 +822,7 @@ async fn partitions_of(
 }
 
 /// The columns of `table` a scan can read — every one but a column holding a
-/// value its Arrow type cannot (`KD8`), which fails the read of any plan
+/// value its Arrow type cannot (D96), which fails the read of any plan
 /// projecting it — by index, in schema order.
 async fn readable_columns(ctx: &SessionContext, table: &PgDumpTable) -> Vec<usize> {
     let state = ctx.state();

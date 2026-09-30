@@ -65,6 +65,7 @@ impl From<CliSchemaMode> for SchemaMode {
 enum CliUnrepresentable {
     #[default]
     Null,
+    Text,
     Refuse,
 }
 
@@ -72,6 +73,7 @@ impl From<CliUnrepresentable> for UnrepresentableMode {
     fn from(mode: CliUnrepresentable) -> Self {
         match mode {
             CliUnrepresentable::Null => UnrepresentableMode::Null,
+            CliUnrepresentable::Text => UnrepresentableMode::Text,
             CliUnrepresentable::Refuse => UnrepresentableMode::Refuse,
         }
     }
@@ -982,9 +984,11 @@ enum Command {
         /// type and the column's type cannot hold — `infinity` in a `date`,
         /// `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`: `null`, the
         /// default, reads each as NULL, for filtering too, and says on stderr
-        /// how many each column printed holds; `refuse` refuses, before a row
-        /// is read, a query printing a column that holds one, whatever its
-        /// filter keeps, and compares one a filter reads in PostgreSQL's
+        /// how many each column printed holds; `text` reads each column
+        /// holding one as its text, every other column keeping its type, and
+        /// filters it in its declared type's order; `refuse` refuses, before
+        /// a row is read, a query printing a column that holds one, whatever
+        /// its filter keeps, and compares one a filter reads in PostgreSQL's
         /// order. `--schema-mode strings` reads every value as its text.
         #[arg(long, value_name = "MODE", value_enum, default_value_t)]
         unrepresentable: CliUnrepresentable,
@@ -2607,6 +2611,7 @@ fn resolution_token(r: &ColumnResolution) -> &'static str {
         ColumnResolution::VaryingArrayShape => "varying_array_shape",
         ColumnResolution::OpaqueBaseType => "opaque_base_type",
         ColumnResolution::EmptyEnum => "empty_enum",
+        ColumnResolution::UnrepresentableValues => "unrepresentable_values",
     }
 }
 

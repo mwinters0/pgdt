@@ -18,9 +18,10 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 
+use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
-use pgdump_query::resolve::SchemaMode;
+use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
     Error, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, UnrepresentableMode, read_table,
     render_field, table_stream,
@@ -62,8 +63,17 @@ async fn try_rows(
     table: &str,
     mode: SchemaMode,
 ) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
-    let source = LocalFileSource::open(path).unwrap();
     let options = QueryOptions { schema_mode: mode, ..Default::default() };
+    Ok(try_rows_in(path, table, options).await?.0)
+}
+
+/// [`try_rows`] under `options`, and the schema the rows came in.
+async fn try_rows_in(
+    path: &Path,
+    table: &str,
+    options: QueryOptions,
+) -> pgdump_query::Result<(Vec<Vec<Option<String>>>, pgdump_query::ResolvedSchema)> {
+    let source = LocalFileSource::open(path).unwrap();
     let mut stream =
         table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
     let mut out = Vec::new();
@@ -83,7 +93,7 @@ async fn try_rows(
             );
         }
     }
-    Ok(out)
+    Ok((out, stream.resolved_schema()))
 }
 
 /// Every type family that always decodes successfully on this fixture (no
@@ -386,11 +396,12 @@ async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
 
 /// **A value its column's type cannot hold, through the real pipeline**:
 /// read as NULL by default — each row whose `column` the text spells `value`
-/// is NULL there in the typed read — and in the refuse mode
-/// `Error::Unrepresentable` before a row is read, naming the table, the
-/// column, its declared type and how many values the typed read nulls
-/// (`docs/design/decisions.md`, "D98", "D99"). `Strings` mode never looks at
-/// the DDL, so the value passes through as its text.
+/// is NULL there in the typed read — in the untyped mode as its text, that
+/// column alone read as `Utf8View` and every row as `Strings` mode reads it,
+/// and in the refuse mode `Error::Unrepresentable` before a row is read,
+/// naming the table, the column, its declared type and how many values the
+/// typed read nulls (`docs/design/decisions.md`, "D98", "D99"). `Strings`
+/// mode never looks at the DDL, so the value passes through as its text.
 async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, value: &str) {
     for version in [13, 16, 18] {
         let path = types_fixture(version, "default");
@@ -407,6 +418,29 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         let nulled = (0..strings.len())
             .filter(|&row| strings[row][index].is_some() && typed[row][index].is_none())
             .count() as u64;
+
+        let untyped =
+            QueryOptions { unrepresentable: UnrepresentableMode::Text, ..Default::default() };
+        let (text, widened) = try_rows_in(&path, table, untyped).await.unwrap();
+        assert_eq!(text, strings, "pg_dump {version}: the untyped mode keeps every value");
+        let declared_schema = resolved_schema(&path, table).await;
+        for (i, field) in widened.schema.fields().iter().enumerate() {
+            let holds_one =
+                (0..strings.len()).any(|row| strings[row][i].is_some() && typed[row][i].is_none());
+            let (resolution, data_type) = match holds_one {
+                true => (ColumnResolution::UnrepresentableValues, &DataType::Utf8View),
+                false => (
+                    declared_schema.columns[i].clone(),
+                    declared_schema.schema.field(i).data_type(),
+                ),
+            };
+            assert_eq!(
+                (&widened.columns[i], field.data_type()),
+                (&resolution, data_type),
+                "pg_dump {version}: {table}.{}, which the typed read nulls a value of: {holds_one}",
+                field.name()
+            );
+        }
 
         let source = LocalFileSource::open(&path).unwrap();
         let refuse =

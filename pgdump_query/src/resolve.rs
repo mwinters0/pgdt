@@ -15,8 +15,8 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 use crate::diagnostic::{Finding, Severity};
 use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
 use crate::pgtype::{
-    CompareKind, ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type,
-    with_extension,
+    CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TypeOutcome, comparison_for,
+    resolve_declared_type, with_extension,
 };
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
@@ -80,6 +80,19 @@ pub enum ColumnResolution {
     /// A C-level base type or a shell/undefined type.
     OpaqueBaseType,
     EmptyEnum,
+    /// A column the map says holds a value PostgreSQL accepts for its declared
+    /// type and its Arrow type cannot hold, in the tiers the query's front end
+    /// reads, read as its text because the query asked for the untyped mode
+    /// ([`crate::UnrepresentableMode::Text`]).
+    ///
+    /// **It compares in each front end's semantics**: bytewise over that text
+    /// in DataFusion's, the order DataFusion evaluates a `Utf8View` in, so no
+    /// statistic gathered in the declared type's order is read for it; and in
+    /// PostgreSQL's in its declared type's order, special values ranked
+    /// ([`ResolvedSchema::comparisons`] keeping the declared type's plan
+    /// there alone). A property of the query as much as of the column, so
+    /// only a query's resolution produces it ([`read_as_text`]).
+    UnrepresentableValues,
 }
 
 impl ColumnResolution {
@@ -107,6 +120,10 @@ impl ColumnResolution {
             }
             Self::OpaqueBaseType => "opaque base type — information-free in the dump",
             Self::EmptyEnum => "empty enum",
+            Self::UnrepresentableValues => {
+                "unrepresentable values — it holds a value its type cannot hold, and the untyped \
+                 mode reads it as text"
+            }
         }
     }
 }
@@ -150,6 +167,10 @@ impl Finding for ColumnNote {
         let declared = self.declared.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
         let fallback = match self.resolution {
             ColumnResolution::Mapped => "",
+            ColumnResolution::UnrepresentableValues => {
+                "; its value is the file's text, compared as that text in DataFusion's semantics \
+                 and in its declared type's order in PostgreSQL's"
+            }
             _ => "; its value is the file's text, and compares as that text",
         };
         format!("column `{}`{declared}: {}{fallback}", self.column, self.resolution.describe())
@@ -461,6 +482,54 @@ pub fn resolve_columns(
         notes,
         plans,
         comparisons,
+    }
+}
+
+/// **Read each column `text` marks as its text**, the untyped mode's widening
+/// ([`ColumnResolution::UnrepresentableValues`]): positional like `resolved`'s
+/// columns, and applied, as the census is, after the DDL has spoken and only
+/// to a column still `Mapped` to a type other than `Utf8View` — one the census
+/// or the register already took to text holds every value
+/// (`docs/design/decisions.md`, "D100").
+///
+/// The column becomes `Utf8View` at [`NestedPlan::Scalar`], no extension
+/// name, its bytes being the file's literal. **Its comparison is its query's
+/// semantics'**: the declared type's plan under
+/// [`ComparisonSemantics::Postgres`], and under
+/// [`ComparisonSemantics::DataFusion`] [`ComparisonPlan::Refused`], which
+/// that semantics compares bytewise as every column read as text.
+pub(crate) fn read_as_text(
+    resolved: &mut ResolvedSchema,
+    text: &[bool],
+    semantics: ComparisonSemantics,
+) {
+    use arrow::datatypes::DataType;
+
+    if !text.contains(&true) {
+        return;
+    }
+    let mut fields: Vec<Field> =
+        resolved.schema.fields().iter().map(|field| field.as_ref().clone()).collect();
+    let mut widened = false;
+    for (i, field) in fields.iter_mut().enumerate() {
+        let read_as_text = text.get(i).copied().unwrap_or(false)
+            && resolved.columns[i] == ColumnResolution::Mapped
+            && *field.data_type() != DataType::Utf8View;
+        if !read_as_text {
+            continue;
+        }
+        widened = true;
+        *field = Field::new(field.name(), DataType::Utf8View, true);
+        resolved.columns[i] = ColumnResolution::UnrepresentableValues;
+        resolved.notes[i].resolution = ColumnResolution::UnrepresentableValues;
+        resolved.plans[i] = NestedPlan::Scalar;
+        if semantics == ComparisonSemantics::DataFusion {
+            resolved.comparisons[i] = ComparisonPlan::Refused;
+        }
+    }
+    if widened {
+        resolved.schema =
+            Arc::new(Schema::new_with_metadata(fields, resolved.schema.metadata().clone()));
     }
 }
 
@@ -1006,6 +1075,49 @@ mod tests {
     /// A [`ColumnNote`]'s severity is derived from its resolution, never
     /// stored — so it cannot drift out of agreement with the outcome it
     /// describes.
+    /// **The untyped mode widens a marked column still `Mapped` and no
+    /// other**: to `Utf8View` at a scalar plan, keeping the declared type's
+    /// comparison in PostgreSQL's semantics and none in DataFusion's, which
+    /// compares its text; a column already text holds every value, so is
+    /// left as it is, and an unmarked one keeps its type.
+    #[test]
+    fn the_untyped_mode_widens_a_marked_column_and_compares_it_per_semantics() {
+        use arrow::datatypes::DataType;
+
+        let meta = one_db(
+            &[("public.t", &[("id", "integer"), ("d", "date"), ("n", "text"), ("a", "date[]")])],
+            vec![],
+        );
+        let cols: Vec<String> = ["id", "d", "n", "a"].iter().map(|c| c.to_string()).collect();
+        let declared =
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
+        for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::DataFusion] {
+            let mut widened = declared.clone();
+            read_as_text(&mut widened, &[false, true, true, true], semantics);
+            let types: Vec<&DataType> =
+                widened.schema.fields().iter().map(|f| f.data_type()).collect();
+            assert_eq!(
+                types,
+                [&DataType::Int32, &DataType::Utf8View, &DataType::Utf8View, &DataType::Utf8View]
+            );
+            use ColumnResolution::{Mapped, UnrepresentableValues};
+            assert_eq!(
+                widened.columns,
+                [Mapped, UnrepresentableValues, Mapped, UnrepresentableValues]
+            );
+            assert_eq!(widened.notes[1].resolution, UnrepresentableValues);
+            assert_eq!(widened.plans[3], NestedPlan::Scalar);
+            let expected = |i: usize| match semantics {
+                ComparisonSemantics::Postgres => declared.comparisons[i].clone(),
+                ComparisonSemantics::DataFusion => ComparisonPlan::Refused,
+            };
+            assert_eq!(widened.comparisons[1], expected(1), "{semantics:?}");
+            assert_eq!(widened.comparisons[3], expected(3), "{semantics:?}");
+            assert_eq!(widened.comparisons[..1], declared.comparisons[..1]);
+            assert_eq!(widened.comparisons[2], declared.comparisons[2]);
+        }
+    }
+
     #[test]
     fn column_note_severity_follows_its_resolution() {
         let note = |resolution| ColumnNote { column: "c".to_string(), declared: None, resolution };
@@ -1016,6 +1128,7 @@ mod tests {
             ColumnResolution::MetadataNotScanned,
             ColumnResolution::OpaqueBaseType,
             ColumnResolution::EmptyEnum,
+            ColumnResolution::UnrepresentableValues,
         ] {
             assert_eq!(note(fell_back.clone()).severity(), Severity::Warning, "{fell_back:?}");
         }

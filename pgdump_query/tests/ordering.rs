@@ -12,8 +12,8 @@ use futures::StreamExt;
 use pgdump_query::Finding;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ComparisonDivergence, Error, Expr, LocalFileSource, Predicate, PredicateOp, QueryOptions,
-    ScanOptions, SchemaMode, UnrepresentableMode, table_stream,
+    ComparisonDivergence, ComparisonSemantics, Error, Expr, LocalFileSource, Predicate,
+    PredicateOp, QueryOptions, ScanOptions, SchemaMode, UnrepresentableMode, table_stream,
 };
 
 mod common;
@@ -853,6 +853,35 @@ async fn the_typed_mode_compares_a_special_value_as_null() {
         kept_ids("public.t_date", vec![is_null]).await,
         [Some("1".to_string()), Some("2".to_string()), Some("7".to_string())]
     );
+}
+
+/// **The untyped mode's filter compares a column it reads as text in its
+/// semantics' order**: in PostgreSQL's, the declared type's, special values
+/// ranked, where the batch holds each value's text; in DataFusion's, that
+/// text bytewise, as DataFusion compares a `Utf8View`
+/// (`docs/design/decisions.md`, "D56"; `ColumnResolution::UnrepresentableValues`).
+#[tokio::test]
+async fn the_untyped_mode_compares_its_text_column_in_each_semantics_order() {
+    let kept = |semantics, op, literal: &str| QueryOptions {
+        filter: Expr::all([term("v_date", op, literal)]),
+        projection: Some(vec!["v_date".to_string()]),
+        unrepresentable: UnrepresentableMode::Text,
+        semantics,
+        ..Default::default()
+    };
+    let values = |rows: Vec<Vec<Option<String>>>| -> Vec<String> {
+        rows.into_iter().map(|row| row[0].clone().unwrap()).collect()
+    };
+    let postgres = ComparisonSemantics::Postgres;
+    let after = kept(postgres, PredicateOp::Gt, "9999-12-31");
+    assert_eq!(values(drain("public.t_date", after).await.unwrap()), ["infinity", "10000-01-01"]);
+    let before = kept(postgres, PredicateOp::Lt, "0001-01-01");
+    assert_eq!(
+        values(drain("public.t_date", before).await.unwrap()),
+        ["-infinity", "0044-01-01 BC"]
+    );
+    let bytewise = kept(ComparisonSemantics::DataFusion, PredicateOp::Gt, "9999-12-31");
+    assert_eq!(values(drain("public.t_date", bytewise).await.unwrap()), ["infinity"]);
 }
 
 /// **The refuse mode's filter is exact where the batch still cannot hold the

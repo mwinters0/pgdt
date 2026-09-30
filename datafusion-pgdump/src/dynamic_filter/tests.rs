@@ -477,7 +477,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         for name in dump.tables() {
             // Only the columns every row decodes are read, so a value the
-            // build cannot hold (`KD8`) ends no comparison.
+            // build cannot hold (D96) ends no comparison.
             let mut projection = None;
             let mut whole = read(&dump, name, &projection, L::default()).await;
             if whole.is_err() {

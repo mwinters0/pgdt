@@ -563,7 +563,7 @@ item; see below.
 ## P28 — Unrepresentable values
 
 **A query's outcome never depends on which rows it happened to read**, and
-how a value its column's Arrow type cannot hold is handled (`KD8`) is the
+how a value its column's Arrow type cannot hold is handled is the
 user's choice among three modes — read as NULL, its column widened to text,
 or a deterministic refusal; and `parse` gains a *metadata* level recording no
 census. The spec is

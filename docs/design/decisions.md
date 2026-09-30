@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D98 -->
+<!-- decision-watermark: D100 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -282,7 +282,9 @@ Where the driver yields a real Arrow type, ours is never wider; the floor is a p
 `main`, one row per declarable `pg_catalog` type. `status`/`extension` columns take a row out of the
 rule by themselves, and only what they cannot say gets a `Disposition` with a stance and a resolving
 citation. `floor_mapping.py` compares value space (`Utf8View` is `string`) and reports an unknown
-arm, never guessing. Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
+arm, never guessing. It binds the typed mode alone: the untyped mode, like `--schema-mode strings`, is the user
+asking for a type wider than the floor, and widens only a column the map says its front end cannot hold (D100).
+Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
 ### D39 `NestedPlan` travels beside the `DataType`, built with it
 An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `List<Struct>`);
@@ -305,7 +307,7 @@ length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 
 ### D42 `interval` is the struct; its special values are unrepresentable
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
-out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are (`KD8`). Twelve built-in range
+out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are. Twelve built-in range
 names are fixed, multiranges apart (I10); a `canonical` function makes a range unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair
@@ -406,6 +408,15 @@ survive by statistics, and statistics never change an answer. A column only a fi
 compares every value in PostgreSQL's order (D56), so no read refuses one. Rejected: refusing where a read reaches one (timing decides);
 over the kept groups; a read-time refusal beside it, the count being exact (D96). Code: `stream::materialized_unrepresentable`.
 Evidence: the refuse mode's cases, `a_selected_special_value_still_cannot_be_materialized`.
+
+### D100 The untyped mode widens a column per table from the map's count, and compares it in each semantics
+Under `UnrepresentableMode::Text` a column whose blocks count, over every one, a value in the tiers its semantics cannot hold (D96, D98) is
+`Utf8View`, settled once per table as the census is (D43), the rest typed; `UnrepresentableValues` keeps the declared plan under PostgreSQL's
+semantics, special values ranked (D56), and is `Refused` under DataFusion's, its text bytewise and no bound gathered in the type's order read,
+so a pushed filter stays `Exact` (D88). Rejected: text everywhere, `pgdt --where` refusing its order as an unmapped column's; per block, two
+blocks of one table typed apart; the declared plan in both, each reader of `comparisons` then asked to know which semantics widened it.
+Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mode's cases,
+`the_untyped_mode_compares_its_text_column_in_each_semantics_order`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership

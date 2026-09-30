@@ -252,7 +252,7 @@ pub enum Error {
     /// "D99"). The remedy is a mode, which the
     /// sentence names in the library's words.
     #[error(
-        "{table}.{column} holds {values} `{declared_type}` value(s) the column's Arrow type cannot hold, and this query refuses a column holding one — read them in the null mode, as NULL, or leave the column unmaterialized, read only by a filter the library answers"
+        "{table}.{column} holds {values} `{declared_type}` value(s) the column's Arrow type cannot hold, and this query refuses a column holding one — read them in the null mode, as NULL, or in the text mode, the column as its text, or leave the column unmaterialized, read only by a filter the library answers"
     )]
     Unrepresentable { table: String, column: String, declared_type: String, values: u64 },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array

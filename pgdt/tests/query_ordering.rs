@@ -162,6 +162,20 @@ fn a_special_value_is_ordered_rather_than_ending_the_query() {
     assert_eq!(kept("public.t_numeric", "id", &["--filter", "v_small is null"]).len(), 5);
 }
 
+/// **`--unrepresentable text` prints a column holding such a value as its
+/// text**, and filters it in its declared type's order, `infinity` above
+/// every finite `date` and `10000-01-01` above `9999-12-31`, which text
+/// would order below it.
+#[test]
+fn the_text_mode_prints_the_text_and_orders_it_as_its_type() {
+    let text = |filter| ["--unrepresentable", "text", "--filter", filter];
+    assert_eq!(
+        kept("public.t_date", "v_date", &text("v_date>9999-12-31")),
+        ["infinity", "10000-01-01"]
+    );
+    assert_eq!(kept("public.t_numeric", "v_small", &text("v_small>0.00")), ["NaN"]);
+}
+
 /// **The null mode says on stderr how many values each column it prints
 /// reads as NULL**, the map's count over the table, and prints them as NULL;
 /// the refuse mode refuses to print the column, with the same count, even

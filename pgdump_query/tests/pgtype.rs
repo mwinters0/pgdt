@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdump_query::{DumpMetadata, LocalFileSource, NestedPlan, ScanOptions, build_index};
+use pgdump_query::{
+    DumpMetadata, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, TableName,
+    UnrepresentableMode, build_index, table_schema,
+};
 
 mod common;
 use common::{all_fixtures, multidb_fixture, types_fixture};
@@ -543,6 +546,7 @@ resolution_outcomes! {
         VaryingArrayShape,
         OpaqueBaseType,
         EmptyEnum,
+        UnrepresentableValues,
     ],
     exempt: [MetadataNotScanned],
 }
@@ -555,7 +559,10 @@ resolution_outcomes! {
 ///
 /// The census is the block's own, so an outcome only the census can produce
 /// (`VaryingArrayShape`) is reachable here — this walk sees the same evidence
-/// `pgdt info` does on a fully scanned file.
+/// `pgdt info` does on a fully scanned file. So is the count: each table is
+/// also resolved as a query in the untyped mode resolves it
+/// ([`table_schema`]), the one reader of the outcome only that mode produces
+/// (`UnrepresentableValues`).
 ///
 /// **The check is partial and says so.** A shape that resolves to an outcome
 /// already covered and merely *works* still passes without a fixture; that
@@ -593,7 +600,12 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 SchemaMode::Typed,
                 block.array_shapes.as_deref().unwrap_or_default(),
             );
-            for note in &resolved.notes {
+            let untyped = QueryOptions {
+                unrepresentable: UnrepresentableMode::Text,
+                ..QueryOptions::default()
+            };
+            let queried = table_schema(&index, &TableName::of(block), &untyped).unwrap();
+            for note in resolved.notes.iter().chain(&queried.notes) {
                 witnesses
                     .entry(outcome_name(&note.resolution))
                     .or_insert_with(|| format!("{}: {qualified}.{}", path.display(), note.column));

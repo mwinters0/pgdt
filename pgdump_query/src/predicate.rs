@@ -375,6 +375,15 @@ pub fn column_divergences(
     out
 }
 
+/// Whether a column of `resolution` compares by its register plan: a
+/// `Mapped` one, and one the untyped mode reads as its text, whose plan is
+/// its declared type's in PostgreSQL's semantics and bytewise
+/// ([`ComparisonPlan::Refused`]) in DataFusion's
+/// ([`ColumnResolution::UnrepresentableValues`]).
+fn compares_as_declared(resolution: &ColumnResolution) -> bool {
+    matches!(resolution, ColumnResolution::Mapped | ColumnResolution::UnrepresentableValues)
+}
+
 /// One diverging position: its path inside the column (`None` for the column
 /// itself), its declared type, and the divergence.
 type DivergingPosition = (Option<String>, String, ComparisonDivergence);
@@ -387,7 +396,7 @@ fn postgres_divergences(
     declared: &str,
 ) -> Vec<DivergingPosition> {
     let column = |divergence| vec![(None, declared.to_string(), divergence)];
-    if resolved.columns[index] != ColumnResolution::Mapped {
+    if !compares_as_declared(&resolved.columns[index]) {
         // Ordering refused; `=` compares the text, announced only where the
         // file named a type this build models nothing for.
         return match resolved.columns[index] {
@@ -2434,7 +2443,7 @@ pub(crate) fn resolve_term(
     // The nested tree a column fell out of, kept so the bytewise `=` below
     // can say what that fallback costs at the position that refused the order.
     let mut fell_back: Option<&NestedCompare> = None;
-    if resolved.columns[index] != ColumnResolution::Mapped {
+    if !compares_as_declared(&resolved.columns[index]) {
         if ordering && !arrow {
             return Err(refuse(NOT_MAPPED));
         }
@@ -7218,7 +7227,7 @@ mod tests {
         /// stored bounds against the group's Arrow minimum and maximum.
         ///
         /// A value the emitted type cannot hold — a `date`'s `infinity`, a
-        /// `numeric(p,s)`'s `NaN` (`KD8`) — is left out: no array carries it
+        /// `numeric(p,s)`'s `NaN` (D96) — is left out: no array carries it
         /// for Arrow to order.
         #[tokio::test]
         async fn each_kind_s_order_and_bounds_against_arrow_s() {

@@ -53,7 +53,8 @@ which is left out and named on stderr with why
   hold (below).
 - **`:unrepresentable=refuse` refuses a query needing a column that holds a
   value its type cannot hold**, before it reads a row, where the default,
-  `:unrepresentable=null`, reads such a value as NULL (below).
+  `:unrepresentable=null`, reads such a value as NULL, and
+  `:unrepresentable=text` reads such a column as its text (below).
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
   in place of the session's. The suffixes may come in any order.
@@ -74,7 +75,7 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 | `pgdump.schema` | Its PostgreSQL schema, where the name alone matches tables in more than one. |
 | `pgdump.database` | Its database, where the file holds several. |
 | `pgdump.schema_mode` | `typed` (the default), or `strings` for every column as its text. |
-| `pgdump.unrepresentable` | `null` (the default), reading a value a typed column cannot hold as NULL, or `refuse`. |
+| `pgdump.unrepresentable` | `null` (the default), reading a value a typed column cannot hold as NULL, `text`, reading a column holding one as its text, or `refuse`. |
 | `pgdump.strict_identity` | This dump's `--strict-identity` terms, in place of the session's (below). |
 
 A name that matches more than one table is refused, naming them. The table's
@@ -192,6 +193,15 @@ every purpose**: a `WHERE` compares it as NULL, `IS NULL` matches it,
 statistics answer or the rows are read, so a query answers the same however
 its partitions run. Each scan says on stderr how many a column it reads
 holds. `:strings` reads it as its text instead.
+
+**`:unrepresentable=text` reads a column holding such a value as its text**,
+a `Utf8View` whatever its declared type, and every other column as its type;
+registration says which columns it read that way. The dump's text is kept, so
+`infinity` prints as `infinity`, and the column compares as text does:
+`'10000-01-01' < '9999-12-31'`, and a comparison with a number casts each
+value to that number's type, failing on the first that is not one. Which
+columns are text is decided by the whole table, so every query of it sees
+the same schema.
 
 **The shell starts with
 `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` off**, unless

@@ -188,7 +188,9 @@ impl QueryOptions {
     /// its type cannot**, as its reads and its filter take one: as NULL under
     /// [`UnrepresentableMode::Null`], in the tiers its semantics cannot hold
     /// ([`Self::unrepresentable_reach`]), and otherwise every value in
-    /// PostgreSQL's order — under the refuse mode, and under
+    /// PostgreSQL's order — under the refuse mode; under the untyped mode,
+    /// whose columns holding one are text and compare in that order in
+    /// PostgreSQL's semantics, and read no bounds in DataFusion's; and under
     /// [`SchemaMode::Strings`], whose text holds every value
     /// (`docs/design/decisions.md`, "D97", "D98").
     pub fn statistics_view(&self) -> StatisticsView {

@@ -51,6 +51,11 @@ same value space, and a floor is a claim about values. A `DataType` this table
 does not carry is reported rather than guessed at, which is what makes a new
 arm arrive loudly.
 
+**The rule binds the typed mode alone.** The untyped mode, like
+`--schema-mode strings`, is the user asking for a type wider than the floor,
+widening only a column the map says holds a value its type cannot
+(`docs/design/decisions.md`, "D38"), so nothing here is about it.
+
 **Every typed arm has its extremes, and every extremes column an arm.** The
 `types` fixture's `public.t_extremes` holds PostgreSQL's least, greatest and
 special values of each type an arm maps to an Arrow type other than

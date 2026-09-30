@@ -413,7 +413,7 @@ async fn check_fixture(
             continue;
         }
         // Only the columns every row of the table decodes are built, so a
-        // value the build cannot hold (`KD8`) ends no comparison — in the
+        // value the build cannot hold (D96) ends no comparison — in the
         // refuse mode, which refuses a column holding one, and in the typed mode,
         // which reads such a value as NULL and so builds more.
         let mut bases = Vec::new();
@@ -440,10 +440,25 @@ async fn check_fixture(
         }
         let refusing = bases.pop().expect("the refuse mode's base");
         let base = bases.pop().expect("the typed mode's base");
-        // Each PostgreSQL-semantics check draws its mode, so both are swept at
-        // one sweep's cost.
-        let draw = |rng: &mut Rng| if rng.below(2) == 0 { &base } else { &refusing };
+        // The untyped mode reads every column, one holding such a value as
+        // its text.
+        let untyped = QueryOptions {
+            database: database.clone(),
+            unrepresentable: UnrepresentableMode::Text,
+            ..Default::default()
+        };
+        // Each check draws its mode, so every one is swept at one sweep's
+        // cost: in DataFusion's semantics the untyped mode's text column
+        // compares bytewise and prunes on no bound gathered in its type's order.
+        let draw = |rng: &mut Rng| match rng.below(3) {
+            0 => &base,
+            1 => &untyped,
+            _ => &refusing,
+        };
         let arrow = QueryOptions { semantics: ComparisonSemantics::DataFusion, ..base.clone() };
+        let arrow_untyped =
+            QueryOptions { semantics: ComparisonSemantics::DataFusion, ..untyped.clone() };
+        let draw_arrow = |rng: &mut Rng| if rng.below(2) == 0 { &arrow } else { &arrow_untyped };
 
         let (mut terms, mut arrow_terms) = (Vec::new(), Vec::new());
         for (i, name) in header.columns.iter().enumerate() {
@@ -463,7 +478,10 @@ async fn check_fixture(
                     if resolves(&dump, &plain, &table, &arrow, &candidate).await {
                         arrow_terms.push(candidate.clone());
                     }
-                    // Resolving reads no mode, so the typed mode's answers for both.
+                    // Resolving reads no mode in PostgreSQL's semantics, a
+                    // column read as text comparing in its declared type's
+                    // order, so the typed mode's answers for all three; in
+                    // DataFusion's a text column resolves every literal.
                     if resolves(&dump, &plain, &table, &base, &candidate).await {
                         terms.push(candidate);
                     }
@@ -484,7 +502,8 @@ async fn check_fixture(
         }
         for _ in 0..ARROW_TREES_PER_TABLE {
             let tree = random_tree(rng, &arrow_terms, 3);
-            check(&dump, (&plain, &gathered_cache), &table, &arrow, tree, arrow_tally).await;
+            let arrow = draw_arrow(rng);
+            check(&dump, (&plain, &gathered_cache), &table, arrow, tree, arrow_tally).await;
         }
     }
 }

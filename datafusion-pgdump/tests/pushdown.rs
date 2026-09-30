@@ -216,7 +216,7 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
                     let unfiltered =
                         table.scan(&state, Some(&projection), &[], None).await.unwrap();
                     let schema = unfiltered.schema();
-                    // A column holding a value its Arrow type cannot (`KD8`)
+                    // A column holding a value its Arrow type cannot (D96)
                     // fails the unfiltered read, and has no oracle.
                     let Ok(all) = try_run(&ctx, unfiltered).await else { continue };
                     let all = concat_batches(&schema, &all).unwrap();
@@ -295,7 +295,7 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
         }
     }
     // Every scalar type the register emits but `Timestamp(µs)` with no zone,
-    // whose one fixture column holds `infinity` (`KD8`) on every major.
+    // whose one fixture column holds `infinity` (D96) on every major.
     for data_type in [
         "Boolean",
         "Int16",
@@ -450,7 +450,7 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
         ("SELECT id FROM t_net WHERE v_macaddr8 > '08:00:2B:01:02:03:04:04'", true),
         ("SELECT id FROM t_oid WHERE v_oid > 2147483647", true),
         // No `v_time` case: the column holds `24:00:00`, which the side not
-        // pushing it has to materialize and cannot (`KD8`).
+        // pushing it has to materialize and cannot (D96).
         ("SELECT id FROM t_time WHERE v_timetz = '24:00:00+00'", true),
     ];
     let mut misplaced = Vec::new();
