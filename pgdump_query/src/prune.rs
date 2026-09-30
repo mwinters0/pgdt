@@ -29,7 +29,7 @@ use crate::index::CopyBlock;
 use crate::pgtype::{CompareKind, bounds_set_keyed_by};
 use crate::preamble::DumpMetadata;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
-use crate::statistics::{BlockStatistics, ColumnBounds, ColumnStatistics, Sortedness};
+use crate::statistics::{BlockStatistics, BoundsSet, ColumnStatistics, Sortedness, StatisticsView};
 
 /// What one block's statistics let a filter skip.
 #[derive(Debug, Clone)]
@@ -114,15 +114,21 @@ impl SortedStop {
 /// bounds a term reads is this block's**: the one gathering stored under the
 /// kind the term compares by, gathering's kinds recomputed from the DDL the
 /// believed column was gathered under (`docs/design/decisions.md`, "D79").
+///
+/// **`reading` is how the filter takes a value its column's type cannot
+/// hold** ([`StatisticsView`]), and the bounds, row order and NULL count read
+/// are that view's — an added NULL believed only where the bounds are, the
+/// tier being the declared type's (`docs/design/decisions.md`, "D97").
 pub(crate) fn prune_block(
     block: &CopyBlock,
     filter: &ResolvedExpr,
     metadata: Option<&DumpMetadata>,
+    reading: StatisticsView,
 ) -> Option<BlockPruning> {
     let statistics = block.statistics.as_deref()?;
     let last = statistics.groups.len().checked_sub(1)?;
     let (believed, kinds) = believed_columns(block, statistics, metadata)?;
-    let view = Believed { statistics, believed: &believed, kinds: &kinds };
+    let view = Believed { statistics, believed: &believed, kinds: &kinds, reading };
 
     let mut pruning = BlockPruning {
         kept: Vec::new(),
@@ -233,9 +239,9 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
         .into_iter()
         .filter(|term| {
             let Some(kind) = term.bounds_kind() else { return false };
-            let Some(bounds) = view.bounds(term.index(), kind) else { return false };
+            let Some(sortedness) = view.sortedness(term.index(), kind) else { return false };
             matches!(
-                (bounds.sortedness, term.op()),
+                (sortedness, term.op()),
                 (Sortedness::Ascending, PredicateOp::Lt | PredicateOp::Le)
                     | (Sortedness::Descending, PredicateOp::Gt | PredicateOp::Ge)
             )
@@ -276,6 +282,9 @@ pub(crate) struct DynamicPruning {
     statistics: Arc<BlockStatistics>,
     believed: Vec<bool>,
     kinds: StoredKinds,
+    /// How the state takes a value its column's type cannot hold
+    /// ([`prune_block`]).
+    reading: StatisticsView,
     /// The block's data and its end, as [`group_run`] reads them.
     extent: Range<u64>,
     filter: Arc<ResolvedExpr>,
@@ -290,11 +299,13 @@ pub(crate) struct DynamicPruning {
 
 impl DynamicPruning {
     /// `block`'s `statistics`, as far as they are believed under `metadata`
-    /// — or `None` where they answer nothing ([`prune_block`]'s conditions).
+    /// and read in `reading` — or `None` where they answer nothing
+    /// ([`prune_block`]'s conditions).
     pub(crate) fn new(
         block: &CopyBlock,
         statistics: Arc<BlockStatistics>,
         metadata: Option<&DumpMetadata>,
+        reading: StatisticsView,
     ) -> Option<Self> {
         let (believed, kinds) = believed_columns(block, &statistics, metadata)?;
         let groups = statistics.groups.len();
@@ -302,6 +313,7 @@ impl DynamicPruning {
             statistics,
             believed,
             kinds,
+            reading,
             extent: block.data_offset..block.end_offset,
             filter: Arc::new(ResolvedExpr::And(Vec::new())),
             verdicts: vec![None; groups],
@@ -311,11 +323,15 @@ impl DynamicPruning {
         })
     }
 
+    fn believed_view(&self) -> Believed<'_> {
+        let (statistics, believed, kinds) = (&self.statistics, &self.believed, &self.kinds);
+        Believed { statistics, believed, kinds, reading: self.reading }
+    }
+
     /// Take `filter`, a state resolved against this block: every verdict
     /// reached under the state before is forgotten.
     pub(crate) fn read(&mut self, filter: Arc<ResolvedExpr>) {
-        let view =
-            Believed { statistics: &self.statistics, believed: &self.believed, kinds: &self.kinds };
+        let view = self.believed_view();
         self.stop = sorted_stop(&filter, &view);
         self.filter = filter;
         self.verdicts.fill(None);
@@ -402,8 +418,7 @@ impl DynamicPruning {
         if let Some(verdict) = self.verdicts[group] {
             return verdict;
         }
-        let view =
-            Believed { statistics: &self.statistics, believed: &self.believed, kinds: &self.kinds };
+        let view = self.believed_view();
         let verdict = view.keeps(&self.filter, group);
         self.verdicts[group] = Some(verdict);
         verdict
@@ -414,8 +429,7 @@ impl DynamicPruning {
     /// every kept group, the stop cost a row's evaluation over every group
     /// before the bound's, to save at most the rest of one.
     pub(crate) fn arm(&mut self, group: usize) {
-        let view =
-            Believed { statistics: &self.statistics, believed: &self.believed, kinds: &self.kinds };
+        let view = self.believed_view();
         let group = Group { view: &view, index: group };
         self.armed = self.stop.as_ref().is_some_and(|stop| stop.reachable(&group));
     }
@@ -434,6 +448,8 @@ struct Believed<'a> {
     believed: &'a [bool],
     /// Per header column, the kinds its stored sets of bounds are ordered by.
     kinds: &'a [[Option<CompareKind>; 2]],
+    /// The view of each column's values read ([`prune_block`]).
+    reading: StatisticsView,
 }
 
 impl Believed<'_> {
@@ -444,10 +460,17 @@ impl Believed<'_> {
         self.statistics.columns.get(column)?.as_ref()
     }
 
-    /// The believed set of `column`'s bounds ordered as `kind` orders.
-    fn bounds(&self, column: usize, kind: &CompareKind) -> Option<&ColumnBounds> {
+    /// The believed column and its set of bounds ordered as `kind` orders.
+    fn set(&self, column: usize, kind: &CompareKind) -> Option<(&ColumnStatistics, BoundsSet)> {
         let set = bounds_set_keyed_by(self.kinds.get(column)?, kind)?;
-        self.believed(column)?.bounds_in(set)
+        Some((self.believed(column)?, set))
+    }
+
+    /// The row order of the believed set of `column`'s bounds ordered as
+    /// `kind` orders, in the view read.
+    fn sortedness(&self, column: usize, kind: &CompareKind) -> Option<Sortedness> {
+        let (statistics, set) = self.set(column, kind)?;
+        statistics.sortedness(set, self.reading)
     }
 
     /// Whether some row of group `index` could make `filter`'s root `True`.
@@ -467,12 +490,20 @@ impl GroupStatistics for Group<'_> {
         self.view.statistics.groups[self.index].rows
     }
 
+    /// Read off the text and believed regardless in every value, and in a
+    /// view taking some as NULL only where the column's declared type is the
+    /// one its tiers were counted under.
     fn null_count(&self, column: usize) -> Option<u64> {
-        self.view.statistics.columns.get(column)?.as_ref()?.null_counts.get(self.index).copied()
+        let statistics = match self.view.reading {
+            StatisticsView::Every => self.view.statistics.columns.get(column)?.as_ref()?,
+            _ => self.view.believed(column)?,
+        };
+        statistics.null_count(self.index, self.view.reading)
     }
 
     fn bounds(&self, column: usize, kind: &CompareKind) -> Option<(&str, &str)> {
-        let bounds = self.view.bounds(column, kind)?.groups.get(self.index)?.as_ref()?;
+        let (statistics, set) = self.view.set(column, kind)?;
+        let bounds = statistics.group_bounds(set, self.view.reading, self.index)?;
         Some((&bounds.min, &bounds.max))
     }
 

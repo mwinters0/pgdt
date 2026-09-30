@@ -49,6 +49,7 @@ use crate::pgtype::{ComparisonSemantics, NestedPlan};
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
+use crate::statistics::StatisticsView;
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs
 // in `stream.rs`; the other recorded deviation, named here rather than
 // reached for inline so `tests/layering.rs` sees it.
@@ -168,6 +169,16 @@ impl Default for QueryOptions {
             parallelism: Parallelism::default(),
             use_statistics: true,
         }
+    }
+}
+
+impl QueryOptions {
+    /// **How this query's statistics are read where a column holds a value
+    /// its type cannot**: as its filter evaluates one, every value in
+    /// PostgreSQL's order, a read that decodes one refusing
+    /// (`docs/design/decisions.md`, "D97").
+    pub(crate) fn statistics_view(&self) -> StatisticsView {
+        StatisticsView::Every
     }
 }
 

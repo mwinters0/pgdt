@@ -32,7 +32,7 @@ quotes a number: every figure is in
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed, decoded and compared structurally; two shapes stay text (`KD3`) and an array inside a composite is decided optimistically (`KD2`) | `nested.rs`, `pgtype.rs`; D39, D41, D45, D58 |
 | Array shape census | recorded at the data level by every mapping pass and read back before a query's first batch; a table `parse` recorded at the metadata level holds none, and a query of it reads the table again for one, writing nothing | `map.rs`, `stream.rs`; D35, D43 |
-| Unrepresentable count | beside the census, per block and column, in two tiers — past Arrow's format spec, and past the calendar DataFusion displays through — under a calendar the cache records and a build ending elsewhere refuses; shown by `info --detail`, read by nothing else yet | `unrepresentable.rs`, `index.rs`, `cache.rs`; D96 |
+| Unrepresentable count | beside the census, per block and column, in two tiers — past Arrow's format spec, and past the calendar DataFusion displays through — under a calendar the cache records and a build ending elsewhere refuses; shown by `info --detail`; statistics count it per group and keep each view of a group's values apart where it differs — the values the type holds, every value, and those within the calendar — which pruning reads in the view a query states, every value's for every query yet | `unrepresentable.rs`, `index.rs`, `cache.rs`, `gather.rs`, `prune.rs`; D96, D97 |
 | CLI `pgdt parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdt/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
 | Partial reporting | `info` reports an unfinished scan's cache with its completion stated once at the top; an interrupted cache is typed for every database segment the scan finished (I1) | D67 |
 | Column projection | working, library and CLI; an unprojected column is never decoded unless a filter term names it | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
@@ -83,7 +83,7 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.10** The extremes, no product code: every typed arm's least and greatest, the special values, `24:00:00`, `interval`'s and nested cases in the `types` fixture at every major; a reconciliation holding each typed `builtin_scalar` arm to an extremes row; the DataFusion-path validity test and the harness over the new rows, each failing value recorded; [notes](../design/roadmap-P28.10-extremes-notes.md)
 - [x] **28.2** The metadata and data levels: `StatisticsLevel` and `--statistics-level` with its overrides, the census gated on the level, `info` reporting each table's level, a query's cold semantics over a metadata-level table and the provider's refusal of one; [notes](../design/roadmap-P28.2-levels-notes.md)
 - [x] **28.3** The unrepresentable count beside the census, lexical, per block and column, each leaf walked by the declared type, in two tiers, in the cache with the calendar bound it counted under; `info --detail` showing it; `24:00:00` refused by its decoder; count and extremes record held to each other by tier; [notes](../design/roadmap-P28.3-count-notes.md)
-- [ ] **28.4** Statistics' views: representable bounds, the unrepresentable count, PostgreSQL-order bounds where they differ, and the engine tier's bounds where it is not empty, gathered, cached and read by pruning under each semantics
+- [x] **28.4** Statistics' views: representable bounds, the unrepresentable count, PostgreSQL-order bounds where they differ, and the engine tier's bounds where it is not empty, gathered, cached and read by pruning under each semantics; [notes](../design/roadmap-P28.4-views-notes.md)
 - [ ] **28.5** The mode option and the typed mode: NULL for every purpose — decode, static and dynamic filters, NULL counts, the provider's statistics — its warning, and the option in `pgdt`, the provider and the shell
 - [ ] **28.6** The refuse mode: by column, at planning, from the map
 - [ ] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`
@@ -119,3 +119,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **28.4 keeps no every-value bounds over a group holding a value no key
+  orders.** The spec's "its bounds in PostgreSQL's order over every value"
+  meets a value the build cannot order at all: a timestamp past `i64`
+  microseconds (`t_extremes.v_ts`, `294276-12-31 23:59:59.999999`) or an
+  `interval` time part past nanoseconds, whose keys
+  (`predicate::order_key`, via `decode_timestamp_micros` and
+  `interval_parts`) answer `None`. Such a group's `every` view is
+  unbounded, as a group holding any value its bounds cannot cover already
+  is, and prunes nothing in that view; the representable and displayable
+  views, which exclude the value, keep their bounds. Why: keying it means
+  widening `OrderKey` for both kinds, which the filter evaluates by too, so
+  it would turn today's refusals of such a value into answers — the refuse
+  mode's change for a column only a filter reads (28.6), not a statistic's
+  (`decisions.md`, "D97", *Rejected*). Reconsidering it means widening the
+  key here, ahead of 28.6, which fills the view with no change to the
+  gatherer and moves the harness's recorded refuse-mode outcomes in the same
+  change.

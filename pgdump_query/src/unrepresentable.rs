@@ -28,7 +28,7 @@ use crate::map::FieldCount;
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use crate::preamble::DumpMetadata;
-use crate::resolve::{SchemaMode, resolve_columns};
+use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 
 use UnrepresentableTier::{Engine, Format};
 
@@ -135,14 +135,58 @@ pub(crate) fn counter_for(
         SchemaMode::Typed,
         &[],
     );
-    let columns = resolved
+    Arc::new(Counter::new(leaves(&resolved), calendar_end()))
+}
+
+/// Each of `resolved`'s columns' leaf.
+fn leaves(resolved: &ResolvedSchema) -> Vec<Leaf> {
+    resolved
         .schema
         .fields()
         .iter()
         .zip(&resolved.plans)
         .map(|(field, plan)| Leaf::of(field.data_type(), plan))
-        .collect();
-    Arc::new(Counter::new(columns, calendar_end()))
+        .collect()
+}
+
+/// **One column's tier test**, for a reader holding the value's text already:
+/// what a statistics observer counts each group's values by, and which of its
+/// views a value joins (`crate::statistics::StatisticsView`).
+#[derive(Debug, Clone)]
+pub(crate) struct ColumnTier {
+    counter: Arc<Counter>,
+    column: usize,
+}
+
+impl ColumnTier {
+    /// The tier `text`, one unescaped value of the column, is past.
+    pub(crate) fn of(&self, text: &str) -> Option<UnrepresentableTier> {
+        self.counter.tier_of(&self.counter.columns[self.column], text)
+    }
+}
+
+/// Each of `resolved`'s columns' tier test, `None` for one every value of
+/// which its type holds. `resolved` is the typed resolution against no census
+/// that [`counter_for`] resolves, so a group counts what its block does.
+pub(crate) fn column_tiers(resolved: &ResolvedSchema) -> Vec<Option<ColumnTier>> {
+    let counter = Arc::new(Counter::new(leaves(resolved), calendar_end()));
+    (0..counter.columns.len())
+        .map(|column| {
+            (counter.columns[column] != Leaf::Held)
+                .then(|| ColumnTier { counter: Arc::clone(&counter), column })
+        })
+        .collect()
+}
+
+/// The tier test of a scalar column the typed read emits as `data_type`, for
+/// a test holding no resolved schema.
+#[cfg(test)]
+pub(crate) fn scalar_tier(data_type: &DataType) -> Option<ColumnTier> {
+    let leaf = Leaf::of(data_type, &NestedPlan::Scalar);
+    (leaf != Leaf::Held).then(|| ColumnTier {
+        counter: Arc::new(Counter::new(vec![leaf], calendar_end())),
+        column: 0,
+    })
 }
 
 impl Counter {

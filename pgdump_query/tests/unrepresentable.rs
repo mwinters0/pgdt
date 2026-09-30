@@ -6,8 +6,10 @@
 //! count the values their typed columns cannot hold, by column and tier, and
 //! nothing else — a `text` field reading `infinity` and a bare `numeric`'s
 //! `NaN` among the nothing — that the metadata level counts none and a
-//! later data-level `parse` counts what a cold one does. Which values those
-//! are is held to DataFusion's own path by `datafusion-pgdump`'s
+//! later data-level `parse` counts what a cold one does — and that statistics
+//! count the same per group and keep each view where it differs
+//! (`docs/design/decisions.md`, "D97"). Which values those are is held to
+//! DataFusion's own path by `datafusion-pgdump`'s
 //! `every_extreme_is_held_by_arrow_or_recorded`.
 
 use std::collections::BTreeMap;
@@ -15,7 +17,8 @@ use std::path::Path;
 
 use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::{
-    DumpIndex, LocalFileSource, ScanOptions, StatisticsRequest, Unrepresentable, map_file,
+    BoundsSet, CopyBlock, DumpIndex, LocalFileSource, ScanOptions, StatisticsRequest,
+    StatisticsView, Unrepresentable, map_file,
 };
 
 mod common;
@@ -109,4 +112,105 @@ async fn a_data_level_parse_over_the_metadata_level_counts_what_a_cold_one_does(
     let backfilled = parsed(&fixture, dir.path(), &StatisticsRequest::DATA).await;
     assert_eq!(counts(&backfilled), counts(&cold));
     assert!(!counts(&cold).is_empty());
+}
+
+/// `table`'s one block in `index`.
+fn table_block<'a>(index: &'a DumpIndex, table: &str) -> &'a CopyBlock {
+    index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"))
+}
+
+/// **A block's groups count what the block does, and its bounds keep a view
+/// apart exactly where a group holds a value the view reads otherwise**:
+/// every value's where one is past Arrow's format spec, the displayable
+/// where one is within it and past the calendar.
+#[tokio::test]
+async fn statistics_count_by_group_what_the_census_counts_by_block() {
+    for version in VERSIONS {
+        let dir = tempfile::tempdir().unwrap();
+        let index =
+            parsed(&types_fixture(version, "default"), dir.path(), &StatisticsRequest::DATA).await;
+        let mut viewed = 0;
+        for block in index.blocks() {
+            let census = block.unrepresentable.as_deref().unwrap();
+            let statistics = block.statistics.as_deref().unwrap();
+            for (c, column) in statistics.columns.iter().enumerate() {
+                let Some(column) = column else { continue };
+                let what = format!(
+                    "pg_dump {version}: {}.{}",
+                    block.header.table, block.header.columns[c]
+                );
+                let mut summed = Unrepresentable::default();
+                for count in column.unrepresentable.iter().flatten() {
+                    summed.merge(count);
+                }
+                assert_eq!(summed, census[c], "{what}");
+                assert_eq!(
+                    column.unrepresentable.is_some(),
+                    !census[c].is_zero(),
+                    "{what}: a count kept only where one is not zero"
+                );
+                for bounds in [&column.bounds, &column.arrow_bounds].into_iter().flatten() {
+                    assert_eq!(bounds.every.is_some(), summed.format > 0, "{what}");
+                    assert_eq!(bounds.displayable.is_some(), summed.engine > 0, "{what}");
+                    viewed += usize::from(bounds.every.is_some() || bounds.displayable.is_some());
+                }
+            }
+        }
+        assert!(viewed >= 10, "pg_dump {version}: only {viewed} sets kept a view apart");
+    }
+}
+
+/// **Each view bounds the values it takes**: `t_date`'s infinities are its
+/// every-value extremes and NULLs in the representable view; `t_extremes`'
+/// greatest `date` is representable and past the calendar, and its every-value
+/// timestamp bounds are lost to a value past `i64`, which keys in no order.
+#[tokio::test]
+async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
+    use StatisticsView::{Displayable, Every, Representable};
+    for version in VERSIONS {
+        let dir = tempfile::tempdir().unwrap();
+        let index =
+            parsed(&types_fixture(version, "default"), dir.path(), &StatisticsRequest::DATA).await;
+        let column = |table: &str, name: &str| {
+            let block = table_block(&index, table);
+            let at = block.header.columns.iter().position(|c| c == name).unwrap();
+            let statistics = block.statistics.as_deref().unwrap();
+            assert_eq!(statistics.groups.len(), 1, "{table}: one group");
+            statistics.columns[at].clone().unwrap()
+        };
+        let extremes = |column: &pgdump_query::ColumnStatistics, view| {
+            column.group_bounds(BoundsSet::Primary, view, 0).map(|b| (b.min.clone(), b.max.clone()))
+        };
+        let pair = |min: &str, max: &str| Some((min.to_string(), max.to_string()));
+        let what = format!("pg_dump {version}");
+
+        let date = column("t_date", "v_date");
+        assert_eq!(extremes(&date, Every), pair("-infinity", "infinity"), "{what}");
+        assert_eq!(extremes(&date, Representable), pair("0044-01-01 BC", "10000-01-01"), "{what}");
+        assert_eq!(extremes(&date, Displayable), extremes(&date, Representable), "{what}");
+        assert_eq!(date.null_count(0, Every), Some(1), "{what}");
+        assert_eq!(date.null_count(0, Representable), Some(3), "{what}");
+
+        let date = column("t_extremes", "v_date");
+        assert_eq!(extremes(&date, Every), pair("-infinity", "infinity"), "{what}");
+        assert_eq!(
+            extremes(&date, Representable),
+            pair("4714-11-24 BC", "5874897-12-31"),
+            "{what}"
+        );
+        assert_eq!(extremes(&date, Displayable), pair("4714-11-24 BC", "262142-12-31"), "{what}");
+
+        let ts = column("t_extremes", "v_ts");
+        assert_eq!(extremes(&ts, Every), None, "{what}: lost to a value keying in no order");
+        assert_eq!(
+            extremes(&ts, Representable),
+            pair("4714-11-24 00:00:00 BC", "294247-01-10 04:00:54.775807"),
+            "{what}"
+        );
+        assert_eq!(
+            extremes(&ts, Displayable),
+            pair("4714-11-24 00:00:00 BC", "262142-12-31 23:59:59.999999"),
+            "{what}"
+        );
+    }
 }

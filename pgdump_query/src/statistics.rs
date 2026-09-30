@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::copy::CopyHeader;
-use crate::index::CopyBlock;
+use crate::index::{CopyBlock, Unrepresentable};
 use crate::instrument;
 
 /// The group size a request that states none gathers at: one mebibyte of a
@@ -531,6 +531,11 @@ pub struct ColumnStatistics {
     pub arrow_bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,
+    /// Per group, its values the column's Arrow type cannot hold, in each tier
+    /// (`docs/design/decisions.md`, "D96") — what a reading taking them as
+    /// NULL adds to [`Self::null_counts`] ([`StatisticsView`]). `None` where
+    /// no group of the block holds one.
+    pub unrepresentable: Option<Vec<Unrepresentable>>,
     /// Per group, the sum of its non-NULL values as integers — a decimal's
     /// unscaled — wrapped at 128 bits, which reduces exactly to any narrower
     /// wrapping sum. Kept for a column the typed read emits as `Int16`,
@@ -560,13 +565,52 @@ pub enum BoundsSet {
     Arrow,
 }
 
-/// Bounds per group and the block's row order, for one column.
+/// Which values a reading of a column's statistics takes as its values, and
+/// which as NULL — a column's type being unable to hold some that PostgreSQL
+/// accepts (`docs/design/decisions.md`, "D96", "D97").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatisticsView {
+    /// Every value, in PostgreSQL's order, a special value ranked
+    /// (`docs/design/decisions.md`, "D56") — the reading of a filter that
+    /// compares the text and holds no value as NULL.
+    Every,
+    /// The values Arrow's format spec lets the column's type hold, each other
+    /// one read as NULL.
+    Representable,
+    /// The values the engine displays as well: a `date` or timestamp past
+    /// [`crate::calendar_end`] read as NULL too.
+    Displayable,
+}
+
+/// Bounds per group and the block's row order, for one column, **over the
+/// values its Arrow type holds**, and beside them the views that differ where
+/// a group holds one it cannot ([`StatisticsView`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnBounds {
-    /// The non-NULL values' order over the whole block, row by row.
+    /// The order of the non-NULL values the type holds over the whole block,
+    /// row by row.
     pub sortedness: Sortedness,
-    /// Per group; `None` where the group holds no non-NULL value or a value
-    /// the bounds could not cover.
+    /// Per group, over the values the type holds; `None` where the group
+    /// holds no such value or one the bounds could not cover.
+    pub groups: Vec<Option<Bounds>>,
+    /// Over every value, where some group holds one past Arrow's format spec:
+    /// [`StatisticsView::Every`]'s, listed only for a group that does.
+    pub every: Option<BoundsView>,
+    /// Over the values within the engine's calendar as well, where some group
+    /// holds one past it: [`StatisticsView::Displayable`]'s, listed only for a
+    /// group that does.
+    pub displayable: Option<BoundsView>,
+}
+
+/// One [`StatisticsView`]'s bounds and row order where it is not
+/// [`ColumnBounds`]' own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundsView {
+    /// The order of the non-NULL values the view takes, over the whole block.
+    pub sortedness: Sortedness,
+    /// Per group, `None` for one holding no value the view reads otherwise
+    /// than [`ColumnBounds::groups`] does, which it is read from, and for one
+    /// whose bounds could not cover a value it takes.
     pub groups: Vec<Option<Bounds>>,
 }
 
@@ -711,16 +755,71 @@ impl ColumnStatistics {
         }
     }
 
+    /// The bounds group `group` of the stored set `set` holds under `view`,
+    /// where it holds any: a group holding no value the view reads otherwise
+    /// is read from [`ColumnBounds::groups`], and one holding such a value
+    /// from the view's own list — none where the view was not kept.
+    pub fn group_bounds(
+        &self,
+        set: BoundsSet,
+        view: StatisticsView,
+        group: usize,
+    ) -> Option<&Bounds> {
+        let bounds = self.bounds_in(set)?;
+        let count = self.unrepresentable_in(group);
+        let groups = match view {
+            StatisticsView::Every if count.format > 0 => &bounds.every.as_ref()?.groups,
+            StatisticsView::Displayable if count.engine > 0 => &bounds.displayable.as_ref()?.groups,
+            _ => &bounds.groups,
+        };
+        groups.get(group)?.as_ref()
+    }
+
+    /// The stored set `set`'s row order under `view`.
+    pub fn sortedness(&self, set: BoundsSet, view: StatisticsView) -> Option<Sortedness> {
+        let bounds = self.bounds_in(set)?;
+        let differing = match view {
+            StatisticsView::Every => bounds.every.as_ref(),
+            StatisticsView::Displayable => bounds.displayable.as_ref(),
+            StatisticsView::Representable => None,
+        };
+        Some(differing.map_or(bounds.sortedness, |view| view.sortedness))
+    }
+
+    /// Group `group`'s NULLs under `view`: its [`Self::null_counts`], and each
+    /// value the view reads as NULL.
+    pub fn null_count(&self, group: usize, view: StatisticsView) -> Option<u64> {
+        let nulls = *self.null_counts.get(group)?;
+        let count = self.unrepresentable_in(group);
+        Some(match view {
+            StatisticsView::Every => nulls,
+            StatisticsView::Representable => nulls + count.format,
+            StatisticsView::Displayable => nulls + count.format + count.engine,
+        })
+    }
+
+    /// Group `group`'s count, zero where the block holds no such value.
+    fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
+        self.unrepresentable
+            .as_ref()
+            .and_then(|counts| counts.get(group))
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn heap_bytes(&self) -> u64 {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
-        let bounds = [&self.bounds, &self.arrow_bounds].into_iter().flatten().map(|bounds| {
-            vec_heap(&bounds.groups)
-                + bounds
-                    .groups
+        let listed = |groups: &Vec<Option<Bounds>>| {
+            vec_heap(groups)
+                + groups
                     .iter()
                     .flatten()
                     .map(|b| text_heap(&b.min) + text_heap(&b.max))
                     .sum::<u64>()
+        };
+        let bounds = [&self.bounds, &self.arrow_bounds].into_iter().flatten().map(|bounds| {
+            let views = [&bounds.every, &bounds.displayable].into_iter().flatten();
+            listed(&bounds.groups) + views.map(|view| listed(&view.groups)).sum::<u64>()
         });
         let bounds = bounds.sum::<u64>();
         let dictionary = self.dictionary.as_ref().map_or(0, |dictionary| {
@@ -731,7 +830,14 @@ impl ColumnStatistics {
         });
         let sums = self.sums.as_ref().map_or(0, vec_heap);
         let value_bytes = vec_heap(&self.value_bytes);
-        named + vec_heap(&self.null_counts) + bounds + dictionary + sums + value_bytes
+        let unrepresentable = self.unrepresentable.as_ref().map_or(0, vec_heap);
+        named
+            + vec_heap(&self.null_counts)
+            + bounds
+            + dictionary
+            + sums
+            + value_bytes
+            + unrepresentable
     }
 
     /// The summed [`Self::value_bytes`] of the groups `keep` answers `true`

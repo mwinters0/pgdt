@@ -11,7 +11,11 @@
 //! (`crate::ResolvedSchema::bounds_kinds`);
 //! a column its comparison equates exactly keeps a dictionary per group; and a
 //! column the typed read emits as an integer or a `Decimal128` keeps a sum per
-//! group; and every column keeps its values' text bytes per group.
+//! group; and every column keeps its values' text bytes per group. **A column
+//! whose type cannot hold every value counts those per group**, and its
+//! bounds and row order are over the values it holds, each other view kept
+//! apart only where a group holds one it reads otherwise
+//! (`docs/design/decisions.md`, "D97"; [`KeyedGroup`], [`ViewOrders`]).
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
@@ -55,17 +59,20 @@ use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decimal_unscaled_digits, decode_bytea, render_bytea};
+use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, Bounds, Charge, ColumnBounds, ColumnDictionary,
-    ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, GroupSizing, RowGroup,
-    STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount, StatisticsBackfill,
-    StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap, vec_heap,
+    BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
+    ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
+    GroupSizing, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount,
+    StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap,
+    vec_heap,
 };
+use crate::unrepresentable::{ColumnTier, column_tiers};
 
 /// The observer for one block, or `None` when `request` tracks nothing in it,
 /// charging what it holds to `account`.
@@ -100,6 +107,7 @@ pub(crate) fn observer_tracking(
     let charge = Charge::new(Arc::clone(account), Term::Gathering);
     let qualified = header.qualified_name();
     let resolved = stored_resolution(header, metadata, database);
+    let tiers = column_tiers(&resolved);
     let declared = declared_columns(metadata, database, &qualified);
     let columns: Vec<Option<ColumnGatherer>> = header
         .columns
@@ -115,11 +123,12 @@ pub(crate) fn observer_tracking(
                     &resolved.comparisons[i],
                     &resolved.plans[i],
                     resolved.schema.field(i).data_type(),
+                    tiers[i].clone(),
                 )
             })
         })
         .collect();
-    drop((resolved, qualified));
+    drop((resolved, tiers, qualified));
     let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
     gatherer.charge_held();
     // An account already full declines this block before its first row, so a
@@ -827,6 +836,12 @@ struct ColumnGatherer {
     sums: Option<Vec<i128>>,
     /// Each closed group's text bytes ([`ColumnStatistics::value_bytes`]).
     value_bytes: Vec<u64>,
+    /// Which tier a value is past, for a column whose type cannot hold every
+    /// value its declared type can (`crate::unrepresentable`).
+    tier: Option<ColumnTier>,
+    /// Each closed group's count of such values, for a column `tier` tests
+    /// ([`ColumnStatistics::unrepresentable`]).
+    unrepresentable: Option<Vec<Unrepresentable>>,
     /// One per [`BoundsSet`], in its order.
     bounds: [Option<BoundsGatherer>; 2],
     dictionary: Option<DictionaryGatherer>,
@@ -841,8 +856,9 @@ impl ColumnGatherer {
     /// orders the column by exactly (`crate::ResolvedSchema::bounds_kinds`),
     /// and a dictionary where the comparison equates exactly
     /// (`docs/design/decisions.md`, "D79"); a sum per group where the typed
-    /// read emits `data_type` as an integer or a `Decimal128`; and, as for
-    /// every tracked column, its NULLs and text bytes per group
+    /// read emits `data_type` as an integer or a `Decimal128`; a count per
+    /// group of the values past `tier`, where the type cannot hold every one;
+    /// and, as for every tracked column, its NULLs and text bytes per group
     /// ([`ColumnStatistics`]).
     fn new(
         declared_type: Option<String>,
@@ -851,6 +867,7 @@ impl ColumnGatherer {
         comparison: &ComparisonPlan,
         plan: &NestedPlan,
         data_type: &DataType,
+        tier: Option<ColumnTier>,
     ) -> Self {
         let postgres = ComparisonSemantics::Postgres;
         let dictionary = match comparison {
@@ -861,7 +878,7 @@ impl ColumnGatherer {
         };
         let bounds = bounds.map(|kind| kind.map(BoundsGatherer::new));
         let summand = Summand::of(data_type);
-        Self::with(declared_type, collation, bounds, dictionary, summand)
+        Self::with(declared_type, collation, bounds, dictionary, summand, tier)
     }
 
     fn with(
@@ -870,6 +887,7 @@ impl ColumnGatherer {
         bounds: [Option<BoundsGatherer>; 2],
         dictionary: Option<DictionaryGatherer>,
         summand: Option<Summand>,
+        tier: Option<ColumnTier>,
     ) -> Self {
         let group = GroupState::fresh(&bounds);
         Self {
@@ -879,6 +897,8 @@ impl ColumnGatherer {
             summand,
             sums: summand.map(|_| Vec::new()),
             value_bytes: Vec::new(),
+            unrepresentable: tier.as_ref().map(|_| Vec::new()),
+            tier,
             bounds,
             dictionary,
             group,
@@ -894,11 +914,13 @@ impl ColumnGatherer {
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
         let per_group = vec_heap(&self.null_counts)
             + self.sums.as_ref().map_or(0, vec_heap)
-            + vec_heap(&self.value_bytes);
+            + vec_heap(&self.value_bytes)
+            + self.unrepresentable.as_ref().map_or(0, vec_heap);
         let mut structure = named + per_group + self.group.heap_bytes() + head;
         for bounds in self.bounds.iter().flatten() {
             structure += vec_heap(&bounds.groups)
                 + vec_heap(&bounds.flags)
+                + vec_heap(&bounds.tiers)
                 + bounds.stored
                 + bounds.rows.heap_bytes();
         }
@@ -926,6 +948,7 @@ impl ColumnGatherer {
             self.bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh)),
             self.dictionary.as_ref().map(DictionaryGatherer::fresh),
             self.summand,
+            self.tier.clone(),
         )
     }
 
@@ -948,6 +971,10 @@ impl ColumnGatherer {
                 return 0;
             }
             Ok(Some(text)) => {
+                let tier = self.tier.as_ref().and_then(|tier| tier.of(&text));
+                if let Some(tier) = tier {
+                    self.group.unrepresentable.add(tier);
+                }
                 self.group.value_bytes += text.len() as u64;
                 if let Some(summand) = self.summand {
                     self.group.sum = self
@@ -958,7 +985,7 @@ impl ColumnGatherer {
                 }
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
-                        bounds.observe(group, &text);
+                        bounds.observe(group, &text, tier);
                     }
                 }
                 if let Some(dictionary) = &self.dictionary {
@@ -973,7 +1000,7 @@ impl ColumnGatherer {
                 self.group.sum = None;
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
-                        bounds.lose_value(group);
+                        bounds.lose_value(group, None);
                     }
                 }
                 self.group.lose_texts();
@@ -994,6 +1021,9 @@ impl ColumnGatherer {
         let group = self.take_group();
         push_charged(&mut self.null_counts, group.nulls, charge);
         push_charged(&mut self.value_bytes, group.value_bytes, charge);
+        if let Some(counts) = &mut self.unrepresentable {
+            push_charged(counts, group.unrepresentable, charge);
+        }
         match (&mut self.sums, group.sum) {
             (Some(sums), Some(sum)) => push_charged(sums, sum, charge),
             // The column held a value that is not its type: it has no sum.
@@ -1022,6 +1052,12 @@ impl ColumnGatherer {
             merge_adjacent(sums, i128::wrapping_add);
         }
         merge_adjacent(&mut self.value_bytes, |a, b| a + b);
+        if let Some(counts) = &mut self.unrepresentable {
+            merge_adjacent(counts, |mut a, b| {
+                a.merge(&b);
+                a
+            });
+        }
         for bounds in self.bounds.iter_mut().flatten() {
             bounds.merge_pairs();
         }
@@ -1048,13 +1084,18 @@ impl ColumnGatherer {
         // loses nothing further.
         let sum = self.sums.as_mut().map(|sums| sums.pop().expect("a closed group sums"));
         let value_bytes = self.value_bytes.pop().expect("a closed group counts its text");
+        let unrepresentable =
+            self.unrepresentable.as_mut().map_or_else(Unrepresentable::default, |counts| {
+                counts.pop().expect("a closed group counts what its type cannot hold")
+            });
         let bounds = self.bounds.each_mut().map(|b| b.as_mut().map(BoundsGatherer::reopen_last));
         let texts = match &mut self.dictionary {
             Some(dictionary) => dictionary.reopen_last(),
             None => Some(Vec::new()),
         };
         let text_bytes = texts.iter().flatten().map(text_heap).sum();
-        let mut group = GroupState { nulls, sum, value_bytes, bounds, texts, text_bytes };
+        let mut group =
+            GroupState { nulls, sum, value_bytes, unrepresentable, bounds, texts, text_bytes };
         group.absorb(mem::replace(&mut self.group, GroupState::fresh(&[None, None])));
         self.group = group;
         let after = self.held();
@@ -1084,6 +1125,13 @@ impl ColumnGatherer {
         self.value_bytes.extend_from_slice(&later.value_bytes);
         later.value_bytes = Vec::new();
         resync(pair(self, later), charge);
+        if let (Some(mine), Some(theirs)) = (&mut self.unrepresentable, &mut later.unrepresentable)
+        {
+            reserve_charged(mine, theirs.len(), charge);
+            mine.append(theirs);
+            *theirs = Vec::new();
+            resync(pair(self, later), charge);
+        }
         match (&mut self.sums, &mut later.sums) {
             (Some(mine), Some(theirs)) => {
                 reserve_charged(mine, theirs.len(), charge);
@@ -1099,6 +1147,7 @@ impl ColumnGatherer {
             let (Some(mine), Some(theirs)) = (&mut self.bounds[set], &mut later.bounds[set]) else {
                 continue;
             };
+            mine.append_tiers(theirs, charge);
             reserve_charged(&mut mine.groups, theirs.groups.len(), charge);
             reserve_charged(&mut mine.flags, theirs.flags.len(), charge);
             mine.groups.append(&mut theirs.groups);
@@ -1126,6 +1175,9 @@ impl ColumnGatherer {
             bounds: primary.map(BoundsGatherer::finish),
             arrow_bounds: arrow.map(BoundsGatherer::finish),
             dictionary: self.dictionary.map(DictionaryGatherer::finish),
+            unrepresentable: self
+                .unrepresentable
+                .filter(|counts| counts.iter().any(|count| !count.is_zero())),
         }
     }
 }
@@ -1138,6 +1190,8 @@ struct GroupState {
     sum: Option<i128>,
     /// The values' text bytes so far.
     value_bytes: u64,
+    /// The values past what the column's type holds so far, by tier.
+    unrepresentable: Unrepresentable,
     /// One per [`BoundsSet`], `None` for a set the column does not keep.
     bounds: [Option<GroupBounds>; 2],
     /// The group's distinct texts in first-seen order, `None` once past a cap
@@ -1154,6 +1208,7 @@ impl GroupState {
             nulls: 0,
             sum: Some(0),
             value_bytes: 0,
+            unrepresentable: Unrepresentable::default(),
             bounds: bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh_group)),
             texts: Some(Vec::new()),
             text_bytes: 0,
@@ -1178,11 +1233,7 @@ impl GroupState {
                 GroupBounds::Bytewise { min, max, .. } => {
                     [min, max].into_iter().flatten().map(|c| text_heap(&c.head)).sum()
                 }
-                GroupBounds::Keyed { min, max, .. } => [min, max]
-                    .into_iter()
-                    .flatten()
-                    .map(|(key, text)| key.heap_bytes() + text_heap(text))
-                    .sum::<u64>(),
+                GroupBounds::Keyed(group) => group.heap_bytes(),
             })
             .sum();
         texts + bounds
@@ -1195,6 +1246,7 @@ impl GroupState {
         self.nulls += later.nulls;
         self.sum = self.sum.zip(later.sum).map(|(sum, more)| sum.wrapping_add(more));
         self.value_bytes += later.value_bytes;
+        self.unrepresentable.merge(&later.unrepresentable);
         for (mine, theirs) in self.bounds.iter_mut().zip(later.bounds) {
             if let (Some(mine), Some(theirs)) = (mine, theirs) {
                 mine.absorb(theirs);
@@ -1279,6 +1331,7 @@ const CLIP_BYTES: usize = DICTIONARY_ENTRY_MAX_BYTES + char::MAX.len_utf8();
 /// and still store what one pass over the group's values stores: each keeps a
 /// value no other value in its half is certainly beyond, and that value can
 /// differ from the true extreme only by bytes no stored bound holds.
+#[derive(Clone)]
 struct Clipped {
     head: String,
     /// Whether `head` is the whole value.
@@ -1343,23 +1396,147 @@ struct BoundsGatherer {
     /// heads ([`Clipped`]), `min_exact` and `max_exact` saying whether each
     /// head is its whole value — stored bounds only once [`Self::finish`]
     /// clips them, since a clipped upper bound no longer orders as its value
-    /// does (`docs/design/decisions.md`, "D82").
+    /// does (`docs/design/decisions.md`, "D82"). **Over the values every
+    /// layer's type holds**: a value past a tier is kept apart, in
+    /// [`Self::tiers`].
     groups: Vec<Option<Bounds>>,
     /// Per closed group, [`LOST`].
     flags: Vec<u8>,
-    /// The text every entry of `groups` holds, summed as they are pushed.
+    /// Per closed group, its values past each tier as `groups` and `flags`
+    /// hold them, `None` for a group holding none — **empty until a group
+    /// holds one**, then one per closed group, so a column never meeting such
+    /// a value pays nothing for the views (`docs/design/decisions.md`, "D97").
+    tiers: Vec<Option<Box<ClosedTiers>>>,
+    /// The text every entry of `groups` and `tiers` holds, summed as they are
+    /// pushed, and each boxed entry of `tiers`.
     stored: u64,
-    rows: RowOrder,
+    rows: ViewOrders,
 }
+
+/// One closed group's values past each tier, in [`tier_slot`] order, as
+/// [`BoundsGatherer::groups`] and [`BoundsGatherer::flags`] hold a group's:
+/// `(None, 0)` for a tier it holds no value past.
+type ClosedTiers = [(Option<Bounds>, u8); 2];
 
 /// A closed group held a value its bounds could not cover, so it has none —
 /// where a group with `None` and no flag held no non-NULL value.
 const LOST: u8 = 1;
 
+/// Where a tier's extremes sit among a group's: the engine's, then the
+/// format spec's.
+fn tier_slot(tier: UnrepresentableTier) -> usize {
+    match tier {
+        UnrepresentableTier::Engine => 0,
+        UnrepresentableTier::Format => 1,
+    }
+}
+
 /// One group's running bounds.
 enum GroupBounds {
     Bytewise { min: Option<Clipped>, max: Option<Clipped>, lost: bool },
-    Keyed { min: Option<(ValueKey, String)>, max: Option<(ValueKey, String)>, lost: bool },
+    Keyed(KeyedGroup),
+}
+
+/// A keyed group's running bounds: over the values every layer holds, and
+/// apart from them each tier's, which only a group holding one allocates.
+#[derive(Default)]
+struct KeyedGroup {
+    values: Extremes,
+    tiers: Option<Box<[Extremes; 2]>>,
+}
+
+/// The extremes of some keyed values, each with its text.
+#[derive(Default)]
+struct Extremes {
+    min: Option<(ValueKey, String)>,
+    max: Option<(ValueKey, String)>,
+    lost: bool,
+}
+
+impl Extremes {
+    fn observe(&mut self, key: &ValueKey, text: &str) {
+        if self.min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Less) {
+            self.min = Some((key.clone(), text.to_owned()));
+        }
+        if self.max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Greater) {
+            self.max = Some((key.clone(), text.to_owned()));
+        }
+    }
+
+    /// Fold `later`, the extremes of the values following these. The earliest
+    /// of equal keys is kept, as a pass does.
+    fn absorb(&mut self, later: Extremes) {
+        self.lost |= later.lost;
+        if let Some(value) = later.min
+            && self.min.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Less)
+        {
+            self.min = Some(value);
+        }
+        if let Some(value) = later.max
+            && self.max.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Greater)
+        {
+            self.max = Some(value);
+        }
+    }
+
+    fn heap_bytes(&self) -> u64 {
+        [&self.min, &self.max]
+            .into_iter()
+            .flatten()
+            .map(|(key, text)| key.heap_bytes() + text_heap(text))
+            .sum()
+    }
+
+    fn closed(self) -> (Option<Bounds>, u8) {
+        match self {
+            Extremes { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
+                (Some(Bounds { min, max, min_exact: true, max_exact: true }), 0)
+            }
+            Extremes { lost, .. } => (None, if lost { LOST } else { 0 }),
+        }
+    }
+
+    /// Closed extremes as they stood before they closed.
+    fn reopen(kind: &CompareKind, bounds: Option<Bounds>, flags: u8) -> Self {
+        match bounds {
+            Some(Bounds { min, max, .. }) => {
+                let key = |text: &str| ValueKey::of(kind, text).expect("a stored bound keyed");
+                Extremes { min: Some((key(&min), min)), max: Some((key(&max), max)), lost: false }
+            }
+            None => Extremes { lost: flags & LOST != 0, ..Extremes::default() },
+        }
+    }
+}
+
+impl KeyedGroup {
+    /// The extremes a value past `tier` joins — a value no tier's joining
+    /// [`Self::values`].
+    fn extremes(&mut self, tier: Option<UnrepresentableTier>) -> &mut Extremes {
+        match tier {
+            None => &mut self.values,
+            Some(tier) => &mut self.tiers.get_or_insert_with(Box::default)[tier_slot(tier)],
+        }
+    }
+
+    fn absorb(&mut self, later: KeyedGroup) {
+        self.values.absorb(later.values);
+        let Some(theirs) = later.tiers else { return };
+        match &mut self.tiers {
+            Some(mine) => {
+                let [engine, format] = *theirs;
+                mine[0].absorb(engine);
+                mine[1].absorb(format);
+            }
+            None => self.tiers = Some(theirs),
+        }
+    }
+
+    fn heap_bytes(&self) -> u64 {
+        let tiers = self.tiers.as_ref().map_or(0, |tiers| {
+            size_of::<[Extremes; 2]>() as u64 + tiers.iter().map(Extremes::heap_bytes).sum::<u64>()
+        });
+        self.values.heap_bytes() + tiers
+    }
 }
 
 impl GroupBounds {
@@ -1384,24 +1561,7 @@ impl GroupBounds {
                     *max = Some(value);
                 }
             }
-            (
-                Self::Keyed { min, max, lost },
-                Self::Keyed { min: later_min, max: later_max, lost: later_lost },
-            ) => {
-                *lost |= later_lost;
-                if let Some(value) = later_min
-                    && min.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Less)
-                {
-                    *min = Some(value);
-                }
-                if let Some(value) = later_max
-                    && max
-                        .as_ref()
-                        .is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Greater)
-                {
-                    *max = Some(value);
-                }
-            }
+            (Self::Keyed(mine), Self::Keyed(later)) => mine.absorb(later),
             _ => unreachable!("one column's groups keep one kind of bounds"),
         }
     }
@@ -1409,6 +1569,7 @@ impl GroupBounds {
 
 /// A column's row order over the rows observed so far: the block's
 /// [`Sortedness`] once every row is in.
+#[derive(Clone)]
 struct RowOrder {
     /// The first value placed, carried to a join as much as places it against
     /// the value before it.
@@ -1422,6 +1583,7 @@ struct RowOrder {
 }
 
 /// A column's first value, kept for the join.
+#[derive(Clone)]
 enum FirstValue {
     /// Its length and its first [`CLIP_BYTES`] bytes, cut at a byte rather
     /// than a character: [`Clipped::locate_bytes`] reads no more.
@@ -1432,6 +1594,7 @@ enum FirstValue {
     Keyed(ValueKey),
 }
 
+#[derive(Clone)]
 enum Previous {
     Bytewise(Clipped),
     Keyed(ValueKey),
@@ -1476,6 +1639,22 @@ impl RowOrder {
         }
     }
 
+    /// Place a keyed value after the one placed before it.
+    fn place_keyed(&mut self, key: ValueKey) {
+        let step = match &self.previous {
+            Some(Previous::Keyed(previous)) => Some(key.stored_order(previous)),
+            Some(Previous::Bytewise(_)) => unreachable!("a keyed order places no head"),
+            None => {
+                self.first = Some(FirstValue::Keyed(key.clone()));
+                None
+            }
+        };
+        self.previous = Some(Previous::Keyed(key));
+        if let Some(step) = step {
+            self.step(Some(step));
+        }
+    }
+
     /// Fold `later`, the order over the rows following these: one step across
     /// the join, then its own.
     fn absorb(&mut self, later: RowOrder) {
@@ -1501,6 +1680,104 @@ impl RowOrder {
             self.previous = later.previous;
         }
     }
+
+    fn sortedness(&self) -> Sortedness {
+        if self.lost {
+            Sortedness::Unsorted
+        } else if self.never_decreased {
+            Sortedness::Ascending
+        } else if self.never_increased {
+            Sortedness::Descending
+        } else {
+            Sortedness::Unsorted
+        }
+    }
+}
+
+/// A column's row order in each view of its values
+/// (`crate::statistics::StatisticsView`): over the values every layer holds,
+/// and — **once the rows observed hold a value past a tier, and not before** —
+/// over those and the engine's tier, and over every value. Until then the
+/// three are one order, which is what a fork copies.
+#[derive(Default)]
+struct ViewOrders {
+    plain: RowOrder,
+    /// Over the values the format spec holds, then over every value.
+    wider: Option<Box<[RowOrder; 2]>>,
+}
+
+impl ViewOrders {
+    fn fork(&mut self) -> &mut [RowOrder; 2] {
+        let plain = &self.plain;
+        self.wider.get_or_insert_with(|| Box::new([plain.clone(), plain.clone()]))
+    }
+
+    /// Place `key`, a value past `tier`, in each order that takes it.
+    fn place_keyed(&mut self, key: ValueKey, tier: Option<UnrepresentableTier>) {
+        match tier {
+            None => {
+                if let Some([representable, every]) = self.wider.as_deref_mut() {
+                    representable.place_keyed(key.clone());
+                    every.place_keyed(key.clone());
+                }
+                self.plain.place_keyed(key);
+            }
+            Some(UnrepresentableTier::Engine) => {
+                let [representable, every] = self.fork();
+                representable.place_keyed(key.clone());
+                every.place_keyed(key);
+            }
+            Some(UnrepresentableTier::Format) => self.fork()[1].place_keyed(key),
+        }
+    }
+
+    /// A value past `tier` no order that takes it can place.
+    fn lose(&mut self, tier: Option<UnrepresentableTier>) {
+        match tier {
+            None => {
+                self.plain.lost = true;
+                for order in self.wider.iter_mut().flat_map(|wider| wider.iter_mut()) {
+                    order.lost = true;
+                }
+            }
+            Some(UnrepresentableTier::Engine) => {
+                for order in self.fork() {
+                    order.lost = true;
+                }
+            }
+            Some(UnrepresentableTier::Format) => self.fork()[1].lost = true,
+        }
+    }
+
+    fn absorb(&mut self, mut later: ViewOrders) {
+        if self.wider.is_some() || later.wider.is_some() {
+            self.fork();
+            later.fork();
+        }
+        self.plain.absorb(later.plain);
+        if let (Some(mine), Some(theirs)) = (&mut self.wider, later.wider) {
+            let [representable, every] = *theirs;
+            mine[0].absorb(representable);
+            mine[1].absorb(every);
+        }
+    }
+
+    fn heap_bytes(&self) -> u64 {
+        let wider = self.wider.as_ref().map_or(0, |wider| {
+            size_of::<[RowOrder; 2]>() as u64 + wider.iter().map(RowOrder::heap_bytes).sum::<u64>()
+        });
+        self.plain.heap_bytes() + wider
+    }
+
+    /// Each view's sortedness: over the values the format spec holds, over
+    /// every value, and over those the engine holds as well.
+    fn sortedness(&self) -> [Sortedness; 3] {
+        let plain = self.plain.sortedness();
+        match self.wider.as_deref() {
+            None => [plain; 3],
+            Some([representable, every]) => [representable.sortedness(), every.sortedness(), plain],
+        }
+    }
 }
 
 impl BoundsGatherer {
@@ -1511,34 +1788,49 @@ impl BoundsGatherer {
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),
         };
-        Self { order, groups: Vec::new(), flags: Vec::new(), stored: 0, rows: RowOrder::default() }
+        Self::of(order)
+    }
+
+    fn of(order: Order) -> Self {
+        Self {
+            order,
+            groups: Vec::new(),
+            flags: Vec::new(),
+            tiers: Vec::new(),
+            stored: 0,
+            rows: ViewOrders::default(),
+        }
     }
 
     fn fresh(&self) -> Self {
-        let order = self.order.clone();
-        Self { order, groups: Vec::new(), flags: Vec::new(), stored: 0, rows: RowOrder::default() }
+        Self::of(self.order.clone())
     }
 
     fn fresh_group(&self) -> GroupBounds {
         match self.order {
             Order::Bytewise(_) => GroupBounds::Bytewise { min: None, max: None, lost: false },
-            Order::Keyed(_) => GroupBounds::Keyed { min: None, max: None, lost: false },
+            Order::Keyed(_) => GroupBounds::Keyed(KeyedGroup::default()),
         }
     }
 
-    /// A value that does not key, or that no stored bound could cover: no
-    /// bounds for its group, and no order for its block.
-    fn lose_value(&mut self, group: &mut GroupBounds) {
+    /// A value past `tier` that does not key, or that no stored bound could
+    /// cover: no bounds for its group, and no order for its block, in each
+    /// view that takes it.
+    fn lose_value(&mut self, group: &mut GroupBounds, tier: Option<UnrepresentableTier>) {
         match group {
-            GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => *lost = true,
+            GroupBounds::Bytewise { lost, .. } => *lost = true,
+            GroupBounds::Keyed(group) => group.extremes(tier).lost = true,
         }
-        self.rows.lost = true;
+        self.rows.lose(tier);
     }
 
-    fn observe(&mut self, group: &mut GroupBounds, text: &str) {
+    /// Observe `text`, a value past `tier` where it is past one — which only a
+    /// keyed kind's column can hold.
+    fn observe(&mut self, group: &mut GroupBounds, text: &str, tier: Option<UnrepresentableTier>) {
         match &self.order {
             Order::Bytewise(canonical) => {
-                let Some(text) = canonical.of(text) else { return self.lose_value(group) };
+                debug_assert!(tier.is_none(), "a bytewise kind's type holds every value");
+                let Some(text) = canonical.of(text) else { return self.lose_value(group, None) };
                 let GroupBounds::Bytewise { min, max, .. } = group else {
                     unreachable!("a bytewise order keeps bytewise bounds")
                 };
@@ -1548,95 +1840,88 @@ impl BoundsGatherer {
                 if max.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Greater)) {
                     *max = Some(Clipped::of(text));
                 }
-                let step = match &self.rows.previous {
+                let rows = &mut self.rows.plain;
+                let step = match &rows.previous {
                     Some(Previous::Bytewise(previous)) => Some(previous.locate(text)),
                     Some(Previous::Keyed(_)) => unreachable!("a bytewise order places no key"),
                     None => {
                         let prefix = text.as_bytes()[..text.len().min(CLIP_BYTES)].to_vec();
-                        self.rows.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
+                        rows.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
                         None
                     }
                 };
-                self.rows.previous = Some(Previous::Bytewise(Clipped::of(text)));
+                rows.previous = Some(Previous::Bytewise(Clipped::of(text)));
                 if let Some(step) = step {
-                    self.rows.step(step);
+                    rows.step(step);
                 }
             }
             Order::Keyed(kind) => {
                 if text.len() > DICTIONARY_ENTRY_MAX_BYTES {
-                    return self.lose_value(group);
+                    return self.lose_value(group, tier);
                 }
-                let Some(key) = ValueKey::of(kind, text) else { return self.lose_value(group) };
-                let GroupBounds::Keyed { min, max, .. } = group else {
+                let Some(key) = ValueKey::of(kind, text) else {
+                    return self.lose_value(group, tier);
+                };
+                let GroupBounds::Keyed(group) = group else {
                     unreachable!("a keyed order keeps keyed bounds")
                 };
-                if min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Less) {
-                    *min = Some((key.clone(), text.to_owned()));
-                }
-                if max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Greater) {
-                    *max = Some((key.clone(), text.to_owned()));
-                }
-                let step = match &self.rows.previous {
-                    Some(Previous::Keyed(previous)) => Some(key.stored_order(previous)),
-                    Some(Previous::Bytewise(_)) => unreachable!("a keyed order places no head"),
-                    None => {
-                        self.rows.first = Some(FirstValue::Keyed(key.clone()));
-                        None
-                    }
-                };
-                self.rows.previous = Some(Previous::Keyed(key));
-                if let Some(step) = step {
-                    self.rows.step(Some(step));
-                }
+                group.extremes(tier).observe(&key, text);
+                self.rows.place_keyed(key, tier);
             }
         }
     }
 
     fn close_group(&mut self, group: GroupBounds, charge: &mut Charge) {
-        let (bounds, flags) = closed(group);
-        self.stored += bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
+        let (bounds, flags, tiers) = closed(group);
+        self.stored += closed_heap(&bounds) + tiers_heap(&tiers);
         push_charged(&mut self.groups, bounds, charge);
         push_charged(&mut self.flags, flags, charge);
+        if tiers.is_some() || !self.tiers.is_empty() {
+            let wanted = self.groups.len() - self.tiers.len();
+            reserve_charged(&mut self.tiers, wanted, charge);
+            self.tiers.resize_with(self.groups.len() - 1, || None);
+            self.tiers.push(tiers);
+        }
     }
 
     /// A closed group's running bounds again, as they stood when it closed.
-    fn reopen(&self, bounds: Option<Bounds>, flags: u8) -> GroupBounds {
-        match (&self.order, bounds) {
-            (Order::Bytewise(_), Some(Bounds { min, max, min_exact, max_exact })) => {
-                GroupBounds::Bytewise {
+    fn reopen(
+        &self,
+        bounds: Option<Bounds>,
+        flags: u8,
+        tiers: Option<Box<ClosedTiers>>,
+    ) -> GroupBounds {
+        match &self.order {
+            Order::Bytewise(_) => match bounds {
+                Some(Bounds { min, max, min_exact, max_exact }) => GroupBounds::Bytewise {
                     min: Some(Clipped { head: min, whole: min_exact }),
                     max: Some(Clipped { head: max, whole: max_exact }),
                     lost: false,
-                }
-            }
-            (Order::Keyed(kind), Some(Bounds { min, max, .. })) => {
-                let key = |text: &str| ValueKey::of(kind, text).expect("a stored bound keyed");
-                GroupBounds::Keyed {
-                    min: Some((key(&min), min)),
-                    max: Some((key(&max), max)),
-                    lost: false,
-                }
-            }
-            (_, None) => {
-                let mut group = self.fresh_group();
-                if flags & LOST != 0 {
-                    match &mut group {
-                        GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => {
-                            *lost = true
-                        }
-                    }
-                }
-                group
-            }
+                },
+                None => GroupBounds::Bytewise { min: None, max: None, lost: flags & LOST != 0 },
+            },
+            Order::Keyed(kind) => GroupBounds::Keyed(KeyedGroup {
+                values: Extremes::reopen(kind, bounds, flags),
+                tiers: tiers.map(|tiers| {
+                    Box::new((*tiers).map(|(bounds, flags)| Extremes::reopen(kind, bounds, flags)))
+                }),
+            }),
         }
+    }
+
+    /// Closed group `index`, taken out of the lists, which keep a hole.
+    fn take_closed(&mut self, index: usize) -> (Option<Bounds>, u8, Option<Box<ClosedTiers>>) {
+        let tiers = self.tiers.get_mut(index).and_then(Option::take);
+        (self.groups[index].take(), mem::take(&mut self.flags[index]), tiers)
     }
 
     /// The last closed group's running bounds, no longer listed.
     fn reopen_last(&mut self) -> GroupBounds {
         let bounds = self.groups.pop().expect("a closed group lists its bounds");
         let flags = self.flags.pop().expect("a closed group flags its bounds");
-        self.stored -= bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
-        self.reopen(bounds, flags)
+        let tiers = self.tiers.pop().flatten();
+        self.stored -= closed_heap(&bounds) + tiers_heap(&tiers);
+        self.reopen(bounds, flags, tiers)
     }
 
     /// Merge every closed group with the one after it, as one pass over both
@@ -1644,46 +1929,131 @@ impl BoundsGatherer {
     fn merge_pairs(&mut self) {
         let closed_groups = self.groups.len();
         let merged = closed_groups.div_ceil(2);
+        let tiered = !self.tiers.is_empty();
         for j in 0..merged {
-            let first = (self.groups[2 * j].take(), mem::take(&mut self.flags[2 * j]));
-            let pair = if 2 * j + 1 < closed_groups {
-                let second = (self.groups[2 * j + 1].take(), mem::take(&mut self.flags[2 * j + 1]));
-                let mut group = self.reopen(first.0, first.1);
-                group.absorb(self.reopen(second.0, second.1));
+            let first = self.take_closed(2 * j);
+            let (bounds, flags, tiers) = if 2 * j + 1 < closed_groups {
+                let second = self.take_closed(2 * j + 1);
+                let mut group = self.reopen(first.0, first.1, first.2);
+                group.absorb(self.reopen(second.0, second.1, second.2));
                 closed(group)
             } else {
                 first
             };
-            (self.groups[j], self.flags[j]) = pair;
+            (self.groups[j], self.flags[j]) = (bounds, flags);
+            if tiered {
+                self.tiers[j] = tiers;
+            }
         }
         self.groups.truncate(merged);
         self.flags.truncate(merged);
-        self.stored =
-            self.groups.iter().flatten().map(|b| text_heap(&b.min) + text_heap(&b.max)).sum();
+        if tiered {
+            self.tiers.truncate(merged);
+        }
+        self.stored = self.groups.iter().map(closed_heap).sum::<u64>()
+            + self.tiers.iter().map(tiers_heap).sum::<u64>();
+    }
+
+    /// Append `later`'s tiers, which follow this gatherer's, ahead of its
+    /// groups: both lists keep one per closed group where either holds any.
+    fn append_tiers(&mut self, later: &mut BoundsGatherer, charge: &mut Charge) {
+        if self.tiers.is_empty() && later.tiers.is_empty() {
+            return;
+        }
+        let total = self.groups.len() + later.groups.len();
+        let wanted = total - self.tiers.len();
+        reserve_charged(&mut self.tiers, wanted, charge);
+        self.tiers.resize_with(self.groups.len(), || None);
+        if later.tiers.is_empty() {
+            self.tiers.resize_with(total, || None);
+        } else {
+            self.tiers.append(&mut later.tiers);
+        }
+        later.tiers = Vec::new();
     }
 
     fn finish(self) -> ColumnBounds {
-        let sortedness = if self.rows.lost {
-            Sortedness::Unsorted
-        } else if self.rows.never_decreased {
-            Sortedness::Ascending
-        } else if self.rows.never_increased {
-            Sortedness::Descending
-        } else {
-            Sortedness::Unsorted
-        };
+        let [sortedness, every_order, displayable_order] = self.rows.sortedness();
         let mut groups = self.groups;
-        if let Order::Bytewise(canonical) = self.order {
-            for group in groups.iter_mut() {
-                if let Some(Bounds { min, max, min_exact, max_exact }) = group.take() {
-                    let min = Clipped { head: min, whole: min_exact };
-                    *group =
-                        clipped_bounds(canonical, min, Clipped { head: max, whole: max_exact });
+        match &self.order {
+            Order::Bytewise(canonical) => {
+                for group in groups.iter_mut() {
+                    if let Some(Bounds { min, max, min_exact, max_exact }) = group.take() {
+                        let min = Clipped { head: min, whole: min_exact };
+                        *group = clipped_bounds(
+                            *canonical,
+                            min,
+                            Clipped { head: max, whole: max_exact },
+                        );
+                    }
+                }
+                ColumnBounds { sortedness, groups, every: None, displayable: None }
+            }
+            Order::Keyed(_) if self.tiers.is_empty() => {
+                ColumnBounds { sortedness, groups, every: None, displayable: None }
+            }
+            Order::Keyed(kind) => {
+                let seen =
+                    |(bounds, flags): &(Option<Bounds>, u8)| bounds.is_some() || flags & LOST != 0;
+                let (mut every, mut displayable) = (Vec::new(), Vec::new());
+                let (mut any_every, mut any_displayable) = (false, false);
+                let mut flags = self.flags.into_iter();
+                for (group, tiers) in groups.iter_mut().zip(self.tiers) {
+                    let base_flags = flags.next().expect("a closed group flags its bounds");
+                    let Some(tiers) = tiers else {
+                        every.push(None);
+                        displayable.push(None);
+                        continue;
+                    };
+                    let [engine, format] = *tiers;
+                    let (engine_seen, format_seen) = (seen(&engine), seen(&format));
+                    let values = group.take();
+                    let mut representable = Extremes::reopen(kind, values.clone(), base_flags);
+                    representable.absorb(Extremes::reopen(kind, engine.0, engine.1));
+                    let (representable, representable_flags) = representable.closed();
+                    displayable.push(values.filter(|_| engine_seen));
+                    any_displayable |= engine_seen;
+                    every.push(
+                        format_seen
+                            .then(|| {
+                                let mut all = Extremes::reopen(
+                                    kind,
+                                    representable.clone(),
+                                    representable_flags,
+                                );
+                                all.absorb(Extremes::reopen(kind, format.0, format.1));
+                                all.closed().0
+                            })
+                            .flatten(),
+                    );
+                    any_every |= format_seen;
+                    *group = representable;
+                }
+                let view = |any: bool, sortedness, groups| {
+                    any.then_some(BoundsView { sortedness, groups })
+                };
+                ColumnBounds {
+                    sortedness,
+                    every: view(any_every, every_order, every),
+                    displayable: view(any_displayable, displayable_order, displayable),
+                    groups,
                 }
             }
         }
-        ColumnBounds { sortedness, groups }
     }
+}
+
+/// The text a closed group's bounds hold.
+fn closed_heap(bounds: &Option<Bounds>) -> u64 {
+    bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max))
+}
+
+/// The heap a closed group's tiers hold: their box and their bounds' text.
+fn tiers_heap(tiers: &Option<Box<ClosedTiers>>) -> u64 {
+    tiers.as_ref().map_or(0, |tiers| {
+        size_of::<ClosedTiers>() as u64
+            + tiers.iter().map(|(bounds, _)| closed_heap(bounds)).sum::<u64>()
+    })
 }
 
 /// The bounds one group of `values` is stored with under `kind`'s order, or
@@ -1694,26 +2064,25 @@ pub(crate) fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bou
     let mut gatherer = BoundsGatherer::new(kind);
     let mut group = gatherer.fresh_group();
     for value in values {
-        gatherer.observe(&mut group, value);
+        gatherer.observe(&mut group, value, None);
     }
     let mut charge = Charge::new(Arc::default(), Term::Gathering);
     gatherer.close_group(group, &mut charge);
     gatherer.finish().groups.pop().flatten()
 }
 
-/// A closed group's bounds as [`BoundsGatherer::groups`] and
-/// [`BoundsGatherer::flags`] hold them.
-fn closed(group: GroupBounds) -> (Option<Bounds>, u8) {
+/// A closed group's bounds as [`BoundsGatherer::groups`],
+/// [`BoundsGatherer::flags`] and [`BoundsGatherer::tiers`] hold them.
+fn closed(group: GroupBounds) -> (Option<Bounds>, u8, Option<Box<ClosedTiers>>) {
     match group {
         GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
             let (min_exact, max_exact) = (min.whole, max.whole);
-            (Some(Bounds { min: min.head, max: max.head, min_exact, max_exact }), 0)
+            (Some(Bounds { min: min.head, max: max.head, min_exact, max_exact }), 0, None)
         }
-        GroupBounds::Keyed { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
-            (Some(Bounds { min, max, min_exact: true, max_exact: true }), 0)
-        }
-        GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => {
-            (None, if lost { LOST } else { 0 })
+        GroupBounds::Bytewise { lost, .. } => (None, if lost { LOST } else { 0 }, None),
+        GroupBounds::Keyed(KeyedGroup { values, tiers }) => {
+            let (bounds, flags) = values.closed();
+            (bounds, flags, tiers.map(|tiers| Box::new((*tiers).map(Extremes::closed))))
         }
     }
 }
@@ -2111,6 +2480,22 @@ mod tests {
         let alphabet: &[char] = &['a', 'b', ' ', 'é', '\u{10FFFF}', '\u{1f}'];
         match kind {
             CompareKind::Int => (rng.below(20) as i64 - 10).to_string(),
+            // Finite dates either side of the calendar's end, and the
+            // infinities, which no format holds.
+            CompareKind::Date => match rng.below(10) {
+                0 => "infinity".into(),
+                1 => "-infinity".into(),
+                2 => format!("{}-01-0{}", 262142 + rng.below(3), 1 + rng.below(9)),
+                _ => format!("20{:02}-0{}-1{}", rng.below(30), 1 + rng.below(9), rng.below(10)),
+            },
+            // As a date, and past `i64` microseconds too, which does not key.
+            CompareKind::Timestamp { .. } => match rng.below(12) {
+                0 => "infinity".into(),
+                1 => "-infinity".into(),
+                2 => format!("262143-01-0{} 00:00:00", 1 + rng.below(9)),
+                3 => format!("29427{}-12-31 23:59:59", 1 + rng.below(5)),
+                _ => format!("20{:02}-01-01 0{}:00:00", rng.below(30), rng.below(10)),
+            },
             CompareKind::Bytea => {
                 let bytes: Vec<u8> = (0..length / 2)
                     .map(|_| [0x00, 0x7f, 0xfe, 0xff][rng.below(4) as usize])
@@ -2167,7 +2552,7 @@ mod tests {
                 });
                 let mut state = gatherer.fresh_group();
                 for v in &all {
-                    gatherer.observe(&mut state, v);
+                    gatherer.observe(&mut state, v, None);
                 }
                 gatherer.close_group(state, &mut charge);
                 let column = gatherer.finish();
@@ -2177,7 +2562,7 @@ mod tests {
             for group in &groups {
                 let mut state = gatherer.fresh_group();
                 for v in group {
-                    gatherer.observe(&mut state, v);
+                    gatherer.observe(&mut state, v, None);
                 }
                 gatherer.close_group(state, &mut charge);
             }
@@ -2241,13 +2626,176 @@ mod tests {
         assert!(ordered > 50, "only {ordered} blocks ordered");
     }
 
+    /// **Each view's stored bounds are the extremes of the values it takes,
+    /// and its stated order holds over them row by row**, read back through
+    /// [`ColumnStatistics::group_bounds`] and [`ColumnStatistics::sortedness`]
+    /// — over random groups of dates and timestamps holding values past each
+    /// tier, one past the format's not keying at all. A view kept for no
+    /// group is kept for none.
+    #[test]
+    fn each_view_bounds_and_orders_the_values_it_takes() {
+        use crate::statistics::{BoundsSet, StatisticsView};
+        use crate::unrepresentable::scalar_tier;
+        use UnrepresentableTier::Format;
+
+        let takes = |view: StatisticsView, tier: Option<UnrepresentableTier>| match view {
+            StatisticsView::Every => true,
+            StatisticsView::Representable => tier != Some(Format),
+            StatisticsView::Displayable => tier.is_none(),
+        };
+        let views =
+            [StatisticsView::Every, StatisticsView::Representable, StatisticsView::Displayable];
+        let kinds = [CompareKind::Date, CompareKind::Timestamp { with_tz: false }];
+        let mut rng = Rng(0x7135);
+        let (mut bounded, mut ordered, mut kept) = ([0usize; 3], [0usize; 3], [0usize; 2]);
+        let mut charge = Charge::new(Arc::default(), Term::Gathering);
+        for round in 0..900 {
+            let kind = &kinds[round % kinds.len()];
+            let tier = scalar_tier(&join_type(kind)).expect("a date or timestamp is tested");
+            let mut values: Vec<String> =
+                (0..rng.below(16)).map(|_| value(&mut rng, kind)).collect();
+            if round % 3 == 0 {
+                let key = |v: &String| ValueKey::of(kind, v);
+                values.sort_by(|a, b| match (key(a), key(b)) {
+                    (Some(a), Some(b)) => a.compare(&b),
+                    (a, b) => a.is_none().cmp(&b.is_none()),
+                });
+                if rng.below(2) == 0 {
+                    values.reverse();
+                }
+            }
+            let mut groups: Vec<Vec<String>> = vec![Vec::new()];
+            for v in values {
+                if rng.below(4) == 0 {
+                    groups.push(Vec::new());
+                }
+                groups.last_mut().unwrap().push(v);
+            }
+            let mut gatherer = BoundsGatherer::new(kind.clone());
+            let mut counts = Vec::new();
+            for group in &groups {
+                let mut state = gatherer.fresh_group();
+                let mut count = Unrepresentable::default();
+                for v in group {
+                    let past = tier.of(v);
+                    if let Some(past) = past {
+                        count.add(past);
+                    }
+                    gatherer.observe(&mut state, v, past);
+                }
+                gatherer.close_group(state, &mut charge);
+                counts.push(count);
+            }
+            let bounds = gatherer.finish();
+            assert_eq!(
+                bounds.every.is_some(),
+                counts.iter().any(|c| c.format > 0),
+                "round {round}"
+            );
+            assert_eq!(bounds.displayable.is_some(), counts.iter().any(|c| c.engine > 0));
+            kept[0] += usize::from(bounds.every.is_some());
+            kept[1] += usize::from(bounds.displayable.is_some());
+            let column = ColumnStatistics {
+                declared_type: None,
+                collation: None,
+                null_counts: vec![0; groups.len()],
+                bounds: Some(bounds),
+                arrow_bounds: None,
+                dictionary: None,
+                sums: None,
+                value_bytes: vec![0; groups.len()],
+                unrepresentable: Some(counts.clone()),
+            };
+            for (v, view) in views.into_iter().enumerate() {
+                let taken = |group: &Vec<String>| -> Vec<(String, Option<ValueKey>)> {
+                    group
+                        .iter()
+                        .filter(|value| takes(view, tier.of(value)))
+                        .map(|value| (value.clone(), ValueKey::of(kind, value)))
+                        .collect()
+                };
+                for (g, group) in groups.iter().enumerate() {
+                    let what = format!("round {round}, {view:?}, group {g}: {group:?}");
+                    let taken = taken(group);
+                    let stored = column.group_bounds(BoundsSet::Primary, view, g);
+                    let keys: Option<Vec<&ValueKey>> =
+                        taken.iter().map(|(_, key)| key.as_ref()).collect();
+                    let Some(keys) = keys.filter(|keys| !keys.is_empty()) else {
+                        assert!(stored.is_none(), "{what}: no value to bound, or one unkeyed");
+                        continue;
+                    };
+                    let b = stored.unwrap_or_else(|| panic!("{what}: keyed values unbounded"));
+                    bounded[v] += 1;
+                    let (low, high) =
+                        (ValueKey::of(kind, &b.min).unwrap(), ValueKey::of(kind, &b.max).unwrap());
+                    assert!(
+                        keys.iter()
+                            .all(|key| low.compare(key).is_le() && high.compare(key).is_ge()),
+                        "{what}: {b:?}"
+                    );
+                    assert!(keys.iter().any(|key| low.compare(key).is_eq()), "{what}: min {b:?}");
+                    assert!(keys.iter().any(|key| high.compare(key).is_eq()), "{what}: max {b:?}");
+                    assert_eq!(
+                        column.null_count(g, view),
+                        Some(match view {
+                            StatisticsView::Every => 0,
+                            StatisticsView::Representable => counts[g].format,
+                            StatisticsView::Displayable => counts[g].format + counts[g].engine,
+                        }),
+                        "{what}: NULLs"
+                    );
+                }
+                let row: Vec<Option<ValueKey>> =
+                    groups.iter().flat_map(taken).map(|(_, key)| key).collect();
+                let expected =
+                    match row.iter().map(Option::as_ref).collect::<Option<Vec<&ValueKey>>>() {
+                        None => Sortedness::Unsorted,
+                        Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).is_ge()) => {
+                            Sortedness::Ascending
+                        }
+                        Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).is_le()) => {
+                            Sortedness::Descending
+                        }
+                        Some(_) => Sortedness::Unsorted,
+                    };
+                let found = column.sortedness(BoundsSet::Primary, view);
+                assert_eq!(found, Some(expected), "round {round}, {view:?}: {groups:?}");
+                ordered[v] += usize::from(expected != Sortedness::Unsorted && row.len() > 3);
+            }
+        }
+        assert!(bounded.iter().all(|&n| n > 600), "groups bounded per view: {bounded:?}");
+        assert!(ordered.iter().all(|&n| n > 30), "blocks ordered per view: {ordered:?}");
+        assert!(kept.iter().all(|&n| n > 200), "views kept: {kept:?}");
+    }
+
     /// The kinds the join test's columns are compared by, a bytewise kind of
-    /// each canonical form and a keyed one.
-    const JOIN_KINDS: [CompareKind; 4] =
-        [CompareKind::Text, CompareKind::PaddedText, CompareKind::Bytea, CompareKind::Int];
+    /// each canonical form and three keyed ones, two of whose types cannot
+    /// hold every value.
+    const JOIN_KINDS: [CompareKind; 6] = [
+        CompareKind::Text,
+        CompareKind::PaddedText,
+        CompareKind::Bytea,
+        CompareKind::Int,
+        CompareKind::Date,
+        CompareKind::Timestamp { with_tz: false },
+    ];
+
+    /// The type the typed read emits a [`JOIN_KINDS`] column as.
+    fn join_type(kind: &CompareKind) -> DataType {
+        match kind {
+            CompareKind::Int => DataType::Int64,
+            CompareKind::Bytea => DataType::Binary,
+            CompareKind::Date => DataType::Date32,
+            CompareKind::Timestamp { .. } => {
+                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None)
+            }
+            _ => DataType::Utf8View,
+        }
+    }
 
     /// A block's columns: one per [`JOIN_KINDS`], each keeping bounds, a
-    /// dictionary and text bytes — the keyed one sums too — and an untracked
+    /// dictionary and text bytes — the integer sums too, and the date and
+    /// the timestamp count what their types cannot hold — and an untracked
     /// one.
     fn join_columns() -> Vec<Option<ColumnGatherer>> {
         let plan =
@@ -2257,11 +2805,7 @@ mod tests {
             .map(|kind| {
                 let plan = plan(kind);
                 let bounds = plan.bounds_kinds();
-                let data_type = match kind {
-                    CompareKind::Int => DataType::Int64,
-                    CompareKind::Bytea => DataType::Binary,
-                    _ => DataType::Utf8View,
-                };
+                let data_type = join_type(kind);
                 Some(ColumnGatherer::new(
                     None,
                     None,
@@ -2269,6 +2813,7 @@ mod tests {
                     &plan,
                     &NestedPlan::Scalar,
                     &data_type,
+                    crate::unrepresentable::scalar_tier(&data_type),
                 ))
             })
             .chain([None])
@@ -2312,6 +2857,7 @@ mod tests {
                             CompareKind::Bytea if short => {
                                 render_bytea(&(rng.below(1 << 16) as u16).to_be_bytes())
                             }
+                            CompareKind::Date | CompareKind::Timestamp { .. } => value(rng, kind),
                             _ if short => rng.below(1000).to_string(),
                             _ => value(rng, kind),
                         };
@@ -2326,8 +2872,12 @@ mod tests {
                 let mut drawn: Vec<String> =
                     (0..rows).map(|_| values[rng.below(pool) as usize].clone()).collect();
                 if sorted {
-                    let key = |v: &String| ValueKey::of(kind, v).unwrap();
-                    drawn.sort_by(|a, b| key(a).compare(&key(b)));
+                    // A value that does not key sorts last.
+                    let key = |v: &String| ValueKey::of(kind, v);
+                    drawn.sort_by(|a, b| match (key(a), key(b)) {
+                        (Some(a), Some(b)) => a.compare(&b),
+                        (a, b) => a.is_none().cmp(&b.is_none()),
+                    });
                     if rng.below(2) == 0 {
                         drawn.reverse();
                     }
@@ -2468,6 +3018,7 @@ mod tests {
         let (mut straddles, mut ordered, mut inexact, mut dictionaries, mut overflowed) =
             (0, 0, 0, 0, 0);
         let (mut summed, mut unsummed, mut measured) = (0, 0, 0);
+        let mut views = [0; 2];
         for round in 0..600 {
             let block = random_block(&mut rng, round);
             let exact = sized(block.group_size, None, None);
@@ -2483,10 +3034,17 @@ mod tests {
                     ordered += 1;
                 }
                 inexact += bounds.groups.iter().flatten().filter(|b| !b.max_exact).count();
-                let dictionary = column.dictionary.as_ref().unwrap();
-                dictionaries += dictionary.groups.iter().flatten().filter(|g| g.len() > 1).count();
-                if block.short {
-                    overflowed += dictionary.groups.iter().filter(|g| g.is_none()).count();
+                if let Some(dictionary) = &column.dictionary {
+                    dictionaries +=
+                        dictionary.groups.iter().flatten().filter(|g| g.len() > 1).count();
+                    if block.short {
+                        overflowed += dictionary.groups.iter().filter(|g| g.is_none()).count();
+                    }
+                }
+                if let Some(counts) = &column.unrepresentable {
+                    assert_eq!(counts.len(), joined.groups.len(), "round {round}: a count a group");
+                    views[0] += usize::from(bounds.every.is_some());
+                    views[1] += usize::from(bounds.displayable.is_some());
                 }
                 match &column.sums {
                     Some(sums) if sums.iter().any(|&sum| sum != 0) => summed += 1,
@@ -2497,6 +3055,8 @@ mod tests {
             }
         }
         assert!(summed > 100, "only {summed} columns summed");
+        assert!(views[0] > 300, "only {} columns kept every value apart", views[0]);
+        assert!(views[1] > 300, "only {} columns kept the displayable apart", views[1]);
         assert!(unsummed > 20, "only {unsummed} columns lost their sums to a value not their type");
         assert!(measured > 500, "only {measured} columns measured");
         assert!(straddles > 500, "only {straddles} cuts fell inside a group");

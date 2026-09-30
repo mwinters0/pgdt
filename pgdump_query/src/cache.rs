@@ -72,7 +72,7 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub const CACHE_FORMAT_VERSION: u32 = 31;
+pub const CACHE_FORMAT_VERSION: u32 = 32;
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read

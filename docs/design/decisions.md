@@ -550,6 +550,15 @@ column, a cache being gathered typed whatever reads it: a `Utf8View`'s size, a `
 Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings` sized by bounds
 and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
 
+### D97 A group keeps a view per tier only where it holds such a value, the values within every tier the base
+A column whose type cannot hold every value counts them per group and bounds and orders the values it holds; beside them, where a
+group holds one past the format spec, every value in PostgreSQL's order, and where one past the calendar, the values within it, for
+that group alone, read in a `StatisticsView` that adds what it takes as NULL to the NULL count, believed only under D78's DDL. The
+base is kept apart from each tier's extremes, allocated at a group's first such value, so a view folds the base with the tiers it
+takes, exactly across pieces and merges (D82); a value no key orders (a timestamp past `i64`) leaves every value's view unbounded.
+Rejected: every value's bounds and the count alone (the spec's); a set per view per column from its first row; a key widened for it
+here, which moves the filter's answers too. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
+
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache

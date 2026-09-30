@@ -25,7 +25,13 @@ use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
-use crate::statistics::{Bounds, ColumnDictionary, ColumnStatistics, Sortedness};
+use crate::statistics::{Bounds, ColumnDictionary, ColumnStatistics, Sortedness, StatisticsView};
+
+/// **The view a summary reads a column's statistics in**: every value, in
+/// PostgreSQL's order, as a scan's pruning reads them — a value its type
+/// cannot hold being one a read materializing it refuses (`KD8`;
+/// `docs/design/decisions.md`, "D89", "D97").
+const READING: StatisticsView = StatisticsView::Every;
 
 /// What a table's stored statistics amount to, one entry per column of the
 /// schema it was summarized against.
@@ -177,25 +183,25 @@ pub fn table_summary(
                 .as_ref()
                 .filter(|_| believed && dictionary_holds_field_text(&gathered, c));
             accumulator.union(dictionary, statistics.groups.len());
-            let stored = accumulator
+            let set = accumulator
                 .kind
                 .as_ref()
                 .filter(|_| believed)
                 .and_then(|kind| bounds_set_keyed_by(&gathered.bounds_kinds(c), kind))
-                .and_then(|set| column.bounds_in(set))
                 // A set or a NULL count not one to a group describes other
                 // groups, and nothing it says is read.
-                .filter(|stored| {
-                    stored.groups.len() == groups && column.null_counts.len() == groups
+                .filter(|&set| {
+                    column.bounds_in(set).is_some_and(|stored| stored.groups.len() == groups)
+                        && column.null_counts.len() == groups
                 });
-            let Some(stored) = stored else {
+            let Some(set) = set else {
                 accumulator.complete = false;
                 continue;
             };
             let kind = accumulator.kind.clone().expect("a stored set was found for it");
-            let per_group = statistics.groups.iter().zip(&stored.groups).zip(&column.null_counts);
-            for ((group, bounds), &nulls) in per_group {
-                match bounds {
+            let per_group = statistics.groups.iter().zip(&column.null_counts).enumerate();
+            for (g, (group, &nulls)) in per_group {
+                match column.group_bounds(set, READING, g) {
                     Some(bounds) => accumulator.fold(&kind, bounds),
                     // A group whose every row is NULL has no value to bound,
                     // so it leaves the column's extremes complete; one that
@@ -415,16 +421,17 @@ fn column_order(
             return None;
         }
         let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
-        let stored = column.bounds_in(bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?)?;
-        if stored.groups.len() != statistics.groups.len() {
+        let set = bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?;
+        if column.bounds_in(set)?.groups.len() != statistics.groups.len() {
             return None;
         }
+        let sortedness = column.sortedness(set, READING)?;
         let mut holding = statistics
             .groups
             .iter()
-            .zip(&stored.groups)
-            .filter(|(group, _)| group.rows > 0)
-            .map(|(_, bounds)| bounds.as_ref());
+            .enumerate()
+            .filter(|(_, group)| group.rows > 0)
+            .map(|(g, _)| column.group_bounds(set, READING, g));
         let Some(first) = holding.next() else { continue };
         let last = holding.next_back().unwrap_or(first);
         // deficiency: KD46 — a block holding one distinct value records
@@ -433,7 +440,7 @@ fn column_order(
         // whose exact extremes are equal as neutral here; no fixture holds one
         // inside a descending table. **(c) unowned**; promoted by a table seen
         // to lose its ordering to one.
-        match (stored.sortedness, order) {
+        match (sortedness, order) {
             (Sortedness::Unsorted, _) => return None,
             (recorded, None) => order = Some(recorded),
             (recorded, Some(held)) if recorded != held => return None,

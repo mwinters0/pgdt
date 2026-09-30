@@ -1460,9 +1460,16 @@ group's `rows` and `bytes`, and one entry per column of the block's header,
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
 `min`, `max`, `min_exact` and `max_exact`, or `null` — an `_exact` flag is
 `false` where a value too long to store was cut to a prefix below it or a
-successor above it), `arrow_bounds` (the same, in a
+successor above it — over the values the column's Arrow type can hold; and
+beside them `every`, the same over every value in PostgreSQL's order, where
+some group holds one the type cannot, and `displayable`, over the values
+within the calendar end as well, where some group holds one past it, each
+`null` otherwise and, where present, `null` for every group holding no such
+value, whose bounds are `bounds`' own), `arrow_bounds` (the same, in a
 DataFusion query's order, for a column whose PostgreSQL order is another, and
-`null` for every other column), `dictionary` (the block's
+`null` for every other column), `unrepresentable` (per group, the block's
+`{format, engine}` count above, for a column some group of which holds such
+a value, and `null` for every other), `dictionary` (the block's
 distinct `entries` once each, and per group a list of indices into them, or
 `null`), `sums` (per group, the sum of its values — a `numeric(p,s)`'s
 counted in units of `10^-s` — for an integer or `oid` column and a

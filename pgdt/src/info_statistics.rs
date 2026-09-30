@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use pgdump_query::{CopyBlock, DumpIndex, Sortedness};
+use pgdump_query::{BoundsSet, CopyBlock, DumpIndex, Sortedness, StatisticsView};
 
 /// One table's statistics over the blocks of it the map holds.
 #[derive(Debug, PartialEq, Eq)]
@@ -125,10 +125,12 @@ impl<'a> TableStatistics<'a> {
             let summary = &mut self.columns[at];
             summary.gathered_blocks += 1;
             summary.groups_with_rows += with_rows.iter().filter(|&&r| r).count() as u64;
-            if let Some(bounds) = &column.bounds {
-                summary.groups_with_bounds +=
-                    counted(&mut bounds.groups.iter().map(Option::is_some));
-                match bounds.sortedness {
+            // Every value, in PostgreSQL's order: what a query's pruning reads.
+            if let Some(sortedness) = column.sortedness(BoundsSet::Primary, StatisticsView::Every) {
+                summary.groups_with_bounds += counted(&mut (0..statistics.groups.len()).map(|g| {
+                    column.group_bounds(BoundsSet::Primary, StatisticsView::Every, g).is_some()
+                }));
+                match sortedness {
                     Sortedness::Ascending => summary.sortedness.ascending += 1,
                     Sortedness::Descending => summary.sortedness.descending += 1,
                     Sortedness::Unsorted => summary.sortedness.unsorted += 1,
@@ -269,6 +271,8 @@ mod tests {
             bounds: Some(ColumnBounds {
                 sortedness,
                 groups: bounded.iter().map(|&b| if b { bounds() } else { None }).collect(),
+                every: None,
+                displayable: None,
             }),
             arrow_bounds: None,
             dictionary: Some(ColumnDictionary {
@@ -277,6 +281,7 @@ mod tests {
             }),
             sums: Some(vec![1; bounded.len()]),
             value_bytes: vec![1; bounded.len()],
+            unrepresentable: None,
         })
     }
 
