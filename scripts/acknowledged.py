@@ -231,4 +231,44 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "datafusion-pgdump/src  # every changed word is Arrow->DataFusion or a reflow"
         ),
     ),
+    Acknowledged(
+        commit="e1f05d3",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why=(
+            "M183's rename: arrow_order and the arrow_divergence family, BoundsSet::Arrow, "
+            "ColumnStatistics::arrow_bounds and NestedArrowOrder named for DataFusion "
+            "semantics, with rustdoc and rustfmt's reflow; it compiles to the same code, "
+            "bincode does not serialize field names, and the one output difference is "
+            "pgdt info --json's key, which no figure's workload reads"
+        ),
+        verified=(
+            "git show --format= --word-diff=porcelain e1f05d3 -- '*/src/*.rs'  "
+            "# every changed word is arrow->datafusion, A->F or a reflow"
+        ),
+    ),
 )
