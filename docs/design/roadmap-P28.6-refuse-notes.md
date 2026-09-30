@@ -40,7 +40,7 @@ What the slices after this one inherit. The spec is
   it failing again and re-records it.
 - **The generated pruning check asserts that no query over a fixture raises**
   (`pgdump_query/tests/pruning.rs`, `check`), its error leg gone with its
-  population: see STATUS, "Decisions worth another look".
+  population until M184 restores it over `KD2`'s shape.
 - **The untyped mode's widening is a plan fact beside this refusal**: the same
   per-column count over every block decides which columns widen, and
   `materialized_unrepresentable` is where both read it.

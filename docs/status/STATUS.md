@@ -119,16 +119,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The generated pruning check lost its error leg, having no error left to
-  compare** (`pgdump_query/tests/pruning.rs`, `check`). The leg asserted that
-  a pruned query reading every row raises the unpruned query's error; its
-  whole population was the refuse mode's read-time refusals and the one
-  timestamp no key ordered, both gone with 28.6, so the sweep raised none. The
-  check now asserts neither query raises over any fixture, and the leg and its
-  floor are deleted rather than left comparing nothing. What that gives up:
-  D54's clause that text which does not parse surfaces only where evaluation
-  reaches it is no longer under a generated check, every fixture being valid
-  PostgreSQL. Reconsidering means a hand-built dump holding such text beside
-  the fixtures — outside the input contract, so nothing `pg_dump` writes —
-  giving the leg a population back.

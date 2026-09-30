@@ -14,8 +14,9 @@
 //! part of seven digits or more, and a `date` or timestamp year at or past the
 //! calendar's end — and only those last two, rare by construction, take the
 //! arithmetic that says which side of the bound they fall.
-//! A value that does not parse as its type is not counted: it is outside the
-//! input contract, and refuses in every mode.
+//! A value that does not decode is not counted, and refuses in every mode:
+//! text its PostgreSQL type would not read is outside the input contract, and
+//! a nested array `KD2` leaves on the optimistic path is that deficiency's.
 
 use std::sync::Arc;
 

@@ -303,9 +303,9 @@ An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8V
 normalizing on parse would edit the user's DDL. A walk spends a visit per definition, the list's
 length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 
-### D42 `interval` is the struct; special values are decode failures
+### D42 `interval` is the struct; its special values are unrepresentable
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
-out-of-range parts are `FieldDecode`, as for `date` and `numeric` (`KD8`). Twelve built-in range
+out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are (`KD8`). Twelve built-in range
 names are fixed, multiranges apart (I10); a `canonical` function makes a range unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair

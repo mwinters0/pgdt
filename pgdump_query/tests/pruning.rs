@@ -231,10 +231,11 @@ struct Tally {
 }
 
 /// `filter` pruned against unpruned, serially and split: **identical rows in
-/// file order**, and **neither raises**: every fixture is valid PostgreSQL, so
-/// the refuse mode's refusals are the plan's, before a row is read, and every
-/// value a type accepts keys in the filter's order
-/// (`docs/design/decisions.md`, "D54", "D99").
+/// file order**, and **neither raises**: the refuse mode's refusals are the
+/// plan's, before a row is read, every value a type accepts keys in the
+/// filter's order, and no fixture holds a value that does not decode, `KD2`'s
+/// shape being one no generated schema writes (`docs/design/decisions.md`,
+/// "D54", "D99").
 ///
 /// The unpruned query reads `plain`, a cache holding no statistic, whose rows
 /// are the gathered cache's under `use_statistics: false` and which loads in a
