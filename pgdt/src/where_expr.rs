@@ -507,13 +507,18 @@ mod tests {
         assert_eq!(ok("\u{e9}and=1"), "\u{e9}and=1", "a keyword never starts inside a character");
     }
 
-    /// **The `NOT` inside a term is the term's.** Both `IS NOT NULL` and
-    /// `IS NOT DISTINCT FROM` carry one; reading either as the expression's
-    /// negation would make `v IS NOT NULL` a negation of the leaf `NULL`.
+    /// **The `NOT` inside a term is the term's.** `IS NOT NULL`,
+    /// `IS NOT UNREPRESENTABLE` and `IS NOT DISTINCT FROM` carry one; reading
+    /// it as the expression's negation would make `v IS NOT NULL` a negation
+    /// of the leaf `NULL`.
     #[test]
     fn a_not_after_is_belongs_to_the_term() {
         assert_eq!(ok("created_at IS NOT NULL"), "created_at IS NOT NULL");
         assert_eq!(ok("a=1 and b is not null"), "and(a=1, b IS NOT NULL)");
+        assert_eq!(
+            ok("v is not unrepresentable or v is null"),
+            "or(v IS NOT UNREPRESENTABLE, v IS NULL)"
+        );
         assert_eq!(ok("not b is not null"), "not(b IS NOT NULL)");
         assert_eq!(
             ok("v is  not  distinct  from  1"),

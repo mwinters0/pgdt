@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use crate::copy::{RawRow, RowSplit};
 use crate::gather::{declared_columns, stored_bounds_kinds};
-use crate::index::CopyBlock;
+use crate::index::{CopyBlock, Unrepresentable};
 use crate::pgtype::{CompareKind, bounds_set_keyed_by};
 use crate::preamble::DumpMetadata;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
@@ -516,5 +516,11 @@ impl GroupStatistics for Group<'_> {
             .iter()
             .all(|&i| (i as usize) < dictionary.entries.len())
             .then(|| indices.iter().map(|&i| dictionary.entries[i as usize].as_str()))
+    }
+
+    /// Believed only where the column's declared type is the one its tiers
+    /// were counted under, as a view's NULL count is.
+    fn unrepresentable(&self, column: usize) -> Option<Unrepresentable> {
+        Some(self.view.believed(column)?.unrepresentable_in(self.index))
     }
 }

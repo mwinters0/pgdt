@@ -56,6 +56,7 @@ mod report;
 mod settings;
 mod statistics;
 mod table;
+mod unrepresentable;
 
 use std::sync::Arc;
 
@@ -71,6 +72,9 @@ pub use factory::{
 pub use report::{BudgetedPlanNote, RefusedTable};
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
+pub use unrepresentable::{
+    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, install as install_unrepresentable,
+};
 
 /// What opening or registering a dump can refuse.
 #[derive(Debug, thiserror::Error)]
@@ -117,7 +121,8 @@ pub enum Error {
 ///
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
 /// unless it already carries one, and `dump`'s statistics are billed to it;
-/// and the [`PgDumpSettings`] `SET` moves, unless it already carries them.
+/// the [`PgDumpSettings`] `SET` moves, unless it already carries them; and
+/// `pgdump_unrepresentable` ([`install_unrepresentable`]).
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name; a table whose plan refuses is not listed, and is one
@@ -163,6 +168,7 @@ pub fn register_dump(
         }
     };
     dump.bill(&session_budget(ctx));
+    unrepresentable::install(ctx);
     dump.report(sink.as_ref());
     Ok(named
         .into_iter()

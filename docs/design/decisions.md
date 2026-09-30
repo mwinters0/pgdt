@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D100 -->
+<!-- decision-watermark: D101 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -419,9 +419,10 @@ Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mod
 `the_untyped_mode_compares_its_text_column_in_each_semantics_order`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
-### D53 The operator set is closed but for membership
+### D53 The operator set is closed but for membership and the unrepresentable test
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
 `Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
+`IS [NOT] UNREPRESENTABLE` is what the null mode forces, its NULL otherwise the dump's to every operator (D101).
 Rejected: an `IN` `PredicateOp`, every operator carrying a list; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner, short-circuit defined against the root
@@ -469,6 +470,15 @@ Rejected: a formatter per type in the provider, a second grammar to drift; pushi
 answered from a set with no `-0` made `0`; `Exact` where the library agrees with PostgreSQL, which answers an enum `<`
 in declaration order pushed and in label order kept; `Inexact`, promising a superset another semantics can break.
 Evidence: `datafusion-pgdump/tests/pushdown.rs`.
+
+### D101 The unrepresentable test reads the text against the declared type; DataFusion's is a scan's alone
+`IS [NOT] UNREPRESENTABLE` tests a field's text in the tiers its semantics reads (D98), whatever the mode or the column's resolution,
+two-valued; a group answers it off its own count (D97), and `SchemaMode::Strings` refuses it. `pgdump_unrepresentable(<column>)` is pushed
+`Exact`, and a plan in which any node but a scan holds it refuses at physical planning: a planner wrapped around the session's walks the
+optimized plan. Rejected: a table function listing each occurrence (no row identity joins back); a companion column (in every `SELECT *`,
+55.1 having no hidden columns); evaluating it in DataFusion (a NULL keeps no origin); refusing in `invoke` (execution, and never reached over
+no rows); an optimizer rule (sees a pass, not the plan); a physical rule (no expression walk over an `ExecutionPlan`). Code: `unrepresentable_tests`,
+`datafusion-pgdump`'s `unrepresentable::install`. Evidence: `the_unrepresentable_function_finds_what_the_null_mode_nulls`, `tests/pruning.rs`.
 
 ### D94 A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`
 Every producer re-checks its rows, so the scan answers `No` and only ever skips. The state is translated as a static filter is (D88), a part with no

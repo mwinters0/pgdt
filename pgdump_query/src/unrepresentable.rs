@@ -216,15 +216,22 @@ pub(crate) struct UnrepresentableRead {
 }
 
 impl UnrepresentableRead {
-    /// Whether `text`, one unescaped value of the column, is one this query
-    /// reads as NULL: one its front end cannot hold.
+    /// Whether `text`, one unescaped value of the column, is one the query's
+    /// front end cannot hold: what the null mode reads as NULL, and what
+    /// `IS UNREPRESENTABLE` matches.
     #[inline]
-    pub(crate) fn nulls(&self, text: &str) -> bool {
+    pub(crate) fn cannot_hold(&self, text: &str) -> bool {
         match self.tier.of(text) {
             Some(Format) => true,
             Some(Engine) => self.reach == Engine,
             None => false,
         }
+    }
+
+    /// How many of the values `count` counts are ones the query's front end
+    /// cannot hold.
+    pub(crate) fn counted(&self, count: Unrepresentable) -> u64 {
+        count.format + if self.reach == Engine { count.engine } else { 0 }
     }
 }
 
@@ -262,6 +269,32 @@ pub(crate) fn unrepresentable_reads(
     if mode != UnrepresentableMode::Null || (0..width).all(read_as_text) {
         return vec![None; width];
     }
+    let mut reads = unrepresentable_tests(header, metadata, database, counts, reach);
+    reads.resize(width, None);
+    for (i, read) in reads.iter_mut().enumerate() {
+        if read_as_text(i) {
+            *read = None;
+        }
+    }
+    reads
+}
+
+/// Per column of a block under `header`, in its own column order, **what
+/// `IS [NOT] UNREPRESENTABLE` tests its text by**
+/// (`docs/design/decisions.md`, "D101"): the declared type's tier test and the
+/// tiers `reach` names, whatever the query's mode or the column's resolution
+/// — `None` for a column whose declared type's leaves all hold every value,
+/// and for one whose block's `counts` say it holds none in those tiers, a
+/// test over either being `False` on every row. A block with no count is
+/// tested throughout. The leaves are resolved as [`unrepresentable_reads`]'s
+/// are.
+pub(crate) fn unrepresentable_tests(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    counts: Option<&[Unrepresentable]>,
+    reach: UnrepresentableTier,
+) -> Vec<Option<UnrepresentableRead>> {
     let declared = resolve_columns(
         &header.qualified_name(),
         &header.columns,
@@ -270,20 +303,15 @@ pub(crate) fn unrepresentable_reads(
         SchemaMode::Typed,
         &[],
     );
-    let tiers = column_tiers(&declared);
-    (0..width)
-        .map(|i| {
-            let tier = tiers.get(i)?.clone()?;
-            if read_as_text(i) {
-                return None;
-            }
+    column_tiers(&declared)
+        .into_iter()
+        .enumerate()
+        .map(|(i, tier)| {
+            let tier = tier?;
             let held = counts
                 .and_then(|counts| counts.get(i))
                 .is_some_and(|count| count.format == 0 && (reach == Format || count.engine == 0));
-            if held {
-                return None;
-            }
-            Some(UnrepresentableRead { tier, reach })
+            (!held).then_some(UnrepresentableRead { tier, reach })
         })
         .collect()
 }
@@ -297,6 +325,16 @@ pub(crate) fn scalar_tier(data_type: &DataType) -> Option<ColumnTier> {
         counter: Arc::new(Counter::new(vec![leaf], calendar_end())),
         column: 0,
     })
+}
+
+/// How a query reaching `reach` reads a scalar column the typed read emits as
+/// `data_type`, for a test holding no resolved schema.
+#[cfg(test)]
+pub(crate) fn scalar_read(
+    data_type: &DataType,
+    reach: UnrepresentableTier,
+) -> Option<UnrepresentableRead> {
+    scalar_tier(data_type).map(|tier| UnrepresentableRead { tier, reach })
 }
 
 impl Counter {

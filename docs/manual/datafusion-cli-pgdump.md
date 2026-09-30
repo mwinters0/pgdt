@@ -194,6 +194,17 @@ statistics answer or the rows are read, so a query answers the same however
 its partitions run. Each scan says on stderr how many a column it reads
 holds. `:strings` reads it as its text instead.
 
+**`pgdump_unrepresentable(column)` finds them**: `true` for a value the
+column's declared type accepts and DataFusion cannot hold, `false` for every
+other, a NULL the dump holds among them, so
+`WHERE v_date IS NULL AND NOT pgdump_unrepresentable(v_date)` keeps the dump's
+NULLs alone. It works in every `:unrepresentable=` mode, and only in a `WHERE`
+over a pgdump table's column — alone, under `NOT`, `AND` and `OR`, or beside
+terms the scan answers — since the scan answers it on the dump's text: a query
+that would have DataFusion evaluate it, in a `SELECT` list, a `GROUP BY` or a
+`WHERE` beside a term the scan leaves to DataFusion, is refused when it is
+planned. So is one under `:strings`, which reads no declared type.
+
 **`:unrepresentable=text` reads a column holding such a value as its text**,
 a `Utf8View` whatever its declared type, and every other column as its type;
 registration says which columns it read that way. The dump's text is kept, so

@@ -191,7 +191,21 @@ rows printed:
 ```sh
 pgdt query --source dump.sql --table public.t_date
 # warning: public.t_date.v_date holds 2 value(s) its type `date` cannot
-# hold, read as NULL
+# hold, read as NULL — `v_date IS UNREPRESENTABLE` tells them from the NULLs
+# the dump holds
+```
+
+**`column IS UNREPRESENTABLE` finds them**, telling a NULL made of such a
+value from one the dump holds, and `column IS NOT UNREPRESENTABLE` is every
+other row, a NULL among them. Both read no value, work under every
+`--unrepresentable` mode and alongside statistics, and are refused under
+`--schema-mode strings`, which reads no declared type to test against:
+
+```sh
+pgdt query --source dump.sql --table public.t_date \
+    --where 'v_date is null and not v_date is unrepresentable'
+# id	v_date
+# 7	\N
 ```
 
 **`--unrepresentable refuse` refuses instead**, before a row is read, a
@@ -375,7 +389,8 @@ nothing. There is no server answer to agree with.
 
 ### `=` and `!=` compare values, not spellings
 
-Every filter operator but `IS NULL`/`IS NOT NULL` reads your value with the
+Every filter operator but `IS [NOT] NULL` and `IS [NOT] UNREPRESENTABLE`
+reads your value with the
 column's own decoder, so `=` asks the question you meant rather than the one
 your keyboard typed:
 
@@ -451,9 +466,9 @@ space or an operator character is named:
 --filter '"is null" = alpha'    # a column named is null
 ```
 
-`column IS NULL` and `column IS NOT NULL` are matched only on a term with no
-operator in it, so `--filter 'note=this is null'` is an equality against the
-value `this is null`.
+`column IS [NOT] NULL` and `column IS [NOT] UNREPRESENTABLE` are matched only
+on a term with no operator in it, so `--filter 'note=this is null'` is an
+equality against the value `this is null`.
 
 `column IS DISTINCT FROM value` and `column IS NOT DISTINCT FROM value` are
 `!=` and `=` with NULL counted as a value rather than as unknown, which is the

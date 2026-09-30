@@ -18,11 +18,12 @@ Options:
       --filter <FILTER>            Single-column filter: `column=value`, `column!=value`,
                                    `column<value`, `column<=value`, `column>value`, `column>=value`,
                                    `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM
-                                   value`, `column IN (value, …)`, `column IS NULL`, or `column IS
-                                   NOT NULL`. Repeatable — every term must match, so the terms are
-                                   ANDed. `OR`, negation and grouping are `--where`, which takes an
-                                   expression over these same terms; giving both flags ANDs them
-                                   (`docs/design/decisions.md`, "Predicates")
+                                   value`, `column IN (value, …)`, `column IS [NOT] NULL`, or
+                                   `column IS [NOT] UNREPRESENTABLE`. Repeatable — every term must
+                                   match, so the terms are ANDed. `OR`, negation and grouping are
+                                   `--where`, which takes an expression over these same terms;
+                                   giving both flags ANDs them (`docs/design/decisions.md`,
+                                   "Predicates")
       --where <EXPR>               Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT`
                                    and parens, with `NOT` binding tighter than `AND` and `AND`
                                    tighter than `OR`. The keywords are case-insensitive and are
@@ -48,14 +49,15 @@ Options:
                                    declared type and the column's type cannot hold — `infinity` in a
                                    `date`, `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`:
                                    `null`, the default, reads each as NULL, for filtering too, and
-                                   says on stderr how many each column printed holds; `text` reads
-                                   each column holding one as its text, every other column keeping
-                                   its type, and filters it in its declared type's order; `refuse`
-                                   refuses, before a row is read, a query printing a column that
-                                   holds one, whatever its filter keeps, and compares one a filter
-                                   reads in PostgreSQL's order. `--schema-mode strings` reads every
-                                   value as its text [default: null] [possible values: null, text,
-                                   refuse]
+                                   says on stderr how many each column printed holds, the filter
+                                   term `column IS UNREPRESENTABLE` telling them from the NULLs the
+                                   dump holds; `text` reads each column holding one as its text,
+                                   every other column keeping its type, and filters it in its
+                                   declared type's order; `refuse` refuses, before a row is read, a
+                                   query printing a column that holds one, whatever its filter
+                                   keeps, and compares one a filter reads in PostgreSQL's order.
+                                   `--schema-mode strings` reads every value as its text [default:
+                                   null] [possible values: null, text, refuse]
       --chunk-size <BYTES>         Bytes requested per read from the dump — the same knob `parse`
                                    carries, and with the same measured answer behind its default
       --max-line-bytes <BYTES>     The longest line the scan accepts, in bytes — the same limit
@@ -67,10 +69,8 @@ Options:
                                    much was skipped, and stops reading data sorted on a column the
                                    filter bounds at its first row past the bound, saying once the
                                    rows are printed how much that left unread; `none` reads every
-                                   row. The rows printed are the same either way. A value that fails
-                                   to decode is reported only where its row is read, so `none` is
-                                   also how to find one in data left unread [default: all] [possible
-                                   values: all, none]
+                                   row. The rows printed are the same either way [default: all]
+                                   [possible values: all, none]
       --strict-identity[=<TERMS>]  Which weak signs of a source's identity must hold, as a
                                    comma-separated selection of `time` and `location`, or `advisory`
                                    or `none` alone; the flag alone is `time,location`. Left

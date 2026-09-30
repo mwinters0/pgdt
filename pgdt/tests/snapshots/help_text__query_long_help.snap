@@ -23,12 +23,17 @@ Options:
       --filter <FILTER>
           Single-column filter: `column=value`, `column!=value`, `column<value`, `column<=value`,
           `column>value`, `column>=value`, `column IS DISTINCT FROM value`, `column IS NOT DISTINCT
-          FROM value`, `column IN (value, …)`, `column IS NULL`, or `column IS NOT NULL`. Repeatable
-          — every term must match, so the terms are ANDed. `OR`, negation and grouping are
-          `--where`, which takes an expression over these same terms; giving both flags ANDs them
-          (`docs/design/decisions.md`, "Predicates").
+          FROM value`, `column IN (value, …)`, `column IS [NOT] NULL`, or `column IS [NOT]
+          UNREPRESENTABLE`. Repeatable — every term must match, so the terms are ANDed. `OR`,
+          negation and grouping are `--where`, which takes an expression over these same terms;
+          giving both flags ANDs them (`docs/design/decisions.md`, "Predicates").
           
-          Every operator but the two NULL tests compares **typed**: the filter's value is read with
+          `IS UNREPRESENTABLE` matches a value PostgreSQL accepts for the column's declared type and
+          the column's type cannot hold — what `--unrepresentable null` reads as NULL, which it so
+          tells apart from the NULLs the dump holds — in any `--unrepresentable` mode, and is
+          refused under `--schema-mode strings`, which reads no declared type.
+          
+          Every operator but those four tests compares **typed**: the filter's value is read with
           the column's own decoder, so a value that is not of that type is refused by name rather
           than matching nothing. The four ordering operators are additionally refused on a column
           whose type did not resolve, where `=`/`!=` compare as text; a nested column compares by
@@ -97,7 +102,8 @@ Options:
           What to do with a value PostgreSQL accepts for a column's declared type and the column's
           type cannot hold — `infinity` in a `date`, `NaN` in a `numeric(p,s)`, `24:00:00` in a
           `time`: `null`, the default, reads each as NULL, for filtering too, and says on stderr how
-          many each column printed holds; `text` reads each column holding one as its text, every
+          many each column printed holds, the filter term `column IS UNREPRESENTABLE` telling them
+          from the NULLs the dump holds; `text` reads each column holding one as its text, every
           other column keeping its type, and filters it in its declared type's order; `refuse`
           refuses, before a row is read, a query printing a column that holds one, whatever its
           filter keeps, and compares one a filter reads in PostgreSQL's order. `--schema-mode
@@ -119,9 +125,7 @@ Options:
           the table's data whose statistics prove no row in it satisfies the filter, and says on
           stderr how much was skipped, and stops reading data sorted on a column the filter bounds
           at its first row past the bound, saying once the rows are printed how much that left
-          unread; `none` reads every row. The rows printed are the same either way. A value that
-          fails to decode is reported only where its row is read, so `none` is also how to find one
-          in data left unread
+          unread; `none` reads every row. The rows printed are the same either way
           
           [default: all]
           [possible values: all, none]

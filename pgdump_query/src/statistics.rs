@@ -814,7 +814,7 @@ impl ColumnStatistics {
     }
 
     /// Group `group`'s count, zero where the block holds no such value.
-    fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
+    pub(crate) fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
         self.unrepresentable
             .as_ref()
             .and_then(|counts| counts.get(group))

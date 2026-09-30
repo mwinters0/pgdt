@@ -23,6 +23,8 @@ use pgdump_query::{
     ResolvedSchema,
 };
 
+use crate::unrepresentable::UNREPRESENTABLE_FUNCTION;
+
 /// `filter` as the library's tree over `table`'s columns, or `None` where some
 /// part of it has no library term that answers as DataFusion does.
 ///
@@ -30,9 +32,10 @@ use pgdump_query::{
 /// any of the eight comparing operators, either side first; `IS [NOT] NULL`;
 /// `BETWEEN`, which DataFusion evaluates as the two comparisons; `IN` over
 /// literals, a `NULL` among them, as one membership, but for a float column;
-/// and a boolean column standing alone or under `IS [NOT] TRUE|FALSE|UNKNOWN`.
-/// A column wrapped in a cast, a function or an arithmetic expression does
-/// not.
+/// a boolean column standing alone or under `IS [NOT] TRUE|FALSE|UNKNOWN`;
+/// and `pgdump_unrepresentable` over a bare column, any type, nested included,
+/// which only this translation answers ([`crate::unrepresentable`]). A column
+/// wrapped in a cast, a function or an arithmetic expression does not.
 pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdump_query::Expr> {
     use pgdump_query::Expr as L;
     Some(match filter {
@@ -61,6 +64,11 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdump_
         }
         Expr::IsNotFalse(inner) => {
             L::Term(boolean(inner, PredicateOp::IsDistinctFrom, Some(false), table)?)
+        }
+        Expr::ScalarFunction(call) if call.name() == UNREPRESENTABLE_FUNCTION => {
+            let [Expr::Column(column)] = call.args.as_slice() else { return None };
+            let index = table.schema.index_of(&column.name).ok()?;
+            L::Term(null_term(index, PredicateOp::IsUnrepresentable, table))
         }
         // A boolean column as the whole predicate is its own truth: `flag` is
         // `flag = true` in three values, a NULL unknown under both.
@@ -158,7 +166,8 @@ fn null_test(column: &Expr, op: PredicateOp, table: &ResolvedSchema) -> Option<P
     Some(null_term(table.schema.index_of(&column.name).ok()?, op, table))
 }
 
-/// `op`, `IS NULL` or `IS NOT NULL`, on column `index` of `table`.
+/// `op`, one of the operators taking no value
+/// ([`PredicateOp::takes_no_value`]), on column `index` of `table`.
 pub(crate) fn null_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Predicate {
     Predicate { column: table.schema.field(index).name().clone(), op, value: None }
 }

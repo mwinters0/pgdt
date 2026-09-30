@@ -1037,3 +1037,182 @@ fn every_extreme_is_held_by_arrow_or_recorded() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// One query of `pgdump_unrepresentable`, and the ids it answers in every
+/// mode: the function tests the text against the declared type, whatever
+/// the column is read as.
+struct Tested {
+    sql: &'static str,
+    ids: &'static [&'static str],
+    /// As [`Case::pick`]'s.
+    pick: Option<usize>,
+}
+
+const fn tested(sql: &'static str, ids: &'static [&'static str]) -> Tested {
+    Tested { sql, ids, pick: None }
+}
+
+/// `t_extremes.v_date` holds both infinities, past Arrow's format spec, and
+/// two dates past `chrono`'s calendar, which DataFusion cannot display either
+/// (ids 2 and 15); `t_extremes_nested`'s first row holds one in each column,
+/// its second an `infinity` in a composite's `text` field, which is text; and
+/// `t_timestamp.v_ts` holds both infinities and a timestamp past `i64`.
+const TESTED: &[Tested] = &[
+    tested(
+        "SELECT id FROM t_extremes WHERE pgdump_unrepresentable(v_date)",
+        &["2", "3", "4", "15"],
+    ),
+    tested(
+        "SELECT id FROM t_extremes WHERE NOT pgdump_unrepresentable(v_date) AND id <= 16",
+        &["1", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "16"],
+    ),
+    // The dump's NULL alone: the null mode's are the function's.
+    tested(
+        "SELECT id FROM t_date WHERE v_date IS NULL AND NOT pgdump_unrepresentable(v_date)",
+        &["7"],
+    ),
+    tested("SELECT id FROM t_extremes_nested WHERE pgdump_unrepresentable(v_dated)", &["1"]),
+    tested(
+        "SELECT id FROM t_extremes_nested WHERE pgdump_unrepresentable(v_interval_array) OR id = 3",
+        &["1", "3"],
+    ),
+    // Beneath a join, which hands the probe side a dynamic filter.
+    tested(
+        "SELECT d.id FROM t_date d JOIN t_timestamp t ON t.id = d.id \
+         WHERE pgdump_unrepresentable(t.v_ts)",
+        &["1", "2", "7"],
+    ),
+    // A `LIMIT` one partition meets first.
+    Tested {
+        sql: "SELECT id FROM t_extremes WHERE pgdump_unrepresentable(v_ts)",
+        ids: &["2", "3", "4", "12", "13", "15"],
+        pick: Some(2),
+    },
+];
+
+/// **`pgdump_unrepresentable` finds exactly the values the null mode reads
+/// as NULL, in every mode and every configuration**, pushed `Exact` into the
+/// scan wherever it stands under `NOT`, `AND` and `OR` beside terms the scan
+/// answers — so its outcome, too, never depends on which rows a scan read
+/// (`docs/design/decisions.md`, "D101").
+#[tokio::test]
+async fn the_unrepresentable_function_finds_what_the_null_mode_nulls() {
+    let mut wrong = Vec::new();
+    for major in MAJORS {
+        let scratch = tempfile::tempdir().unwrap();
+        for statistics in [Statistics::Gathered, Statistics::Absent] {
+            let copy = parsed_copy(&fixture(major), scratch.path(), statistics).await;
+            for mode in MODES {
+                let dump = PgDump::open(copy.to_str().unwrap(), options(mode)).await.unwrap();
+                for config in every_config().into_iter().filter(|c| c.statistics == statistics) {
+                    let ctx = session(config);
+                    register(&ctx, &dump);
+                    for test in TESTED {
+                        let mut ids: Vec<String> = test.ids.iter().map(|s| s.to_string()).collect();
+                        ids.sort();
+                        let expected = Expected::Rows {
+                            types: vec![DataType::Int32],
+                            rows: ids,
+                            pick: test.pick,
+                        };
+                        let sql = match test.pick {
+                            Some(n) => format!("{} LIMIT {n}", test.sql),
+                            None => test.sql.to_string(),
+                        };
+                        let (got, _) = outcome(&ctx, &sql).await;
+                        if !expected.met_by(&got) {
+                            wrong.push(format!(
+                                "{major} {config} {mode:?}: `{sql}` gave {got}, expected {expected}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The message of `sql`'s refusal in `ctx`, which must come before a row is
+/// read.
+async fn refused_at_planning(ctx: &SessionContext, sql: &str) -> DataFusionError {
+    let planned = match ctx.sql(sql).await {
+        Ok(frame) => frame.create_physical_plan().await,
+        Err(err) => Err(err),
+    };
+    planned.err().unwrap_or_else(|| panic!("`{sql}` planned"))
+}
+
+/// **Wherever DataFusion would have to evaluate the function, the plan
+/// refuses**: projected, under an expression no scan answers, over another
+/// source — a NULL there no longer saying whether it was one — and under the
+/// strings schema mode the library's own refusal, there being no declared
+/// type to test against.
+#[tokio::test]
+async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let ctx = SessionContext::new();
+    register(&ctx, &dump);
+    let memory = MemTable::try_new(
+        Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, true)])),
+        vec![vec![]],
+    )
+    .unwrap();
+    ctx.register_table("memory", Arc::new(memory)).unwrap();
+    for sql in [
+        "SELECT pgdump_unrepresentable(v_date) FROM t_date",
+        "SELECT id FROM t_date WHERE pgdump_unrepresentable(v_date) OR id + 1 = 3",
+        "SELECT COUNT(*) FROM t_date GROUP BY pgdump_unrepresentable(v_date)",
+        "SELECT x FROM memory WHERE pgdump_unrepresentable(x)",
+        "SELECT id FROM t_date WHERE id IN \
+         (SELECT x FROM memory WHERE pgdump_unrepresentable(x))",
+    ] {
+        let err = refused_at_planning(&ctx, sql).await.to_string();
+        assert!(err.contains("DataFusion would have to evaluate it"), "`{sql}`: {err}");
+    }
+
+    let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
+    let dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
+    let ctx = SessionContext::new();
+    register(&ctx, &dump);
+    let err =
+        refused_at_planning(&ctx, "SELECT id FROM t_date WHERE pgdump_unrepresentable(v_date)")
+            .await;
+    let mut cause: Option<&dyn std::error::Error> = Some(&err);
+    let mut untyped = false;
+    while let Some(err) = cause {
+        untyped |= matches!(
+            err.downcast_ref(),
+            Some(pgdump_query::Error::UnrepresentableTestUntyped { .. })
+        );
+        cause = err.source();
+    }
+    assert!(untyped, "{err}");
+}
+
+/// **The null mode's warning names the function**, the one way to tell its
+/// NULLs from the dump's in this front end.
+#[tokio::test]
+async fn the_null_mode_s_warning_names_the_function() {
+    let scratch = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = {
+        let heard = Arc::clone(&heard);
+        move |finding: &dyn Finding| heard.lock().unwrap().push(finding.message())
+    };
+    let ctx = SessionContext::new();
+    register_dump(&ctx, Some("dump"), &dump, Arc::new(sink)).unwrap();
+    ctx.sql("SELECT v_date FROM dump.public.t_date").await.unwrap().collect().await.unwrap();
+    let heard = heard.lock().unwrap();
+    assert!(
+        heard.iter().any(|message| message.contains(
+            "holds 2 value(s) its type `date` cannot hold, read as NULL — \
+             `pgdump_unrepresentable(v_date)` tells them from the NULLs the dump holds"
+        )),
+        "{heard:?}"
+    );
+}

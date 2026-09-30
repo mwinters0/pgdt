@@ -462,7 +462,12 @@ async fn check_fixture(
 
         let (mut terms, mut arrow_terms) = (Vec::new(), Vec::new());
         for (i, name) in header.columns.iter().enumerate() {
-            for op in [PredicateOp::IsNull, PredicateOp::IsNotNull] {
+            for op in [
+                PredicateOp::IsNull,
+                PredicateOp::IsNotNull,
+                PredicateOp::IsUnrepresentable,
+                PredicateOp::IsNotUnrepresentable,
+            ] {
                 terms.push(term(name, op, None));
                 arrow_terms.push(term(name, op, None));
             }

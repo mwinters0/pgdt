@@ -98,6 +98,7 @@ use crate::statistics::{
 use crate::summary::partition_orders;
 use crate::unrepresentable::{
     UnrepresentableMode, UnrepresentableRead, counter_for, unrepresentable_reads,
+    unrepresentable_tests,
 };
 use crate::{Error, Result};
 
@@ -218,6 +219,10 @@ fn resolve_loosened(
             .collect()
     };
     let leaf = match filter {
+        // No producer states one, and a block reading a state holds no test
+        // for it to read (`resolve_for_query`'s `testing`), so it stands as
+        // whatever keeps every row.
+        Expr::Term(predicate) if predicate.op.tests_unrepresentable() => None,
         Expr::Term(predicate) => column_position(resolved, &predicate.column).and_then(|index| {
             resolve_term(predicate, index, resolved, header_offset, semantics)
                 .ok()
@@ -363,6 +368,8 @@ fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
                 PredicateOp::Ge => 7u8,
                 PredicateOp::IsDistinctFrom => 8u8,
                 PredicateOp::IsNotDistinctFrom => 9u8,
+                PredicateOp::IsUnrepresentable => 10u8,
+                PredicateOp::IsNotUnrepresentable => 11u8,
             }
             .hash(hasher);
             term.value.hash(hasher);
@@ -2554,7 +2561,13 @@ fn read_as_null(
     columns
         .into_iter()
         .map(|MaterializedUnrepresentable { table, column, declared_type, values }| PlanNote {
-            kind: PlanNoteKind::ReadAsNull { table, column, declared_type, values },
+            kind: PlanNoteKind::ReadAsNull {
+                table,
+                column,
+                declared_type,
+                values,
+                semantics: query_options.semantics,
+            },
             levers: Vec::new(),
         })
         .collect()
@@ -2638,12 +2651,14 @@ fn resolve_for_query(
         query_options.semantics,
     )?;
     let unrepresentable = query_reads(header, metadata, database, &full, counts, query_options);
+    let tests = query_tests(header, metadata, database, counts, query_options)?;
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
     // projection dropped.
     let filter =
         resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?
-            .reading(&unrepresentable);
+            .reading(&unrepresentable)
+            .testing(&tests);
     let notes = filter.comparison_notes();
     let projection = query_options.projection.as_deref().unwrap_or(&table.order);
     let (resolved, field_targets) = project(&full, Some(projection), header_offset)?;
@@ -2676,6 +2691,30 @@ fn query_reads(
         query_options.unrepresentable,
         query_options.unrepresentable_reach(),
     )
+}
+
+/// What `query_options`' unrepresentable tests test each column's text by
+/// ([`unrepresentable_tests`]), and nothing where its filter holds none — or
+/// its refusal, under [`SchemaMode::Strings`], which resolves no declared type
+/// for a test to read (`docs/design/decisions.md`, "D101").
+fn query_tests(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    counts: Option<&[Unrepresentable]>,
+    query_options: &QueryOptions,
+) -> Result<Vec<Option<UnrepresentableRead>>> {
+    let Some(test) = query_options.filter.first_unrepresentable_test() else {
+        return Ok(Vec::new());
+    };
+    if query_options.schema_mode == SchemaMode::Strings {
+        return Err(Error::UnrepresentableTestUntyped {
+            column: test.column.clone(),
+            op: test.op.symbol(),
+        });
+    }
+    let reach = query_options.unrepresentable_reach();
+    Ok(unrepresentable_tests(header, metadata, database, counts, reach))
 }
 
 /// **The filter is resolved at plan time**, once per matched block and
@@ -3422,7 +3461,17 @@ pub enum PlanNoteKind {
     /// count over every block of the table, in the tiers the query's semantics
     /// cannot hold, so it does not move with a `LIMIT`, a pruned group or a
     /// dynamic filter's skip, which decide only how many of them a run met.
-    ReadAsNull { table: String, column: String, declared_type: String, values: u64 },
+    ///
+    /// The sentence names the filter term that tells those values from the
+    /// NULLs the dump holds, in the spelling of the front end `semantics`
+    /// names (`docs/design/decisions.md`, "D101").
+    ReadAsNull {
+        table: String,
+        column: String,
+        declared_type: String,
+        values: u64,
+        semantics: ComparisonSemantics,
+    },
 }
 
 /// One block a [`TableStream`] replayed under an early stop — the filter, or
@@ -3657,10 +3706,18 @@ impl Finding for PlanNote {
                      {skipped_bytes} of the {bytes} byte(s) of rows this table holds are not read"
                 )
             }
-            PlanNoteKind::ReadAsNull { table, column, declared_type, values } => format!(
-                "{table}.{column} holds {values} value(s) its type `{declared_type}` cannot hold, \
-                 read as NULL"
-            ),
+            PlanNoteKind::ReadAsNull { table, column, declared_type, values, semantics } => {
+                let term = match semantics {
+                    ComparisonSemantics::Postgres => format!("`{column} IS UNREPRESENTABLE`"),
+                    ComparisonSemantics::DataFusion => {
+                        format!("`pgdump_unrepresentable({column})`")
+                    }
+                };
+                format!(
+                    "{table}.{column} holds {values} value(s) its type `{declared_type}` cannot \
+                     hold, read as NULL — {term} tells them from the NULLs the dump holds"
+                )
+            }
         }
     }
 

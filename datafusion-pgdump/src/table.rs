@@ -128,24 +128,29 @@ impl TableProvider for PgDumpTable {
     /// scan will ask it to; `Unsupported` for every other
     /// ([`crate::pushdown`]). Resolving is the plan's own check, over every
     /// block, and reads no byte of the dump.
+    ///
+    /// **A filter holding `pgdump_unrepresentable` that translates and does
+    /// not resolve is the plan's refusal**, since no other node can answer it
+    /// (`docs/design/decisions.md`, "D101").
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> Result<Vec<TableProviderFilterPushDown>> {
-        Ok(filters
+        filters
             .iter()
             .map(|filter| {
-                let answered = translate(filter, &self.resolved).is_some_and(|filter| {
-                    let options = QueryOptions { filter, ..query_options(&self.dump) };
-                    pgdump_query::table_schema(self.dump.index(), &self.name, &options).is_ok()
-                });
-                if answered {
-                    TableProviderFilterPushDown::Exact
-                } else {
-                    TableProviderFilterPushDown::Unsupported
+                let Some(translated) = translate(filter, &self.resolved) else {
+                    return Ok(TableProviderFilterPushDown::Unsupported);
+                };
+                let tests = translated.tests_unrepresentable();
+                let options = QueryOptions { filter: translated, ..query_options(&self.dump) };
+                match pgdump_query::table_schema(self.dump.index(), &self.name, &options) {
+                    Ok(_) => Ok(TableProviderFilterPushDown::Exact),
+                    Err(err) if tests => Err(external(err)),
+                    Err(_) => Ok(TableProviderFilterPushDown::Unsupported),
                 }
             })
-            .collect())
+            .collect()
     }
 
     /// The replay planned now, against the session's `target_partitions` and

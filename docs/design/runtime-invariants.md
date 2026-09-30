@@ -1097,3 +1097,39 @@ grep -n 'MAX_YEAR: i32' ~/.cargo/registry/src/*/chrono-$(cargo tree -i chrono -e
 ```
 
 The test passes only while ids 14 and 15 sit either side of the bound.
+
+## RT22 — DataFusion plans physically the optimized plan, from which an `Exact` filter is gone
+
+**Claim.** `SessionState::create_physical_plan` optimizes a logical plan and
+hands the result to the session's `QueryPlanner`; and a conjunct of a
+`WHERE` a `TableProvider` answers `Exact` is moved into its `TableScan`'s
+`filters` and left in no `Filter` above it, so no node DataFusion evaluates
+holds it.
+
+**Proof.** DataFusion 55.1.0: `datafusion/core/src/execution/session_state.rs`,
+`create_physical_plan` (`self.optimize` then `self.query_planner`);
+`datafusion/optimizer/src/push_down_filter.rs`, the `TableScan` arm, which keeps
+above the scan only the conjuncts answered `Unsupported` or `Inexact`, and the
+volatile and subquery-holding ones. Observed by
+`the_unrepresentable_function_finds_what_the_null_mode_nulls`
+(`datafusion-pgdump/tests/unrepresentable.rs`), which plans only where no node
+but a scan holds the function.
+
+**Scope limit.** Plans reaching physical planning through the session's own
+`create_physical_plan`, which `DataFrame` and SQL use; a caller driving a
+`PhysicalPlanner` by hand is not claimed.
+
+**Verified against:** DataFusion 55.1.0.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D101" — `pgdump_unrepresentable`
+refused by a planner wrapped around the session's, which walks the optimized
+plan for any node but a scan holding it.
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p datafusion-pgdump --test unrepresentable unrepresentable_function
+```
+
+Both tests pass only while the function is planned where a scan answers it
+and refused wherever another node holds it.

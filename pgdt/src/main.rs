@@ -898,13 +898,21 @@ enum Command {
         /// `column<value`, `column<=value`, `column>value`,
         /// `column>=value`, `column IS DISTINCT FROM value`,
         /// `column IS NOT DISTINCT FROM value`, `column IN (value, …)`,
-        /// `column IS NULL`, or `column IS NOT NULL`. Repeatable — every term
+        /// `column IS [NOT] NULL`, or `column IS [NOT] UNREPRESENTABLE`.
+        /// Repeatable — every term
         /// must match, so the terms are ANDed. `OR`, negation and grouping
         /// are `--where`, which takes an expression over these same terms;
         /// giving both flags ANDs them (`docs/design/decisions.md`,
         /// "Predicates").
         ///
-        /// Every operator but the two NULL tests compares **typed**: the
+        /// `IS UNREPRESENTABLE` matches a value PostgreSQL accepts for the
+        /// column's declared type and the column's type cannot hold — what
+        /// `--unrepresentable null` reads as NULL, which it so tells apart
+        /// from the NULLs the dump holds — in any `--unrepresentable` mode,
+        /// and is refused under `--schema-mode strings`, which reads no
+        /// declared type.
+        ///
+        /// Every operator but those four tests compares **typed**: the
         /// filter's value is read with the column's own decoder, so a value
         /// that is not of that type is refused by name rather than matching
         /// nothing. The four ordering operators are additionally refused on a
@@ -984,7 +992,9 @@ enum Command {
         /// type and the column's type cannot hold — `infinity` in a `date`,
         /// `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`: `null`, the
         /// default, reads each as NULL, for filtering too, and says on stderr
-        /// how many each column printed holds; `text` reads each column
+        /// how many each column printed holds, the filter term
+        /// `column IS UNREPRESENTABLE` telling them from the NULLs the dump
+        /// holds; `text` reads each column
         /// holding one as its text, every other column keeping its type, and
         /// filters it in its declared type's order; `refuse` refuses, before
         /// a row is read, a query printing a column that holds one, whatever
@@ -1006,9 +1016,7 @@ enum Command {
         /// skipped, and stops reading data sorted on a column the filter
         /// bounds at its first row past the bound, saying once the rows are
         /// printed how much that left unread; `none` reads every row. The
-        /// rows printed are the same either way. A value that fails to decode
-        /// is reported only where its row is read, so `none` is also how to
-        /// find one in data left unread.
+        /// rows printed are the same either way.
         #[arg(long, value_name = "USE", value_enum, default_value_t)]
         statistics: QueryStatistics,
         #[command(flatten)]
@@ -1449,7 +1457,7 @@ pub(crate) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
         .or_else(|| in_at(bytes, i))
 }
 
-/// What [`split_filter_op`] found. `NoOperator` is the `IS NULL` forms' cue,
+/// What [`split_filter_op`] found. `NoOperator` is the worded `IS` tests' cue,
 /// not a fault: they are the fallback, tried only on a term with no operator
 /// outside quotes.
 enum FilterSplit<'a> {
@@ -1492,8 +1500,8 @@ fn dequote(part: &str) -> Option<Result<String, char>> {
 /// outside the quotes trimmed off, and a quoted part taken exactly as written.
 /// `what` names the side for the error message. Trimming is `str::trim`,
 /// Unicode's whitespace; the worded operators and the keyword boundaries
-/// separate words by ASCII whitespace alone, and the `IS NULL` forms are the
-/// literal suffixes `strip_ci_suffix` matches.
+/// separate words by ASCII whitespace alone, and the NULL and unrepresentable
+/// tests are the literal suffixes `strip_ci_suffix` matches.
 fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     let part = part.trim();
     match dequote(part) {
@@ -1523,9 +1531,10 @@ fn parse_filter_flag(spec: &str) -> Result<Expr> {
 /// a repeated `--filter` builds, and equally the **leaf** of a `--where`
 /// expression ([`where_expr`]): `column<op>value` for any of the six
 /// comparison spellings, `column IS [NOT] DISTINCT FROM value`,
-/// `column IN (value, …)`, or `column IS NULL` / `column IS NOT NULL`, the
-/// worded forms matched case-insensitively (`docs/design/decisions.md`,
-/// "D60").
+/// `column IN (value, …)`, `column IS NULL` / `column IS NOT NULL`, or
+/// `column IS UNREPRESENTABLE` / `column IS NOT UNREPRESENTABLE`, the worded
+/// forms matched case-insensitively (`docs/design/decisions.md`, "D60",
+/// "D101").
 ///
 /// **`IN` has no NULL**: its values are read as `=`'s are, so `null` in the
 /// list is the text `null`, and `c in (a, b)` means `c=a or c=b` exactly —
@@ -1550,9 +1559,12 @@ fn parse_filter(spec: &str) -> Result<Expr> {
         FilterSplit::UnbalancedQuote(quote) => Err(unbalanced_quote("column name", quote, spec)),
         FilterSplit::NoOperator => {
             let trimmed = spec.trim();
-            for (suffix, op) in
-                [("is not null", PredicateOp::IsNotNull), ("is null", PredicateOp::IsNull)]
-            {
+            for (suffix, op) in [
+                ("is not null", PredicateOp::IsNotNull),
+                ("is null", PredicateOp::IsNull),
+                ("is not unrepresentable", PredicateOp::IsNotUnrepresentable),
+                ("is unrepresentable", PredicateOp::IsUnrepresentable),
+            ] {
                 if let Some(column) = strip_ci_suffix(trimmed, suffix) {
                     return Ok(Expr::Term(Predicate {
                         column: filter_part(column, "column name", spec)?,
@@ -1562,7 +1574,7 @@ fn parse_filter(spec: &str) -> Result<Expr> {
                 }
             }
             anyhow::bail!(
-                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IN (value, …)`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IN (value, …)`, `column IS [NOT] NULL`, or `column IS [NOT] UNREPRESENTABLE`, got `{spec}`"
             )
         }
     }
@@ -1661,6 +1673,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::Unrepresentable { .. }
+        | Lib::UnrepresentableTestUntyped { .. }
         | Lib::FieldRender { .. } => false,
     }
 }
@@ -1777,13 +1790,15 @@ fn announce_early_stops(streams: &[pgdump_query::TableStream<'_>]) {
     }
 }
 
-/// Case-insensitive suffix strip, for matching `IS NULL`/`IS NOT NULL` at
-/// the end of a `--filter` argument regardless of how the user cased it.
+/// Case-insensitive suffix strip, for matching `IS [NOT] NULL` and
+/// `IS [NOT] UNREPRESENTABLE` at the end of a `--filter` argument regardless
+/// of how the user cased it.
 ///
 /// Deficiency register: `deficiency: KD52` — the suffix is matched as
 /// written, one space between its words and no boundary before `is`, so
 /// `x is  null` is refused as a term with no operator and `xis null` is read
-/// as `x IS NULL`, under `--filter` and every `--where` leaf alike. **(c)
+/// as `x IS NULL`, and so for each of the four, under `--filter` and every
+/// `--where` leaf alike. **(c)
 /// unowned**; closing it means the worded operators' own word boundaries
 /// here.
 fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
@@ -4434,6 +4449,14 @@ mod tests {
             ("created_at".into(), PredicateOp::IsNotNull, None)
         );
         assert_eq!(ok(r#" "my column" Is Null "#).0, "my column");
+        assert_eq!(
+            ok("v_date IS UNREPRESENTABLE"),
+            ("v_date".into(), PredicateOp::IsUnrepresentable, None)
+        );
+        assert_eq!(
+            ok("v_date is not unrepresentable"),
+            ("v_date".into(), PredicateOp::IsNotUnrepresentable, None)
+        );
         assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq, Some("x".into())));
     }
 

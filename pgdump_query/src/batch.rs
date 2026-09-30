@@ -1073,7 +1073,7 @@ impl RowBatcher {
             return Ok(());
         };
         let read = unrepresentable[col].as_ref();
-        if read.is_some_and(|read| read.nulls(&text)) {
+        if read.is_some_and(|read| read.cannot_hold(&text)) {
             append_null(builder);
             return Ok(());
         }

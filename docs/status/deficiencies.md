@@ -332,7 +332,7 @@ than reading as a phase nobody has sliced.
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
   streams. Detail: `pgdump_query/src/io.rs`.
 
-- **KD52** — a `--filter` term or `--where` leaf ending `is null` or `is not
-  null` is matched as that literal suffix, so `xis null` asks for `x IS NULL`
-  and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
+- **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
+  `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
+  asks for `x IS NULL` and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
   either. Detail: `pgdt/src/main.rs`.

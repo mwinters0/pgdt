@@ -255,6 +255,15 @@ pub enum Error {
         "{table}.{column} holds {values} `{declared_type}` value(s) the column's Arrow type cannot hold, and this query refuses a column holding one — read them in the null mode, as NULL, or in the text mode, the column as its text, or leave the column unmaterialized, read only by a filter the library answers"
     )]
     Unrepresentable { table: String, column: String, declared_type: String, values: u64 },
+    /// `IS [NOT] UNREPRESENTABLE` in a query under
+    /// [`crate::SchemaMode::Strings`], which resolves no declared type: every
+    /// value is text its column holds, and no NULL was made of one, so there
+    /// is nothing for the test to tell apart (`docs/design/decisions.md`,
+    /// "D101"). Raised before a row is read.
+    #[error(
+        "`{column} {op}` asks whether a value is one its declared type accepts and its column's type cannot hold, and this query reads every column as its text, resolving no declared type — ask it of a query in the typed schema mode"
+    )]
+    UnrepresentableTestUntyped { column: String, op: &'static str },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
     /// refuses rather than writing something the file could not have held

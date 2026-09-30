@@ -7,6 +7,7 @@ use arrow::datatypes::i256;
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
 use crate::diagnostic::{Finding, Severity};
+use crate::index::Unrepresentable;
 #[cfg(feature = "introspect")]
 use crate::instrument::timed_span;
 use crate::instrument::{EvaluationPart as Part, timed};
@@ -21,8 +22,8 @@ use crate::{Error, Result};
 
 /// Comparison operator for [`Predicate`].
 ///
-/// Every operator but the two NULL tests compares typed, through the column's
-/// own [`ComparisonPlan`]: the four ordering operators decode both sides and
+/// Every operator but the NULL and unrepresentable tests compares typed,
+/// through the column's own [`ComparisonPlan`]: the four ordering operators decode both sides and
 /// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
 /// that gives the server's answer for that column ([`equality_comparison`]).
 /// A nested column with a plan is compared structurally under every operator,
@@ -36,11 +37,25 @@ use crate::{Error, Result};
 pub enum PredicateOp {
     Eq,
     Ne,
-    /// `col IS NULL` — matches only a NULL field (`\N`). Rounds out the NULL
+    /// `col IS NULL` — matches a NULL field (`\N`), and under
+    /// [`crate::UnrepresentableMode::Null`] a value the query reads as NULL,
+    /// which [`Self::IsUnrepresentable`] tells apart. Rounds out the NULL
     /// semantics `Eq`/`Ne` deliberately can't express (see [`Predicate::value`]).
     IsNull,
-    /// `col IS NOT NULL` — matches every non-NULL field.
+    /// `col IS NOT NULL` — matches every field [`Self::IsNull`] does not.
     IsNotNull,
+    /// `col IS UNREPRESENTABLE` — matches a value PostgreSQL accepts for the
+    /// column's **declared** type and the query's front end cannot hold
+    /// (`docs/design/decisions.md`, "D101"): past Arrow's format spec in
+    /// PostgreSQL's semantics, past the engine's calendar too in DataFusion's
+    /// — exactly the values [`crate::UnrepresentableMode::Null`] reads as
+    /// NULL there. Two-valued, as `IsNull` is, and takes no value; answered
+    /// under every [`crate::UnrepresentableMode`], and refused under
+    /// [`crate::SchemaMode::Strings`], which reads no declared type.
+    IsUnrepresentable,
+    /// `col IS NOT UNREPRESENTABLE` — matches every field
+    /// [`Self::IsUnrepresentable`] does not, a NULL field among them.
+    IsNotUnrepresentable,
     Lt,
     Le,
     Gt,
@@ -77,7 +92,23 @@ impl PredicateOp {
             Self::Ge => ">=",
             Self::IsDistinctFrom => "IS DISTINCT FROM",
             Self::IsNotDistinctFrom => "IS NOT DISTINCT FROM",
+            Self::IsUnrepresentable => "IS UNREPRESENTABLE",
+            Self::IsNotUnrepresentable => "IS NOT UNREPRESENTABLE",
         }
+    }
+
+    /// Whether this operator reads no comparison value: the NULL tests and
+    /// the unrepresentable tests.
+    pub fn takes_no_value(self) -> bool {
+        matches!(
+            self,
+            Self::IsNull | Self::IsNotNull | Self::IsUnrepresentable | Self::IsNotUnrepresentable
+        )
+    }
+
+    /// Whether this is one of the two unrepresentable tests.
+    pub fn tests_unrepresentable(self) -> bool {
+        matches!(self, Self::IsUnrepresentable | Self::IsNotUnrepresentable)
     }
 }
 
@@ -85,9 +116,10 @@ impl PredicateOp {
 /// of an [`Expr`] — a query carries one expression and keeps a row only if
 /// its root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
 /// matched against the queried table's column names, the `COPY` header's
-/// list. `value` is `None` for `IsNull`/`IsNotNull`, which need no
-/// comparison value; both parsers give one for every other operator, and a
-/// `None` there is read as the empty value.
+/// list. `value` is `None` for the NULL and unrepresentable tests, which need
+/// no comparison value ([`PredicateOp::takes_no_value`]); both parsers give
+/// one for every other operator, and a `None` there is read as the empty
+/// value.
 ///
 /// `value` is read with the column's own decoder wherever the register gives
 /// the column a comparison, whatever the operator, once when the block's schema
@@ -100,10 +132,11 @@ impl PredicateOp {
 /// ([`equality_comparison`]).
 ///
 /// A NULL field is [`Truth::Unknown`] under every comparing operator, and a
-/// row survives only where the root is `True`. The four operators that are
+/// row survives only where the root is `True`. The operators that are
 /// two-valued on a NULL field are `IsNull`/`IsNotNull`, which ask about the
-/// NULL directly, and `IsDistinctFrom`/`IsNotDistinctFrom`, which count it as
-/// a value (`docs/design/decisions.md`, "D53").
+/// NULL directly, `IsUnrepresentable`/`IsNotUnrepresentable`, which ask of a
+/// field's text, and `IsDistinctFrom`/`IsNotDistinctFrom`, which count a NULL
+/// as a value (`docs/design/decisions.md`, "D53").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
@@ -196,6 +229,26 @@ impl Expr {
     /// Over an empty iterator it is the filter that keeps every row.
     pub fn all(terms: impl IntoIterator<Item = Predicate>) -> Self {
         Self::And(terms.into_iter().map(Self::Term).collect())
+    }
+}
+
+impl Expr {
+    /// Whether this tree holds an unrepresentable test
+    /// ([`PredicateOp::tests_unrepresentable`]).
+    pub fn tests_unrepresentable(&self) -> bool {
+        self.first_unrepresentable_test().is_some()
+    }
+
+    /// The first unrepresentable test in this tree, left to right.
+    pub(crate) fn first_unrepresentable_test(&self) -> Option<&Predicate> {
+        match self {
+            Self::Term(predicate) => predicate.op.tests_unrepresentable().then_some(predicate),
+            Self::In(_) => None,
+            Self::And(children) | Self::Or(children) => {
+                children.iter().find_map(Self::first_unrepresentable_test)
+            }
+            Self::Not(inner) => inner.first_unrepresentable_test(),
+        }
     }
 }
 
@@ -2306,19 +2359,25 @@ impl BelievedStatistics {
 pub(crate) struct ResolvedTerm {
     op: PredicateOp,
     index: usize,
-    /// `None` for `IS NULL`/`IS NOT NULL`, the two operators that compare
-    /// nothing.
+    /// `None` for the NULL and unrepresentable tests, the four operators that
+    /// compare nothing.
     compared: Option<ComparedTerm>,
     /// How the query reads a value of this column its type cannot hold, where
     /// the block's column can hold one ([`ResolvedExpr::reading`]).
     unrepresentable: Option<UnrepresentableRead>,
+    /// What an unrepresentable test tests its column's text by, where the
+    /// block's count says the column holds such a value in the tiers the
+    /// query's front end reads; `None` for every other operator, and for a
+    /// test over a column holding none, which is `False` on every row
+    /// (`crate::unrepresentable::unrepresentable_tests`).
+    tested: Option<UnrepresentableRead>,
 }
 
 impl ResolvedTerm {
     /// This term's divergences from PostgreSQL's own comparison. Empty for
-    /// the two NULL tests, and for every term whose column answers this
-    /// operator the way the server does; more than one only for a nested
-    /// column with more than one diverging position.
+    /// the operators taking no value, and for every term whose column answers
+    /// this operator the way the server does; more than one only for a
+    /// nested column with more than one diverging position.
     pub(crate) fn comparison_notes(&self) -> Vec<ComparisonNote> {
         let Some(compared) = self.compared.as_ref() else { return Vec::new() };
         compared
@@ -2375,7 +2434,9 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// [`ResolvedSchema`], at `index` — the column's position, already looked up
 /// by the caller.
 ///
-/// The two NULL tests need nothing. Every other operator reads the column's
+/// The NULL and unrepresentable tests need nothing here, the latter's test
+/// being the block's to hand it ([`ResolvedExpr::testing`]). Every other
+/// operator reads the column's
 /// [`ComparisonPlan`] and, where it compares, decodes the filter's own literal
 /// here, so a value
 /// that is not of the column's type is a fault reported once rather than a
@@ -2406,8 +2467,14 @@ pub(crate) fn resolve_term(
     header_offset: u64,
     semantics: ComparisonSemantics,
 ) -> Result<ResolvedTerm> {
-    if matches!(predicate.op, PredicateOp::IsNull | PredicateOp::IsNotNull) {
-        return Ok(ResolvedTerm { op: predicate.op, index, compared: None, unrepresentable: None });
+    if predicate.op.takes_no_value() {
+        return Ok(ResolvedTerm {
+            op: predicate.op,
+            index,
+            compared: None,
+            unrepresentable: None,
+            tested: None,
+        });
     }
     let ordering = predicate.op.is_ordering();
     let refuse = |reason: &str| Error::UnorderedPredicateColumn {
@@ -2424,7 +2491,7 @@ pub(crate) fn resolve_term(
         reason: NESTED_IN_DATAFUSION.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
-    // `value` is `Some` for every operator but the two NULL tests. An
+    // `value` is `Some` for every operator taking one. An
     // embedder that builds a `Gt` term without one is read as having stated
     // the empty string: a fault wherever the kind's decoder rejects it, and
     // silently a comparison against `""` for the text kinds, which refuse no
@@ -2453,7 +2520,7 @@ pub(crate) fn resolve_term(
         // offering `=`/`!=`: the file
         // says the server's equality is not a comparison of the text it
         // holds, so the fall-through below would be a wrong answer rather
-        // than a weaker one. The two NULL tests have already returned.
+        // than a weaker one. The operators taking no value have already returned.
         return Err(Error::UncomparablePredicateColumn {
             header_offset,
             column: predicate.column.clone(),
@@ -2612,6 +2679,7 @@ pub(crate) fn resolve_term(
         op: predicate.op,
         index,
         unrepresentable: None,
+        tested: None,
         compared: Some(ComparedTerm {
             column: predicate.column.clone(),
             comparison,
@@ -2670,7 +2738,7 @@ impl ResolvedTerm {
     /// type cannot hold keys in PostgreSQL's order, or is read as NULL, and
     /// never reaches here (`docs/design/decisions.md`, "D56", "D98").
     fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
-        let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
+        let compared = self.compared.as_ref().expect("an operator taking no value decodes nothing");
         Error::FieldDecode {
             table: table.to_string(),
             column: compared.column.clone(),
@@ -2684,7 +2752,7 @@ impl ResolvedTerm {
     #[inline]
     fn as_read<'v>(&self, value: Option<&'v str>) -> Option<&'v str> {
         match &self.unrepresentable {
-            Some(read) => value.filter(|text| !read.nulls(text)),
+            Some(read) => value.filter(|text| !read.cannot_hold(text)),
             None => value,
         }
     }
@@ -2699,20 +2767,27 @@ impl ResolvedTerm {
     /// `None` back is a non-NULL value that is not a value of the column's
     /// type under this term's comparison — what the row path reports as
     /// `Error::FieldDecode`, the only case in which it returns nothing. The
-    /// NULL tests and the two equalities comparing text never decode, so
-    /// they always answer.
+    /// operators taking no value and the two equalities comparing text never
+    /// decode, so they always answer.
     ///
     /// **A value the query reads as NULL is answered as one**
-    /// (`docs/design/decisions.md`, "D98").
+    /// (`docs/design/decisions.md`, "D98") — but by the two unrepresentable
+    /// tests, which ask of the text itself whether it is such a value.
     #[inline]
     pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
-        let value = self.as_read(value);
         let Some(compared) = self.compared.as_ref() else {
             return Some(Truth::of(match self.op {
-                PredicateOp::IsNull => value.is_none(),
-                _ => value.is_some(),
+                PredicateOp::IsNull => self.as_read(value).is_none(),
+                PredicateOp::IsNotNull => self.as_read(value).is_some(),
+                op => {
+                    let unrepresentable = value
+                        .zip(self.tested.as_ref())
+                        .is_some_and(|(text, test)| timed!(Part::Compare, test.cannot_hold(text)));
+                    unrepresentable == (op == PredicateOp::IsUnrepresentable)
+                }
             }));
         };
+        let value = self.as_read(value);
         let Some(text) = value else {
             return Some(match self.op {
                 PredicateOp::IsDistinctFrom => Truth::True,
@@ -2997,7 +3072,7 @@ impl ResolvedMembership {
             return Some(self.unmatched());
         }
         let value = match &self.unrepresentable {
-            Some(read) => value.filter(|text| !read.nulls(text)),
+            Some(read) => value.filter(|text| !read.cannot_hold(text)),
             None => value,
         };
         let Some(text) = value else { return Some(Truth::Unknown) };
@@ -3208,6 +3283,31 @@ impl ResolvedExpr {
                 children.iter_mut().for_each(|child| child.set_reads(reads));
             }
             Self::Not(inner) => inner.set_reads(reads),
+        }
+    }
+
+    /// **This tree with each unrepresentable test testing its column's text**
+    /// ([`PredicateOp::IsUnrepresentable`]): `tests` is per column of the
+    /// block's unprojected schema, as [`Self::reading`]'s `reads` is, and a
+    /// test over a column it holds `None` for is `False` on every row
+    /// (`docs/design/decisions.md`, "D101").
+    pub(crate) fn testing(mut self, tests: &[Option<UnrepresentableRead>]) -> ResolvedExpr {
+        if tests.iter().any(Option::is_some) {
+            self.set_tests(tests);
+        }
+        self
+    }
+
+    fn set_tests(&mut self, tests: &[Option<UnrepresentableRead>]) {
+        match self {
+            Self::Term(term) if term.op.tests_unrepresentable() => {
+                term.tested = tests.get(term.index).cloned().flatten();
+            }
+            Self::Term(_) | Self::In(_) => {}
+            Self::And(children) | Self::Or(children) => {
+                children.iter_mut().for_each(|child| child.set_tests(tests));
+            }
+            Self::Not(inner) => inner.set_tests(tests),
         }
     }
 
@@ -3450,6 +3550,10 @@ pub(crate) trait GroupStatistics {
     /// Every distinct text among `column`'s non-NULL values, as unescaped
     /// field text — complete, or `None`.
     fn dictionary(&self, column: usize) -> Option<impl Iterator<Item = &str>>;
+
+    /// How many of those rows hold, in `column`, a value its type cannot
+    /// hold, per tier — `None` where the group did not count them.
+    fn unrepresentable(&self, column: usize) -> Option<Unrepresentable>;
 }
 
 /// One row group's bounds on one column in one kind, read as keys once for
@@ -3505,6 +3609,21 @@ impl ResolvedTerm {
         keyed: &mut KeyedBounds<'a>,
     ) -> TruthSet {
         let rows = group.rows();
+        // Off the group's own count, never its NULL count, which under the
+        // null mode's view counts the values the test matches.
+        if self.op.tests_unrepresentable() {
+            let matched = match (&self.tested, group.unrepresentable(self.index)) {
+                (None, _) => Some(0),
+                (Some(test), Some(count)) => Some(test.counted(count)),
+                (Some(_), None) => None,
+            };
+            let (some, all) = matched.map_or((rows > 0, false), |n| (n > 0, n >= rows));
+            let (can_match, can_miss) = (some, rows > 0 && !all);
+            return match self.op {
+                PredicateOp::IsUnrepresentable => TruthSet::from_flags(can_match, can_miss),
+                _ => TruthSet::from_flags(can_miss, can_match),
+            };
+        }
         let (nulls, values) = match group.null_count(self.index) {
             Some(nulls) => (nulls > 0, nulls < rows),
             None => (rows > 0, rows > 0),
@@ -3628,10 +3747,13 @@ mod tests {
     use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 
     use super::*;
+    use crate::copy::encode_field;
+    use crate::index::UnrepresentableTier;
     use crate::pgtype::{bounds_set_keyed_by, comparison_for};
     use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
     use crate::statistics::BoundsSet;
+    use crate::unrepresentable::scalar_read;
 
     /// [`super::resolve_term`] in PostgreSQL's semantics, which every test
     /// but the DataFusion-semantics ones asks for.
@@ -3662,7 +3784,7 @@ mod tests {
             statistics: BelievedStatistics::NONE,
         });
         let compared = if p.op.is_ordering() { None } else { compared };
-        ResolvedTerm { op: p.op, index, compared, unrepresentable: None }
+        ResolvedTerm { op: p.op, index, compared, unrepresentable: None, tested: None }
     }
 
     /// The one note a term announces, or `None` — a scalar column has at most
@@ -3867,6 +3989,110 @@ mod tests {
         assert_eq!(truth(&is_not_null, b"other\ta", 1), Truth::True);
     }
 
+    /// `op` over a `date` column, testing in the tiers `reach` reads and read
+    /// as the null mode reads it there, or tested by nothing.
+    fn date_test(op: PredicateOp, reach: Option<UnrepresentableTier>) -> ResolvedExpr {
+        let predicate = Predicate { column: "v".into(), op, value: None };
+        let resolved = one_column("date", DataType::Date32);
+        let term = resolve_term(&predicate, 0, &resolved, 0).unwrap();
+        let reads = [reach.and_then(|reach| scalar_read(&DataType::Date32, reach))];
+        ResolvedExpr::Term(term).reading(&reads).testing(&reads)
+    }
+
+    fn row_truth(expr: &ResolvedExpr, field: &str) -> Truth {
+        let row = encode_field((field != "\\N").then_some(field));
+        expr.eval(true, RawRow::unchecked(&row), &mut RowSplit::default(), "public.t", 0).unwrap()
+    }
+
+    /// **`IS UNREPRESENTABLE` asks of the text, in the tiers its front end
+    /// reads, and tells apart exactly the NULLs the null mode made there**:
+    /// an infinity in both, a date past the calendar in DataFusion's alone, a
+    /// NULL the dump holds and a finite date in neither — two-valued, and
+    /// its negation the complement, NULL included (`docs/design/decisions.md`,
+    /// "D101").
+    #[test]
+    fn the_unrepresentable_test_tells_the_null_mode_s_nulls_from_the_dump_s() {
+        use UnrepresentableTier::{Engine, Format};
+        let cases: [(&str, bool, bool); 5] = [
+            // (field, IS UNREPRESENTABLE at Format, at Engine)
+            ("infinity", true, true),
+            ("-infinity", true, true),
+            ("262143-01-01", false, true),
+            ("2024-01-01", false, false),
+            ("\\N", false, false),
+        ];
+        for (field, format, engine) in cases {
+            for (reach, want) in [(Format, format), (Engine, engine)] {
+                let is = date_test(PredicateOp::IsUnrepresentable, Some(reach));
+                let is_not = date_test(PredicateOp::IsNotUnrepresentable, Some(reach));
+                assert_eq!(row_truth(&is, field), Truth::of(want), "{field} at {reach:?}");
+                assert_eq!(row_truth(&is_not, field), Truth::of(!want), "{field} at {reach:?}");
+                // The null mode reads as NULL exactly what the test matches,
+                // so `IS NULL` is the test's or the dump's.
+                let is_null = date_test(PredicateOp::IsNull, Some(reach));
+                assert_eq!(row_truth(&is_null, field), Truth::of(want || field == "\\N"));
+            }
+            // A column the block's count says holds none is tested by
+            // nothing, and never matches.
+            let untested = date_test(PredicateOp::IsUnrepresentable, None);
+            assert_eq!(row_truth(&untested, field), Truth::False);
+        }
+    }
+
+    /// A group of `rows` rows whose count, where it kept one, is `count`.
+    struct Counted {
+        rows: u64,
+        count: Option<Unrepresentable>,
+    }
+
+    impl GroupStatistics for Counted {
+        fn rows(&self) -> u64 {
+            self.rows
+        }
+        // Every row NULL to the null mode's view, which tells the test
+        // nothing: it reads the count alone.
+        fn null_count(&self, _: usize) -> Option<u64> {
+            Some(self.rows)
+        }
+        fn bounds(&self, _: usize, _: &CompareKind) -> Option<(&str, &str)> {
+            None
+        }
+        fn dictionary(&self, _: usize) -> Option<impl Iterator<Item = &str>> {
+            None::<std::iter::Empty<&str>>
+        }
+        fn unrepresentable(&self, _: usize) -> Option<Unrepresentable> {
+            self.count
+        }
+    }
+
+    /// **A group answers the test off its own count, in the tiers the test
+    /// reads**, never off its NULL count, which in the null mode's view
+    /// counts the values the test matches; a group that kept no count can go
+    /// either way, and a column its block's count says holds none matches
+    /// nowhere.
+    #[test]
+    fn a_group_answers_the_unrepresentable_test_off_its_count() {
+        use UnrepresentableTier::{Engine, Format};
+        let group = |rows, format, engine| Counted {
+            rows,
+            count: Some(Unrepresentable { format, engine }),
+        };
+        let (t, f) = (Truth::True, Truth::False);
+        let is = |reach| date_test(PredicateOp::IsUnrepresentable, Some(reach));
+        let is_not = |reach| date_test(PredicateOp::IsNotUnrepresentable, Some(reach));
+        assert_eq!(is(Format).truths(&group(3, 0, 2)), TruthSet::of(f));
+        assert_eq!(is(Engine).truths(&group(3, 0, 2)), sets(&[t, f]));
+        assert_eq!(is(Engine).truths(&group(3, 1, 2)), TruthSet::of(t));
+        assert_eq!(is_not(Engine).truths(&group(3, 1, 2)), TruthSet::of(f));
+        assert_eq!(is_not(Format).truths(&group(3, 0, 2)), TruthSet::of(t));
+        assert_eq!(is(Format).truths(&Counted { rows: 3, count: None }), sets(&[t, f]));
+        assert_eq!(is(Format).truths(&group(0, 0, 0)), TruthSet::EMPTY);
+        let untested = date_test(PredicateOp::IsUnrepresentable, None);
+        assert_eq!(untested.truths(&Counted { rows: 3, count: None }), TruthSet::of(f));
+        let negated = date_test(PredicateOp::IsNotUnrepresentable, None);
+        assert_eq!(negated.truths(&Counted { rows: 3, count: None }), TruthSet::of(t));
+    }
+
     #[test]
     fn an_empty_conjunction_matches_every_row() {
         assert!(matches_all(&[], &[], b"a\tb"));
@@ -4050,6 +4276,9 @@ mod tests {
         }
         fn dictionary(&self, _: usize) -> Option<impl Iterator<Item = &str>> {
             self.dictionary.as_ref().map(|entries| entries.iter().map(String::as_str))
+        }
+        fn unrepresentable(&self, _: usize) -> Option<Unrepresentable> {
+            None
         }
     }
 

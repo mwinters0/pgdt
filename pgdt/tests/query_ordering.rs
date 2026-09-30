@@ -187,7 +187,8 @@ fn values_read_as_null_are_counted_on_stderr() {
     let stderr = stderr_of(&out);
     assert!(
         stderr.contains(
-            "warning: public.t_date.v_date holds 2 value(s) its type `date` cannot hold, read as NULL"
+            "warning: public.t_date.v_date holds 2 value(s) its type `date` cannot hold, read as \
+             NULL — `v_date IS UNREPRESENTABLE` tells them from the NULLs the dump holds"
         ),
         "{stderr}"
     );
@@ -199,6 +200,41 @@ fn values_read_as_null_are_counted_on_stderr() {
         assert!(!refused.status.success());
         assert!(stderr_of(&refused).contains(refusal), "{}", stderr_of(&refused));
     }
+}
+
+/// **`IS UNREPRESENTABLE` tells the null mode's NULLs from the dump's**, in
+/// every mode — `t_date` holds both infinities and one NULL, the extremes a
+/// date past `chrono`'s calendar, which `pgdt` holds — and `IS NOT
+/// UNREPRESENTABLE` is its complement, the NULL among it; under the strings
+/// schema mode, which reads no declared type, both are refused
+/// (`docs/design/decisions.md`, "D101").
+#[test]
+fn the_unrepresentable_test_finds_what_the_null_mode_nulls() {
+    let ids = |table: &str, mode: &str, filter: &str| {
+        kept(table, "id", &["--unrepresentable", mode, "--where", filter])
+    };
+    for mode in ["null", "text", "refuse"] {
+        assert_eq!(ids("public.t_date", mode, "v_date is unrepresentable"), ["1", "2"], "{mode}");
+        assert_eq!(
+            ids("public.t_date", mode, "v_date IS NOT UNREPRESENTABLE"),
+            ["3", "4", "5", "6", "7"],
+            "{mode}"
+        );
+        assert_eq!(ids("public.t_extremes", mode, "v_date is unrepresentable"), ["3", "4"]);
+    }
+    // The null mode's NULLs are the test's and the dump's.
+    assert_eq!(ids("public.t_date", "null", "v_date is null"), ["1", "2", "7"]);
+    assert_eq!(
+        ids("public.t_date", "null", "v_date is null and not v_date is unrepresentable"),
+        ["7"]
+    );
+    let refused = query(
+        "public.t_date",
+        "id",
+        &["--schema-mode", "strings", "--filter", "v_date is unrepresentable"],
+    );
+    assert!(!refused.status.success());
+    assert!(stderr_of(&refused).contains("resolving no declared type"), "{}", stderr_of(&refused));
 }
 
 /// A literal that is not a value of the column's type is refused by name,
@@ -221,9 +257,17 @@ fn the_usage_message_names_every_operator() {
     let out = query("public.t_int", "v_integer", &["--filter", "nonsense"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
-    for op in
-        ["!=", "<", "<=", ">", ">=", "IS DISTINCT FROM", "IS NOT DISTINCT FROM", "IS NOT NULL"]
-    {
+    for op in [
+        "!=",
+        "<",
+        "<=",
+        ">",
+        ">=",
+        "IS DISTINCT FROM",
+        "IS NOT DISTINCT FROM",
+        "IS [NOT] NULL",
+        "IS [NOT] UNREPRESENTABLE",
+    ] {
         assert!(stderr.contains(op), "usage does not name `{op}`: {stderr}");
     }
 }

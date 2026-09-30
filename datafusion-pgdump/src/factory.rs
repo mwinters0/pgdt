@@ -253,6 +253,7 @@ pub fn register_table_factory(
 ) {
     ctx.register_table_options_extension(PgDumpTableOptions::default());
     session_budget(ctx);
+    crate::unrepresentable::install(ctx);
     ctx.state_ref().write().table_factories_mut().insert(
         PGDUMP_FILE_TYPE.to_string(),
         Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),
