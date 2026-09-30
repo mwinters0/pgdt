@@ -50,7 +50,9 @@ use datafusion::datasource::MemTable;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::physical_plan::{ExecutionPlan, collect};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
+use datafusion_pgdump::{
+    PgDump, PgDumpOptions, PgDumpSettings, register_dump, with_unrepresentable_guard,
+};
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     DataBlock, Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, SpanBody,
@@ -169,6 +171,11 @@ const FLAGS: [&str; 3] = [
 /// Two partitions a scan, so the two orders are every order, and batches
 /// two rows long, so a filter tightens while a partition still streams.
 fn session(config: Config) -> SessionContext {
+    SessionContext::new_with_state(session_state(config).build())
+}
+
+/// [`session`]'s state, unbuilt.
+fn session_state(config: Config) -> SessionStateBuilder {
     let rows = match config.dynamic {
         Dynamic::OnWithRows => RowEvaluation::On,
         Dynamic::Off | Dynamic::On => RowEvaluation::Off,
@@ -181,12 +188,9 @@ fn session(config: Config) -> SessionContext {
     for flag in FLAGS {
         options = options.set_bool(flag, config.dynamic != Dynamic::Off);
     }
-    SessionContext::new_with_state(
-        SessionStateBuilder::new_with_default_features()
-            .with_config(options)
-            .with_physical_optimizer_rule(Arc::new(RunScansInOrder(config.order)))
-            .build(),
-    )
+    SessionStateBuilder::new_with_default_features()
+        .with_config(options)
+        .with_physical_optimizer_rule(Arc::new(RunScansInOrder(config.order)))
 }
 
 /// What the refuse mode does with a case.
@@ -1093,7 +1097,8 @@ const TESTED: &[Tested] = &[
 /// **`pgdump_unrepresentable` finds exactly the values the null mode reads
 /// as NULL, in every mode and every configuration**, pushed `Exact` into the
 /// scan wherever it stands under `NOT`, `AND` and `OR` beside terms the scan
-/// answers — so its outcome, too, never depends on which rows a scan read
+/// answers — so its outcome, too, never depends on which rows a scan read —
+/// and planned under the guard, which none of these uses meets
 /// (`docs/design/decisions.md`, "D101").
 #[tokio::test]
 async fn the_unrepresentable_function_finds_what_the_null_mode_nulls() {
@@ -1105,7 +1110,9 @@ async fn the_unrepresentable_function_finds_what_the_null_mode_nulls() {
             for mode in MODES {
                 let dump = PgDump::open(copy.to_str().unwrap(), options(mode)).await.unwrap();
                 for config in every_config().into_iter().filter(|c| c.statistics == statistics) {
-                    let ctx = session(config);
+                    let ctx = SessionContext::new_with_state(
+                        with_unrepresentable_guard(session_state(config)).build(),
+                    );
                     register(&ctx, &dump);
                     for test in TESTED {
                         let mut ids: Vec<String> = test.ids.iter().map(|s| s.to_string()).collect();
@@ -1143,39 +1150,57 @@ async fn refused_at_planning(ctx: &SessionContext, sql: &str) -> DataFusionError
     planned.err().unwrap_or_else(|| panic!("`{sql}` planned"))
 }
 
-/// **Wherever DataFusion would have to evaluate the function, the plan
-/// refuses**: projected, under an expression no scan answers, over another
-/// source — a NULL there no longer saying whether it was one — and under the
-/// strings schema mode the library's own refusal, there being no declared
-/// type to test against.
+/// A session built with the guard.
+fn guarded() -> SessionContext {
+    SessionContext::new_with_state(
+        with_unrepresentable_guard(SessionStateBuilder::new_with_default_features()).build(),
+    )
+}
+
+/// Uses of the function DataFusion would have to evaluate over `t_date`:
+/// projected, under an expression no scan answers, grouped by.
+const EVALUATED: [&str; 3] = [
+    "SELECT pgdump_unrepresentable(v_date) FROM t_date",
+    "SELECT id FROM t_date WHERE pgdump_unrepresentable(v_date) OR id + 1 = 3",
+    "SELECT COUNT(*) FROM t_date GROUP BY pgdump_unrepresentable(v_date)",
+];
+
+/// **Wherever DataFusion would have to evaluate the function, a session
+/// built with the guard refuses the plan**: projected, under an expression
+/// no scan answers, over another source, in a subquery — a NULL there no
+/// longer saying whether it was one — and under the strings schema mode the
+/// library's own refusal, there being no declared type to test against.
 #[tokio::test]
 async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it() {
     let scratch = tempfile::tempdir().unwrap();
     let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let ctx = SessionContext::new();
+    let ctx = guarded();
     register(&ctx, &dump);
-    let memory = MemTable::try_new(
-        Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, true)])),
-        vec![vec![]],
+    // One row, so no statistic answers an aggregate over it without the
+    // filter being evaluated.
+    let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, true)]));
+    let one = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![Arc::new(arrow::array::Int32Array::from(vec![1]))],
     )
     .unwrap();
+    let memory = MemTable::try_new(schema, vec![vec![one]]).unwrap();
     ctx.register_table("memory", Arc::new(memory)).unwrap();
-    for sql in [
-        "SELECT pgdump_unrepresentable(v_date) FROM t_date",
-        "SELECT id FROM t_date WHERE pgdump_unrepresentable(v_date) OR id + 1 = 3",
-        "SELECT COUNT(*) FROM t_date GROUP BY pgdump_unrepresentable(v_date)",
+    for sql in EVALUATED.into_iter().chain([
         "SELECT x FROM memory WHERE pgdump_unrepresentable(x)",
         "SELECT id FROM t_date WHERE id IN \
          (SELECT x FROM memory WHERE pgdump_unrepresentable(x))",
-    ] {
+        "SELECT id, (SELECT MAX(x) FROM memory WHERE pgdump_unrepresentable(x)) FROM t_date",
+    ]) {
         let err = refused_at_planning(&ctx, sql).await.to_string();
         assert!(err.contains("DataFusion would have to evaluate it"), "`{sql}`: {err}");
+        assert!(!err.contains("refuses such a query at planning"), "`{sql}`: {err}");
     }
 
     let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
-    let ctx = SessionContext::new();
+    let ctx = guarded();
     register(&ctx, &dump);
     let err =
         refused_at_planning(&ctx, "SELECT id FROM t_date WHERE pgdump_unrepresentable(v_date)")
@@ -1190,6 +1215,38 @@ async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it
         cause = err.source();
     }
     assert!(untyped, "{err}");
+}
+
+/// **Registering a dump registers the function and leaves the session's
+/// planning as its embedder built it**: nothing is rebuilt, so a statement
+/// prepared before survives it. Without the guard a use DataFusion would
+/// evaluate refuses when it is evaluated, naming the guard, and a pushed use
+/// answers as under it.
+#[tokio::test]
+async fn registering_a_dump_leaves_the_session_s_planning_alone() {
+    let scratch = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let ctx = SessionContext::new();
+    ctx.sql("PREPARE before_registration(INT) AS SELECT $1 + 1 AS n").await.unwrap();
+    register(&ctx, &dump);
+    let prepared = ctx.sql("EXECUTE before_registration(1)").await.unwrap().collect().await;
+    assert!(prepared.is_ok(), "{prepared:?}");
+
+    for sql in EVALUATED {
+        let plan = ctx.sql(sql).await.unwrap().create_physical_plan().await;
+        let plan = plan.unwrap_or_else(|err| panic!("`{sql}` refused at planning: {err}"));
+        let err = collect(plan, ctx.task_ctx()).await.err();
+        let err = err.unwrap_or_else(|| panic!("`{sql}` answered")).to_string();
+        assert!(err.contains("DataFusion would have to evaluate it"), "`{sql}`: {err}");
+        assert!(err.contains("with_unrepresentable_guard"), "`{sql}`: {err}");
+    }
+
+    let sql = "SELECT id FROM t_date WHERE v_date IS NULL AND NOT pgdump_unrepresentable(v_date)";
+    let (got, _) = outcome(&ctx, sql).await;
+    let answered =
+        Expected::Rows { types: vec![DataType::Int32], rows: vec!["7".into()], pick: None };
+    assert!(answered.met_by(&got), "{got}");
 }
 
 /// **The null mode's warning names the function**, the one way to tell its

@@ -31,19 +31,14 @@ What the slices after this one inherit. The spec is
   from a `semantics` field it gained.
 - **`datafusion-pgdump`'s `pgdump_unrepresentable`** (`PgDumpUnrepresentable`,
   `UNREPRESENTABLE_FUNCTION`), translated by `pushdown::translate` over a bare
-  column of any type, nested included. `install_unrepresentable` registers it
-  and wraps the session's query planner; `register_dump` and
-  `register_table_factory` call it, and an embedder registering a
-  `PgDumpTable` by hand calls it itself. A filter holding it that translates
-  and does not resolve is `supports_filters_pushdown`'s error, the library's
-  refusal carried whole.
+  column of any type, nested included; registered and guarded as
+  [28.11's notes](roadmap-P28.11-guard-notes.md) say. A filter holding it that
+  translates and does not resolve is `supports_filters_pushdown`'s error, the
+  library's refusal carried whole.
 
 ## What the next slices inherit
 
 - **Nothing 28.9 times reads the term**: no figure's filter holds one.
-- **`install_unrepresentable` replaces the session's state in place**
-  (`SessionStateBuilder::new_from_existing`, the session id kept), marked by a
-  config extension so a second registration does not wrap the planner twice.
 
 ## Negative results
 

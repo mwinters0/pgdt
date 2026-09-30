@@ -217,6 +217,39 @@ fn the_aggregate_dynamic_filter_is_off_unless_stated() {
     assert_eq!(value(stated), format!("{KEY},true"));
 }
 
+/// **The shell is built with the guard**: `pgdump_unrepresentable` answers
+/// where a scan answers it, and a query DataFusion would have to evaluate it
+/// in is refused at planning, by the guard, not when it is evaluated.
+#[tokio::test]
+async fn the_unrepresentable_function_is_guarded_at_planning() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("types"), dir.path()).await;
+    let dump = format!("shop={}", copy.display());
+
+    let out = run(&[
+        "-q",
+        "--dump",
+        &dump,
+        "-c",
+        "SELECT id FROM shop.public.t_date \
+         WHERE v_date IS NULL AND NOT pgdump_unrepresentable(v_date)",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), "id\n7");
+
+    let out = run(&[
+        "-q",
+        "--dump",
+        &dump,
+        "-c",
+        "SELECT pgdump_unrepresentable(v_date) FROM shop.public.t_date",
+    ]);
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(said.contains("pgdump_unrepresentable_guard"), "{said}");
+    assert!(said.contains("DataFusion would have to evaluate it"), "{said}");
+    assert!(!said.contains("with_unrepresentable_guard"), "{said}");
+}
+
 /// **A dump with no complete cache ends the run before any SQL**, naming the
 /// parse that builds it.
 #[tokio::test]

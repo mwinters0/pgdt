@@ -474,11 +474,11 @@ Evidence: `datafusion-pgdump/tests/pushdown.rs`.
 ### D101 The unrepresentable test reads the text against the declared type; DataFusion's is a scan's alone
 `IS [NOT] UNREPRESENTABLE` tests a field's text in the tiers its semantics reads (D98), whatever the mode or the column's resolution,
 two-valued; a group answers it off its own count (D97), and `SchemaMode::Strings` refuses it. `pgdump_unrepresentable(<column>)` is pushed
-`Exact`, and a plan in which any node but a scan holds it refuses at physical planning: a planner wrapped around the session's walks the
-optimized plan. Rejected: a table function listing each occurrence (no row identity joins back); a companion column (in every `SELECT *`,
-55.1 having no hidden columns); evaluating it in DataFusion (a NULL keeps no origin); refusing in `invoke` (execution, and never reached over
-no rows); an optimizer rule (sees a pass, not the plan). Code: `unrepresentable_tests`,
-`datafusion-pgdump`'s `unrepresentable::install`. Evidence: `the_unrepresentable_function_finds_what_the_null_mode_nulls`, `tests/pruning.rs`.
+`Exact` and refuses where DataFusion evaluates it; registering a dump registers it and leaves planning alone, and a physical optimizer rule the
+embedder appends to a `SessionStateBuilder` refuses at planning any node's expressions holding it (RT22). Rejected: a table function or a companion column
+(no row identity; 55.1 has no hidden columns); evaluating it (a NULL keeps no origin); registration installing the guard (a rebuild, dropping prepared
+statements); a wrapped planner (one slot, trusting an `Exact` conjunct gone); the function opt-in too (withholds the always-sound pushed use).
+Code: `unrepresentable_tests`, `datafusion-pgdump`'s `unrepresentable::with_guard`. Evidence: `the_unrepresentable_function_*`, `tests/pruning.rs`.
 
 ### D94 A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`
 Every producer re-checks its rows, so the scan answers `No` and only ever skips. The state is translated as a static filter is (D88), a part with no

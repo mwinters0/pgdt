@@ -38,6 +38,12 @@
 //! answers a `MIN` or `MAX` wrongly (`KD56`).
 // upstream: UF1
 //!
+//! **An embedder should build its session [`with_unrepresentable_guard`]**, as
+//! `datafusion-cli-pgdump` does: registering a dump registers
+//! `pgdump_unrepresentable` and leaves planning alone, so without the guard a
+//! query DataFusion would have to evaluate the function in refuses when it
+//! does, rather than at planning (`docs/design/decisions.md`, "D101").
+//!
 //! **Two figures time it, through `datafusion-cli-pgdump`**:
 //! `dynamic-filter-join` and `dynamic-filter-topk`, naming that shell's
 //! allocator, which is the embedder's (`docs/design/decisions.md`, "D13").
@@ -73,7 +79,8 @@ pub use report::{BudgetedPlanNote, RefusedTable};
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
 pub use unrepresentable::{
-    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, install as install_unrepresentable,
+    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, register as register_unrepresentable,
+    with_guard as with_unrepresentable_guard,
 };
 
 /// What opening or registering a dump can refuse.
@@ -122,7 +129,9 @@ pub enum Error {
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
 /// unless it already carries one, and `dump`'s statistics are billed to it;
 /// the [`PgDumpSettings`] `SET` moves, unless it already carries them; and
-/// `pgdump_unrepresentable` ([`install_unrepresentable`]).
+/// `pgdump_unrepresentable` ([`register_unrepresentable`]), its planning left
+/// as its embedder built it, which refuses the function at planning only
+/// where it was built [`with_unrepresentable_guard`].
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name; a table whose plan refuses is not listed, and is one
@@ -168,7 +177,7 @@ pub fn register_dump(
         }
     };
     dump.bill(&session_budget(ctx));
-    unrepresentable::install(ctx);
+    unrepresentable::register(ctx);
     dump.report(sink.as_ref());
     Ok(named
         .into_iter()

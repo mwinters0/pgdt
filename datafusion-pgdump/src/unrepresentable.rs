@@ -1,28 +1,29 @@
 //! `pgdump_unrepresentable(<column>)`: the library's `IS UNREPRESENTABLE`
-//! spelled as a DataFusion scalar function, and the planner that keeps it
-//! where only a scan can answer it.
+//! spelled as a DataFusion scalar function, and the guard that refuses it at
+//! planning where only a scan can answer it.
 //!
 //! **Only a scan can answer it**: under the null mode an unrepresentable
 //! value reaches DataFusion as a NULL, which no longer says where it came
 //! from, so the function is answered on the field's text, by the library, as
 //! a filter pushed `Exact` into a pgdump scan ([`crate::pushdown`]). Wherever
 //! DataFusion would have to evaluate it instead — projected, under an
-//! expression no scan answers, over another source — the plan is refused
-//! before it runs ([`install`]; `docs/design/decisions.md`, "D101").
+//! expression no scan answers, over another source — evaluating it refuses,
+//! and a session its embedder built [`with_guard`] refuses the plan before it
+//! runs (`docs/design/decisions.md`, "D101").
 
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, FieldRef};
-use async_trait::async_trait;
-use datafusion::catalog::Session;
 use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion::common::{Result, plan_datafusion_err, plan_err};
-use datafusion::execution::context::QueryPlanner;
+use datafusion::common::{Result, exec_err, plan_datafusion_err};
+use datafusion::config::ConfigOptions;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{
-    ColumnarValue, Expr, LogicalPlan, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF,
-    ScalarUDFImpl, Signature, Volatility,
+    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature,
+    Volatility,
 };
+use datafusion::physical_expr::ScalarFunctionExpr;
+use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::SessionContext;
 
@@ -70,11 +71,17 @@ impl ScalarUDFImpl for PgDumpUnrepresentable {
         false
     }
 
-    /// Reached only where the planner's check was not installed, or by a
-    /// literal argument folded while the plan is optimized: either way
-    /// DataFusion holds the value, not its text.
+    /// Reached only in a session built without [`with_guard`], where
+    /// DataFusion holds the value, not its text. Sound though it refuses at
+    /// execution: DataFusion skips it only where the answer does not depend
+    /// on it — an `AND`'s or an `OR`'s short circuit, an untaken `CASE`
+    /// branch, no rows.
     fn invoke_with_args(&self, _: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        plan_err!("{}", evaluated_by_datafusion(&format!("{UNREPRESENTABLE_FUNCTION}(…)")))
+        exec_err!(
+            "{}; a session built with `datafusion_pgdump::with_unrepresentable_guard` refuses \
+             such a query at planning, before a row is read",
+            evaluated_by_datafusion(&format!("{UNREPRESENTABLE_FUNCTION}(…)"))
+        )
     }
 }
 
@@ -88,63 +95,65 @@ fn evaluated_by_datafusion(call: &str) -> String {
     )
 }
 
-/// **Register the function in `ctx`, and the planner check that refuses a
-/// plan in which DataFusion would evaluate it**: wrapped around the session's
-/// own planner, the optimized plan is walked before it is planned
-/// physically, and every use of the function outside a scan's pushed filters
-/// refuses it (`docs/design/runtime-invariants.md`, "RT22"). Once per session; [`crate::register_dump`] and
-/// [`crate::register_table_factory`] call it, and an embedder registering a
-/// [`crate::PgDumpTable`] by hand calls it itself.
-pub fn install(ctx: &SessionContext) {
-    let state = ctx.state_ref();
-    let mut state = state.write();
-    if state.config().get_extension::<Installed>().is_some() {
-        return;
-    }
-    let planner = Arc::new(Guarded(Arc::clone(state.query_planner())));
-    let session_id = state.session_id().to_string();
-    let mut built = SessionStateBuilder::new_from_existing(state.clone())
-        .with_session_id(session_id)
-        .with_query_planner(planner)
-        .build();
-    built.config_mut().set_extension(Arc::new(Installed));
-    *state = built;
-    drop(state);
+/// **Register the function in `ctx`**, leaving the session's planning as its
+/// embedder built it: a use DataFusion would evaluate refuses when it is
+/// evaluated, unless the session was built [`with_guard`]. [`crate::register_dump`]
+/// and [`crate::register_table_factory`] call it, and an embedder registering
+/// a [`crate::PgDumpTable`] by hand calls it itself.
+pub fn register(ctx: &SessionContext) {
     ctx.register_udf(ScalarUDF::new_from_impl(PgDumpUnrepresentable::default()));
 }
 
-/// The mark [`install`] leaves on a session it has installed into.
-#[derive(Debug)]
-struct Installed;
+/// **`builder` with the function and its guard**: a physical optimizer rule,
+/// appended after every other, refusing at planning a plan in which any node
+/// holds the function among the expressions DataFusion evaluates — a scan's
+/// pushed filters being the library's, no node but a scan answering it
+/// (`docs/design/runtime-invariants.md`, "RT22"). Offered on a builder alone,
+/// so nothing rebuilds a session its embedder owns: one holding a live
+/// [`SessionContext`] rebuilds it through
+/// [`SessionStateBuilder::new_from_existing`], which keeps no prepared
+/// statement.
+pub fn with_guard(mut builder: SessionStateBuilder) -> SessionStateBuilder {
+    builder
+        .scalar_functions()
+        .get_or_insert_with(Vec::new)
+        .push(Arc::new(ScalarUDF::new_from_impl(PgDumpUnrepresentable::default())));
+    builder.with_physical_optimizer_rule(Arc::new(Guard))
+}
 
-/// The session's own planner, behind [`refuse_evaluation`].
+/// The rule [`with_guard`] appends.
 #[derive(Debug)]
-struct Guarded(Arc<dyn QueryPlanner + Send + Sync>);
+struct Guard;
 
-#[async_trait]
-impl QueryPlanner for Guarded {
-    async fn create_physical_plan(
+impl PhysicalOptimizerRule for Guard {
+    fn optimize(
         &self,
-        logical_plan: &LogicalPlan,
-        session: &dyn Session,
+        plan: Arc<dyn ExecutionPlan>,
+        _: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        refuse_evaluation(logical_plan)?;
-        self.0.create_physical_plan(logical_plan, session).await
+        refuse_evaluation(&plan)?;
+        Ok(plan)
+    }
+
+    fn name(&self) -> &str {
+        "pgdump_unrepresentable_guard"
+    }
+
+    fn schema_check(&self) -> bool {
+        true
     }
 }
 
-/// Refuse `plan`, optimized, wherever it holds the function outside a scan's
-/// filters, subqueries included: a scan holds only the filters its provider
-/// answered, and every other node's expressions are DataFusion's to evaluate.
-fn refuse_evaluation(plan: &LogicalPlan) -> Result<()> {
+/// Refuse `plan` wherever a node holds the function among the expressions
+/// DataFusion evaluates, a scalar subquery's plan included, it being a
+/// child: a pgdump scan reports only its dynamic filters, the filters its
+/// provider answered being the library's.
+fn refuse_evaluation(plan: &Arc<dyn ExecutionPlan>) -> Result<()> {
     let mut found = None;
-    plan.apply_with_subqueries(|node| {
-        if matches!(node, LogicalPlan::TableScan(_)) {
-            return Ok(TreeNodeRecursion::Continue);
-        }
-        node.apply_expressions(|expr| {
+    plan.apply(|node| {
+        node.apply_expressions(&mut |expr| {
             expr.apply(|inner| {
-                if let Expr::ScalarFunction(call) = inner
+                if let Some(call) = inner.downcast_ref::<ScalarFunctionExpr>()
                     && call.name() == UNREPRESENTABLE_FUNCTION
                 {
                     found = Some(inner.to_string());

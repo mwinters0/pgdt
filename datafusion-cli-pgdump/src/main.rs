@@ -41,6 +41,8 @@ use datafusion::execution::memory_pool::{
     FairSpillPool, GreedyMemoryPool, MemoryPool, TrackConsumersPool,
 };
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+// pgdump: the session built rather than had from `new_with_config_rt`.
+use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::ExplainFormat;
 use datafusion::prelude::SessionContext;
 use datafusion_cli::catalog::DynamicObjectStoreCatalog;
@@ -278,7 +280,15 @@ async fn main_inner() -> Result<()> {
     let runtime_env = rt_builder.build_arc()?;
 
     // enable dynamic file query
-    let ctx = SessionContext::new_with_config_rt(session_config, runtime_env).enable_url_table();
+    // pgdump: the session `new_with_config_rt` builds, built with the guard
+    // refusing `pgdump_unrepresentable` at planning where DataFusion would
+    // evaluate it.
+    let state = SessionStateBuilder::new()
+        .with_config(session_config)
+        .with_runtime_env(runtime_env)
+        .with_default_features();
+    let state = datafusion_pgdump::with_unrepresentable_guard(state).build();
+    let ctx = SessionContext::new_with_state(state).enable_url_table();
     ctx.refresh_catalogs().await?;
     // install dynamic catalog provider that can register required object stores
     ctx.register_catalog_list(Arc::new(DynamicObjectStoreCatalog::new(

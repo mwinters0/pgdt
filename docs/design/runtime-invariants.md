@@ -1098,32 +1098,44 @@ grep -n 'MAX_YEAR: i32' ~/.cargo/registry/src/*/chrono-$(cargo tree -i chrono -e
 
 The test passes only while ids 14 and 15 sit either side of the bound.
 
-## RT22 — DataFusion plans physically the optimized plan, from which an `Exact` filter is gone
+## RT22 — A physical plan reports every expression it evaluates, and a rule appended last sees the plan that runs
 
-**Claim.** `SessionState::create_physical_plan` optimizes a logical plan and
-hands the result to the session's `QueryPlanner`; and a conjunct of a
-`WHERE` a `TableProvider` answers `Exact` is moved into its `TableScan`'s
-`filters` and left in no `Filter` above it, so no node DataFusion evaluates
-holds it.
+**Claim.** `SessionState::create_physical_plan` hands the plan its
+`QueryPlanner` builds to the session's physical optimizer rules in order and
+runs what the last returns, a rule a `SessionStateBuilder` appends running
+after every default one; every built-in `ExecutionPlan` reports through
+`apply_expressions` each expression it evaluates, and a scalar subquery's
+plan is a child of `ScalarSubqueryExec`. And a conjunct of a `WHERE` a
+`TableProvider` answers `Exact` is moved into its `TableScan`'s `filters` and
+left in no `Filter` above it, so no node DataFusion plans evaluates it.
 
-**Proof.** DataFusion 55.1.0: `datafusion/core/src/execution/session_state.rs`,
-`create_physical_plan` (`self.optimize` then `self.query_planner`);
-`datafusion/optimizer/src/push_down_filter.rs`, the `TableScan` arm, which keeps
-above the scan only the conjuncts answered `Unsupported` or `Inexact`, and the
-volatile and subquery-holding ones. Observed by
-`the_unrepresentable_function_finds_what_the_null_mode_nulls`
-(`datafusion-pgdump/tests/unrepresentable.rs`), which plans only where no node
-but a scan holds the function.
+**Proof.** DataFusion 55.1.0: `datafusion/core/src/physical_planner.rs`,
+`DefaultPhysicalPlanner::create_physical_plan` then `optimize_physical_plan`,
+looping over `session_state.physical_optimizers()`;
+`datafusion/core/src/execution/session_state.rs`, `SessionStateBuilder::build`,
+pushing `physical_optimizer_rules` after the defaults;
+`datafusion/physical-plan/src/execution_plan.rs`, `apply_expressions`, a
+required method; `datafusion/physical-plan/src/scalar_subquery.rs`,
+`ScalarSubqueryExec::children`; `datafusion/optimizer/src/push_down_filter.rs`,
+the `TableScan` arm, which keeps above the scan only the conjuncts answered
+`Unsupported` or `Inexact`, and the volatile and subquery-holding ones.
+Observed by `the_unrepresentable_function_finds_what_the_null_mode_nulls` and
+`the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it`
+(`datafusion-pgdump/tests/unrepresentable.rs`), the first planning under the
+guard every use a scan answers and the second refusing every other, a scalar
+subquery's included.
 
 **Scope limit.** Plans reaching physical planning through the session's own
-`create_physical_plan`, which `DataFrame` and SQL use; a caller driving a
-`PhysicalPlanner` by hand is not claimed.
+`create_physical_plan`, which `DataFrame` and SQL use, and built-in nodes; a
+caller driving a `PhysicalPlanner` by hand, a rule appended after the guard,
+and an embedder's own `ExecutionPlan` reporting fewer expressions than it
+evaluates are not claimed.
 
 **Verified against:** DataFusion 55.1.0.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D101" — `pgdump_unrepresentable`
-refused by a planner wrapped around the session's, which walks the optimized
-plan for any node but a scan holding it.
+refused at planning by a physical optimizer rule the embedder appends, which
+walks every node's expressions and finds the function in none a scan answers.
 
 **Re-verify:**
 

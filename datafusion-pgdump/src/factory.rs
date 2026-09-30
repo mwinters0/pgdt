@@ -245,7 +245,8 @@ impl TableProviderFactory for PgDumpTableFactory {
 /// and the session's [`crate::ScanBudget`] and [`crate::PgDumpSettings`]
 /// installed as [`crate::register_dump`] installs them, so every table the
 /// statement registers draws on the one budget and `SET pgdump.…` reaches
-/// every scan.
+/// every scan; and `pgdump_unrepresentable`, registered as
+/// [`crate::register_dump`] registers it.
 pub fn register_table_factory(
     ctx: &SessionContext,
     sink: Arc<dyn DiagnosticSink>,
@@ -253,7 +254,7 @@ pub fn register_table_factory(
 ) {
     ctx.register_table_options_extension(PgDumpTableOptions::default());
     session_budget(ctx);
-    crate::unrepresentable::install(ctx);
+    crate::unrepresentable::register(ctx);
     ctx.state_ref().write().table_factories_mut().insert(
         PGDUMP_FILE_TYPE.to_string(),
         Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),
