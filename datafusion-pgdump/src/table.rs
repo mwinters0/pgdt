@@ -95,11 +95,13 @@ impl PgDumpTable {
 }
 
 /// What every query of `dump` asks, before a scan adds its projection,
-/// parallelism and batch size: the dump's schema mode, and DataFusion's
-/// comparison semantics (`docs/design/decisions.md`, "D40").
+/// parallelism and batch size: the dump's schema mode and how it reads a value
+/// its column's type cannot hold, and DataFusion's comparison semantics
+/// (`docs/design/decisions.md`, "D40", "D98").
 fn query_options(dump: &PgDump) -> QueryOptions {
     QueryOptions {
         schema_mode: dump.schema_mode(),
+        unrepresentable: dump.unrepresentable(),
         semantics: ComparisonSemantics::Arrow,
         ..QueryOptions::default()
     }
@@ -194,6 +196,7 @@ impl TableProvider for PgDumpTable {
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
         };
+        let reading = query_options.statistics_view();
         let scan_options = settings.scan_options(parallelism);
         let partitions = TablePartitions::plan(
             source,
@@ -212,7 +215,7 @@ impl TableProvider for PgDumpTable {
         let mut statistics = self
             .statistics
             .get_or_init(|| {
-                Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved))
+                Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved, reading))
             })
             .as_ref()
             .clone()

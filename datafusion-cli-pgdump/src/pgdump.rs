@@ -19,6 +19,7 @@ use namespace_init::InitShutdown;
 use pgdump_query::cache::StrictIdentity;
 use pgdump_query::{
     ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, SchemaMode, Severity,
+    UnrepresentableMode,
 };
 
 /// The environment variable naming the file the introspection build writes
@@ -65,8 +66,10 @@ pub fn end_as_namespace_init(repl: bool) -> Result<()> {
 pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per database it holds, \
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
-    refused for one of several. :strings reads every column as its text, and \
-    :strict-identity=TERMS states this dump's strictness where --strict-identity would. Repeatable";
+    refused for one of several. :strings reads every column as its text, \
+    :unrepresentable=refuse refuses a value a column's type cannot hold where the default, `null`, \
+    reads it as NULL, and :strict-identity=TERMS states this dump's strictness where \
+    --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
     does, for every --dump and STORED AS PGDUMP that states none of its own: `time` refuses a \
@@ -76,18 +79,21 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict
     is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory` is the default, which a dump under a stricter \
     session states to keep that check";
 
-/// One `--dump [NAME=]SOURCE[:strings][:strict-identity=TERMS]`.
+/// One `--dump [NAME=]SOURCE[:strings][:unrepresentable=MODE][:strict-identity=TERMS]`.
 ///
 /// **`NAME=` is recognised only where what precedes the first `=` could not
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
-/// `./a=b.sql`. **The suffixes are stripped from the right, in either order**,
-/// each at most once: TERMS hold `,` and never `:`.
+/// `./a=b.sql`. **The suffixes are stripped from the right, in any order**,
+/// each at most once: TERMS hold `,` and never `:`, and MODE is `null` or
+/// `refuse`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
     pub source: String,
     pub schema_mode: SchemaMode,
+    /// How this dump reads a value its column's type cannot hold.
+    pub unrepresentable: UnrepresentableMode,
     /// This dump's strictness, where `--strict-identity` gives the default.
     pub strict_identity: Option<StrictIdentity>,
 }
@@ -95,13 +101,31 @@ pub struct DumpArg {
 impl DumpArg {
     pub fn parse(arg: &str) -> Result<Self, String> {
         const STRICT: &str = ":strict-identity=";
+        const UNREPRESENTABLE: &str = ":unrepresentable=";
         let mut arg = arg;
         let mut strings = false;
         let mut strict_identity = None;
+        let mut unrepresentable = None;
         loop {
             if let Some(rest) = arg.strip_suffix(":strings") {
                 if std::mem::replace(&mut strings, true) {
                     return Err("--dump states :strings twice".to_string());
+                }
+                arg = rest;
+            } else if let Some((rest, mode)) =
+                arg.rsplit_once(UNREPRESENTABLE).filter(|(_, mode)| !mode.contains(':'))
+            {
+                let mode = match mode {
+                    "null" => UnrepresentableMode::Null,
+                    "refuse" => UnrepresentableMode::Refuse,
+                    _ => {
+                        return Err(format!(
+                            "--dump {UNREPRESENTABLE}{mode}: the mode is `null` or `refuse`"
+                        ));
+                    }
+                };
+                if unrepresentable.replace(mode).is_some() {
+                    return Err(format!("--dump states {UNREPRESENTABLE} twice"));
                 }
                 arg = rest;
             } else if let Some((rest, terms)) =
@@ -127,7 +151,8 @@ impl DumpArg {
         if source.is_empty() {
             return Err("--dump names no source".to_string());
         }
-        Ok(Self { name, source: source.to_string(), schema_mode, strict_identity })
+        let unrepresentable = unrepresentable.unwrap_or_default();
+        Ok(Self { name, source: source.to_string(), schema_mode, unrepresentable, strict_identity })
     }
 }
 
@@ -262,6 +287,7 @@ pub async fn register(
     for dump in dumps {
         let options = PgDumpOptions {
             schema_mode: dump.schema_mode,
+            unrepresentable: dump.unrepresentable,
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
             ..PgDumpOptions::default()
         };
@@ -287,6 +313,7 @@ mod tests {
             name: name.map(str::to_string),
             source: source.to_string(),
             schema_mode,
+            unrepresentable: UnrepresentableMode::Null,
             strict_identity: None,
         }
     }
@@ -353,6 +380,45 @@ mod tests {
             "koji.dump:strict-identity=",
             "koji.dump:strict-identity=time:strict-identity=none",
             "koji.dump:strings:strings",
+        ] {
+            assert!(DumpArg::parse(refused).is_err(), "{refused}");
+        }
+    }
+
+    /// **`:unrepresentable=MODE` is how this dump reads a value its column's
+    /// type cannot hold**, `null` unstated, beside the other suffixes in any
+    /// order and at most once.
+    #[test]
+    fn a_dump_states_how_it_reads_a_value_its_type_cannot_hold() {
+        let mode = |arg: &str| DumpArg::parse(arg).unwrap().unrepresentable;
+        assert_eq!(mode("koji.dump"), UnrepresentableMode::Null);
+        assert_eq!(mode("koji.dump:unrepresentable=null"), UnrepresentableMode::Null);
+        for arg in [
+            "koji.dump:unrepresentable=refuse:strings:strict-identity=none",
+            "koji.dump:strict-identity=none:unrepresentable=refuse:strings",
+            "koji.dump:strings:strict-identity=none:unrepresentable=refuse",
+        ] {
+            let parsed = parsed(arg);
+            assert_eq!(
+                (
+                    parsed.source.as_str(),
+                    parsed.schema_mode,
+                    parsed.unrepresentable,
+                    parsed.strict_identity
+                ),
+                (
+                    "koji.dump",
+                    SchemaMode::Strings,
+                    UnrepresentableMode::Refuse,
+                    Some(StrictIdentity::NONE)
+                ),
+                "{arg}"
+            );
+        }
+        for refused in [
+            "koji.dump:unrepresentable=text",
+            "koji.dump:unrepresentable=",
+            "koji.dump:unrepresentable=null:unrepresentable=refuse",
         ] {
             assert!(DumpArg::parse(refused).is_err(), "{refused}");
         }

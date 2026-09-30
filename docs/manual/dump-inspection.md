@@ -1250,8 +1250,11 @@ cannot be displayed by a DataFusion query, which formats dates through a
 calendar ending there; the line counts those apart, as `N past 262142-12-31,
 which a DataFusion query cannot display`. A value inside an array, a range or a
 composite makes the whole value one such value, counted once. The line appears
-only where the column holds one. Reading such a column in a query refuses
-where the read reaches the value, naming it.
+only where the column holds one. A query reads each such value as NULL, the
+dates past that calendar too in a DataFusion query, and says how many a column
+it prints holds; `pgdt query --unrepresentable refuse` refuses where the read
+reaches one instead, naming it ([type handling](type-handling.md), "A value
+its column cannot hold reads as NULL").
 
 `--detail` closes its listing, above the totals, with what `parse` gathered
 (see "`--statistics-level`" above), one line per table and one beneath it per column:
@@ -1472,7 +1475,8 @@ DataFusion query's order, for a column whose PostgreSQL order is another, and
 a value, and `null` for every other), `dictionary` (the block's
 distinct `entries` once each, and per group a list of indices into them, or
 `null`), `sums` (per group, the sum of its values — a `numeric(p,s)`'s
-counted in units of `10^-s` — for an integer or `oid` column and a
+counted in units of `10^-s`, a `NaN` left out as a NULL is — for an integer
+or `oid` column and a
 `numeric(p,s)` of at most 38 digits, and
 `null` for every other column and for one holding a value that is not its
 type; a sum wraps at 128 bits, which can be past what a JSON reader parses

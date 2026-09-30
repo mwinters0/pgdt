@@ -83,5 +83,6 @@ pub use stream::{
     table_stream, table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};
+pub use unrepresentable::UnrepresentableMode;
 
 pub type Result<T> = std::result::Result<T, Error>;

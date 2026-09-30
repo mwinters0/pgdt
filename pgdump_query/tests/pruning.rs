@@ -20,7 +20,7 @@ use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::{
     ComparisonSemantics, CopyBlock, DumpIndex, EarlyStop, Expr, LocalFileSource, Parallelism,
     PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, StatisticsRequest,
-    StatisticsSelection, map_file, table_stream, table_stream_partitions,
+    StatisticsSelection, UnrepresentableMode, map_file, table_stream, table_stream_partitions,
 };
 
 mod common;
@@ -477,23 +477,36 @@ async fn check_fixture(
             continue;
         }
         // Only the columns every row of the table decodes are built, so a
-        // value the build cannot hold (`KD8`) ends no comparison.
-        let everything = QueryOptions { database: database.clone(), ..Default::default() };
-        let projection = match answer(&dump, &plain, &table, everything.clone()).await {
-            Ok(_) => None,
-            Err(_) => {
-                let mut decodes = Vec::new();
-                for name in &header.columns {
-                    let one =
-                        QueryOptions { projection: Some(vec![name.clone()]), ..everything.clone() };
-                    if answer(&dump, &plain, &table, one).await.is_ok() {
-                        decodes.push(name.clone());
+        // value the build cannot hold (`KD8`) ends no comparison — in the
+        // refuse mode, which reaches the error path, and in the typed mode,
+        // which reads such a value as NULL and so builds more.
+        let mut bases = Vec::new();
+        for unrepresentable in [UnrepresentableMode::Null, UnrepresentableMode::Refuse] {
+            let everything =
+                QueryOptions { database: database.clone(), unrepresentable, ..Default::default() };
+            let projection = match answer(&dump, &plain, &table, everything.clone()).await {
+                Ok(_) => None,
+                Err(_) => {
+                    let mut decodes = Vec::new();
+                    for name in &header.columns {
+                        let one = QueryOptions {
+                            projection: Some(vec![name.clone()]),
+                            ..everything.clone()
+                        };
+                        if answer(&dump, &plain, &table, one).await.is_ok() {
+                            decodes.push(name.clone());
+                        }
                     }
+                    Some(decodes)
                 }
-                Some(decodes)
-            }
-        };
-        let base = QueryOptions { projection, ..everything };
+            };
+            bases.push(QueryOptions { projection, ..everything });
+        }
+        let refusing = bases.pop().expect("the refuse mode's base");
+        let base = bases.pop().expect("the typed mode's base");
+        // Each PostgreSQL-semantics check draws its mode, so both are swept at
+        // one sweep's cost.
+        let draw = |rng: &mut Rng| if rng.below(2) == 0 { &base } else { &refusing };
         let arrow = QueryOptions { semantics: ComparisonSemantics::Arrow, ..base.clone() };
 
         let (mut terms, mut arrow_terms) = (Vec::new(), Vec::new());
@@ -514,6 +527,7 @@ async fn check_fixture(
                     if resolves(&dump, &plain, &table, &arrow, &candidate).await {
                         arrow_terms.push(candidate.clone());
                     }
+                    // Resolving reads no mode, so the typed mode's answers for both.
                     if resolves(&dump, &plain, &table, &base, &candidate).await {
                         terms.push(candidate);
                     }
@@ -523,12 +537,14 @@ async fn check_fixture(
         for candidate in &terms {
             if rng.below(8) == 0 {
                 let filter = Expr::Term(candidate.clone());
-                check(&dump, (&plain, &gathered_cache), &table, &base, filter, tally).await;
+                let base = draw(rng);
+                check(&dump, (&plain, &gathered_cache), &table, base, filter, tally).await;
             }
         }
         for _ in 0..TREES_PER_TABLE {
             let tree = random_tree(rng, &terms, 3);
-            check(&dump, (&plain, &gathered_cache), &table, &base, tree, tally).await;
+            let base = draw(rng);
+            check(&dump, (&plain, &gathered_cache), &table, base, tree, tally).await;
         }
         for _ in 0..ARROW_TREES_PER_TABLE {
             let tree = random_tree(rng, &arrow_terms, 3);

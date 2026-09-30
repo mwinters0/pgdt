@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::copy::CopyHeader;
-use crate::index::{CopyBlock, Unrepresentable};
+use crate::index::{CopyBlock, Unrepresentable, UnrepresentableTier};
 use crate::instrument;
 
 /// The group size a request that states none gathers at: one mebibyte of a
@@ -536,13 +536,15 @@ pub struct ColumnStatistics {
     /// NULL adds to [`Self::null_counts`] ([`StatisticsView`]). `None` where
     /// no group of the block holds one.
     pub unrepresentable: Option<Vec<Unrepresentable>>,
-    /// Per group, the sum of its non-NULL values as integers — a decimal's
-    /// unscaled — wrapped at 128 bits, which reduces exactly to any narrower
-    /// wrapping sum. Kept for a column the typed read emits as `Int16`,
-    /// `Int32`, `Int64`, `UInt32` or `Decimal128` — `int2`, `int4`, `int8`,
-    /// `oid` and a `numeric(p,s)` of at most 38 digits — and `None` for every
-    /// other, **and for one holding a value that does not decode as its
-    /// type**: a sum cannot leave a value out the way a bound can.
+    /// Per group, the sum of its non-NULL values the type holds as integers —
+    /// a decimal's unscaled — wrapped at 128 bits, which reduces exactly to
+    /// any narrower wrapping sum; a `NaN` is left out, as a NULL is, and
+    /// counted in [`Self::unrepresentable`]. Kept for a column the typed read
+    /// emits as `Int16`, `Int32`, `Int64`, `UInt32` or `Decimal128` — `int2`,
+    /// `int4`, `int8`, `oid` and a `numeric(p,s)` of at most 38 digits — and
+    /// `None` for every other, **and for one holding a value that does not
+    /// decode as its type**: a sum cannot leave a value out the way a bound
+    /// can.
     pub sums: Option<Vec<i128>>,
     /// Per group, the summed length of its non-NULL fields' text once
     /// unescaped — the bytes a `Utf8View` of them holds, and never fewer than
@@ -567,7 +569,8 @@ pub enum BoundsSet {
 
 /// Which values a reading of a column's statistics takes as its values, and
 /// which as NULL — a column's type being unable to hold some that PostgreSQL
-/// accepts (`docs/design/decisions.md`, "D96", "D97").
+/// accepts (`docs/design/decisions.md`, "D96", "D97"). A query's is
+/// [`crate::QueryOptions::statistics_view`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatisticsView {
     /// Every value, in PostgreSQL's order, a special value ranked
@@ -743,6 +746,18 @@ impl Drop for BlockStatistics {
         let _attributed = instrument::StatisticsScope::enter();
         drop(std::mem::take(&mut self.columns));
         drop(std::mem::take(&mut self.groups));
+    }
+}
+
+impl StatisticsView {
+    /// Whether this view takes a value past `tier` — `None` for one the type
+    /// holds — as NULL.
+    pub fn reads_as_null(self, tier: Option<UnrepresentableTier>) -> bool {
+        match (self, tier) {
+            (_, None) | (StatisticsView::Every, _) => false,
+            (StatisticsView::Representable, Some(tier)) => tier == UnrepresentableTier::Format,
+            (StatisticsView::Displayable, Some(_)) => true,
+        }
     }
 }
 

@@ -16,7 +16,7 @@ use datafusion::common::{DataFusionError, Result, plan_err};
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
 use pgdump_query::cache::StrictIdentity;
-use pgdump_query::{DiagnosticSink, SchemaMode};
+use pgdump_query::{DiagnosticSink, SchemaMode, UnrepresentableMode};
 
 use crate::budget::ScanBudget;
 use crate::dump::{PgDump, PgDumpOptions};
@@ -46,6 +46,10 @@ pub struct PgDumpTableOptions {
     /// `pgdump.schema_mode`: `typed`, the default, or `strings`, every column
     /// as the file's text — the escape hatch from a wrong type mapping.
     pub schema_mode: SchemaMode,
+    /// `pgdump.unrepresentable`: `null`, the default, reading a value the
+    /// column's type cannot hold as NULL, or `refuse`
+    /// ([`PgDumpOptions::unrepresentable`]).
+    pub unrepresentable: UnrepresentableMode,
     /// `pgdump.strict_identity`: which identity signals bind for this dump,
     /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
     pub strict_identity: Option<StrictIdentity>,
@@ -87,6 +91,17 @@ impl ExtensionOptions for PgDumpTableOptions {
                     }
                 }
             }
+            "unrepresentable" => {
+                self.unrepresentable = match value.to_ascii_lowercase().as_str() {
+                    "null" => UnrepresentableMode::Null,
+                    "refuse" => UnrepresentableMode::Refuse,
+                    _ => {
+                        return plan_err!(
+                            "pgdump.unrepresentable is `null` or `refuse`, not `{value}`"
+                        );
+                    }
+                }
+            }
             "strict_identity" => match value.parse() {
                 Ok(strict) => self.strict_identity = Some(strict),
                 Err(why) => return plan_err!("pgdump.strict_identity `{value}`: {why}"),
@@ -94,8 +109,8 @@ impl ExtensionOptions for PgDumpTableOptions {
             _ => {
                 return plan_err!(
                     "`{key}` is not a PGDUMP option — the options are pgdump.table, \
-                     pgdump.schema, pgdump.database, pgdump.schema_mode and \
-                     pgdump.strict_identity"
+                     pgdump.schema, pgdump.database, pgdump.schema_mode, \
+                     pgdump.unrepresentable and pgdump.strict_identity"
                 );
             }
         }
@@ -112,6 +127,10 @@ impl ExtensionOptions for PgDumpTableOptions {
             SchemaMode::Typed => "typed",
             SchemaMode::Strings => "strings",
         };
+        let unrepresentable = match self.unrepresentable {
+            UnrepresentableMode::Null => "null",
+            UnrepresentableMode::Refuse => "refuse",
+        };
         vec![
             entry("table", self.table.clone(), "The table to register; required."),
             entry("schema", self.schema.clone(), "The table's PostgreSQL schema."),
@@ -120,6 +139,11 @@ impl ExtensionOptions for PgDumpTableOptions {
                 "schema_mode",
                 Some(mode.to_string()),
                 "`typed`, or `strings` for every column as the file's text.",
+            ),
+            entry(
+                "unrepresentable",
+                Some(unrepresentable.to_string()),
+                "`null`, a value its column's type cannot hold read as NULL, or `refuse`.",
             ),
             entry(
                 "strict_identity",
@@ -197,6 +221,7 @@ impl TableProviderFactory for PgDumpTableFactory {
         };
         let open = PgDumpOptions {
             schema_mode: options.schema_mode,
+            unrepresentable: options.unrepresentable,
             strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
             ..PgDumpOptions::default()
         };

@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD55 -->
-**`KD1`–`KD55` are allocated, and nothing at or below `KD55` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD56 -->
+**`KD1`–`KD56` are allocated, and nothing at or below `KD56` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -99,12 +99,12 @@ than reading as a phase nobody has sliced.
   `pgdump_query/src/pgtype.rs`.
 
 - **KD8** — a typed column cannot hold `±infinity`, `NaN`, `time` `24:00:00`,
-  an `interval` time part past Arrow's or a `timestamp` past `294247-01-10`,
-  so materializing one raises `Error::FieldDecode`, and a `date` or timestamp
-  past `262142-12-31` decodes to a value DataFusion reads as an error; whether
-  a query reaches such a value can depend on how its partitions run, so it may
-  answer on one run and refuse on the next. **(b) owned by P28**, whose three
-  modes never depend on which rows a read reached; slice 28.7 closes it.
+  an `interval` time part past Arrow's or a timestamp past `294247-01-10`, nor
+  DataFusion display a `date` or timestamp past `262142-12-31`: the null mode
+  reads them as NULL, but the refuse mode refuses only where a read reaches
+  one, so it may answer on one run and refuse on the next, and no mode reads
+  the column as text. **(b) owned by P28**, whose refuse mode refuses at
+  planning and whose untyped mode reads the text; slice 28.7 closes it.
   Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
@@ -313,6 +313,14 @@ than reading as a phase nobody has sliced.
   keep a flooded list's defence at a fraction of the cost. **(c) unowned**;
   promoted by row evaluation going on by default, or a figure pricing
   `pgdt --where`'s `in (…)`. Detail: `pgdump_query/src/predicate.rs`.
+
+- **KD56** — an ungrouped aggregate holding a `MIN` and a `MAX` publishes a
+  dynamic filter that loses its `MIN` side once a batch of that column holds
+  no value, DataFusion 55.1 reading only an untyped NULL as no bound, so a
+  scan skipping groups or rows under it can answer a `MIN` above the column's
+  least value. **(c) unowned**; promoted by the typed mode's harness, which
+  meets it where rows are evaluated, the fix being upstream's. Detail:
+  `datafusion-pgdump/src/dynamic_filter.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst

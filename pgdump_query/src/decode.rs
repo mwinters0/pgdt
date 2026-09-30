@@ -342,24 +342,19 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// `NaN` on a `Decimal128`, a timestamp past `i64` microseconds from 1970,
 /// which PostgreSQL's range outlasts by three decades, and
 /// [`decode_time64_micros`]'s `24:00:00`): a typed column cannot hold the
-/// value, so materializing one is an `Error::FieldDecode` and there is no
-/// typed way to read it. A `date`, or a timestamp short of `i64`'s end, past
-/// `262142-12-31` does not refuse: each decodes, and `arrow-cast` formats it
-/// through a calendar ending there, which DataFusion reads as an error
-/// wherever it formats or casts the value. The map counts both kinds per
-/// block and column (`crate::index::Unrepresentable`), and nothing reads the
-/// count yet.
-/// `--schema-mode strings` returns the literal verbatim. A DataFusion query
-/// need not read every row — a `LIMIT` one partition meets
-/// first, a dynamic filter another partition tightened — so whether it
-/// reaches the value, and refuses, can differ from run to run. **(b) owned by
-/// P28**, whose modes read the value as NULL, its column as text, or refuse
-/// wherever the query could reach it.
-/// **A null makes every NULL count a floor**, each being `\N`s counted off
-/// the text: pruning's `IS NULL` truths (`ResolvedTerm::truths`) and the
-/// provider's `Exact` `COUNT(<column>)` would both answer wrongly unless
-/// they change with it. A sentinel stays consistent, rows and bounds
-/// decoding through the same function.
+/// value. A query in the null mode reads it as NULL before any of these is
+/// asked (`docs/design/decisions.md`, "D98"); in the refuse mode
+/// materializing one is `Error::Unrepresentable` where a read reaches it,
+/// and a `date`, or a timestamp short of `i64`'s end, past `262142-12-31`
+/// decodes, and `arrow-cast` formats it through a calendar ending there,
+/// which DataFusion reads as an error wherever it formats or casts the
+/// value. A DataFusion query need not read every row — a `LIMIT` one
+/// partition meets first, a dynamic filter another partition tightened — so
+/// in the refuse mode whether it reaches the value, and refuses, can differ
+/// from run to run; and no mode yet reads the column as its text, which
+/// `--schema-mode strings` does for every column. **(b) owned by P28**,
+/// whose refuse mode refuses at planning from the map's count and whose
+/// untyped mode reads such a column as text.
 pub fn decode_date32(s: &str) -> Option<i32> {
     if s == "infinity" || s == "-infinity" {
         return None;

@@ -571,7 +571,9 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
 #[tokio::test]
 async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
     use pgdump_query::map::{DataBlock, SpanBody};
-    use pgdump_query::{ComparisonSemantics, QueryOptions, TableName, table_schema, table_summary};
+    use pgdump_query::{
+        ComparisonSemantics, QueryOptions, StatisticsView, TableName, table_schema, table_summary,
+    };
 
     let mut index = gathered(
         &statistics_fixture(16, "default"),
@@ -582,7 +584,8 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
     let summary = |index: &DumpIndex| {
         let resolved = table_schema(index, &name, &QueryOptions::default()).unwrap();
         let id = resolved.schema.index_of("id").unwrap();
-        table_summary(index, &name, &resolved, ComparisonSemantics::Arrow).columns[id].clone()
+        let (semantics, reading) = (ComparisonSemantics::Arrow, StatisticsView::Every);
+        table_summary(index, &name, &resolved, semantics, reading).columns[id].clone()
     };
     assert!(summary(&index).bounds_complete, "every group of `id` is bounded");
 

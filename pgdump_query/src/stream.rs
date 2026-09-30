@@ -63,8 +63,9 @@ use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Finding, Severity};
 use crate::gather;
 use crate::index::{
-    ArrayShape, BlockCensus, CopyBlock, DumpIndex, TableName, non_seekable_compression_diagnostic,
-    scan_preamble, tiling_diagnostics, toc_coverage_diagnostic, union_census,
+    ArrayShape, BlockCensus, CopyBlock, DumpIndex, TableName, Unrepresentable, UnrepresentableTier,
+    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
+    toc_coverage_diagnostic, union_census,
 };
 #[cfg(feature = "introspect")]
 use crate::instrument::statistics_loaded;
@@ -93,7 +94,9 @@ use crate::statistics::{
     StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
-use crate::unrepresentable::counter_for;
+use crate::unrepresentable::{
+    UnrepresentableMode, UnrepresentableRead, counter_for, unrepresentable_reads,
+};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -285,7 +288,8 @@ fn project(
 }
 
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
-/// projection, the filter terms and their semantics, the schema mode and — for a sub-stream of a
+/// projection, the filter terms and their semantics, the schema mode, how a
+/// value its column cannot hold is read and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
 /// (`docs/design/decisions.md`, "D50"). The hasher's output is not stable
 /// across Rust releases: a token is valid only within its own process.
@@ -330,6 +334,7 @@ fn query_fingerprint(
         ComparisonSemantics::Arrow => 1u8,
     }
     .hash(&mut hasher);
+    options.unrepresentable.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -2288,6 +2293,9 @@ struct ReplayPlan {
     stops: BTreeMap<u64, SortedStop>,
     /// What pruning skipped, where any block's statistics were consulted.
     pruned: Option<PlanNote>,
+    /// Each materialized column's values read as NULL
+    /// ([`PlanNoteKind::ReadAsNull`]).
+    read_as_null: Vec<PlanNote>,
     /// At least the rows the replay can emit ([`Pruned::rows`]).
     kept_rows: u64,
     /// At least the text bytes the replay emits of each projected field
@@ -2311,6 +2319,7 @@ impl ReplayPlan {
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
+        let read_as_null = read_as_null(matches, &blocks, &query_options);
         Ok(Self {
             scan_options,
             query_options,
@@ -2320,9 +2329,17 @@ impl ReplayPlan {
             kept,
             stops,
             pruned,
+            read_as_null,
             kept_rows,
             kept_value_bytes,
         })
+    }
+
+    /// What the plan settled before any row is read, as every sub-stream
+    /// carries it ([`TableStream::plan_notes`]) bar what cutting it into
+    /// sub-streams adds.
+    fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
+        self.read_as_null.iter().chain(&self.pruned).cloned()
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -2413,6 +2430,59 @@ fn prune_blocks(
     Pruned { kept, stops, note, rows, value_bytes }
 }
 
+/// **Each column the query materializes that holds a value it reads as
+/// NULL**, with the map's count of them over every block of the table in the
+/// tiers the query's semantics cannot hold ([`PlanNoteKind::ReadAsNull`]) —
+/// under [`crate::UnrepresentableMode::Null`] and typed, and never for a
+/// column read as `Utf8View`, whose text holds every value.
+fn read_as_null(
+    matches: &[CopyBlock],
+    blocks: &BTreeMap<u64, PlannedBlock>,
+    query_options: &QueryOptions,
+) -> Vec<PlanNote> {
+    if query_options.unrepresentable != UnrepresentableMode::Null
+        || query_options.schema_mode != SchemaMode::Typed
+    {
+        return Vec::new();
+    }
+    let (Some(first), Some(planned)) = (matches.first(), blocks.values().next()) else {
+        return Vec::new();
+    };
+    let reach = query_options.unrepresentable_reach();
+    let table = first.header.qualified_name();
+    let fields = planned.resolved.schema.fields();
+    let mut notes = Vec::new();
+    for (i, field) in fields.iter().enumerate() {
+        if matches!(field.data_type(), arrow::datatypes::DataType::Utf8View) {
+            continue;
+        }
+        let values: u64 = matches
+            .iter()
+            .filter_map(|block| {
+                let c = block.header.columns.iter().position(|name| name == field.name())?;
+                let count = block.unrepresentable.as_ref()?.get(c)?;
+                Some(
+                    count.format
+                        + if reach == UnrepresentableTier::Engine { count.engine } else { 0 },
+                )
+            })
+            .sum();
+        if values == 0 {
+            continue;
+        }
+        notes.push(PlanNote {
+            kind: PlanNoteKind::ReadAsNull {
+                table: table.clone(),
+                column: field.name().clone(),
+                declared_type: planned.resolved.notes[i].declared.clone().unwrap_or_default(),
+                values,
+            },
+            levers: Vec::new(),
+        });
+    }
+    notes
+}
+
 /// Per field of `planned`, the text bytes `block`'s statistics count of its
 /// values in the groups `kept` keeps — every group where `kept` is `None` —
 /// and `None` for a field the block's statistics did not count
@@ -2452,6 +2522,10 @@ struct PlannedBlock {
     /// The **projected** schema, which is what the batches carry.
     resolved: ResolvedSchema,
     field_targets: Vec<Option<usize>>,
+    /// Per field of the block, how the query reads its values their type
+    /// cannot hold ([`unrepresentable_reads`]) — what the batcher and the
+    /// filter both read them by.
+    unrepresentable: Vec<Option<UnrepresentableRead>>,
     filter: Arc<ResolvedExpr>,
     notes: Vec<ComparisonNote>,
 }
@@ -2463,6 +2537,9 @@ struct PlannedBlock {
 /// **An unprojected query projects the table's order** ([`TableColumns`]),
 /// so the batches of a block listing its columns in another order come out
 /// reordered by name, the same shape as every other block's.
+///
+/// `counts` is the block's unrepresentable count, where the map holds the
+/// block ([`unrepresentable_reads`]).
 fn resolve_for_query(
     header: &CopyHeader,
     header_offset: u64,
@@ -2470,14 +2547,17 @@ fn resolve_for_query(
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     table: &TableColumns,
+    counts: Option<&[Unrepresentable]>,
 ) -> Result<PlannedBlock> {
     let census = table.census_for(&header.columns);
     let full = resolve_block(header, metadata, database, query_options.schema_mode, &census)?;
+    let unrepresentable = query_reads(header, metadata, database, &full, counts, query_options);
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
     // projection dropped.
     let filter =
-        resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?;
+        resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?
+            .reading(&unrepresentable);
     let notes = filter.comparison_notes();
     let projection = query_options.projection.as_deref().unwrap_or(&table.order);
     let (resolved, field_targets) = project(&full, Some(projection), header_offset)?;
@@ -2486,9 +2566,30 @@ fn resolve_for_query(
         database: database.map(str::to_string),
         resolved,
         field_targets,
+        unrepresentable,
         filter: Arc::new(filter),
         notes,
     })
+}
+
+/// [`unrepresentable_reads`] for `query_options`' mode and front end.
+fn query_reads(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    full: &ResolvedSchema,
+    counts: Option<&[Unrepresentable]>,
+    query_options: &QueryOptions,
+) -> Vec<Option<UnrepresentableRead>> {
+    unrepresentable_reads(
+        header,
+        metadata,
+        database,
+        full,
+        counts,
+        query_options.unrepresentable,
+        query_options.unrepresentable_reach(),
+    )
 }
 
 /// **The filter is resolved at plan time**, once per matched block and
@@ -2517,6 +2618,7 @@ fn plan_blocks(
                 query_options,
                 metadata,
                 table,
+                block.unrepresentable.as_deref(),
             )?;
             Ok((block.header_offset, planned))
         })
@@ -2698,6 +2800,7 @@ fn activate(
                 &plan.query_options,
                 plan.metadata.as_ref(),
                 &plan.table,
+                None,
             )?;
             &resolved_here
         }
@@ -2707,6 +2810,7 @@ fn activate(
         header.qualified_name(),
         plan.query_options.clone(),
         block.field_targets.clone(),
+        block.unrepresentable.clone(),
     );
     let (resolved, notes) = (block.resolved.clone(), block.notes.clone());
     Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
@@ -3223,6 +3327,16 @@ pub enum PlanNoteKind {
     /// declared type or collation no longer matches, and one holding only NULL
     /// counts under an operator they cannot answer.
     StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
+    /// A column this query materializes holds `values` values PostgreSQL
+    /// accepts for its declared type and its type cannot hold, which the
+    /// query reads as NULL ([`crate::UnrepresentableMode::Null`];
+    /// `docs/design/decisions.md`, "D98"). One per such column.
+    ///
+    /// **A property of the table, never of the run**: `values` is the map's
+    /// count over every block of the table, in the tiers the query's semantics
+    /// cannot hold, so it does not move with a `LIMIT`, a pruned group or a
+    /// dynamic filter's skip, which decide only how many of them a run met.
+    ReadAsNull { table: String, column: String, declared_type: String, values: u64 },
 }
 
 /// One block a [`TableStream`] replayed under an early stop — the filter, or
@@ -3326,8 +3440,9 @@ impl PlanNote {
     }
 
     /// The read-buffer budget this note's [`PlanNote::message`] quotes, where
-    /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`],
-    /// whose fact is about stored statistics and names no budget at all.
+    /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`] and
+    /// [`PlanNoteKind::ReadAsNull`], whose facts are about what the map holds
+    /// and name no budget at all.
     ///
     /// **It exists so a caller can say where that number came from.**
     /// Provenance is the caller's fact and never the library's
@@ -3342,7 +3457,7 @@ impl PlanNote {
             | PlanNoteKind::CompressedBlockPathDeclined { memory_bytes, .. }
             | PlanNoteKind::AllocationBelowFloor { memory_bytes, .. }
             | PlanNoteKind::BatchSpanNarrowed { memory_bytes, .. } => Some(*memory_bytes),
-            PlanNoteKind::StatisticsPruned { .. } => None,
+            PlanNoteKind::StatisticsPruned { .. } | PlanNoteKind::ReadAsNull { .. } => None,
         }
     }
 
@@ -3363,7 +3478,7 @@ impl Finding for PlanNote {
     /// narrowed to seat the readers asked for (`docs/design/decisions.md`,
     /// "D84"), where the `Warning` beside it is what says a count still came
     /// up short — and `Warning` for every note saying the budget in force
-    /// declined something asked of it. Derived from the kind, as
+    /// declined something asked of it, and for values read as NULL. Derived from the kind, as
     /// `ColumnNote`'s is from its resolution, so a caller printing it and one
     /// draining it into a sink cannot disagree.
     fn severity(&self) -> Severity {
@@ -3373,7 +3488,8 @@ impl Finding for PlanNote {
             }
             PlanNoteKind::ParallelismBudgetLimited { .. }
             | PlanNoteKind::CompressedBlockPathDeclined { .. }
-            | PlanNoteKind::AllocationBelowFloor { .. } => Severity::Warning,
+            | PlanNoteKind::AllocationBelowFloor { .. }
+            | PlanNoteKind::ReadAsNull { .. } => Severity::Warning,
         }
     }
 
@@ -3455,6 +3571,10 @@ impl Finding for PlanNote {
                      {skipped_bytes} of the {bytes} byte(s) of rows this table holds are not read"
                 )
             }
+            PlanNoteKind::ReadAsNull { table, column, declared_type, values } => format!(
+                "{table}.{column} holds {values} value(s) its type `{declared_type}` cannot hold, \
+                 read as NULL"
+            ),
         }
     }
 
@@ -4338,6 +4458,9 @@ struct DynamicRead {
 struct DynamicBlock {
     header_offset: u64,
     full: ResolvedSchema,
+    /// How the query reads each column's values its type cannot hold, which
+    /// each state's leaves read them by, as the static filter's do.
+    unrepresentable: Vec<Option<UnrepresentableRead>>,
     /// The generation of the state last read, `None` before the first.
     generation: Option<u64>,
     /// The state last read, resolved against this block: what its groups
@@ -4364,6 +4487,9 @@ impl DynamicBlock {
         let schema_mode = plan.query_options.schema_mode;
         let database = block.database.as_deref();
         let full = resolve_block(&block.header, metadata, database, schema_mode, &census).ok()?;
+        let counts = block.unrepresentable.as_deref();
+        let unrepresentable =
+            query_reads(&block.header, metadata, database, &full, counts, &plan.query_options);
         let reading = plan.query_options.statistics_view();
         let pruning = statistics.and_then(|statistics| {
             DynamicPruning::new(block, Arc::clone(statistics), metadata, reading)
@@ -4371,6 +4497,7 @@ impl DynamicBlock {
         Some(Self {
             header_offset: block.header_offset,
             full,
+            unrepresentable,
             generation: None,
             state: Arc::new(ResolvedExpr::And(Vec::new())),
             rows: None,
@@ -4389,7 +4516,8 @@ impl DynamicBlock {
         semantics: ComparisonSemantics,
         evaluation: RowEvaluation,
     ) {
-        let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false);
+        let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false)
+            .reading(&self.unrepresentable);
         self.rows = (evaluation == RowEvaluation::On).then(|| resolved.for_rows());
         self.state = Arc::new(resolved);
         self.generation = Some(generation);
@@ -4646,7 +4774,7 @@ pub fn table_stream<'a>(
         // resume point being inside a mapped block by construction.
         let MappedTable { matches, metadata } = mapped;
         let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata)?);
-        *shared_for_stream.plan_notes.lock().unwrap() = plan.pruned.iter().cloned().collect();
+        *shared_for_stream.plan_notes.lock().unwrap() = plan.notes().collect();
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches
             .iter()
@@ -4788,7 +4916,7 @@ fn plan_replay(
     // outside the resume fingerprint, being a batching knob
     // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
     plan.query_options.max_source_span = span;
-    plan_notes.extend(plan.pruned.iter().cloned());
+    plan_notes.extend(plan.notes());
     Ok(PlannedReplay { plan: Arc::new(plan), groups, plan_notes, advice })
 }
 
@@ -4891,8 +5019,14 @@ impl TablePartitions {
             .map(|planned| &planned.resolved)
             .cloned()
             .unwrap_or_default();
-        let orders =
-            partition_orders(&matches, index.metadata.as_ref(), &resolved, &block_runs(&groups));
+        let reading = plan.query_options.statistics_view();
+        let orders = partition_orders(
+            &matches,
+            index.metadata.as_ref(),
+            &resolved,
+            &block_runs(&groups),
+            reading,
+        );
         let use_statistics = plan.query_options.use_statistics;
         let matches: Vec<CopyBlock> = matches
             .into_iter()
@@ -5060,7 +5194,9 @@ impl TablePartitions {
         }
         let metadata = self.plan.metadata.as_ref();
         let resolved = self.resolved_schema();
-        let proved = partition_orders(&self.matches, metadata, &resolved, &block_runs(groups));
+        let reading = self.plan.query_options.statistics_view();
+        let proved =
+            partition_orders(&self.matches, metadata, &resolved, &block_runs(groups), reading);
         self.orders
             .iter()
             .zip(&proved)
@@ -6116,6 +6252,7 @@ mod tests {
                 &query_options,
                 mapped.metadata.as_ref(),
                 &plan.table,
+                block.unrepresentable.as_deref(),
             )
         };
         let planned = &plan.blocks[&first.header_offset];

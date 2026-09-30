@@ -22,7 +22,7 @@ use pgdump_query::{
     DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
     Parallelism, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized,
     ScanOptions, Severity, Span, SpanBody, StatisticsLevel, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, TypeKind, open, preamble_only, render_field_into,
+    StatisticsTarget, TypeKind, UnrepresentableMode, open, preamble_only, render_field_into,
 };
 use tracing::Instrument;
 
@@ -55,6 +55,24 @@ impl From<CliSchemaMode> for SchemaMode {
         match mode {
             CliSchemaMode::Typed => SchemaMode::Typed,
             CliSchemaMode::Strings => SchemaMode::Strings,
+        }
+    }
+}
+
+/// CLI spelling of [`UnrepresentableMode`] (`docs/design/decisions.md`,
+/// "D98").
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+enum CliUnrepresentable {
+    #[default]
+    Null,
+    Refuse,
+}
+
+impl From<CliUnrepresentable> for UnrepresentableMode {
+    fn from(mode: CliUnrepresentable) -> Self {
+        match mode {
+            CliUnrepresentable::Null => UnrepresentableMode::Null,
+            CliUnrepresentable::Refuse => UnrepresentableMode::Refuse,
         }
     }
 }
@@ -960,6 +978,15 @@ enum Command {
         /// for a database an incremental scan hasn't read the DDL for yet.
         #[arg(long, value_enum, default_value_t)]
         schema_mode: CliSchemaMode,
+        /// What to do with a value PostgreSQL accepts for a column's declared
+        /// type and the column's type cannot hold — `infinity` in a `date`,
+        /// `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`: `null`, the
+        /// default, reads each as NULL, for filtering too, and says on stderr
+        /// how many each column printed holds; `refuse` stops the query where
+        /// it reads one. `--schema-mode strings` reads every value as its
+        /// text.
+        #[arg(long, value_name = "MODE", value_enum, default_value_t)]
+        unrepresentable: CliUnrepresentable,
         /// Bytes requested per read from the dump — the same knob `parse`
         /// carries, and with the same measured answer behind its default.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
@@ -1628,6 +1655,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::TableColumnsDisagree { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
+        | Lib::Unrepresentable { .. }
         | Lib::FieldRender { .. } => false,
     }
 }
@@ -2183,6 +2211,7 @@ async fn main() -> Result<()> {
             no_columns,
             database,
             schema_mode,
+            unrepresentable,
             chunk_size,
             max_line_bytes,
             statistics,
@@ -2243,6 +2272,7 @@ async fn main() -> Result<()> {
             let query_options = QueryOptions {
                 database,
                 schema_mode: schema_mode.into(),
+                unrepresentable: unrepresentable.into(),
                 filter,
                 projection: projection(column, no_columns),
                 parallelism: replay.parallelism(),
@@ -3434,6 +3464,7 @@ mod tests {
         "DTCACHE",
         "FILTER",
         "SCHEMA_MODE",
+        "MODE",
         "TERMS",
     ];
 

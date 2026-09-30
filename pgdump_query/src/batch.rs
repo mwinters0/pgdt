@@ -41,6 +41,7 @@ use bytes::Bytes;
 use crate::cache::CacheMode;
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
+use crate::index::UnrepresentableTier;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::{ComparisonSemantics, NestedPlan};
@@ -50,6 +51,7 @@ use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
 use crate::statistics::StatisticsView;
+use crate::unrepresentable::{UnrepresentableMode, UnrepresentableRead};
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs
 // in `stream.rs`; the other recorded deviation, named here rather than
 // reached for inline so `tests/layering.rs` sees it.
@@ -123,6 +125,14 @@ pub struct QueryOptions {
     /// mapping for stays `Utf8View`, as `SchemaMode::Strings` maps every
     /// column.
     pub schema_mode: SchemaMode,
+    /// How a value PostgreSQL accepts for a column's declared type and the
+    /// column's Arrow type cannot hold is read ([`UnrepresentableMode`]):
+    /// NULL, by default, or refused. Which values those are is the
+    /// semantics' to say — Arrow's format spec under PostgreSQL's, and past
+    /// the engine's calendar too under DataFusion's
+    /// (`docs/design/decisions.md`, "D98"). Moot under
+    /// [`SchemaMode::Strings`], which reads every value as its text.
+    pub unrepresentable: UnrepresentableMode,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
     /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a
@@ -164,6 +174,7 @@ impl Default for QueryOptions {
             max_bytes: None,
             max_source_span: Some(64 << 20),
             schema_mode: SchemaMode::default(),
+            unrepresentable: UnrepresentableMode::default(),
             database: None,
             scan_extent: ScanExtent::default(),
             parallelism: Parallelism::default(),
@@ -174,11 +185,34 @@ impl Default for QueryOptions {
 
 impl QueryOptions {
     /// **How this query's statistics are read where a column holds a value
-    /// its type cannot**: as its filter evaluates one, every value in
-    /// PostgreSQL's order, a read that decodes one refusing
-    /// (`docs/design/decisions.md`, "D97").
-    pub(crate) fn statistics_view(&self) -> StatisticsView {
-        StatisticsView::Every
+    /// its type cannot**, as its reads and its filter take one: as NULL under
+    /// [`UnrepresentableMode::Null`], in the tiers its semantics cannot hold
+    /// ([`Self::unrepresentable_reach`]), and otherwise every value in
+    /// PostgreSQL's order — under the refuse mode, and under
+    /// [`SchemaMode::Strings`], whose text holds every value
+    /// (`docs/design/decisions.md`, "D97", "D98").
+    pub fn statistics_view(&self) -> StatisticsView {
+        match (self.schema_mode, self.unrepresentable, self.unrepresentable_reach()) {
+            (SchemaMode::Typed, UnrepresentableMode::Null, UnrepresentableTier::Format) => {
+                StatisticsView::Representable
+            }
+            (SchemaMode::Typed, UnrepresentableMode::Null, UnrepresentableTier::Engine) => {
+                StatisticsView::Displayable
+            }
+            _ => StatisticsView::Every,
+        }
+    }
+
+    /// **The tiers of value this query's front end cannot hold**, named by the
+    /// wider: every layer holds a value to Arrow's format spec, and DataFusion
+    /// — whose comparison [`ComparisonSemantics::Arrow`] is — cannot display
+    /// a `date` or timestamp past [`crate::calendar_end`] either
+    /// (`docs/design/decisions.md`, "D98").
+    pub(crate) fn unrepresentable_reach(&self) -> UnrepresentableTier {
+        match self.semantics {
+            ComparisonSemantics::Postgres => UnrepresentableTier::Format,
+            ComparisonSemantics::Arrow => UnrepresentableTier::Engine,
+        }
     }
 }
 
@@ -847,20 +881,33 @@ pub(crate) struct RowBatcher {
     /// decodes no field, and where the filter reads none either the read loop
     /// skips the bulk UTF-8 validation (`docs/design/decisions.md`, "D27").
     decodes_fields: bool,
+    /// Parallel to `columns`: how each projected column's values its type
+    /// cannot hold are read, where it can hold one
+    /// ([`crate::unrepresentable::unrepresentable_reads`]).
+    unrepresentable: Vec<Option<UnrepresentableRead>>,
     options: QueryOptions,
 }
 
 impl RowBatcher {
     /// `resolved` is the **projected** schema — what this batcher's
     /// `RecordBatch`es carry — and `field_targets` maps the block's own
-    /// fields onto it. Both come from `crate::stream::project`.
+    /// fields onto it. Both come from `crate::stream::project`;
+    /// `unrepresentable` is parallel to `field_targets`, and empty for a
+    /// block none of whose fields is tested.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
         options: QueryOptions,
         field_targets: Vec<Option<usize>>,
+        unrepresentable: Vec<Option<UnrepresentableRead>>,
     ) -> Self {
         let schema = resolved.schema.clone();
+        let mut projected = vec![None; schema.fields().len()];
+        for (field, target) in field_targets.iter().enumerate() {
+            if let Some(target) = *target {
+                projected[target] = unrepresentable.get(field).cloned().flatten();
+            }
+        }
         let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
         // `plans` is positional and parallel to `schema.fields()`:
         // `resolve_columns` fills one entry per column, `NestedPlan::Scalar`
@@ -881,6 +928,7 @@ impl RowBatcher {
             rows_in_batch: 0,
             bytes_in_batch: 0,
             span: None,
+            unrepresentable: projected,
             options,
         }
     }
@@ -994,6 +1042,13 @@ impl RowBatcher {
         Ok(())
     }
 
+    /// Append one field's text to projected column `col`.
+    ///
+    /// **A value the query reads as NULL is NULL before it is decoded**, as a
+    /// whole: an array, range or composite holding one leaf its type cannot
+    /// hold is the NULL, a NULL range bound meaning unbounded
+    /// (`docs/design/decisions.md`, "D98"). One refused is named as such,
+    /// where a value that does not parse is [`Error::FieldDecode`].
     fn push_field(
         &mut self,
         col: usize,
@@ -1008,24 +1063,36 @@ impl RowBatcher {
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table`/`declared_types` are only ever read, on the
         // (rare) error path.
-        let Self { schema, table, declared_types, columns, .. } = self;
+        let Self { schema, table, declared_types, columns, unrepresentable, .. } = self;
         let builder = &mut columns[col];
         let Some(text) = decoded else {
             append_null(builder);
             return Ok(());
         };
+        let read = unrepresentable[col].as_ref();
+        if read.is_some_and(|read| read.nulls(&text)) {
+            append_null(builder);
+            return Ok(());
+        }
         match builder {
             ColumnBuilder::Utf8View(b) => {
                 push_utf8view_field(b, col, field_offset, field_len, text, chunks)
             }
             _ => {
                 if let Err(value) = append_typed(builder, &text) {
-                    return Err(Error::FieldDecode {
-                        table: table.clone(),
-                        column: schema.field(col).name().clone(),
-                        row_offset,
-                        declared_type: declared_types[col].clone().unwrap_or_default(),
-                        value,
+                    let (table, column) = (table.clone(), schema.field(col).name().clone());
+                    let declared_type = declared_types[col].clone().unwrap_or_default();
+                    return Err(match read.is_some_and(|read| read.past(&text)) {
+                        true => Error::Unrepresentable {
+                            table,
+                            column,
+                            row_offset,
+                            declared_type,
+                            value,
+                        },
+                        false => {
+                            Error::FieldDecode { table, column, row_offset, declared_type, value }
+                        }
                     });
                 }
             }
@@ -1817,7 +1884,7 @@ mod tests {
             plans: vec![NestedPlan::Scalar],
             comparisons: vec![comparison_for(declared, None, &[], &[])],
         };
-        RowBatcher::new(&resolved, "public.t".into(), options, field_targets)
+        RowBatcher::new(&resolved, "public.t".into(), options, field_targets, Vec::new())
     }
 
     /// The unprojected case: one `Utf8View` column, fed by the row's only
@@ -1948,6 +2015,7 @@ mod tests {
             "public.t".into(),
             QueryOptions::default(),
             vec![None, None],
+            Vec::new(),
         );
         let mut chunks = RetainedChunks::new();
         batcher

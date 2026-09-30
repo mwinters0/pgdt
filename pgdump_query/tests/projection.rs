@@ -8,7 +8,9 @@
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::ColumnResolution;
-use pgdump_query::{Error, LocalFileSource, QueryOptions, ScanOptions, table_stream};
+use pgdump_query::{
+    Error, LocalFileSource, QueryOptions, ScanOptions, UnrepresentableMode, table_stream,
+};
 
 mod common;
 use common::{edge_cases, rows_of, types_fixture, widgets_expected};
@@ -129,11 +131,11 @@ async fn a_repeated_name_is_refused_without_reading_the_file() {
     }
 }
 
-/// **Whether a query succeeds depends on its projection.** `t_numeric.v_small`
-/// carries a `NaN` that `Decimal128` cannot represent, so the whole table is a
-/// hard `Error::FieldDecode`; projecting that column away is a per-column
-/// escape beside `--schema-mode strings`, and it leaves every other column
-/// typed.
+/// **Whether a refusing query succeeds depends on its projection.**
+/// `t_numeric.v_small` carries a `NaN` that `Decimal128` cannot represent, so
+/// under the refuse mode the whole table is a hard `Error::Unrepresentable`;
+/// projecting that column away is a per-column escape beside `--schema-mode
+/// strings`, and it leaves every other column typed.
 #[tokio::test]
 async fn projecting_a_column_away_escapes_its_decode_failure() {
     for version in [13, 16, 18] {
@@ -156,11 +158,18 @@ async fn projecting_a_column_away_escapes_its_decode_failure() {
             Ok::<_, Error>((stream.resolved_schema(), rows))
         };
 
+        let refusing = |options: QueryOptions| QueryOptions {
+            unrepresentable: UnrepresentableMode::Refuse,
+            ..options
+        };
         assert!(
-            matches!(run(QueryOptions::default()).await, Err(Error::FieldDecode { .. })),
+            matches!(
+                run(refusing(QueryOptions::default())).await,
+                Err(Error::Unrepresentable { .. })
+            ),
             "pg_dump {version}: the whole table still fails"
         );
-        let (resolved, rows) = run(projecting(&["id", "v_typed"]))
+        let (resolved, rows) = run(refusing(projecting(&["id", "v_typed"])))
             .await
             .unwrap_or_else(|e| panic!("pg_dump {version}: {e}"));
         assert!(!rows.is_empty(), "pg_dump {version}");
@@ -173,8 +182,8 @@ async fn projecting_a_column_away_escapes_its_decode_failure() {
         // projection and not something else about the narrower query.
         assert!(
             matches!(
-                run(projecting(&["id", "v_small"])).await,
-                Err(Error::FieldDecode { column, .. }) if column == "v_small"
+                run(refusing(projecting(&["id", "v_small"]))).await,
+                Err(Error::Unrepresentable { column, .. }) if column == "v_small"
             ),
             "pg_dump {version}: the column is what fails"
         );

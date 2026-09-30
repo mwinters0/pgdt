@@ -49,11 +49,14 @@ which is left out and named on stderr with why
   for a file naming one database, it replaces that name; given for a file of
   several, it is refused, since it could name none of them.
 - **`:strings` reads every column as its text**, the escape from a type
-  mapping you do not trust, and the way to read a column holding a value its
-  type cannot (below).
+  mapping you do not trust, and the way to keep a value a typed column cannot
+  hold (below).
+- **`:unrepresentable=refuse` refuses a value a typed column cannot hold**
+  where a query reads one, where the default, `:unrepresentable=null`, reads
+  it as NULL (below).
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
-  in place of the session's. It and `:strings` may come in either order.
+  in place of the session's. The suffixes may come in any order.
 - **The source is anything `pgdt --source` takes**: a path, an `.xz` file, or
   an `http(s)://` URL. A path containing `=` is written `./a=b.sql`; a URL's
   `=` is never read as a name.
@@ -71,6 +74,7 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 | `pgdump.schema` | Its PostgreSQL schema, where the name alone matches tables in more than one. |
 | `pgdump.database` | Its database, where the file holds several. |
 | `pgdump.schema_mode` | `typed` (the default), or `strings` for every column as its text. |
+| `pgdump.unrepresentable` | `null` (the default), reading a value a typed column cannot hold as NULL, or `refuse`. |
 | `pgdump.strict_identity` | This dump's `--strict-identity` terms, in place of the session's (below). |
 
 A name that matches more than one table is refused, naming them. The table's
@@ -180,16 +184,28 @@ is the function's name where the driver gives its OID.
 [Type handling](type-handling.md) covers what each type becomes.
 
 **A typed column cannot hold `infinity`, `-infinity` or `NaN`** (`date`,
-`timestamp`, a typed `numeric`) nor an `interval` too long for its Arrow type:
-reading such a value is an error, and `:strings` reads it as its text. A
-`COUNT(column)` with no `WHERE` can still answer, from the statistics `pgdt
-parse` recorded, without reading the column; a `SUM` cannot, a sum having no
-way to leave the value out, so it reads the column and errors. **Whether a
-query reads it can change from run to run**: a scan's partitions run
+`timestamp`, a typed `numeric`), `time` `24:00:00`, an `interval` too long for
+its Arrow type, nor a timestamp past `294247-01-10`, and DataFusion cannot
+print a `date` or timestamp past `262142-12-31`. **Each reads as NULL, for
+every purpose**: a `WHERE` compares it as NULL, `IS NULL` matches it,
+`COUNT(column)` leaves it out and `MIN`, `MAX` and `SUM` skip it, whether the
+statistics answer or the rows are read, so a query answers the same however
+its partitions run. Each scan says on stderr how many a column it reads
+holds. `:strings` reads it as its text instead.
+
+One exception is DataFusion's own, and not particular to these values: **an
+ungrouped `MIN` beside a `MAX` can answer a `MIN` too high** once a batch it
+aggregates holds no value of the `MIN`'s column — a NULL, or a value read as
+one — because DataFusion 55.1 then drops the `MIN` side of the filter the
+aggregate hands the scan, which may skip rows below it. Turning off
+`datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` avoids it.
+
+**`:unrepresentable=refuse` refuses where a scan reads one** — and whether a
+query reads it can change from run to run: a scan's partitions run
 concurrently, and a `LIMIT` another partition fills first, or a `MIN`, `MAX`,
 join or `ORDER BY … LIMIT` whose running bound lets a partition skip the rows
 holding it, can finish without reaching the value — so the same query may
-answer on one run, correctly, and error on the next.
+answer on one run and error on the next.
 
 ## Memory
 

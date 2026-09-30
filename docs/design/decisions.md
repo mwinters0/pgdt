@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D96 -->
+<!-- decision-watermark: D98 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -390,6 +390,14 @@ Rejected: the cut held by `TablePartitions`, outliving the filter a reset discar
 re-pruning a whole block per generation; the filter handed through the plan node, whose clones share it; seeking the scanner in place at a skip.
 Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `pgdump_query/tests/dynamic_filter.rs`, `datafusion-pgdump/tests/dynamic_filters.rs`.
 
+### D98 The typed mode nulls what its front end cannot hold, tested before decode where the block's count says it holds one
+Under `UnrepresentableMode::Null` a value past the tiers the query's semantics cannot hold — the format spec's under PostgreSQL's, the calendar's
+too under Arrow's, DataFusion's comparison being DataFusion's front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a
+dictionary entry) and the statistics' view (D97), a sum leaving it out; a nested value holding one is the NULL whole. It is tested lexically (D96)
+before decoding, only in a column whose block counts one in those tiers. Rejected: nulling what fails to decode (an engine-tier value decodes, and
+text that does not parse must still refuse); a tier option beside the semantics, always set with them; testing every block. Reopens: a library
+consumer comparing in Arrow's order and displaying past the calendar. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
+
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
@@ -533,22 +541,22 @@ is itself non-monotone in the container limit, being `margin_allowance(allowance
 sizing an attribution input by row width. Evidence: `statistics-gathering`.
 
 ### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
-`TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec` *holds* one instead of
-parenting it: a parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block
-contributed and the stored text is the value, else `Inexact`; a distinct count the dictionaries' union — derived, not gathered (D79) —
-where every group kept one of emitted text (I48), else `Absent`; all `Inexact` under a fetch below the exact rows or a pushed filter,
-whose rows are the kept groups' plus each unconsulted block's. It answers over a value a read refuses (`KD8`), as D54. Rejected: `Absent`
-for a partial bound, giving up cardinality; the union as `Inexact`, a floor inflating a join's estimate; NULL counts withheld where a
-bound fails to decode; under a filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
+`TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec` *holds* one instead of parenting it: a
+parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block contributed and the stored text
+is the value, else `Inexact`; a distinct count the dictionaries' union — derived, not gathered (D79) — where every group kept one of emitted text
+(I48), else `Absent`; all `Inexact` under a fetch below the exact rows or a pushed filter, whose rows are the kept groups' plus each unconsulted
+block's. It reads each value in the query's view (D98), and answers over one the refuse mode refuses (`KD8`), as D54. Rejected: `Absent` for a partial
+bound, giving up cardinality; the union as `Inexact`, a floor inflating a join's estimate; NULL counts withheld where a bound fails to decode; under a
+filter, v55's rows or a guessed selectivity. Code: `datafusion-pgdump`, `summary.rs`. Evidence: `tests/statistics.rs`.
 
 ### D91 A sum is kept wrapped and handed over as `SUM` wraps; a byte size is the text's length
-The value owed is DataFusion's `SUM`, which wraps (`add_wrapping`), not PostgreSQL's, and wrapping addition is associative: group sums at
-128 bits narrow exactly to the `Int64` an integer is cast to and an `oid`'s `UInt64`, and are a `Decimal128`'s own, which `SUM` widens
-unchecked. A value that does not decode drops its column's sums, unable to leave it out as a bound does (D54). Text bytes are kept for every
-column, a cache being gathered typed whatever reads it: a `Utf8View`'s size, a `Binary`'s bound and an enum's labels beside its keys, `Inexact`
-(D46); rows × width, a bit a boolean, `Exact` unfiltered; a nested column none, its text bounding no leaf; a filter bounds each by the kept groups.
-Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings` sized by bounds
-and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
+The value owed is DataFusion's `SUM`, which wraps (`add_wrapping`), not PostgreSQL's, and wrapping addition is associative: group sums at 128 bits
+narrow exactly to the `Int64` an integer is cast to and an `oid`'s `UInt64`, and are a `Decimal128`'s own, which `SUM` widens unchecked. A `NaN` is
+left out as a NULL, the sum read only in a view taking it as one (D98); a value that does not decode drops its column's sums (D54). Text bytes are
+kept for every column, a cache being gathered typed whatever reads it: a `Utf8View`'s size, a `Binary`'s bound and an enum's labels beside its keys,
+`Inexact` (D46); rows × width, a bit a boolean, `Exact` unfiltered; a nested column none, its text bounding no leaf; a filter bounds each by the
+kept groups. Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings`
+sized by bounds and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
 
 ### D97 A group keeps a view per tier only where it holds such a value, the values within every tier the base
 A column whose type cannot hold every value counts them per group and bounds and orders the values it holds; beside them, where a

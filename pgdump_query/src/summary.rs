@@ -20,18 +20,13 @@ use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
 use crate::gather::{declared_columns, dictionary_holds_field_text, keeps_sums, stored_resolution};
-use crate::index::{CopyBlock, DumpIndex, TableName};
+use crate::index::{CopyBlock, DumpIndex, TableName, UnrepresentableTier};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
 use crate::statistics::{Bounds, ColumnDictionary, ColumnStatistics, Sortedness, StatisticsView};
-
-/// **The view a summary reads a column's statistics in**: every value, in
-/// PostgreSQL's order, as a scan's pruning reads them — a value its type
-/// cannot hold being one a read materializing it refuses (`KD8`;
-/// `docs/design/decisions.md`, "D89", "D97").
-const READING: StatisticsView = StatisticsView::Every;
+use crate::unrepresentable::column_tiers;
 
 /// What a table's stored statistics amount to, one entry per column of the
 /// schema it was summarized against.
@@ -101,18 +96,26 @@ pub struct Bound {
 }
 
 /// Summarize `table` over `index`, a complete map, against the schema a query
-/// of it resolves and in the semantics that query compares in.
+/// of it resolves and in the semantics that query compares in, reading each
+/// column in the view that query reads a value its type cannot hold in
+/// ([`crate::QueryOptions::statistics_view`]).
 ///
 /// **A block's bounds are read from the set pruning reads** — the set
 /// gathering stored under the kind a term in `semantics` compares by, and
 /// only where the DDL the column was gathered under still stands
 /// (`docs/design/decisions.md`, "D78", "D79"). A block with no statistics
 /// leaves every column incomplete and its rows counted all the same.
+///
+/// **A value `reading` takes as NULL is one**: counted among the NULLs, left
+/// out of the bounds and the distinct values, and out of the sum, which a
+/// view taking every value reads nowhere such a value is
+/// (`docs/design/decisions.md`, "D97", "D98").
 pub fn table_summary(
     index: &DumpIndex,
     table: &TableName,
     resolved: &ResolvedSchema,
     semantics: ComparisonSemantics,
+    reading: StatisticsView,
 ) -> TableSummary {
     let metadata = index.metadata.as_ref();
     let fields = resolved.schema.fields();
@@ -151,6 +154,7 @@ pub fn table_summary(
         let declared =
             declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
         let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
+        let tiers = column_tiers(&gathered);
         let mut seen = vec![false; fields.len()];
         for (c, name) in block.header.columns.iter().enumerate() {
             let Some(i) = fields.iter().position(|field| field.name() == name) else { continue };
@@ -160,20 +164,34 @@ pub fn table_summary(
                 accumulator.uncounted();
                 continue;
             };
-            accumulator.nulls += column.null_counts.iter().sum::<u64>();
-            if column.null_counts.len() != statistics.groups.len() {
-                accumulator.nulls_complete = false;
-            }
             // The bounds, the row order and the dictionary are believed only
-            // under the DDL they were gathered under; the NULL counts above
-            // are read off the text and are believed regardless (D78).
+            // under the DDL they were gathered under; the NULL counts are
+            // read off the text and are believed regardless, bar a value a
+            // view adds to them, counted under that DDL too (D78, D97).
             let believed = believed(column, declared, name);
             let groups = statistics.groups.len();
+            let view_nulls = |g: usize| match believed || reading == StatisticsView::Every {
+                true => column.null_count(g, reading),
+                false => column.null_counts.get(g).copied(),
+            };
+            accumulator.nulls += (0..column.null_counts.len()).filter_map(view_nulls).sum::<u64>();
+            if column.null_counts.len() != groups || (!believed && reading != StatisticsView::Every)
+            {
+                accumulator.nulls_complete = false;
+            }
             accumulator.value_bytes = accumulator
                 .value_bytes
                 .zip(column.value_bytes_where(groups, |_| true))
                 .map(|(held, block)| held + block);
-            let sums = column.sums.as_ref().filter(|sums| believed && sums.len() == groups);
+            // A sum is of the values the type holds, so it is the column's
+            // only in a view taking the rest as NULL, or where there are none.
+            let summed = reading.reads_as_null(Some(UnrepresentableTier::Format))
+                || column
+                    .unrepresentable
+                    .as_ref()
+                    .is_none_or(|counts| counts.iter().all(|count| count.format == 0));
+            let sums =
+                column.sums.as_ref().filter(|sums| summed && believed && sums.len() == groups);
             accumulator.sum = accumulator
                 .sum
                 .zip(sums)
@@ -182,7 +200,10 @@ pub fn table_summary(
                 .dictionary
                 .as_ref()
                 .filter(|_| believed && dictionary_holds_field_text(&gathered, c));
-            accumulator.union(dictionary, statistics.groups.len());
+            let tier = tiers.get(c).cloned().flatten().filter(|_| reading != StatisticsView::Every);
+            accumulator.union(dictionary, statistics.groups.len(), |entry| {
+                tier.as_ref().is_some_and(|tier| reading.reads_as_null(tier.of(entry)))
+            });
             let set = accumulator
                 .kind
                 .as_ref()
@@ -199,14 +220,13 @@ pub fn table_summary(
                 continue;
             };
             let kind = accumulator.kind.clone().expect("a stored set was found for it");
-            let per_group = statistics.groups.iter().zip(&column.null_counts).enumerate();
-            for (g, (group, &nulls)) in per_group {
-                match column.group_bounds(set, READING, g) {
+            for (g, group) in statistics.groups.iter().enumerate() {
+                match column.group_bounds(set, reading, g) {
                     Some(bounds) => accumulator.fold(&kind, bounds),
                     // A group whose every row is NULL has no value to bound,
                     // so it leaves the column's extremes complete; one that
                     // lost a value to gathering does not.
-                    None if nulls == group.rows => {}
+                    None if column.null_count(g, reading) == Some(group.rows) => {}
                     None => accumulator.complete = false,
                 }
             }
@@ -256,9 +276,15 @@ impl<'a> Accumulator<'a> {
         self.value_bytes = None;
     }
 
-    /// Add a block's dictionary to the union, or give the union up where the
-    /// block kept none of field text or any of its `groups` groups kept none.
-    fn union(&mut self, dictionary: Option<&'a ColumnDictionary>, groups: usize) {
+    /// Add a block's dictionary to the union, but each entry `nulled` says the
+    /// query reads as NULL, or give the union up where the block kept none of
+    /// field text or any of its `groups` groups kept none.
+    fn union(
+        &mut self,
+        dictionary: Option<&'a ColumnDictionary>,
+        groups: usize,
+        nulled: impl Fn(&str) -> bool,
+    ) {
         let Some(distinct) = &mut self.distinct else { return };
         let Some(dictionary) = dictionary.filter(|d| d.groups.len() == groups) else {
             self.distinct = None;
@@ -273,6 +299,7 @@ impl<'a> Accumulator<'a> {
             };
             for &index in indices {
                 match dictionary.entries.get(index as usize) {
+                    Some(entry) if nulled(entry) => false,
                     Some(entry) => distinct.insert(entry.as_str()),
                     None => {
                         self.distinct = None;
@@ -383,19 +410,27 @@ pub(crate) fn partition_orders(
     metadata: Option<&DumpMetadata>,
     resolved: &ResolvedSchema,
     runs: &[Vec<u64>],
+    reading: StatisticsView,
 ) -> Vec<Sortedness> {
     (0..resolved.schema.fields().len())
-        .map(|i| column_order(matches, metadata, resolved, i, runs).unwrap_or(Sortedness::Unsorted))
+        .map(|i| {
+            column_order(matches, metadata, resolved, i, runs, reading)
+                .unwrap_or(Sortedness::Unsorted)
+        })
         .collect()
 }
 
-/// [`partition_orders`] for column `i`, `None` wherever it proves nothing.
+/// [`partition_orders`] for column `i`, read in `reading` — a value it takes
+/// as NULL being one, so a column holding one is proved in no order
+/// (`docs/design/decisions.md`, "D98") — and `None` wherever it proves
+/// nothing.
 fn column_order(
     matches: &[CopyBlock],
     metadata: Option<&DumpMetadata>,
     resolved: &ResolvedSchema,
     i: usize,
     runs: &[Vec<u64>],
+    reading: StatisticsView,
 ) -> Option<Sortedness> {
     let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::Arrow)?;
     let name = resolved.schema.field(i).name();
@@ -410,14 +445,14 @@ fn column_order(
         }
         let c = block.header.columns.iter().position(|column| column == name)?;
         let column = statistics.columns[c].as_ref()?;
-        if column.null_counts.len() != statistics.groups.len()
-            || column.null_counts.iter().any(|&nulls| nulls > 0)
-        {
-            return None;
-        }
         let declared =
             declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
         if !believed(column, declared, name) {
+            return None;
+        }
+        if column.null_counts.len() != statistics.groups.len()
+            || (0..statistics.groups.len()).any(|g| column.null_count(g, reading) != Some(0))
+        {
             return None;
         }
         let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
@@ -425,13 +460,13 @@ fn column_order(
         if column.bounds_in(set)?.groups.len() != statistics.groups.len() {
             return None;
         }
-        let sortedness = column.sortedness(set, READING)?;
+        let sortedness = column.sortedness(set, reading)?;
         let mut holding = statistics
             .groups
             .iter()
             .enumerate()
             .filter(|(_, group)| group.rows > 0)
-            .map(|(g, _)| column.group_bounds(set, READING, g));
+            .map(|(g, _)| column.group_bounds(set, reading, g));
         let Some(first) = holding.next() else { continue };
         let last = holding.next_back().unwrap_or(first);
         // deficiency: KD46 — a block holding one distinct value records

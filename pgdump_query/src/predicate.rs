@@ -16,6 +16,7 @@ use crate::pgtype::{
     NestedCompare, NestedPlan, UnanswerableReason, arrow_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
+use crate::unrepresentable::UnrepresentableRead;
 use crate::{Error, Result};
 
 /// Comparison operator for [`Predicate`].
@@ -2297,6 +2298,9 @@ pub(crate) struct ResolvedTerm {
     /// `None` for `IS NULL`/`IS NOT NULL`, the two operators that compare
     /// nothing.
     compared: Option<ComparedTerm>,
+    /// How the query reads a value of this column its type cannot hold, where
+    /// the block's column can hold one ([`ResolvedExpr::reading`]).
+    unrepresentable: Option<UnrepresentableRead>,
 }
 
 impl ResolvedTerm {
@@ -2392,7 +2396,7 @@ pub(crate) fn resolve_term(
     semantics: ComparisonSemantics,
 ) -> Result<ResolvedTerm> {
     if matches!(predicate.op, PredicateOp::IsNull | PredicateOp::IsNotNull) {
-        return Ok(ResolvedTerm { op: predicate.op, index, compared: None });
+        return Ok(ResolvedTerm { op: predicate.op, index, compared: None, unrepresentable: None });
     }
     let ordering = predicate.op.is_ordering();
     let refuse = |reason: &str| Error::UnorderedPredicateColumn {
@@ -2596,6 +2600,7 @@ pub(crate) fn resolve_term(
     Ok(ResolvedTerm {
         op: predicate.op,
         index,
+        unrepresentable: None,
         compared: Some(ComparedTerm {
             column: predicate.column.clone(),
             comparison,
@@ -2650,15 +2655,29 @@ impl ResolvedTerm {
     }
 
     /// The `Error::FieldDecode` a comparing term raises over a `value` that
-    /// is not of its column's type.
+    /// is not of its column's type — `Error::Unrepresentable` over one that
+    /// is and the column's Arrow type cannot hold, where the query refuses
+    /// those (`docs/design/decisions.md`, "D98").
     fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
         let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
-        Error::FieldDecode {
-            table: table.to_string(),
-            column: compared.column.clone(),
-            row_offset,
-            declared_type: compared.declared_type.clone(),
-            value: value.unwrap_or_default().to_string(),
+        let (table, column) = (table.to_string(), compared.column.clone());
+        let declared_type = compared.declared_type.clone();
+        let refused = value.is_some_and(|value| {
+            self.unrepresentable.as_ref().is_some_and(|read| read.past(value))
+        });
+        let value = value.unwrap_or_default().to_string();
+        match refused {
+            true => Error::Unrepresentable { table, column, row_offset, declared_type, value },
+            false => Error::FieldDecode { table, column, row_offset, declared_type, value },
+        }
+    }
+
+    /// `value`, or NULL where the query reads it as NULL.
+    #[inline]
+    fn as_read<'v>(&self, value: Option<&'v str>) -> Option<&'v str> {
+        match &self.unrepresentable {
+            Some(read) => value.filter(|text| !read.nulls(text)),
+            None => value,
         }
     }
 
@@ -2674,8 +2693,12 @@ impl ResolvedTerm {
     /// `Error::FieldDecode`, the only case in which it returns nothing. The
     /// NULL tests and the two equalities comparing text never decode, so
     /// they always answer.
+    ///
+    /// **A value the query reads as NULL is answered as one**
+    /// (`docs/design/decisions.md`, "D98").
     #[inline]
     pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
+        let value = self.as_read(value);
         let Some(compared) = self.compared.as_ref() else {
             return Some(Truth::of(match self.op {
                 PredicateOp::IsNull => value.is_none(),
@@ -2789,6 +2812,8 @@ pub(crate) struct ResolvedMembership {
     /// other value matches.
     null: bool,
     lookup: Lookup,
+    /// As [`ResolvedTerm`]'s.
+    unrepresentable: Option<UnrepresentableRead>,
 }
 
 /// Every non-NULL value of one membership, held the way its `=` terms
@@ -2930,6 +2955,7 @@ pub(crate) fn resolve_membership(
         null: membership.values.iter().any(Option::is_none),
         lookup: Lookup::of(&terms),
         terms,
+        unrepresentable: None,
     })
 }
 
@@ -2962,6 +2988,10 @@ impl ResolvedMembership {
         if self.terms.is_empty() {
             return Some(self.unmatched());
         }
+        let value = match &self.unrepresentable {
+            Some(read) => value.filter(|text| !read.nulls(text)),
+            None => value,
+        };
         let Some(text) = value else { return Some(Truth::Unknown) };
         Some(if self.lookup.contains(text, &self.terms)? { Truth::True } else { self.unmatched() })
     }
@@ -3142,6 +3172,35 @@ impl ResolvedExpr {
             }
             Self::Not(inner) => inner.eval(true, raw_row, split, table, row_offset)?.not(),
         })
+    }
+
+    /// **This tree with each leaf reading its column as the query does**
+    /// ([`UnrepresentableRead`]): `reads` is per column of the block's
+    /// unprojected schema, which a leaf's index numbers, and a leaf over a
+    /// column it holds `None` for, or none at all, reads every value as
+    /// itself (`docs/design/decisions.md`, "D98").
+    pub(crate) fn reading(mut self, reads: &[Option<UnrepresentableRead>]) -> ResolvedExpr {
+        if reads.iter().any(Option::is_some) {
+            self.set_reads(reads);
+        }
+        self
+    }
+
+    fn set_reads(&mut self, reads: &[Option<UnrepresentableRead>]) {
+        let read = |index: usize| reads.get(index).cloned().flatten();
+        match self {
+            Self::Term(term) => term.unrepresentable = read(term.index),
+            Self::In(membership) => {
+                membership.unrepresentable = read(membership.index);
+                for term in &mut membership.terms {
+                    term.unrepresentable = read(term.index);
+                }
+            }
+            Self::And(children) | Self::Or(children) => {
+                children.iter_mut().for_each(|child| child.set_reads(reads));
+            }
+            Self::Not(inner) => inner.set_reads(reads),
+        }
     }
 
     /// This tree as a row is evaluated against it where only whether the root
@@ -3594,7 +3653,8 @@ mod tests {
             divergences: Vec::new(),
             statistics: BelievedStatistics::NONE,
         });
-        ResolvedTerm { op: p.op, index, compared: if p.op.is_ordering() { None } else { compared } }
+        let compared = if p.op.is_ordering() { None } else { compared };
+        ResolvedTerm { op: p.op, index, compared, unrepresentable: None }
     }
 
     /// The one note a term announces, or `None` — a scalar column has at most
@@ -6891,7 +6951,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (32, 2_008_420_983_373_127_703);
+        const GOLDEN_ORDER: (u32, u64) = (33, 2_008_420_983_373_127_703);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

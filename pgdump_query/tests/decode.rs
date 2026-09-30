@@ -9,8 +9,8 @@
 //! `decode.rs`'s own unit tests already cover the boundary values a round
 //! trip through a small fixture can't be relied on to hit (`NaN`,
 //! `±Infinity`, `infinity`/`-infinity` dates/timestamps, 38-vs-39-digit
-//! numeric); this file instead proves those same failure modes surface
-//! correctly through the *real* pipeline — preamble parse, resolution, and
+//! numeric); this file instead proves those same values surface correctly —
+//! read as NULL, or refused — through the *real* pipeline — preamble parse, resolution, and
 //! decode together — using `public.t_numeric`/`t_date`/`t_timestamp`'s own
 //! real boundary rows rather than hand-built ones.
 
@@ -22,8 +22,8 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::SchemaMode;
 use pgdump_query::{
-    Error, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, read_table, render_field,
-    table_stream,
+    Error, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, UnrepresentableMode, read_table,
+    render_field, table_stream,
 };
 
 mod common;
@@ -384,129 +384,84 @@ async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
     assert_eq!(strings[0][1].as_deref(), Some(r#"(a,"{{1,2},{3,4}}")"#));
 }
 
-/// `NaN` bypasses `numeric(p,s)`'s own precision/scale check and has no
-/// `Decimal128`/`Decimal256` representation, so it's a genuine decode
-/// failure, not a bug — `public.t_numeric.v_small numeric(10,2)` carries it
-/// for exactly this reason (`docs/design/decisions.md`, "D42"). Checks the
-/// error names the right table/column/declared type/value rather than
-/// merely failing.
-#[tokio::test]
-async fn nan_numeric_is_a_field_decode_error_naming_its_context() {
+/// **A value its column's type cannot hold, through the real pipeline**:
+/// read as NULL by default — each row whose `column` the text spells `value`
+/// is NULL there in the typed read — and in the refuse mode
+/// `Error::Unrepresentable`, naming the table, the column, its declared type
+/// and the value (`docs/design/decisions.md`, "D98"). `Strings` mode never
+/// looks at the DDL, so the value passes through as its text.
+async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, value: &str) {
     for version in [13, 16, 18] {
         let path = types_fixture(version, "default");
+        let typed = rows(&path, table, SchemaMode::Typed).await;
+        let strings = rows(&path, table, SchemaMode::Strings).await;
+        let index = resolved_schema(&path, table).await.schema.index_of(column).unwrap();
+        let spelled: Vec<usize> = (0..strings.len())
+            .filter(|&row| strings[row][index].as_deref() == Some(value))
+            .collect();
+        assert!(!spelled.is_empty(), "pg_dump {version}: {table} holds `{value}` as text");
+        for row in spelled {
+            assert_eq!(typed[row][index], None, "pg_dump {version}: {table} row {row}");
+        }
+
         let source = LocalFileSource::open(&path).unwrap();
+        let refuse =
+            QueryOptions { unrepresentable: UnrepresentableMode::Refuse, ..Default::default() };
         let err = read_table(
             &source,
-            "public.t_numeric",
+            table,
             &ScanOptions::default(),
-            &QueryOptions::default(),
+            &refuse,
             CacheMode::DISABLED,
             |_| ControlFlow::Continue(()),
         )
         .await
         .unwrap_err();
         match err {
-            Error::FieldDecode { table, column, declared_type, value, .. } => {
-                assert_eq!(table, "public.t_numeric", "pg_dump {version}");
-                assert_eq!(column, "v_small", "pg_dump {version}");
-                assert_eq!(declared_type, "numeric(10,2)", "pg_dump {version}");
-                assert_eq!(value, "NaN", "pg_dump {version}");
+            Error::Unrepresentable {
+                table: named, column: at, declared_type, value: held, ..
+            } => {
+                assert_eq!(named, table, "pg_dump {version}");
+                assert_eq!(at, column, "pg_dump {version}");
+                assert_eq!(declared_type, declared, "pg_dump {version}");
+                assert_eq!(held, value, "pg_dump {version}");
             }
-            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
+            other => panic!("pg_dump {version}: expected Unrepresentable, got {other:?}"),
         }
-        // The escape hatch: `Strings` mode never looks at the DDL, so `NaN`
-        // passes through as plain Utf8View text with no error at all.
-        let strings = rows(&path, "public.t_numeric", SchemaMode::Strings).await;
-        assert!(
-            strings.iter().any(|row| row.iter().any(|f| f.as_deref() == Some("NaN"))),
-            "pg_dump {version}: Strings mode should still show NaN as text"
-        );
     }
+}
+
+/// `NaN` bypasses `numeric(p,s)`'s own precision/scale check and has no
+/// `Decimal128`/`Decimal256` representation (`docs/design/decisions.md`,
+/// "D42"); `public.t_numeric.v_small numeric(10,2)` carries it for exactly
+/// this reason.
+#[tokio::test]
+async fn nan_numeric_is_read_as_null_or_refused_naming_its_context() {
+    read_as_null_or_refused("public.t_numeric", "v_small", "numeric(10,2)", "NaN").await;
 }
 
 /// `infinity`/`-infinity` are real PostgreSQL date values with no `Date32`
-/// sentinel, so this is a genuine, expected `FieldDecode` (same reasoning as
-/// `NaN` above), not a bug.
+/// sentinel.
 #[tokio::test]
-async fn date_infinity_is_a_field_decode_error_naming_its_context() {
-    for version in [13, 16, 18] {
-        let path = types_fixture(version, "default");
-        let source = LocalFileSource::open(&path).unwrap();
-        let err = read_table(
-            &source,
-            "public.t_date",
-            &ScanOptions::default(),
-            &QueryOptions::default(),
-            CacheMode::DISABLED,
-            |_| ControlFlow::Continue(()),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            Error::FieldDecode { table, column, declared_type, value, .. } => {
-                assert_eq!(table, "public.t_date", "pg_dump {version}");
-                assert_eq!(column, "v_date", "pg_dump {version}");
-                assert_eq!(declared_type, "date", "pg_dump {version}");
-                assert_eq!(value, "infinity", "pg_dump {version}");
-            }
-            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
-        }
-    }
+async fn date_infinity_is_read_as_null_or_refused_naming_its_context() {
+    read_as_null_or_refused("public.t_date", "v_date", "date", "infinity").await;
 }
 
-/// **`time` `24:00:00` is refused as the infinities are**: PostgreSQL's
-/// inclusive bound, past the day Arrow's `Time64` holds, so the decoder
-/// names it rather than writing a value Arrow forbids.
+/// **`time` `24:00:00` is one as the infinities are**: PostgreSQL's
+/// inclusive bound, past the day Arrow's `Time64` holds.
 #[tokio::test]
-async fn time_24_00_00_is_a_field_decode_error_naming_its_context() {
-    for version in [13, 16, 18] {
-        let path = types_fixture(version, "default");
-        let source = LocalFileSource::open(&path).unwrap();
-        let err = read_table(
-            &source,
-            "public.t_time",
-            &ScanOptions::default(),
-            &QueryOptions::default(),
-            CacheMode::DISABLED,
-            |_| ControlFlow::Continue(()),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            Error::FieldDecode { column, declared_type, value, .. } => {
-                assert_eq!(column, "v_time", "pg_dump {version}");
-                assert_eq!(declared_type, "time without time zone", "pg_dump {version}");
-                assert_eq!(value, "24:00:00", "pg_dump {version}");
-            }
-            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
-        }
-    }
+async fn time_24_00_00_is_read_as_null_or_refused_naming_its_context() {
+    read_as_null_or_refused("public.t_time", "v_time", "time without time zone", "24:00:00").await;
 }
 
 /// Same as the date case, for `timestamp without time zone`.
 #[tokio::test]
-async fn timestamp_infinity_is_a_field_decode_error_naming_its_context() {
-    for version in [13, 16, 18] {
-        let path = types_fixture(version, "default");
-        let source = LocalFileSource::open(&path).unwrap();
-        let err = read_table(
-            &source,
-            "public.t_timestamp",
-            &ScanOptions::default(),
-            &QueryOptions::default(),
-            CacheMode::DISABLED,
-            |_| ControlFlow::Continue(()),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            Error::FieldDecode { table, column, declared_type, value, .. } => {
-                assert_eq!(table, "public.t_timestamp", "pg_dump {version}");
-                assert_eq!(column, "v_ts", "pg_dump {version}");
-                assert_eq!(declared_type, "timestamp without time zone", "pg_dump {version}");
-                assert_eq!(value, "infinity", "pg_dump {version}");
-            }
-            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
-        }
-    }
+async fn timestamp_infinity_is_read_as_null_or_refused_naming_its_context() {
+    read_as_null_or_refused(
+        "public.t_timestamp",
+        "v_ts",
+        "timestamp without time zone",
+        "infinity",
+    )
+    .await;
 }

@@ -25,7 +25,8 @@
 //!
 //! **And the sweep is held to having exercised the order**: every table a
 //! case reads is scanned by two partitions, so the two orders [`Order::ALL`]
-//! names are every order there is.
+//! names are every order there is — or by one, where statistics kept one
+//! partition's worth of its rows, which has one order.
 //!
 //! **Which values are unrepresentable is read, not listed**: the `types`
 //! fixture's extremes, at every major, each decode to a value
@@ -52,7 +53,7 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     DataBlock, Finding, LocalFileSource, RowEvaluation, ScanOptions, SchemaMode, SpanBody,
-    StatisticsRequest, Unrepresentable, decode_field, map_file,
+    StatisticsRequest, Unrepresentable, UnrepresentableMode, decode_field, map_file,
 };
 
 mod in_order;
@@ -88,11 +89,16 @@ const MODES: [Mode; 3] = [Mode::Null, Mode::Text, Mode::Refuse];
 /// Every mode; a case failing in each.
 const EVERY_MODE: &[Mode] = &MODES;
 
-/// The options a dump is opened with under `mode`. **No mode exists yet**, so
-/// every mode opens today's provider, and each case is held to all three
-/// outcomes against it; the slice adding the option states it here.
-fn options(_mode: Mode) -> PgDumpOptions {
-    PgDumpOptions::default()
+/// The options a dump is opened with under `mode`. **The untyped mode does
+/// not exist yet**, so it opens the refuse mode, which refuses as today's
+/// provider did, and each case is held to the untyped outcome against it; the
+/// slice adding that mode states it here.
+fn options(mode: Mode) -> PgDumpOptions {
+    let unrepresentable = match mode {
+        Mode::Null => UnrepresentableMode::Null,
+        Mode::Text | Mode::Refuse => UnrepresentableMode::Refuse,
+    };
+    PgDumpOptions { unrepresentable, ..PgDumpOptions::default() }
 }
 
 /// Whether the map a case reads carries statistics.
@@ -217,17 +223,26 @@ use Refuse::{Answers, Column};
 /// holds one in its last row too.
 const CASES: &[Case] = &[
     // A `LIMIT` one partition meets first.
-    picking("SELECT id, v_small FROM t_numeric", 3, Column("t_numeric.v_small"), EVERY_MODE),
-    picking("SELECT v_date FROM t_date", 2, Column("t_date.v_date"), EVERY_MODE),
+    picking(
+        "SELECT id, v_small FROM t_numeric",
+        3,
+        Column("t_numeric.v_small"),
+        &[Mode::Text, Mode::Refuse],
+    ),
+    picking("SELECT v_date FROM t_date", 2, Column("t_date.v_date"), &[Mode::Text, Mode::Refuse]),
     picking(
         "SELECT id, v_tstz FROM t_timestamp WHERE id > 1",
         2,
         Column("t_timestamp.v_tstz"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     // Ungrouped `MIN`/`MAX`: answered from the map where it can be, and with
     // a static filter keeping the map from answering, by the rows under an
     // aggregate's dynamic filter.
+    // The typed mode misses both unfiltered pairs where rows are evaluated and
+    // no statistics answer: a partition's first batch holding no value of the
+    // column leaves DataFusion's shared `MIN` bound a typed NULL it reads as no
+    // bound, so the aggregate's filter keeps only `> max` (`KD56`).
     case(
         "SELECT MIN(v_small), MAX(v_small) FROM t_numeric",
         Column("t_numeric.v_small"),
@@ -236,24 +251,44 @@ const CASES: &[Case] = &[
     case(
         "SELECT MIN(v_small) FROM t_numeric WHERE id > 0",
         Column("t_numeric.v_small"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
-    case("SELECT MAX(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), EVERY_MODE),
-    case("SELECT MIN(v_ts) FROM t_timestamp WHERE id > 0", Column("t_timestamp.v_ts"), EVERY_MODE),
+    case(
+        "SELECT MAX(v_date) FROM t_date WHERE id > 0",
+        Column("t_date.v_date"),
+        &[Mode::Text, Mode::Refuse],
+    ),
+    case(
+        "SELECT MIN(v_ts) FROM t_timestamp WHERE id > 0",
+        Column("t_timestamp.v_ts"),
+        &[Mode::Text, Mode::Refuse],
+    ),
     // A count of the column: NULLs are not counted, so the typed mode's are.
-    case("SELECT COUNT(v_small) FROM t_numeric", Column("t_numeric.v_small"), EVERY_MODE),
-    case("SELECT COUNT(v_date) FROM t_date WHERE id > 0", Column("t_date.v_date"), EVERY_MODE),
+    case(
+        "SELECT COUNT(v_small) FROM t_numeric",
+        Column("t_numeric.v_small"),
+        &[Mode::Text, Mode::Refuse],
+    ),
+    case(
+        "SELECT COUNT(v_date) FROM t_date WHERE id > 0",
+        Column("t_date.v_date"),
+        &[Mode::Text, Mode::Refuse],
+    ),
     // TopK, the sort keys alone.
-    case("SELECT v_date FROM t_date ORDER BY v_date LIMIT 2", Column("t_date.v_date"), EVERY_MODE),
+    case(
+        "SELECT v_date FROM t_date ORDER BY v_date LIMIT 2",
+        Column("t_date.v_date"),
+        &[Mode::Text, Mode::Refuse],
+    ),
     case(
         "SELECT v_small FROM t_numeric ORDER BY v_small DESC NULLS LAST LIMIT 2",
         Column("t_numeric.v_small"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT v_ts FROM t_timestamp ORDER BY v_ts LIMIT 3",
         Column("t_timestamp.v_ts"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     // Joins: a build side ruling out the probe rows holding the value, which
     // a dynamic filter's row drop never decodes; a join on the column itself;
@@ -262,39 +297,35 @@ const CASES: &[Case] = &[
         "SELECT n.id, n.v_small FROM (SELECT id FROM t_numeric WHERE id >= 4) b \
          JOIN t_numeric n ON n.id = b.id",
         Column("t_numeric.v_small"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT a.id, b.id FROM t_date a JOIN t_date b ON a.v_date = b.v_date",
         Column("t_date.v_date"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT t.id, t.v_ts FROM t_date d JOIN t_timestamp t ON t.id = d.id \
          WHERE d.v_date > '1000-01-01'",
         Column("t_timestamp.v_ts"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     // A static filter over the column alone, which the library answers: the
     // refuse mode keeps PostgreSQL's order, where an infinity is above every
     // date and no special value is NULL. Each literal is text, which the
     // untyped mode compares as text: DataFusion reads a `Utf8View` against a
     // number by casting each value to the number's type.
-    case(
-        "SELECT id FROM t_numeric WHERE v_small IS NOT NULL",
-        Answers(&["3", "4", "5"]),
-        &[Mode::Null],
-    ),
+    case("SELECT id FROM t_numeric WHERE v_small IS NOT NULL", Answers(&["3", "4", "5"]), &[]),
     case(
         "SELECT id FROM t_date WHERE v_date > '5000-01-01'",
         Answers(&["1", "4", "6"]),
-        &[Mode::Null, Mode::Text],
+        &[Mode::Text],
     ),
-    case("SELECT id FROM t_date WHERE v_date IS NULL", Answers(&["7"]), &[Mode::Null]),
+    case("SELECT id FROM t_date WHERE v_date IS NULL", Answers(&["7"]), &[]),
     case(
         "SELECT COUNT(*) FROM t_timestamp WHERE v_tstz < '2000-01-01 00:00:00+00'",
         Answers(&["3"]),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     // The extremes: a value the decoder refuses, and one it decodes to a
     // value `arrow-cast` cannot display — `24:00:00`, a date or timestamp
@@ -303,37 +334,49 @@ const CASES: &[Case] = &[
         "SELECT id, v_interval FROM t_extremes WHERE v_interval IS NOT NULL",
         3,
         Column("t_extremes.v_interval"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT MIN(v_interval), MAX(v_interval) FROM t_extremes",
         Column("t_extremes.v_interval"),
         EVERY_MODE,
     ),
-    case("SELECT MAX(v_time) FROM t_extremes", Column("t_extremes.v_time"), EVERY_MODE),
+    case(
+        "SELECT MAX(v_time) FROM t_extremes",
+        Column("t_extremes.v_time"),
+        &[Mode::Text, Mode::Refuse],
+    ),
     case(
         "SELECT MAX(v_date) FROM t_extremes WHERE id > 0",
         Column("t_extremes.v_date"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
-    case("SELECT MAX(v_numeric76) FROM t_extremes", Column("t_extremes.v_numeric76"), EVERY_MODE),
-    case("SELECT COUNT(v_ts) FROM t_extremes", Column("t_extremes.v_ts"), EVERY_MODE),
+    case(
+        "SELECT MAX(v_numeric76) FROM t_extremes",
+        Column("t_extremes.v_numeric76"),
+        &[Mode::Text, Mode::Refuse],
+    ),
+    case(
+        "SELECT COUNT(v_ts) FROM t_extremes",
+        Column("t_extremes.v_ts"),
+        &[Mode::Text, Mode::Refuse],
+    ),
     case(
         "SELECT v_tstz FROM t_extremes ORDER BY v_tstz DESC NULLS LAST LIMIT 2",
         Column("t_extremes.v_tstz"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT e.id, e.v_interval FROM t_extremes_nested n JOIN t_extremes e ON e.id = n.id",
         Column("t_extremes.v_interval"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
-    case("SELECT id FROM t_extremes WHERE v_time > '12:00:00'", Answers(&["2"]), &[Mode::Null]),
+    case("SELECT id FROM t_extremes WHERE v_time > '12:00:00'", Answers(&["2"]), &[]),
     picking(
         "SELECT id, v_date_array FROM t_extremes_nested",
         2,
         Column("t_extremes_nested.v_date_array"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
     case(
         "SELECT id, v_dated FROM t_extremes_nested WHERE id = 2",
@@ -343,13 +386,9 @@ const CASES: &[Case] = &[
     case(
         "SELECT MAX(v_interval_array) FROM t_extremes_nested",
         Column("t_extremes_nested.v_interval_array"),
-        EVERY_MODE,
+        &[Mode::Text, Mode::Refuse],
     ),
-    case(
-        "SELECT id FROM t_extremes_nested WHERE v_daterange IS NULL",
-        Answers(&["3"]),
-        &[Mode::Null],
-    ),
+    case("SELECT id FROM t_extremes_nested WHERE v_daterange IS NULL", Answers(&["3"]), &[]),
 ];
 
 /// Which step of a query a refusal came out of.
@@ -392,7 +431,10 @@ impl Outcome {
     fn of(err: &DataFusionError, stage: Stage) -> Outcome {
         let mut cause: Option<&dyn std::error::Error> = Some(err);
         while let Some(err) = cause {
-            if let Some(pgdump_query::Error::FieldDecode { table, column, .. }) = err.downcast_ref()
+            if let Some(
+                pgdump_query::Error::FieldDecode { table, column, .. }
+                | pgdump_query::Error::Unrepresentable { table, column, .. },
+            ) = err.downcast_ref()
             {
                 let table = table.rsplit('.').next().unwrap_or(table);
                 return Outcome::Refused { column: format!("{table}.{column}"), stage };
@@ -767,10 +809,10 @@ fn every_query_has_one_outcome_per_mode() {
         }
         partitions.extend(major_partitions);
     }
-    assert_eq!(
-        partitions,
-        BTreeSet::from([2]),
-        "every scan runs two partitions, so the two orders are every order"
+    assert!(
+        partitions.contains(&2) && partitions.is_subset(&BTreeSet::from([1, 2])),
+        "every scan runs two partitions, so the two orders are every order, or one, which has \
+         one order: {partitions:?}"
     );
 
     let mut wrong = Vec::new();

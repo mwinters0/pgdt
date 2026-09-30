@@ -11,12 +11,14 @@
 //! stored bound is the value it came from; everything else it can still bound
 //! is `Inexact`, which no answer is read from.
 //!
-//! **An answer from here does not raise what reading the column would.** A
-//! column holding a value its Arrow type cannot represent (`KD8`) refuses on
-//! the row that holds it, while a NULL count read off the text and a bound
-//! that decodes both describe the column truthfully — so a `COUNT` of such a
-//! column answers here and refuses when read (`docs/design/decisions.md`,
-//! "D89").
+//! **A value its column's type cannot hold is read here as the scan reads
+//! it**, in the view its mode states (`docs/design/decisions.md`, "D98"): as
+//! NULL by default, counted with the NULLs and outside the bounds, the
+//! distinct count and the sum. **Under the refuse mode an answer from here
+//! does not raise what reading the column would** (`KD8`): the row holding
+//! the value refuses, while a NULL count read off the text and a bound that
+//! decodes both describe the column truthfully, so a `COUNT` of such a column
+//! answers here and refuses when read ("D89").
 
 use std::sync::Arc;
 
@@ -26,17 +28,22 @@ use datafusion::common::stats::Precision;
 use datafusion::common::{ColumnStatistics, ScalarValue, Statistics};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
-use pgdump_query::{ComparisonSemantics, DumpIndex, ResolvedSchema, Sortedness, TableName};
+use pgdump_query::{
+    ComparisonSemantics, DumpIndex, ResolvedSchema, Sortedness, StatisticsView, TableName,
+};
 
 /// What the dump's map says about `table`, in the schema `resolved` states and
 /// in DataFusion's own comparison semantics — the order the emitted values
-/// carry, which is the order a `MIN` or `MAX` of them would be taken in.
+/// carry, which is the order a `MIN` or `MAX` of them would be taken in — each
+/// value its type cannot hold read as the scan reads it, in `reading`.
 pub(crate) fn table_statistics(
     index: &DumpIndex,
     table: &TableName,
     resolved: &ResolvedSchema,
+    reading: StatisticsView,
 ) -> Statistics {
-    let summary = pgdump_query::table_summary(index, table, resolved, ComparisonSemantics::Arrow);
+    let semantics = ComparisonSemantics::Arrow;
+    let summary = pgdump_query::table_summary(index, table, resolved, semantics, reading);
     // Every block of a complete map carries its row count, whether or not it
     // gathered statistics.
     let rows = Precision::Exact(summary.rows as usize);

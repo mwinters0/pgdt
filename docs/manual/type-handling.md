@@ -89,13 +89,13 @@ Three kinds of value PostgreSQL accepts do not fit their Arrow types. A
 `timestamp` or `timestamptz` from `294247-01-10 04:00:54.775808` UTC to
 PostgreSQL's last, `294276-12-31 23:59:59.999999`, is past what Arrow counts
 from 1970, and `time` `24:00:00`, PostgreSQL's end of day, is past Arrow's:
-a column holding either fails to build the way a `date` holding `infinity`
-does. A `date`, `timestamp` or `timestamptz` after `262142-12-31` is past the
-calendar Arrow's formatting reads it through: `pgdt query` prints it, and
-DataFusion shows `ERROR: Cast error` where it formats or casts one. Every one
-reads back verbatim under `--schema-mode strings`, and `pgdt info --detail`
-counts them per column ([dump inspection](dump-inspection.md), "Values a
-column's type cannot hold").
+each reads as NULL, as a `date` holding `infinity` does (below, "A value its
+column cannot hold reads as NULL"). A `date`, `timestamp` or `timestamptz`
+after `262142-12-31` is past the calendar Arrow's formatting reads it
+through: `pgdt query` prints it, and a DataFusion query reads it as NULL too.
+Every one reads back verbatim under `--schema-mode strings`, and `pgdt info
+--detail` counts them per column ([dump inspection](dump-inspection.md),
+"Values a column's type cannot hold").
 
 ### `interval` keeps its three fields, and two kinds of value do not fit
 
@@ -106,8 +106,8 @@ is read from is always in PostgreSQL's `postgres` interval style
 (`1 year 2 mons 3 days 04:05:06`), because `pg_dump` pins the setting when it
 reads the table, and `pgdt query` writes that same text back.
 
-Two kinds of value have no place in the Arrow type, and a column holding one
-fails to build the same way a `date` holding `infinity` does:
+Two kinds of value have no place in the Arrow type, and each reads as NULL
+the same way a `date` holding `infinity` does:
 
 - `infinity` and `-infinity`, which PostgreSQL 17 added for this type;
 - a time part longer than `2562047:47:16.854775807`. PostgreSQL counts
@@ -115,11 +115,10 @@ fails to build the same way a `date` holding `infinity` does:
   and nothing folds hours into days — so `interval '100000000 hours'` is
   written `100000000:00:00` and is well past it.
 
-Neither is common, and the recourse is the one every such value has: project
-the column away, or read it with `--schema-mode strings`, and the text comes
-back verbatim. Filtering is unaffected either way — see "`infinity` and `NaN`
-filter correctly even where the column cannot hold them" below, which is the
-same shape.
+Neither is common, and the recourse is the one every such value has: read
+the column with `--schema-mode strings`, and the text comes back verbatim —
+see "A value its column cannot hold reads as NULL" below, which is the same
+shape.
 
 `<`, `<=`, `>` and `>=` on an `interval` column compare **durations**, not the
 three fields separately. PostgreSQL treats a month as 30 days and a day as 24 hours when it orders
@@ -172,37 +171,45 @@ OID could ever equal. Write the value you mean.
 to round-trip without loss. `NaN`, `Infinity` and `-Infinity` are written in
 those exact spellings and are parsed as such.
 
-### `infinity` and `NaN` filter correctly even where the column cannot hold them
+### A value its column cannot hold reads as NULL
 
 `date`, `timestamp` and `timestamptz` accept `infinity` and `-infinity`;
 `numeric` accepts `NaN`, and a bare one accepts `Infinity` and `-Infinity` as
 well. Each type is held to its own spelling: `date` writes `infinity` and
 `numeric` writes `Infinity`, and neither answers to the other's.
-PostgreSQL gives all of these a place in the order —
-`-infinity` below every finite value, `infinity` above every one, `NaN` above
-`infinity` — and `<`, `<=`, `>` and `>=` answer them exactly, in the spelling
-each type writes.
 
-Arrow has nowhere to *put* them: `Date32` has no infinity and `Decimal128` has
-no `NaN`. So the two halves of a query have different powers, and it shows up
-like this:
+Arrow has nowhere to *put* some of them: `Date32` has no infinity and
+`Decimal128` has no `NaN` — a bare `numeric`, read as text, holds all three.
+**Such a value reads as NULL, for every purpose**, as though the dump held a
+NULL there: the column keeps its type, `--filter 'v_date<2020-01-01'` does
+not select the `-infinity` row, `--filter 'v_date is null'` does, and a count
+of the column's values leaves it out. So a query answers the same whichever
+rows it happens to read. `pgdt query` says on stderr how many such values
+each column it prints holds, which is a property of the table, not of the
+rows printed:
 
 ```sh
-# selects the -infinity row, prints it, and succeeds — v_date is not built
-pgdt query --source dump.sql --table public.t_date \
-  --filter 'v_date<2020-01-01' --column id
-
-# selects the same row and then fails building the Date32 column for it
-pgdt query --source dump.sql --table public.t_date --filter 'v_date<2020-01-01'
-# Error: public.t_date.v_date at row offset …: value `-infinity` does not
-# parse as its mapped type `date` — use --schema-mode strings to read this
-# column verbatim
+pgdt query --source dump.sql --table public.t_date
+# warning: public.t_date.v_date holds 2 value(s) its type `date` cannot
+# hold, read as NULL
 ```
 
-The filter is right in both. What fails in the second is materializing a value
-the output type cannot represent, and the message is the ordinary decode error
-above. Project the column away, or read it with `--schema-mode strings`, and
-the value comes back as the text the dump holds.
+**`--unrepresentable refuse` refuses instead**, where the query reads such a
+value in a column it prints; one only a filter reads is compared in
+PostgreSQL's order, `-infinity` below every finite value, `infinity` above
+every one and `NaN` above `infinity`, so `--filter 'v_date<2020-01-01'
+--column id` selects the `-infinity` row:
+
+```sh
+pgdt query --source dump.sql --table public.t_date --unrepresentable refuse
+# Error: public.t_date.v_date at row offset …: `-infinity` is a `date` value
+# the column's Arrow type cannot hold, and this query refuses such values —
+# read them in the null mode, as NULL, or leave the column unmaterialized
+```
+
+Where the query refuses depends on the rows it reads first, which is not
+yet fixed. Read the column with `--schema-mode strings` to get the text the
+dump holds.
 
 ### Text ordering is bytewise, and your server's may not be
 
@@ -907,7 +914,8 @@ Where each column comes from:
   Arrow's format specification.
 - **DataFusion**: what DataFusion 55.1 can display or cast to a string
   (`arrow-cast` 59.2.0, `chrono` 0.4.45). Outside this range it holds, compares
-  and writes the value, but printing it gives `ERROR: Cast error`.
+  and writes the value, but printing it gives `ERROR: Cast error`, so the
+  DataFusion provider reads such a value as NULL, or refuses it.
 - **Python**: the standard library, as `pyarrow`'s `as_py()` hands values to
   it (Python 3.13.7, `pyarrow` 25.0.1).
 - **pandas**: `pyarrow`'s `to_pandas()` with its default options (pandas
@@ -952,15 +960,16 @@ carries their least and greatest values.
 - **DataFusion's calendar ends at `262142-12-31`**, long before Arrow's
   integers do: it formats dates and timestamps through `chrono`, whose calendar
   ends there. A later value is still a valid Arrow value, and DataFusion
-  compares, sorts and writes it; it cannot print it.
+  compares, sorts and writes it; it cannot print it, so the provider reads it
+  as NULL, as it does a value Arrow cannot hold.
 - **Python's calendar is the narrowest**: 0001 to 9999. `as_py()` raises
   `OverflowError` for any `Date32` or `Timestamp` outside it.
-- **`time` `24:00:00`** is past Arrow's day, so reading it is refused rather
-  than handed to a consumer that would misread it: DataFusion raises `Cast
-  error` on such a value, `to_pandas()` raises `ValueError` for the whole
-  column, and `as_py()` silently returns `00:00:00` — as does reading it out
-  of a `pd.ArrowDtype` column. Read such a column with `SchemaMode::Strings`
-  if it may hold one.
+- **`time` `24:00:00`** is past Arrow's day, so it reads as NULL, or is
+  refused, rather than handed to a consumer that would misread it: DataFusion
+  raises `Cast error` on such a value, `to_pandas()` raises `ValueError` for
+  the whole column, and `as_py()` silently returns `00:00:00` — as does
+  reading it out of a `pd.ArrowDtype` column. Read such a column with
+  `SchemaMode::Strings` to keep it.
 - **pandas fails whole, not per value.** A `date` column holding one value past
   9999, or before year 1, makes `to_pandas()` raise for the entire table; pass
   `date_as_object=False` to get `datetime64[ms]` instead, which holds every

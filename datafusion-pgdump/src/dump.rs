@@ -9,6 +9,7 @@ use pgdump_query::cache::{
 };
 use pgdump_query::{
     ByteRangeSource, Diagnostic, DumpIndex, Origin, Recognized, SchemaMode, TableName,
+    UnrepresentableMode,
 };
 
 use crate::Error;
@@ -24,6 +25,12 @@ pub struct PgDumpOptions {
     /// Typed columns, or every column as text — the escape hatch from a wrong
     /// type mapping, per dump.
     pub schema_mode: SchemaMode,
+    /// How a value PostgreSQL accepts for a column's declared type and the
+    /// column's Arrow type cannot hold is read, the calendar DataFusion
+    /// displays a `date` or timestamp through included: as NULL, the default,
+    /// or refused (`docs/design/decisions.md`, "D98"). Moot under
+    /// [`SchemaMode::Strings`].
+    pub unrepresentable: UnrepresentableMode,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:
     /// between runs, what the cache is checked against at open; during one,
     /// whether a file changing under a scan fails it, and so whether a source
@@ -63,6 +70,7 @@ pub struct PgDump {
     index: DumpIndex,
     tables: Vec<TableName>,
     schema_mode: SchemaMode,
+    unrepresentable: UnrepresentableMode,
     /// The `pgdt parse` that builds this dump's cache, which a refusal names.
     parse: String,
     statistics_bytes: u64,
@@ -146,6 +154,7 @@ impl PgDump {
             index,
             tables,
             schema_mode: options.schema_mode,
+            unrepresentable: options.unrepresentable,
             parse: parse_command(location, options.cache_path.as_deref()),
             statistics_bytes,
             holds: Mutex::default(),
@@ -220,6 +229,10 @@ impl PgDump {
 
     pub(crate) fn schema_mode(&self) -> SchemaMode {
         self.schema_mode
+    }
+
+    pub(crate) fn unrepresentable(&self) -> UnrepresentableMode {
+        self.unrepresentable
     }
 
     /// The `pgdt parse` that puts `table` at the data level, keeping every

@@ -44,6 +44,13 @@ Options:
                                    byte-for-byte output — the way out of `Error::MetadataNotScanned`
                                    for a database an incremental scan hasn't read the DDL for yet
                                    [default: typed] [possible values: typed, strings]
+      --unrepresentable <MODE>     What to do with a value PostgreSQL accepts for a column's
+                                   declared type and the column's type cannot hold — `infinity` in a
+                                   `date`, `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`:
+                                   `null`, the default, reads each as NULL, for filtering too, and
+                                   says on stderr how many each column printed holds; `refuse` stops
+                                   the query where it reads one. `--schema-mode strings` reads every
+                                   value as its text [default: null] [possible values: null, refuse]
       --chunk-size <BYTES>         Bytes requested per read from the dump — the same knob `parse`
                                    carries, and with the same measured answer behind its default
       --max-line-bytes <BYTES>     The longest line the scan accepts, in bytes — the same limit

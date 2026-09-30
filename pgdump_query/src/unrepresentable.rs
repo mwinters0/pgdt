@@ -23,7 +23,7 @@ use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field};
 use crate::decode::{civil_from_days, decode_date32, interval_parts, timestamp_micros_wide};
-use crate::index::{UnrepresentableTier, calendar_end};
+use crate::index::{Unrepresentable, UnrepresentableTier, calendar_end};
 use crate::map::FieldCount;
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
@@ -174,6 +174,111 @@ pub(crate) fn column_tiers(resolved: &ResolvedSchema) -> Vec<Option<ColumnTier>>
         .map(|column| {
             (counter.columns[column] != Leaf::Held)
                 .then(|| ColumnTier { counter: Arc::clone(&counter), column })
+        })
+        .collect()
+}
+
+/// **How a query reads a value PostgreSQL accepts for a column's declared
+/// type and the column's Arrow type cannot hold** — `QueryOptions`'s
+/// `unrepresentable`, stated where a dump is opened
+/// (`docs/design/decisions.md`, "D98").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum UnrepresentableMode {
+    /// The column keeps its declared type and such a value is NULL, for every
+    /// purpose: what a batch holds, what a filter compares, what statistics
+    /// count and bound. The default.
+    #[default]
+    Null,
+    /// A query materializing such a value refuses where its read reaches it.
+    Refuse,
+}
+
+/// **How one query reads one column's values its type cannot hold**: the
+/// column's tier test, the tiers the query's front end cannot hold, and
+/// whether it reads them as NULL or refuses them (`docs/design/decisions.md`,
+/// "D98").
+#[derive(Debug, Clone)]
+pub(crate) struct UnrepresentableRead {
+    tier: ColumnTier,
+    /// [`Engine`] where the front end cannot hold a value past the engine's
+    /// calendar either, [`Format`] where it holds every value Arrow's format
+    /// spec does.
+    reach: UnrepresentableTier,
+    null: bool,
+}
+
+impl UnrepresentableRead {
+    /// Whether `text`, one unescaped value of the column, is one this query
+    /// reads as NULL.
+    #[inline]
+    pub(crate) fn nulls(&self, text: &str) -> bool {
+        self.null && self.past(text)
+    }
+
+    /// Whether `text` is one the query's front end cannot hold.
+    pub(crate) fn past(&self, text: &str) -> bool {
+        match self.tier.of(text) {
+            Some(Format) => true,
+            Some(Engine) => self.reach == Engine,
+            None => false,
+        }
+    }
+}
+
+/// Per column of `resolved` — one block's schema as a query resolves it, in
+/// the block's own column order — how that query reads its values their type
+/// cannot hold: `None` for a column read as `Utf8View`, which holds every
+/// value, and for one whose declared type's leaves all hold every value.
+///
+/// **Under [`UnrepresentableMode::Null`] a column is tested only where
+/// `counts`, the block's own count ([`crate::index::CopyBlock::unrepresentable`]),
+/// says it holds such a value in the tiers `reach` reads**, the count being
+/// the map's exact record of them (`docs/design/decisions.md`, "D96"); a
+/// block with no count is tested throughout. Under the refuse mode the test
+/// is asked only of a value that failed to decode, so every column that can
+/// hold one carries it.
+///
+/// The leaves are the declared type's, resolved typed against no census as
+/// [`counter_for`] resolves them, so a column a census deepens is tested as
+/// the count tested it.
+pub(crate) fn unrepresentable_reads(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    resolved: &ResolvedSchema,
+    counts: Option<&[Unrepresentable]>,
+    mode: UnrepresentableMode,
+    reach: UnrepresentableTier,
+) -> Vec<Option<UnrepresentableRead>> {
+    let width = resolved.schema.fields().len();
+    let read_as_text =
+        |i: usize| matches!(resolved.schema.field(i).data_type(), DataType::Utf8View);
+    if (0..width).all(read_as_text) {
+        return vec![None; width];
+    }
+    let declared = resolve_columns(
+        &header.qualified_name(),
+        &header.columns,
+        metadata,
+        database,
+        SchemaMode::Typed,
+        &[],
+    );
+    let tiers = column_tiers(&declared);
+    let null = mode == UnrepresentableMode::Null;
+    (0..width)
+        .map(|i| {
+            let tier = tiers.get(i)?.clone()?;
+            if read_as_text(i) {
+                return None;
+            }
+            let held = counts
+                .and_then(|counts| counts.get(i))
+                .is_some_and(|count| count.format == 0 && (reach == Format || count.engine == 0));
+            if null && held {
+                return None;
+            }
+            Some(UnrepresentableRead { tier, reach, null })
         })
         .collect()
 }

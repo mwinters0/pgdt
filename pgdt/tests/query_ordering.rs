@@ -149,13 +149,35 @@ fn strings_mode_refuses_every_ordering_operator() {
 }
 
 /// PostgreSQL's `infinity` is a value with an order, not a decode failure, so
-/// a filter over a `date` column holding one answers instead of erroring. The
-/// meaning is pinned against the library; what this adds is that the binary
-/// exits 0 on a dump every `pg_dump` can produce.
+/// under `--unrepresentable refuse` a filter over a `date` column holding one
+/// answers instead of erroring; by default it is NULL, which the filter keeps
+/// out and `is null` keeps. The meaning is pinned against the library; what
+/// this adds is that the binary exits 0 on a dump every `pg_dump` can produce.
 #[test]
 fn a_special_value_is_ordered_rather_than_ending_the_query() {
-    assert_eq!(kept("public.t_date", "id", &["--filter", "v_date>9999-12-31"]), ["1", "6"]);
-    assert_eq!(kept("public.t_numeric", "id", &["--filter", "v_small>0.00"]), ["3"]);
+    let refuse = |filter| ["--unrepresentable", "refuse", "--filter", filter];
+    assert_eq!(kept("public.t_date", "id", &refuse("v_date>9999-12-31")), ["1", "6"]);
+    assert_eq!(kept("public.t_numeric", "id", &refuse("v_small>0.00")), ["3"]);
+    assert_eq!(kept("public.t_date", "id", &["--filter", "v_date>9999-12-31"]), ["6"]);
+    assert_eq!(kept("public.t_numeric", "id", &["--filter", "v_small is null"]).len(), 5);
+}
+
+/// **The null mode says on stderr how many values each column it prints
+/// reads as NULL**, the map's count over the table, and prints them as NULL.
+#[test]
+fn values_read_as_null_are_counted_on_stderr() {
+    let out = query("public.t_date", "v_date", &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    assert!(
+        stderr.contains(
+            "warning: public.t_date.v_date holds 2 value(s) its type `date` cannot hold, read as NULL"
+        ),
+        "{stderr}"
+    );
+    let refused = query("public.t_date", "v_date", &["--unrepresentable", "refuse"]);
+    assert!(!refused.status.success());
+    assert!(stderr_of(&refused).contains("refuses such values"), "{}", stderr_of(&refused));
 }
 
 /// A literal that is not a value of the column's type is refused by name,

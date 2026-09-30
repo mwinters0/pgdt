@@ -243,6 +243,22 @@ pub enum Error {
         declared_type: String,
         value: String,
     },
+    /// A value PostgreSQL accepts for the column's declared type and its
+    /// Arrow type cannot hold, met by a query under
+    /// [`crate::UnrepresentableMode::Refuse`] where its read reached it — a
+    /// value of the type, where [`Self::FieldDecode`]'s is not
+    /// (`docs/design/decisions.md`, "D98"). The remedy is a mode, which the
+    /// sentence names in the library's words.
+    #[error(
+        "{table}.{column} at row offset {row_offset}: `{value}` is a `{declared_type}` value the column's Arrow type cannot hold, and this query refuses such values — read them in the null mode, as NULL, or leave the column unmaterialized"
+    )]
+    Unrepresentable {
+        table: String,
+        column: String,
+        row_offset: u64,
+        declared_type: String,
+        value: String,
+    },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
     /// refuses rather than writing something the file could not have held

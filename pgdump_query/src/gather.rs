@@ -976,7 +976,10 @@ impl ColumnGatherer {
                     self.group.unrepresentable.add(tier);
                 }
                 self.group.value_bytes += text.len() as u64;
-                if let Some(summand) = self.summand {
+                // A value the type cannot hold is left out, as a NULL is: the
+                // sum is of the values the type holds, read only in a view
+                // taking the rest as NULL (`docs/design/decisions.md`, "D98").
+                if let Some(summand) = self.summand.filter(|_| tier.is_none()) {
                     self.group.sum = self
                         .group
                         .sum

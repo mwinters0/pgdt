@@ -10,10 +10,11 @@
 //!   from `Exact` statistics by replacing the aggregate with a literal, so a
 //!   wrong `Exact` is a wrong answer with no error; a session whose physical
 //!   optimizer does not carry `aggregate_statistics` reads every row instead,
-//!   and the two must agree wherever reading the column answers at all. Where
-//!   a typed read refuses (`KD8`), a count is still checked: read as text, no
-//!   value refuses, and a `COUNT(<column>)` counts values without their
-//!   meaning.
+//!   and the two must agree wherever reading the column answers at all —
+//!   everywhere in the typed mode, which reads a value its column's type
+//!   cannot hold as NULL. Where the refuse mode's read refuses (`KD8`), a
+//!   count is still checked: read as text, no value refuses, and a
+//!   `COUNT(<column>)` counts values without their meaning.
 //! - **An estimate** — a row count, a byte size — is checked as the bound it
 //!   claims to be: never below what the scan emits, over generated filters,
 //!   and equal to it wherever it says `Exact`.
@@ -52,7 +53,7 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     Finding, LocalFileSource, NestedPlan, ScanOptions, SchemaMode, StatisticsRequest,
-    StatisticsSelection, TableName, map_file,
+    StatisticsSelection, TableName, UnrepresentableMode, map_file,
 };
 
 mod in_order;
@@ -218,8 +219,10 @@ impl Refusal {
     fn of(err: &DataFusionError) -> Refusal {
         let mut cause: Option<&dyn std::error::Error> = Some(err);
         while let Some(err) = cause {
-            if let Some(pgdump_query::Error::FieldDecode { table, column, declared_type, .. }) =
-                err.downcast_ref()
+            if let Some(
+                pgdump_query::Error::FieldDecode { table, column, declared_type, .. }
+                | pgdump_query::Error::Unrepresentable { table, column, declared_type, .. },
+            ) = err.downcast_ref()
             {
                 return Refusal::Unreadable {
                     table: table.clone(),
@@ -384,7 +387,16 @@ async fn opened(
     copy: &Path,
     schema_mode: SchemaMode,
 ) -> (Arc<PgDump>, SessionContext, SessionContext, Vec<(Option<String>, String)>) {
-    let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };
+    opened_in(copy, schema_mode, UnrepresentableMode::Null).await
+}
+
+/// [`opened`], reading a value its column's type cannot hold as `mode` says.
+async fn opened_in(
+    copy: &Path,
+    schema_mode: SchemaMode,
+    unrepresentable: UnrepresentableMode,
+) -> (Arc<PgDump>, SessionContext, SessionContext, Vec<(Option<String>, String)>) {
+    let options = PgDumpOptions { schema_mode, unrepresentable, ..PgDumpOptions::default() };
     let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
     let (reading, blind) = sessions();
     let catalogs = register_in((&reading, &blind), &dump);
@@ -450,20 +462,26 @@ async fn every_aggregate(
     }
 }
 
-/// **Typed and as text**, as the provider's other targets are: the text pass
-/// is the typed one's oracle wherever a typed read refuses (`KD8`), and is
-/// itself read against the rows, bounds included (D89).
+/// **Typed, typed refusing, and as text**, as the provider's other targets
+/// are: the text pass is the refusing one's oracle wherever its read refuses
+/// (`KD8`), and is itself read against the rows, bounds included (D89); the
+/// typed mode, reading such a value as NULL, refuses nothing (D98).
 #[test]
 fn statistics_never_change_an_answer() {
     let seen = per_major(every_fixture(), |fixtures| async move {
         let scratch = tempfile::tempdir().unwrap();
-        let (mut typed, mut strings) = (Seen::default(), Seen::default());
+        let (mut typed, mut refusing, mut strings) =
+            (Seen::default(), Seen::default(), Seen::default());
         for fixture in fixtures {
             let copy = parsed_copy(&fixture, scratch.path()).await;
             let (text_dump, text_reading, text_blind, text_catalogs) =
                 opened(&copy, SchemaMode::Strings).await;
             let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
             every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut typed).await;
+            let refuse = UnrepresentableMode::Refuse;
+            let (dump, reading, blind, catalogs) =
+                opened_in(&copy, SchemaMode::Typed, refuse).await;
+            every_aggregate(&dump, (&reading, &blind), &catalogs, &text_blind, &mut refusing).await;
             every_aggregate(
                 &text_dump,
                 (&text_reading, &text_blind),
@@ -473,11 +491,12 @@ fn statistics_never_change_an_answer() {
             )
             .await;
         }
-        (typed, strings)
+        (typed, strings, refusing.counted_as_text)
     });
-    let (typed, strings) =
-        seen.into_iter().fold((Seen::default(), Seen::default()), |(typed, strings), (t, s)| {
-            (typed.or(t), strings.or(s))
+    let (typed, strings, refused) = seen
+        .into_iter()
+        .fold((Seen::default(), Seen::default(), false), |(typed, strings, refused), (t, s, r)| {
+            (typed.or(t), strings.or(s), refused || r)
         });
     for (mode, seen) in [(SchemaMode::Typed, &typed), (SchemaMode::Strings, &strings)] {
         assert!(seen.count, "no `COUNT(*)` was answered from the statistics ({mode:?})");
@@ -498,9 +517,10 @@ fn statistics_never_change_an_answer() {
     // A text column has no `SUM`, so only the typed pass asks one.
     assert!(typed.sum, "no `SUM` was answered from the statistics");
     assert!(
-        typed.counted_as_text,
-        "no typed `COUNT(<column>)` over a refusing column was checked against the text"
+        refused,
+        "no refusing `COUNT(<column>)` over a refusing column was checked against the text"
     );
+    assert!(!typed.counted_as_text, "a typed read refused: {typed:?}");
     assert!(!strings.counted_as_text, "a text read refused: {strings:?}");
 }
 
@@ -762,9 +782,9 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
 /// `public.spans` read as three blocks, every integer, `oid` and typmodded
 /// `numeric` column answers — `big` wrapping the `Int64` every integer is
 /// summed as, `i2` and `i4` passing their own types, and `huge` wrapping
-/// `Decimal128` — and the blind session reads each back. A float, a column
-/// holding no non-NULL value, and one holding a value its type cannot (`KD8`)
-/// state no sum, and are read.
+/// `Decimal128` — and the blind session reads each back, as does a column
+/// holding a `NaN`, read as NULL. A float and a column holding no non-NULL
+/// value state no sum, and are read.
 #[tokio::test]
 async fn a_sum_answers_where_every_group_kept_one() {
     let scratch = tempfile::tempdir().unwrap();
@@ -779,9 +799,10 @@ async fn a_sum_answers_where_every_group_kept_one() {
         (&default, "zeros", "min_pos_first"),
         (&default, "zeros", "r_min_pos_first"),
         (&default, "ordered", "all_null"),
-        (&types, "t_numeric", "v_small"),
     ];
     let checks = summed.iter().map(|column| (&spans, "spans", *column, true));
+    // A `NaN` the typed mode reads as NULL is left out of the sum (D98).
+    let checks = checks.chain([(&types, "t_numeric", "v_small", true)]);
     let checks = checks.chain(unsummed.into_iter().map(|(dump, t, c)| (dump, t, c, false)));
     for (copy, table_name, column, answers) in checks {
         let (dump, reading, blind, _) = opened(copy, SchemaMode::Typed).await;
