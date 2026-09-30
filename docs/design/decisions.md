@@ -208,7 +208,7 @@ being the only `ColumnCountMismatch` site. Evidence: `predicate-terms`.
 Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing builder for nested
 `Utf8View` (the prize is zero below arrow's inlining width); skipping a block with `memmem` (the row
 count and the census read every row); a proposal is sized against the per-row profile. Evidence:
-`nested-decode-micro`, `map-only`, `census-attribution`, `cross-file-floor`, `nested-end-to-end`.
+`nested-decode-micro`, `map-only`, `cross-file-floor`, `nested-end-to-end`.
 
 ## The file map and the preamble (`map.rs`, `index.rs`, `preamble.rs`)
 ### D30 The statement grammar is primary; the TOC is enrichment
@@ -249,7 +249,7 @@ max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any c
 the data level is censused, and so is every block a query's pass maps: gating on a full scan left
 early blocks uncensused. The metadata level records `None` and splits no field; a typed query re-reads
 such a table for itself, writing nothing, and a plan over a held map refuses it. Rejected: degrading
-to the DDL's `List`; a census-only level a user can reach. Evidence: `census-brace-free`, `census-arrays`.
+to the DDL's `List`; a census-only level a user can reach. Evidence: `statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 Every census-taking read counts per block and column what the declared type's typed pair (no census) cannot hold, a leaf

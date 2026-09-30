@@ -32,13 +32,13 @@ What it enforces, from that doc's standing rules:
 **Selection is per figure, never finer.** One figure is exactly one table, and
 a table is atomic -- half of one may not be re-taken. Figures that share a
 reading say so and pull the other figure in rather than measuring it twice
-(the warm scan-throughput table's `COPY` row *is* the census table's warm
-census-on column, and must be the same number).
+(the allocator table's reference `parse` row *is* the warm scan-throughput
+table's `COPY` row, and must be the same number).
 
 **Each figure declares the paths that invalidate it**, so `--stale` can say
 which figures a diff has made stale. That is the half a harness alone does not
-fix: a one-line change to `map::Builder::on_row` invalidated both census
-figures and nothing announced it. **A section the register does not hold
+fix: a one-line change to `map::Builder::on_row` invalidated two figures and
+nothing announced it. **A section the register does not hold
 declares one too** (`Outside.depends`), and its marker in the doc names the
 commit its readings were taken at: being outside means the harness cannot
 re-take them, not that nothing is told when they go wrong.
@@ -56,21 +56,12 @@ it states its worker count as its session's `target_partitions`, runs in an
 image of its own because it cannot run in the register's, and allocates with
 its own `mimalloc` — each held by a test and said in its tables.
 
-One binary this cannot build for itself, by design: the **census-off** binary is
-`map::census_row`'s body preceded by a bare `return;` -- a source patch no
-harness should perform. Build it by hand (the recipe is in measurements.md) and
-point `PGDT_MEASURE_CENSUS_OFF_BIN` at it. **It carries a `.stamp` beside it
-naming the commit it was built from**, the way a generated input does, and a
-census figure is refused unless that commit is an ancestor of the one being
-measured with no path the selected census figures declare changed in between:
-not building it and not trusting an unstamped one are different rules, and the
-second is what says the difference between the two binaries is the census.
-
-**It is the only historical build here, and that is the point.** A comparison
-against a pinned commit measures everything that differs between the two trees,
-which grows every time the tree moves and the pinned side does not -- so a
-subtraction is registered here only with an expiry that refuses it, and one that
-had none is retired rather than carried.
+**No build of another tree is measured here.** A subtraction between two
+builds measures everything that differs between the two trees, which grows
+every time the tree moves and the pinned side does not; what one mechanism
+costs inside a run is an attribution, read off a profile
+(`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
+blind"), not a second build differenced against the first.
 
 Machine facts stay out of here: every path is an environment variable whose
 default suits the machine CLAUDE.local.md describes, and the procedure lives in
@@ -220,9 +211,6 @@ class Config:
         "PGDT_MEASURE_DFCLI_IMAGE",
         "archlinux:base@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6",
     )
-    bin_nocensus: Path = Path(
-        _env("PGDT_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdt-nocensus"))
-    )
     # The `allocator` figure's three legs. Each is a full cargo target dir, so
     # it goes on scratch rather than under `runs/`, which holds logs and small
     # binaries; the binaries themselves are copied into `runs/`. A separate
@@ -259,17 +247,6 @@ class Config:
     # property of the *run* rather than of the selection because of what it
     # makes the tables -- see `unpublishable_reason`.
     alone: bool = False
-
-    @property
-    def bin_nocensus_stamp(self) -> Path:
-        """The commit the census-off binary was built from, recorded beside it
-        exactly as a generated input's `.stamp` sits beside the input.
-
-        Derived from the binary's own path rather than given its own
-        environment variable, so pointing `PGDT_MEASURE_CENSUS_OFF_BIN` at
-        another build moves the stamp with it and cannot leave the two
-        describing different files."""
-        return self.bin_nocensus.with_name(self.bin_nocensus.name + ".stamp")
 
     @property
     def unpublishable_reason(self) -> str | None:
@@ -1479,7 +1456,7 @@ def _perf(name: str, *flags: str) -> InputSpec:
 
 INPUTS: dict[str, InputSpec] = {
     # The brace-free control. Its lack of `{`/`[` is a contract, not an
-    # accident: the census and scan-throughput figures are taken on it.
+    # accident: the scan-throughput figures are taken on it.
     "control": _perf("control", "--seed", "42"),
     # The instrument's own floor: identical shape, different seed.
     "control43": _perf("control43", "--seed", "43"),
@@ -2042,7 +2019,7 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdt" | "nocensus" | "dfcli" | … | "none" (dd); `Session.binary_path`
+    binary: str  # "pgdt" | "dfcli" | … | "none" (dd); `Session.binary_path`
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -2406,7 +2383,8 @@ SWEEP_JOBS = 1
 #: against. `statistics_flag_problems` refuses a shape that runs `parse`
 #: without it; `--preamble-only` reads no row and takes no statistics flag, so
 #: it states none. The metadata level records no census either, so a query
-#: over a cache it wrote reads its table once more for one.
+#: over a cache it wrote reads its table once more for one, and no figure
+#: queries such a cache.
 NO_STATISTICS = "--statistics-level metadata"
 
 #: `pgdump_query::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
@@ -2415,8 +2393,8 @@ ROW_GROUP_SIZE = 1 << 20
 
 #: **What the statistics figures state instead, where they gather**, and the
 #: dynamic-filter figures' untimed builder with them. Their subject is the
-#: gathering the rule above keeps out of every other figure, or what it buys a
-#: query, so they are its one exemption, and they state the request rather
+#: data level the rule above keeps out of every other figure, or what its
+#: statistics buy a query, so they are its one exemption, and they state the request rather
 #: than inherit it for the rule's own reason: the selection and the group size
 #: are both defaults that can move, and a shape inheriting either would re-time
 #: its figure the day one did. The size stated is the default's base size, and a
@@ -2425,16 +2403,20 @@ ROW_GROUP_SIZE = 1 << 20
 GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 
 #: `statistics-gathering`'s shapes: one whole-file `parse` under the resident
-#: wrapper, with statistics and without, `<family><leg>-rss`. **Both legs are
-#: the family's own**, the `none` leg included, though its argv is
-#: `parse-rss`'s: the figure's container is not the register's, so it is not
-#: that run, and a leg borrowed from `peak-rss` would stand this figure in a
-#: sharing edge that confines it to a stamped sweep.
+#: wrapper, at the metadata level and at the data level, `<family><leg>-rss`.
+#: **The figure prices the data level whole**: the census, the unrepresentable
+#: count and the statistics together, the only two levels a `parse` offers
+#: (`docs/design/decisions.md`, "D77"), and which of the three costs what is
+#: an attribution, read off a profile of the `data` leg (`PROFILE_SHAPES`).
+#: **Both legs are the family's own**, the `metadata` leg included, though
+#: its argv is `parse-rss`'s: the figure's container is not the register's, so
+#: it is not that run, and a leg borrowed from `peak-rss` would stand this
+#: figure in a sharing edge that confines it to a stamped sweep.
 STATISTICS_FAMILY = "parse-statistics-"
 #: The two legs, in the table's column order, each with the flags it states.
 STATISTICS_LEGS: tuple[tuple[str, str], ...] = (
-    ("none", NO_STATISTICS),
-    ("all", GATHER_STATISTICS),
+    ("metadata", NO_STATISTICS),
+    ("data", GATHER_STATISTICS),
 )
 
 #: `statistics-gathering`'s container limit, against the register's 512 MB.
@@ -2479,18 +2461,13 @@ PRUNING_FILTERS: dict[str, tuple[str, str]] = {
 PRUNING_UNNARROWED = "unnarrowed"
 #: The legs, in the table's column order: what `query --statistics` states.
 PRUNING_LEGS = ("none", "all")
-#: **The leg carrying no statistics, run for `PRUNING_UNNARROWED` alone**: its
-#: builder states `NO_STATISTICS`, and its query states `--statistics all`, as
-#: the `all` leg's does. The cache is decoded whole whatever the query states
-#: (`cache::read_cache_file`), so the `none` leg pays the statistics' decode
-#: too, and only a cache written without them prices carrying them. The query
-#: uses statistics rather than refusing them for two reasons: the leg and the
-#: `all` leg then differ by what the builder wrote alone, which is the choice a
-#: caller of a flagless `query` makes at `parse`; and its note is the check —
-#: printed wherever a block held statistics that fit it, so a leg printing none
-#: proves the cache carried nothing to consult, which `--statistics none` would
-#: print whatever the cache held.
-PRUNING_UNCARRIED = "uncarried"
+#: **No leg prices carrying statistics.** The cache is decoded whole whatever
+#: the query states (`cache::read_cache_file`), so every leg pays the
+#: statistics' decode, and no `parse` writes a cache that holds its table's
+#: census without its statistics: a metadata-level one leaves the query to
+#: re-read the table for its census inside the timer, and a column-level
+#: override still carries some column's statistics. The pruned legs bound the
+#: decode from above, each decoding the whole cache inside its wall.
 
 #: The second timed program: `datafusion-cli-pgdump`, mounted beside `/pgdt`,
 #: which builds the cache it reads (`ensure_dfcli_binary`).
@@ -3550,7 +3527,7 @@ def _script(command: str) -> str:
         )
     if command.startswith(STATISTICS_FAMILY):
         # `statistics-gathering`: the same wrapped `parse` as `parse-rss`, its
-        # statistics request stated by the leg.
+        # level stated by the leg.
         leg, _, suffix = command.removeprefix(STATISTICS_FAMILY).partition("-")
         flags = dict(STATISTICS_LEGS)
         if leg not in flags or suffix != "rss":
@@ -3564,16 +3541,14 @@ def _script(command: str) -> str:
         # gathering request; the timed `query` states which use it makes of it.
         # `typed`, stated: the range compares `id` as an integer.
         name, _, leg = command.removeprefix(PRUNING_FAMILY).rpartition("-")
-        uncarried = (name, leg) == (PRUNING_UNNARROWED, PRUNING_UNCARRIED)
-        if name not in PRUNING_FILTERS or not (leg in PRUNING_LEGS or uncarried):
+        if name not in PRUNING_FILTERS or leg not in PRUNING_LEGS:
             raise ValueError(f"unknown command shape {command!r}")
         expr = PRUNING_FILTERS[name][0]
-        written, used = (NO_STATISTICS, "all") if uncarried else (GATHER_STATISTICS, leg)
         return (
             f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} "
-            f"{written} >/dev/null; "
+            f"{GATHER_STATISTICS} >/dev/null; "
             f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
-            f"--schema-mode typed --where '{expr}' --statistics {used} {j} >/dev/null"
+            f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
         )
     if command == DYNFILTER_STARTUP:
         # The builder and the registration exactly as a leg has them, and a
@@ -3769,7 +3744,6 @@ def command_shapes() -> tuple[str, ...]:
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
         *(f"{STATISTICS_FAMILY}{leg}-rss" for leg, _ in STATISTICS_LEGS),
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
-        f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
         *dynfilter_shapes(),
         DYNFILTER_STARTUP,
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
@@ -4196,8 +4170,6 @@ class Session:
     def binary_path(self, which: str) -> Path:
         if which == "pgdt":
             return self.cfg.bin_pgdt
-        if which == "nocensus":
-            return self.cfg.bin_nocensus
         if which == "xzdecode":
             return ensure_xz_decode_binary(self.cfg, self.log)
         if which == "dfcli":
@@ -4755,9 +4727,10 @@ class Session:
     def borrow(self, figure: str, shared: Shared) -> list[RunSpec]:
         """Copy the readings one declared `Shared` names into `figure`'s keys.
 
-        A reading another figure already took. The warm scan-throughput table's
-        `COPY` row *is* the census table's warm census-on column -- re-measuring
-        it would put two different numbers in the doc for one measurement.
+        A reading another figure already took. The allocator table's reference
+        `parse` row *is* the warm scan-throughput table's `COPY` row --
+        re-measuring it would put two different numbers in the doc for one
+        measurement.
 
         Returns the specs that were satisfied, which is empty when the source
         figure was not in this sitting. What is *not* satisfied is left absent
@@ -4806,131 +4779,10 @@ def resolve_commit(rev: str) -> str | None:
     return proc.stdout.strip() or None
 
 
-def census_binary_problem(
-    cfg: Config,
-    figures: Iterable[Figure],
-    resolve: Callable[[str], str | None] = resolve_commit,
-    ancestor: Callable[[str, str], bool] | None = None,
-    changed_between: Callable[[str, str], list[str]] | None = None,
-) -> str | None:
-    """Why the census-off binary may not be measured against this commit, if it
-    may not. `None` means it may.
-
-    **Refusing to build it and refusing to trust it are two rules, and only the
-    first was here.** The harness will not apply the source patch -- a harness
-    that patches its own subject can produce any figure it likes -- so the
-    binary arrives from a hand build, and nothing recorded which tree it came
-    from. Every *generated input* answers exactly that question with a `.stamp`
-    beside it; this is the same file for the same reason, and the recipe in
-    `measurements.md` writes it.
-
-    The cost of not having it is not hypothetical. A census figure is a
-    subtraction between this binary and `target/release/pgdt`, so **everything
-    that differs between the two trees is attributed to the census**: the
-    binary found 40 commits behind on 2026-09-05 would have charged ten slices
-    of read-path work to the census, in the one table that was already the
-    register's largest correction, with nothing to tell the two errors apart.
-
-    **The threshold is what that hazard actually is, not commit equality.** A
-    reading moves when *source* differs between the two binaries, and a commit
-    touching no path the figures being taken declare cannot move one -- so the
-    rule is that the stamp is an **ancestor** of HEAD with no declared path
-    changed in between. Exact equality charged a doc-only commit a whole hand
-    rebuild, and that friction lands on a ritual whose failure mode is reaching
-    for the old binary instead of rebuilding, which is the failure this check
-    exists to stop.
-
-    Two consequences of stating it that way, both deliberate. A stamp that is
-    **not** an ancestor stays refused: a divergent or ahead commit has no "in
-    between" to inspect, so "no declared path changed" would be computed over a
-    diff that does not mean what it says, and the binary comes from a tree
-    outside this one's history. And the check is **per sitting**, reading the
-    selected figures' own declared paths -- `census-attribution` declares no
-    scanner path where the other two do -- which is what lets the refusal name
-    the declared path that actually moved.
-
-    What the stamp buys is bounded, and worth saying: it is only as honest as
-    the hand that wrote it, so it cannot catch a re-stamp without a rebuild.
-    What it does catch is *age*, which is the failure that actually happened
-    and the one nothing else can see. Two things stay deliberately out of
-    scope: a dirty tree, which the session stamp already declares; and
-    `--dry-run`, which checks no binary at all because it measures nothing and
-    must run where none exists, so the refusal it would give lands seconds later
-    instead, at the first second of the sitting that would have published the
-    figure.
-
-    The *other* side of every census subtraction, `bin_pgdt`, is out of scope
-    here for a reason rather than for a weaker one: the harness builds it
-    (`ensure_pgdt_binary`), so it knows that provenance and has nothing to ask a
-    stamp. This binary is the register's only pinned historical build, and it is
-    pinned *with* an expiry -- which is what the one that had none, the
-    quadratic table's retired pre-throttle column, is the argument for.
-    """
-    # Defaulted here rather than in the signature: both are git helpers defined
-    # further down the file, where the rest of them live.
-    ancestor = ancestor or is_ancestor
-    changed_between = changed_between or paths_changed_between
-    figures = list(figures)
-    if not figures:
-        # The declared-path question is asked of the selection, so an empty one
-        # would quietly weaken the check to ancestry alone.
-        return "no census figure was named, so nothing says which declared paths to ask about."
-    if not cfg.bin_nocensus.exists():
-        return (
-            f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
-            "should perform: add a bare `return;` as the first statement of "
-            "`map::census_row`, `cargo build --release -p pgdt`, copy the binary "
-            f"to {cfg.bin_nocensus}, then revert. measurements.md's census section has the recipe."
-        )
-    want = resolve("HEAD")
-    if want is None:
-        return (
-            "HEAD does not resolve to a commit, so nothing can say which source "
-            f"{cfg.bin_nocensus} ought to have been built from."
-        )
-    stamp = cfg.bin_nocensus_stamp
-    if not stamp.exists():
-        return (
-            f"{stamp} is missing, so nothing says which source {cfg.bin_nocensus} was built from "
-            "— and a census figure is that binary differenced against this one. Rebuild it from "
-            "measurements.md's census recipe, which ends by writing that stamp."
-        )
-    text = stamp.read_text().strip()
-    got = resolve(text) if text else None
-    if got is None:
-        return (
-            f"{stamp} reads {text!r}, which is not a commit in this repository. It must name the "
-            f"commit {cfg.bin_nocensus} was built from."
-        )
-    rebuild = (
-        "Rebuild it from measurements.md's census recipe, which ends by re-writing "
-        f"{stamp}."
-    )
-    if got == want:
-        return None
-    if not ancestor(got, want):
-        return (
-            f"{cfg.bin_nocensus} was built at {got[:7]}, which is not an ancestor of the "
-            f"{want[:7]} being measured — so there is no run of commits between the two to "
-            "inspect, and the tree it came from is as unknown as an unstamped binary's. "
-            + rebuild
-        )
-    changed = changed_between(got, want)
-    moved = [(fig, hits) for fig in figures if (hits := declared_hits(fig, changed))]
-    if moved:
-        detail = "; ".join(f"{fig.id} declares {', '.join(hits)}" for fig, hits in moved)
-        return (
-            f"{cfg.bin_nocensus} was built at {got[:7]}, and paths the figures being taken "
-            f"declare changed between there and the {want[:7]} being measured ({detail}), so a "
-            "census figure would charge that change to the census. " + rebuild
-        )
-    return None
-
-
 #: Whether this process has already built the shipped binary. Per process for
-#: `_ALLOC_BUILT`'s reason, one level up: this is the binary every figure that
-#: is not a census subtraction is timed against, and a stale one is what a
-#: sitting cannot see.
+#: `_ALLOC_BUILT`'s reason, one level up: this is the binary every `pgdt`
+#: figure but the allocator's other legs is timed against, and a stale one is
+#: what a sitting cannot see.
 _PGDT_BUILT = False
 
 
@@ -4946,17 +4798,13 @@ def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     `charge_model`'s repaired mirror of it and reported the difference as an
     over-bill of the whole bill.
 
-    **Built, not stamped, and the harness's own record is what settles which.**
-    `census_binary_problem` refuses to build its subject because "a harness that
-    patches its own subject can produce any figure it likes" — a reason that
-    reaches a source patch and not an unpatched build of the current tree, and
-    that says nothing at all about a build the harness performs itself and
-    therefore knows the provenance of; and `ensure_allocator_binary` rebuilds
-    every leg once per
-    process precisely because "short-circuiting on the file's existence would
-    have silently timed the previous session's binary against this one's
-    reference". That last is this failure, already written down as a rejected
-    alternative — for the legs of a comparison whose reference side did it.
+    **Built, not stamped.** A build the harness performs itself is one whose
+    provenance it knows, where a stamp only records a hand's claim; and
+    `ensure_allocator_binary` rebuilds every leg once per process precisely
+    because "short-circuiting on the file's existence would have silently timed
+    the previous session's binary against this one's reference". That is this
+    failure, already written down as a rejected alternative — for the legs of a
+    comparison whose reference side did it.
 
     Once per **process**, for that reason. `cargo` is incremental, so a tree
     that has not moved costs about a second; a build between two timed reps
@@ -4994,10 +4842,9 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     """`pgdump_query`'s `xz_decode` example, built and copied beside the other
     measurement binaries.
 
-    Mechanical, so the harness does it rather than asking for a binary — the
-    line between the two is the census-off patch's: that one is a *source
-    edit* no harness should perform, and this is a `cargo build` of a committed
-    target.
+    Mechanical, so the harness does it rather than asking for a binary: a
+    `cargo build` of a committed target, where a source edit is one no harness
+    should perform.
 
     **An example target, so `target/release/pgdt` is untouched.** Every other
     figure in a sweep is timed against that binary, and a build that replaced
@@ -5458,7 +5305,7 @@ SCAN = ("pgdump_query/src/scan.rs", "pgdump_query/src/copy.rs", "pgdump_query/sr
 #: Every figure that times a `pgdt` run over a file reads its bytes through
 #: this one module, whatever else the figure is about, so it is its own
 #: mechanism rather than part of `SCAN`: `nested-end-to-end` and
-#: `census-attribution` declare no scanner path and are still moved by it.
+#: `cross-file-floor` declare no scanner path and are still moved by it.
 #: The read path was undeclared until the buffer pool landed, which made a
 #: change to the largest single term in a warm `parse`'s user time read green
 #: against every table it moved.
@@ -5484,6 +5331,9 @@ PREDICATE = ("pgdump_query/src/predicate.rs",)
 #: touched it.
 DECODE = ("pgdump_query/src/decode.rs",)
 CACHE = ("pgdump_query/src/cache.rs",)
+#: The unrepresentable count, which every data-level mapping pass takes beside
+#: the census (`docs/design/decisions.md`, "D96").
+UNREPRESENTABLE = ("pgdump_query/src/unrepresentable.rs",)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
 PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
 #: A query figure also reads through the CLI's own row rendering. The whole
@@ -5552,10 +5402,10 @@ def _throughput_table(session: Session, figure: str, specs: Sequence[RunSpec]) -
 def _throughput_figure(session: Session, figure: str, regime: str, reps: int) -> str:
     """The four-row throughput table, in one regime.
 
-    Its `COPY` row is not a measurement of its own: it is the census table's
-    census-on column for the same regime -- same binary, same command, same
-    input. Measuring it twice would put two numbers in the doc for one
-    measurement, which is the defect the whole sweep exists to remove."""
+    Its warm `COPY` row is also the allocator table's reference `parse` row --
+    same binary, same command, same input -- which borrows it rather than
+    measuring it twice, since two numbers in the doc for one measurement is the
+    defect the whole sweep exists to remove."""
     specs = _throughput_specs(regime)
     note = share_readings(session, figure)
     to_run = [s for s in specs if s.key(figure) not in session.readings]
@@ -5658,73 +5508,6 @@ def run_chunk_size(session: Session) -> str:
         rows.append(cells)
     table = md_table(["Chunk", *(label for _, label in CHUNK_REGIMES)], rows)
     return table + "\n" + _per_rep("chunk-size", session, specs)
-
-
-# -- the census pair --------------------------------------------------------
-
-
-def _census_specs(input_name: str, regime: str) -> tuple[RunSpec, RunSpec]:
-    """The census table's two binaries, in one regime.
-
-    A named pair rather than two constructions inline, because the census-on
-    spec is **borrowed** by two other figures -- the warm throughput table's
-    `COPY` row and the allocator table's reference column -- and a borrow is a
-    dictionary lookup that silently returns nothing if the key drifts."""
-    return (
-        RunSpec("nocensus", input_name, "parse", regime, f"census off ({regime})"),
-        RunSpec("pgdt", input_name, "parse", regime, f"census on ({regime})"),
-    )
-
-
-def _census_figure(session: Session, figure: str, input_name: str) -> str:
-    """The census table: two binaries, one input, both regimes.
-
-    Cold and warm are two rows of one table, so the table is only taken whole:
-    half a comparison table may not be re-taken."""
-    rows = []
-    per_rep = []
-    for regime in ("cold", "warm"):
-        off, on = _census_specs(input_name, regime)
-        session.sweep(figure, [off, on], session.cfg.reps(6))
-        off_v, on_v = session.get(figure, off), session.get(figure, on)
-        label = "cold, on the SSD" if regime == "cold" else "warm, on tmpfs"
-        rows.append(
-            [label, fmt_median_spread(off_v), fmt_median_spread(on_v), fmt_delta(median(off_v), median(on_v))]
-        )
-        per_rep.append(f"- {label} — census off: {fmt_readings(off_v)}; census on: {fmt_readings(on_v)}")
-
-        floor = RunSpec("none", input_name, "dd", regime, f"dd floor ({regime})")
-        session.sweep(figure, [floor], session.cfg.reps(3))
-
-    table = md_table(["", "Census off", "Census on", "Δ"], rows)
-
-    profile = session.stager.profile(input_name)
-    warm_off = session.get(figure, RunSpec("nocensus", input_name, "parse", "warm", ""))
-    warm_on = session.get(figure, RunSpec("pgdt", input_name, "parse", "warm", ""))
-    delta = median(warm_on) - median(warm_off)
-    per_row_ns = delta / profile["rows"] * 1e9 if profile["rows"] else 0.0
-    floors = {
-        r: median(session.get(figure, RunSpec("none", input_name, "dd", r, "")))
-        for r in ("cold", "warm")
-    }
-    notes = (
-        f"\nThe census costs **{delta:+.3f} s per {profile['bytes'] / GIB:.2f} GiB** of these rows — "
-        f"{per_row_ns:.0f} ns per {profile['columns']}-column row of {profile['row_bytes']:,} bytes, "
-        f"over {profile['rows']:,} rows.\n"
-        f"`dd` → `/dev/null` on the same file in the same container: "
-        f"**{fmt_s(floors['warm'])} s** warm, **{fmt_s(floors['cold'])} s** cold, so the census-off "
-        f"scan is within {median(warm_off) / floors['warm']:.1f}× of what the kernel charges to hand "
-        "over the bytes.\n"
-    )
-    return table + "\n" + notes + "\nPer-rep readings (s):\n" + "\n".join(per_rep) + "\n"
-
-
-def run_census_brace_free(session: Session) -> str:
-    return _census_figure(session, "census-brace-free", "control")
-
-
-def run_census_arrays(session: Session) -> str:
-    return _census_figure(session, "census-arrays", "arrays")
 
 
 # -- nested end to end ------------------------------------------------------
@@ -5841,8 +5624,8 @@ def run_projection_widths(session: Session) -> str:
 
     Every attribution the cross-file apparatus makes is a subtraction between
     two adjacent rows here, over identical rows of an identical file — so
-    neither `cross-file-floor`'s subtraction floor nor the census's
-    file-dependent untyped baseline enters. That is what makes this a
+    neither `cross-file-floor`'s subtraction floor nor a file-dependent untyped
+    baseline enters. That is what makes this a
     supersession of that apparatus rather than one more figure beside it.
     """
     figure = "projection-widths"
@@ -5965,34 +5748,6 @@ def run_predicate_terms(session: Session) -> str:
         + "\n".join(per_rep)
         + "\n"
     )
-
-
-# -- census attribution -----------------------------------------------------
-
-
-def run_census_attribution(session: Session) -> str:
-    figure = "census-attribution"
-    files = ("control", "arrays")
-    specs = [
-        RunSpec(binary, name, "query-strings", "warm", f"{binary} {name}")
-        for binary in ("pgdt", "nocensus")
-        for name in files
-    ]
-    session.sweep(figure, specs, session.cfg.reps(5))
-    rows, per_rep = [], []
-    for binary, label in (("pgdt", "census on"), ("nocensus", "census off")):
-        medians = [
-            median(session.get(figure, RunSpec(binary, n, "query-strings", "warm", "")))
-            for n in files
-        ]
-        rows.append(
-            [label, f"{medians[0]:.3f} s", f"{medians[1]:.3f} s", f"**{medians[1] - medians[0]:+.3f} s**"]
-        )
-        for n in files:
-            v = session.get(figure, RunSpec(binary, n, "query-strings", "warm", ""))
-            per_rep.append(f"- {label}, {n}: {fmt_readings(v)}")
-    table = md_table(["", "control", "`--arrays --composite`", "gap"], rows)
-    return table + "\n\nPer-rep readings (s):\n" + "\n".join(per_rep) + "\n"
 
 
 # -- the per-block quadratic ------------------------------------------------
@@ -6415,7 +6170,7 @@ def run_nested_decode_micro(session: Session) -> str:
 #: `parse`'s profile at all, and it is `parse` where the answer turned out to
 #: be decided.
 _ALLOCATOR_SHAPES: tuple[tuple[str, str, str], ...] = (
-    ("parse", "`pgdt parse` — structure discovery", "census-brace-free"),
+    ("parse", "`pgdt parse` — structure discovery", "scan-throughput-warm"),
     (
         "query-strings",
         "`query --schema-mode strings` — zero-copy extraction",
@@ -6449,8 +6204,8 @@ def _allocator_reference(cfg: Config) -> str:
     (`measurements.md`, "Two builds of one source can differ by layout"), which
     is larger than the effect being measured. And it keeps the doc carrying
     **one** number per measurement: the reference readings are borrowed from
-    the figures that already take them, exactly as the census table's
-    census-on column is shared with the warm throughput table.
+    the figures that already take them, the warm throughput table's `COPY` row
+    and the nested table's control rows.
 
     Reading the name off the binary rather than assuming `system` is what makes
     the figure survive its own answer: adopt a leg and this becomes the
@@ -8265,15 +8020,21 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
     return "Per-rep readings (s):\n" + "\n".join(lines) + "\n"
 
 
-# -- what gathering statistics costs, and what they buy --------------------
+# -- what the data level costs, and what its statistics buy ----------------
 
 #: `statistics-gathering`'s inputs, in the table's row order: the three
-#: scan-throughput inputs the spec names. **Two of them hold no `COPY` row**, and
-#: a gathering `parse` over them observes nothing: their rows are what the
-#: request costs where it gathers nothing, which is the control's row read from
-#: the other side.
+#: scan-throughput inputs, and the `--arrays --composite` file. **The control
+#: and the arrays file bracket the census**: a control row holds no array, so
+#: the census reads only its counted columns, and every arrays row holds three
+#: nested values it inspects as well, so the two rows' profiles of the `data`
+#: leg attribute the census on the shape most dumps have and on the one it
+#: exists for. **Two of the inputs hold no `COPY` row**, and a data-level
+#: `parse` over them observes nothing: their rows are what the level costs
+#: where it records nothing, which is the control's row read from the other
+#: side.
 _STATISTICS_ROWS: tuple[tuple[str, str], ...] = (
     ("control", "`COPY` block"),
+    ("arrays", "`COPY` block, arrays in every row"),
     ("large_object", "Large-object region"),
     ("insert_run", "`INSERT` run"),
 )
@@ -8282,7 +8043,7 @@ _STATISTICS_ROWS: tuple[tuple[str, str], ...] = (
 def _statistics_specs() -> list[RunSpec]:
     return [
         RunSpec(
-            "pgdt", name, f"{STATISTICS_FAMILY}{leg}-rss", "warm", f"{label}, statistics {leg}"
+            "pgdt", name, f"{STATISTICS_FAMILY}{leg}-rss", "warm", f"{label}, {leg} level"
         )
         for name, label in _STATISTICS_ROWS
         for leg, _ in STATISTICS_LEGS
@@ -8290,9 +8051,9 @@ def _statistics_specs() -> list[RunSpec]:
 
 
 def run_statistics_gathering(session: Session) -> str:
-    """Whole-file `parse` with every statistic gathered against `--statistics
-    none`, warm, in one container of the figure's own, with resident recorded
-    beside each and not refined."""
+    """Whole-file `parse` at the data level against the metadata level, warm,
+    in one container of the figure's own, with resident recorded beside each
+    and not refined."""
     figure = "statistics-gathering"
     specs = _statistics_specs()
     session.sweep(figure, specs, session.cfg.reps(5))
@@ -8314,25 +8075,25 @@ def run_statistics_gathering(session: Session) -> str:
             [
                 label,
                 *(fmt_median_spread(walls[leg]) for leg in legs),
-                fmt_delta(median(walls["none"]), median(walls["all"])),
+                fmt_delta(median(walls["metadata"]), median(walls["data"])),
                 *(fmt_mib_median_spread(rss[leg]) for leg in legs),
                 f"{fmt_s(median(session.get(figure, floor)))} s",
             ]
         )
         for leg in legs:
             per_rep.append(
-                f"- {label}, `--statistics {leg}`: {fmt_readings(walls[leg])}; "
+                f"- {label}, {leg} level: {fmt_readings(walls[leg])}; "
                 + ", ".join(fmt_mib(v) for v in rss[leg])
             )
         per_rep.append(f"- {label}, `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
     table = md_table(
         [
             "Input",
-            "`--statistics none`",
-            "Every statistic",
+            "Metadata level",
+            "Data level",
             "Δ",
-            "Peak RSS, none",
-            "Peak RSS, every statistic",
+            "Peak RSS, metadata",
+            "Peak RSS, data",
             "`dd` floor",
         ],
         rows,
@@ -8340,12 +8101,14 @@ def run_statistics_gathering(session: Session) -> str:
     return (
         table
         + f"\n\nEvery run is `pgdt parse` over the whole file at `--jobs {SWEEP_JOBS}`, "
-        f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the default's "
+        f"its level stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the default's "
         "base size, gathered exactly where a flagless `parse` coarsens wide rows — "
         f"**in a {STATISTICS_MEMORY} container**, against the register's "
         f"{session.cfg.memory}: statistics are billed against the limit's margin "
         '(`docs/design/decisions.md`, "D85"), so the limit is chosen generously that none '
-        "declines, and the resident column says what it left. Resident is recorded, not "
+        "declines, and the resident column says what it left. The Δ is the census, the "
+        "unrepresentable count and the statistics together; which costs what is read off "
+        "a profile of the data level, not off this table. Resident is recorded, not "
         "attributed.\n\nPer-rep readings (s; peak RSS):\n"
         + "\n".join(per_rep)
         + "\n"
@@ -8363,14 +8126,6 @@ def _pruning_specs() -> list[RunSpec]:
         )
         for name in PRUNING_FILTERS
         for leg in PRUNING_LEGS
-    ] + [
-        RunSpec(
-            "pgdt",
-            "pruning",
-            f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
-            "warm",
-            f"{PRUNING_UNNARROWED}, a cache written by `parse {NO_STATISTICS}`",
-        )
     ]
 
 
@@ -8386,12 +8141,7 @@ def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
     **`PRUNING_UNNARROWED` is held to the opposite**, and admitted there alone:
     its pruned leg must say it consulted statistics — the note is printed only
     where it did — and skipped no group and stopped no read, or it prices
-    something other than consulting them.
-
-    **Its `PRUNING_UNCARRIED` leg must say it consulted none**, having asked to:
-    a note there means the builder's cache carried statistics after all, and
-    the leg prices nothing against the others. Its rows are held to the rest of
-    the row's."""
+    something other than consulting them."""
     bad = []
     for name in PRUNING_FILTERS:
         none, used = reported.get(f"{name}-none", {}), reported.get(f"{name}-all", {})
@@ -8410,26 +8160,13 @@ def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
                 f"{name}: the two legs returned {none.get('rows_returned')} and "
                 f"{used.get('rows_returned')} row(s)"
             )
-        if name == PRUNING_UNNARROWED:
-            bare = reported.get(f"{name}-{PRUNING_UNCARRIED}", {})
-            if "skipped_groups" in bare or "unread_bytes" in bare:
-                bad.append(
-                    f"{name}: the cache `parse {NO_STATISTICS}` wrote carried statistics "
-                    "the query consulted"
-                )
-            if returned is None or returned != bare.get("rows_returned"):
-                bad.append(
-                    f"{name}: a cache without statistics returned "
-                    f"{bare.get('rows_returned')} row(s) against {returned}"
-                )
     return bad
 
 
 def run_statistics_pruning(session: Session) -> str:
     """`pgdt query` under a selective range on a sorted column, under an
     equality a dictionary answers, and under an equality its statistics cannot
-    narrow, each with its statistics and with `--statistics none`, warm — the
-    last also against a cache written without statistics."""
+    narrow, each with its statistics and with `--statistics none`, warm."""
     figure = "statistics-pruning"
     specs = _pruning_specs()
     session.sweep(figure, specs, session.cfg.reps(6))
@@ -8444,16 +8181,14 @@ def run_statistics_pruning(session: Session) -> str:
         raise RuntimeError("statistics-pruning does not price pruning: " + "; ".join(problems))
     rows, per_rep = [], []
     for name, (expr, label) in PRUNING_FILTERS.items():
-        legs = (*PRUNING_LEGS, PRUNING_UNCARRIED) if name == PRUNING_UNNARROWED else PRUNING_LEGS
         walls = {
             leg: session.get(
                 figure, RunSpec("pgdt", "pruning", f"{PRUNING_FAMILY}{name}-{leg}", "warm", "")
             )
-            for leg in legs
+            for leg in PRUNING_LEGS
         }
         used = reported[f"{name}-all"]
         unread = int(used["skipped_bytes"]) + int(used.get("unread_bytes", "0"))
-        bare = walls.get(PRUNING_UNCARRIED)
         rows.append(
             [
                 f"{label}: `{expr}`",
@@ -8461,8 +8196,6 @@ def run_statistics_pruning(session: Session) -> str:
                 fmt_median_spread(walls["all"]),
                 fmt_delta(median(walls["none"]), median(walls["all"])),
                 f"**{median(walls['none']) / median(walls['all']):.1f}×**",
-                "—" if bare is None else fmt_median_spread(bare),
-                "—" if bare is None else fmt_delta(median(bare), median(walls["all"])),
                 f"{int(used['skipped_groups']):,} of {int(used['groups']):,}",
                 f"{int(used.get('unread_bytes', '0')):,}",
                 f"{unread / int(used['bytes']) * 100:.2f}%",
@@ -8471,11 +8204,6 @@ def run_statistics_pruning(session: Session) -> str:
         )
         for leg in PRUNING_LEGS:
             per_rep.append(f"- {label}, `--statistics {leg}`: {fmt_readings(walls[leg])}")
-        if bare is not None:
-            per_rep.append(
-                f"- {label}, `--statistics all`, a cache written by `parse {NO_STATISTICS}`: "
-                f"{fmt_readings(bare)}"
-            )
     per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
     table = md_table(
         [
@@ -8484,8 +8212,6 @@ def run_statistics_pruning(session: Session) -> str:
             "Statistics used",
             "Δ",
             "Speedup",
-            "Statistics used, none in the cache",
-            "Δ carrying them",
             "Groups skipped",
             "Bytes a stop left unread",
             "Of the rows' bytes, not read",
@@ -8502,11 +8228,8 @@ def run_statistics_pruning(session: Session) -> str:
         f"`{GATHER_STATISTICS}` wrote in the same container, so the two legs of a row differ "
         "by `--statistics` alone. The first two rows price what pruning buys; the third, "
         "which skips nothing, what consulting the statistics costs a query they cannot "
-        "narrow. The cache is decoded whole whatever the query states, so the third "
-        "filter also runs against a cache an untimed `parse` stating "
-        f"`{NO_STATISTICS}` wrote, with statistics used and none to consult, and its Δ "
-        "against the cache carrying them is what carrying them costs that query. The "
-        "skipped groups and bytes are the query's own notes; the "
+        "narrow. The cache is decoded whole whatever the query states, so both legs pay "
+        "its statistics' decode. The skipped groups and bytes are the query's own notes; the "
         "bytes a stop left unread are a lower bound, and the share not read adds them to the "
         f"skipped groups'. `dd` → `/dev/null` on the same file: "
         f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"
@@ -8662,24 +8385,6 @@ def run_dynamic_filter_topk(session: Session) -> str:
 
 FIGURES: list[Figure] = [
     Figure(
-        id="census-brace-free",
-        section="The census on brace-free rows costs 8% of a warm scan",
-        stage="cold+warm",
-        depends=(*MAP, *SCAN, *READ, *GEN_PERF),
-        cold_inputs=("control",),
-        warm_inputs=("control",),
-        run=run_census_brace_free,
-    ),
-    Figure(
-        id="census-arrays",
-        section="The census on array-bearing rows more than triples a warm scan",
-        stage="cold+warm",
-        depends=(*MAP, *SCAN, *READ, *GEN_PERF),
-        cold_inputs=("arrays",),
-        warm_inputs=("arrays",),
-        run=run_census_arrays,
-    ),
-    Figure(
         id="scan-throughput-cold",
         also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
@@ -8690,13 +8395,6 @@ FIGURES: list[Figure] = [
         stage="cold",
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         cold_inputs=("control", "large_object", "insert_run"),
-        shares=(
-            Shared(
-                "census-brace-free",
-                "the `COPY` row, which is the census table's census-on column for this regime",
-                (RunSpec("pgdt", "control", "parse", "cold", ""),),
-            ),
-        ),
         run=run_scan_throughput_cold,
     ),
     Figure(
@@ -8710,21 +8408,13 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         warm_inputs=("control", "large_object", "insert_run"),
-        shares=(
-            Shared(
-                "census-brace-free",
-                "the `COPY` row, which is the census table's census-on column for this regime",
-                (RunSpec("pgdt", "control", "parse", "warm", ""),),
-            ),
-        ),
         run=run_scan_throughput_warm,
     ),
     # The third device class, and the only one that can price the I/O
     # defaults: on the HDD and the SATA SSD the device is the whole cost and
     # on tmpfs there is no device at all, so a readahead, `fadvise` or
-    # chunk-size change has nowhere to show. It borrows nothing -- no census
-    # figure is taken in this regime -- so its `COPY` row is its own reading
-    # rather than a republished one.
+    # chunk-size change has nowhere to show. Like the other two, it borrows
+    # nothing: its `COPY` row is its own reading.
     Figure(
         id="scan-throughput-nvme",
         also_quoted_by=(
@@ -8760,14 +8450,6 @@ FIGURES: list[Figure] = [
         depends=(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
         run=run_nested_end_to_end,
-    ),
-    Figure(
-        id="census-attribution",
-        section="The untyped baseline is not file-independent (census attribution)",
-        stage="warm",
-        depends=(*MAP, *READ, *QUERY_CLI, *GEN_PERF),
-        warm_inputs=("control", "arrays"),
-        run=run_census_attribution,
     ),
     Figure(
         id="cross-file-floor",
@@ -9104,16 +8786,26 @@ FIGURES: list[Figure] = [
         memory=PARALLEL_MEMORY,
         run=run_reserve,
     ),
-    # The spec's two figures for per-row-group statistics, each standing in no
-    # sharing edge, so each publishes outside a sweep from its own commit.
-    # `depends` for the first is what a gathering scan runs through and what
-    # writes what it gathered; its `none` leg is the scan-throughput shape and
-    # declares that figure's paths.
+    # The data level's two figures, each standing in no sharing edge, so each
+    # publishes outside a sweep from its own commit. `depends` for the first is
+    # what a data-level scan runs through — the census in the map, the count
+    # beside it, the gathering — and what writes what it recorded; its
+    # `metadata` leg is the scan-throughput shape and declares that figure's
+    # paths.
     Figure(
         id="statistics-gathering",
-        section="What gathering row-group statistics costs a parse",
+        section="What the data level costs a parse",
         stage="warm",
-        depends=(*SCAN, *MAP, *READ, *CACHE, *STATISTICS, *QUERY_CLI, *GEN_SHAPES),
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *CACHE,
+            *STATISTICS,
+            *UNREPRESENTABLE,
+            *QUERY_CLI,
+            *GEN_SHAPES,
+        ),
         warm_inputs=tuple(name for name, _ in _STATISTICS_ROWS),
         memory=STATISTICS_MEMORY,
         run=run_statistics_gathering,
@@ -9243,59 +8935,6 @@ SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
 EVERY_FIGURE = FIGURES + UNTAKEN + DERIVED
 EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 
-#: The slice that lifts `BARRED`, and the only one that may: it re-points the
-#: barred figures' builders, and `test_measure` holds the bar to that slice's
-#: box being unticked in `STATUS.md`, so ticking it with a figure still barred
-#: fails the suite rather than leaving a refusal nobody owns.
-BAR_LIFTED_BY = "28.9"
-
-#: Figures the harness refuses to take, each with what its reading would say
-#: that its caption does not. P28's metadata level left each one's legs timing
-#: something other than what its table names
-#: (`docs/design/roadmap-P28-unrepresentable-values.md`, "Facts found while
-#: grilling"); what each should price is `BAR_LIFTED_BY`'s to decide, so until
-#: then the harness refuses them by name rather than publishing a table that
-#: misreads. A selection reaching one through a borrow edge is refused too, and
-#: `--alone` and `--dry-run` are no exemption: the bar is about what the reading
-#: means, not whether it is published or measured.
-BARRED: dict[str, str] = {
-    "census-brace-free": (
-        "it differences the census-off build against a `parse` stating "
-        f"`{NO_STATISTICS}`, which censuses nothing either"
-    ),
-    "census-arrays": (
-        "it differences the census-off build against a `parse` stating "
-        f"`{NO_STATISTICS}`, which censuses nothing either"
-    ),
-    "statistics-gathering": (
-        "its legs are the metadata and data levels, so its Δ is the census, the count and "
-        "the statistics together, under a caption naming the statistics alone"
-    ),
-    "statistics-pruning": (
-        f"its `{PRUNING_UNCARRIED}` leg reads a cache `parse {NO_STATISTICS}` wrote, "
-        "which holds no census, so it times a census re-read of its table, and its prose "
-        "reads the legs as one comparison"
-    ),
-}
-
-
-def barred_problems(figures: Iterable[Figure]) -> list[str]:
-    """Why each barred figure in a selection may not be taken, borrowed ones
-    included; empty where none is."""
-    figures = list(figures)
-    problems = []
-    for fig in figures:
-        if fig.id not in BARRED:
-            continue
-        borrowers = [f.id for f in figures if fig.id in f.requires]
-        pulled = f" (borrowed by {', '.join(borrowers)})" if borrowers else ""
-        problems.append(
-            f"{fig.id}{pulled} is barred until {BAR_LIFTED_BY} re-points its builder: "
-            f"{BARRED[fig.id]}"
-        )
-    return problems
-
-
 # --------------------------------------------------------------------------
 # Consumers: who repeats a figure, computed from who names it.
 # --------------------------------------------------------------------------
@@ -9416,10 +9055,10 @@ def sharing_edges() -> dict[str, set[str]]:
     """The republication graph, undirected.
 
     Undirected because the defect is symmetric: `allocator` borrowing
-    `census-brace-free`'s reading and the two throughput tables borrowing the
-    same one put the same number in four tables, and re-taking *any* of them
-    alone leaves the doc carrying two numbers for one measurement. Direction
-    only says which figure measures it."""
+    `scan-throughput-warm`'s `COPY` reading puts the same number in two
+    tables, and re-taking *either* of them alone leaves the doc carrying two
+    numbers for one measurement. Direction only says which figure measures
+    it."""
     edges: dict[str, set[str]] = {}
     for fig in EVERY_FIGURE:
         for shared in fig.shares:
@@ -9434,10 +9073,9 @@ def sharing_closure(fid: str) -> list[str]:
     """Every other figure that publishes a reading this one would move.
 
     Transitive, which is the whole point of declaring the graph: the note a
-    run function used to write by hand named its *direct* sources, and behind
-    the allocator table that is two figures where the honest set is four --
-    `census-brace-free` is itself borrowed by both throughput tables. Returned
-    in register order, so the closure reads as a run order."""
+    run function used to write by hand named its *direct* sources, and a
+    source that is itself borrowed by a third table drags that table too.
+    Returned in register order, so the closure reads as a run order."""
     edges = sharing_edges()
     seen, queue = {fid}, [fid]
     while queue:
@@ -10597,8 +10235,7 @@ def sitting_problems(
       the sweep took carries no marker and a figure it did not take was folded
       in later -- which makes a non-descendant either a marker a sweep left
       behind or a hand edit, both of which republish a fresh table under a lying
-      provenance and put `--stale` back on the wrong commit. It is the
-      `pgdt-nocensus` failure in another mechanism, and it costs one
+      provenance and put `--stale` back on the wrong commit. It costs one
       `is_ancestor` call."""
     ancestor = ancestor or is_ancestor
     out: list[str] = []
@@ -10674,15 +10311,11 @@ def declared_hits(fig: Figure | Outside, changed: Iterable[str]) -> list[str]:
     """The paths in `changed` that `fig` declares. A declared path is a prefix:
     a directory matches everything under it.
 
-    **One predicate, three callers.** `--stale` argues from it that a figure has
-    gone stale, the census-off binary's stamp check argues from it that a
-    commit moved nothing the figures being taken measure, and `--stale` argues
-    the same way over a section the register does not hold. Writing any of them
-    separately would make it a second authority over what can move a reading,
-    which is exactly the objection that kept the stamp rule at exact equality
-    until the ancestor threshold replaced it — and an `Outside` declares its
-    edge in the same field a `Figure` does precisely so that one predicate
-    still answers for both."""
+    **One predicate, every caller.** `--stale` argues from it that a figure has
+    gone stale, and the same way over a section the register does not hold.
+    Writing either separately would make it a second authority over what can
+    move a reading — and an `Outside` declares its edge in the same field a
+    `Figure` does precisely so that one predicate still answers for both."""
     return sorted({c for c in changed for d in fig.depends if c == d or c.startswith(d)})
 
 
@@ -10710,18 +10343,6 @@ def changed_paths(since: str) -> list[str]:
     paths = [line.strip() for line in diff.splitlines() if line.strip()]
     paths += [line[3:].strip() for line in status.splitlines() if line.strip()]
     return sorted(set(paths))
-
-
-def paths_changed_between(earlier: str, later: str) -> list[str]:
-    """Repo-relative paths differing between two commits.
-
-    Commit to commit, where `changed_paths` folds the working tree in as well:
-    `--stale` asks what has moved since the doc was stamped, and an
-    uncommitted change is part of that answer. The census stamp's scope stops
-    at committed history, because a dirty tree is already declared by the
-    session stamp."""
-    diff = run(["git", "diff", "--name-only", earlier, later], cwd=REPO, capture=True)
-    return sorted({line.strip() for line in diff.splitlines() if line.strip()})
 
 
 # --------------------------------------------------------------------------
@@ -11355,8 +10976,6 @@ def cmd_list() -> None:
     print("Figures (run order; one figure is one table):\n")
     for fig in ALL_FIGURES:
         print(f"  {fig.id:<24} [{fig.stage}]  {fig.section}")
-        if fig.id in BARRED:
-            print(f"  {'':<24}  barred until {BAR_LIFTED_BY}: {BARRED[fig.id]}")
         if fig.requires:
             print(f"  {'':<24}  borrows readings from: {', '.join(fig.requires)}")
         closure = sharing_closure(fig.id)
@@ -11552,14 +11171,25 @@ DEBUGINFOD = _env("PGDT_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
 #: `perf_event_max_sample_rate` = 49000.
 PERF_FREQ = 4999
 
-#: The three command shapes profiled, in the order the baseline table reads
-#: them, and the sweep figure each is read against. `parse` is discovery;
-#: `query-strings` is row extraction before a column is typed; `query-typed`
-#: is the whole path.
-PROFILE_SHAPES: tuple[str, ...] = ("parse", "query-strings", "query-typed")
+#: The command shapes profiled. `parse` is discovery at the metadata level,
+#: read against the scan-throughput tables and `statistics-gathering`'s
+#: `metadata` leg; `query-strings` is row extraction
+#: before a column is typed and `query-typed` the whole path, read against
+#: `nested-end-to-end`. **The data level's `parse`**, `statistics-gathering`'s
+#: `data` leg run without its resident wrapper, is what attributes that
+#: figure's Δ among the census, the unrepresentable count and the statistics
+#: (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
+#: blind"): no figure differences a build without one of them.
+PROFILE_SHAPES: tuple[str, ...] = (
+    "parse",
+    f"{STATISTICS_FAMILY}data-rss",
+    "query-strings",
+    "query-typed",
+)
 
 #: The two inputs. The brace-free control is the shape most dumps have; the
-#: `--arrays --composite` file is where the nested path is reached at all.
+#: `--arrays --composite` file is where the nested path is reached at all, and
+#: where the census inspects array shapes.
 PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 
 #: The profiles read as a **pair** rather than against a baseline table, each
@@ -11572,7 +11202,7 @@ PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 #: profile, and the only way a profile answers it is as a difference: the two
 #: shapes are read against each other, bucket by bucket.
 #:
-#: **Explicitly paired, not a second cross product.** The three shapes above
+#: **Explicitly paired, not a second cross product.** The shapes above
 #: are crossed with both inputs because each is asking what a *path* costs and
 #: the two files reach different paths. This one is asking what one figure's
 #: one anomalous row is made of, and that row is on `control`; profiling the
@@ -11622,6 +11252,20 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "--dtcache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *NO_STATISTICS.split(),
+        ]
+    if command.startswith(STATISTICS_FAMILY):
+        # The leg's own `parse`, the resident wrapper left off: a profile is
+        # the process's proportions, and the wrapper is a second process.
+        leg, _, suffix = command.removeprefix(STATISTICS_FAMILY).partition("-")
+        flags = dict(STATISTICS_LEGS)
+        if leg not in flags or suffix != "rss":
+            raise ValueError(f"unknown profile shape {command!r}")
+        return [
+            "parse",
+            "--source", str(source),
+            "--dtcache", str(cache),
+            "--jobs", str(SWEEP_JOBS),
+            *flags[leg].split(),
         ]
     if command in ("query-strings", "query-typed"):
         mode = command.split("-")[1]
@@ -11691,7 +11335,7 @@ def profile_recipe(cfg: Config) -> str:
       sharper than a moved number: a sampling profile's buckets are per
       *thread*, so a profile taken at the machine's available parallelism
       attributes a scan among workers the figure it explains never ran. The
-      three cross-product shapes state `SWEEP_JOBS`; the `PROFILE_AXIS` pair
+      cross-product shapes state `SWEEP_JOBS`; the `PROFILE_AXIS` pair
       states the count in its own name, which is the whole of what separates
       those two profiles. The shape-equality assertion is what holds this
       function and `_script` together, and it compares two shapes that each
@@ -12759,8 +12403,7 @@ def cmd_stale(since: str | None) -> int:
     for fig, hits in stale:
         base = bases[fig.id]
         own = "" if base == stamp or since else f" (since its own sitting {base})"
-        bar = f"; barred until {BAR_LIFTED_BY}" if fig.id in BARRED else ""
-        print(f"  {fig.id:<24} stale — {', '.join(hits)}{own}{bar}")
+        print(f"  {fig.id:<24} stale — {', '.join(hits)}{own}")
         by_path = by_base[base]
         for path, excused, blocking in inert_excuses(fig.id, hits, by_path, acks):
             names = ", ".join(c[:7] for c in excused)
@@ -12778,24 +12421,12 @@ def cmd_stale(since: str | None) -> int:
     # `--figure` is what takes one on its own, so a derived figure is not in
     # this list however few edges it stands in: `--drift` is how it moves.
     alone = sorted(
-        fig.id
-        for fig, _ in stale
-        if fig.id in SELECTABLE_BY_ID and fig.id not in BARRED and not entangled_with(fig.id)
+        fig.id for fig, _ in stale if fig.id in SELECTABLE_BY_ID and not entangled_with(fig.id)
     )
-    if BARRED:
-        # `--all` reaches every barred figure and is refused, so recommending it
-        # here would be a trap.
-        print(
-            f"\nNo sweep is taken until {BAR_LIFTED_BY} lifts the bar on "
-            f"{', '.join(sorted(BARRED))}: `--all` reaches them and is refused, and a stale "
-            "figure stays red with its reason written down (measurements.md, \"A stale "
-            "figure does not oblige a sweep\")."
-        )
-    else:
-        print(
-            "\nA stale figure is re-taken with the whole doc: one sweep replaces every table "
-            "(`uv run measure.py --all`), because the doc differences across tables."
-        )
+    print(
+        "\nA stale figure is re-taken with the whole doc: one sweep replaces every table "
+        "(`uv run measure.py --all`), because the doc differences across tables."
+    )
     if alone:
         print(
             "These stand in no borrow edge, so each may instead be re-taken on its own and "
@@ -12969,15 +12600,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if problem:
             parser.error(problem)
     figures = resolve_selection(ids, alone=args.alone)
-    # First, since no other answer matters for a figure whose reading would not
-    # mean what its table says: a sweep, a stage and a borrow edge all reach one.
-    barred = barred_problems(figures)
-    if barred:
-        parser.error(
-            "; ".join(barred)
-            + f". Only {BAR_LIFTED_BY} lifts the bar; until it lands, name the figures "
-            "wanted without these, and one borrowing from them is not taken either."
-        )
     # A sitting short of the sweep publishes outside the session stamp, which
     # only a figure standing in no borrow edge may do. Asked here, before the
     # measurement is spent, rather than at `--check` after it -- and asked only
@@ -12994,11 +12616,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 + ". Take the whole doc (`--all`), which re-stamps it, or `--alone` for a "
                 "diagnostic sitting, whose tables come back marked NOT PUBLISHABLE."
             )
-    # Beside the census refusal and for its reason, pointed at the other
-    # binary: in the first second, before the run directory exists, and about
-    # provenance rather than existence. `print` rather than the sitting's log,
-    # which `emit` has not opened yet — a build that fails here must not leave
-    # an empty run directory behind it.
+    # The shipped binary, built in the first second, before the run directory
+    # exists, and about provenance rather than existence. `print` rather than
+    # the sitting's log, which `emit` has not opened yet — a build that fails
+    # here must not leave an empty run directory behind it.
     ensure_pgdt_binary(cfg, lambda msg: print(msg, flush=True))
     if not cfg.dry_run and not cfg.bin_pgdt.exists():
         parser.error(
@@ -13006,17 +12627,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"not build. Point it at one that exists, or unset it and let the harness build "
             f"{CARGO_RELEASE_BIN}."
         )
-    census = [f for f in figures if f.id.startswith("census")]
-    if not cfg.dry_run and census:
-        # Existence and age in one refusal, in the first second and before the
-        # run directory exists: a sweep that starts on a stale census-off
-        # binary loses its census tables an hour later, and worse, may not
-        # look like it lost anything. The census figures *being taken* are
-        # passed in because the age question is asked of their own declared
-        # paths -- the check is per sitting, not against a fixed list.
-        problem = census_binary_problem(cfg, census)
-        if problem:
-            parser.error(problem)
     return emit(cfg, figures)
 
 

@@ -46,15 +46,13 @@ What the slices after this one inherit. The spec is
   and `parsed_copy` in `datafusion-pgdump/tests/unrepresentable.rs`); a
   metadata-level map would be refused before any case ran.
 - **`measure.NO_STATISTICS` is `--statistics-level metadata`**, the flag it
-  stated having gone, and `GATHER_STATISTICS` states the data level. So until
-  28.9 re-points them, `statistics-pruning`'s `uncarried` leg, the one query
-  over a cache a `NO_STATISTICS` builder wrote, reads the table once more for
-  the census inside its timer; `statistics-gathering`'s `none` leg no longer
-  censuses; and `census-brace-free` and `census-arrays` difference two builds
-  of which neither censuses. Those four are barred until 28.9
-  (`measure.BARRED`; [`../status/history/2026-09-29.md`](../status/history/2026-09-29.md),
-  "28.2 leaves the harness mid-way to 28.9"). No register figure was re-taken
-  and no table was edited.
+  stated having gone, and `GATHER_STATISTICS` states the data level. That left
+  `statistics-pruning`'s `uncarried` leg, the one query over a cache a
+  `NO_STATISTICS` builder wrote, reading the table once more for the census
+  inside its timer; `statistics-gathering`'s `none` leg no longer censusing;
+  and `census-brace-free` and `census-arrays` differencing two builds of which
+  neither censuses. 28.9 retires the census figures and re-points the other
+  two ([`roadmap-P28.9-figures-notes.md`](roadmap-P28.9-figures-notes.md)).
 - **`query --statistics all|none` is not the level**: it says whether a query
   uses the statistics a cache holds.
 

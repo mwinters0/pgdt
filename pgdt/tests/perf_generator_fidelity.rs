@@ -213,18 +213,8 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     let skipped_none = format!("rule out 0 of {groups} group(s)");
     assert!(queried.contains(&skipped_none), "{queried}");
     assert!(!queried.contains("reading stopped early"), "{queried}");
-    // `measure.PRUNING_UNCARRIED`: the same query over a cache carrying none.
-    let bare = dir.path().join("bare.dtcache");
-    let bare = bare.to_str().unwrap();
-    pgdt(&["parse", "--source", dump, "--dtcache", bare, "--statistics-level", "metadata"]);
-    let uncarried = query(bare);
-    assert!(!uncarried.contains("row-group statistics"), "{uncarried}");
-    assert!(!uncarried.contains("reading stopped early"), "{uncarried}");
-    let rows = |said: &str| {
-        said.lines()
-            .rfind(|l| l.ends_with(" row(s)") || l.starts_with("no rows found for "))
-            .map(str::to_string)
-    };
-    assert!(rows(&queried).is_some(), "{queried}");
-    assert_eq!(rows(&uncarried), rows(&queried), "{uncarried}");
+    assert!(
+        queried.lines().any(|l| l.ends_with(" row(s)") || l.starts_with("no rows found for ")),
+        "{queried}"
+    );
 }

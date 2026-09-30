@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-28, against commit `da05a72`, under the `system` allocator and glibc 2.41. **25 of the 27 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`aff3a0e`), `dynamic-filter-topk` (`aff3a0e`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-09-28, against commit `da05a72`, under the `system` allocator and glibc 2.41. **22 of the 24 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `dynamic-filter-join` (`aff3a0e`), `dynamic-filter-topk` (`aff3a0e`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -359,11 +359,10 @@ Eighteen standing rules for reading anything below:
 **Every figure below is taken by `scripts/measure.py`, and the session stamp
 above records the sweep that took the doc as a whole** — every figure, which is
 every section carrying a `<!-- figure: … -->` marker and no other. Figures that
-share a reading share it rather than measuring it twice: each throughput table's `COPY`
-row *is* the census table's census-on column for that regime, the preamble
+share a reading share it rather than measuring it twice: the preamble
 table's full-`parse` row *is* the quadratic table's 4000-block `parse` cell,
-and the allocator table's reference column *is* the census and nested tables'
-readings of the same three shapes.
+and the allocator table's reference column *is* the warm throughput and nested
+tables' readings of the same three shapes.
 
 **A figure may be re-taken on its own, and its apparatus line is what says so.**
 Selection is per figure, so a table can be replaced between sweeps; what a
@@ -383,9 +382,9 @@ that legible:
   what it is read for is diagnosis: whether a change moved this figure, answered
   without the hour its borrowed sources cost.
 - **The harness names the closure, not its direct sources.** Re-taking a figure
-  that others borrow from drags them too: `census-brace-free` is borrowed by
-  both throughput tables, so the honest set behind the allocator table is four
-  figures where its direct sources are two. Each figure declares what it
+  that others borrow from drags them too: `peak-rss` is borrowed by both
+  `reserve` and `rss-attribution`, so the honest set behind the reserve table
+  is two figures where its direct source is one. Each figure declares what it
   borrows, so the harness computes that closure rather than a session working
   it out by hand — `--figure` takes what a figure borrows and names the rest
   before the first reading, the partial-sweep note states the whole set to
@@ -408,10 +407,10 @@ that legible:
 **`--alone` cannot change any figure that may publish outside a sweep.** Its
 only job is to skip the borrow closure, `Figure.requires` is derived from
 `shares`, and every figure standing in no borrow edge declares no `shares` — so
-for all eleven of them `--figure <id>` and `--figure <id> --alone` resolve to
+for each of them `--figure <id>` and `--figure <id> --alone` resolve to
 the same selection and run the same sitting. The flag's whole behavioural
 footprint is on the entangled figures, which are exactly the ones a sitting of
-their own may not publish; four of those — `census-brace-free`,
+their own may not publish; four of those — `scan-throughput-warm`,
 `nested-end-to-end`, `per-block-quadratic`, `peak-rss` — are entangled while
 borrowing nothing, so there it decides only whether the sitting is refused
 outright or taken and marked. It is a diagnostic switch and not a mode.
@@ -454,9 +453,9 @@ session stamp names `git rev-parse HEAD` regardless — and the resulting sittin
 does not look lost: it emits a full table, a stamp naming a commit it did not
 execute, and a verdict. So `measure.py` runs `cargo build --release -p pgdt`
 once per process before anything else, which costs about a second on a tree
-that has not moved. **Building it and refusing the census-off binary are the
-same rule**: what the census section refuses is a harness patching its *own
-subject*, which an unpatched build of the current tree is not.
+that has not moved. **Building it is not patching it**: a harness that edits
+its own subject's source can produce any figure it likes, and an unpatched
+build of the tree being measured is the one binary whose provenance it knows.
 `PGDT_MEASURE_BIN` pointed anywhere else builds nothing — that is the one path
 the build writes — and the binary is then the caller's. Only one figure's
 numbers can see a stale binary at all: a `reserve` sitting's resolved budgets
@@ -465,6 +464,12 @@ fingerprint the charge model compiled into the binary
 gate sitting timed a binary three commits stale, and its verdict is about a
 library nobody ran"). A throughput table encodes no such fingerprint and would
 publish in silence.
+
+**Never redirect stderr inside a timed command.** Some shells route `time`'s
+own report through the timed command's redirection, so a `2>/dev/null` meant
+to hide the binary's chatter deletes the figure and leaves a labelled run with
+no number under it. The harness's own tests assert that none of its commands
+does this; the trap is recorded because a hand-run one still can.
 
 **The worker count is in that line because it is stated rather than inherited**
 — `measure.SWEEP_JOBS`, carried by every shape `_script` builds outside the
@@ -1021,10 +1026,9 @@ that move also spans every commit between the stamps, so the alternation above
 remains the term's price. The cold-NVMe gap is "Scan throughput by input
 shape"'s.
 
-**Two prose recipes never go**, because the harness genuinely does not own
-them: the census-off **source patch**, which no harness should perform, and the
-generator invocations a reader may want on their own. koji's the harness owns —
-`uv run measure.py --koji-recipe` prints it.
+**One prose recipe never goes**, because the harness genuinely does not own
+it: the generator invocations a reader may want on their own. koji's the
+harness owns — `uv run measure.py --koji-recipe` prints it.
 
 ## What an instrument can see, and what only a sitting can
 
@@ -1388,10 +1392,9 @@ Five reps rather than the other two tables' three — each reading here is a
 third of a cold SSD one, and what the table is read for is a ratio near 1 where
 a few percent decides three levers.
 
-Each cold-SSD and warm table's `COPY` row is the census figure's census-on
-column for that regime — the same binary, the same command, the same input, not
-a second measurement of it. **The NVMe table borrows nothing**: no census
-figure is taken in that regime, so its `COPY` row is its own reading.
+**Each table's `COPY` row is its own reading**, and the warm one is also the
+allocator table's reference `parse` row — the same binary, the same command,
+the same input, which that table borrows rather than measuring twice.
 
 Every run completes inside the 512 MB cgroup, which is the memory claim *this*
 table can make. **It carries no max-RSS figure**: `/usr/bin/time -f %M` around
@@ -1507,8 +1510,11 @@ All three are deterministic under `--seed`, which is what lets these tables be
 re-taken whole rather than re-measured against different bytes.
 
 The `COPY` control is 814,362 rows of 16 columns, 3,956 bytes each, and holds
-no `{` or `[` in any data row — see "The census on brace-free rows" below for
-why that is a contract rather than an accident. The `INSERT` generator writes
+no `{` or `[` in any data row. **That is a contract, not an accident**: it is
+the koji shape, whose six array columns are entirely NULL, and the generator's
+`--arrays` and `--composite` flags exist precisely so its default output stays
+what these tables and `statistics-gathering`'s control row are taken on. Anything that puts a `{` or
+`[` into the default rows invalidates them. The `INSERT` generator writes
 one `INSERT INTO public.bench_inserts VALUES (…);` per line under an ordinary
 `TABLE DATA` TOC comment, with an apostrophe doubled the way `pg_dump` writes
 one in ~15% of them, so the statement scan's quote tracker is genuinely
@@ -1873,259 +1879,6 @@ at any of these values.
 NVMe, and 1.00× on the SATA SSD — the per-chunk work paid 16× as often, which
 the slower device hides entirely and the faster one does not.
 
-## The census on brace-free rows costs little, and never nothing
-
-<!-- figure: census-brace-free — reproduce with `cd scripts && uv run measure.py --figure census-brace-free` -->
-
-The census walks every data row of every block any mapping pass maps — a cold
-query's included, since a mapped block always carries one
-([`decisions.md`](decisions.md), "D35"), so it is a
-change to the scan hot path. The 3.00 GiB `COPY` control the generator writes
-by default — 814,362 rows of 16 columns, 3,956 bytes each on `--seed 42`: no
-`{` or `[` in any data row, so every row is rejected by the census's own pre-filter
-after one pass over its bytes and no row is ever split into fields. That is
-deliberately the koji shape — koji's six array columns are entirely NULL — and
-it is the case worth knowing the price of, since it is what a `pgdt parse`
-over a real dump mostly does.
-
-Census on is the working tree; census off is the same tree with one line
-added, so nothing but the census differs between the two binaries (below).
-
-Six reps each, the pair run in both orders; medians, with the full spread
-beside them.
-
-|  | Census off | Census on | Δ |
-|---|---|---|---|
-| cold, on the SSD | **5.76 s** (5.75–5.76) | **5.75 s** (5.75–5.77) | **-0.003 s, -0%** |
-| warm, on tmpfs | **0.382 s** (0.371–0.444) | **0.430 s** (0.425–0.477) | **+0.048 s, +13%** |
-
-The census costs **+0.048 s per 3.00 GiB** of these rows — 60 ns per 16-column row of 3,956 bytes, over 814,362 rows.
-`dd` → `/dev/null` on the same file in the same container: **0.300 s** warm, **5.76 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
-
-Per-rep readings (s):
-- cold, on the SSD — census off: 5.76, 5.76, 5.75, 5.76, 5.75, 5.75; census on: 5.75, 5.75, 5.77, 5.75, 5.75, 5.75
-- warm, on tmpfs — census off: 0.384, 0.375, 0.371, 0.384, 0.444, 0.379; census on: 0.427, 0.426, 0.433, 0.425, 0.477, 0.443
-
-Apparatus over every run in this table: CPU stall ≤1.00%, I/O stall ≤17.15%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.79 GHz, ≤61°C.
-
-Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
-for the reason under the scan-throughput table.
-
-**What this says.** The pre-filter is very nearly free on the shape a real
-dump mostly has: 60 ns per 16-column row of 3,956 bytes. That implies tens of
-GB/s, which is above what this machine's DRAM will give one core — so the
-reading is not a memory-bandwidth figure at all: the pre-filter re-walks bytes
-the scanner has just walked, out of cache, and `memchr2` is fast enough that
-what is left is the loop, not the bytes.
-
-**Cold, the census is invisible, and this stamp reads it negative**: −0.003 s
-on a 5.76 s scan, with the two legs' spreads overlapping (5.75–5.76 against
-5.75–5.77). Earlier stamps read the same row at +0.011 s, +0.004 s, +0.003 s,
-+0.002 s, −0.008 s, −0.009 s and −0.018 s, so the effect is smaller than the
-noise it sits in. Rep by rep census-on is the faster leg in five of six, by
-1–12 ms: a difference in the direction the census cannot cause, inside the
-cold regime's ~0.5% floor, and unattributed. That row is not a separate finding — it is the
-same CPU cost, hidden behind a device delivering 560 MB/s. Which one a user sees is decided by
-whether the bytes are already resident.
-
-**Read the warm Δ against the instrument, not to three figures.** "What a
-session's own drift costs" below puts warm sub-second readings several percent
-apart between two sweeps of identical binaries and inputs — and both legs of
-this Δ are such readings, moving independently — so the percentage is "a few
-percent to a seventh", and the +6%, +7%, +8%, +9%, +9%, +10%, +11%, +11% and +14%
-other sweeps read are the same measurement rather than a change. Ten sweeps have
-read it and every one is positive, which is the finding; **the heading names no
-number** because that number is the half the instrument does not hold still,
-and `measure.py`'s own heading string for this figure still carries the 8% one
-sweep read. This stamp's reading is **+13%**, high in the band, with both legs
-lower than the previous stamp's — census-off 0.441 s → 0.382 s and census-on
-0.479 s → 0.430 s — and this file's own warm `dd` floor fell with them,
-0.344 s → 0.300 s. So the move is the tmpfs floor's and not the binary's:
-census-off reads 1.27× its floor against 1.28× before.
-
-**The scalar loop it replaced cost seventeen times more.** `raw.iter().any(…)`
-before `memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded
-and **+63% reconstructed**, once the 0.77 s container wrapper that sat in both
-legs is taken out
-([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)). A
-*skippable* census is closed on the same reading: tens of nanoseconds per row
-is not a cost worth a knob.
-
-**The census's cost is two tiers.** It is paid by the rows that pass the
-pre-filter (next section), and the pre-filter is **21% of what such a row
-costs** — 60 ns against 284 ns. Under the `ba2fc12` stamp the same ratio was
-60 ns against 1.49 µs, or 4%, which is what licensed calling the pre-filter a
-rounding error on the inspected path. Putting the splitter on `memchr` took the
-field split off a per-byte closure and the inspected row got five times cheaper
-while the pre-filter did not, so the two tiers are within a factor of six of
-each other and the subtraction below has to be read with that in mind. The
-census is unconditional either way ([`decisions.md`](decisions.md), "D35") — the
-alternative is a query that cannot retype its array columns without a second
-pass.
-
-**The two warm spreads overlap in this sitting**: census-off spans
-0.371–0.444 against census-on's 0.425–0.477, the overlap being census-off's
-fifth rep, and paired rep by rep census-on is slower in all six.
-The finding is the pairing — six reps each, run in both orders, and ten sweeps
-reading the Δ positive — never one sitting's separation, which is what the drift
-table exists to discount.
-
-**The control's brace-freeness is a contract, not an accident.** The same
-generator writes array columns behind `--arrays` and a composite behind
-`--composite`, and those flags exist precisely so its *default* output stays
-what this figure and the scan-throughput table above were taken on. Anything
-that puts a `{` or `[` into the default rows invalidates both.
-
-**The census-off binary is a source patch, which no harness performs.** Build
-it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
-census_row` in `map.rs` — the pre-filter and everything after it, and nothing
-else. That is the fold itself rather than `Builder::on_row`, which delegates
-to it, so the patch isolates the census, and the unrepresentable count beside
-it ([`decisions.md`](decisions.md), "D96"), for **every** caller, the interior
-workers included ([`decisions.md`](decisions.md), "D52"). Then
-
-```sh
-cargo build --release -p pgdt          # default target: glibc
-cp target/release/pgdt runs/pgdt-nocensus          # then revert map.rs
-git rev-parse HEAD > runs/pgdt-nocensus.stamp      # what it was built from
-```
-
-and the harness takes it from there, staging both regimes, interleaving the
-pair, reversing the order halfway and taking the floor in the same container:
-
-```sh
-cd scripts && uv run measure.py --figure census-brace-free
-```
-
-**The stamp is not bookkeeping: it is what makes the subtraction mean the
-census.** These tables difference that binary against `target/release/pgdt`, so
-whatever differs between the two *trees* is charged to the census — and a
-hand-built binary has no provenance the harness can read, where every generated
-input carries a `.stamp` naming its generator. So the census-off binary carries
-one too, and the refusal comes in the first second rather than an hour into a
-sweep. **Not building it and not trusting it are separate rules**: the patch
-stays a hand build, because a harness that patches its own subject can produce
-any figure it likes. A stamp cannot catch a re-stamp without a rebuild, but
-*age* is the failure that happens and the one nothing else can see — the binary
-was found 40 commits stale on 2026-09-05 with nothing having noticed
-([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "The
-census-off binary is apparatus, and nothing was checking its age").
-`target/release/pgdt`, the binary these tables are differenced *against*, needs
-none of it: the harness builds that one in the first second of every sitting
-(see "The apparatus"), so there is no provenance left for a stamp to record.
-
-**This is the register's only pinned historical build, and it is pinned with an
-expiry.** A subtraction against a fixed commit measures everything that differs
-between the two trees, and that set grows every time the tree moves and the
-pinned side does not, so a figure that subtracts one build from another is
-registered here only with something that refuses it when the condition stops
-holding. Where the thing being priced is a settled historical fact, the number
-is recorded beside its mechanism instead of re-measured every sitting.
-
-**The threshold is the hazard, not commit equality: the stamp must be an
-ancestor of the commit being measured, with no path the census figures *being
-taken* declare changed in between.** What moves a census reading is source
-differing between the two binaries, and a commit touching no declared path
-cannot move one — so exact equality charged a doc-only commit a whole hand
-rebuild (patch `map.rs`, build, copy, revert, re-stamp), and that friction lands
-on a ritual whose failure mode is reaching for the old binary instead of
-rebuilding, which is the failure the check exists to stop
-([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "`M59`:
-the census stamp is an ancestor, not an equal"). Three properties of the rule
-as stated. A stamp that is **not** an ancestor stays refused: a divergent or
-ahead commit has no run of commits in between to inspect, and the tree the
-binary came from is outside this one's history. The check is **per sitting**,
-reading the selected figures' own `depends` — `census-attribution` declares no
-scanner path where the other two do — which lets the refusal name the declared
-path that actually moved. And it argues from the same prefix predicate
-`--stale` argues staleness from. A dirty tree stays out of scope, the session
-stamp already declaring uncommitted changes under a measured path.
-
-**Never redirect stderr inside a timed command.** Some shells route `time`'s
-own report through the timed command's redirection, so a `2>/dev/null` meant
-to hide the binary's chatter deletes the figure and leaves a labelled run with
-no number under it. The harness's own tests assert that none of its commands
-does this; the trap is recorded because a hand-run one still can.
-
-## The census on array-bearing rows adds half again to a warm scan
-
-<!-- figure: census-arrays — reproduce with `cd scripts && uv run measure.py --figure census-arrays` -->
-
-The other side of the figure above: a 3.00 GiB dump where **every** row holds
-an array, so the census's pre-filter passes on all of them and every field of
-every row is split out and inspected. Generated by the same script with
-`--arrays --composite`, so the file differs from the control in exactly the
-three stress columns — `v_int_array` (3–5 elements), `v_int_array_long` (50)
-and `v_comp` (a two-field composite). 699,962 rows, 4,602 bytes each, 19
-columns.
-
-Census on is the working tree; census off is the same tree with one line
-added, so nothing but the census differs between the two binaries (below).
-Six reps each, the pair run in both orders; medians, with the full spread.
-
-|  | Census off | Census on | Δ |
-|---|---|---|---|
-| cold, on the SSD | **5.76 s** (5.75–5.80) | **5.76 s** (5.76–5.77) | **+0.005 s, +0%** |
-| warm, on tmpfs | **0.358 s** (0.353–0.377) | **0.558 s** (0.555–0.638) | **+0.199 s, +56%** |
-
-The census costs **+0.199 s per 3.00 GiB** of these rows — 284 ns per 19-column row of 4,602 bytes, over 699,962 rows.
-`dd` → `/dev/null` on the same file in the same container: **0.280 s** warm, **5.76 s** cold, so the census-off scan is within 1.3× of what the kernel charges to hand over the bytes.
-
-Per-rep readings (s):
-- cold, on the SSD — census off: 5.75, 5.76, 5.75, 5.80, 5.75, 5.76; census on: 5.76, 5.76, 5.76, 5.76, 5.76, 5.77
-- warm, on tmpfs — census off: 0.358, 0.353, 0.374, 0.357, 0.377, 0.359; census on: 0.638, 0.563, 0.555, 0.559, 0.556, 0.556
-
-Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤22.88%, machine ≤7% busy, steal ≤0.00%, busiest core ≥3.61 GHz, ≤66°C.
-
-Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
-for the reason under the scan-throughput table. Against that `dd` floor,
-census-on is 2.0× it.
-
-**What this says.** The census costs 284 ns per 19-column row, which is **+56%**
-on a scan reading from memory. Cold it is **+0%**, hidden behind the device
-exactly as the brace-free case is. Both rows are the same CPU; which one a user
-sees is decided by whether the bytes are already resident.
-
-**The cell was wrong by a factor of five under the `ba2fc12` stamp, through
-staleness rather than method.** That reading was 1.045 s and 1.49 µs a row,
-taken before the census's field split went behind `memchr`; the split was the
-byte loop, not the census
-([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The
-census's field split was the byte loop, not the census"). The figure was red on
-`pgdump_query/src/copy.rs` throughout — a red figure states only that a number
-may have moved, never how far.
-
-**The pre-filter is 60 ns of that 284 ns**, read off the previous section, the
-same census-off binary running the pre-filter on every row of both files, which
-is what licenses the subtraction, and it is a **within-sitting** one, both
-tables coming from the same sweep. Splitting the row into fields and running
-`observe` over all 19 of them, the work the pre-filter exists to avoid, is
-**79% of the census's whole cost**, down from 96–98% before the split went
-behind `memchr`. The pre-filter is what keeps the brace-free case off that
-path, at about a fifth of the price rather than a rounding error. The census is
-unconditional either way (`decisions.md`, "D35") — the alternative is a query
-that cannot retype its array columns without a second pass.
-
-The same census-off binary the previous section builds, on the same apparatus:
-
-```sh
-cd scripts && uv run measure.py --figure census-arrays
-```
-
-The input alone, for a reader who wants it without the harness:
-
-```sh
-cd scripts && uv run generate_perf_data.py --arrays --composite \
-  --size-mb 3072 --seed 42 /dev/shm/pgdt/arrays.sql
-```
-
-*Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
-of a source edit — it would ship a build in which `decisions.md`'s "the census
-is unconditional" is untrue, serving a comparison taken about once a phase. The
-escape if the patch-and-revert ever bites is to drop the comparison, not to
-gate it: the absolute figures (60 ns/row rejected, 284 ns/row inspected) are
-what the census's own section consumes ([`decisions.md`](decisions.md), "D35").
-
 ## Nested decode costs what it copies, and an element is now a borrowed slice
 
 <!-- figure: nested-decode-micro — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure nested-decode-micro` -->
@@ -2231,7 +1984,7 @@ has taken it to roughly a third of a typed run; the current split is
 **This table attributes no cost to a particular column.** "What a column
 costs: five projection widths over one file" below does that, over identical
 rows of one file. What the three files are for is the finding underneath them:
-the untyped baseline is not file-independent, and the census is why.
+the untyped baseline is not file-independent, and the census is one term of why.
 
 Three inputs on tmpfs, output to `/dev/null`. **One interleaved sweep**: five
 reps, each rep running both modes on all three files in turn, so the slow
@@ -2284,55 +2037,12 @@ worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
-**The untyped baseline is file-dependent, and the census is one term of it — but the
-effect is now about the size of the instrument.** All three `strings` legs read
-within 2% of each other (3.47 / 3.46 / 3.49 s) where the `--arrays --composite`
-file once read 21% above the other two. Its rows are the only ones carrying a
-`{`, so they are the only ones the mapping pass's array-shape census splits
-into fields. Running the same query with the **census-off** binary is what
-separates the two:
-
-<!-- figure: census-attribution — reproduce with `cd scripts && uv run measure.py --figure census-attribution` -->
-
-|  | control | `--arrays --composite` | gap |
-|---|---|---|---|
-| census on | 3.450 s | 3.536 s | **+0.086 s** |
-| census off | 3.369 s | 3.403 s | **+0.034 s** |
-
-Per-rep readings (s):
-- census on, control: 3.45, 3.44, 3.45, 3.42, 3.65
-- census on, arrays: 3.52, 3.67, 3.55, 3.54, 3.49
-- census off, control: 3.35, 3.38, 3.33, 3.37, 3.38
-- census off, arrays: 3.50, 3.40, 3.40, 3.28, 3.46
-
-Apparatus over every run in this table: CPU stall ≤0.22%, I/O stall ≤2.71%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.96 GHz, ≤64°C.
-
-**With the census on, the arrays file reads above the control, and removing
-the census narrows the gap**: +0.086 s becomes **+0.034 s** on a file carrying
-14% *fewer* rows than the control. The previous stamp read −0.073 s and
-−0.231 s, a sign change carried by legs each inside the warm floor, and rep by
-rep both gaps take both signs, so neither sign is a finding. What has changed
-is the size of the thing being attributed. The census costs **0.133 s** on the
-arrays file here and **0.081 s** on the control, against the `parse` figures
-two sections above of +0.199 s and +0.048 s — the same order on a different
-command, off a different pair of legs. The control's 0.081 s clears its
-census-off leg's scatter here (3.33–3.38 s), where the previous stamp's
-0.089 s sat inside it: one sitting's separation, not a resolution. Under the `ba2fc12` stamp the same two
-numbers were 1.031 s and 0.030 s, and it was the first of them that made the
-baseline gap large enough to see without the census-off binary.
-
-**So the finding survives and its headline number does not.** A `strings` leg
-is a scan plus a census whose price depends on the data's shape rather than a
-flat per-byte floor; but the census's field split came off a per-byte closure,
-and the shape-dependent term fell with it from about a fifth of the run to
-under a twentieth. A reader who wants to know whether the untyped baseline is
-file-independent still needs this table — the +0.086 s census-on gap is inside
-the drift figure below and would be read as nothing at all. Both rows come from
-the same query loop below, run with each binary in turn:
-
-```sh
-cd scripts && uv run measure.py --figure census-attribution
-```
+**The untyped baseline is file-dependent, and the census is one term of it.**
+All three `strings` legs read within 2% of each other (3.47 / 3.46 / 3.49 s),
+though the `--arrays --composite` file's rows are the only ones carrying a
+`{`, so the only ones whose array shapes the mapping pass's census inspects.
+Which share of a leg the census is, is a profile's attribution
+(`measure.py --profile-recipe`), not a second build's.
 
 The micro above covers 3.3 µs of the 6.6 µs — decode plus render for a
 4-element array (355 ns), a 50-element array (2.69 µs) and a two-field
@@ -2507,7 +2217,7 @@ cd scripts && uv run measure.py --figure projection-widths
 ```
 
 The input alone, for a reader who wants it without the harness, is the same
-`--arrays --composite` file the census and nested figures are taken on:
+`--arrays --composite` file the nested and data-level figures are taken on:
 
 ```sh
 cd scripts && uv run generate_perf_data.py --arrays --composite \
@@ -2606,7 +2316,7 @@ cd scripts && uv run measure.py --figure predicate-terms
 ```
 
 The input alone, for a reader who wants it without the harness, is the same
-brace-free control the census and throughput figures are taken on:
+brace-free control the throughput figures are taken on:
 
 ```sh
 cd scripts && uv run generate_perf_data.py --seed 42 \
@@ -3828,8 +3538,9 @@ container, so no run writes to the container's own layer.
 historical fact, recorded beside the mechanism
 ([`decisions.md`](decisions.md), "D62"); a column re-measured against a pinned
 commit every sitting prices everything that has landed since instead. What
-isolates a mechanism is the census-off method above — one line, one rebuild,
-and an expiry that refuses the figure when the two trees have drifted.
+isolates a mechanism inside one run is an attribution off a profile
+([`roadmap.md`](roadmap.md), "Attribution is introspective; only the gate is
+blind"), not a second build.
 
 | blocks | dump | final cache | parse | saves |
 |---|---|---|---|---|
@@ -3957,7 +3668,7 @@ the script has no Rust runtime to call into.
 tripwire — see "Nested decode costs what it copies". The generator's array and
 composite stress columns are behind `--arrays` and `--composite`, and
 `whole_file.rs` passes neither: that bench's input stays the brace-free
-control, the same shape the scan-throughput and census figures were taken on.
+control, the same shape the scan-throughput figures are taken on.
 `whole_file.rs` regenerates `runs/perf-whole-file.sql` when it is missing
 **or** when `runs/perf-whole-file.stamp` disagrees with a hash of
 `generate_perf_data.py` and the bench's size constant, so a change to the

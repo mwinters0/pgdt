@@ -126,7 +126,7 @@ class Tables(unittest.TestCase):
             measure.md_table(["a", "b"], [["1"]])
 
     def test_empty_first_header_is_allowed(self):
-        # The census table's first column has no header.
+        # The preamble table's first column has no header.
         self.assertTrue(measure.md_table(["", "on"], [["warm", "0.5"]]).startswith("|  | on |"))
 
 
@@ -477,12 +477,15 @@ class StatisticsFigures(unittest.TestCase):
                 self.assertEqual(fig.shares, ())
                 self.assertEqual(measure.entangled_with(fid), [])
 
-    def test_the_gathering_figure_is_the_scan_throughput_inputs(self):
-        # The spec's inputs, whole: two of them hold no `COPY` row, and that is
-        # a row of the table rather than a reason to drop it.
+    def test_the_gathering_figure_is_the_scan_throughput_inputs_and_the_arrays_file(self):
+        # The throughput inputs, whole: two of them hold no `COPY` row, and that
+        # is a row of the table rather than a reason to drop it. The arrays file
+        # beside them is where the census splits every row, so its row and the
+        # control's bracket the census the data level prices.
         fig = measure.SELECTABLE_BY_ID["statistics-gathering"]
         warm = measure.FIGURES_BY_ID["scan-throughput-warm"].warm_inputs
-        self.assertEqual(set(fig.warm_inputs), set(warm))
+        self.assertEqual(set(fig.warm_inputs), set(warm) | {"arrays"})
+        self.assertEqual(fig.warm_inputs[:2], ("control", "arrays"))
         self.assertEqual(fig.memory, measure.STATISTICS_MEMORY)
         self.assertNotEqual(measure.STATISTICS_MEMORY, measure.Config().memory)
 
@@ -498,11 +501,20 @@ class StatisticsFigures(unittest.TestCase):
                 self.assertIn(flags, script)
                 self.assertIn(measure.rss_wrapper(measure.platform.machine()), script)
 
-    def test_the_two_gathering_legs_differ_by_the_request_alone(self):
-        (none, none_flags), (every, every_flags) = measure.STATISTICS_LEGS
-        a = measure._script(f"{measure.STATISTICS_FAMILY}{none}-rss")
-        b = measure._script(f"{measure.STATISTICS_FAMILY}{every}-rss")
-        self.assertEqual(a.replace(none_flags, every_flags), b)
+    def test_the_two_gathering_legs_differ_by_the_level_alone(self):
+        (metadata, metadata_flags), (data, data_flags) = measure.STATISTICS_LEGS
+        self.assertEqual((metadata, data), ("metadata", "data"))
+        self.assertEqual(metadata_flags, measure.NO_STATISTICS)
+        self.assertEqual(data_flags, measure.GATHER_STATISTICS)
+        a = measure._script(f"{measure.STATISTICS_FAMILY}{metadata}-rss")
+        b = measure._script(f"{measure.STATISTICS_FAMILY}{data}-rss")
+        self.assertEqual(a.replace(metadata_flags, data_flags), b)
+
+    def test_the_metadata_leg_is_the_register_parse_in_the_figures_container(self):
+        # Its own leg rather than `peak-rss`'s borrowed, for the container; the
+        # argv is the same, so the two cannot drift apart unseen.
+        metadata = measure._script(f"{measure.STATISTICS_FAMILY}metadata-rss")
+        self.assertEqual(metadata, measure._script("parse-rss"))
 
     def test_the_exemption_admits_the_gathering_request_and_nothing_else(self):
         # Outside the three families a `parse` stating `GATHER_STATISTICS` is
@@ -529,34 +541,17 @@ class StatisticsFigures(unittest.TestCase):
                     self.assertEqual(script.count("time "), 1)
                     self.assertIn(f"--statistics {leg} ", timed)
 
-    def test_the_uncarried_leg_differs_from_the_used_leg_by_what_the_builder_wrote(self):
-        # The one leg over a cache written without statistics, asking for them
-        # as the `all` leg does, so its Δ against that leg is the cache's.
-        uncarried = measure._script(
-            f"{measure.PRUNING_FAMILY}{measure.PRUNING_UNNARROWED}-{measure.PRUNING_UNCARRIED}"
-        )
-        used = measure._script(f"{measure.PRUNING_FAMILY}{measure.PRUNING_UNNARROWED}-all")
-        builder, _, timed = uncarried.partition("; ")
-        self.assertIn(measure.NO_STATISTICS, builder)
-        self.assertNotIn("time ", builder)
-        self.assertIn("--statistics all ", timed)
-        self.assertEqual(uncarried.count("time "), 1)
-        self.assertEqual(
-            uncarried.replace(measure.NO_STATISTICS, measure.GATHER_STATISTICS, 1), used
-        )
-
-    def test_the_uncarried_leg_is_the_unnarrowed_filters_alone(self):
-        shapes = measure.command_shapes()
-        for name in measure.PRUNING_FILTERS:
-            command = f"{measure.PRUNING_FAMILY}{name}-{measure.PRUNING_UNCARRIED}"
-            with self.subTest(filter=name):
-                if name == measure.PRUNING_UNNARROWED:
-                    self.assertIn(command, shapes)
-                    self.assertIn(command, [s.command for s in measure._pruning_specs()])
-                else:
-                    self.assertNotIn(command, shapes)
-                    with self.assertRaises(ValueError):
-                        measure._script(command)
+    def test_no_shape_queries_a_cache_the_metadata_level_wrote(self):
+        # Such a query re-reads its table for the census inside the timer, so
+        # it times the census rather than what its figure names.
+        for command in measure.command_shapes():
+            script = measure._script(command)
+            with self.subTest(command=command):
+                self.assertFalse(
+                    any(measure.NO_STATISTICS in run for run in measure._PARSE_RUN.findall(script))
+                    and "/pgdt query" in script,
+                    script,
+                )
 
     def test_the_two_pruning_legs_differ_by_the_flag_alone(self):
         for name in measure.PRUNING_FILTERS:
@@ -631,7 +626,6 @@ class StatisticsFigures(unittest.TestCase):
             "dictionary-all": {"rows_returned": "3000", "skipped_groups": "5", "groups": "20"},
             "unnarrowed-none": {"rows_returned": "12"},
             "unnarrowed-all": {"rows_returned": "12", "skipped_groups": "0", "groups": "20"},
-            "unnarrowed-uncarried": {"rows_returned": "12"},
         }
         good.update(override)
         return good
@@ -685,23 +679,6 @@ class StatisticsFigures(unittest.TestCase):
         }
         got = self._refused(**{"unnarrowed-all": stopped})
         self.assertTrue(got.startswith("unnarrowed: "), got)
-
-    def test_an_uncarried_leg_that_consulted_statistics_is_refused(self):
-        # The note there means the builder's cache carried statistics after
-        # all, so the leg prices nothing against the others.
-        for said in (
-            {"rows_returned": "12", "skipped_groups": "0", "groups": "20"},
-            {"rows_returned": "12", "unread_bytes": "4096"},
-        ):
-            with self.subTest(said=said):
-                got = self._refused(**{"unnarrowed-uncarried": said})
-                self.assertIn("carried statistics", got)
-
-    def test_an_uncarried_leg_returning_different_rows_is_refused(self):
-        for said in ({"rows_returned": "11"}, {}):
-            with self.subTest(said=said):
-                got = self._refused(**{"unnarrowed-uncarried": said})
-                self.assertIn("a cache without statistics returned", got)
 
 
 class DynamicFilterFigures(unittest.TestCase):
@@ -983,10 +960,10 @@ class Allocator(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(source, measure.FIGURES_BY_ID)
                 self.assertLess(order.index(source), order.index("allocator"))
-        census = measure._census_specs("control", "warm")
+        throughput = measure._throughput_specs("warm")
         self.assertIn(
-            measure.RunSpec("pgdt", "control", "parse", "warm", "").key("census-brace-free"),
-            {s.key("census-brace-free") for s in census},
+            measure.RunSpec("pgdt", "control", "parse", "warm", "").key("scan-throughput-warm"),
+            {s.key("scan-throughput-warm") for s in throughput},
         )
         nested = measure._nested_specs()
         for command in ("query-strings", "query-typed"):
@@ -1302,206 +1279,8 @@ class Glibc(unittest.TestCase):
         self.assertEqual(measure.marker_glibcs(out.getvalue()), {"session-drift": "2.41"})
 
 
-class CensusBinary(unittest.TestCase):
-    """The census-off binary's stamp: the harness will not build that binary,
-    and will not trust one whose tree could have moved a reading.
-
-    A census figure is a subtraction between it and `target/release/pgdt`, so
-    every difference between the two trees is attributed to the census — which
-    is why the age of the hand-built half has to be checkable at all. The
-    threshold is that hazard rather than commit equality: an **ancestor** of
-    HEAD with no path the figures being taken declare changed in between.
-    """
-
-    HEAD = "a" * 40
-    ANCESTOR = "b" * 40
-    DIVERGENT = "c" * 40
-
-    #: Two figures declaring different paths, which is what makes the check
-    #: per sitting: `census-attribution` declares no scanner path where the
-    #: other two do.
-    MAPPER = measure.Figure(
-        id="census-fake-mapper",
-        section="",
-        stage="warm",
-        depends=("pgdump_query/src/map.rs", "pgdump_query/src/scan.rs"),
-    )
-    READER = measure.Figure(
-        id="census-fake-reader",
-        section="",
-        stage="warm",
-        depends=("pgdump_query/src/io.rs",),
-    )
-
-    def _resolve(self, rev):
-        if rev == "HEAD":
-            return self.HEAD
-        return {
-            "aaaaaaa": self.HEAD,
-            "bbbbbbb": self.ANCESTOR,
-            "ccccccc": self.DIVERGENT,
-        }.get(rev[:7])
-
-    def _ancestor(self, earlier, later):
-        return (earlier, later) == (self.ANCESTOR, self.HEAD)
-
-    def _problem(self, cfg, *, figures=None, changed=()):
-        def between(earlier, later):
-            self.assertEqual((earlier, later), (self.ANCESTOR, self.HEAD))
-            return list(changed)
-
-        return measure.census_binary_problem(
-            cfg,
-            [self.MAPPER] if figures is None else figures,
-            self._resolve,
-            self._ancestor,
-            between,
-        )
-
-    def _cfg(self, tmp, *, binary=True, stamp=None):
-        cfg = measure.Config(bin_nocensus=Path(tmp) / "runs" / "pgdt-nocensus")
-        cfg.bin_nocensus.parent.mkdir(parents=True, exist_ok=True)
-        if binary:
-            cfg.bin_nocensus.write_text("#!/bin/true\n")
-        if stamp is not None:
-            cfg.bin_nocensus_stamp.write_text(stamp)
-        return cfg
-
-    def test_the_stamp_sits_beside_the_binary_it_describes(self):
-        # Derived from the binary's path, so PGDT_MEASURE_CENSUS_OFF_BIN moves
-        # both and cannot leave them describing different files.
-        cfg = measure.Config(bin_nocensus=Path("/elsewhere/pgdt-nocensus"))
-        self.assertEqual(
-            cfg.bin_nocensus_stamp, Path("/elsewhere/pgdt-nocensus.stamp")
-        )
-
-    def test_a_missing_binary_is_still_refused_by_name(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, binary=False)
-            problem = self._problem(cfg)
-            self.assertIn("pgdt-nocensus", problem)
-            self.assertIn("is missing", problem)
-
-    def test_a_binary_with_no_stamp_is_refused(self):
-        # The state every checkout was in before this rule: a binary from some
-        # tree, and nothing saying which.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp)
-            problem = self._problem(cfg)
-            self.assertIn("pgdt-nocensus.stamp", problem)
-
-    def test_a_stamp_that_names_no_commit_is_refused(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp="not-a-sha\n")
-            self.assertIn("not a commit", self._problem(cfg))
-
-    def test_an_empty_stamp_is_refused_rather_than_read_as_head(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp="\n")
-            self.assertIsNotNone(self._problem(cfg))
-
-    def test_a_stamp_naming_the_commit_being_measured_passes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.HEAD + "\n")
-            # And without consulting a diff: HEAD against itself has nothing in
-            # between, so the equality case short-circuits.
-            def never(earlier, later):
-                raise AssertionError("the diff was consulted for HEAD against itself")
-
-            self.assertIsNone(
-                measure.census_binary_problem(
-                    cfg, [self.MAPPER], self._resolve, self._ancestor, never
-                )
-            )
-
-    def test_a_short_stamp_still_resolves(self):
-        # `git rev-parse HEAD` writes a full sha, but a stamp written by hand
-        # may be short and still name the same commit.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp="aaaaaaa\n")
-            self.assertIsNone(self._problem(cfg))
-
-    def test_an_ancestor_that_moved_nothing_measured_is_tolerated(self):
-        # The loosening: a doc-only commit cannot move a reading a census
-        # figure takes, so it does not cost a hand rebuild.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
-            self.assertIsNone(
-                self._problem(cfg, changed=["docs/design/measurements.md"])
-            )
-
-    def test_an_ancestor_that_moved_a_declared_path_is_refused_naming_it(self):
-        # The 2026-09-05 failure: a binary 40 commits behind, differenced
-        # against a fresh one, with read-path work charged to the census.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
-            problem = self._problem(cfg, changed=["pgdump_query/src/scan.rs"])
-            self.assertIn(self.ANCESTOR[:7], problem)
-            self.assertIn(self.HEAD[:7], problem)
-            self.assertIn("pgdump_query/src/scan.rs", problem)
-            self.assertIn("census-fake-mapper", problem)
-
-    def test_a_declared_directory_still_matches_everything_under_it(self):
-        # The same prefix predicate `--stale` argues staleness from, which is
-        # what keeps this from being a second authority over what moves a
-        # reading.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
-            figure = measure.Figure(
-                id="census-fake-dir", section="", stage="warm", depends=("pgdump_query/",)
-            )
-            self.assertIsNotNone(
-                self._problem(
-                    cfg, figures=[figure], changed=["pgdump_query/src/copy.rs"]
-                )
-            )
-
-    def test_the_check_reads_the_figures_being_taken(self):
-        # Per sitting, not against a fixed list: the same commit refuses one
-        # selection and passes another.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
-            moved = ["pgdump_query/src/io.rs"]
-            self.assertIsNone(self._problem(cfg, figures=[self.MAPPER], changed=moved))
-            self.assertIsNotNone(
-                self._problem(cfg, figures=[self.READER], changed=moved)
-            )
-
-    def test_naming_no_figure_refuses_rather_than_checking_ancestry_alone(self):
-        # The declared-path question is asked of the selection, so an empty one
-        # would quietly weaken the check to the half that is not the point.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
-            self.assertIsNotNone(self._problem(cfg, figures=[]))
-
-    def test_a_stamp_that_is_not_an_ancestor_is_refused(self):
-        # A divergent or ahead commit has no "in between" to inspect, so the
-        # diff would not mean what it says — and the binary comes from a tree
-        # outside this one's history.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.DIVERGENT + "\n")
-
-            def never(earlier, later):
-                raise AssertionError("a non-ancestor stamp was diffed against HEAD")
-
-            problem = measure.census_binary_problem(
-                cfg, [self.MAPPER], self._resolve, self._ancestor, never
-            )
-            self.assertIn("not an ancestor", problem)
-            self.assertIn(self.DIVERGENT[:7], problem)
-            self.assertIn(self.HEAD[:7], problem)
-
-    def test_the_doc_s_recipe_writes_the_stamp_the_harness_reads(self):
-        # The two halves have to meet: a recipe that does not write the stamp
-        # leaves the check unsatisfiable, and the recipe is where a hand build
-        # is described.
-        doc = (measure.REPO / "docs/design/measurements.md").read_text()
-        name = measure.Config().bin_nocensus_stamp.name
-        self.assertIn(f"git rev-parse HEAD > runs/{name}", doc)
-
-
 class ShippedBinary(unittest.TestCase):
-    """The binary every non-census figure is timed against, built rather than
+    """The binary every `pgdt` figure is timed against, built rather than
     found.
 
     The failure each of these holds shut is the same one and it is silent: a
@@ -1848,8 +1627,8 @@ class RssAttribution(unittest.TestCase):
     """The nine legs that say what `peak-rss`'s per-block growth is made of.
 
     Every failure this class covers returns a plausible-looking table of
-    something else, which is the family the allocator legs and the census
-    binary already have tests for. Two matter most. A leg that is not
+    something else, which is the family the allocator legs already have tests
+    for. Two matter most. A leg that is not
     *distinguishable* as a reading silently becomes another leg's number, since
     `RunSpec.key` carries the binary, the input, the shape and the regime and
     not the words the table prints. And a leg whose shape carries no RSS
@@ -1954,12 +1733,12 @@ def _peak_rss_specs() -> list:
 
 class Selection(unittest.TestCase):
     def test_a_shared_reading_pulls_its_source_in(self):
-        got = [f.id for f in measure.resolve_selection(["scan-throughput-warm"])]
-        self.assertIn("census-brace-free", got)
+        got = [f.id for f in measure.resolve_selection(["allocator"])]
+        self.assertIn("scan-throughput-warm", got)
 
     def test_the_source_runs_first(self):
-        got = [f.id for f in measure.resolve_selection(["scan-throughput-warm"])]
-        self.assertLess(got.index("census-brace-free"), got.index("scan-throughput-warm"))
+        got = [f.id for f in measure.resolve_selection(["allocator"])]
+        self.assertLess(got.index("scan-throughput-warm"), got.index("allocator"))
 
     def test_unknown_figure_is_refused(self):
         with self.assertRaises(SystemExit):
@@ -1975,7 +1754,7 @@ class BorrowGraph(unittest.TestCase):
 
     Its whole reason to be declared is the *transitive* case: a note written at
     a `session.borrow` call site names the source it just asked for, and behind
-    the allocator table that is two figures where the honest set is four."""
+    the reserve table that is one figure where the honest set is two."""
 
     def _session(self, readings=None, rss=None):
         session = measure.Session.__new__(measure.Session)
@@ -1988,7 +1767,7 @@ class BorrowGraph(unittest.TestCase):
         # the one that drifts is the one no run function reads.
         fig = measure.FIGURES_BY_ID["allocator"]
         self.assertEqual(
-            fig.requires, ("census-brace-free", "nested-end-to-end")
+            fig.requires, ("scan-throughput-warm", "nested-end-to-end")
         )
 
     def test_every_borrow_names_a_known_figure(self):
@@ -2006,10 +1785,8 @@ class BorrowGraph(unittest.TestCase):
         producing a table that measures its own reference column and says it
         shared it."""
         taken = {
-            "census-brace-free": {
-                spec.key("census-brace-free")
-                for regime in ("cold", "warm")
-                for spec in measure._census_specs("control", regime)
+            "scan-throughput-warm": {
+                spec.key("scan-throughput-warm") for spec in measure._throughput_specs("warm")
             },
             "nested-end-to-end": {
                 spec.key("nested-end-to-end") for spec in measure._nested_specs()
@@ -2034,16 +1811,11 @@ class BorrowGraph(unittest.TestCase):
                         self.assertIn(spec.key(shared.source), taken[shared.source])
 
     def test_the_closure_is_transitive(self):
-        # The four the history entry names: `allocator` borrows two, and both
-        # throughput tables borrow the census reading in turn.
+        # `reserve` borrows `peak-rss` alone, and `rss-attribution` borrows the
+        # same readings in turn, so re-taking `reserve` moves all three tables.
+        self.assertEqual(measure.FIGURES_BY_ID["reserve"].requires, ("peak-rss",))
         self.assertEqual(
-            measure.sharing_closure("allocator"),
-            [
-                "census-brace-free",
-                "scan-throughput-cold",
-                "scan-throughput-warm",
-                "nested-end-to-end",
-            ],
+            measure.sharing_closure("reserve"), ["peak-rss", "rss-attribution"]
         )
 
     def test_the_closure_is_symmetric(self):
@@ -2064,9 +1836,14 @@ class BorrowGraph(unittest.TestCase):
 
     def test_a_satisfied_borrow_is_copied_and_said_to_be_shared(self):
         source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
-        session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
-        note = measure.share_readings(session, "scan-throughput-warm")
-        self.assertEqual(session.readings[source.key("scan-throughput-warm")], [1.0, 2.0])
+        readings = {
+            spec.key(shared.source): [1.0, 2.0]
+            for shared in measure.FIGURES_BY_ID["allocator"].shares
+            for spec in shared.republished
+        }
+        session = self._session(readings)
+        note = measure.share_readings(session, "allocator")
+        self.assertEqual(session.readings[source.key("allocator")], [1.0, 2.0])
         self.assertIn("Shared, not measured again", note)
         self.assertNotIn("Partial sweep", note)
 
@@ -2079,31 +1856,31 @@ class BorrowGraph(unittest.TestCase):
         sweep, not at the declaration."""
         source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session(
-            {source.key("census-brace-free"): [1.0, 2.0]},
-            {source.key("census-brace-free"): [5.9, 6.0]},
+            {source.key("scan-throughput-warm"): [1.0, 2.0]},
+            {source.key("scan-throughput-warm"): [5.9, 6.0]},
         )
-        measure.share_readings(session, "scan-throughput-warm")
-        self.assertEqual(session.rss[source.key("scan-throughput-warm")], [5.9, 6.0])
+        measure.share_readings(session, "allocator")
+        self.assertEqual(session.rss[source.key("allocator")], [5.9, 6.0])
 
     def test_a_source_with_no_resident_reading_leaves_the_key_absent(self):
         # An absent `rss` key means "this shape carries no RSS wrapper", which
         # `sweep` is careful to distinguish from an empty one. Manufacturing an
         # empty list here would turn the first fact into the second.
         source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
-        session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
-        measure.share_readings(session, "scan-throughput-warm")
-        self.assertNotIn(source.key("scan-throughput-warm"), session.rss)
+        session = self._session({source.key("scan-throughput-warm"): [1.0, 2.0]})
+        measure.share_readings(session, "allocator")
+        self.assertNotIn(source.key("allocator"), session.rss)
 
     def test_an_all_killed_source_leg_crosses_as_an_empty_list(self):
         # The other side of the same distinction: the source opened the key and
         # every rep was censored. That is a fact about the leg and it travels.
         source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session(
-            {source.key("census-brace-free"): [1.0]},
-            {source.key("census-brace-free"): []},
+            {source.key("scan-throughput-warm"): [1.0]},
+            {source.key("scan-throughput-warm"): []},
         )
-        measure.share_readings(session, "scan-throughput-warm")
-        self.assertEqual(session.rss[source.key("scan-throughput-warm")], [])
+        measure.share_readings(session, "allocator")
+        self.assertEqual(session.rss[source.key("allocator")], [])
 
     def test_no_republished_spec_is_an_instrument_leg(self):
         """Why `borrow` copies two channels and not four.
@@ -2133,11 +1910,11 @@ class BorrowGraph(unittest.TestCase):
         self.assertEqual(session.readings, {})
 
     def test_closure_gaps_name_what_a_selection_leaves_out(self):
-        gaps = measure.closure_gaps(measure.resolve_selection(["allocator"]))
-        self.assertTrue(any(g.startswith("allocator —") for g in gaps))
-        joined = " ".join(gaps)
-        self.assertIn("scan-throughput-cold", joined)
-        self.assertIn("scan-throughput-warm", joined)
+        # Selection pulls `peak-rss` in, which `reserve` borrows; the table
+        # borrowing the same readings is what it leaves out.
+        gaps = measure.closure_gaps(measure.resolve_selection(["reserve"]))
+        self.assertTrue(any(g.startswith("reserve —") for g in gaps))
+        self.assertIn("rss-attribution", " ".join(gaps))
 
     def test_a_whole_closure_leaves_no_gap(self):
         ids = ["allocator", *measure.sharing_closure("allocator")]
@@ -2161,9 +1938,9 @@ class BorrowGraph(unittest.TestCase):
         )
 
     def test_a_republished_share_is_not_a_derivation(self):
-        # `scan-throughput-warm` publishes `census-brace-free`'s reading as its
-        # own number, which is the closure's business and not this edge's.
-        self.assertEqual(measure.derived_consumers("census-brace-free"), [])
+        # `allocator` publishes `scan-throughput-warm`'s reading as its own
+        # number, which is the closure's business and not this edge's.
+        self.assertEqual(measure.derived_consumers("scan-throughput-warm"), [])
 
     def test_re_taking_a_source_alone_names_the_table_it_strands(self):
         gaps = measure.derivation_gaps(measure.resolve_selection(["nested-end-to-end"]))
@@ -2191,7 +1968,7 @@ class BorrowGraph(unittest.TestCase):
 
     def test_a_partial_note_is_attributed_to_the_marker_above_it(self):
         text = (
-            "<!-- figure: census-brace-free -->\nnothing here\n"
+            "<!-- figure: scan-throughput-warm -->\nnothing here\n"
             "<!-- figure: allocator -->\n**Partial sweep**: measured here.\n"
         )
         self.assertEqual(
@@ -2312,8 +2089,8 @@ class ParallelFigures(unittest.TestCase):
     `pgdt`'s own `--jobs`.
 
     Every assertion here is a way to get a plausible table of the wrong thing,
-    which is the family this module already covers for the allocator legs and
-    the census binary. Three of them matter most, and each fails silently
+    which is the family this module already covers for the allocator legs.
+    Three of them matter most, and each fails silently
     without a test. A **clamped row** — a stated count the library quietly
     reduces because the budget cannot hold that many partitions — is a lower
     count wearing a higher label, and the resulting table is monotone and wrong.
@@ -4134,8 +3911,8 @@ class Staleness(unittest.TestCase):
         touched = dict(
             (f.id, hits) for f, hits in measure.figures_touched(["pgdump_query/src/map.rs"])
         )
-        self.assertIn("census-brace-free", touched)
-        self.assertIn("census-arrays", touched)
+        self.assertIn("scan-throughput-warm", touched)
+        self.assertIn("statistics-gathering", touched)
 
     def test_an_unrelated_path_touches_nothing(self):
         self.assertEqual(measure.figures_touched(["README.md"]), [])
@@ -4216,7 +3993,7 @@ class CommentOnlyStaleness(unittest.TestCase):
 
     def test_a_comment_only_commit_settles_a_path_with_no_entry(self):
         got = measure.excused_paths(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa"]},
             set(),
@@ -4228,9 +4005,9 @@ class CommentOnlyStaleness(unittest.TestCase):
     def test_a_comment_only_commit_is_not_what_holds_a_path_red(self):
         # An inert entry names the commits actually blocking it, and a commit
         # the oracle settled is not one of them.
-        acks = (measure.Acknowledged(commit="aaa", figures=("census-arrays",), why="additive"),)
+        acks = (measure.Acknowledged(commit="aaa", figures=("nested-end-to-end",), why="additive"),)
         got = measure.inert_excuses(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa", "bbb", "ccc"]},
             acks,
@@ -4259,13 +4036,13 @@ class Acknowledgements(unittest.TestCase):
     """
 
     ACKS = (
-        measure.Acknowledged(commit="aaa", figures=("census-arrays",), why="additive"),
+        measure.Acknowledged(commit="aaa", figures=("nested-end-to-end",), why="additive"),
         measure.Acknowledged(commit="bbb", figures=(), why="touches no figure's subject"),
     )
 
     def test_a_path_whose_only_commit_is_excused_is_excused(self):
         got = measure.excused_paths(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa"]},
             set(),
@@ -4275,7 +4052,7 @@ class Acknowledgements(unittest.TestCase):
 
     def test_an_excuse_does_not_reach_a_figure_it_does_not_name(self):
         got = measure.excused_paths(
-            "census-brace-free",
+            "scan-throughput-warm",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa"]},
             set(),
@@ -4285,7 +4062,7 @@ class Acknowledgements(unittest.TestCase):
 
     def test_an_empty_figure_list_excuses_every_figure(self):
         got = measure.excused_paths(
-            "census-brace-free",
+            "scan-throughput-warm",
             ["scripts/measure.py"],
             {"scripts/measure.py": ["bbb"]},
             set(),
@@ -4324,7 +4101,7 @@ class Acknowledgements(unittest.TestCase):
         # The failure this exists against: a path changed by an excused commit
         # and an unexamined one is stale on the strength of the second.
         got = measure.excused_paths(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa", "ccc"]},
             set(),
@@ -4335,7 +4112,7 @@ class Acknowledgements(unittest.TestCase):
     def test_an_uncommitted_path_is_never_excused(self):
         # There is no commit to point at, so nobody has read the diff.
         got = measure.excused_paths(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa"]},
             {"scripts/generate_perf_data.py"},
@@ -4345,7 +4122,7 @@ class Acknowledgements(unittest.TestCase):
 
     def test_a_path_with_no_commits_in_range_is_not_excused(self):
         got = measure.excused_paths(
-            "census-arrays", ["scripts/generate_perf_data.py"], {}, set(), self.ACKS
+            "nested-end-to-end", ["scripts/generate_perf_data.py"], {}, set(), self.ACKS
         )
         self.assertEqual(got, [])
 
@@ -4354,7 +4131,7 @@ class Acknowledgements(unittest.TestCase):
         # a path another commit also touched vanishes from every output, which
         # reads as a missing entry and has been mistaken for one.
         got = measure.inert_excuses(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["aaa", "ccc"]},
             self.ACKS,
@@ -4363,7 +4140,7 @@ class Acknowledgements(unittest.TestCase):
 
     def test_a_path_nothing_excuses_gets_no_commentary(self):
         got = measure.inert_excuses(
-            "census-arrays",
+            "nested-end-to-end",
             ["scripts/generate_perf_data.py"],
             {"scripts/generate_perf_data.py": ["ccc"]},
             self.ACKS,
@@ -4770,19 +4547,19 @@ class Markers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             doc = self._doc(
                 tmp,
-                "<!-- figure: census-arrays — reproduce with `cd scripts && "
-                "uv run measure.py --figure census-arrays` -->\n",
+                "<!-- figure: nested-end-to-end — reproduce with `cd scripts && "
+                "uv run measure.py --figure nested-end-to-end` -->\n",
             )
-            self.assertEqual(measure.markers_in(doc), ["census-arrays"])
+            self.assertEqual(measure.markers_in(doc), ["nested-end-to-end"])
 
     def test_a_heading_that_quotes_a_number_is_not_an_address(self):
         with tempfile.TemporaryDirectory() as tmp:
             doc = self._doc(
                 tmp,
-                "## The census on brace-free rows costs 6% of a warm scan\n\n"
-                "<!-- figure: census-brace-free -->\n",
+                "## A typed query over nested columns costs 6.6 µs a row more than a string one\n\n"
+                "<!-- figure: nested-end-to-end -->\n",
             )
-            self.assertEqual(measure.markers_in(doc), ["census-brace-free"])
+            self.assertEqual(measure.markers_in(doc), ["nested-end-to-end"])
 
     def test_no_marker_is_no_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5092,9 +4869,9 @@ class Sittings(unittest.TestCase):
 
     def test_a_figure_that_shares_a_reading_may_not_be_published_alone(self):
         # What one sitting buys is differencing, so the condition is the borrow
-        # graph: `allocator`'s reference column *is* three other tables' rows.
+        # graph: `allocator`'s reference column *is* two other tables' rows.
         self.assertEqual(measure.entangled_with("map-only"), [])
-        self.assertIn("census-brace-free", measure.entangled_with("allocator"))
+        self.assertIn("scan-throughput-warm", measure.entangled_with("allocator"))
 
     def test_the_unentangled_example_is_still_unentangled(self):
         """`map-only` is the figure the fabricated sittings below are written
@@ -5120,7 +4897,7 @@ class Sittings(unittest.TestCase):
     def test_an_entangled_sitting_is_refused_by_the_doc_and_by_the_run(self):
         problems = measure.sitting_problems({"allocator": "bbbbbbb"}, "aaaaaaa")
         self.assertEqual(len(problems), 1)
-        self.assertIn("census-brace-free", problems[0])
+        self.assertIn("scan-throughput-warm", problems[0])
         refusals = measure.publication_refusals([measure.ALL_BY_ID["allocator"]])
         self.assertEqual(len(refusals), 1)
         self.assertIn("only a sweep", refusals[0])
@@ -5140,62 +4917,20 @@ class Sittings(unittest.TestCase):
                 measure.main(argv)
         return err.getvalue()
 
-    def test_each_barred_figure_is_refused_by_name_naming_the_slice_that_lifts_it(self):
-        self.assertEqual(
-            set(measure.BARRED),
-            {"census-brace-free", "census-arrays", "statistics-gathering", "statistics-pruning"},
-        )
-        for fid in measure.BARRED:
-            with self.subTest(fid):
-                err = self._cli_stderr(["--figure", fid])
-                self.assertIn(f"{fid} is barred until {measure.BAR_LIFTED_BY}", err)
-
-    def test_a_sweep_and_a_stage_reach_a_barred_figure_and_are_refused(self):
-        for argv in (["--all"], ["--stage", "warm"], ["--all", "--dry-run"]):
-            with self.subTest(argv):
-                self.assertIn("is barred until", self._cli_stderr(argv))
-
-    def test_a_diagnostic_sitting_is_no_exemption_from_the_bar(self):
-        self.assertIn(
-            "statistics-gathering is barred until",
-            self._cli_stderr(["--figure", "statistics-gathering", "--alone"]),
-        )
-
-    def test_a_figure_borrowing_a_barred_one_is_refused_naming_the_borrow(self):
-        err = self._cli_stderr(["--figure", "scan-throughput-warm"])
-        self.assertIn("census-brace-free (borrowed by scan-throughput-warm) is barred", err)
-
-    def test_the_bar_refuses_nothing_else(self):
-        self.assertEqual(measure.barred_problems([measure.ALL_BY_ID["map-only"]]), [])
-        self.assertNotIn("is barred", self._cli_stderr(["--figure", "map-only"]))
-
-    def test_the_bar_is_held_while_the_slice_that_lifts_it_is_unticked(self):
-        """Ticking the slice with a figure still barred leaves a refusal nobody
-        owns, so it fails here; a lifted bar empties `BARRED` and this with it."""
-        if not measure.BARRED:
-            return
-        status = (measure.REPO / "docs/status/STATUS.md").read_text()
-        self.assertIn(f"- [ ] **{measure.BAR_LIFTED_BY}**", status)
-        for fid in measure.BARRED:
-            self.assertIn(fid, measure.SELECTABLE_BY_ID)
-
-    # The two below clear `BARRED`: `allocator` borrows from a barred figure,
-    # and the bar, asked first, would make the second assertion vacuous.
-    @unittest.mock.patch.dict(measure.BARRED, clear=True)
     def test_an_entangled_figure_is_refused_before_the_measurement_is_spent(self):
         self.assertIn(
             "publish outside the document's session stamp",
             self._cli_stderr(["--figure", "allocator"]),
         )
 
-    @unittest.mock.patch.dict(measure.BARRED, clear=True)
     def test_the_refusal_stops_firing_for_a_diagnostic_sitting(self):
         # Not an exemption clause: `--alone` marks the run unpublishable, so
         # the guard -- which asks only of a publishable run -- has no
         # publication left to refuse.
-        err = self._cli_stderr(["--figure", "allocator", "--alone"])
-        self.assertNotIn("publish outside the document's session stamp", err)
-        self.assertNotIn("is barred", err)
+        self.assertNotIn(
+            "publish outside the document's session stamp",
+            self._cli_stderr(["--figure", "allocator", "--alone"]),
+        )
 
     def test_a_diagnostic_sitting_is_not_told_to_fold_its_tables_in(self):
         reason = measure.Config(alone=True).unpublishable_reason
@@ -5561,9 +5296,12 @@ class ProfileRecipe(unittest.TestCase):
         and not the other gives a profile of something no figure measures, and
         nothing else would notice."""
         shapes = list(measure.PROFILE_SHAPES) + [s for s, _ in measure.PROFILE_AXIS]
+        wrapper = measure.rss_wrapper(measure.platform.machine())
         for shape in shapes:
             with self.subTest(shape=shape):
-                timed = measure._script(shape).split()
+                # A resident leg's wrapper is a second process a profile leaves
+                # off, and nothing else of the timed line.
+                timed = measure._script(shape).replace(f"{wrapper} ", "", 1).split()
                 # Drop `time /pgdt`, the trailing redirect, and the container's
                 # own paths; what is left is the flags both must agree on.
                 self.assertEqual(timed[:2], ["time", "/pgdt"])
@@ -6003,10 +5741,11 @@ class ColdNvme(unittest.TestCase):
 
     def test_a_cold_stage_selection_does_not_reach_another_device(self):
         # `--stage` splits on `+` rather than matching as a substring, so
-        # `cold+warm` is selected by both and `cold-nvme` by neither.
+        # `chunk-size`'s `warm+cold+cold-nvme` is selected by `cold` and
+        # `scan-throughput-nvme`'s `cold-nvme` is not.
         cold = [f.id for f in measure.FIGURES if "cold" in f.stage.split("+")]
         self.assertIn("scan-throughput-cold", cold)
-        self.assertIn("census-brace-free", cold)
+        self.assertIn("chunk-size", cold)
         self.assertNotIn("scan-throughput-nvme", cold)
         nvme = [f.id for f in measure.FIGURES if "cold-nvme" in f.stage.split("+")]
         self.assertEqual(sorted(nvme), ["chunk-size", "scan-throughput-nvme"])
@@ -6096,8 +5835,8 @@ class Drift(unittest.TestCase):
 
     def test_the_delta_is_the_second_sweep_against_the_first(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = self._sweep(tmp, "a", {"census-brace-free/pgdt/control/parse/warm": [1.0, 1.0]})
-            b = self._sweep(tmp, "b", {"census-brace-free/pgdt/control/parse/warm": [1.1, 1.1]})
+            a = self._sweep(tmp, "a", {"scan-throughput-warm/pgdt/control/parse/warm": [1.0, 1.0]})
+            b = self._sweep(tmp, "b", {"scan-throughput-warm/pgdt/control/parse/warm": [1.1, 1.1]})
             table = measure.drift_table(a / "raw.json", b / "raw.json")
             self.assertIn("+10.0%", table)
 

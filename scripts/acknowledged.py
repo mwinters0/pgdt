@@ -196,8 +196,6 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="3d49806",
         figures=(
-            "census-brace-free",
-            "census-arrays",
             "scan-throughput-cold",
             "scan-throughput-warm",
             "scan-throughput-nvme",
@@ -234,14 +232,11 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="e1f05d3",
         figures=(
-            "census-brace-free",
-            "census-arrays",
             "scan-throughput-cold",
             "scan-throughput-warm",
             "scan-throughput-nvme",
             "chunk-size",
             "nested-end-to-end",
-            "census-attribution",
             "cross-file-floor",
             "per-block-quadratic",
             "peak-rss",
@@ -274,8 +269,6 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="6648707",
         figures=(
-            "census-brace-free",
-            "census-arrays",
             "scan-throughput-cold",
             "scan-throughput-warm",
             "scan-throughput-nvme",
@@ -303,8 +296,6 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="3294e24",
         figures=(
-            "census-brace-free",
-            "census-arrays",
             "scan-throughput-cold",
             "scan-throughput-warm",
             "scan-throughput-nvme",
@@ -343,8 +334,6 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         commit="caa3bab",
         figures=(
             "allocator",
-            "census-arrays",
-            "census-brace-free",
             "chunk-size",
             "cross-file-floor",
             "dynamic-filter-join",

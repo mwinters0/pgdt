@@ -47,8 +47,9 @@ What the slices after this one inherit. The spec is
   the mapping pass**, where before only a row holding `{` or `[` was; a
   table of nothing but held types still costs one `memchr2` a row. A block
   that also gathers statistics splits each row twice, once here and once in
-  its observer. Neither is priced: the census figures are barred, and 28.9
-  attributes the census's price, the count inside it.
+  its observer. Neither is priced: the census figures are retired, and a
+  profile of a data-level `parse` attributes the census's price, the count
+  inside it (28.9).
 - **A type mapping that changes what a column holds changes the counts** in
   every cache: it bumps `CACHE_FORMAT_VERSION` ("D96").
 

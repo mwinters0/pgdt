@@ -89,7 +89,8 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`; [notes](../design/roadmap-P28.7-untyped-notes.md)
 - [x] **28.8** `IS [NOT] UNREPRESENTABLE` and `pgdump_unrepresentable`, "D53" amended; [notes](../design/roadmap-P28.8-predicate-notes.md)
 - [x] **28.11** The unrepresentable guard, the embedder's: registering a dump registers `pgdump_unrepresentable` and leaves the session's planning alone; the planning refusal a physical optimizer rule the embedder installs on a `SessionStateBuilder`, the evaluation's refusal naming it, and the shell installing it; "D101" and "RT22" rewritten; [notes](../design/roadmap-P28.11-guard-notes.md)
-- [ ] **28.9** The figures: scan figures at the metadata level, query figures over a data-level cache, the census's price attributed by a `perf` profile, the `census-*` figures and the census-off build retired
+- [ ] **28.9** The figures: the `census-*` figures and the census-off build retired, `statistics-gathering` pricing the data level against the metadata level, `statistics-pruning` without its `uncarried` leg, the bar lifted, and a data-level `parse` profiled; [notes](../design/roadmap-P28.9-figures-notes.md). The instrument has landed; its readings remain — the scan and statistics figures re-taken and the census's price attributed off the profile — taken after 28.9.1, in one sweep with its
+- [ ] **28.9.1** The query figures over a data-level cache: `query-typed`, `query-strings`, `query-project-*` and `query-where-*` built untimed at the data level and queried with `--statistics none`, their readings with 28.9's
 
 ## Not started
 
@@ -120,3 +121,22 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`statistics-gathering` prices the data level whole, and gains an arrays
+  row.** The call: its legs are `--statistics-level metadata` against `data`
+  (`measure.STATISTICS_LEGS`), so its Δ is the census, the unrepresentable
+  count and the statistics together, apportioned by a profile of the `data`
+  leg; `arrays` joins its rows. Its id stays. Why: those are the only two
+  levels a `parse` offers ("D77"), the spec refusing a census-only one, and
+  without the arrays row no figure times a `parse` where the census inspects
+  array shapes. Reconsidering adds a leg stating a column override
+  (`metadata,public.perf.<column>=data`), which censuses and counts the table
+  with one column's statistics, or renames the id.
+- **`statistics-pruning` loses its `uncarried` leg, with nothing in its
+  place.** The call: the unnarrowed filter runs over the gathering cache
+  alone. Why: no `parse` writes a table's census without its statistics, and
+  the figure's own prose read the leg's Δ as unresolved, bounded above by the
+  pruned legs' floor, and said another subtraction would not price it
+  (`measurements.md`, `statistics-pruning`). Reconsidering keeps the leg over
+  a cache carrying one other column's statistics
+  (`--statistics-level metadata,public.perf.id=data`).
