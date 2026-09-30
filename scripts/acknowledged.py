@@ -193,4 +193,42 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "sed -n 1500,1520p pgdump_query/src/stream.rs  # back-fill only if statistics.gathers()"
         ),
     ),
+    Acknowledged(
+        commit="3d49806",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why=(
+            "M182's rename: ComparisonSemantics::Arrow becomes ::DataFusion, with the "
+            "identifiers, test names and rustdoc built on it and rustfmt's reflow of the "
+            "longer lines; it compiles to the same code, and the one runtime difference is "
+            "the nested-column refusal's text, which no figure's workload reaches"
+        ),
+        verified=(
+            "git show --format= --word-diff=porcelain 3d49806 -- pgdump_query/src "
+            "datafusion-pgdump/src  # every changed word is Arrow->DataFusion or a reflow"
+        ),
+    ),
 )
