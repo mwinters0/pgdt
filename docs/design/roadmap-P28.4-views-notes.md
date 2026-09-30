@@ -47,11 +47,13 @@ What the slices after this one inherit. The spec is
   add truths to a group's set, and a typed-mode NULL's `Unknown` comes from
   the NULL count the view adds to.
 - **Every value's view is unbounded over a group holding a value no key
-  orders** — a timestamp past `i64` microseconds, an `interval` time part
-  past nanoseconds — as any value the bounds cannot cover leaves a group
-  (STATUS, "Decisions worth another look"). The refuse mode's filter over
-  such a column (28.6) needs those values keyed, and keying them fills the
-  view with no change here but the key.
+  orders**, as any value the bounds cannot cover leaves a group: a timestamp
+  past `i64` microseconds, and nothing else — an `interval` past Arrow's
+  nanoseconds keys in both orders, its span and fields being 128 bits
+  (`each_view_of_the_types_fixture_bounds_the_values_it_takes`). 28.6 keys
+  the timestamp, its filter comparing that value in PostgreSQL's order, and
+  keying it fills the view with no change here but the key
+  ([2026-09-30](../status/history/2026-09-30.md)).
 - **A gathered block tests each value of a counted column twice**, once in
   the census and once in its observer, as it splits each row twice;
   unpriced, and 28.9's profile is where it shows.

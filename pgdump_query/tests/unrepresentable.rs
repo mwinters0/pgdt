@@ -163,7 +163,8 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
 /// **Each view bounds the values it takes**: `t_date`'s infinities are its
 /// every-value extremes and NULLs in the representable view; `t_extremes`'
 /// greatest `date` is representable and past the calendar, and its every-value
-/// timestamp bounds are lost to a value past `i64`, which keys in no order.
+/// timestamp bounds are lost to a value past `i64`, which keys in no order;
+/// its intervals past Arrow's nanoseconds key, and keep theirs.
 #[tokio::test]
 async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
     use StatisticsView::{Displayable, Every, Representable};
@@ -212,5 +213,13 @@ async fn each_view_of_the_types_fixture_bounds_the_values_it_takes() {
             pair("4714-11-24 00:00:00 BC", "262142-12-31 23:59:59.999999"),
             "{what}"
         );
+
+        // A time part past Arrow's nanoseconds keys in both orders, the span
+        // and the fields being 128 bits, so every value's view keeps bounds.
+        let interval = column("t_extremes", "v_interval");
+        for set in [BoundsSet::Primary, BoundsSet::Arrow] {
+            let every = interval.group_bounds(set, Every, 0);
+            assert!(every.is_some(), "{what}: {set:?}'s every-value interval bounds");
+        }
     }
 }

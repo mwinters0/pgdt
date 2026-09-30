@@ -85,7 +85,7 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.3** The unrepresentable count beside the census, lexical, per block and column, each leaf walked by the declared type, in two tiers, in the cache with the calendar bound it counted under; `info --detail` showing it; `24:00:00` refused by its decoder; count and extremes record held to each other by tier; [notes](../design/roadmap-P28.3-count-notes.md)
 - [x] **28.4** Statistics' views: representable bounds, the unrepresentable count, PostgreSQL-order bounds where they differ, and the engine tier's bounds where it is not empty, gathered, cached and read by pruning under each semantics; [notes](../design/roadmap-P28.4-views-notes.md)
 - [ ] **28.5** The mode option and the typed mode: NULL for every purpose — decode, static and dynamic filters, NULL counts, the provider's statistics — its warning, and the option in `pgdt`, the provider and the shell
-- [ ] **28.6** The refuse mode: by column, at planning, from the map
+- [ ] **28.6** The refuse mode: by column, at planning, from the map; a timestamp past `i64` microseconds keyed, filling every value's view
 - [ ] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`
 - [ ] **28.8** `IS [NOT] UNREPRESENTABLE` and `pgdump_unrepresentable`, "D53" amended
 - [ ] **28.9** The figures: scan figures at the metadata level, query figures over a data-level cache, the census's price attributed by a `perf` profile, the `census-*` figures and the census-off build retired
@@ -120,20 +120,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **28.4 keeps no every-value bounds over a group holding a value no key
-  orders.** The spec's "its bounds in PostgreSQL's order over every value"
-  meets a value the build cannot order at all: a timestamp past `i64`
-  microseconds (`t_extremes.v_ts`, `294276-12-31 23:59:59.999999`) or an
-  `interval` time part past nanoseconds, whose keys
-  (`predicate::order_key`, via `decode_timestamp_micros` and
-  `interval_parts`) answer `None`. Such a group's `every` view is
-  unbounded, as a group holding any value its bounds cannot cover already
-  is, and prunes nothing in that view; the representable and displayable
-  views, which exclude the value, keep their bounds. Why: keying it means
-  widening `OrderKey` for both kinds, which the filter evaluates by too, so
-  it would turn today's refusals of such a value into answers — the refuse
-  mode's change for a column only a filter reads (28.6), not a statistic's
-  (`decisions.md`, "D97", *Rejected*). Reconsidering it means widening the
-  key here, ahead of 28.6, which fills the view with no change to the
-  gatherer and moves the harness's recorded refuse-mode outcomes in the same
-  change.

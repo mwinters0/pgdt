@@ -296,7 +296,8 @@ path never sharing a slice with a new mechanism:
    counts, "D89"'s statistics — the warning's `Finding`; `pgdt
    --unrepresentable`, the provider's option, the shell's table option and
    suffix; the refusal naming the modes.
-6. **The refuse mode**: by column, at planning, from the map.
+6. **The refuse mode**: by column, at planning, from the map; a timestamp
+   past `i64` microseconds keyed, filling every value's view.
 7. **The untyped mode**: the widening `ColumnResolution` and its comparison
    in each semantics; "D38"'s clause and `floor_mapping.py`. The harness is
    green here, and `KD8` closes.
