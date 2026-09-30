@@ -137,15 +137,20 @@ nothing about running it looks wrong. Where the thing being priced is a
 over re-measuring it every sitting: re-measurement buys apparatus consistency,
 and once the gap is wide enough that is no longer what dominates the reading.
 
-> The census-off binary carries a `.stamp` and is refused unless its commit is
-> an ancestor of the one being measured with **no declared path changed in
-> between**. The pre-throttle binary, one figure over, had no such guard. By
-> the time anything ran it, "before the throttle" was 453 commits back and the
-> column priced 453 commits of unrelated work under the throttle's name — the
-> doc conceding it was "a whole-commit comparison" while the gap grew by two
-> orders of magnitude. It surfaced as a crash only because a later apparatus
-> rule handed it a flag it predated; a figure that merely *ran* would have
-> published the wrong number (2026-09-13).
+**The strongest expiry is not pinning at all.** Build every side from the tree
+being measured, as the `allocator` figure does, asking each binary what it is
+before timing it; or move the attribution to a profile, which is how the
+census's price is read now. Where a pinned build is unavoidable, the guard that
+holds is a stamp refused unless its commit is an ancestor of the measured one
+with **no declared path changed in between**.
+
+> The pre-throttle binary had no such guard. By the time anything ran it,
+> "before the throttle" was 453 commits back and the column priced 453 commits
+> of unrelated work under the throttle's name — the doc conceding it was "a
+> whole-commit comparison" while the gap grew by two orders of magnitude. It
+> surfaced as a crash only because a later apparatus rule handed it a flag it
+> predated; a figure that merely *ran* would have published the wrong number
+> (2026-09-13).
 
 ## Before planning a slice whose deliverable is a reading
 
