@@ -394,4 +394,16 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "scripts/measure.py names no test"
         ),
     ),
+    Acknowledged(
+        commit="437162f",
+        figures=("session-drift",),
+        why=(
+            "the closure of two Decisions-worth-another-look entries: its measure.py "
+            "hunks are #: comments beside STATISTICS_LEGS and PRUNING_LEGS, no code"
+        ),
+        verified=(
+            "git show 437162f -- scripts/measure.py | grep -E '^[+-]' | "
+            "grep -v -E '^(\\+\\+\\+|---|[+-]#:)'  # prints nothing"
+        ),
+    ),
 )
