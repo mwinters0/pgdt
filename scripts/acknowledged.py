@@ -339,4 +339,48 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "scripts/measure.py names no mode"
         ),
     ),
+    Acknowledged(
+        commit="caa3bab",
+        figures=(
+            "allocator",
+            "census-arrays",
+            "census-brace-free",
+            "chunk-size",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "map-only",
+            "nested-end-to-end",
+            "parallel-peak-rss",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "per-block-quadratic",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "scan-throughput-cold",
+            "scan-throughput-nvme",
+            "scan-throughput-warm",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why=(
+            "28.8's unrepresentable test: per row, eval_value only moves as_read below the "
+            "compared check and adds an arm on the path of operators taking no value; per "
+            "row group, one tests_unrepresentable branch per term; per block, query_tests "
+            "returns on a filter holding no test; batch.rs and statistics.rs are a rename and "
+            "a visibility; the provider's pushdown answers every other filter as before, and "
+            "install rebuilds the session from its own state, config kept, walking each "
+            "logical plan once. No figure's filter holds the test"
+        ),
+        verified=(
+            "git show caa3bab -- pgdump_query/src/predicate.rs pgdump_query/src/stream.rs "
+            "pgdump_query/src/batch.rs pgdump_query/src/prune.rs pgdump_query/src/statistics.rs "
+            "datafusion-pgdump/src/table.rs datafusion-pgdump/src/pushdown.rs  # "
+            "install uses SessionStateBuilder::new_from_existing; grep -i unrepresentable "
+            "scripts/measure.py names no mode or test"
+        ),
+    ),
 )
