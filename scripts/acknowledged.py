@@ -150,6 +150,9 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "preamble-prepass",
             "parallel-scan-throughput",
             "per-block-quadratic",
+            "peak-rss",
+            "parallel-peak-rss",
+            "reserve",
         ),
         why=(
             "28.3's count: each figure times only `parse --statistics-level metadata` (or "
@@ -162,6 +165,32 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "git show 4c0399d -- pgdump_query/src/stream.rs  "
             "# map_forward: header = census.then(..); leader plan = header.map(..); "
             "graft callers build_index  # tests only"
+        ),
+    ),
+    Acknowledged(
+        commit="179cce7",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "preamble-prepass",
+            "parallel-scan-throughput",
+            "per-block-quadratic",
+            "peak-rss",
+            "parallel-peak-rss",
+            "reserve",
+        ),
+        why=(
+            "28.4's views: each figure times only `parse --statistics-level metadata` (or "
+            "`--preamble-only`), where the gatherer is reached only through a data-level "
+            "request (map_forward's observer_for, backfill_statistics behind "
+            "StatisticsRequest::gathers) and nothing is pruned; what is left is the cache "
+            "format version"
+        ),
+        verified=(
+            "graft callers observer_tracking  # map_forward's observer_for and reread_block; "
+            "sed -n 1500,1520p pgdump_query/src/stream.rs  # back-fill only if statistics.gathers()"
         ),
     ),
 )
