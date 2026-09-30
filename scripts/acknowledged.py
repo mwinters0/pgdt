@@ -300,4 +300,43 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "parse*, info-cache-rss and query-nomatch*"
         ),
     ),
+    Acknowledged(
+        commit="3294e24",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why=(
+            "28.7's untyped mode: stream.rs computes the widened set only under "
+            "UnrepresentableMode::Text, and read_as_text returns before touching the schema "
+            "when no column is marked; predicate.rs adds a variant to a matches!; pgdt's "
+            "main.rs adds a CLI value, its help and a match arm. No figure's leg chooses an "
+            "unrepresentable mode, so every one runs the default null mode"
+        ),
+        verified=(
+            "git show 3294e24 -- pgdump_query/src/stream.rs pgdump_query/src/predicate.rs "
+            "pgdt/src/main.rs  # TableColumns::settle's text is Vec::new() off (Typed, Text); "
+            "read_as_text returns on !text.contains(&true); grep -i unrepresentable "
+            "scripts/measure.py names no mode"
+        ),
+    ),
 )
