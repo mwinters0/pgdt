@@ -271,4 +271,33 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "# every changed word is arrow->datafusion, A->F or a reflow"
         ),
     ),
+    Acknowledged(
+        commit="6648707",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+        ),
+        why=(
+            "28.6's refusal at planning: its only change to these figures' paths is "
+            "stream.rs's ReplayPlan::new, which a parse never builds and a query matching "
+            "no table enters with no blocks, returning before the new per-column walk; "
+            "every leg here is a parse, an info or a no-match query"
+        ),
+        verified=(
+            "git show 6648707 -- pgdump_query/src/stream.rs  # materialized_unrepresentable "
+            "returns on matches.first() == None; measure.py's legs for these figures are "
+            "parse*, info-cache-rss and query-nomatch*"
+        ),
+    ),
 )
