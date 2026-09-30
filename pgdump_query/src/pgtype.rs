@@ -236,12 +236,12 @@ pub enum ComparisonSemantics {
     /// kernels over the batch this build produces, a float's `-0` first made
     /// `0` (DataFusion's `apply_cmp`). A comparison this build cannot answer
     /// that way is refused rather than answered in the other semantics.
-    Arrow,
+    DataFusion,
 }
 
 impl CompareKind {
     /// The kind whose order over this kind's field text is
-    /// [`ComparisonSemantics::Arrow`]'s order over the value its column emits.
+    /// [`ComparisonSemantics::DataFusion`]'s order over the value its column emits.
     /// A kind whose key *is* the emitted value is its own. A float is its own
     /// too: with `-0` made `0`, IEEE `totalOrder` over what a dump holds — one
     /// `NaN`, which it writes as `NaN` — is `float8_cmp`'s. **Every kind
@@ -285,7 +285,7 @@ impl CompareKind {
     }
 }
 
-/// What a position of `kind` diverges in under [`ComparisonSemantics::Arrow`],
+/// What a position of `kind` diverges in under [`ComparisonSemantics::DataFusion`],
 /// given the register's own `divergence` for it: [`CompareKind::arrow_divergence`],
 /// then the register's, but for `jsonb`'s string collation, the whole value
 /// being compared as text there.
@@ -385,11 +385,11 @@ pub enum ComparisonDivergence {
     /// `xml`, whose `=` PostgreSQL does not define at all, filtering by exact
     /// text is a thing a user legitimately wants.
     UnmodelledType,
-    /// An enum under [`ComparisonSemantics::Arrow`]: DataFusion compares the
+    /// An enum under [`ComparisonSemantics::DataFusion`]: DataFusion compares the
     /// emitted `Dictionary` by its label text, where PostgreSQL orders labels
     /// by declaration (I33). Equality agrees, a label being unique.
     ///
-    /// This and the five variants after it are Arrow semantics' own:
+    /// This and the five variants after it are DataFusion semantics' own:
     /// produced by [`CompareKind::arrow_divergence`],
     /// [`NestedCompare::arrow_divergences`] and
     /// `crate::predicate::column_divergences`, never by the register — as
@@ -640,7 +640,7 @@ impl NestedCompare {
         out
     }
 
-    /// [`Self::divergences`] under [`ComparisonSemantics::Arrow`]: what each
+    /// [`Self::divergences`] under [`ComparisonSemantics::DataFusion`]: what each
     /// position's own comparison differs in from the server's when DataFusion
     /// compares the emitted value with `make_comparator`, in walk order. A
     /// leaf reports what a column of its kind would
@@ -810,7 +810,7 @@ impl ComparisonPlan {
     /// which is PostgreSQL's, and otherwise Arrow's ([`CompareKind::arrow_order`]),
     /// which is always exact over the text the column emits: a divergent text
     /// column's bytewise order, `jsonb`'s and a `character(n)`'s off `C`
-    /// (padded) as text, and a column with no plan bytewise, as Arrow
+    /// (padded) as text, and a column with no plan bytewise, as DataFusion
     /// semantics compares it. The Arrow set is a second one, for an exact kind
     /// whose Arrow order is another — but `macaddr`, whose field text orders
     /// as its octets do (I40), so its one set serves both.
@@ -857,8 +857,10 @@ impl ComparisonPlan {
             (Self::Compared { kind, divergence: None }, ComparisonSemantics::Postgres) => {
                 Some(kind.clone())
             }
-            (Self::Compared { kind, .. }, ComparisonSemantics::Arrow) => Some(kind.arrow_order()),
-            (Self::Refused, ComparisonSemantics::Arrow) => Some(CompareKind::Text),
+            (Self::Compared { kind, .. }, ComparisonSemantics::DataFusion) => {
+                Some(kind.arrow_order())
+            }
+            (Self::Refused, ComparisonSemantics::DataFusion) => Some(CompareKind::Text),
             _ => None,
         }
     }
@@ -2915,10 +2917,10 @@ mod tests {
     fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
         use BoundsSet::{Arrow as A, Primary as P};
         use ComparisonDivergence::*;
-        use ComparisonSemantics::{Arrow, Postgres};
+        use ComparisonSemantics::{DataFusion, Postgres};
         let text = || Some(CompareKind::Text);
         let read = |plan: &ComparisonPlan| {
-            (plan.bounds_kinds(), plan.bounds_in(Postgres), plan.bounds_in(Arrow))
+            (plan.bounds_kinds(), plan.bounds_in(Postgres), plan.bounds_in(DataFusion))
         };
         assert_eq!(
             read(&ComparisonPlan::agrees(CompareKind::Text)),
@@ -2976,7 +2978,7 @@ mod tests {
     fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
         use BoundsSet::{Arrow as A, Primary as P};
         let text = CompareKind::Text;
-        let refused = ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::Arrow);
+        let refused = ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::DataFusion);
         assert_eq!(refused.as_ref(), Some(&text));
         assert_eq!(ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::Postgres), None);
         let labels: Arc<[String]> = Arc::from(vec!["b".to_string()]);

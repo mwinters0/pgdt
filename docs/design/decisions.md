@@ -392,7 +392,7 @@ Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `pgdump_qu
 
 ### D98 The typed mode nulls what its front end cannot hold, tested before decode where the block's count says it holds one
 Under `UnrepresentableMode::Null` a value past the tiers the query's semantics cannot hold — the format spec's under PostgreSQL's, the calendar's
-too under Arrow's, DataFusion's comparison being DataFusion's front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a
+too under DataFusion's, the semantics naming its front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a
 dictionary entry) and the statistics' view (D97), a sum leaving it out; a nested value holding one is the NULL whole. It is tested lexically (D96)
 before decoding, only in a column whose block counts one in those tiers. Rejected: nulling what fails to decode (an engine-tier value decodes, and
 unparsable text must still refuse); a tier option beside the semantics, two fields for one fact, the semantics naming DataFusion, whose display is
@@ -433,7 +433,7 @@ comparing operator, the NULL tests reading no value (I44–I47).
 
 ### D59 Divergence is per position on its own channel: per term, and per column at registration
 `ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
-conditional, so L4) and per column from `column_divergences` in a query's semantics — Arrow's variants
+conditional, so L4) and per column from `column_divergences` in a query's semantics — DataFusion's variants
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
@@ -443,7 +443,7 @@ and `NOT` after `is` stays in the term. A term splits at the earliest operator o
 first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.
 
 ### D88 A pushed filter is `Exact` where the plan resolves it; a literal is the renderer's text
-`supports_filters_pushdown` asks `table_schema` to resolve the translated term in Arrow semantics,
+`supports_filters_pushdown` asks `table_schema` to resolve the translated term in DataFusion semantics,
 the scan's own refusals. A typed literal must be the column's Arrow type and is written by
 `render_field`, the decoders' inverse; a string one stands only where the library compares text.
 Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,

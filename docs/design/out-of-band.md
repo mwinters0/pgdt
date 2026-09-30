@@ -75,4 +75,4 @@ table as a work queue.
 |---|---|---|---|---|
 | M180 | 2026-09-29 | `measure.py` refuses `census-brace-free`, `census-arrays`, `statistics-gathering` and `statistics-pruning`, naming 28.9, until 28.9 re-points their builders and lifts it | | [2026-09-29](../status/history/2026-09-29.md) |
 | M181 | 2026-09-30 | `datafusion-cli-pgdump` starts with DataFusion's aggregate dynamic filter off (`KD56`); the upstream register `docs/status/upstream.md`, `scripts/upstream.py`, and the `upstream-issue` and `upgrade-deps` skills | | [2026-09-30](../status/history/2026-09-30.md) |
-| M182 | | `ComparisonSemantics::Arrow` renamed `ComparisonSemantics::DataFusion`, the front end its contract already names, with every citation of it | | [2026-09-30](../status/history/2026-09-30.md) |
+| M182 | 2026-09-30 | `ComparisonSemantics::Arrow` renamed `ComparisonSemantics::DataFusion`, the front end its contract already names, with every citation of it | | [2026-09-30](../status/history/2026-09-30.md) |

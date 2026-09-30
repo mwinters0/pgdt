@@ -15,7 +15,7 @@ What the slices after this one inherit. The spec is
   the resume fingerprint.
 - **Which tiers a query cannot hold follows its semantics**
   (`QueryOptions::unrepresentable_reach`): the format spec's under
-  PostgreSQL's, the calendar's too under Arrow's. `statistics_view` is
+  PostgreSQL's, the calendar's too under DataFusion's. `statistics_view` is
   `Representable` or `Displayable` from it under the null mode and typed, and
   `Every` otherwise, `SchemaMode::Strings` included.
 - **`unrepresentable::UnrepresentableRead`** is one column's reading, built per

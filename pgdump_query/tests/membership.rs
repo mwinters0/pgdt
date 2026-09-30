@@ -339,7 +339,7 @@ async fn check_fixture(
             Some(kept)
         };
         let base = QueryOptions { projection, ..everything };
-        let arrow = QueryOptions { semantics: ComparisonSemantics::Arrow, ..base.clone() };
+        let arrow = QueryOptions { semantics: ComparisonSemantics::DataFusion, ..base.clone() };
 
         let mut leaves = Vec::new();
         for (i, name) in header.columns.iter().enumerate() {

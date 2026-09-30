@@ -42,7 +42,7 @@ pub(crate) fn table_statistics(
     resolved: &ResolvedSchema,
     reading: StatisticsView,
 ) -> Statistics {
-    let semantics = ComparisonSemantics::Arrow;
+    let semantics = ComparisonSemantics::DataFusion;
     let summary = pgdump_query::table_summary(index, table, resolved, semantics, reading);
     // Every block of a complete map carries its row count, whether or not it
     // gathered statistics.

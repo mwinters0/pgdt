@@ -8,7 +8,7 @@
 //! and what it may do with one is only ever skip rows the filter rules out.
 //!
 //! **A filter is translated loosened, never refused.** Its state now is read
-//! into the library's tree in Arrow semantics, as a static filter is
+//! into the library's tree in DataFusion semantics, as a static filter is
 //! ([`crate::pushdown`]), and every row DataFusion's evaluation of that state
 //! keeps, or its producer keeps by its own order ([`loosened`]), the
 //! translation keeps: a wrongly skipped row is one the join or the TopK never

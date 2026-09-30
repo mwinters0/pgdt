@@ -328,7 +328,10 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        QueryOptions { semantics: pgdump_query::ComparisonSemantics::Arrow, ..options.clone() },
+        QueryOptions {
+            semantics: pgdump_query::ComparisonSemantics::DataFusion,
+            ..options.clone()
+        },
         Some(token.clone()),
         CacheMode::DISABLED,
     );

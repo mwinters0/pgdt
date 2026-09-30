@@ -584,7 +584,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
     let summary = |index: &DumpIndex| {
         let resolved = table_schema(index, &name, &QueryOptions::default()).unwrap();
         let id = resolved.schema.index_of("id").unwrap();
-        let (semantics, reading) = (ComparisonSemantics::Arrow, StatisticsView::Every);
+        let (semantics, reading) = (ComparisonSemantics::DataFusion, StatisticsView::Every);
         table_summary(index, &name, &resolved, semantics, reading).columns[id].clone()
     };
     assert!(summary(&index).bounds_complete, "every group of `id` is bounded");

@@ -33,11 +33,10 @@ bindings were carved out of.
 ## A front end other than DataFusion takes semantics of its own
 
 **Fact.** `QueryOptions::semantics` names the front end, not an abstract
-order: `ComparisonSemantics::Arrow` is DataFusion's comparison (a float's `-0`
-made `0`, `pgtype.rs`), and under the typed mode it also nulls what
-DataFusion cannot print, `arrow-cast`'s calendar ending at `262142-12-31`
-([`decisions.md`](decisions.md), "D98"; `RT21`). Its rename to `DataFusion`
-is M182.
+order: `ComparisonSemantics::DataFusion` is DataFusion's comparison (a
+float's `-0` made `0`, `pgtype.rs`), and under the typed mode it also nulls
+what DataFusion cannot print, `arrow-cast`'s calendar ending at `262142-12-31`
+([`decisions.md`](decisions.md), "D98"; `RT21`).
 
 **Why P24 cares.** A Python caller handing batches to pyarrow, polars or
 pandas compares and prints with that library, not DataFusion. Borrowing

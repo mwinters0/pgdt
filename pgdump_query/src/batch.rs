@@ -205,13 +205,13 @@ impl QueryOptions {
 
     /// **The tiers of value this query's front end cannot hold**, named by the
     /// wider: every layer holds a value to Arrow's format spec, and DataFusion
-    /// — whose comparison [`ComparisonSemantics::Arrow`] is — cannot display
+    /// — whose comparison [`ComparisonSemantics::DataFusion`] is — cannot display
     /// a `date` or timestamp past [`crate::calendar_end`] either
     /// (`docs/design/decisions.md`, "D98").
     pub(crate) fn unrepresentable_reach(&self) -> UnrepresentableTier {
         match self.semantics {
             ComparisonSemantics::Postgres => UnrepresentableTier::Format,
-            ComparisonSemantics::Arrow => UnrepresentableTier::Engine,
+            ComparisonSemantics::DataFusion => UnrepresentableTier::Engine,
         }
     }
 }

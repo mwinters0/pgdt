@@ -102,7 +102,7 @@ fn query_options(dump: &PgDump) -> QueryOptions {
     QueryOptions {
         schema_mode: dump.schema_mode(),
         unrepresentable: dump.unrepresentable(),
-        semantics: ComparisonSemantics::Arrow,
+        semantics: ComparisonSemantics::DataFusion,
         ..QueryOptions::default()
     }
 }
@@ -124,7 +124,7 @@ impl TableProvider for PgDumpTable {
     }
 
     /// `Exact` for a filter that translates into the library's tree and that
-    /// the library's plan of this table resolves in Arrow semantics, as the
+    /// the library's plan of this table resolves in DataFusion semantics, as the
     /// scan will ask it to; `Unsupported` for every other
     /// ([`crate::pushdown`]). Resolving is the plan's own check, over every
     /// block, and reads no byte of the dump.

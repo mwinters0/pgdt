@@ -26,11 +26,11 @@ use crate::{Error, Result};
 /// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
 /// that gives the server's answer for that column ([`equality_comparison`]).
 /// A nested column with a plan is compared structurally under every operator,
-/// and a query's Arrow semantics refuses one under every operator instead.
+/// and a query's DataFusion semantics refuses one under every operator instead.
 /// Where the register has no plan for a column — it did not resolve, one of
 /// its nested positions is not compared, or this build orders its type not at
 /// all — `Eq`/`Ne` compare the canonical `*_out` text the file holds and the
-/// ordering operators are refused, where a query's Arrow semantics orders a
+/// ordering operators are refused, where a query's DataFusion semantics orders a
 /// scalar one bytewise instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
@@ -342,7 +342,7 @@ impl Finding for ComparisonNote {
 /// ([`ResolvedTerm::comparison_notes`]): an operator refused on the column
 /// adds nothing, having no answer to diverge.
 ///
-/// **Under [`ComparisonSemantics::Arrow`]** they say how DataFusion's
+/// **Under [`ComparisonSemantics::DataFusion`]** they say how DataFusion's
 /// comparison of the emitted value differs from the server's, whether or not
 /// this build answers a term on the column — `ORDER BY`, `MIN`/`MAX` and every
 /// filter a plan keeps reach it too, so a nested column whose every term is
@@ -363,7 +363,7 @@ pub fn column_divergences(
         let declared = note.declared.clone().unwrap_or_default();
         let positions = match semantics {
             ComparisonSemantics::Postgres => postgres_divergences(resolved, index, &declared),
-            ComparisonSemantics::Arrow => arrow_divergences(resolved, index, &declared),
+            ComparisonSemantics::DataFusion => arrow_divergences(resolved, index, &declared),
         };
         out.extend(positions.into_iter().map(|(path, declared_type, divergence)| ComparisonNote {
             column: note.column.clone(),
@@ -414,7 +414,7 @@ fn postgres_divergences(
     }
 }
 
-/// [`column_divergences`] under Arrow's semantics, read off what the column
+/// [`column_divergences`] under DataFusion's semantics, read off what the column
 /// emits rather than off which terms this build answers.
 ///
 /// A column that did not resolve says nothing here: its fall-back
@@ -2268,7 +2268,7 @@ struct BelievedStatistics {
     bounds: Option<Box<(CompareKind, OrderKey)>>,
     /// Whether a group's dictionary answers this term: one of the four
     /// equality operators, on a `Compared` column whose divergence, if any,
-    /// does not reach equality — and in Arrow's semantics not a
+    /// does not reach equality — and in DataFusion's semantics not a
     /// `character(n)`, whose entries are stored unpadded
     /// ([`ComparisonPlan::dictionary_answers_in`]).
     dictionary: bool,
@@ -2276,7 +2276,7 @@ struct BelievedStatistics {
 
 impl BelievedStatistics {
     /// A term no statistic but the counts answers: a nested column, and one
-    /// compared as its text for want of a plan outside Arrow's semantics.
+    /// compared as its text for want of a plan outside DataFusion's semantics.
     const NONE: Self = Self { bounds: None, dictionary: false };
 }
 
@@ -2342,8 +2342,8 @@ fn nested_refusal(path: &str, declared: &str) -> String {
     )
 }
 const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
-const NESTED_IN_ARROW: &str = "the column is nested (array, composite, range or multirange), and \
-     this build does not compare a nested value in Arrow's semantics";
+const NESTED_IN_DATAFUSION: &str = "the column is nested (array, composite, range or \
+     multirange), and this build does not compare a nested value in DataFusion's semantics";
 
 /// The sentence for a column the register can answer **no** operator on,
 /// worded here rather than in `crate::pgtype` for the same reason
@@ -2381,7 +2381,7 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// resolution already reached (`crate::pgtype::comparison_for`), carried in
 /// [`ResolvedSchema::comparisons`].
 ///
-/// **Under [`ComparisonSemantics::Arrow`]** a scalar compares by its kind's
+/// **Under [`ComparisonSemantics::DataFusion`]** a scalar compares by its kind's
 /// [`CompareKind::arrow_order`], a column with no plan — every one of which
 /// emits `Utf8View` — compares bytewise under every operator, every
 /// comparing operator on a nested column is refused, statistics are read only where they are ordered or equated
@@ -2405,12 +2405,12 @@ pub(crate) fn resolve_term(
         op: predicate.op.symbol(),
         reason: reason.to_string(),
     };
-    let arrow = semantics == ComparisonSemantics::Arrow;
-    let refuse_nested_in_arrow = || Error::UncomparablePredicateColumn {
+    let arrow = semantics == ComparisonSemantics::DataFusion;
+    let refuse_nested_in_datafusion = || Error::UncomparablePredicateColumn {
         header_offset,
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
-        reason: NESTED_IN_ARROW.to_string(),
+        reason: NESTED_IN_DATAFUSION.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
     // `value` is `Some` for every operator but the two NULL tests. An
@@ -2451,7 +2451,7 @@ pub(crate) fn resolve_term(
         });
     } else if let Some(ComparisonPlan::Nested(tree)) = plan {
         if arrow {
-            return Err(refuse_nested_in_arrow());
+            return Err(refuse_nested_in_datafusion());
         }
         // A nested column whose *shape* is compared here but one of whose
         // positions is not: the ordering operators are refused naming that
@@ -2473,7 +2473,7 @@ pub(crate) fn resolve_term(
         // where the two walks would land if they disagreed about a declared
         // type, the alternative to refusing being a silent scalar comparison.
         if arrow {
-            return Err(refuse_nested_in_arrow());
+            return Err(refuse_nested_in_datafusion());
         }
         if ordering {
             return Err(refuse(NESTED));
@@ -2484,7 +2484,7 @@ pub(crate) fn resolve_term(
         Some(compared @ ComparisonPlan::Compared { kind, divergence }) => {
             let kind = &match semantics {
                 ComparisonSemantics::Postgres => kind.clone(),
-                ComparisonSemantics::Arrow => kind.arrow_order(),
+                ComparisonSemantics::DataFusion => kind.arrow_order(),
             };
             let comparison = if ordering {
                 Comparison::Ordered {
@@ -2528,7 +2528,7 @@ pub(crate) fn resolve_term(
         ),
         // No plan at all: an ordering operator is refused here, and `Eq`/`Ne`
         // on a column the register does not compare is a comparison of the
-        // canonical `*_out` text the file holds. In Arrow's semantics the
+        // canonical `*_out` text the file holds. In DataFusion's semantics the
         // column is the `Utf8View` holding that text, which DataFusion orders
         // bytewise, and so is it ordered here, reading the bytewise bounds
         // gathered for it.
@@ -3626,7 +3626,7 @@ mod tests {
     use crate::statistics::BoundsSet;
 
     /// [`super::resolve_term`] in PostgreSQL's semantics, which every test
-    /// but the Arrow-semantics ones asks for.
+    /// but the DataFusion-semantics ones asks for.
     fn resolve_term(
         predicate: &Predicate,
         index: usize,
@@ -4887,15 +4887,15 @@ mod tests {
         ));
     }
 
-    /// Under Arrow's semantics every comparing operator on a nested column is
+    /// Under DataFusion's semantics every comparing operator on a nested column is
     /// refused — `=` too, which PostgreSQL's answers structurally or as text
     /// — and a column with no plan still answers `=` bytewise, which is
     /// Arrow's `=` over the `Utf8View` it emits, announcing nothing. Its
-    /// ordering is `arrow_semantics_orders_a_column_with_no_plan_bytewise`'s.
+    /// ordering is `datafusion_semantics_orders_a_column_with_no_plan_bytewise`'s.
     #[test]
-    fn arrow_semantics_refuses_a_nested_column_under_every_comparing_operator() {
+    fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator() {
         let arrow = |p: &Predicate, resolved: &ResolvedSchema| {
-            super::resolve_term(p, 0, resolved, 0, ComparisonSemantics::Arrow)
+            super::resolve_term(p, 0, resolved, 0, ComparisonSemantics::DataFusion)
         };
         let mut opaque = one_column("public.opaquerange", DataType::Utf8View);
         opaque.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
@@ -4907,7 +4907,7 @@ mod tests {
                 let err = arrow(&order_predicate(op, "{}"), resolved).unwrap_err();
                 assert!(
                     matches!(&err, Error::UncomparablePredicateColumn { reason, .. }
-                        if reason == NESTED_IN_ARROW),
+                        if reason == NESTED_IN_DATAFUSION),
                     "{err:?}"
                 );
             }
@@ -4927,7 +4927,7 @@ mod tests {
     /// divergence under its path — `numeric[]` its element's text, `text[]`
     /// its element's collation, `real[]` its element's unnormalized zero; a
     /// float column reports nothing in either.
-    /// A column that fell back to text reports nothing in Arrow's semantics,
+    /// A column that fell back to text reports nothing in DataFusion's semantics,
     /// its column note being the finding. One schema, so the order of the
     /// report is the columns'.
     #[test]
@@ -4981,7 +4981,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            report(ComparisonSemantics::Arrow),
+            report(ComparisonSemantics::DataFusion),
             [
                 (c(1), None, D::UnknownCollation),
                 (c(2), None, D::IntervalFields),
@@ -4994,7 +4994,7 @@ mod tests {
                 (c(8), element(), D::UnnormalizedZero),
             ]
         );
-        let notes = column_divergences(&resolved, ComparisonSemantics::Arrow);
+        let notes = column_divergences(&resolved, ComparisonSemantics::DataFusion);
         let order = notes.iter().find(|n| n.column == c(3)).unwrap();
         assert!(!order.divergence.affects_equality());
         assert!(
@@ -5010,14 +5010,14 @@ mod tests {
     /// **A text-emitted kind's equality warning is about a literal's
     /// spelling**: DataFusion compares a literal bytewise with the emitted
     /// text, so a `timetz` literal the server reads as the value it wrote
-    /// matches nothing in Arrow's semantics where PostgreSQL's matches it.
+    /// matches nothing in DataFusion's semantics where PostgreSQL's matches it.
     /// The column says so, and names such a spelling.
     #[test]
-    fn a_literal_not_spelled_as_the_server_writes_misses_in_arrow_semantics() {
+    fn a_literal_not_spelled_as_the_server_writes_misses_in_datafusion_semantics() {
         let resolved = one_column("time with time zone", DataType::Utf8View);
         let arrow = |literal| {
             let p = order_predicate(PredicateOp::Eq, literal);
-            super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::Arrow).unwrap()
+            super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::DataFusion).unwrap()
         };
         assert_eq!(arrow("12:00+00").eval_value(Some("12:00:00+00")), Some(Truth::False));
         // One this build's PostgreSQL semantics also reads, answering as the
@@ -5026,7 +5026,7 @@ mod tests {
         let postgres = resolve_term(&p, 0, &resolved, 0).unwrap();
         assert_eq!(postgres.eval_value(Some("12:00:00+00")), Some(Truth::True));
         assert_eq!(arrow("12:00:00.0+00").eval_value(Some("12:00:00+00")), Some(Truth::False));
-        let [note] = &column_divergences(&resolved, ComparisonSemantics::Arrow)[..] else {
+        let [note] = &column_divergences(&resolved, ComparisonSemantics::DataFusion)[..] else {
             panic!("one note")
         };
         assert_eq!(note.divergence, ComparisonDivergence::ValueAsText);
@@ -5039,9 +5039,10 @@ mod tests {
         let p = order_predicate(PredicateOp::Eq, "08:00:2B:01:02:03");
         let postgres = resolve_term(&p, 0, &resolved, 0).unwrap();
         assert_eq!(postgres.eval_value(Some("08:00:2b:01:02:03")), Some(Truth::True));
-        let arrow = super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::Arrow).unwrap();
+        let arrow =
+            super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::DataFusion).unwrap();
         assert_eq!(arrow.eval_value(Some("08:00:2b:01:02:03")), Some(Truth::False));
-        let [note] = &column_divergences(&resolved, ComparisonSemantics::Arrow)[..] else {
+        let [note] = &column_divergences(&resolved, ComparisonSemantics::DataFusion)[..] else {
             panic!("one note")
         };
         assert_eq!(note.divergence, ComparisonDivergence::ValueAsText);
@@ -5049,7 +5050,7 @@ mod tests {
 
     /// **A float nested in a list is compared with no `-0` made `0`**, as
     /// `make_comparator` compares it and as [`ComparisonDivergence::UnnormalizedZero`]
-    /// says — where a float column's `-0` equals `0` in Arrow's semantics
+    /// says — where a float column's `-0` equals `0` in DataFusion's semantics
     /// (DataFusion's `apply_cmp`). Read off the arrays a batch builds.
     #[test]
     fn a_nested_float_s_negative_zero_is_not_zero_to_datafusion() {
@@ -5064,7 +5065,7 @@ mod tests {
         assert_eq!(cmp(0, 1), Ordering::Less);
     }
 
-    /// **A column with no plan is ordered bytewise in Arrow's semantics**,
+    /// **A column with no plan is ordered bytewise in DataFusion's semantics**,
     /// under every ordering operator, where PostgreSQL's refuses them: the
     /// column emits the file's text as `Utf8View`, which DataFusion orders by
     /// its bytes. Both roads there — a type this build does not map, and a
@@ -5074,7 +5075,7 @@ mod tests {
     /// gathering having resolved the column under whatever type its DDL gives
     /// it (`crate::pgtype::bounds_set_keyed_by`).
     #[test]
-    fn arrow_semantics_orders_a_column_with_no_plan_bytewise() {
+    fn datafusion_semantics_orders_a_column_with_no_plan_bytewise() {
         let mut unknown = one_column("box", DataType::Utf8View);
         unknown.columns[0] = ColumnResolution::UnknownType;
         let mut undeclared = one_column("text", DataType::Utf8View);
@@ -5096,8 +5097,8 @@ mod tests {
                     resolve_term(&p, 0, resolved, 0),
                     Err(Error::UnorderedPredicateColumn { .. })
                 ));
-                let term =
-                    super::resolve_term(&p, 0, resolved, 0, ComparisonSemantics::Arrow).unwrap();
+                let term = super::resolve_term(&p, 0, resolved, 0, ComparisonSemantics::DataFusion)
+                    .unwrap();
                 assert!(term.comparison_notes().is_empty());
                 let statistics = &term.compared.as_ref().unwrap().statistics;
                 let kind = statistics.bounds.as_deref().map(|(kind, _)| kind.clone());
@@ -5119,11 +5120,11 @@ mod tests {
     /// under <, dictionary under =)`. **Each semantics reads the set gathered
     /// in its own order** — the primary set where one order serves both, the
     /// Arrow set where the register's exact order is another, and a divergent
-    /// column's one set, Arrow's, in Arrow's alone — and a dictionary
+    /// column's one set, Arrow's, in DataFusion's alone — and a dictionary
     /// wherever its entries are the field's own text, which `character(n)`'s,
     /// stored unpadded, are not.
     #[test]
-    fn arrow_semantics_reads_only_the_statistics_that_hold_there() {
+    fn datafusion_semantics_reads_only_the_statistics_that_hold_there() {
         use BoundsSet::{Arrow as A, Primary as P};
         let read = |declared: &str, literal: &str, semantics| {
             let believed = |op| {
@@ -5157,7 +5158,11 @@ mod tests {
                 postgres,
                 "{declared}"
             );
-            assert_eq!(read(declared, literal, ComparisonSemantics::Arrow), arrow, "{declared}");
+            assert_eq!(
+                read(declared, literal, ComparisonSemantics::DataFusion),
+                arrow,
+                "{declared}"
+            );
         }
     }
 
@@ -7047,7 +7052,7 @@ mod tests {
         /// construction — a float's too, its `-0` made `0` before the
         /// kernels see it; `MacAddr` agrees because `macaddr_out` writes
         /// fixed-width lowercase hex, whose bytes order as the octets do, and
-        /// is compared as text in Arrow semantics all the same, a user's
+        /// is compared as text in DataFusion semantics all the same, a user's
         /// literal not being bound to that spelling. The seven that do not,
         /// each with the pair the walk first meets:
         ///
@@ -7327,14 +7332,14 @@ mod tests {
             assert_eq!(table, ARROW_AGREEMENT, "\n{}", report.join("\n"));
         }
 
-        /// **Under [`ComparisonSemantics::Arrow`] every comparing operator
+        /// **Under [`ComparisonSemantics::DataFusion`] every comparing operator
         /// answers as DataFusion does** ([`arrow_against`]) over the array a
         /// batch builds, over every value the server wrote for every declared
         /// type the register compares as a scalar, on six majors, each value
         /// in turn the literal — and announces nothing. A nested column refuses
         /// every comparing operator instead.
         ///
-        /// It also holds the rule for which stored bounds Arrow's semantics
+        /// It also holds the rule for which stored bounds DataFusion's semantics
         /// reads ([`ComparisonPlan::bounds_ordered_in`]) to the evidence
         /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::arrow_order`]
         /// leaves alone is one whose order and gathered bounds were found
@@ -7344,13 +7349,13 @@ mod tests {
         /// agreeing over them cannot show that a user's literal is compared
         /// as DataFusion compares it, and only bytewise is.
         ///
-        /// **The set of bounds Arrow's semantics reads is DataFusion's minimum
+        /// **The set of bounds DataFusion's semantics reads is DataFusion's minimum
         /// and maximum**, gathered under its kind over every value and over
         /// runs of three, on six majors; and an undivergent column reads its one set there
         /// exactly where [`ARROW_AGREEMENT`] records that set agreeing —
         /// `macaddr` among them — and a second set everywhere else.
         #[tokio::test]
-        async fn arrow_semantics_answers_as_datafusion_does() {
+        async fn datafusion_semantics_answers_as_arrow_s_kernels_do() {
             const OPS: [PredicateOp; 8] = [
                 PredicateOp::Eq,
                 PredicateOp::Ne,
@@ -7362,7 +7367,7 @@ mod tests {
                 PredicateOp::IsNotDistinctFrom,
             ];
             let arrow_term = |p: &Predicate, resolved: &ResolvedSchema| {
-                crate::predicate::resolve_term(p, 0, resolved, 0, ComparisonSemantics::Arrow)
+                crate::predicate::resolve_term(p, 0, resolved, 0, ComparisonSemantics::DataFusion)
             };
             let mut kinds: BTreeMap<&'static str, CompareKind> = BTreeMap::new();
             let (mut answered, mut nested_refused, mut text_emitted) = (0usize, 0usize, 0usize);
@@ -7424,7 +7429,7 @@ mod tests {
                         continue;
                     }
                     kinds.insert(kind_name(&kind), kind.clone());
-                    let set = resolved.comparisons[0].bounds_in(ComparisonSemantics::Arrow);
+                    let set = resolved.comparisons[0].bounds_in(ComparisonSemantics::DataFusion);
                     if matches!(
                         resolved.comparisons[0],
                         ComparisonPlan::Compared { divergence: None, .. }
@@ -7498,7 +7503,7 @@ mod tests {
                 assert_eq!(
                     kinds[name].arrow_divergence().is_none(),
                     kinds[name].arrow_order() == kinds[name],
-                    "{name}: a kind Arrow semantics moves reports a divergence, and only one"
+                    "{name}: a kind DataFusion semantics moves reports a divergence, and only one"
                 );
                 if kinds[name].arrow_order() == kinds[name] {
                     assert!(*order && *bounds, "{name} keeps its kind and disagrees with Arrow");
@@ -7582,8 +7587,8 @@ mod tests {
             assert!(compared > 300, "only {compared} cases compared");
         }
 
-        /// **Under Arrow's semantics a column that reports nothing answers as
-        /// the server does**: every oracle cell a term in Arrow's semantics
+        /// **Under DataFusion's semantics a column that reports nothing answers as
+        /// the server does**: every oracle cell a term in DataFusion's semantics
         /// answers differently from PostgreSQL falls on a column reporting a
         /// divergence that reaches the cell's operator, or on one that fell
         /// back to text, whose column note is its finding. A nested column,
@@ -7612,7 +7617,7 @@ mod tests {
                     let declared = row[0].clone().expect("a case names a type");
                     let collation = clause(row[3].as_ref());
                     let schema = &resolved[&(declared.clone(), collation)];
-                    let report = column_divergences(schema, ComparisonSemantics::Arrow);
+                    let report = column_divergences(schema, ComparisonSemantics::DataFusion);
                     if matches!(schema.comparisons[0], ComparisonPlan::Nested(_)) {
                         assert!(
                             report
@@ -7677,7 +7682,7 @@ mod tests {
                                     0,
                                     schema,
                                     0,
-                                    ComparisonSemantics::Arrow,
+                                    ComparisonSemantics::DataFusion,
                                 ) else {
                                     continue;
                                 };
@@ -7703,7 +7708,7 @@ mod tests {
                                         op.is_ordering() || n.divergence.affects_equality()
                                     }),
                                 "{major} {declared} {collation:?}: {left:?} {} {right:?} is \
-                                 {got:?} in Arrow semantics and {cell} on the server, and the \
+                                 {got:?} in DataFusion semantics and {cell} on the server, and the \
                                  column reports {report:?}",
                                 op.symbol()
                             );

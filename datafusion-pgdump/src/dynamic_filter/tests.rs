@@ -113,7 +113,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     copy
 }
 
-/// What a scan's replay returns of `table` under `filter`, in Arrow
+/// What a scan's replay returns of `table` under `filter`, in DataFusion
 /// semantics, projected to `projection`: every row as one batch (`None` for
 /// none), or the refusal as text.
 async fn read(
@@ -125,7 +125,7 @@ async fn read(
     let options = QueryOptions {
         projection: projection.clone(),
         filter,
-        semantics: ComparisonSemantics::Arrow,
+        semantics: ComparisonSemantics::DataFusion,
         schema_mode: dump.schema_mode(),
         ..QueryOptions::default()
     };
@@ -173,7 +173,7 @@ async fn read_dynamic(
 ) -> std::result::Result<ReadDynamic, String> {
     let options = QueryOptions {
         projection: projection.clone(),
-        semantics: ComparisonSemantics::Arrow,
+        semantics: ComparisonSemantics::DataFusion,
         schema_mode: dump.schema_mode(),
         parallelism: Parallelism::workers(DYNAMIC_JOBS, 1 << 30),
         ..QueryOptions::default()

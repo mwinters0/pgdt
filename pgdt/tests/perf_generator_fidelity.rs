@@ -131,7 +131,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 /// `scripts/generate_pruning_bench.py` exists for what `statistics-pruning`
 /// prices, so its guard is that the statistics that figure reads are the ones
 /// a `parse` stores: `id` ascending with bounds in every group, `v_category`
-/// with a dictionary in every group — its bytewise bounds are read in Arrow's
+/// with a dictionary in every group — its bytewise bounds are read in DataFusion's
 /// semantics alone, never by `pgdt`'s (`docs/design/decisions.md`, "D79"), so
 /// the equality leg is pruned by the dictionary it is named for — and
 /// `v_smallint` bounded in every group with no dictionary in any, so the

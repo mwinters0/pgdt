@@ -3,7 +3,7 @@
 //!
 //! **A filter is pushed `Exact` or not at all.** It is `Exact` where it
 //! translates here and the library's plan resolves it in
-//! [`ComparisonSemantics::Arrow`](pgdump_query::ComparisonSemantics::Arrow) —
+//! [`ComparisonSemantics::DataFusion`](pgdump_query::ComparisonSemantics::DataFusion) —
 //! which is where the library answers as DataFusion does over the value the
 //! column emits — and `Unsupported` everywhere else, DataFusion then filtering
 //! the rows itself. So a pushed filter and a kept one answer alike, and a
@@ -189,7 +189,7 @@ pub(crate) fn boolean_term(
 }
 
 /// Where `expr`, a bare column, sits in `table` — `None` for anything else,
-/// and for a nested column, whose comparisons Arrow semantics refuses.
+/// and for a nested column, whose comparisons DataFusion semantics refuses.
 fn column_index(expr: &Expr, table: &ResolvedSchema) -> Option<usize> {
     let Expr::Column(column) = expr else { return None };
     let index = table.schema.index_of(&column.name).ok()?;
@@ -258,7 +258,7 @@ fn string_value(literal: &ScalarValue) -> Option<&str> {
 }
 
 /// Whether the library compares column `index` of `table` bytewise over its
-/// text in Arrow semantics: a column with no plan, and every kind Arrow
+/// text in DataFusion semantics: a column with no plan, and every kind DataFusion
 /// semantics moves to text.
 fn compared_as_text(table: &ResolvedSchema, index: usize) -> bool {
     if table.columns[index] != ColumnResolution::Mapped {

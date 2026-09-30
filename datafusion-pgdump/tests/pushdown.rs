@@ -2,7 +2,7 @@
 //! fixtures (`docs/design/decisions.md`, "D40" and "D88").
 //!
 //! **DataFusion is the oracle.** A filter the provider answers `Exact` is
-//! evaluated by the library in Arrow semantics and DataFusion never sees the
+//! evaluated by the library in DataFusion semantics and DataFusion never sees the
 //! rows it dropped, so the rows a pushed scan returns must be exactly the
 //! rows DataFusion's own evaluation of that filter keeps from the unfiltered
 //! scan — the physical expression a `FilterExec` would run, over the arrays
@@ -492,7 +492,7 @@ fn one_column(declared: &str) -> ResolvedSchema {
     resolve_columns("public.t", &["v".to_string()], Some(&metadata), None, SchemaMode::Typed, &[])
 }
 
-/// **What registration announces about a nested column in Arrow semantics
+/// **What registration announces about a nested column in DataFusion semantics
 /// is what DataFusion does**: a NULL element orders first, and a float's `-0`
 /// inside a list is below `0` and unequal to it — each note found on the
 /// column, and its claim checked through `compare_op_for_nested`, which is
@@ -507,7 +507,7 @@ fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
         ListArray::new(item, OffsetBuffer::from_lengths([values.len()]), values, None)
     };
     let announced = |resolved: &ResolvedSchema, divergence| {
-        column_divergences(resolved, ComparisonSemantics::Arrow)
+        column_divergences(resolved, ComparisonSemantics::DataFusion)
             .iter()
             .any(|note| note.divergence == divergence)
     };

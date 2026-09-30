@@ -2545,7 +2545,7 @@ type can hold.
 and `MacAddr` arms and `predicate.rs`'s parsers for them —
 [`decisions.md`](decisions.md), "D55",
 where these are four *Agrees* rows. The `macaddr` output form is also what
-lets its one set of stored bounds serve Arrow's semantics, which compares the
+lets its one set of stored bounds serve DataFusion's semantics, which compares the
 column as text — `ComparisonPlan::bounds_kinds` and
 [`decisions.md`](decisions.md), "D79". The hour field's ceiling is also what keeps
 `interval` a `Utf8View` — Arrow's `Interval(MonthDayNano)` holds nanoseconds in

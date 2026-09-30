@@ -432,7 +432,7 @@ fn column_order(
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Option<Sortedness> {
-    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::Arrow)?;
+    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::DataFusion)?;
     let name = resolved.schema.field(i).name();
     let mut order = None;
     // Each block's first and last group holding a row, by header offset. A

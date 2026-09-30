@@ -124,7 +124,7 @@ async fn a_column_note_reads_as_a_finding() {
 /// **A table's divergences drain at registration, before any term is named**,
 /// on the comparison channel and in the semantics asked for: the enum and the
 /// label-less enum of `t_enum_domain` report nothing in PostgreSQL's
-/// semantics, and in Arrow's the enum is compared by its label text. The
+/// semantics, and in DataFusion's the enum is compared by its label text. The
 /// label-less one, emitted as text, earns no second finding beside its
 /// `Warning` column note, which says so. The domain over `integer` reports in
 /// neither.
@@ -153,7 +153,7 @@ async fn a_table_s_divergences_drain_at_registration() {
         seen.into_inner().unwrap()
     };
     assert_eq!(drained(ComparisonSemantics::Postgres), []);
-    let arrow = drained(ComparisonSemantics::Arrow);
+    let arrow = drained(ComparisonSemantics::DataFusion);
     let divergences: Vec<_> = arrow.iter().map(|(c, d, _)| (c.as_str(), *d)).collect();
     assert_eq!(divergences, [("v_mood", ComparisonDivergence::LabelText)]);
     assert!(

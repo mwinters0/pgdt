@@ -331,7 +331,7 @@ fn query_fingerprint(
     hash_expr(&options.filter, &mut hasher);
     match options.semantics {
         ComparisonSemantics::Postgres => 0u8,
-        ComparisonSemantics::Arrow => 1u8,
+        ComparisonSemantics::DataFusion => 1u8,
     }
     .hash(&mut hasher);
     options.unrepresentable.hash(&mut hasher);

@@ -34,8 +34,8 @@ const TINY_GROUP: u64 = 32;
 /// Random trees per table, each run pruned and unpruned, serially and split.
 const TREES_PER_TABLE: usize = 24;
 
-/// Random trees per table under Arrow's semantics
-/// (`ComparisonSemantics::Arrow`), over the terms that resolve there.
+/// Random trees per table under DataFusion's semantics
+/// (`ComparisonSemantics::DataFusion`), over the terms that resolve there.
 const ARROW_TREES_PER_TABLE: usize = 8;
 
 /// Literals drawn for each operator over each column.
@@ -507,7 +507,7 @@ async fn check_fixture(
         // Each PostgreSQL-semantics check draws its mode, so both are swept at
         // one sweep's cost.
         let draw = |rng: &mut Rng| if rng.below(2) == 0 { &base } else { &refusing };
-        let arrow = QueryOptions { semantics: ComparisonSemantics::Arrow, ..base.clone() };
+        let arrow = QueryOptions { semantics: ComparisonSemantics::DataFusion, ..base.clone() };
 
         let (mut terms, mut arrow_terms) = (Vec::new(), Vec::new());
         for (i, name) in header.columns.iter().enumerate() {
@@ -691,14 +691,14 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
     }
 }
 
-/// **Text on the database's collation is bounded bytewise, and only Arrow's
+/// **Text on the database's collation is bounded bytewise, and only DataFusion's
 /// semantics reads the bounds**: `default_text` holds `a…` then `Z…`, so
 /// under `>= 'a'` every group holding only `Z…` rows is skipped there, while
 /// PostgreSQL's semantics — whose order for the column the file does not
 /// state — skips none, and both answer the rows an unpruned read does
 /// (`docs/design/decisions.md`, "D79").
 #[tokio::test]
-async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() {
+async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alone() {
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
@@ -709,7 +709,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() 
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
 
         let filter = Expr::all([term("default_text", PredicateOp::Ge, Some("a"))]);
-        for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::Arrow] {
+        for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::DataFusion] {
             for jobs in [1, SPLIT_JOBS] {
                 let options = |use_statistics| QueryOptions {
                     semantics,
@@ -726,7 +726,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() 
                 let skipped = pruned(&notes).map_or(0, |p| p.0);
                 let expected = match semantics {
                     ComparisonSemantics::Postgres => 0,
-                    ComparisonSemantics::Arrow => below,
+                    ComparisonSemantics::DataFusion => below,
                 };
                 assert_eq!(skipped, expected, "{what}");
             }
@@ -743,7 +743,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() 
 /// (`docs/design/decisions.md`, "D79").
 #[tokio::test]
 async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
-    use ComparisonSemantics::{Arrow, Postgres};
+    use ComparisonSemantics::{DataFusion, Postgres};
     for version in VERSIONS {
         let (_dir, dump, index) = gathered(&types_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks_for("public.t_enum_domain").next().unwrap();
@@ -760,8 +760,8 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
         for (semantics, op, literal, rows, skipped) in [
             (Postgres, PredicateOp::Gt, "sad", 3, 0),
             (Postgres, PredicateOp::Lt, "sad", 0, 1),
-            (Arrow, PredicateOp::Lt, "has,comma", 2, 0),
-            (Arrow, PredicateOp::Gt, "sad", 0, 1),
+            (DataFusion, PredicateOp::Lt, "has,comma", 2, 0),
+            (DataFusion, PredicateOp::Gt, "sad", 0, 1),
         ] {
             let filter = Expr::all([term("v_mood", op, Some(literal))]);
             let options = |use_statistics| QueryOptions {
@@ -784,26 +784,26 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
 /// **A term reads the set gathering stored under the kind it compares by,
 /// whatever its own plan says** (`docs/design/decisions.md`, "D79"). A column
 /// no DDL declared — every column of a `--data-only` dump — is bounded as its
-/// text, and Arrow's semantics prunes by it. Under `SchemaMode::Strings`,
+/// text, and DataFusion's semantics prunes by it. Under `SchemaMode::Strings`,
 /// where every column compares as its text, `v_mood` reads its enum's Arrow
 /// set, which is its labels' text, and `id` reads none: its one set is
 /// ordered as integers, and a build reading it as text would skip the group
 /// under `id > '9'`.
 #[tokio::test]
 async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
-    use ComparisonSemantics::{Arrow, Postgres};
+    use ComparisonSemantics::{DataFusion, Postgres};
     use pgdump_query::SchemaMode::{Strings, Typed};
     for version in VERSIONS {
         for (flag_set, schema_mode, semantics, column, op, literal, rows, skipped) in [
-            ("data-only", Typed, Arrow, "v_mood", PredicateOp::Gt, "sad", 0, 1),
-            ("data-only", Typed, Arrow, "v_mood", PredicateOp::Lt, "has,comma", 2, 0),
-            ("data-only", Typed, Arrow, "id", PredicateOp::Gt, "4", 0, 1),
+            ("data-only", Typed, DataFusion, "v_mood", PredicateOp::Gt, "sad", 0, 1),
+            ("data-only", Typed, DataFusion, "v_mood", PredicateOp::Lt, "has,comma", 2, 0),
+            ("data-only", Typed, DataFusion, "id", PredicateOp::Gt, "4", 0, 1),
             // PostgreSQL's semantics believes no bounds for a column it has
             // no plan for: its `=` is bytewise, and it reads none.
             ("data-only", Typed, Postgres, "id", PredicateOp::Eq, "9", 0, 0),
-            ("default", Strings, Arrow, "v_mood", PredicateOp::Gt, "sad", 0, 1),
-            ("default", Strings, Arrow, "id", PredicateOp::Gt, "9", 0, 0),
-            ("default", Typed, Arrow, "id", PredicateOp::Gt, "9", 0, 1),
+            ("default", Strings, DataFusion, "v_mood", PredicateOp::Gt, "sad", 0, 1),
+            ("default", Strings, DataFusion, "id", PredicateOp::Gt, "9", 0, 0),
+            ("default", Typed, DataFusion, "id", PredicateOp::Gt, "9", 0, 1),
         ] {
             let (_dir, dump, index) =
                 gathered(&types_fixture(version, flag_set), SMALL_GROUP).await;

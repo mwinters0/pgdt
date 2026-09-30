@@ -95,7 +95,7 @@ impl PgDumpTable {
         for finding in &resolved.notes {
             sink.report(&Located { subject, finding });
         }
-        for finding in &column_divergences(resolved, ComparisonSemantics::Arrow) {
+        for finding in &column_divergences(resolved, ComparisonSemantics::DataFusion) {
             sink.report(&Located { subject, finding });
         }
         let reporting = Reporting { subject: subject.to_string(), sink };

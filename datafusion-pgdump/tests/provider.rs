@@ -127,7 +127,7 @@ async fn library_answer(
     let options = QueryOptions {
         database: table.database.clone(),
         schema_mode,
-        semantics: ComparisonSemantics::Arrow,
+        semantics: ComparisonSemantics::DataFusion,
         ..QueryOptions::default()
     };
     let mut stream = table_stream(
