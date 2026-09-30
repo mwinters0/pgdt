@@ -88,6 +88,7 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.6** The refuse mode: by column, at planning, from the map; a timestamp past `i64` microseconds keyed, filling every value's view; [notes](../design/roadmap-P28.6-refuse-notes.md)
 - [x] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`; [notes](../design/roadmap-P28.7-untyped-notes.md)
 - [x] **28.8** `IS [NOT] UNREPRESENTABLE` and `pgdump_unrepresentable`, "D53" amended; [notes](../design/roadmap-P28.8-predicate-notes.md)
+- [ ] **28.11** The unrepresentable guard, the embedder's: registering a dump registers `pgdump_unrepresentable` and leaves the session's planning alone; the planning refusal a physical optimizer rule the embedder installs on a `SessionStateBuilder`, the evaluation's refusal naming it, and the shell installing it; "D101" and "RT22" rewritten
 - [ ] **28.9** The figures: scan figures at the metadata level, query figures over a data-level cache, the census's price attributed by a `perf` profile, the `census-*` figures and the census-off build retired
 
 ## Not started
@@ -119,18 +120,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdump_unrepresentable`'s planning refusal rebuilds the embedder's
-  session** (28.8, "D101"). The call: `install_unrepresentable`, run by
-  `register_dump` and `register_table_factory`, replaces the `SessionState`
-  inside the caller's `SessionContext` with one whose `QueryPlanner` wraps the
-  one it had, so every query of that session is walked for the function before
-  it is planned physically. Why: only the optimized logical plan says whether
-  a node other than a scan holds it (`runtime-invariants.md`, "RT22"); a
-  logical rule sees one optimizer pass, a physical rule has no expression walk,
-  and refusing in `invoke` is at execution and never reached over no rows. What
-  the maintainer decides: whether registering a dump may rebuild a session an
-  embedder built — its planner wrapped, its state replaced in place — or the
-  refusal should be the embedder's to opt into (the function then answering
-  wherever pushed and erring at execution elsewhere), which moves the spec's
-  "refusing at planning" to a documented obligation.

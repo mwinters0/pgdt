@@ -477,7 +477,7 @@ two-valued; a group answers it off its own count (D97), and `SchemaMode::Strings
 `Exact`, and a plan in which any node but a scan holds it refuses at physical planning: a planner wrapped around the session's walks the
 optimized plan. Rejected: a table function listing each occurrence (no row identity joins back); a companion column (in every `SELECT *`,
 55.1 having no hidden columns); evaluating it in DataFusion (a NULL keeps no origin); refusing in `invoke` (execution, and never reached over
-no rows); an optimizer rule (sees a pass, not the plan); a physical rule (no expression walk over an `ExecutionPlan`). Code: `unrepresentable_tests`,
+no rows); an optimizer rule (sees a pass, not the plan). Code: `unrepresentable_tests`,
 `datafusion-pgdump`'s `unrepresentable::install`. Evidence: `the_unrepresentable_function_finds_what_the_null_mode_nulls`, `tests/pruning.rs`.
 
 ### D94 A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`

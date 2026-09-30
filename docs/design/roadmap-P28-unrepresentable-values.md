@@ -212,8 +212,12 @@ two-valued as `IS NULL` is and taking no value, reopening "D53"'s closed set.
 The library evaluates them on the text against the column's *declared* type —
 `pgdt --where '<column> is unrepresentable'`, and in DataFusion a scalar UDF,
 `pgdump_unrepresentable(<column>)`, `NOT` above it the negation, always pushed
-`Exact` and refusing at planning wherever DataFusion would have to evaluate it
-itself, a NULL no longer carrying its origin. Each tests the tiers its front
+`Exact`, and wherever DataFusion would have to evaluate it itself refused, a
+NULL no longer carrying its origin: at planning where the session's embedder
+installed the guard, and on evaluation otherwise. Registering a dump registers
+the function and leaves the session's planning as its embedder built it; the
+shell installs the guard ([`../status/history/2026-09-30.md`](../status/history/2026-09-30.md),
+"`pgdump_unrepresentable`'s guard becomes the embedder's to install"). Each tests the tiers its front
 end reads, `pgdt` the format spec's and the UDF both, so each tells apart
 exactly the NULLs its own typed mode made. It answers in the typed, untyped
 and refuse modes — in the last where the column is not materialized — and
@@ -314,6 +318,12 @@ path never sharing a slice with a new mechanism:
     `interval`'s, nested cases — every major's fixtures regenerated; the
     reconciliation beside `floor_mapping.py`; the DataFusion-path validity
     test, its failing values recorded; the harness extended over the new rows.
+11. **The unrepresentable guard, the embedder's**, admitted after the spec
+    and landing before 9: registering a dump registers `pgdump_unrepresentable`
+    and leaves the session's planning alone; the planning refusal a physical
+    optimizer rule the embedder installs on a `SessionStateBuilder`, in place
+    of the wrapped planner, the evaluation's refusal naming it, and the shell
+    installing it; "D101" and "RT22" rewritten.
 
 ## Facts found while grilling
 
