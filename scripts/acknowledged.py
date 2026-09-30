@@ -383,4 +383,26 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "scripts/measure.py names no mode or test"
         ),
     ),
+    Acknowledged(
+        commit="949fb2f",
+        figures=(
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why=(
+            "28.11's embedder guard: registration now calls register_udf where it rebuilt "
+            "the session, doing strictly less; the shell's state is the one "
+            "new_with_config_rt builds (SessionStateBuilder with_config, with_runtime_env, "
+            "with_default_features) plus one physical optimizer rule walking each plan's "
+            "expressions once at planning, touching no scan code. Neither figure's query "
+            "names pgdump_unrepresentable"
+        ),
+        verified=(
+            "git show 949fb2f -- datafusion-cli-pgdump/src/main.rs datafusion-pgdump/src/lib.rs "
+            "datafusion-pgdump/src/factory.rs datafusion-pgdump/src/unrepresentable.rs  # "
+            "SessionContext::new_with_config_rt in DataFusion 55.1.0 "
+            "core/src/execution/context/mod.rs builds the same state; grep -i unrepresentable "
+            "scripts/measure.py names no test"
+        ),
+    ),
 )
