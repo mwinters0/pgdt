@@ -16,6 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -558,6 +559,27 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
+
+## P29 — Versioned binary releases
+
+Publishing the binaries as versioned GitHub Releases, starting with `v0.1.0`,
+sketched to corner-avoidance depth. Three pieces: a local cross-build producing
+Linux and macOS binaries for x86-64 and arm64; a `/release` skill that
+rehearses every release build, bumps the version and tags the commit, leaving
+the push to the maintainer; and a manually triggered workflow that builds the
+binaries from a pushed tag and publishes the Release with a doc the maintainer
+wrote. **The maintainer owns the timing and the text; CI owns the bytes.**
+**No crate is published**, and every workspace member's version moves in
+lockstep, the vendored `xz-seek` keeping its own.
+
+Beyond the mechanics, the grilling settles which binaries ship and with which
+features; the Linux artifact's libc and allocator, the shipped binary being
+what every figure times; whether a macOS build ships before it can discover
+its own memory; when the version moves and how `--version` tells a release
+from any other `--release` build; where the release doc lives, a pushed tag
+being a feed entry before any Release exists; and what licence and notices a
+published binary carries. The facts each turns on are in [its
+inbox](roadmap-P29-releases-inbox.md).
 
 ## P22 — The third tunable
 
