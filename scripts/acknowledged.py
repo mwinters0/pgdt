@@ -100,6 +100,37 @@ class Acknowledged:
 #: commit apiece.
 ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
+        commit="a3058df5",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M196 adds one integer comparison per plan (span_on_chunk) and "
+        "changes ParallelismBudgetLimited's lever list and message only where a "
+        "span is stated below the chunk on a source the chunk does not size, which "
+        "no figure's plain-file or .xz-block run reaches; outside that, "
+        "#[cfg(test)] code only, no scan, decode or allocation path changed",
+        verified="git diff -U0 a3058df5^ a3058df5 -- pgdump_query/src/stream.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
+    Acknowledged(
         commit="ce6ecb58",
         figures=(
             "scan-throughput-cold",
