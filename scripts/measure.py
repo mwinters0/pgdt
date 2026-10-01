@@ -5545,7 +5545,8 @@ class Figure:
     #: number moves without losing its table. The label is what a sitting
     #: renders as that heading, so `--check` holds it to begin with the heading
     #: its marker sits under (`section_label_problems`): a heading rewritten
-    #: takes its label with it.
+    #: takes its label with it. Not read from the heading instead: `--list`,
+    #: the sweep log and a sitting's grouping print it without the doc.
     section: str
     #: The regimes this figure is taken in, `+`-separated — every token a key
     #: of `REGIMES`, or one of `NON_REGIME_STAGES` for a figure that reads no

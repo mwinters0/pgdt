@@ -132,6 +132,10 @@ What the reader will want that the map does not is a *position*: the scan
 updates state and reports whether the run so far is complete, but does not
 return the offset of the terminating `;`. Adding that is a method on an
 existing type, and the lines it walks are the ones the scanner surfaces.
+A `$$` inside an `INSERT` row is proved over a hand-built dump only
+(`pgdump_query/tests/map.rs`, `an_insert_run_holding_a_dollar_pair_keeps_every_row`):
+the objects fixture holds `$$` in a comment, a default and a quoted name, and
+an `--inserts` row holding one waits for this reader.
 
 **This phase also owns `KD9`'s three untaken cuts**, all in the scan above,
 because slicing P8 is when they acquire a slice and `scripts/deficiencies.py`
@@ -154,6 +158,7 @@ documented on the type and both are load-bearing for a caller that reuses it.
 
 **Origin.** The `INSERT` fast path, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)), and
-`M191`, 2026-10-01 ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md)),
+the lexer change of 2026-10-01
+([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md)),
 which put it on the scanner's lexer. The mechanism is
 [`decisions.md`](decisions.md), "D33".

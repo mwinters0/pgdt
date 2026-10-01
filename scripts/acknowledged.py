@@ -122,7 +122,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M196 adds one integer comparison per plan (span_on_chunk) and "
+        why="adds one integer comparison per plan (span_on_chunk) and "
         "changes ParallelismBudgetLimited's lever list and message only where a "
         "span is stated below the chunk on a source the chunk does not size, which "
         "no figure's plain-file or .xz-block run reaches; outside that, "
@@ -179,7 +179,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-topk",
             "session-drift",
         ),
-        why="M191's lexer runs only on lines outside a COPY block (CopyScanner's "
+        why="the lexer runs only on lines outside a COPY block (CopyScanner's "
         "State::Outside arm, map.rs's INSERT-run end), a few KB of preamble on "
         "these COPY-dominated inputs; the in-block per-row path is untouched, the "
         "scanner's state changes by a Lexer replacing a dollar tag, and "
@@ -214,7 +214,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M192 rewords four messages (an error's Display, an option's help, "
+        why="rewords four messages (an error's Display, an option's help, "
         "pgdt's statistics line when MemAvailable is unreadable, a plan note's "
         "text), each built once per plan or only when printed, and adds "
         "#[cfg(test)] code; no scan, decode or map path changes, so no timing or "
@@ -247,7 +247,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M193 moves map.rs's Arc::new(statistics) inside the StatisticsScope "
+        why="moves map.rs's Arc::new(statistics) inside the StatisticsScope "
         "on_copy_end already entered; without introspect that scope is an empty "
         "struct with no Drop, so a timed build does the same work, and an "
         "introspect build only attributes one small allocation per block to "
@@ -258,7 +258,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="f6ef4636",
         figures=("session-drift",),
-        why="M194 joins two untimed builders to their timed command by && where "
+        why="joins two untimed builders to their timed command by && where "
         "they had ;, which times the same command whenever the builder succeeds, "
         "and widens _PARSE_RUN, a --check pattern no sitting runs; no shape "
         "session-drift times changes",
@@ -268,7 +268,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="79917ef8",
         figures=("session-drift",),
-        why="M195 adds section_label_problems to --check and corrects one figure's "
+        why="adds section_label_problems to --check and corrects one figure's "
         "section label, a heading string a sitting renders; no command shape, "
         "staging or timed path changes",
         verified="git show 79917ef8 -- scripts/measure.py | grep '^[-+]' "

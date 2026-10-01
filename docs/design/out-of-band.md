@@ -48,7 +48,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M190 are struck**, and nothing at or below `M190` is reused. That is a
+**M1–M197 are struck**, and nothing at or below `M197` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -73,10 +73,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M191 | 2026-10-01 | The scanner lexes outside `COPY` as `scan.l` does — standard and `E''` strings, quoted identifiers, `--` and nested `/* */` comments, each carried across lines, a plain string's backslash per the dump's own `standard_conforming_strings` (a new `I<n>`) — so a `$` in any of them opens no dollar quote, the `INSERT` run's end in `map.rs` sharing the lexer; the objects fixture holding `$$`/`$x$` in a table comment, a default and a quoted table name at every major | | [2026-10-01](../status/history/2026-10-01.md) |
-| M192 | 2026-10-01 | Four messages said what the code does: `ResumeQueryMismatch` names no field list, the token being resumed by the query that issued it; `pgdump.unrepresentable`'s help naming `text`; `statistics_allowance_display`'s none as `MemAvailable` unreadable; `ParallelismBudgetLimited`'s span arm not claiming a smaller chunk shrinks a span stated below it; snapshots with them | | [2026-10-01](../status/history/2026-10-01.md) |
-| M193 | 2026-10-01 | The mapping pass's `Arc::new(statistics)` inside its `StatisticsScope` (`map.rs`, `on_copy_end`), `instrument.rs`'s module doc losing the exception, acknowledged as moving no reading of a build without `introspect` | | [2026-10-01](../status/history/2026-10-01.md) |
-| M194 | 2026-10-01 | Every untimed builder joined to its timed command by `&&` (`statistics-pruning`'s and `rss-attribution`'s `info` leg), asserted per shape in `test_measure.py`, `_PARSE_RUN` ending a `parse` at `&&` too; P23's "figures owed" bullet losing the `;` clause | | [2026-10-01](../status/history/2026-10-01.md) |
-| M195 | 2026-10-01 | `measure.py --check` holding each figure's `section` to begin with the heading its marker sits under, `nested-end-to-end`'s label corrected to it and `Figure.section`'s comment then true | | [2026-10-01](../status/history/2026-10-01.md) |
-| M196 | 2026-10-01 | `ParallelismBudgetLimited` lists `SmallerReadChunk` only where the chunk moves a term it charged — `chunk_sized`, or a span floored on the chunk rather than stated below it — and its message's span arm names the chunk only where it is listed, closing `KD59` | | [2026-10-01](../status/history/2026-10-01.md) |
-| M197 | 2026-10-01 | `test_measure.py`'s live-register test, now `test_the_live_register_names_only_figures_and_declared_sections`, admitting a declared section (`NOT_OURS`) as `--check`'s `acknowledgement_problems` and `excuses` already do | | [2026-10-01](../status/history/2026-10-01.md) |
