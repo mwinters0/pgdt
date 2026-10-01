@@ -122,3 +122,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+
+- **`D54`'s clause that a decode failure is never raised in a row group
+  statistics rule out, or past a sorted block's stop, has no test, and `M184`
+  did not give it one.** `M184`'s population, `KD2`'s 2-D array in
+  `public.t_composite_matrix`, raises only where a row holding it is emitted;
+  a term comparing it reads it structurally and answers, so no skipped group
+  ever holds a row that would raise, and the restored leg asserts only the
+  converse — a pruned query reading every row raises the same error
+  ([2026-10-01](history/2026-10-01.md), "`M184`: the pruning check's error leg
+  reads `KD2`'s shape"). The call: land the leg and floors as the row
+  describes, which they deliver, and leave the clause as the tree walk's
+  alone (`predicate.rs`, `a_decode_failure_surfaces_only_where_it_is_reached`).
+  Reconsidering decides between a hand-written test over a hand-built dump
+  whose text a comparison cannot read — outside the input contract, the
+  population 2026-09-30 reserved for after `KD2` closes — and accepting the
+  tree walk's test as the clause's only one.

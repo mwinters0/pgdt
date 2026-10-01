@@ -305,9 +305,9 @@ async fn an_array_declaration_pg_dump_never_writes_resolves_and_takes_its_census
 /// multi-dimensional value there is a `FieldDecode` — with
 /// `--schema-mode strings`, which the message names, as its only remedy.
 ///
-/// Hand-written rather than a fixture: `pg_dump` writes what it is given, and
-/// no fixture schema inserts a 2-D array into a composite field.
-/// `t_nested_ok` is the control that says the literal below really is
+/// Hand-written, though the types fixture's `t_composite_matrix` holds the
+/// same shape, so that it sits beside its control: `t_nested_ok` says the
+/// literal below really is
 /// `record_out`'s form — it round-trips through the typed path unchanged, so
 /// the failure on `t_nested_bad` is the nested array's and not a misquoted
 /// composite's.

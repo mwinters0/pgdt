@@ -319,7 +319,10 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 /// `[lb:ub]=`-decorated value in one is a hard `Error::FieldDecode` naming the
 /// column, which scanning more of the file cannot improve. **(c) unowned**,
 /// deferred on frequency. Closing it means a census keyed by *path* rather
-/// than by column, so a shape one level down has somewhere to be recorded.
+/// than by column, so a shape one level down has somewhere to be recorded,
+/// and finding another population for the two test floors the types
+/// fixture's `t_composite_matrix` alone fills (`tests/pruning.rs`,
+/// `datafusion-pgdump/tests/statistics.rs`).
 ///
 /// **The plan reaching here is always `Array(non-array)`.** The one declared
 /// shape that resolves to a nested `Array` — an array whose element type is

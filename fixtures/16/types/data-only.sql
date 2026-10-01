@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hbMJ8BQMebmU2dWfkCuU01TZyD4xSIWVz524BzkiEgt7azvE1HLCvBkZvLG4QqZ
+\restrict GVcmawXYrpJ21iVYJQpohjxl5XZR8YIzJa903ha0BMZ3Gkr83ZrS0ckYa4jSus2
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -97,6 +97,25 @@ COPY public.t_composite (id, v_point, v_points, v_tagged, v_empty_comp) FROM std
 1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")	()
 2	\N	\N	\N	\N
 3	(,"")	{NULL,"(3,)"}	("",{})	()
+\.
+
+
+--
+-- Data for Name: t_composite_matrix; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_composite_matrix (id, v_tagged) FROM stdin;
+1	(a,"{x,y}")
+2	(b,{p})
+3	\N
+4	(c,"{q,NULL}")
+5	(d,{})
+6	(m,"{{a,b},{c,d}}")
+7	(e,{r})
+8	\N
+9	(f,"{s,t}")
+10	(g,{u})
+11	(h,)
 \.
 
 
@@ -397,5 +416,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hbMJ8BQMebmU2dWfkCuU01TZyD4xSIWVz524BzkiEgt7azvE1HLCvBkZvLG4QqZ
+\unrestrict GVcmawXYrpJ21iVYJQpohjxl5XZR8YIzJa903ha0BMZ3Gkr83ZrS0ckYa4jSus2
 

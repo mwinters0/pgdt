@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict nuhFUbpkiYinDngtMhOqAjcgdu8ebda3SyedKq3RIg6iFTbsh2sLHURJI9mgqT4
+\restrict EJ4cKKtfJ4eBiChSSdpZLCmqeDENCk70XjKTokWjngLlhDpbqe11L96PM4fUwV3
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -396,6 +396,18 @@ CREATE TABLE public.t_composite (
 
 
 ALTER TABLE public.t_composite OWNER TO postgres;
+
+--
+-- Name: t_composite_matrix; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_composite_matrix (
+    id integer NOT NULL,
+    v_tagged public.tagged
+);
+
+
+ALTER TABLE public.t_composite_matrix OWNER TO postgres;
 
 --
 -- Name: t_date; Type: TABLE; Schema: public; Owner: postgres
@@ -805,6 +817,25 @@ COPY public.t_composite (id, v_point, v_points, v_tagged, v_empty_comp) FROM std
 
 
 --
+-- Data for Name: t_composite_matrix; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_composite_matrix (id, v_tagged) FROM stdin;
+1	(a,"{x,y}")
+2	(b,{p})
+3	\N
+4	(c,"{q,NULL}")
+5	(d,{})
+6	(m,"{{a,b},{c,d}}")
+7	(e,{r})
+8	\N
+9	(f,"{s,t}")
+10	(g,{u})
+11	(h,)
+\.
+
+
+--
 -- Data for Name: t_date; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1148,6 +1179,14 @@ ALTER TABLE ONLY public.t_collate
 
 
 --
+-- Name: t_composite_matrix t_composite_matrix_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_composite_matrix
+    ADD CONSTRAINT t_composite_matrix_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_composite t_composite_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1343,5 +1382,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict nuhFUbpkiYinDngtMhOqAjcgdu8ebda3SyedKq3RIg6iFTbsh2sLHURJI9mgqT4
+\unrestrict EJ4cKKtfJ4eBiChSSdpZLCmqeDENCk70XjKTokWjngLlhDpbqe11L96PM4fUwV3
 

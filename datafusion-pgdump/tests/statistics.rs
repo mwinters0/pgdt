@@ -203,14 +203,15 @@ fn register_in(
 }
 
 /// What refused a query. A value its column's type cannot hold (D96), or
-/// one that does not parse, is named by its table, column and type alone: no
-/// query promises which of its partitions' refusals it reports
+/// one that does not decode (`KD2`'s), is named by its table, column and type
+/// alone: no query promises which of its partitions' refusals it reports
 /// (`docs/design/decisions.md`, "D52"), so a row offset and a value are
 /// load's to choose. Anything else keeps its
 /// whole text.
 #[derive(Debug, PartialEq, Eq)]
 enum Refusal {
     Unreadable { table: String, column: String, declared_type: String },
+    Undecodable { table: String, column: String, declared_type: String },
     Other(String),
 }
 
@@ -218,16 +219,24 @@ impl Refusal {
     fn of(err: &DataFusionError) -> Refusal {
         let mut cause: Option<&dyn std::error::Error> = Some(err);
         while let Some(err) = cause {
-            if let Some(
-                pgdump_query::Error::FieldDecode { table, column, declared_type, .. }
-                | pgdump_query::Error::Unrepresentable { table, column, declared_type, .. },
-            ) = err.downcast_ref()
-            {
-                return Refusal::Unreadable {
-                    table: table.clone(),
-                    column: column.clone(),
-                    declared_type: declared_type.clone(),
-                };
+            match err.downcast_ref() {
+                Some(pgdump_query::Error::Unrepresentable {
+                    table, column, declared_type, ..
+                }) => {
+                    return Refusal::Unreadable {
+                        table: table.clone(),
+                        column: column.clone(),
+                        declared_type: declared_type.clone(),
+                    };
+                }
+                Some(pgdump_query::Error::FieldDecode { table, column, declared_type, .. }) => {
+                    return Refusal::Undecodable {
+                        table: table.clone(),
+                        column: column.clone(),
+                        declared_type: declared_type.clone(),
+                    };
+                }
+                _ => {}
             }
             cause = err.source();
         }
@@ -248,6 +257,11 @@ fn rendered(batches: &Result<Vec<RecordBatch>, Refusal>) -> String {
         Err(Refusal::Unreadable { table, column, declared_type }) => {
             format!("refused: {table}.{column} holds a value `{declared_type}` cannot")
         }
+        Err(Refusal::Undecodable { table, column, declared_type }) => {
+            format!(
+                "refused: {table}.{column} holds a value that does not decode as `{declared_type}`"
+            )
+        }
         Err(Refusal::Other(err)) => format!("refused: {err}"),
     }
 }
@@ -255,7 +269,10 @@ fn rendered(batches: &Result<Vec<RecordBatch>, Refusal>) -> String {
 /// The aggregate's answer with and without the statistics, and a note of
 /// whether the statistics actually answered it. A query the refuse mode
 /// refuses is refused at planning in both sessions alike, before anything
-/// is asked of the statistics (`docs/design/decisions.md`, "D99").
+/// is asked of the statistics (`docs/design/decisions.md`, "D99"). One the
+/// statistics answer may answer where reading the rows raises a value that
+/// does not decode, which they never read ("D54"), their NULL counts kept
+/// where a value fails to decode ("D89").
 async fn agrees(reading: &SessionContext, blind: &SessionContext, sql: &str) -> Answer {
     let from_statistics = rows(reading, sql).await;
     let from_rows = rows(blind, sql).await;
@@ -272,6 +289,10 @@ async fn agrees(reading: &SessionContext, blind: &SessionContext, sql: &str) -> 
         .indent(false)
         .to_string()
         .contains("PgDumpExec");
+    if answered && from_statistics.is_ok() && matches!(from_rows, Err(Refusal::Undecodable { .. }))
+    {
+        return Answer::Unread;
+    }
     assert_eq!(
         rendered(&from_statistics),
         rendered(&from_rows),
@@ -289,6 +310,9 @@ enum Answer {
     FromStatistics,
     /// Both sessions refused, at planning, alike.
     Refused,
+    /// The statistics answered, and reading the rows raises a value that
+    /// does not decode.
+    Unread,
 }
 
 impl Answer {
@@ -310,6 +334,8 @@ struct Seen {
     distinct: bool,
     sum: bool,
     refused: bool,
+    /// A `COUNT(<column>)` the statistics answered where the rows raise.
+    unread: bool,
 }
 
 impl Seen {
@@ -322,6 +348,7 @@ impl Seen {
             distinct: self.distinct || other.distinct,
             sum: self.sum || other.sum,
             refused: self.refused || other.refused,
+            unread: self.unread || other.unread,
         }
     }
 }
@@ -401,6 +428,7 @@ async fn every_aggregate(
             let answer = agrees(reading, blind, &sql).await;
             seen.null_count |= answer.answered();
             seen.refused |= answer == Answer::Refused;
+            seen.unread |= answer == Answer::Unread;
             // DataFusion plans no `MIN`/`MAX` over a list or a struct, in
             // either session, so there is nothing to compare.
             if matches!(
@@ -490,6 +518,8 @@ fn statistics_never_change_an_answer() {
     }
     // A text column has no `SUM`, so only the typed pass asks one.
     assert!(typed.sum, "no `SUM` was answered from the statistics");
+    // Populated by `KD2`'s shape alone, so closing it turns this red.
+    assert!(typed.unread, "no `COUNT(<column>)` was answered past a value that does not decode");
     assert!(refused, "no refusing `COUNT(<column>)` over a refusing column was checked");
     assert!(!typed.refused, "a typed read refused: {typed:?}");
     assert!(!untyped_refused, "an untyped read refused");

@@ -484,6 +484,30 @@ INSERT INTO public.t_composite VALUES
         ROW('', ARRAY[]::text[])::public.tagged,
         '()');
 
+-- `KD2`'s shape: a two-dimensional array in a composite field, which PostgreSQL
+-- accepts for `text[]` whatever its declared dimensions. The census is keyed by
+-- column, so this field stays on the one-dimensional path and row 6 fails to
+-- decode wherever a query emits it; a filter comparing it reads it structurally
+-- and answers. A table of its own, so every other composite reads whole; the
+-- generated pruning check's error leg reads it (pgdump_query/tests/pruning.rs,
+-- `check`), with rows either side for its terms over `id` to prune around.
+CREATE TABLE public.t_composite_matrix (
+    id integer PRIMARY KEY,
+    v_tagged public.tagged
+);
+INSERT INTO public.t_composite_matrix VALUES
+    (1, ROW('a', ARRAY['x', 'y'])::public.tagged),
+    (2, ROW('b', ARRAY['p'])::public.tagged),
+    (3, NULL),
+    (4, ROW('c', ARRAY['q', NULL])::public.tagged),
+    (5, ROW('d', ARRAY[]::text[])::public.tagged),
+    (6, ROW('m', ARRAY[['a', 'b'], ['c', 'd']])::public.tagged),
+    (7, ROW('e', ARRAY['r'])::public.tagged),
+    (8, NULL),
+    (9, ROW('f', ARRAY['s', 't'])::public.tagged),
+    (10, ROW('g', ARRAY['u'])::public.tagged),
+    (11, ROW('h', NULL)::public.tagged);
+
 CREATE TABLE public.t_range (
     id integer PRIMARY KEY,
     v_range int4range

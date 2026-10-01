@@ -38,9 +38,9 @@ What the slices after this one inherit. The spec is
   opens it, so `COUNT(*) … WHERE v_tstz < …` now passes under `Text` too and
   was struck from its record. 28.7, opening the real untyped mode, may find
   it failing again and re-records it.
-- **The generated pruning check asserts that no query over a fixture raises**
-  (`pgdump_query/tests/pruning.rs`, `check`), its error leg gone with its
-  population until M184 restores it over `KD2`'s shape.
+- **The generated pruning check's error leg is populated by `KD2`'s shape**
+  (`pgdump_query/tests/pruning.rs`, `check`; `public.t_composite_matrix` in
+  the types fixture), the refuse mode raising nothing at read time.
 - **The untyped mode's widening is a plan fact beside this refusal**: the same
   per-column count over every block decides which columns widen, and
   `materialized_unrepresentable` is where both read it.
