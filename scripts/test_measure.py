@@ -517,16 +517,21 @@ class StatisticsFigures(unittest.TestCase):
         self.assertEqual(metadata, measure._script("parse-rss"))
 
     def test_the_exemption_admits_the_gathering_request_and_nothing_else(self):
-        # Outside the three families a `parse` stating `GATHER_STATISTICS` is
-        # still one that gathers, and is reported.
+        # Outside the declared families a `parse` stating `GATHER_STATISTICS`
+        # is still one that gathers, and is reported.
         script = f"time /pgdt parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             reported = measure.statistics_flag_problems()
-        families = (
-            measure.STATISTICS_FAMILY,
-            measure.PRUNING_FAMILY,
-            measure.DYNFILTER_FAMILY,
-            *measure.DATA_LEVEL_QUERIES,
+        families = measure.GATHERING_FAMILIES
+        self.assertEqual(
+            set(families),
+            {
+                measure.STATISTICS_FAMILY,
+                measure.PRUNING_FAMILY,
+                measure.DYNFILTER_FAMILY,
+                f"{measure.PARALLEL_SCAN}-jobs-",
+                *measure.DATA_LEVEL_QUERIES,
+            },
         )
         self.assertEqual(
             sorted(reported),
@@ -692,8 +697,9 @@ class DataLevelQueries(unittest.TestCase):
     (`measure.DATA_LEVEL_QUERIES`), so neither a mapping pass nor pruning
     enters the reading."""
 
-    #: The figures whose rows are those shapes, `allocator`'s query rows and
-    #: `parallel-scan-throughput`'s typed-`query` legs included.
+    #: The figures whose rows are those shapes, `allocator`'s query rows
+    #: included, and `parallel-scan-throughput`, whose provider legs read the
+    #: cache the same builder request writes (`ParallelScanThroughputProvider`).
     FIGURES = (
         "nested-end-to-end",
         "cross-file-floor",
@@ -737,7 +743,6 @@ class DataLevelQueries(unittest.TestCase):
               for w in measure.PROJECTION_WIDTHS),
             *(measure.RunSpec("pgdt", "control", f"query-where-{s}", "warm", "")
               for s in measure.PREDICATE_SHAPES),
-            *(s for s in measure._parallel_specs() if "query" in s.command),
             *(measure.RunSpec("pgdt", "control", c, "warm", "")
               for c, _, _ in measure._ALLOCATOR_SHAPES if c.startswith("query")),
         ]
@@ -752,12 +757,6 @@ class DataLevelQueries(unittest.TestCase):
             c for c in measure.command_shapes() if "--dtcache none" in measure._script(c)
         }
         self.assertEqual(uncached, {"query-nomatch", "query-nomatch-rss"})
-
-    def test_every_row_of_the_jobs_axis_reads_one_cache(self):
-        scripts = [measure._script(f"query-typed-jobs-{n}") for n in measure.PARALLEL_JOBS]
-        builders = {script.partition(" && ")[0] for script in scripts}
-        self.assertEqual(len(builders), 1)
-        self.assertEqual(len({script.partition(" && ")[2] for script in scripts}), len(scripts))
 
     def test_every_query_figure_declares_what_its_cache_holds(self):
         for fid in self.FIGURES:
@@ -2196,11 +2195,16 @@ class ParallelFigures(unittest.TestCase):
         self.assertIn("parallel-peak-rss", taken)
 
     def test_every_registered_job_count_has_a_shape_in_every_family(self):
+        # The provider family's count is its `target_partitions`; the `--jobs`
+        # it states is its untimed builder's.
         for family in measure.JOBS_AXIS:
             for jobs in measure.PARALLEL_JOBS:
                 with self.subTest(family=family, jobs=jobs):
                     script = measure._script(f"{family}{jobs}")
-                    self.assertIn(f"--jobs {jobs} ", script)
+                    if family.startswith(measure.PARALLEL_SCAN):
+                        self.assertEqual(measure._dfcli_partitions(script), {str(jobs)})
+                    else:
+                        self.assertIn(f"--jobs {jobs} ", script)
                     self.assertEqual(script.count("time "), 1)
 
     def test_a_job_count_the_figures_do_not_carry_is_an_error(self):
@@ -2208,7 +2212,7 @@ class ParallelFigures(unittest.TestCase):
         # to be refused explicitly or it would run at whatever was typed and be
         # read as a row of the table.
         for command in ("parse-jobs-3", "parse-jobs-", "parse-jobs-all",
-                        "query-typed-jobs-7", "parse-rss-jobs-x"):
+                        "dfcli-query-typed-jobs-7", "parse-rss-jobs-x"):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     measure._script(command)
@@ -2228,13 +2232,18 @@ class ParallelFigures(unittest.TestCase):
         # The axis is the worker count; a budget that moved with it would make
         # each row a different apparatus and the ratios a comparison of two
         # variables.
+        # A provider leg states it as the setting `pgdt --memory` is the flag
+        # for, ahead of its query in the same process.
+        allowance = measure.stated_allowance(measure.PARALLEL_BUDGET)
         for family in measure.JOBS_AXIS:
             for jobs in measure.PARALLEL_JOBS:
                 with self.subTest(family=family, jobs=jobs):
-                    self.assertIn(
-                        f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)}",
-                        measure._script(f"{family}{jobs}"),
+                    stated = (
+                        f"'SET pgdump.memory = {allowance}'"
+                        if family.startswith(measure.PARALLEL_SCAN)
+                        else f"--memory {allowance}"
                     )
+                    self.assertIn(stated, measure._script(f"{family}{jobs}"))
 
     def test_the_budget_admits_the_widest_row_on_the_coarser_leg(self):
         # A block-decoding source charges each reader its block, the chunk
@@ -2331,7 +2340,7 @@ class ParallelFigures(unittest.TestCase):
             sorted(
                 (inp, cmd)
                 for inp in ("control", "control_xz")
-                for cmd in ("parse", "query-typed")
+                for cmd in ("parse", measure.PARALLEL_SCAN)
             ),
         )
 
@@ -6543,7 +6552,7 @@ class Governor(unittest.TestCase):
 
 
 class SubstreamAnnotation(unittest.TestCase):
-    """The sub-stream count belongs to the two typed-`query` legs and no other.
+    """The sub-stream count belongs to the two provider legs and no other.
 
     It is stated per cell rather than footnoted once, so a cell that carries it
     is making a claim about *that* leg. The count was once hand-applied to a
@@ -6552,25 +6561,26 @@ class SubstreamAnnotation(unittest.TestCase):
     mapping is asserted here rather than read off the table by eye.
     """
 
-    def test_only_typed_query_legs_are_annotated(self):
+    def test_only_provider_legs_are_annotated(self):
+        scan = measure.PARALLEL_SCAN
         annotated = {
-            (inp, family)
-            for inp, family, _ in measure.PARALLEL_LEGS
-            if family == "query-typed"
+            (inp, family) for inp, family, _ in measure.PARALLEL_LEGS if family == scan
         }
-        self.assertEqual(annotated, {("control", "query-typed"), ("control_xz", "query-typed")})
+        self.assertEqual(annotated, {("control", scan), ("control_xz", scan)})
         for inp, family, label in measure.PARALLEL_LEGS:
-            if family != "query-typed":
+            if family != scan:
                 self.assertNotIn(
-                    "typed `query`", label, f"{label} is not a typed-query leg but reads like one"
+                    "provider", label, f"{label} is not a provider leg but reads like one"
                 )
 
-    def test_a_cap_belongs_to_a_typed_query_leg(self):
+    def test_a_cap_belongs_to_a_provider_leg(self):
         # A cap for a leg nothing annotates is dead weight that reads as a
         # claim about the table. The dict may legitimately be empty — no leg's
         # count falls inside the axis at the budget stated today — so what is
         # asserted is the membership, not that anything is in it.
-        typed = {inp for inp, family, _ in measure.PARALLEL_LEGS if family == "query-typed"}
+        typed = {
+            inp for inp, family, _ in measure.PARALLEL_LEGS if family == measure.PARALLEL_SCAN
+        }
         self.assertLessEqual(set(measure.QUERY_SUBSTREAM_CAP), typed)
 
     def test_an_empty_cap_says_so_in_the_prose(self):
@@ -6580,12 +6590,12 @@ class SubstreamAnnotation(unittest.TestCase):
         # empty branch is reached by patching one in.
         with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {}):
             empty = measure._substream_note()
-        self.assertIn("neither typed-`query` leg reaches it", empty)
+        self.assertIn("neither provider leg reaches it", empty)
         self.assertNotIn("state the count they actually", empty)
         with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {"control": 14}):
             clamped = measure._substream_note()
         self.assertIn("`14` on plain", clamped)
-        self.assertNotIn("neither typed-`query` leg reaches it", clamped)
+        self.assertNotIn("neither provider leg reaches it", clamped)
 
     def test_a_cap_is_never_above_the_largest_job_count(self):
         # A cap at or above the largest `--jobs` would annotate every row with
@@ -6779,6 +6789,117 @@ class StampingTheDocument(unittest.TestCase):
         )
 
 
+class ParallelScanThroughputProvider(unittest.TestCase):
+    """`parallel-scan-throughput`'s extraction legs run the provider.
+
+    `pgdt query`'s in-order merge reads one sub-stream at a time past its
+    first round (`KD57`), so a column of it timed the merge rather than the
+    library's sub-streams. What these hold is that the replacement times a
+    scan: every column decoded, every row read, no count answered from the
+    statistics, and one answer at every count."""
+
+    FAMILY = f"{measure.PARALLEL_SCAN}-jobs-"
+
+    def test_the_query_counts_every_column_of_the_generated_table(self):
+        sql = measure.PARALLEL_SCAN_SQL
+        for name, _ in measure.perf.COLUMNS:
+            with self.subTest(column=name):
+                self.assertIn(f"count({name})", sql)
+        self.assertIn(f"FROM {measure.DFCLI_CATALOG}.{measure.perf.TABLE} ", sql)
+
+    def test_a_filter_keeps_the_counts_from_being_answered(self):
+        # Unfiltered, the plan node's exact NULL counts answer every
+        # `count(<column>)` with no row read; a pushed filter makes them
+        # estimates. `id` is written on every row, so the filter keeps them all.
+        self.assertTrue(measure.PARALLEL_SCAN_SQL.endswith(" WHERE id IS NOT NULL"))
+        self.assertEqual(measure.perf.COLUMNS[0][0], "id")
+
+    def test_every_row_reads_the_cache_its_builder_wrote_ahead_of_the_timer(self):
+        builders = set()
+        for jobs in measure.PARALLEL_JOBS:
+            script = measure._script(f"{self.FAMILY}{jobs}")
+            with self.subTest(jobs=jobs):
+                builder, _, rest = script.partition(" && ")
+                builders.add(builder)
+                self.assertNotIn("time ", builder)
+                self.assertIn(measure.GATHER_STATISTICS, builder)
+                self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
+                self.assertIn("--dtcache /dump.sql.dtcache ", builder)
+                self.assertTrue(
+                    rest.startswith(
+                        f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.DFCLI} "
+                        f"--dump {measure.DFCLI_CATALOG}=/dump.sql "
+                    ),
+                    rest,
+                )
+                self.assertNotIn("; ", script)
+        self.assertEqual(len(builders), 1)
+
+    def test_the_answer_is_read_back_outside_the_timer(self):
+        script = measure._script(f"{self.FAMILY}1")
+        timed, _, after = script.partition(">/tmp/result.csv && ")
+        self.assertEqual(after, measure.DFCLI_ANSWER)
+        self.assertNotIn("echo", timed)
+
+    def test_the_allowance_is_set_before_the_query_in_one_process(self):
+        _, argv = measure.parallel_scan_invocation(8, "/dump.sql")
+        allowance = measure.stated_allowance(measure.PARALLEL_BUDGET)
+        self.assertEqual(
+            argv[-4:], ["-c", f"SET pgdump.memory = {allowance}", "-c", measure.PARALLEL_SCAN_SQL]
+        )
+
+    def test_a_count_the_figure_does_not_carry_is_refused(self):
+        with self.assertRaises(ValueError):
+            measure.parallel_scan_invocation(3, "/dump.sql")
+
+    def test_only_the_provider_legs_run_the_second_program(self):
+        for spec in measure._parallel_specs():
+            with self.subTest(command=spec.command):
+                self.assertEqual(
+                    spec.binary, "dfcli" if spec.command.startswith(self.FAMILY) else "pgdt"
+                )
+
+    def test_one_answer_passes_and_anything_else_is_refused(self):
+        one = {"result_rows": "1", "result_first": "814362", "result_digest": "ab"}
+        self.assertEqual(measure.parallel_answer_problems({"a": one, "b": one}), [])
+        self.assertTrue(
+            measure.parallel_answer_problems({"a": one, "b": {**one, "result_digest": "cd"}})
+        )
+        self.assertTrue(measure.parallel_answer_problems({"a": one, "b": {}}))
+        self.assertTrue(measure.parallel_answer_problems({}))
+        self.assertTrue(
+            measure.parallel_answer_problems({"a": {**one, "result_first": "0"}})
+        )
+
+    def test_a_sitting_whose_legs_disagree_is_not_rendered(self):
+        figure = "parallel-scan-throughput"
+        specs = measure._parallel_specs()
+        answers = iter(range(len(specs)))
+        raw = {
+            "readings": {s.key(figure): [1.0] * 5 for s in specs},
+            "reported": {
+                s.key(figure): {
+                    "result_rows": "1",
+                    "result_first": "814362",
+                    "result_digest": str(next(answers)),
+                }
+                for s in specs
+                if s.binary == "dfcli"
+            },
+            "input_sizes": {"control": 3221227790, "control_xz": 591190020},
+            "runs": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = figure
+            with self.assertRaises(RuntimeError):
+                measure.run_parallel_scan_throughput(session)
+
+    def test_the_figure_declares_the_provider(self):
+        depends = measure.SELECTABLE_BY_ID["parallel-scan-throughput"].depends
+        self.assertLessEqual(set(measure.DATAFUSION), set(depends))
+
+
 class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
     """The renderer itself, over synthetic readings.
 
@@ -6799,8 +6920,10 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
     def _render(self, cap=None):
         figure = "parallel-scan-throughput"
         specs = measure._parallel_specs()
+        answer = {"result_rows": "1", "result_first": "814362", "result_digest": "ab"}
         raw = {
             "readings": {s.key(figure): [1.0, 1.0, 1.0, 1.0, 1.0] for s in specs},
+            "reported": {s.key(figure): answer for s in specs if s.binary == "dfcli"},
             "input_sizes": {"control": 3221227790, "control_xz": 591190020},
             "runs": [],
         }
@@ -6814,8 +6937,8 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
             ):
                 return measure.run_parallel_scan_throughput(session)
 
-    def test_the_shipped_cap_annotates_the_plain_typed_query_leg(self):
-        # The plain typed-`query` leg is clamped to seven sub-streams once the
+    def test_the_shipped_cap_annotates_the_plain_provider_leg(self):
+        # The plain provider leg is clamped to seven sub-streams once the
         # span is on its floor, so every one of its annotated cells carries
         # that count and no other column does. An empty dict annotates nothing
         # at all, which is what a leg no budget clamps inside the axis gets.
@@ -6832,11 +6955,11 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         for row in (r for r in empty.splitlines() if r.startswith("| ")):
             self.assertNotIn("sub-stream", row)
 
-    def test_the_annotation_is_in_the_typed_query_columns_only(self):
+    def test_the_annotation_is_in_the_provider_columns_only(self):
         body = self._render()
         rows = [r for r in body.splitlines() if r.startswith("| ")]
         header = [c.strip() for c in rows[0].strip("|").split("|")]
-        typed = {i for i, c in enumerate(header) if "typed `query`" in c}
+        typed = {i for i, c in enumerate(header) if "provider" in c}
         self.assertEqual(len(typed), 2, header)
         # Only the legs a budget clamp actually reaches are annotated, and
         # which those are is `QUERY_SUBSTREAM_CAP`'s to say.
@@ -6845,7 +6968,7 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
             for i in typed
             if ("control_xz" if "`.xz`" in header[i] else "control") in self.CAP
         }
-        self.assertTrue(capped, "no typed-`query` leg is capped, so this asserts nothing")
+        self.assertTrue(capped, "no provider leg is capped, so this asserts nothing")
 
         annotated_columns = set()
         for row in rows[2:]:  # skip header and the |---| separator
@@ -6856,7 +6979,7 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         self.assertEqual(
             annotated_columns,
             capped,
-            "the sub-stream count must appear in the capped typed-`query` columns and no others",
+            "the sub-stream count must appear in the capped provider columns and no others",
         )
 
     def test_rows_at_or_below_four_carry_no_annotation(self):

@@ -2333,7 +2333,14 @@ PARALLEL_BASELINE = 1
 #: stated families (`RESERVE_JOBS`) and its flagless one, each by its own
 #: prefix. A family added to `_script` and not here states a count nothing
 #: reconciles.
-JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-jobs-")
+#:
+#: **The provider family's count is `target_partitions`, not `--jobs`**
+#: (`PARALLEL_SCAN`): its rows run `datafusion-cli-pgdump`, and the `--jobs`
+#: its untimed builder states is `SWEEP_JOBS` on every row.
+JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "dfcli-query-typed-jobs-")
+
+#: The provider family's shape, `JOBS_AXIS`' third prefix less its `-jobs-`.
+PARALLEL_SCAN = "dfcli-query-typed"
 
 #: The **read-buffer budget** every row of both `parallel-*` figures runs at,
 #: stated as the `--memory` allowance that leaves it (`stated_allowance`).
@@ -2410,8 +2417,10 @@ PARALLEL_HEADROOM = 2 << 30
 #: is why the shared constant hid it.
 PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
-#: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
-#: keyed by input — `worker_count`'s `WorkerMemory::affords` — **for the legs
+#: The sub-stream count a provider leg of `parallel-scan-throughput` actually
+#: gets from `PARALLEL_BUDGET`, keyed by input — `worker_count`'s
+#: `WorkerMemory::affords`, reached through the scan budget's draw
+#: (`datafusion-pgdump/src/table.rs`, `scan`) — **for the legs
 #: a budget clamp reaches at all**. A leg absent from this dict is one the
 #: budget never clamps inside `PARALLEL_JOBS`, and it carries no per-cell
 #: annotation, there being nothing to say.
@@ -2529,14 +2538,12 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 #: over no cache (`--dtcache none`) maps inside the timer, timing the census
 #: and the count with the rows, and one over a metadata-level cache reads its
 #: table once more for a census, inside the timer (`NO_STATISTICS`). These are the
-#: prefixes `_script` dispatches on, `query-typed` covering
-#: `parallel-scan-throughput`'s `query-typed-jobs-` too. `query-nomatch*` is
-#: not here: it times the map and its saves, which a built cache would leave
-#: nothing of.
+#: prefixes `_script` dispatches on. `query-nomatch*` is not here: it times
+#: the map and its saves, which a built cache would leave nothing of.
 #:
 #: **Every row of a figure reads one cache**: the builder states `SWEEP_JOBS`
-#: whatever its query states, so a row of the `--jobs` axis differs from
-#: another by the query's count alone. **Builder and query are joined by
+#: whatever its query states, as `PARALLEL_SCAN`'s does on every row of its
+#: axis. **Builder and query are joined by
 #: `&&`**: a builder that failed would leave the query to map the table cold
 #: and save it inside the timer, published as a read over a cache. What the
 #: query reads carries decoding the whole cache, statistics included
@@ -2757,6 +2764,52 @@ def dfcli_shell(env: list[str], program: str, argv: list[str]) -> str:
     single-quoted."""
     words = (f"'{a}'" if " " in a else a for a in argv)
     return f"{' '.join(env)} {program} {' '.join(words)}"
+
+
+#: What a timed run of `DFCLI` answered, read back off `/tmp/result.csv`
+#: outside the timer as `key=value` lines `parse_reported` takes: its rows
+#: under the header, its first row's first field, and a digest of the whole.
+DFCLI_ANSWER = (
+    "echo result_rows=$(($(wc -l </tmp/result.csv) - 1)) && "
+    "echo result_first=$(sed -n 2p /tmp/result.csv | cut -d, -f1) && "
+    "echo result_digest=$(sha256sum </tmp/result.csv | cut -d' ' -f1)"
+)
+
+#: `parallel-scan-throughput`'s provider legs' query: every column of the
+#: control's table counted, under a filter every row passes.
+#:
+#: **Every column, so every column is decoded typed**, as the `pgdt query`
+#: legs it replaced decoded them (`KD57` is why it replaced them); **one row
+#: out**, so no printing serializes what the partitions decode in parallel.
+#: **The filter is what keeps the counts from being answered**: unfiltered,
+#: the plan node's exact NULL counts answer every `count(<column>)` with no
+#: row read, where a pushed filter hands them over as estimates
+#: (`docs/design/decisions.md`, "D89"). `id IS NOT NULL` keeps every row,
+#: since the generator writes an `id` on each, so its statistics prune
+#: nothing.
+PARALLEL_SCAN_SQL = (
+    f"SELECT {', '.join(f'count({name})' for name, _ in perf.COLUMNS)} "
+    f"FROM {DFCLI_CATALOG}.{perf.TABLE} WHERE id IS NOT NULL"
+)
+
+
+def parallel_scan_invocation(partitions: int, dump: str) -> tuple[list[str], list[str]]:
+    """The environment and the arguments one provider leg of
+    `parallel-scan-throughput` states over the dump at `dump`, at
+    `partitions` as its session's `target_partitions`.
+
+    **The allowance is the `pgdt` legs' own**, stated by a `SET` ahead of the
+    query in the same process, so each column of the table runs under one
+    stated allowance (`PARALLEL_BUDGET`)."""
+    if partitions not in PARALLEL_JOBS:
+        raise ValueError(f"{partitions} is a partition count the figure does not carry")
+    env = [f"{DFCLI_PARTITIONS}={partitions}"]
+    argv = [
+        "--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
+        "-c", f"SET pgdump.memory = {stated_allowance(PARALLEL_BUDGET)}",
+        "-c", PARALLEL_SCAN_SQL,
+    ]
+    return env, argv
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3743,10 +3796,7 @@ def _script(command: str) -> str:
             f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
             f"time {dfcli_shell(env, DFCLI, argv)} "
-            ">/tmp/result.csv && "
-            "echo result_rows=$(($(wc -l </tmp/result.csv) - 1)) && "
-            "echo result_first=$(sed -n 2p /tmp/result.csv | cut -d, -f1) && "
-            "echo result_digest=$(sha256sum </tmp/result.csv | cut -d' ' -f1)"
+            f">/tmp/result.csv && {DFCLI_ANSWER}"
         )
     if command.startswith("parse-chunk-"):
         # The read chunk, the one lever of the three I/O defaults that is a
@@ -3820,8 +3870,8 @@ def _script(command: str) -> str:
         )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
-        # apparatus's constant. Everything else about them is the shape they are
-        # named after, so a row of `parallel-scan-throughput` and the
+        # apparatus's constant. Each `pgdt` one is otherwise the shape it is
+        # named after, so a `parse` row of `parallel-scan-throughput` and the
         # corresponding row of `scan-throughput-warm` differ in `--jobs` and
         # `--memory` and nothing else.
         #
@@ -3843,12 +3893,18 @@ def _script(command: str) -> str:
                 f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
                 f"--dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
             )
-        if shape == "query-typed":
-            # The builder states `SWEEP_JOBS`, not the row's count, so every
-            # row reads one cache (`DATA_LEVEL_QUERIES`).
+        if shape == PARALLEL_SCAN:
+            # The dynamic-filter figures' builder and read-back around
+            # `PARALLEL_SCAN_SQL`: the builder states `SWEEP_JOBS`, not the
+            # row's count, so every row reads one cache, written beside the
+            # dump where `--dump` looks; the count is the provider's
+            # `target_partitions`, and `--memory` its `SET pgdump.memory`.
+            env, argv = parallel_scan_invocation(int(jobs), "/dump.sql")
             return (
-                f"{DATA_LEVEL_BUILDER}{q} query --source /dump.sql --table public.perf "
-                f"{DATA_LEVEL_QUERY} --schema-mode typed {p} >/dev/null"
+                f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
+                f"{GATHER_STATISTICS} >/dev/null && "
+                f"time {dfcli_shell(env, DFCLI, argv)} "
+                f">/tmp/result.csv && {DFCLI_ANSWER}"
             )
         raise ValueError(f"unknown command shape {command!r}")
     if command.startswith("decode-"):
@@ -4018,6 +4074,17 @@ def stated_threads(command: str) -> int | None:
 _PARSE_RUN = re.compile(r"/pgdt parse [^;]*")
 
 
+#: The command-shape prefixes `statistics_flag_problems` lets state
+#: `GATHER_STATISTICS`.
+GATHERING_FAMILIES: tuple[str, ...] = (
+    STATISTICS_FAMILY,
+    PRUNING_FAMILY,
+    DYNFILTER_FAMILY,
+    f"{PARALLEL_SCAN}-jobs-",
+    *DATA_LEVEL_QUERIES,
+)
+
+
 def statistics_flag_problems() -> list[str]:
     """Command shapes running a `pgdt parse` that does not state
     `NO_STATISTICS`.
@@ -4030,16 +4097,15 @@ def statistics_flag_problems() -> list[str]:
     `GATHER_STATISTICS` instead**, and only that — the two statistics
     figures', the dynamic-filter figures', whose scans prune by what the
     untimed builder gathered, and the query figures', which read the cache it
-    wrote (`DATA_LEVEL_QUERIES`) — and a `parse` of theirs that inherits the
+    wrote (`DATA_LEVEL_QUERIES`, `PARALLEL_SCAN`) — and a `parse` of theirs that inherits the
     request is reported exactly as anyone else's is."""
-    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY, DYNFILTER_FAMILY, *DATA_LEVEL_QUERIES)
     return [
         command
         for command in command_shapes()
         if any(
             NO_STATISTICS not in run
             and "--preamble-only" not in run
-            and not (command.startswith(gathers) and GATHER_STATISTICS in run)
+            and not (command.startswith(GATHERING_FAMILIES) and GATHER_STATISTICS in run)
             for run in _PARSE_RUN.findall(_script(command))
         )
     ]
@@ -4547,6 +4613,14 @@ class Session:
                 }
                 if spec.command == DYNFILTER_STARTUP:
                     self._last_stdout = {"startup_answer": "1"}
+            if spec.command.startswith(f"{PARALLEL_SCAN}-jobs-"):
+                # One answer for every provider leg of the figure, which it
+                # refuses to render otherwise.
+                self._last_stdout = {
+                    "result_rows": "1",
+                    "result_first": "100",
+                    "result_digest": hashlib.sha256(PARALLEL_SCAN_SQL.encode()).hexdigest(),
+                }
             if spec.command.startswith(PRUNING_FAMILY):
                 # A stand-in of what the query's own notes say, for the same
                 # reason: the pruning table divides by them and refuses a
@@ -6792,16 +6866,21 @@ def run_xz_decode_scaling(session: Session) -> str:
 #:
 #: **Two axes crossed, both of which the phase argues about separately.**
 #: Plain against `.xz` is whether there is a decoder in front of the scan;
-#: `parse` against a typed `query` is discovery against extraction. The rule
+#: `parse` against a typed scan is discovery against extraction. The rule
 #: the design argues from is one line over those two — *parallelize what is CPU-bound*
 #: (`docs/design/decisions.md`, "D25").
 #: A table missing a column cannot check that rule; it would confirm whichever
 #: half it kept.
+#:
+#: **The extraction legs run the provider, not `pgdt query`**
+#: (`PARALLEL_SCAN`): `pgdt query`'s in-order merge reads one sub-stream at a
+#: time past its first round (`KD57`), so a column of it times the merge
+#: rather than the library's sub-streams, which DataFusion polls together.
 PARALLEL_LEGS: tuple[tuple[str, str, str], ...] = (
     ("control", "parse", "Plain, `parse`"),
-    ("control", "query-typed", "Plain, typed `query`"),
+    ("control", PARALLEL_SCAN, "Plain, typed provider scan"),
     ("control_xz", "parse", "`.xz`, `parse`"),
-    ("control_xz", "query-typed", "`.xz`, typed `query`"),
+    ("control_xz", PARALLEL_SCAN, "`.xz`, typed provider scan"),
 )
 
 #: The input whose byte count a leg's rate is per.
@@ -6818,21 +6897,50 @@ PARALLEL_PLAINTEXT: dict[str, str] = {"control": "control", "control_xz": "contr
 
 def _parallel_specs() -> list[RunSpec]:
     return [
-        RunSpec("pgdt", inp, f"{family}-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        RunSpec(
+            "dfcli" if family == PARALLEL_SCAN else "pgdt",
+            inp,
+            f"{family}-jobs-{jobs}",
+            "warm-parallel",
+            f"{label}, {jobs}{'p' if family == PARALLEL_SCAN else 'j'}",
+        )
         for inp, family, label in PARALLEL_LEGS
         for jobs in PARALLEL_JOBS
     ]
 
 
+def parallel_answer_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
+    """Why `parallel-scan-throughput`'s provider legs do not price one
+    answer, keyed by each leg's `RunSpec.label`.
+
+    **Every provider cell must return one answer**, byte for byte, at every
+    partition count over both files: the two files are one plaintext and the
+    count changes no row, so a difference is a scan that lost or repeated rows
+    under the timer. An answer of no row, or a first count of none, is a
+    query that read nothing."""
+    digests = {answer.get("result_digest") for answer in reported.values()}
+    if not reported or None in digests or "" in digests or len(digests) != 1:
+        return ["the provider legs answered differently, or not at all"]
+    bad = []
+    for label, answer in reported.items():
+        if answer.get("result_rows") != "1" or answer.get("result_first", "0") == "0":
+            bad.append(f"{label}: the query counted no row")
+    return bad
+
+
 def run_parallel_scan_throughput(session: Session) -> str:
-    """Wall clock against `--jobs`, over four legs of one 3.00 GiB plaintext.
+    """Wall clock against the worker count, over four legs of one 3.00 GiB
+    plaintext: `pgdt parse` at each `--jobs`, and the provider's typed scan at
+    each `target_partitions`.
 
     **Every cell is read against the one-job cell of its own leg**, which is
     both the figure's content — what the second worker through the twenty-fourth
     buy — and its witness: `warm-parallel` gates on almost nothing, a reading
     that occupies every hardware thread being busy by construction, so what
     stands in for the gate is that a machine busy with someone else's work moves
-    a leg's whole column and leaves the ratio (`CONTENTION_LIMITS`).
+    a leg's whole column and leaves the ratio (`CONTENTION_LIMITS`). It is also
+    why two programs in two images may share a table: no cell is read against
+    another leg's.
 
     **The baseline row is the serial path, not a pool of one.** `--jobs 1` is
     `Parallelism::Serial` carrying the same stated allowance as every other row,
@@ -6847,6 +6955,15 @@ def run_parallel_scan_throughput(session: Session) -> str:
     figure = "parallel-scan-throughput"
     specs = _parallel_specs()
     session.sweep(figure, specs, session.cfg.reps(5))
+    problems = parallel_answer_problems(
+        {
+            spec.label: session.reported.get(spec.key(figure), {})
+            for spec in specs
+            if spec.binary == "dfcli"
+        }
+    )
+    if problems:
+        raise RuntimeError(f"{figure} does not price one answer: " + "; ".join(problems))
 
     by_leg: dict[tuple[str, str], dict[int, list[float]]] = {}
     for spec in specs:
@@ -6866,44 +6983,69 @@ def run_parallel_scan_throughput(session: Session) -> str:
             )
             cell = f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)} · {base / got:.2f}×"
             # A budget clamp is not `POOL_DEPTH`'s to footnote once — see
-            # `QUERY_SUBSTREAM_CAP`. A typed-`query` leg the budget clamps
-            # inside the axis states, on every row above four, the count it
-            # actually planned, so a reader never has to ask whether a given
-            # cell is the label or the ceiling; a leg absent from that dict is
-            # never clamped and carries nothing.
-            if family == "query-typed" and jobs > 4 and inp in QUERY_SUBSTREAM_CAP:
+            # `QUERY_SUBSTREAM_CAP`. A provider leg the budget clamps inside
+            # the axis states, on every row above four, the count it actually
+            # planned, so a reader never has to ask whether a given cell is
+            # the label or the ceiling; a leg absent from that dict is never
+            # clamped and carries nothing.
+            if family == PARALLEL_SCAN and jobs > 4 and inp in QUERY_SUBSTREAM_CAP:
                 achieved = min(jobs, QUERY_SUBSTREAM_CAP[inp])
                 cell += f" · {achieved} sub-stream{'s' if achieved != 1 else ''}"
             cells.append(cell)
         rows.append(cells)
-    table = md_table(["`--jobs`", *(label for _, _, label in PARALLEL_LEGS)], rows)
+    table = md_table(
+        ["`--jobs` · `target_partitions`", *(label for _, _, label in PARALLEL_LEGS)], rows
+    )
 
     plain = file_size(session.cfg, session.input_path("control", "warm-parallel"), "control")
     compressed = file_size(
         session.cfg, session.input_path("control_xz", "warm-parallel"), "control_xz"
     )
+    allowance = stated_allowance(PARALLEL_BUDGET)
     notes = (
         "\n\nEach cell is wall clock, the plaintext rate it implies, and the speedup over that "
-        "leg's own one-job row. Both `.xz` legs decode the same "
+        "leg's own one-worker row. Both `.xz` legs decode the same "
         f"{_fmt_bytes(plain)} of plaintext the plain legs read directly "
-        f"({_fmt_bytes(compressed)} on disk, {plain / compressed:.2f}×), so a rate is "
-        "comparable across all four columns.\n\n"
-        f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, the allowance "
-        f"that leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in a "
-        f"{PARALLEL_MEMORY} container — **not** the "
+        f"({_fmt_bytes(compressed)} on disk, {plain / compressed:.2f}×), so every rate is per "
+        "the same bytes.\n\n"
+        "**The `parse` legs run `pgdt parse` at `--jobs` N; the provider legs run "
+        f"`datafusion-cli-pgdump -c` at `{DFCLI_PARTITIONS}=N`**, the session's "
+        "`target_partitions`, which the provider plans a scan's sub-streams against and "
+        "DataFusion polls together. `pgdt query` is not timed: its in-order merge reads one "
+        "sub-stream at a time past its first round "
+        "([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The query is "
+        f"`SELECT count({perf.COLUMNS[0][0]}), …, count({perf.COLUMNS[-1][0]}) FROM "
+        f"{perf.TABLE} WHERE id IS NOT NULL`, a `count` of each of the table's "
+        f"{len(perf.COLUMNS)} columns: every column decoded typed "
+        "and one row out, the filter keeping every row and leaving the scan's exact NULL "
+        'counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, '
+        '"D89"). Every provider cell answered alike, byte for byte, at every count over both '
+        "files. **That binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in "
+        f"the `{image_name(session.cfg.dfcli_image)}` image rather than "
+        f"`{image_name(session.cfg.image)}`, whose glibc is older than the one it was linked "
+        "against, so a provider cell is read against its own leg and never against a "
+        "`parse` cell. Each carries the program's startup and the dump's registration, "
+        "which `dynamic-filter-join`'s startup leg reads.\n\n"
+        f"Every row states the allowance `{allowance}` — `--memory {allowance}` on a `parse` "
+        f"leg, `SET pgdump.memory = {allowance}` run ahead of the query in the same process "
+        f"on a provider leg — which leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in "
+        f"a {PARALLEL_MEMORY} container — **not** the "
         "register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The "
-        "one-job row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying "
-        "it, so an `.xz` leg's one-job row is one block-decoding reader rather than the "
-        "streaming fallback, and that serial path is what a speedup is a speedup over.\n\n"
-        "**A plain leg's `--jobs` is what is asked for, not what is delivered.** "
+        "one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` "
+        "carrying it, as is a provider scan planned at one partition, so an `.xz` leg's "
+        "one-worker row is one block-decoding reader rather than the streaming fallback, and "
+        "that serial path is what a speedup is a speedup over.\n\n"
+        "**A plain leg's count is what is asked for, not what is delivered.** "
         "`POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a "
         "worker wait for one, so a fifth fused worker on a plain source waits. What that "
         "wait costs the rows above four is not separated from anything else they pay "
         '(`docs/design/decisions.md`, "D25").\n\n'
         + _substream_note()
-        + _cached_query_note("Each typed-`query` leg, at every `--jobs`,")
-        + "\n"
-        + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
+        + "Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating "
+        f"`{GATHER_STATISTICS}` wrote beside the dump in the same container, where `--dump` "
+        "looks for it: its reading carries decoding that cache whole, statistics included, "
+        "and no mapping pass, and its filter rules out no row group.\n\n"
+        f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
         "budget-clamped;** a plain source stays on the library's default budget whatever is "
         'stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
         "state. A compressed reader is charged its block, the chunk buffer and the "
@@ -6915,7 +7057,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
 
 
 def _substream_note() -> str:
-    """What the typed-`query` columns say about the count they actually planned.
+    """What the provider columns say about the count they actually planned.
 
     Read off `QUERY_SUBSTREAM_CAP` rather than stated, because the dict is what
     decides whether a cell carries the annotation: a paragraph asserting a
@@ -6923,16 +7065,16 @@ def _substream_note() -> str:
     divergence the harness owns its own prose to avoid.
     """
     head = (
-        "**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the "
+        "**A provider leg's count can be clamped a second way, and that one the "
         "table states per cell rather than footnotes once.** `plan_partitions` solves a "
-        "query's sub-stream count against the read-buffer budget, each sub-stream costing "
+        "scan's sub-stream count against the read-buffer budget, each sub-stream costing "
         "its read plus a batch span narrowed toward the chunk size before the count is cut "
         '(`docs/design/decisions.md`, "D4", "D84") — a budget '
         "the *harness* chose, not a ceiling the library ships. "
     )
     if not QUERY_SUBSTREAM_CAP:
         return (
-            head + "**At this budget neither typed-`query` leg reaches it**, so no cell "
+            head + "**At this budget neither provider leg reaches it**, so no cell "
             "carries the annotation: what each leg is charged and what it affords is "
             "`QUERY_SUBSTREAM_CAP`'s own argument, computed once there.\n\n"
         )
@@ -9046,9 +9188,10 @@ FIGURES: list[Figure] = [
     # The parallel scan's throughput claim, and the first figure in the register
     # whose axis is the worker count of `pgdt` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
-    # path, the leader, the decoder, and the CLI where `--jobs` is parsed — plus
-    # both generators behind its inputs. It is wide on purpose: this figure is
-    # the one that would be quietly wrong if any of them changed.
+    # path, the leader, the decoder, the CLI where `--jobs` is parsed, and the
+    # provider its typed legs scan through — plus both generators behind its
+    # inputs. It is wide on purpose: this figure is the one that would be
+    # quietly wrong if any of them changed.
     Figure(
         id="parallel-scan-throughput",
         section="What a second scan worker buys, and where the plain path stops",
@@ -9064,9 +9207,12 @@ FIGURES: list[Figure] = [
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
-            # Its typed-`query` legs read a data-level cache (`CACHED_QUERY`).
+            # Its provider legs read a data-level cache (`CACHED_QUERY`), and
+            # prune by its statistics under their filter.
             *CACHE,
             *STATISTICS,
+            "pgdump_query/src/prune.rs",
+            *DATAFUSION,
         ),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,

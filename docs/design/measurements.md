@@ -127,13 +127,14 @@ Eighteen standing rules for reading anything below:
   being the binary's and never the library's.
 
   **The second timed program departs from both, and its tables say so.**
-  `datafusion-cli-pgdump`, which the dynamic-filter figures time, allocates
+  `datafusion-cli-pgdump`, which the dynamic-filter figures and
+  `parallel-scan-throughput`'s provider legs time, allocates
   with `datafusion-cli`'s own `mimalloc`, and built on a host whose glibc is
   newer than the register's image's it links `libm` symbol versions that image
   does not hold, so it runs in an image of the build host's distribution
   (`measure.Config.dfcli_image`). Its
-  figures are therefore never differenced against a `pgdt` one; each states
-  its binary and image in its own table. *Rejected:* building it in a
+  readings are therefore never differenced against a `pgdt` one; each table
+  holding one states its binary and image. *Rejected:* building it in a
   toolchain container of the register's image's distribution, which keeps one
   image by adding a second compiler to the apparatus, for figures in which the
   image's `malloc` times nothing.
@@ -174,7 +175,8 @@ Eighteen standing rules for reading anything below:
   of getting it wrong is sharper, a sampling profile's buckets being per thread
   — and `uv run measure.py --check` fails a shape that pins no count. Three
   kinds of shape are exempt from stating 1, and each declares itself, below: a
-  figure whose *axis* is the count (`parallel-scan-throughput`,
+  figure whose *axis* is the count (`parallel-scan-throughput`, whose
+  provider legs state it as `target_partitions`,
   `parallel-peak-rss`, and `xz-decode-scaling` in its instrument's `--workers`),
   the `reserve` figure's stated legs, which hold the count at
   `measure.RESERVE_JOBS` and vary the budget, and that figure's flagless legs,
@@ -2995,7 +2997,9 @@ at the seven it seats from eight. **Both query columns time `pgdt query`'s
 in-order merge, not the library's sub-streams**: past its first round the merge
 reads one sub-stream at a time, so these columns are its first round's gain
 ([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The
-sub-streams themselves are what `M187` moves these legs to measure.
+harness now times these legs through the provider at each `target_partitions`
+(`M187`, `measure.PARALLEL_SCAN`); this table predates that, and its re-take
+is what reads the sub-streams.
 
 ## What a parallel scan holds resident, at two block sizes
 

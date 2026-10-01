@@ -67,7 +67,9 @@ second sweep on a first's commit re-takes, and the koji section, outside the
 register and red, which only a run on the HDD clears. Red with the reason
 written down is the standing requirement, not red cleared
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep").
+not oblige a sweep"). `parallel-scan-throughput` is owed a re-take `--stale`
+cannot see: the harness times its extraction legs through the provider
+(`M187`), and its published table is `pgdt query`'s.
 
 **Profiles and heap recordings are not figures.** `measure.py --profile-recipe`
 and `--heaptrack-recipe` print an instrument sequence and run none of it; what
