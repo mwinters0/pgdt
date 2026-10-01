@@ -234,4 +234,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show f6ef4636 -- scripts/measure.py | grep '^[-+]' "
         "| grep -v '^[-+][[:space:]]*#'",
     ),
+    Acknowledged(
+        commit="79917ef8",
+        figures=("session-drift",),
+        why="M195 adds section_label_problems to --check and corrects one figure's "
+        "section label, a heading string a sitting renders; no command shape, "
+        "staging or timed path changes",
+        verified="git show 79917ef8 -- scripts/measure.py | grep '^[-+]' "
+        "| grep -v '^[-+][[:space:]]*#'",
+    ),
 )
