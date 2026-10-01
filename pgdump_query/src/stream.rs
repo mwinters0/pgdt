@@ -3311,9 +3311,9 @@ pub enum PlanLever {
     LargerAllowance,
     /// A smaller read chunk (`crate::scan::ScanOptions::chunk_size_bytes`) —
     /// listed only where the source sizes a reader from it
-    /// ([`crate::io::Partitioning::sized_by_read_chunk`]) or the plan charged
-    /// a batch span ([`derived_source_span`]), which it floors on the chunk
-    /// unless the stated span is already below it.
+    /// ([`crate::io::Partitioning::sized_by_read_chunk`]) or the batch span
+    /// the plan charged sits on the chunk floor ([`derived_source_span`]),
+    /// never for a span stated below the chunk, which is charged as stated.
     SmallerReadChunk,
     /// Fewer sub-streams asked for (`Parallelism::jobs`), which leaves each a
     /// larger batch ([`PlanNoteKind::BatchSpanNarrowed`]).
@@ -3350,6 +3350,9 @@ pub enum PlanNoteKind {
     /// `footprint` from, a fixed multiple of it
     /// (`crate::io::Partitioning::partition_bytes`), and which floors the
     /// span unless the span was stated below it ([`derived_source_span`]).
+    /// The arm with no span names it with that condition; **the span arm
+    /// names it only where [`PlanNote::levers`] lists it**, where it moves
+    /// one of the two terms, and is otherwise left with the budget alone.
     ///
     /// **What a seat buys is not said here**: whether the sub-streams seated
     /// run concurrently is decided by how the caller drains them, which a plan
@@ -3567,7 +3570,7 @@ impl PlanNote {
         max_source_span: Option<u64>,
         memory_bytes: u64,
         allowance_raises: bool,
-        chunk_sized: bool,
+        chunk_moves: bool,
     ) -> Self {
         Self {
             kind: PlanNoteKind::ParallelismBudgetLimited {
@@ -3577,18 +3580,7 @@ impl PlanNote {
                 max_source_span,
                 memory_bytes,
             },
-            // The span it charged is floored on the chunk wherever it fired,
-            // bar a stated span already below the chunk, charged as stated.
-            //
-            // Deficiency register: `deficiency: KD59` — the chunk is listed
-            // for that span too, so on a source whose reader the chunk does
-            // not size (the default advice, `crate::io::RemoteSource`'s) the
-            // note offers a lever that moves nothing, where
-            // [`PlanNote::levers`] lists only the ones that apply. The fix is
-            // this constructor told whether the charged span sits on the
-            // chunk, and the message's span arm naming the chunk only where it
-            // is listed.
-            levers: levers(allowance_raises, chunk_sized || max_source_span.is_some(), false),
+            levers: levers(allowance_raises, chunk_moves, false),
         }
     }
 
@@ -3658,16 +3650,22 @@ impl Finding for PlanNote {
                 max_source_span,
                 memory_bytes,
             } => match max_source_span {
-                Some(span) => format!(
-                    "asked for up to {requested} sub-stream(s), but a memory budget of \
-                     {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
-                     byte(s) to decode plus {span} byte(s) held by its own batch — the batch \
-                     span is already as small as the plan will make it, so what seats more is \
-                     a smaller read chunk, which a source cutting by one sizes the first from \
-                     and which floors the second unless that span was stated below it, or a \
-                     larger memory budget, which is not the same as a larger allowance on a \
-                     source that recommends no per-reader cost of its own"
-                ),
+                Some(span) => {
+                    let chunk = if self.levers.contains(&PlanLever::SmallerReadChunk) {
+                        "a smaller read chunk, which sets one or both of those costs on this \
+                         source, or "
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "asked for up to {requested} sub-stream(s), but a memory budget of \
+                         {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
+                         byte(s) to decode plus {span} byte(s) held by its own batch — the batch \
+                         span is already as small as the plan will make it, so what seats more \
+                         is {chunk}a larger memory budget, which is not the same as a larger \
+                         allowance on a source that recommends no per-reader cost of its own"
+                    )
+                }
                 None => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
                      {memory_bytes} byte(s) affords only {planned} at {footprint} byte(s) to \
@@ -3918,6 +3916,13 @@ fn plan_partitions(
     // declined (`docs/design/decisions.md`, "D84").
     let charged_span =
         stated_span.map(|span| derived_source_span(charge, parallelism, span, chunk_size));
+    // A span is on the chunk floor where it equals the chunk: the derived span
+    // is `min(stated, max(room, chunk))`, which is the chunk only where the
+    // room is at most the chunk and the stated span at least it, so a smaller
+    // chunk lowers it wherever the count note below fires, the room being
+    // below the chunk there. A span stated below the chunk is charged as
+    // stated, and a smaller chunk moves nothing of it.
+    let span_on_chunk = charged_span == Some(chunk_size);
     let charge = match charged_span {
         Some(span) => charge.plus_per_worker(span as u64),
         None => charge,
@@ -3970,7 +3975,11 @@ fn plan_partitions(
             charged_span.map(|span| span as u64),
             memory_bytes,
             raises(memory_bytes),
-            chunk_sized,
+            // The chunk moves the charge through either term: the reader's
+            // cost where the source sizes it from the chunk, and the span
+            // where it sits on the chunk floor. A span stated below the chunk
+            // is charged as stated and moves with nothing here.
+            chunk_sized || span_on_chunk,
         ));
     }
 
@@ -5802,6 +5811,89 @@ mod tests {
         assert!(note.message().contains("a smaller read chunk"), "{}", note.message());
         let (_, widened) = planned(256 << 10, Parallelism::workers(4, cap), Some(64 << 20));
         assert!(widened > narrowed, "{widened:?} against {narrowed:?}");
+    }
+
+    /// **The count note offers the chunk for the span only where the span
+    /// sits on the chunk floor.** Over a source taking the default advice —
+    /// one partition at no reader cost, `RemoteSource`'s — the chunk sizes no
+    /// reader, so what it can move is the span alone: a span floored on the
+    /// chunk lists it and the sentence names it, a span stated below the
+    /// chunk is charged as stated and does neither. The premise is checked
+    /// too: a smaller chunk lowers the first charged span and leaves the
+    /// second where it was.
+    #[test]
+    fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
+        use PlanLever::{LargerAllowance, SmallerReadChunk};
+        use std::future::Future;
+        use std::time::SystemTime;
+        struct Unadvised;
+        impl ByteRangeSource for Unadvised {
+            fn read_range(
+                &self,
+                _offset: u64,
+                _len: usize,
+            ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+                Box::pin(async { Ok(Bytes::new()) })
+            }
+            fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+                Box::pin(async { Ok(45) })
+            }
+            fn modified(
+                &self,
+            ) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+                Box::pin(async { Ok(None) })
+            }
+        }
+        let block = CopyBlock {
+            header: crate::copy::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
+            database: None,
+            header_offset: 0,
+            data_offset: 33,
+            terminator_offset: 42,
+            end_offset: 45,
+            row_count: 2,
+            partition_root: None,
+            statistics: None,
+            statistics_declined: None,
+            array_shapes: Some(Vec::new()),
+            unrepresentable: Some(Vec::new()),
+        };
+        let chunk = 1 << 20;
+        let plan = |chunk: usize, budget: u64, span: usize| {
+            plan_partitions(
+                &Unadvised,
+                std::slice::from_ref(&block),
+                &BTreeMap::new(),
+                Parallelism::workers(8, budget),
+                Some(span),
+                chunk,
+            )
+        };
+        let limited = |chunk: usize, budget: u64, span: usize| {
+            let (_, notes, charged, _) = plan(chunk, budget, span);
+            let note = notes
+                .into_iter()
+                .find(|note| matches!(note.kind, PlanNoteKind::ParallelismBudgetLimited { .. }))
+                .unwrap_or_else(|| panic!("no count note at {budget} byte(s), span {span}"));
+            (note, charged)
+        };
+
+        // Eight readers of no cost inside 4 MiB leave half a MiB apiece, below
+        // the chunk, so a 64 MiB span is floored on it and four are seated.
+        let (floored, charged) = limited(chunk, 4 << 20, 64 << 20);
+        assert_eq!(charged, Some(chunk));
+        assert_eq!(floored.levers, [LargerAllowance, SmallerReadChunk]);
+        assert!(floored.message().contains("a smaller read chunk"), "{}", floored.message());
+        assert!(plan(chunk / 2, 4 << 20, 64 << 20).2 < charged, "a smaller chunk lowers it");
+
+        // A 256 KiB span stated below the chunk inside 1 MiB seats four too,
+        // charged as stated whatever the chunk.
+        let (stated, charged) = limited(chunk, 1 << 20, 256 << 10);
+        assert_eq!(charged, Some(256 << 10));
+        assert_eq!(stated.levers, [LargerAllowance]);
+        assert!(!stated.message().contains("read chunk"), "{}", stated.message());
+        assert!(stated.message().contains("a larger memory budget"), "{}", stated.message());
+        assert_eq!(plan(chunk / 2, 1 << 20, 256 << 10).2, charged, "nothing the chunk moves");
     }
 
     /// **A note is a `Warning` exactly where the budget declined something

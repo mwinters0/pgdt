@@ -343,7 +343,3 @@ than reading as a phase nobody has sliced.
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
-
-- **KD59** — a count note beside a batch span stated below the read chunk
-  lists the chunk as a lever, which on a source the chunk does not size moves
-  nothing. **(b) owned by `M196`**. Detail: `pgdump_query/src/stream.rs`.

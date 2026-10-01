@@ -57,10 +57,11 @@ gap.
 ## The plain-source inertness now has a user-facing consumer
 
 **Fact.** `PlanNoteKind::ParallelismBudgetLimited` no longer offers "raise the
-memory budget to get more" alone. Both arms name the **announced read chunk**
-(`crate::scan::ScanOptions::chunk_size_bytes`) as the lever a plain source
-actually has — a source cutting by it sizes the decode term from it, and it
-floors the span term unless the span was stated below it.
+memory budget to get more" alone. On a plain source both arms name the
+**announced read chunk** (`crate::scan::ScanOptions::chunk_size_bytes`) as the
+lever it actually has — a source cutting by it sizes the decode term from it,
+and it floors the span term unless the span was stated below it; the span arm
+names it only where `PlanNote::levers` lists it.
 [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--chunk-size`: you almost certainly do not need it" says the same to a user.
 
