@@ -4559,35 +4559,89 @@ class WarmBound(unittest.TestCase):
         stager.plan(measure.EVERY_FIGURE)
         self.assertGreater(stager.budget() - max(stager.group_need.values()), 64 * 1024)
 
-    def test_a_split_figure_partitions_its_warm_set(self):
+    def test_a_split_figure_covers_its_warm_set(self):
+        # An input is measured in a second sweep only where a declared
+        # subtraction pairs it with that sweep's other input: a repeat nothing
+        # reads is a full-size input's reps spent for no reading.
+        paired = {
+            (s.source, name)
+            for fig in measure.EVERY_FIGURE
+            for s in fig.subtracts
+            for name in s.inputs
+        }
         for fig in measure.EVERY_FIGURE:
             if not fig.warm_groups:
                 continue
             with self.subTest(figure=fig.id):
                 named = [name for group in fig.warm_groups for name in group]
-                self.assertEqual(sorted(named), sorted(fig.warm_inputs))
-                self.assertEqual(len(named), len(set(named)))
+                self.assertEqual(set(named), set(fig.warm_inputs))
+                self.assertEqual(len(set(fig.warm_groups)), len(fig.warm_groups))
+                for group in fig.warm_groups:
+                    self.assertEqual(len(group), len(set(group)))
+                for name in {n for n in named if named.count(n) > 1}:
+                    for gi, group in enumerate(fig.warm_groups):
+                        if name in group:
+                            self.assertTrue(
+                                any(
+                                    measure.subtraction_sweep(fig.id, name, other) == gi
+                                    for other in group
+                                    if other != name and (fig.id, other) in paired
+                                ),
+                                f"{name} is in sweep {gi} beside nothing it is paired with",
+                            )
 
     def test_the_figures_the_bound_splits(self):
         # One sweep per input where no reading subtracts one input from
-        # another; `nested-end-to-end` keeps control and composite together,
-        # because `cross-file-floor`'s row 1 pairs their reps.
+        # another; `nested-end-to-end` measures control beside each nested
+        # file, because every reading across its files is against control.
         self.assertEqual(
             {f.id: f.warm_groups for f in measure.EVERY_FIGURE if f.warm_groups},
             {
                 "scan-throughput-warm": (("control",), ("large_object",), ("insert_run",)),
-                "nested-end-to-end": (("control", "composite"), ("arrays",)),
+                "nested-end-to-end": (("control", "composite"), ("control", "arrays")),
                 "statistics-gathering": (
                     ("control",), ("arrays",), ("large_object",), ("insert_run",)
                 ),
             },
         )
 
-    def test_the_cross_file_pair_is_one_warm_set(self):
-        source = inspect.getsource(measure.run_cross_file_floor)
-        self.assertIn('_per_row_diffs(session, "nested-end-to-end", "control", "composite")', source)
-        groups = measure.FIGURES_BY_ID["nested-end-to-end"].staging_groups
-        self.assertIn(("control", "composite"), groups)
+    def test_every_declared_subtraction_lies_in_one_sweep(self):
+        # The rule the split is held to: two inputs a reading subtracts are
+        # measured together, whichever figure reads them.
+        declared = [(fig.id, s) for fig in measure.EVERY_FIGURE for s in fig.subtracts]
+        self.assertTrue(declared)
+        for reader, s in declared:
+            with self.subTest(reader=reader, source=s.source, inputs=s.inputs):
+                source = measure.EVERY_BY_ID[s.source]
+                self.assertNotEqual(*s.inputs)
+                homes = [g for g in source.sweeps if set(s.inputs) <= set(g)]
+                self.assertEqual(len(homes), 1, source.sweeps)
+                requires = measure.EVERY_BY_ID[reader].requires
+                self.assertTrue(reader == s.source or s.source in requires)
+
+    def test_the_nested_figure_and_its_consumer_declare_what_they_read(self):
+        self.assertEqual(
+            measure.subtraction_sweep("nested-end-to-end", "control", "composite"), 0
+        )
+        self.assertEqual(measure.subtraction_sweep("nested-end-to-end", "arrays", "control"), 1)
+        self.assertEqual(measure.subtraction_sweep("cross-file-floor", "control", "control43"), 0)
+
+    def test_an_undeclared_cross_input_reading_is_refused(self):
+        # composite and arrays are in no one sweep, and nothing declares them.
+        for a, b in (("composite", "arrays"), ("control", "control43")):
+            with self.subTest(pair=(a, b)):
+                with self.assertRaises(ValueError):
+                    measure.subtraction_sweep("nested-end-to-end", a, b)
+        with self.assertRaises(ValueError):
+            measure._per_row_diffs(None, "nested-end-to-end", "composite", "arrays")
+
+    def test_a_declared_pair_no_one_sweep_holds_is_refused(self):
+        fig = measure.EVERY_BY_ID["nested-end-to-end"]
+        stray = measure.Subtraction("nested-end-to-end", ("composite", "arrays"), "x")
+        with unittest.mock.patch.object(fig, "subtracts", (*fig.subtracts, stray)):
+            with self.assertRaises(ValueError) as caught:
+                measure.subtraction_sweep("nested-end-to-end", "composite", "arrays")
+        self.assertIn("0 sweeps", str(caught.exception))
 
     def test_an_explicit_budget_only_caps_it_lower(self):
         self.assertEqual(self._stager(4).budget(), 4 * measure.GIB)
@@ -4687,7 +4741,75 @@ class SplitSweep(unittest.TestCase):
         parts = measure.split_specs(fig.id, measure._nested_specs(), fig.staging_groups)
         self.assertEqual([gi for gi, _ in parts], [0, 1])
         self.assertEqual({s.input for s in parts[0][1]}, {"control", "composite"})
-        self.assertEqual({s.input for s in parts[1][1]}, {"arrays"})
+        self.assertEqual({s.input for s in parts[1][1]}, {"control", "arrays"})
+        # The second sweep's control is a reading of its own; the first's
+        # keys as it always did, which is what the allocator table borrows.
+        self.assertEqual({s.sweep for s in parts[0][1]}, {None})
+        self.assertEqual(
+            {(s.input, s.sweep) for s in parts[1][1]}, {("control", 1), ("arrays", None)}
+        )
+        keys = [s.key(fig.id) for s in measure._nested_specs()]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertIn("nested-end-to-end/pgdt/control/query-typed/warm/sweep=1", keys)
+        self.assertIn("nested-end-to-end/pgdt/control/query-typed/warm", keys)
+
+    def test_a_spec_names_only_a_later_group_staging_its_input(self):
+        groups = measure.FIGURES_BY_ID["nested-end-to-end"].staging_groups
+        for sweep in (0, 2):
+            spec = measure.RunSpec("pgdt", "control", "query-typed", "warm", "x", sweep=sweep)
+            with self.subTest(sweep=sweep):
+                with self.assertRaises(ValueError):
+                    measure.split_specs("nested-end-to-end", [spec], groups)
+        arrays = measure.RunSpec("pgdt", "arrays", "query-typed", "warm", "x", sweep=0)
+        with self.assertRaises(ValueError):
+            measure.split_specs("nested-end-to-end", [arrays], groups)
+        with self.assertRaises(ValueError):
+            measure.in_sweep("nested-end-to-end", arrays, 0)
+
+    def test_an_unsplit_figure_refuses_a_spec_naming_a_sweep(self):
+        session = self._session()
+        session.take = lambda spec, rep: 1.0
+        spec = measure.RunSpec("pgdt", "control", "query-typed", "warm", "x", sweep=1)
+        with self.assertRaises(ValueError):
+            session.sweep("cross-file-floor", [spec], 1)
+
+    def test_the_nested_table_reads_each_file_against_its_own_sweep(self):
+        # Distinct controls per sweep, so a headline read against the wrong
+        # one renders a different number.
+        legs = {
+            ("control", None): (1.0, 2.0),
+            ("composite", None): (1.0, 2.5),
+            ("control", 1): (1.1, 2.6),
+            ("arrays", None): (1.1, 5.0),
+            ("control43", None): (1.0, 2.0),
+        }
+        readings = {}
+        for (name, sweep), (strings, typed) in legs.items():
+            figure = "cross-file-floor" if name == "control43" else "nested-end-to-end"
+            for command, value in (("query-strings", strings), ("query-typed", typed)):
+                spec = measure.RunSpec("pgdt", name, command, "warm", "", sweep=sweep)
+                readings[spec.key(figure)] = [value] * 5
+        for command, value in (("query-strings", 1.0), ("query-typed", 2.0)):
+            spec = measure.RunSpec("pgdt", "control", command, "warm", "")
+            readings[spec.key("cross-file-floor")] = [value] * 5
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True, cache_dir=Path(tmp))
+            session = measure.ReplaySession(
+                cfg, {"readings": readings, "runs": []}, Path(tmp), lambda _m: None
+            )
+            table = measure.run_nested_end_to_end(session)
+            rows = cfg.size_gib * measure.GIB // 4000
+            self.assertIn("| control — 16 scalar columns, in `--composite`'s sweep |", table)
+            self.assertIn(
+                "| control — 16 scalar columns, in `--arrays --composite`'s sweep |", table
+            )
+            headline = ((5.0 - 1.1) - (2.6 - 1.1)) / rows * 1e6
+            self.assertIn(f"**{headline:+.2f} µs/row**", table)
+            self.assertIn("`--arrays --composite` 1.000×", table)
+            self.assertIn("`--composite` 1.000×", table)
+            floor = measure.run_cross_file_floor(session)
+            share = ((2.5 - 1.0) - (2.0 - 1.0)) / rows * 1e6
+            self.assertIn(f"**{share:+.2f} µs**", floor)
 
     def test_a_spec_no_group_stages_is_an_error(self):
         groups = measure.FIGURES_BY_ID["scan-throughput-warm"].staging_groups

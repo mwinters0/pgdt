@@ -1638,23 +1638,46 @@ class StagingError(RuntimeError):
 def split_specs(
     figure: str, specs: Sequence[RunSpec], groups: Sequence[tuple[str, ...]]
 ) -> list[tuple[int, list[RunSpec]]]:
-    """A split figure's specs by the group their input is staged in, in group
-    order, each group's specs in the order given; groups no spec reads are
-    left out.
+    """A split figure's specs by the group they are swept in, in group order,
+    each group's specs in the order given; groups no spec reads are left out.
+    A spec is swept in the first group staging its input unless it names a
+    later one (`RunSpec.sweep`).
 
     **A spec a group cannot place is an error**, not a sweep of its own: a
-    split figure reads every input warm, and a spec off tmpfs or over an input
-    no group names would be measured beside nothing it was declared with."""
+    split figure reads every input warm, and a spec off tmpfs, over an input
+    no group names, or naming a group that does not stage its input would be
+    measured beside nothing it was declared with. So is a spec naming its
+    first group, which would key one reading two ways."""
     parts: list[list[RunSpec]] = [[] for _ in groups]
     for spec in specs:
         homes = [gi for gi, group in enumerate(groups) if spec.input in group]
-        if regime_spec(spec.regime).area != "warm" or len(homes) != 1:
+        where = spec.label or spec.command
+        if regime_spec(spec.regime).area != "warm" or not homes:
             raise ValueError(
-                f"{figure} is split into warm groups, and {spec.label or spec.command} reads "
-                f"{spec.input!r} in the {spec.regime} regime, which no one group stages"
+                f"{figure} is split into warm groups, and {where} reads "
+                f"{spec.input!r} in the {spec.regime} regime, which no group stages"
             )
-        parts[homes[0]].append(spec)
+        if spec.sweep is not None and (spec.sweep not in homes or spec.sweep == homes[0]):
+            raise ValueError(
+                f"{figure}: {where} names sweep {spec.sweep}, but {spec.input!r} is first "
+                f"staged in sweep {homes[0]} and in {homes}; a spec names only a later group "
+                "staging its input"
+            )
+        parts[homes[0] if spec.sweep is None else spec.sweep].append(spec)
     return [(gi, part) for gi, part in enumerate(parts) if part]
+
+
+def in_sweep(figure: str, spec: RunSpec, group: int) -> RunSpec:
+    """`spec` as it is swept in `figure`'s warm group `group`: unchanged in the
+    first group staging its input, or in an unsplit figure's one sweep, and
+    naming the group otherwise (`RunSpec.sweep`)."""
+    groups = EVERY_BY_ID[figure].staging_groups
+    homes = [gi for gi, g in enumerate(groups) if spec.input in g]
+    if len(groups) < 2 or (homes and homes[0] == group):
+        return dataclasses.replace(spec, sweep=None)
+    if group not in homes:
+        raise ValueError(f"{figure}'s sweep {group} does not stage {spec.input!r}")
+    return dataclasses.replace(spec, sweep=group)
 
 
 def nominal_size(cfg: Config, name: str) -> int:
@@ -2138,6 +2161,12 @@ class RunSpec:
     #: arrangement was measured, and two legs cannot differ by it alone — the
     #: build does not change the argv.
     instrument: bool = False
+    #: Which of a split figure's `warm_groups` this run is swept in, where its
+    #: input is staged in more than one: `None` is the first group staging it,
+    #: so only a later group's run states one (`in_sweep`). **Part of `key`**:
+    #: the same input in two sweeps is two readings, each paired only with its
+    #: own sweep's (`nested-end-to-end`'s control).
+    sweep: int | None = None
 
     def key(self, figure: str) -> str:
         """This run's identity, which is what a reading is filed under.
@@ -2147,9 +2176,12 @@ class RunSpec:
         failure `_attribution_specs` names, where two legs differing only in the
         words a table prints silently become one reading. It is appended rather
         than always present so that a past sitting's `raw.json` still renders:
-        every spec that states no limit keys exactly as it did before."""
+        every spec that states no limit keys exactly as it did before. A later
+        sweep's run is appended the same way."""
         base = f"{figure}/{self.binary}/{self.input}/{self.command}/{self.regime}"
-        return base if self.memory is None else f"{base}/m={self.memory}"
+        if self.memory is not None:
+            base += f"/m={self.memory}"
+        return base if self.sweep is None else f"{base}/sweep={self.sweep}"
 
 
 #: The perf table's columns, split the way the generator writes them: the 16
@@ -4717,6 +4749,8 @@ class Session:
         fig = EVERY_BY_ID.get(figure)
         groups = fig.staging_groups if fig else ()
         if len(groups) < 2:
+            if named := [s.label or s.command for s in specs if s.sweep is not None]:
+                raise ValueError(f"{figure} is one sweep, and {named} name a warm group")
             self._sweep_one(figure, specs, reps)
             return
         for gi, part in split_specs(figure, specs, groups):
@@ -5401,6 +5435,30 @@ class Shared:
     republished: tuple[RunSpec, ...] = ()
 
 
+@dataclass(frozen=True)
+class Subtraction:
+    """A reading this figure takes across two inputs of `source`'s reps.
+
+    Declared because which inputs share a sweep is decided by it: a difference
+    or a ratio between two inputs' readings, rep by rep or median against
+    median, holds only where both were taken in one sweep, a session's own
+    level shift being as large as what such a difference resolves
+    (`measurements.md`, "Re-take a comparison table whole"). Where it is read
+    is no matter -- a table row, a sentence or heading of the figure's
+    section, or another figure consuming `source`'s reps -- and the reader
+    declares it. `test_measure.py` holds each to one of `source`'s warm
+    groups, and `_per_row_diffs` refuses a pair nothing declares. A reading
+    normalised within its own sweep -- a shape against its own floor, a leg
+    against its own one-worker row -- is set beside another sweep's, never
+    subtracted from it, and is not one."""
+
+    source: str
+    #: The pair, unordered: which side is subtracted is the reader's.
+    inputs: tuple[str, str]
+    #: What reads it, in the section's own terms.
+    what: str
+
+
 @dataclass
 class Figure:
     id: str
@@ -5430,9 +5488,9 @@ class Figure:
     warm_inputs: tuple[str, ...] = ()
     #: A figure whose warm set outgrows `warm_bound`, split: each group is
     #: staged and swept on its own, in this order, so `Session.sweep` runs a
-    #: spec only beside the specs over its own group. Inputs share a group only
-    #: where a reading subtracts one from another, paired rep by rep -- a
-    #: difference over reps taken in two sweeps is no longer paired. Empty is
+    #: spec only beside the specs over its own group. Inputs share a group
+    #: wherever a declared `Subtraction` pairs them, and an input two groups'
+    #: subtractions both need is measured in each (`RunSpec.sweep`). Empty is
     #: one sweep over `warm_inputs`.
     warm_groups: tuple[tuple[str, ...], ...] = ()
     #: Inputs this figure reads cold off the NVMe. A third list rather than a
@@ -5445,6 +5503,9 @@ class Figure:
     #: read off it, and `share_readings` writes the table's provenance
     #: paragraph from it.
     shares: tuple[Shared, ...] = ()
+    #: The cross-input readings this figure reads, its own reps' or another
+    #: figure's.
+    subtracts: tuple[Subtraction, ...] = ()
     #: The container memory limit this figure's runs are given, where the
     #: recorded 512 MB is not what it needs. It is an **apparatus** departure,
     #: so a figure that sets it says so in its own table: the register's one
@@ -5478,6 +5539,39 @@ class Figure:
         if self.warm_groups:
             return self.warm_groups
         return (self.warm_inputs,) if self.warm_inputs else ()
+
+    @property
+    def sweeps(self) -> tuple[tuple[str, ...], ...]:
+        """The input sets this figure measures together: its `warm_groups`, or
+        every input it reads as one sweep."""
+        if self.warm_groups:
+            return self.warm_groups
+        return (tuple(dict.fromkeys((*self.warm_inputs, *self.cold_inputs, *self.nvme_inputs))),)
+
+
+def subtraction_sweep(source: str, a: str, b: str) -> int:
+    """The sweep of `source` in which a reading across `a` and `b` is taken:
+    the one group holding both, for a pair some figure declares.
+
+    **An undeclared pair is refused**, and so is a declared one no single
+    group holds: either is a difference whose two sides may come from two
+    sweeps, which is a session's drift published as a between-file one."""
+    pair = {a, b}
+    if not any(
+        s.source == source and set(s.inputs) == pair
+        for fig in EVERY_FIGURE
+        for s in fig.subtracts
+    ):
+        raise ValueError(
+            f"no figure declares a subtraction of {a!r} and {b!r} over {source}'s reps "
+            "(`Figure.subtracts`)"
+        )
+    homes = [gi for gi, group in enumerate(EVERY_BY_ID[source].sweeps) if pair <= set(group)]
+    if len(homes) != 1:
+        raise ValueError(
+            f"{source} measures {a!r} and {b!r} together in {len(homes)} sweeps, not one"
+        )
+    return homes[0]
 
 
 #: The paths behind each mechanism a figure can depend on. Declared narrowly
@@ -5736,49 +5830,78 @@ def _cached_query_note(subject: str) -> str:
     )
 
 
-_NESTED_FILES = (
-    ("control", "control — 16 scalar columns"),
-    ("composite", "`--composite` — the same 16 plus one composite"),
-    ("arrays", "`--arrays --composite` — the same 16 plus three nested"),
-)
+_NESTED_FILES = {
+    "control": "control — 16 scalar columns",
+    "composite": "`--composite` — the same 16 plus one composite",
+    "arrays": "`--arrays --composite` — the same 16 plus three nested",
+}
+
+#: The figure's two sweeps: each nested file with a control of its own, since
+#: two of them and a control do not fit `warm_bound` and every reading across
+#: files is against control (`Figure.subtracts`). The first sweep's control is
+#: the one `cross-file-floor` and the allocator table read.
+_NESTED_SWEEPS: tuple[tuple[str, str], ...] = (("control", "composite"), ("control", "arrays"))
 
 
 def _nested_specs() -> list[RunSpec]:
     specs = []
-    for name, _ in _NESTED_FILES:
-        for mode in ("strings", "typed"):
-            specs.append(RunSpec("pgdt", name, f"query-{mode}", "warm", f"{name} {mode}"))
+    for gi, (_, nested) in enumerate(_NESTED_SWEEPS):
+        for name in _NESTED_SWEEPS[gi]:
+            beside = f" beside {nested}" if name == "control" else ""
+            for mode in ("strings", "typed"):
+                spec = RunSpec("pgdt", name, f"query-{mode}", "warm", f"{name} {mode}{beside}")
+                specs.append(in_sweep("nested-end-to-end", spec, gi))
     return specs
 
 
 def run_nested_end_to_end(session: Session) -> str:
     figure = "nested-end-to-end"
-    specs = _nested_specs()
-    session.sweep(figure, specs, session.cfg.reps(5))
+    session.sweep(figure, _nested_specs(), session.cfg.reps(5))
     rows, per_rep = [], []
-    for name, label in _NESTED_FILES:
-        s = RunSpec("pgdt", name, "query-strings", "warm", "")
-        t = RunSpec("pgdt", name, "query-typed", "warm", "")
-        sv, tv = session.get(figure, s), session.get(figure, t)
-        profile = session.stager.profile(name)
-        diff = median(tv) - median(sv)
-        rows.append(
-            [
-                label,
-                f"{profile['rows']:,}",
-                f"{fmt_s(median(sv))} s",
-                f"{fmt_s(median(tv))} s",
-                f"**{diff / profile['rows'] * 1e6:.2f} µs/row**",
-                f"{median(tv) / median(sv):.2f}×",
-            ]
-        )
-        per_rep.append(f"- {name} — `strings`: {fmt_readings(sv)}; `typed`: {fmt_readings(tv)}")
+    for gi, (_, nested) in enumerate(_NESTED_SWEEPS):
+        for name in _NESTED_SWEEPS[gi]:
+            label = _NESTED_FILES[name]
+            flag = _NESTED_FILES[nested].partition(" — ")[0]
+            beside = f", in {flag}'s sweep" if name == "control" else ""
+            sv, tv = (
+                session.get(figure, in_sweep(figure, RunSpec("pgdt", name, cmd, "warm", ""), gi))
+                for cmd in ("query-strings", "query-typed")
+            )
+            profile = session.stager.profile(name)
+            diff = median(tv) - median(sv)
+            rows.append(
+                [
+                    label + beside,
+                    f"{profile['rows']:,}",
+                    f"{fmt_s(median(sv))} s",
+                    f"{fmt_s(median(tv))} s",
+                    f"**{diff / profile['rows'] * 1e6:.2f} µs/row**",
+                    f"{median(tv) / median(sv):.2f}×",
+                ]
+            )
+            per_rep.append(
+                f"- {name}{beside} — `strings`: {fmt_readings(sv)}; `typed`: {fmt_readings(tv)}"
+            )
     table = md_table(
         ["File", "Rows", "`strings`", "`typed`", "`typed` − `strings`", "Ratio"], rows
     )
+    headline = _per_row_diffs(session, figure, "control", "arrays")
+    baselines = []
+    for _, nested in _NESTED_SWEEPS:
+        control, other = (
+            session.get(figure, spec)
+            for spec in _across(figure, "control", nested, "query-strings")
+        )
+        flag = _NESTED_FILES[nested].partition(" — ")[0]
+        baselines.append(f"{flag} {median(other) / median(control):.3f}×")
     return (
         table
-        + "\n\n"
+        + "\n\n**The three nested columns' cost**, the arrays file's `typed` − `strings` less "
+        f"its own sweep's control's, paired rep by rep: **{median(headline):+.2f} µs/row** "
+        f"({', '.join(f'{v:+.2f}' for v in sorted(headline))}).\n\n"
+        "Each nested file's `strings` leg against its own sweep's control's: "
+        + ", ".join(baselines)
+        + ".\n\n"
         + _cached_query_note("Each `query`")
         + "\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
@@ -5789,18 +5912,30 @@ def run_nested_end_to_end(session: Session) -> str:
 # -- the cross-file floor ---------------------------------------------------
 
 
+def _across(figure: str, a: str, b: str, command: str) -> tuple[RunSpec, RunSpec]:
+    """`a`'s and `b`'s runs of `command` from the one sweep of `figure` a
+    declared subtraction pairs them in (`subtraction_sweep`), which refuses a
+    pair nothing declares."""
+    gi = subtraction_sweep(figure, a, b)
+    spec_a, spec_b = (
+        in_sweep(figure, RunSpec("pgdt", name, command, "warm", ""), gi) for name in (a, b)
+    )
+    return spec_a, spec_b
+
+
 def _per_row_diffs(session: Session, figure: str, a: str, b: str) -> list[float]:
-    """Per-rep µs/row differences between two files' own typed−strings costs.
+    """Per-rep µs/row differences between two files' own typed−strings costs,
+    from the one sweep that declares them a pair.
 
     Each file's typed leg is differenced against *its own* strings leg first,
     which is what makes the subtraction legitimate: whatever the untyped
     baseline is worth on a given file cancels out of that file's own
     difference, and would not cancel out of a cross-file ratio."""
+    strings, typed = (_across(figure, a, b, cmd) for cmd in ("query-strings", "query-typed"))
     out = []
-    for name in (a, b):
-        profile = session.stager.profile(name)
-        s = session.get(figure, RunSpec("pgdt", name, "query-strings", "warm", ""))
-        t = session.get(figure, RunSpec("pgdt", name, "query-typed", "warm", ""))
+    for s_spec, t_spec in zip(strings, typed):
+        profile = session.stager.profile(s_spec.input)
+        s, t = session.get(figure, s_spec), session.get(figure, t_spec)
         out.append([(tv - sv) / profile["rows"] * 1e6 for sv, tv in zip(s, t)])
     reps = min(len(out[0]), len(out[1]))
     return [out[1][i] - out[0][i] for i in range(reps)]
@@ -5808,8 +5943,8 @@ def _per_row_diffs(session: Session, figure: str, a: str, b: str) -> list[float]
 
 def run_cross_file_floor(session: Session) -> str:
     figure = "cross-file-floor"
-    # Row 1 is read off the nested sweep's own reps -- the same five runs, not
-    # a second pass over the same two files.
+    # Row 1 is read off the nested figure's first sweep's own reps -- the same
+    # five runs, not a second pass over the same two files.
     share = _per_row_diffs(session, "nested-end-to-end", "control", "composite")
     # Row 2 is this figure's own: two files that differ only in their seed.
     specs = []
@@ -8700,8 +8835,20 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=_declare(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "composite", "arrays"),
-        # `cross-file-floor`'s row 1 pairs control's reps with composite's.
-        warm_groups=(("control", "composite"), ("arrays",)),
+        warm_groups=_NESTED_SWEEPS,
+        subtracts=(
+            Subtraction(
+                "nested-end-to-end", ("control", "arrays"), "the headline, paired per rep"
+            ),
+            *(
+                Subtraction(
+                    "nested-end-to-end",
+                    ("control", nested),
+                    "each nested file's `strings` leg against its control's",
+                )
+                for _, nested in _NESTED_SWEEPS
+            ),
+        ),
         run=run_nested_end_to_end,
     ),
     Figure(
@@ -8718,6 +8865,12 @@ FIGURES: list[Figure] = [
             #: the sharing closure.
             Shared("nested-end-to-end", "row 1's per-rep differences"),
         ),
+        subtracts=(
+            Subtraction(
+                "nested-end-to-end", ("control", "composite"), "row 1, the composite's share"
+            ),
+            Subtraction("cross-file-floor", ("control", "control43"), "row 2, the seed floor"),
+        ),
         run=run_cross_file_floor,
     ),
     Figure(
@@ -8726,6 +8879,16 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS, *GEN_PERF),
         warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
+        #: The prose reads each block count's `parse` against the one-block
+        #: control of the same bytes.
+        subtracts=tuple(
+            Subtraction(
+                "per-block-quadratic",
+                (_QUADRATIC_ROWS[0][0], name),
+                "a block count against the control",
+            )
+            for name, _ in _QUADRATIC_ROWS[1:]
+        ),
         run=run_per_block_quadratic,
     ),
     # A figure whose reading is not a time. It is registered rather than left a
@@ -8759,6 +8922,11 @@ FIGURES: list[Figure] = [
         # twice by `--list`.
         depends=(*READ, *SCAN, *MAP, *CACHE, *GEN_PERF, *GEN_BLOCKS),
         warm_inputs=_RSS_ROWS,
+        subtracts=tuple(
+            Subtraction("peak-rss", (_RSS_PIVOT, name), "a row against the pivot")
+            for name in _RSS_ROWS
+            if name != _RSS_PIVOT
+        ),
         run=run_peak_rss,
     ),
     Figure(
@@ -8767,6 +8935,11 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*MAP_BUILD, *READ, *QUERY_CLI, *GEN_BLOCKS),
         warm_inputs=("blocks1000", "blocks2000", "blocks4000"),
+        #: The prose reads the series' growth per doubling, row by row.
+        subtracts=(
+            Subtraction("map-only", ("blocks1000", "blocks2000"), "the first doubling"),
+            Subtraction("map-only", ("blocks2000", "blocks4000"), "the second doubling"),
+        ),
         run=run_map_only,
     ),
     Figure(
@@ -8976,6 +9149,12 @@ FIGURES: list[Figure] = [
             ),
         ),
         warm_inputs=_ATTRIBUTION_INPUTS,
+        #: Every leg's slope, its `parse` row's over `peak-rss`'s reps where
+        #: this sitting took that figure.
+        subtracts=(
+            Subtraction("rss-attribution", _ATTRIBUTION_INPUTS, "each leg's per-block slope"),
+            Subtraction("peak-rss", _ATTRIBUTION_INPUTS, "the `parse` row's slope, borrowed"),
+        ),
         run=run_rss_attribution,
     ),
     # The budget rule's one number, the compressed path's account, and the third

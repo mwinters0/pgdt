@@ -65,9 +65,15 @@ Eighteen standing rules for reading anything below:
   tmpfs** — see "The apparatus" below, which every figure here shares.
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
-  cross-file difference a file at a time: inputs a reading subtracts share a
-  sweep, and only a table whose every row stays within one file is split one
-  sweep per input, as the warm-set bound splits three ("The apparatus"). Session-to-session level shifts of up
+  cross-file difference a file at a time: inputs share a sweep wherever
+  anything read off their reps subtracts one input's reading from another's,
+  rep by rep or median against median — a table row, a sentence or heading,
+  or another figure consuming them. Each such reading is declared by the
+  figure that reads it (`measure.Subtraction`), and `scripts/test_measure.py`
+  holds every declared pair to one of its source's sweeps. A reading
+  normalised within its own sweep — a shape against its own floor, a share
+  against a seed floor — may be set beside another sweep's, never subtracted
+  from it, and a raw absolute is quoted within its own sweep. Session-to-session level shifts of up
   to 5.6% in the median, over four pairs of sweeps, happen here on identical
   binaries and identical inputs — measured, in
   "What a session's own drift costs" below — and a
@@ -571,10 +577,11 @@ The tmpfs budget is a constant of the apparatus, `measure.warm_bound`: two
 full-size inputs, which is what one paired cross-file difference needs, plus
 64 MiB for a generator's few-KB overshoot — 6.06 GiB at 3.00 GiB inputs.
 `scripts/test_measure.py` holds every figure's warm set to it. A figure that
-outgrows it is split (`Figure.warm_groups`), one sweep per input, and inputs
-share a sweep only where a reading subtracts one from another rep by rep — a
-difference over reps from two sweeps is no longer paired. Each input's `dd`
-floor runs in its own sweep, while that input is staged. *Rejected:* growing
+outgrows it is split (`Figure.warm_groups`), one sweep per input except where
+a declared subtraction pairs two ("Re-take a comparison table whole" above),
+and an input two sweeps' subtractions both need is measured in each, as
+`nested-end-to-end`'s control is. Each input's `dd` floor runs in its own
+sweep, while that input is staged. *Rejected:* growing
 the room to fit a figure — a budget computed from the largest figure grows with
 whatever a slice adds, and the quota it meets may be one `statvfs` and `df`
 cannot see (`systemd-user-runtime-dir`'s per-user one on `/dev/shm`). Preflight
@@ -2005,11 +2012,13 @@ rows of one file. What the three files are for is the finding underneath them:
 the untyped baseline is not file-independent, and the census is one term of why.
 
 Three inputs on tmpfs, output to `/dev/null`. **Two interleaved sweeps**, the
-warm-set bound's split ("The apparatus"): control and `--composite` together,
-whose reps the cross-file figure below pairs, then `--arrays --composite`
-alone. Five reps, each running both modes on every file of its sweep in turn,
-so the slow upward drift across a session lands on a pair's rows equally rather
-than on whichever file went first. Medians of five:
+warm-set bound's split ("The apparatus"), each a nested file beside a control
+of its own: control and `--composite`, whose reps the cross-file figure below
+pairs, then control and `--arrays --composite`, so every reading across files
+is against the control of its own sweep and the table carries a control row
+per sweep. Five reps, each running both modes on every file of its sweep in
+turn, so the slow upward drift across a session lands on a pair's rows equally
+rather than on whichever file went first. Medians of five:
 
 | File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
@@ -2037,7 +2046,10 @@ ratio only against the sweep it came from; the design consumes the differences.
 **What this says.** Typing the 16 scalar columns costs **1.6 µs per row**;
 typing those plus the three nested ones costs **8.2 µs per row**. So three
 nested columns — 19% more columns — cost **6.6 µs of every row**, four times
-what all sixteen scalar columns together cost. **The two array columns
+what all sixteen scalar columns together cost. That headline is the arrays
+file's per-row difference less its own sweep's control's, paired rep by rep
+as the cross-file figure below pairs one, and the line under the table states
+it. **The two array columns
 carry most of it** — 6.15 µs against the composite column's 0.84,
 which the projection table below reads directly rather than by differencing two
 files.
@@ -2058,9 +2070,10 @@ same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
 **The untyped baseline is file-dependent, and the census is one term of it.**
-All three `strings` legs read within 2% of each other (3.47 / 3.46 / 3.49 s),
-though the `--arrays --composite` file's rows are the only ones carrying a
-`{`, so the only ones whose array shapes the mapping pass's census inspects.
+Each nested file's `strings` leg reads within 2% of its own sweep's
+control's, the ratios under the table, though the `--arrays --composite`
+file's rows are the only ones carrying a `{`, so the only ones whose array
+shapes the mapping pass's census inspects.
 Which share of a leg the census is, is a profile's attribution
 (`measure.py --profile-recipe`), not a second build's.
 
