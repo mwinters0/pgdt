@@ -32,7 +32,7 @@
 //! **Which values are unrepresentable is read, not listed**: the `types`
 //! fixture's extremes, at every major, each decode to a value
 //! [`arrow_holds`] admits or are recorded in [`UNREPRESENTABLE`], exactly,
-//! and the library's count of them is the record's, tier by tier.
+//! and the library's count of them is the record's, tier by tier (D102).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

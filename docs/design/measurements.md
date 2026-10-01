@@ -2529,9 +2529,9 @@ same cache whole, statistics included, and the pruned legs do it inside a
 39–46 ms wall, so decoding 3,072 groups' statistics costs at most that floor.
 No leg prices it below the floor: no `parse` writes a census without
 statistics, so there is no cache to set beside this one that differs by its
-statistics alone ([`roadmap-P28.9-figures-notes.md`](roadmap-P28.9-figures-notes.md),
-"Negative results"). Pricing it takes more groups or the process timing its
-own cache load, not another subtraction.
+statistics alone (`scripts/measure.py`, beside `PRUNING_LEGS`). Pricing it
+takes more groups or the process timing its own cache load, not another
+subtraction.
 
 **Rows returned agree across every leg**, 13 on the third, exactly as
 `generate_pruning_bench.py`'s draws, recomputed without writing the file,

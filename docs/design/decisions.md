@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D101 -->
+<!-- decision-watermark: D103 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -418,6 +418,13 @@ blocks of one table typed apart; the declared plan in both, each reader of `comp
 Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mode's cases,
 `the_untyped_mode_compares_its_text_column_in_each_semantics_order`.
 
+### D103 The unrepresentable mode is one option for every column, fixed where a dump is opened, apart from the schema mode
+`QueryOptions::unrepresentable` is stated by `pgdt query --unrepresentable`, `PgDumpOptions`, the `pgdump.unrepresentable` table option and the
+shell's `:unrepresentable=` suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches
+it. `--schema-mode` is about ignoring the DDL, and the mode, which reads it, is moot under `strings`. The library's refusal names the modes in its
+own words, never a front end's flag, and the provider passes it through. Rejected: a `pgdump.*` session setting, changing a schema a statement
+cannot rebuild; a third `SchemaMode`, folding a choice about values into one about the DDL. Code: `UnrepresentableMode`, `PgDumpTableOptions`.
+
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
@@ -675,3 +682,12 @@ and `profiling` do not inherit `dev`, so no figure moves. Rejected: tests under 
 drops both checks; moving a sweep out of the default suite (`pruning.rs`'s own refusal). Reopens: an
 edit-to-test rebuild costing more than the sweeps save. Code: `Cargo.toml`. Evidence:
 `docs/status/history/2026-09-25.md`, "M152: the test build optimizes".
+
+### D102 The unrepresentable category is read off hand-written extremes through DataFusion's own path, never listed
+`types`' `t_extremes` holds PostgreSQL's least, greatest and special values of each arm mapping to a type but `Utf8View`, one column an arm,
+and `t_extremes_nested` the nested shapes, by hand, PostgreSQL keeping no catalog of them. Each decoded is formatted by `arrow-cast` and cast
+strictly to `Utf8`, an error being a value its type cannot hold, recorded with its tier and held to D96's count tier by tier, so an upgrade
+moving the calendar fails the check; `floor_mapping.py` holds columns and typed arms to each other per major, so a new major's typed mapping
+forces its extremes (D38). Rejected: the list kept by review; a bound written per type (the list again); a decoder's refusal as the test,
+which took `24:00:00`; a binary type's cast, which reads its bytes as UTF-8. Code: `arrow_holds`, `floor_mapping.py`'s `extremes_problems`.
+Evidence: `every_extreme_is_held_by_arrow_or_recorded`.

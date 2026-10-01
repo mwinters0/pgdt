@@ -185,7 +185,7 @@ pub(crate) fn column_tiers(resolved: &ResolvedSchema) -> Vec<Option<ColumnTier>>
 /// **How a query reads a value PostgreSQL accepts for a column's declared
 /// type and the column's Arrow type cannot hold** — `QueryOptions`'s
 /// `unrepresentable`, stated where a dump is opened
-/// (`docs/design/decisions.md`, "D98").
+/// (`docs/design/decisions.md`, "D103").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum UnrepresentableMode {
     /// The column keeps its declared type and such a value is NULL, for every

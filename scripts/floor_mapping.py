@@ -61,7 +61,7 @@ widening only a column the map says holds a value its type cannot
 special values of each type an arm maps to an Arrow type other than
 `Utf8View`, one column per arm, and the category of values an Arrow type
 cannot hold is read off those values rather than written per type
-(`roadmap-P28-unrepresentable-values.md`, "Evidence"). So a floor row a new
+(`docs/design/decisions.md`, "D102"). So a floor row a new
 major brings forces a mapping decision above, and a typed mapping forces its
 extremes here: a typed arm no column declares, a column no typed arm answers,
 and a major whose `types` dump holds no such table are each a problem.

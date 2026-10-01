@@ -42,5 +42,5 @@ where a query-time gather observes a column completely; whether it gathers,
 and whether it may save what it gathered past "the library never replaces
 cache data", is P21's call.
 
-**Origin.** P28's grilling, 2026-09-29. *Contingent on* P28 landing that
-cold-semantics rule.
+**Origin.** P28's grilling, 2026-09-29. *Contingent on* that cold-semantics
+rule standing ([`decisions.md`](decisions.md), "D35").

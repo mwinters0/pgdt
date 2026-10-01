@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P28 — unrepresentable values | Current | [spec](roadmap-P28-unrepresentable-values.md); checklist in [`../status/STATUS.md`](../status/STATUS.md) |
+| P28 — unrepresentable values | Complete | [spec](roadmap-P28-unrepresentable-values.md); [notes](roadmap-P28-unrepresentable-values-notes.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -673,7 +673,9 @@ What it inherits:
   `v_escaped`) should grow, every retained column carrying one more
   `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
   `v_category` carries bounds its fidelity guard no longer asserts absent,
-  `pgdt query` still reading only its dictionary. Since `542fdfb` a
+  `pgdt query` still reading only its dictionary, and its builder still
+  joins the timed query by `;` where every cached-query figure's joins by
+  `&&` (`measure.py`, `DATA_LEVEL_QUERIES`). Since `542fdfb` a
   summed column keeps an `i128` a group and every tracked column a `u64` of
   text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times since.
   `statistics-gathering` now prices the whole data level, census and
