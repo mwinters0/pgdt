@@ -80,6 +80,17 @@ For more, see:
 - Upstream's [`datafusion-cli` docs](https://datafusion.apache.org/user-guide/cli/index.html)
 - The [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
 
+## Why
+I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres with indexes.
+I want last week's data from it.
+
+- Traditional approach:
+    - 36 hours + 1.5Tb to load
+    - 5 minutes to extract to Parquet
+- With `pgdt`:
+    - 1 hour + 200Mb to build the cache
+    - 15 minutes to extract the Parquet
+
 
 ## Status
 ⚠️ **Functional, with extensive tests, but still early development.**  No stability guarantees for
@@ -188,11 +199,13 @@ routinely hundreds of gigabytes, so the local-file reader aims to stay device-bo
 CPU-bound, with a flat RSS profile.
 
 ### Next
+
 Prior to v1.0 we must provide:
 - Support for all pg_dump formats and compression methods
-- Postgres-equivalent collation, at minimum for the common default of `en_US.utf8`.
+- Postgres-equivalent collation, at minimum for the common default of `en_US.utf8`
 - A Python library interface
 
+See:
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) - Sketches of future phases (aka epics)
 - [`docs/status/deficiencies.md`](docs/status/deficiencies.md) - Known deficiencies (some TODO, some
 simply properties of our design).
