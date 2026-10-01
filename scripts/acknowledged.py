@@ -307,4 +307,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 0112e9da -- pgdump_query/src/lex.rs pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="7d722fa4",
+        figures=("preamble-prepass", "rss-attribution"),
+        why="admits KD61 and KD62 to their out-of-band rows: two deficiency "
+        "markers in preamble.rs lose their promotion clause, comments only, which "
+        "comment_only_commit cannot place in that file",
+        verified="git show 7d722fa4 -- pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
