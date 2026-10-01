@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD62 -->
-**`KD1`–`KD62` are allocated, and nothing at or below `KD62` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD63 -->
+**`KD1`–`KD63` are allocated, and nothing at or below `KD63` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -344,11 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD60** — a zero in a negative-scale `numeric(p,s)` column (PG15+), which
-  `pg_dump` writes `0`, fails to decode, so the default null mode reads it as
-  NULL and counts it unrepresentable, and an unscaled zero renders back as
-  `000`. **(b) owned by `M198`**. Detail: `pgdump_query/src/decode.rs`.
-
 - **KD61** — a `CREATE TABLESPACE` statement, which `pg_dumpall` writes among
   its globals, is classified as a `CREATE TABLE` of a table named `space`, so
   `info --map` lists a `TABLE space` span. **(b) owned by `M199`**. Detail: `pgdump_query/src/preamble.rs`.
@@ -358,3 +353,11 @@ than reading as a phase nobody has sliced.
   `pg_dump` versions, the earlier segment taking them instead. **(b) owned
   by `M200`**. Detail:
   `pgdump_query/src/preamble.rs`.
+
+- **KD63** — a `numeric(p,s)` whose scale PostgreSQL 15 and later admit but
+  Arrow's decimal does not — past its precision, as `numeric(2,5)`, or past
+  the type's maximum scale — panics a typed query of its table, and one past
+  `i8` is typed at scale 0, so its non-zero values read as NULL. **(c)
+  unowned**; promoted by a dump holding such a column, the fix choosing
+  between text and a precision widened to the scale. Detail:
+  `pgdump_query/src/pgtype.rs`.

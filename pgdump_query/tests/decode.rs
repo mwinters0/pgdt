@@ -15,16 +15,16 @@
 //! real boundary rows rather than hand-built ones.
 
 use std::ops::ControlFlow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    Error, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, UnrepresentableMode, read_table,
-    render_field, table_stream,
+    Error, Expr, LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions,
+    StatisticsRequest, UnrepresentableMode, map_file, read_table, render_field, table_stream,
 };
 
 mod common;
@@ -500,4 +500,84 @@ async fn timestamp_infinity_is_read_as_null_or_refused_naming_its_context() {
         "infinity",
     )
     .await;
+}
+
+/// Columns at four negative scales (PostgreSQL 15 and later; no fixture
+/// holds one), written as `numeric_out` writes them (I51): zero as `0`
+/// whatever the scale, every other value ending in the scale's zeros. `v40`
+/// is past `Decimal128`'s precision.
+fn negative_scale_dump(dir: &Path) -> PathBuf {
+    let dump = dir.join("negative_scale.sql");
+    let text = "CREATE TABLE public.t (\n    id integer,\n    v1 numeric(3,-1),\n    \
+                v2 numeric(3,-2),\n    v5 numeric(4,-5),\n    v40 numeric(40,-3)\n);\n\n\
+                COPY public.t (id, v1, v2, v5, v40) FROM stdin;\n\
+                1\t0\t0\t0\t0\n\
+                2\t120\t1200\t-100000\t1234000\n\
+                3\t\\N\t\\N\t\\N\t\\N\n\
+                4\t0\t-9900\t0\t0\n\
+                \\.\n\nSELECT 1;\n";
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A negative scale's zero is a value of its column**: typed, it decodes
+/// and renders back as the `0` the file holds, so the default null mode reads
+/// no value of these columns as NULL, the refuse mode answers rather than
+/// refusing, a data-level `parse` counts nothing unrepresentable, and `= 0`
+/// keeps the zeros.
+#[tokio::test]
+async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = negative_scale_dump(dir.path());
+
+    let (typed, schema) = try_rows_in(&path, "public.t", QueryOptions::default()).await.unwrap();
+    assert_eq!(typed, rows(&path, "public.t", SchemaMode::Strings).await);
+    let zeros = ["1", "0", "0", "0", "0"].map(|v| Some(v.to_string()));
+    assert_eq!(typed[0], zeros, "zero renders back as written");
+    let types: Vec<&DataType> = schema.schema.fields().iter().map(|f| f.data_type()).collect();
+    assert_eq!(
+        types,
+        [
+            &DataType::Int32,
+            &DataType::Decimal128(3, -1),
+            &DataType::Decimal128(3, -2),
+            &DataType::Decimal128(4, -5),
+            &DataType::Decimal256(40, -3),
+        ]
+    );
+
+    let refuse =
+        QueryOptions { unrepresentable: UnrepresentableMode::Refuse, ..Default::default() };
+    let (refused, _) = try_rows_in(&path, "public.t", refuse).await.unwrap();
+    assert_eq!(refused, typed, "the refuse mode answers");
+
+    let source = LocalFileSource::open(&path).unwrap();
+    let mode = CacheMode::enabled(cache::colocated_path(&path));
+    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
+        .await
+        .unwrap()
+        .index;
+    let mut blocks = 0;
+    for block in index.blocks() {
+        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
+        blocks += 1;
+    }
+    assert_eq!(blocks, 1);
+
+    let zero = |column: &str| QueryOptions {
+        filter: Expr::all([Predicate {
+            column: column.into(),
+            op: PredicateOp::Eq,
+            value: Some("0".into()),
+        }]),
+        projection: Some(vec!["id".into()]),
+        ..Default::default()
+    };
+    for (column, ids) in [("v1", ["1", "4"]), ("v5", ["1", "4"]), ("v40", ["1", "4"])] {
+        let (kept, _) = try_rows_in(&path, "public.t", zero(column)).await.unwrap();
+        assert_eq!(kept, ids.map(|id| vec![Some(id.to_string())]), "{column} = 0");
+    }
+    let (kept, _) = try_rows_in(&path, "public.t", zero("v2")).await.unwrap();
+    assert_eq!(kept, [vec![Some("1".to_string())]], "v2 = 0");
 }

@@ -73,6 +73,6 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M198 | | A zero in a negative-scale `numeric(p,s)` column, written `0`, decodes as zero and renders back as `0` (`decimal_unscaled_digits`, `render_decimal`), tested at every negative scale and through the null and refuse modes, closing `KD60` | | [2026-10-01](../status/history/2026-10-01.md) |
+| M198 | 2026-10-01 | A zero in a negative-scale `numeric(p,s)` column, written `0`, decodes as zero and renders back as `0` (`decimal_unscaled_digits`, `render_decimal`), tested at every negative scale and through the null and refuse modes, closing `KD60` | | [2026-10-01](../status/history/2026-10-01.md) |
 | M199 | | The preamble's `CREATE` keywords end at a word boundary, so `CREATE TABLESPACE` classifies as no table, tested over a `pg_dumpall` globals section holding one, closing `KD61` | | [2026-10-01](../status/history/2026-10-01.md) |
 | M200 | | Every database of a `pg_dumpall` dump keeps its own version headers whatever the segment before it holds, the `dumpall` fixture's databases each asserted at every major, closing `KD62` | | [2026-10-01](../status/history/2026-10-01.md) |

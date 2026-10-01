@@ -904,14 +904,10 @@ pub fn render_bytea(bytes: &[u8]) -> String {
 /// digits toward `scale`" step below is exact rather than a rounding
 /// approximation — including PG15+'s negative-scale numerics, which print
 /// with no fractional digits at all and where this divides out the implied
-/// trailing zeros instead of appending them.
-///
-/// Deficiency register: `deficiency: KD60` — a zero at a scale of `-2` or
-/// below is written `0`, fewer digits than the zeros the scale implies, so
-/// `cut > total` answers `None` and the value reads as one its type cannot
-/// hold; [`render_decimal`] writes an unscaled zero there as `000` in turn.
-/// The fix is that zero answers `0` whatever the scale, and
-/// renders as `0`.
+/// trailing zeros instead of appending them. The one value written with fewer
+/// digits than a negative scale divides out is zero, which `numeric_out`
+/// prints as `0` at any scale (I51), so an all-zero digit string answers `0`
+/// there.
 pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     if s == "NaN" {
         return None;
@@ -948,7 +944,7 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     } else {
         let cut = (-shift) as usize;
         if cut > total {
-            return None;
+            return (0..total).all(|i| digit(i) == b'0').then(|| "0".to_string());
         }
         let keep = total - cut;
         // The digits divided out have to be the zeros the typmod implies; a
@@ -978,15 +974,18 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
 
 /// Render an unscaled decimal integer (`i128`/`i256`'s own `Display`, e.g.
 /// `"-15000000000"`) back to PostgreSQL's fixed-`scale` text form. Exact
-/// inverse of [`decimal_unscaled_digits`] but for a negative scale's zero
-/// (`KD60`).
+/// inverse of [`decimal_unscaled_digits`]: at a scale of zero or below, zero
+/// is `0` rather than a zero followed by the scale's.
 pub fn render_decimal(unscaled: &str, scale: i8) -> String {
     let (neg, digits) = match unscaled.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, unscaled),
     };
     let body = if scale <= 0 {
-        format!("{digits}{}", "0".repeat((-scale) as usize))
+        if digits == "0" {
+            return digits.to_string();
+        }
+        format!("{digits}{}", "0".repeat(usize::from(scale.unsigned_abs())))
     } else {
         let scale = scale as usize;
         let padded = if digits.len() <= scale {
@@ -1301,6 +1300,33 @@ mod tests {
         assert_eq!(unscaled, "12");
         assert_eq!(render_decimal(&unscaled, -2), "1200");
     }
+
+    /// **Zero is `0` at every negative scale**, which is how `numeric_out`
+    /// prints it whatever the typmod, though every other value of the column
+    /// carries the scale's trailing zeros: it decodes, to `0`, and renders
+    /// back as `0`. A short digit string that is not zero stays refused, it
+    /// being no multiple of the scale's power of ten; and `i8::MIN` renders,
+    /// its magnitude being past `i8`.
+    #[test]
+    fn a_negative_scale_zero_is_zero_and_renders_as_written() {
+        for scale in i8::MIN..0 {
+            let zeros = usize::from(scale.unsigned_abs());
+            for text in ["0", "-0", "0.0", "00"] {
+                assert_eq!(
+                    decimal_unscaled_digits(text, scale).as_deref(),
+                    Some("0"),
+                    "{text:?} at scale {scale}"
+                );
+            }
+            assert_eq!(render_decimal("0", scale), "0", "at scale {scale}");
+
+            let one = format!("1{}", "0".repeat(zeros));
+            assert_eq!(decimal_unscaled_digits(&one, scale).as_deref(), Some("1"), "at {scale}");
+            assert_eq!(render_decimal("1", scale), one, "at scale {scale}");
+            let short = format!("1{}", "0".repeat(zeros - 1));
+            assert_eq!(decimal_unscaled_digits(&short, scale), None, "{short:?} at {scale}");
+        }
+    }
 }
 
 /// The straightforward `format!`/`parse` spellings of the four scalar
@@ -1446,7 +1472,7 @@ mod prior_shape {
         } else {
             let cut = (-shift) as usize;
             if cut > digits.len() {
-                return None;
+                return digits.bytes().all(|b| b == b'0').then(|| "0".to_string());
             }
             let (keep, dropped) = digits.split_at(digits.len() - cut);
             if !dropped.bytes().all(|b| b == b'0') {

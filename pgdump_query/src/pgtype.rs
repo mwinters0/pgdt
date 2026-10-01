@@ -1156,6 +1156,15 @@ fn catalog_name(name: &str) -> Option<&'static str> {
 /// `±Infinity` under any typmod (I34), so accepting the spelling in a
 /// *filter's literal* on the `p > 76` arm would accept a value the server
 /// refuses.
+///
+/// Deficiency register: `deficiency: KD63` — PostgreSQL 15 and later admit a
+/// scale from -1000 to 1000 whatever the precision (`numerictypmodin`), and
+/// this maps one Arrow's decimal refuses: a positive scale past the precision
+/// (`numeric(2,5)` holds `0.00012`) or past the type's `MAX_SCALE`, which
+/// `batch.rs`'s `with_precision_and_scale(..).expect(..)` then panics on; and
+/// a scale outside `i8` falls to `unwrap_or(0)`, so the column is typed at
+/// scale 0 and every non-zero value fails to decode. The fix
+/// maps either to text, or widens the precision to cover the scale.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
     let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
