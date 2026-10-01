@@ -4262,8 +4262,10 @@ class Acknowledgements(unittest.TestCase):
         )
         self.assertEqual(got, [])
 
-    def test_the_live_register_names_only_real_figures(self):
-        known = set(measure.ALL_BY_ID)
+    def test_the_live_register_names_only_figures_and_declared_sections(self):
+        # The names `--check` admits: a declared section is acknowledged by
+        # name (`excuses`), so an entry naming `koji` is no typo.
+        known = set(measure.ALL_BY_ID) | set(measure.NOT_OURS)
         for ack in measure.ACKNOWLEDGED:
             for fid in ack.figures:
                 with self.subTest(commit=ack.commit, figure=fid):
