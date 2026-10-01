@@ -316,4 +316,20 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 7d722fa4 -- pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="4ecb705d",
+        figures=(
+            "projection-widths",
+            "allocator",
+            "parallel-scan-throughput",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M198: decode.rs changes only the branch a negative scale reaches "
+        "with fewer digits than its zeros, and render_decimal's scale <= 0 arm; "
+        "every measured input's numeric has a positive scale, so neither runs",
+        verified="git show 4ecb705d -- pgdump_query/src/decode.rs; "
+        "grep -n 'numeric(' scripts/generate_*.py",
+    ),
 )
