@@ -171,13 +171,9 @@ class Config:
     nvme_dir: Path = Path(
         _env("PGDT_MEASURE_NVME_DIR", "/var/tmp/pgdump_query/measure")
     )
-    # How much of the tmpfs the harness may fill. **Normally computed, not
-    # configured**: the harness knows which inputs each figure needs and how
-    # big they are, so the budget is the largest figure's own need plus
-    # WARM_MARGIN. A constant here would be a guess -- and a guess that is
-    # exactly the nominal sum fails on the few KB every generator overshoots
-    # by, twenty minutes into a sweep. Set the variable only to cap it below
-    # what the machine would otherwise allow.
+    # A cap on how much of the tmpfs the harness may fill, below the bound
+    # `warm_bound` sets by design. It only ever lowers that bound: the room
+    # is not grown (`docs/design/measurements.md`, "The apparatus").
     warm_budget: float | None = (
         float(os.environ["PGDT_MEASURE_TMPFS_BUDGET_GIB"])
         if "PGDT_MEASURE_TMPFS_BUDGET_GIB" in os.environ
@@ -1610,11 +1606,55 @@ def input_stamp(spec: InputSpec, cfg: Config) -> str:
     return h.hexdigest()
 
 
-#: Headroom over the largest figure's own inputs. It absorbs the kilobytes a
-#: generator overshoots its target by, and nothing more — the budget tracks the
-#: need rather than a round number, so it is portable to a machine whose
-#: `/dev/shm` is smaller than this one's.
-WARM_MARGIN = 1.10
+#: How many full-size inputs a sweep ever holds on tmpfs at once: the two one
+#: paired cross-file difference needs. A figure whose warm set is larger is
+#: split into sweeps of its own (`Figure.warm_groups`); the room is never grown
+#: to hold it (`docs/design/measurements.md`, "The apparatus").
+WARM_FULL_INPUTS = 2
+
+#: Over those inputs' nominal size: the kilobytes a generator overshoots its
+#: target by, and nothing more.
+WARM_SLACK = 64 * MIB
+
+
+def warm_bound(cfg: Config) -> int:
+    """The tmpfs budget, by design: `WARM_FULL_INPUTS` full-size inputs plus
+    `WARM_SLACK`. A constant of the apparatus rather than a sum over the
+    figures selected, so a figure that outgrows it fails `test_measure.py`
+    instead of growing the room every sweep needs."""
+    return int(WARM_FULL_INPUTS * cfg.size_gib * GIB) + WARM_SLACK
+
+
+#: The file preflight reserves the budget through, in the warm directory.
+WARM_RESERVATION = ".budget-reservation"
+
+
+class StagingError(RuntimeError):
+    """An input could not be staged onto tmpfs. It aborts the sweep rather
+    than failing one figure: every later figure stages through the same area,
+    so the next one would fail the same way or, worse, read a partial file."""
+
+
+def split_specs(
+    figure: str, specs: Sequence[RunSpec], groups: Sequence[tuple[str, ...]]
+) -> list[tuple[int, list[RunSpec]]]:
+    """A split figure's specs by the group their input is staged in, in group
+    order, each group's specs in the order given; groups no spec reads are
+    left out.
+
+    **A spec a group cannot place is an error**, not a sweep of its own: a
+    split figure reads every input warm, and a spec off tmpfs or over an input
+    no group names would be measured beside nothing it was declared with."""
+    parts: list[list[RunSpec]] = [[] for _ in groups]
+    for spec in specs:
+        homes = [gi for gi, group in enumerate(groups) if spec.input in group]
+        if regime_spec(spec.regime).area != "warm" or len(homes) != 1:
+            raise ValueError(
+                f"{figure} is split into warm groups, and {spec.label or spec.command} reads "
+                f"{spec.input!r} in the {spec.regime} regime, which no one group stages"
+            )
+        parts[homes[0]].append(spec)
+    return [(gi, part) for gi, part in enumerate(parts) if part]
 
 
 def nominal_size(cfg: Config, name: str) -> int:
@@ -1653,8 +1693,13 @@ class Stager:
     def __init__(self, cfg: Config, log: Callable[[str], None]) -> None:
         self.cfg = cfg
         self.log = log
+        #: The steps each input is wanted warm in. A step is one co-measured
+        #: set: a figure's whole warm set, or one of its `warm_groups`.
         self.needs: dict[str, list[int]] = {}
-        self.figure_need: dict[str, int] = {}
+        #: Each figure's steps, in its `staging_groups` order.
+        self.steps: dict[str, list[int]] = {}
+        #: What each step holds on tmpfs at once, by (figure, group index).
+        self.group_need: dict[tuple[str, int], int] = {}
         self._profiles: dict[str, dict] = {}
         self._pretended: set[str] = set()
         self._staged: dict[str, int] = {}
@@ -1748,40 +1793,50 @@ class Stager:
     def _warm_bytes(self) -> int:
         return sum(self._staged.values())
 
-    def warm_path(self, name: str, figure_index: int = 0) -> Path:
+    def warm_path(self, name: str, step: int = 0) -> Path:
+        """`name` on tmpfs, copied there if it is not, evicting for room.
+
+        **Recorded as staged only once its copy has finished**, and a copy
+        that fails removes what it wrote: an input marked staged before its
+        copy left a partial file that later figures read as the input."""
         src = self.ensure_generated(name)
         dst = self.cfg.warm_dir / input_file(name)
         size = file_size(self.cfg, src, name)
         if self._staged.get(name) == size and (self.cfg.dry_run or dst.exists()):
             return dst
         self._staged.pop(name, None)
-        self._make_room(size, figure_index)
-        self._staged[name] = size
+        self._make_room(size, step)
         if self.cfg.dry_run:
             self.log(f"  [dry-run] would stage {name} -> {dst}")
+            self._staged[name] = size
             return dst
-        self.cfg.warm_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"  staging {name} -> {dst}")
-        shutil.copyfile(src, dst)
+        try:
+            self.cfg.warm_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+        except OSError as exc:
+            dst.unlink(missing_ok=True)
+            raise StagingError(f"staging {name} onto {self.cfg.warm_dir} failed: {exc}") from exc
+        self._staged[name] = size
         return dst
 
-    def _make_room(self, need: int, figure_index: int) -> None:
+    def _make_room(self, need: int, step: int) -> None:
         budget = self.budget()
         while self._warm_bytes() + need > budget:
             if not self._staged:
-                raise RuntimeError(
+                raise StagingError(
                     f"{need / GIB:.2f} GiB does not fit in a {budget / GIB:.2f} GiB "
                     "tmpfs budget even when empty"
                 )
-            # Evict what no remaining figure wants; failing that, what is
-            # wanted latest. An input the *current* figure wants is never a
-            # victim -- that would be a budget too small for one figure.
-            victim = max(self._staged, key=lambda n: self._next_need(n, figure_index))
-            if self._next_need(victim, figure_index) <= figure_index:
-                raise RuntimeError(
-                    "the tmpfs budget cannot hold one figure's inputs at once: still needs "
-                    f"{victim} and {need / GIB:.2f} GiB more; raise "
-                    "PGDT_MEASURE_TMPFS_BUDGET_GIB"
+            # Evict what no remaining step wants; failing that, what is wanted
+            # latest. An input the *current* step wants is never a victim --
+            # that would be a budget too small for one warm set, which
+            # `preflight` refuses before the first run.
+            victim = max(self._staged, key=lambda n: self._next_need(n, step))
+            if self._next_need(victim, step) <= step:
+                raise StagingError(
+                    "the tmpfs budget cannot hold one warm set at once: still needs "
+                    f"{victim} and {need / GIB:.2f} GiB more"
                 )
             self.log(f"  evicting {victim} from tmpfs")
             del self._staged[victim]
@@ -1789,65 +1844,100 @@ class Stager:
                 (self.cfg.warm_dir / input_file(victim)).unlink(missing_ok=True)
 
     def plan(self, figures: Sequence[Figure]) -> None:
-        """Record which figures want each input warm, so eviction can pick the
-        one nothing is waiting on -- and, failing that, the one wanted
-        latest. Also size each figure, which is what the budget is computed
-        from."""
-        self.needs = {}
-        for i, fig in enumerate(figures):
-            for name in fig.warm_inputs:
-                self.needs.setdefault(name, []).append(i)
-        self.figure_need = {
-            fig.id: sum(self.expected_size(n) for n in fig.warm_inputs) for fig in figures
-        }
+        """Number the sitting's steps -- one per figure, or one per group of a
+        figure split into `warm_groups` -- and record which steps want each
+        input warm, so eviction can pick the one nothing is waiting on and,
+        failing that, the one wanted latest. Also size each step, which is
+        what `preflight` holds to the budget."""
+        self.needs, self.steps, self.group_need = {}, {}, {}
+        step = 0
+        for fig in figures:
+            self.steps[fig.id] = []
+            for gi, group in enumerate(fig.staging_groups or ((),)):
+                self.steps[fig.id].append(step)
+                for name in group:
+                    self.needs.setdefault(name, []).append(step)
+                self.group_need[(fig.id, gi)] = sum(self.expected_size(n) for n in group)
+                step += 1
+
+    def step_of(self, figure: str, group: int) -> int:
+        """The step a figure's group is staged at, or 0 for a figure this
+        stager was not planned with -- whose inputs nothing else then wants,
+        so every staged input is a candidate for eviction."""
+        steps = self.steps.get(figure)
+        return steps[group] if steps else 0
 
     def expected_size(self, name: str) -> int:
         """What an input weighs: measured if it has been generated, nominal if
         not. Nominal is the low estimate -- every generator overshoots its
-        target by a few KB -- which is what WARM_MARGIN is for."""
+        target by a few KB -- which is what `WARM_SLACK` is for."""
         path = self.cfg.cache_dir / input_file(name)
         if path.exists():
             return path.stat().st_size
         return nominal_size(self.cfg, name)
 
     def budget(self) -> int:
-        """The tmpfs ceiling: one figure's inputs plus headroom, since only one
-        figure's inputs are ever needed at once and eviction handles the rest.
-        An explicit PGDT_MEASURE_TMPFS_BUDGET_GIB overrides it."""
+        """The tmpfs ceiling: `warm_bound`, or the explicit
+        PGDT_MEASURE_TMPFS_BUDGET_GIB where that is lower."""
+        bound = warm_bound(self.cfg)
         if self.cfg.warm_budget is not None:
-            return int(self.cfg.warm_budget * GIB)
-        largest = max(self.figure_need.values(), default=0)
-        return int(largest * WARM_MARGIN)
+            return min(bound, int(self.cfg.warm_budget * GIB))
+        return bound
+
+    def reserve(self, budget: int) -> str | None:
+        """Allocate what the budget may still add to the staging area, then
+        give it back: why it cannot be had, or `None`.
+
+        **An allocation, not a reading of free space**: `statvfs` cannot see a
+        per-user tmpfs quota, so a free-space check passed a budget the quota
+        refused mid-sweep. `fallocate` on tmpfs is charged exactly as a write
+        is, and gives back everything it took when it fails, so any limit
+        refuses it here, before the first measurement."""
+        want = budget - self._warm_bytes()
+        if want <= 0:
+            return None
+        probe = self.cfg.warm_dir / WARM_RESERVATION
+        try:
+            self.cfg.warm_dir.mkdir(parents=True, exist_ok=True)
+            fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.posix_fallocate(fd, 0, want)
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            return (
+                f"{self.cfg.warm_dir} could not reserve {want / GIB:.2f} GiB, what the "
+                f"{budget / GIB:.2f} GiB tmpfs budget may still stage there: {exc}. A "
+                "per-user quota is invisible to `df`; point PGDT_MEASURE_WARM_DIR at a "
+                "memory-backed filesystem that can hold the budget"
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+        return None
 
     def preflight(self, figures: Sequence[Figure]) -> list[str]:
-        """Everything knowable before the first run: does each figure fit the
-        budget, does the budget fit the tmpfs, do the inputs fit the disk they
-        are generated onto.
+        """Everything knowable before the first run: does each warm set fit
+        the budget, can the staging area actually hold the budget, do the
+        inputs fit the disk they are generated onto.
 
         This exists because the alternative is finding out twenty minutes in,
         with a figure already lost and its dependants failing behind it."""
         problems: list[str] = []
         budget = self.budget()
         for fig in figures:
-            need = self.figure_need.get(fig.id, 0)
-            if need > budget:
-                problems.append(
-                    f"{fig.id} needs {need / GIB:.2f} GiB of tmpfs at once, over the "
-                    f"{budget / GIB:.2f} GiB budget"
-                )
-        try:
-            self.cfg.warm_dir.mkdir(parents=True, exist_ok=True)
-            warm_free = shutil.disk_usage(self.cfg.warm_dir).free + self._warm_bytes()
-        except OSError as exc:
-            problems.append(f"{self.cfg.warm_dir} is not usable as a staging area: {exc}")
-            warm_free = budget
-        if budget > warm_free:
-            problems.append(
-                f"{self.cfg.warm_dir} has {warm_free / GIB:.2f} GiB usable, under the "
-                f"{budget / GIB:.2f} GiB this sweep needs resident. Point "
-                "PGDT_MEASURE_WARM_DIR at a larger memory-backed filesystem, or lower "
-                "PGDT_MEASURE_SIZE_GIB — which makes the run unpublishable"
-            )
+            groups = fig.staging_groups
+            for gi, group in enumerate(groups):
+                need = self.group_need.get((fig.id, gi), 0)
+                if need > budget:
+                    which = f"{fig.id}'s sweep over {', '.join(group)}" if len(groups) > 1 else fig.id
+                    problems.append(
+                        f"{which} needs {need / GIB:.2f} GiB of tmpfs at once, over the "
+                        f"{budget / GIB:.2f} GiB budget"
+                    )
+        if not self.cfg.dry_run:
+            problem = self.reserve(budget)
+            if problem:
+                problems.append(problem)
         wanted = {
             n
             for fig in figures
@@ -1908,10 +1998,8 @@ class Stager:
             ]
         return []
 
-    def _next_need(self, name: str, figure_index: int) -> float:
-        return min(
-            (i for i in self.needs.get(name, []) if i >= figure_index), default=float("inf")
-        )
+    def _next_need(self, name: str, step: int) -> float:
+        return min((i for i in self.needs.get(name, []) if i >= step), default=float("inf"))
 
     def cleanup(self) -> None:
         if self.cfg.keep_warm or self.cfg.dry_run:
@@ -4087,7 +4175,9 @@ class Session:
         #: that wants it wants it *instead of* the wall clock, not beside it.
         self.rss: dict[str, list[float]] = {}
         self.records: list[dict] = []
-        self.figure_index = 0
+        #: The stager's step this sitting is at (`Stager.plan`): the figure in
+        #: hand, or the group of a split figure being swept.
+        self.step = 0
         self.figure_id = ""
         #: The container memory limit in force, which `emit` sets per figure.
         #: `None` means the recorded 512 MB.
@@ -4242,8 +4332,27 @@ class Session:
         if area == "nvme":
             return self.stager.nvme_path(name)
         if area == "warm":
-            return self.stager.warm_path(name, self.figure_index)
+            return self.stager.warm_path(name, self.step)
         raise ValueError(f"regime {regime!r} names an unknown staging area {area!r}")
+
+    def input_size(self, name: str, regime: str) -> int:
+        """That input's size, which is what a rate is per.
+
+        A warm input is sized off the SSD copy it is staged from -- the same
+        bytes -- so a renderer asking after a split figure's sweeps does not
+        stage back an input eviction has taken off tmpfs."""
+        if regime_spec(regime).area == "warm":
+            return file_size(self.cfg, self.cfg.cache_dir / input_file(name), name)
+        return file_size(self.cfg, self.input_path(name, regime), name)
+
+    def stage(self, figure: str, group: int) -> None:
+        """Move to that figure's group's step and stage the group, evicting
+        what no later step wants first."""
+        self.step = self.stager.step_of(figure, group)
+        fig = EVERY_BY_ID.get(figure)
+        groups = fig.staging_groups if fig else ()
+        for name in groups[group] if group < len(groups) else ():
+            self.stager.warm_path(name, self.step)
 
     def drop_caches(self) -> None:
         argv = shlex.split(self.cfg.sudo) + ["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"]
@@ -4602,6 +4711,19 @@ class Session:
     # -- sweeps -----------------------------------------------------------
 
     def sweep(self, figure: str, specs: Sequence[RunSpec], reps: int) -> None:
+        """`_sweep_one` over `specs` -- or, for a figure split into
+        `warm_groups`, over each group's specs in turn, that group staged
+        first, so a group's inputs are measured only beside each other."""
+        fig = EVERY_BY_ID.get(figure)
+        groups = fig.staging_groups if fig else ()
+        if len(groups) < 2:
+            self._sweep_one(figure, specs, reps)
+            return
+        for gi, part in split_specs(figure, specs, groups):
+            self.stage(figure, gi)
+            self._sweep_one(figure, part, reps)
+
+    def _sweep_one(self, figure: str, specs: Sequence[RunSpec], reps: int) -> None:
         """One interleaved sweep: every rep runs every spec in turn, and the
         second half of the reps runs them in the opposite order.
 
@@ -5306,6 +5428,13 @@ class Figure:
     table_label: str = ""
     cold_inputs: tuple[str, ...] = ()
     warm_inputs: tuple[str, ...] = ()
+    #: A figure whose warm set outgrows `warm_bound`, split: each group is
+    #: staged and swept on its own, in this order, so `Session.sweep` runs a
+    #: spec only beside the specs over its own group. Inputs share a group only
+    #: where a reading subtracts one from another, paired rep by rep -- a
+    #: difference over reps taken in two sweeps is no longer paired. Empty is
+    #: one sweep over `warm_inputs`.
+    warm_groups: tuple[tuple[str, ...], ...] = ()
     #: Inputs this figure reads cold off the NVMe. A third list rather than a
     #: flag on `cold_inputs`, because the two name different *devices* and a
     #: figure is free to want both -- which is what the throughput section
@@ -5341,6 +5470,14 @@ class Figure:
         same fact drift, and the one that drifts is the one no run function
         reads."""
         return tuple(dict.fromkeys(s.source for s in self.shares))
+
+    @property
+    def staging_groups(self) -> tuple[tuple[str, ...], ...]:
+        """The warm sets this figure stages one at a time: its `warm_groups`,
+        or its whole warm set as one, or none."""
+        if self.warm_groups:
+            return self.warm_groups
+        return (self.warm_inputs,) if self.warm_inputs else ()
 
 
 #: The paths behind each mechanism a figure can depend on. Declared narrowly
@@ -5430,11 +5567,18 @@ def _declare(*paths: str) -> tuple[str, ...]:
 
 # -- scan throughput --------------------------------------------------------
 
+#: The three shapes, then **each one's own `dd` floor**: the warm table is
+#: split one sweep per input (`Figure.warm_groups`), so a floor read in
+#: another input's sweep would be a cross-sweep ratio, and the three regimes'
+#: tables are read against each other as ratios, so they carry the same rows.
+_THROUGHPUT_SHAPES = (
+    ("control", "`COPY` block"),
+    ("large_object", "Large-object region"),
+    ("insert_run", "`INSERT` run"),
+)
 _THROUGHPUT_ROWS = (
-    ("control", "parse", "`COPY` block"),
-    ("large_object", "parse", "Large-object region"),
-    ("insert_run", "parse", "`INSERT` run"),
-    ("control", "dd", "`dd` → `/dev/null`"),
+    *((inp, "parse", label) for inp, label in _THROUGHPUT_SHAPES),
+    *((inp, "dd", f"`dd` → `/dev/null`, {label}") for inp, label in _THROUGHPUT_SHAPES),
 )
 
 
@@ -5446,12 +5590,18 @@ def _throughput_specs(regime: str) -> list[RunSpec]:
 
 
 def _throughput_table(session: Session, figure: str, specs: Sequence[RunSpec]) -> str:
-    floor = median(session.get(figure, specs[-1]))
+    floors = {
+        spec.input: median(session.get(figure, spec)) for spec in specs if spec.command == "dd"
+    }
     rows = []
     for spec, (_, _, label) in zip(specs, _THROUGHPUT_ROWS):
         values = session.get(figure, spec)
-        size = file_size(session.cfg, session.input_path(spec.input, spec.regime), spec.input)
-        against = "—" if spec.command == "dd" else f"{median(values) / floor:.2f}× the floor's time"
+        size = session.input_size(spec.input, spec.regime)
+        against = (
+            "—"
+            if spec.command == "dd"
+            else f"{median(values) / floors[spec.input]:.2f}× its floor's time"
+        )
         rows.append(
             [label, fmt_median_spread(values), fmt_rate(size, median(values)), against]
         )
@@ -5459,7 +5609,7 @@ def _throughput_table(session: Session, figure: str, specs: Sequence[RunSpec]) -
 
 
 def _throughput_figure(session: Session, figure: str, regime: str, reps: int) -> str:
-    """The four-row throughput table, in one regime.
+    """The throughput table, in one regime: three shapes and their floors.
 
     Its warm `COPY` row is also the allocator table's reference `parse` row --
     same binary, same command, same input -- which borrows it rather than
@@ -8150,11 +8300,14 @@ def run_statistics_gathering(session: Session) -> str:
     and not refined."""
     figure = "statistics-gathering"
     specs = _statistics_specs()
-    session.sweep(figure, specs, session.cfg.reps(5))
     floors = [
         RunSpec("none", name, "dd", "warm", f"dd floor {name}") for name, _ in _STATISTICS_ROWS
     ]
-    session.sweep(figure, floors, session.cfg.reps(3))
+    # One input at a time, its floor while it is staged: the figure is split
+    # one sweep per input, and no row reads one input against another.
+    for (name, _), floor in zip(_STATISTICS_ROWS, floors):
+        session.sweep(figure, [spec for spec in specs if spec.input == name], session.cfg.reps(5))
+        session.sweep(figure, [floor], session.cfg.reps(3))
     legs = [leg for leg, _ in STATISTICS_LEGS]
     rows, per_rep = [], []
     for (name, label), floor in zip(_STATISTICS_ROWS, floors):
@@ -8502,6 +8655,7 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         warm_inputs=("control", "large_object", "insert_run"),
+        warm_groups=(("control",), ("large_object",), ("insert_run",)),
         run=run_scan_throughput_warm,
     ),
     # The third device class, and the only one that can price the I/O
@@ -8543,6 +8697,8 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=_declare(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "composite", "arrays"),
+        # `cross-file-floor`'s row 1 pairs control's reps with composite's.
+        warm_groups=(("control", "composite"), ("arrays",)),
         run=run_nested_end_to_end,
     ),
     Figure(
@@ -8907,6 +9063,7 @@ FIGURES: list[Figure] = [
             *GEN_SHAPES,
         ),
         warm_inputs=tuple(name for name, _ in _STATISTICS_ROWS),
+        warm_groups=tuple((name,) for name, _ in _STATISTICS_ROWS),
         memory=STATISTICS_MEMORY,
         run=run_statistics_gathering,
     ),
@@ -10642,6 +10799,13 @@ class ReplaySession(Session):
                 fh.truncate(self._sizes[name])
         return path
 
+    def input_size(self, name: str, regime: str) -> int:
+        """The recorded size, whatever the regime: nothing is staged here."""
+        return file_size(self.cfg, self.input_path(name, regime), name)
+
+    def stage(self, figure: str, group: int) -> None:
+        """A no-op: nothing is staged to serve a past sitting's readings."""
+
 
 def render(cfg: Config, run_dir: Path) -> int:
     """Rebuild one sitting's `tables.md` from its `raw.json`, measuring nothing.
@@ -10807,9 +10971,9 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     problems = stager.preflight(figures)
     log(
         f"tmpfs budget: {stager.budget() / GIB:.2f} GiB "
-        f"(largest figure {max(stager.figure_need.values(), default=0) / GIB:.2f} GiB "
-        f"+ {WARM_MARGIN - 1:.0%} margin)" if cfg.warm_budget is None
-        else f"tmpfs budget: {stager.budget() / GIB:.2f} GiB (set explicitly)"
+        f"({WARM_FULL_INPUTS} full-size inputs + {WARM_SLACK // MIB} MiB; largest warm set "
+        f"{max(stager.group_need.values(), default=0) / GIB:.2f} GiB)"
+        + ("" if stager.budget() == warm_bound(cfg) else ", capped by PGDT_MEASURE_TMPFS_BUDGET_GIB")
     )
     if problems:
         for problem in problems:
@@ -10844,7 +11008,6 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     # though the arrangement had been measured.
     censored: list[tuple[str, int]] = []
     for i, fig in enumerate(figures):
-        session.figure_index = i
         blocked = [r for r, _ in failures if r in fig.requires]
         if blocked:
             # A figure that borrows a reading from one that failed cannot be
@@ -10867,9 +11030,16 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 stager.ensure_generated(name)
             for name in fig.nvme_inputs:
                 stager.nvme_path(name)
-            for name in fig.warm_inputs:
-                stager.warm_path(name, i)
+            session.stage(fig.id, 0)
             body = fig.run(session)
+        except StagingError as exc:
+            # Every later figure stages through the same area, so the sweep
+            # ends here rather than failing each of them in turn.
+            log(f"!! {fig.id} failed staging, and the sweep is aborted: {exc}")
+            failures.append((fig.id, str(exc)))
+            for rest in figures[i + 1 :]:
+                failures.append((rest.id, "skipped: the sweep was aborted by a staging failure"))
+            break
         except Exception as exc:  # one figure failing must not lose the others
             log(f"!! {fig.id} failed: {exc}")
             failures.append((fig.id, str(exc)))

@@ -4463,82 +4463,265 @@ if __name__ == "__main__":
 
 class Eviction(unittest.TestCase):
     """The tmpfs budget is smaller than the union of the inputs, so the sweep
-    is staged. What must never happen is evicting something the figure in hand
-    still needs, or thrashing an input the next figure wants."""
+    is staged. What must never happen is evicting something the step in hand
+    still needs, or thrashing an input the next step wants."""
 
     def _stager(self, budget: float | None):
         cfg = measure.Config(dry_run=True, warm_budget=budget)
         return measure.Stager(cfg, lambda _msg: None)
 
     def test_an_input_nothing_wants_again_goes_first(self):
-        stager = self._stager(8)
+        stager = self._stager(None)
         stager.needs = {"control": [0, 3], "arrays": [1], "composite": [3]}
         stager._staged = {"control": 3 * measure.GIB, "arrays": 3 * measure.GIB}
-        stager._make_room(3 * measure.GIB, figure_index=3)
+        stager._make_room(3 * measure.GIB, step=3)
         self.assertNotIn("arrays", stager._staged)
         self.assertIn("control", stager._staged)
 
-    def test_what_the_current_figure_needs_is_never_the_victim(self):
+    def test_what_the_current_step_needs_is_never_the_victim(self):
         stager = self._stager(3)
         stager.needs = {"control": [0]}
         stager._staged = {"control": 3 * measure.GIB}
-        with self.assertRaises(RuntimeError):
-            stager._make_room(3 * measure.GIB, figure_index=0)
+        with self.assertRaises(measure.StagingError):
+            stager._make_room(3 * measure.GIB, step=0)
 
     def test_a_budget_too_small_for_one_input_is_an_error(self):
         stager = self._stager(1)
         stager.needs = {}
-        with self.assertRaises(RuntimeError):
-            stager._make_room(3 * measure.GIB, figure_index=0)
+        with self.assertRaises(measure.StagingError):
+            stager._make_room(3 * measure.GIB, step=0)
 
     def test_room_already_free_evicts_nothing(self):
-        stager = self._stager(9)
+        stager = self._stager(None)
         stager.needs = {"control": [0, 5]}
         stager._staged = {"control": 3 * measure.GIB}
-        stager._make_room(3 * measure.GIB, figure_index=1)
+        stager._make_room(3 * measure.GIB, step=1)
         self.assertEqual(list(stager._staged), ["control"])
 
-    def test_the_budget_is_the_largest_figure_plus_headroom(self):
+    def test_a_split_figure_evicts_its_own_earlier_group(self):
+        # The point of a split: the second group's input displaces the first
+        # group's, which no later step wants, rather than refusing because the
+        # figure as a whole still names it.
         stager = self._stager(None)
-        stager.plan(measure.FIGURES)
-        largest = max(stager.figure_need.values())
-        self.assertEqual(stager.budget(), int(largest * measure.WARM_MARGIN))
+        fig = measure.FIGURES_BY_ID["statistics-gathering"]
+        stager.plan([fig])
+        for gi, group in enumerate(fig.staging_groups):
+            for name in group:
+                stager.warm_path(name, stager.step_of(fig.id, gi))
+            with self.subTest(group=group):
+                self.assertTrue(set(group) <= set(stager._staged))
+                self.assertLessEqual(stager._warm_bytes(), stager.budget())
 
-    def test_every_figure_fits_the_computed_budget(self):
-        stager = self._stager(None)
-        stager.plan(measure.FIGURES)
+
+class WarmBound(unittest.TestCase):
+    """Measurement's RAM is bounded by design: a constant of the apparatus,
+    which every figure's warm set is held to here, so a figure that outgrows
+    it splits instead of growing the room (`measurements.md`, "The
+    apparatus")."""
+
+    def _stager(self, budget: float | None = None):
+        cfg = measure.Config(dry_run=True, warm_budget=budget)
+        return measure.Stager(cfg, lambda _msg: None)
+
+    def test_the_bound_is_two_full_size_inputs_and_the_slack(self):
+        cfg = measure.Config()
+        self.assertEqual(measure.WARM_FULL_INPUTS, 2)
+        self.assertEqual(measure.WARM_SLACK, 64 * measure.MIB)
+        self.assertEqual(
+            measure.warm_bound(cfg), int(2 * cfg.size_gib * measure.GIB) + 64 * measure.MIB
+        )
+        self.assertEqual(self._stager().budget(), measure.warm_bound(cfg))
+
+    def test_the_bound_does_not_follow_the_figures_selected(self):
+        # The defect it replaces: a budget computed from the largest figure
+        # grew with whatever a slice added, past a quota nothing checked.
+        small, every = self._stager(), self._stager()
+        small.plan([measure.FIGURES_BY_ID["peak-rss"]])
+        every.plan(measure.FIGURES)
+        self.assertEqual(small.budget(), every.budget())
+
+    def test_every_warm_set_fits_the_bound(self):
+        # Real sizes where the inputs exist, so a generator's overshoot is
+        # counted; nominal ones otherwise.
+        stager = self._stager()
+        stager.plan(measure.EVERY_FIGURE)
         budget = stager.budget()
-        for fig in measure.FIGURES:
+        for fig in measure.EVERY_FIGURE:
+            for gi, group in enumerate(fig.staging_groups):
+                with self.subTest(figure=fig.id, group=group):
+                    self.assertLessEqual(stager.group_need[(fig.id, gi)], budget)
+
+    def test_a_generator_overshooting_its_target_does_not_break_the_bound(self):
+        # The real defect behind the slack: three inputs whose nominal sum was
+        # exactly the budget overshot it by 6,799 bytes, and the sweep died
+        # twenty minutes in.
+        stager = self._stager()
+        stager.plan(measure.EVERY_FIGURE)
+        self.assertGreater(stager.budget() - max(stager.group_need.values()), 64 * 1024)
+
+    def test_a_split_figure_partitions_its_warm_set(self):
+        for fig in measure.EVERY_FIGURE:
+            if not fig.warm_groups:
+                continue
             with self.subTest(figure=fig.id):
-                self.assertLessEqual(stager.figure_need[fig.id], budget)
+                named = [name for group in fig.warm_groups for name in group]
+                self.assertEqual(sorted(named), sorted(fig.warm_inputs))
+                self.assertEqual(len(named), len(set(named)))
 
-    def test_a_generator_overshooting_its_target_does_not_break_the_budget(self):
-        # The real defect: three inputs whose nominal sum is exactly the budget
-        # overshot it by 6,799 bytes, and the sweep died twenty minutes in.
-        # The margin has to absorb that, and the check has to use real sizes.
-        stager = self._stager(None)
-        stager.plan(measure.FIGURES)
-        largest = max(stager.figure_need.values())
-        self.assertGreater(stager.budget() - largest, 64 * 1024)
+    def test_the_figures_the_bound_splits(self):
+        # One sweep per input where no reading subtracts one input from
+        # another; `nested-end-to-end` keeps control and composite together,
+        # because `cross-file-floor`'s row 1 pairs their reps.
+        self.assertEqual(
+            {f.id: f.warm_groups for f in measure.EVERY_FIGURE if f.warm_groups},
+            {
+                "scan-throughput-warm": (("control",), ("large_object",), ("insert_run",)),
+                "nested-end-to-end": (("control", "composite"), ("arrays",)),
+                "statistics-gathering": (
+                    ("control",), ("arrays",), ("large_object",), ("insert_run",)
+                ),
+            },
+        )
 
-    def test_an_explicit_budget_overrides_the_computed_one(self):
-        stager = self._stager(4)
-        stager.plan(measure.FIGURES)
-        self.assertEqual(stager.budget(), 4 * measure.GIB)
+    def test_the_cross_file_pair_is_one_warm_set(self):
+        source = inspect.getsource(measure.run_cross_file_floor)
+        self.assertIn('_per_row_diffs(session, "nested-end-to-end", "control", "composite")', source)
+        groups = measure.FIGURES_BY_ID["nested-end-to-end"].staging_groups
+        self.assertIn(("control", "composite"), groups)
 
-    def test_a_figure_too_big_for_an_explicit_budget_is_refused_before_any_run(self):
+    def test_an_explicit_budget_only_caps_it_lower(self):
+        self.assertEqual(self._stager(4).budget(), 4 * measure.GIB)
+        self.assertEqual(self._stager(100).budget(), measure.warm_bound(measure.Config()))
+
+    def test_a_warm_set_too_big_for_the_budget_is_refused_before_any_run(self):
         stager = self._stager(1)
         stager.plan(measure.FIGURES)
         problems = stager.preflight(measure.FIGURES)
         self.assertTrue(any("over the" in p for p in problems))
 
-    def test_a_staging_area_too_small_is_refused_before_any_run(self):
-        stager = self._stager(None)
+
+class Staging(unittest.TestCase):
+    """A staging failure is the sweep's, not a figure's: what it must never
+    leave behind is a partial file recorded as an input."""
+
+    def _cfg(self, root: Path, **kw) -> measure.Config:
+        return measure.Config(
+            cache_dir=root / "ssd", warm_dir=root / "shm", nvme_dir=root / "nvme", **kw
+        )
+
+    def test_preflight_reserves_the_budget_and_gives_it_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stager = measure.Stager(self._cfg(root, warm_budget=1 / 1024), lambda _m: None)
+            with unittest.mock.patch.object(
+                measure.os, "posix_fallocate", wraps=measure.os.posix_fallocate
+            ) as alloc:
+                self.assertIsNone(stager.reserve(stager.budget()))
+            self.assertEqual(alloc.call_args.args[1:], (0, measure.MIB))
+            self.assertEqual(list((root / "shm").iterdir()), [])
+
+    def test_a_reservation_the_quota_refuses_is_a_preflight_problem(self):
+        # `statvfs` cannot see a per-user quota, so the free space read fine
+        # and the sweep hit EDQUOT staging its eighteenth figure.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stager = measure.Stager(self._cfg(root), lambda _m: None)
+            stager.plan([measure.FIGURES_BY_ID["peak-rss"]])
+            quota = OSError(122, "Disk quota exceeded")
+            with unittest.mock.patch.object(measure.os, "posix_fallocate", side_effect=quota):
+                problems = stager.preflight([measure.FIGURES_BY_ID["peak-rss"]])
+            self.assertTrue(any("could not reserve" in p for p in problems), problems)
+            self.assertFalse((root / "shm" / measure.WARM_RESERVATION).exists())
+
+    def test_what_is_already_staged_is_not_reserved_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stager = measure.Stager(self._cfg(Path(tmp)), lambda _m: None)
+            stager._staged = {"control": stager.budget()}
+            with unittest.mock.patch.object(measure.os, "posix_fallocate") as alloc:
+                self.assertIsNone(stager.reserve(stager.budget()))
+            alloc.assert_not_called()
+
+    def test_a_failed_copy_leaves_nothing_staged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = self._cfg(root)
+            stager = measure.Stager(cfg, lambda _m: None)
+            (root / "ssd").mkdir()
+            (root / "ssd" / "control.sql").write_bytes(b"x" * 4096)
+            (root / "ssd" / "control.stamp").write_text(
+                measure.input_stamp(measure.INPUTS["control"], cfg) + "\n"
+            )
+
+            def partial(src, dst):
+                Path(dst).write_bytes(b"x" * 100)
+                raise OSError(122, "Disk quota exceeded")
+
+            with unittest.mock.patch.object(measure.shutil, "copyfile", side_effect=partial):
+                with self.assertRaises(measure.StagingError):
+                    stager.warm_path("control")
+            self.assertNotIn("control", stager._staged)
+            self.assertFalse((root / "shm" / "control.sql").exists())
+            # And the next ask copies it whole rather than taking the stub.
+            self.assertEqual(stager.warm_path("control").stat().st_size, 4096)
+            self.assertIn("control", stager._staged)
+
+    def test_a_staging_failure_aborts_the_sweep(self):
+        source = inspect.getsource(measure.emit)
+        handler = source.index("except StagingError")
+        self.assertLess(handler, source.index("except Exception as exc:  # one figure failing"))
+        self.assertIn("break", source[handler : handler + 800])
+
+
+class SplitSweep(unittest.TestCase):
+    """A split figure's specs run beside the specs over their own group, each
+    group staged first."""
+
+    def _session(self):
+        cfg = measure.Config(dry_run=True)
+        stager = measure.Stager(cfg, lambda _m: None)
         stager.plan(measure.FIGURES)
-        tiny = collections.namedtuple("usage", "total used free")(0, 0, 1 * measure.GIB)
-        with unittest.mock.patch.object(measure.shutil, "disk_usage", return_value=tiny):
-            problems = stager.preflight(measure.FIGURES)
-        self.assertTrue(any("usable" in p for p in problems), problems)
+        return measure.Session(cfg, stager, lambda _m: None)
+
+    def test_specs_go_to_their_group_in_group_order(self):
+        fig = measure.FIGURES_BY_ID["nested-end-to-end"]
+        parts = measure.split_specs(fig.id, measure._nested_specs(), fig.staging_groups)
+        self.assertEqual([gi for gi, _ in parts], [0, 1])
+        self.assertEqual({s.input for s in parts[0][1]}, {"control", "composite"})
+        self.assertEqual({s.input for s in parts[1][1]}, {"arrays"})
+
+    def test_a_spec_no_group_stages_is_an_error(self):
+        groups = measure.FIGURES_BY_ID["scan-throughput-warm"].staging_groups
+        for spec in (
+            measure.RunSpec("pgdt", "control", "parse", "cold", "off tmpfs"),
+            measure.RunSpec("pgdt", "arrays", "parse", "warm", "no group"),
+        ):
+            with self.subTest(spec=spec.label):
+                with self.assertRaises(ValueError):
+                    measure.split_specs("scan-throughput-warm", [spec], groups)
+
+    def test_each_group_is_staged_before_its_own_reps(self):
+        session = self._session()
+        order = []
+        session.take = lambda spec, rep: order.append(("run", spec.input)) or 1.0
+        stage = session.stage
+        session.stage = lambda figure, gi: (order.append(("stage", gi)), stage(figure, gi))
+        session.sweep("scan-throughput-warm", measure._throughput_specs("warm"), 2)
+        self.assertEqual(
+            [o for o in order if o[0] == "stage"], [("stage", 0), ("stage", 1), ("stage", 2)]
+        )
+        runs = [(i, o[1]) for i, o in enumerate(order) if o[0] == "run"]
+        stages = [i for i, o in enumerate(order) if o[0] == "stage"]
+        for (i, name) in runs:
+            group = max(g for g, at in enumerate(stages) if at < i)
+            self.assertEqual(
+                (name,), measure.FIGURES_BY_ID["scan-throughput-warm"].staging_groups[group]
+            )
+
+    def test_each_warm_throughput_shape_has_its_own_floor(self):
+        specs = measure._throughput_specs("warm")
+        parsed = {s.input for s in specs if s.command == "parse"}
+        floors = {s.input for s in specs if s.command == "dd"}
+        self.assertEqual(parsed, floors)
 
 
 class Consumers(unittest.TestCase):
@@ -5699,7 +5882,7 @@ class ColdNvme(unittest.TestCase):
         self.assertEqual(fig.cold_inputs, ())
         self.assertEqual(fig.warm_inputs, ())
 
-    def test_it_measures_the_same_three_shapes_and_a_floor(self):
+    def test_it_measures_the_same_three_shapes_and_their_floors(self):
         # The three tables are read against each other as ratios, so they have
         # to be the same rows over the same files.
         cold = measure.FIGURES_BY_ID["scan-throughput-cold"]
@@ -5707,8 +5890,11 @@ class ColdNvme(unittest.TestCase):
             measure.FIGURES_BY_ID["scan-throughput-nvme"].nvme_inputs, cold.cold_inputs
         )
         specs = measure._throughput_specs("cold-nvme")
-        self.assertEqual([s.regime for s in specs], ["cold-nvme"] * 4)
-        self.assertEqual(specs[-1].command, "dd")
+        self.assertEqual({s.regime for s in specs}, {"cold-nvme"})
+        self.assertEqual(
+            [(s.input, s.command) for s in specs],
+            [(s.input, s.command) for s in measure._throughput_specs("warm")],
+        )
 
     def test_the_nvme_regime_resolves_under_the_nvme_directory(self):
         cfg = measure.Config(dry_run=True, warm_budget=8)

@@ -65,13 +65,15 @@ Eighteen standing rules for reading anything below:
   tmpfs** — see "The apparatus" below, which every figure here shares.
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
-  multi-file comparison a file at a time. Session-to-session level shifts of up
+  cross-file difference a file at a time: inputs a reading subtracts share a
+  sweep, and only a table whose every row stays within one file is split one
+  sweep per input, as the warm-set bound splits three ("The apparatus"). Session-to-session level shifts of up
   to 5.6% in the median, over four pairs of sweeps, happen here on identical
   binaries and identical inputs — measured, in
   "What a session's own drift costs" below — and a
   file-at-a-time sweep maps a session's own drift onto file identity,
   manufacturing a between-file difference that is apparatus. Each rep runs
-  every file-and-mode combination in turn; report medians. Two takes of the
+  every file-and-mode combination of its sweep in turn; report medians. Two takes of the
   nested table a day apart disagreed by 3.45× against 3.08× for exactly this
   reason, while the per-row differences the design actually consumes barely
   moved
@@ -563,14 +565,26 @@ to no cold-SSD sitting. The contention gate carries a row per regime for the
 same reason — a regime with no row gates nothing, so a fourth one added without
 a row would silently take every reading it was handed.
 
-**The harness stages the inputs, and the budget is computed.** The full input
-set is six 3.00 GiB files, which does not fit `/dev/shm`, so it stages one
-figure's inputs at a time and evicts what no remaining figure wants. The
-ceiling is the largest single figure's own inputs plus 10% — 9.90 GiB here —
-checked against the filesystem's real free space before the first measurement
-rather than discovered twenty minutes into a sweep. Inputs are generated onto
-the SSD once and *copied* into tmpfs, both from the host: 3 GiB written from
-inside the 512 MB container would be charged to its cgroup and kill it. The
+**Measurement's RAM is bounded by design, and the harness stages within it**,
+evicting what no later sweep wants.
+The tmpfs budget is a constant of the apparatus, `measure.warm_bound`: two
+full-size inputs, which is what one paired cross-file difference needs, plus
+64 MiB for a generator's few-KB overshoot — 6.06 GiB at 3.00 GiB inputs.
+`scripts/test_measure.py` holds every figure's warm set to it. A figure that
+outgrows it is split (`Figure.warm_groups`), one sweep per input, and inputs
+share a sweep only where a reading subtracts one from another rep by rep — a
+difference over reps from two sweeps is no longer paired. Each input's `dd`
+floor runs in its own sweep, while that input is staged. *Rejected:* growing
+the room to fit a figure — a budget computed from the largest figure grows with
+whatever a slice adds, and the quota it meets may be one `statvfs` and `df`
+cannot see (`systemd-user-runtime-dir`'s per-user one on `/dev/shm`). Preflight
+*reserves* the budget, `fallocate`ing it in the staging directory and giving it
+back, and any limit refuses the sweep there rather than twenty minutes in. An
+input is recorded as staged only once its copy has finished, and a staging
+failure aborts the sweep, since every later figure stages through the same
+area. Inputs are generated onto the SSD once and *copied* into tmpfs, both from
+the host: 3 GiB written from inside the 512 MB container would be charged to
+its cgroup and kill it. The
 NVMe copies are made the same way and **kept** rather than evicted — that area
 is disk, not RAM, so there is no budget to reclaim and nothing to buy by
 re-copying 3 GiB before every sitting. Each copy carries the generator stamp
@@ -1989,10 +2003,12 @@ costs: five projection widths over one file" below does that, over identical
 rows of one file. What the three files are for is the finding underneath them:
 the untyped baseline is not file-independent, and the census is one term of why.
 
-Three inputs on tmpfs, output to `/dev/null`. **One interleaved sweep**: five
-reps, each rep running both modes on all three files in turn, so the slow
-upward drift across a long session lands on every row equally rather than on
-whichever file went first. Medians of five:
+Three inputs on tmpfs, output to `/dev/null`. **Two interleaved sweeps**, the
+warm-set bound's split ("The apparatus"): control and `--composite` together,
+whose reps the cross-file figure below pairs, then `--arrays --composite`
+alone. Five reps, each running both modes on every file of its sweep in turn,
+so the slow upward drift across a session lands on a pair's rows equally rather
+than on whichever file went first. Medians of five:
 
 | File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
