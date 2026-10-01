@@ -916,7 +916,7 @@ pub(crate) enum StatementShape {
 /// Deficiency register: `deficiency: KD61` — [`strip_kw`] checks no word
 /// boundary, so `CREATE TABLE` also matches `CREATE TABLESPACE fast OWNER …`,
 /// which `pg_dumpall` writes among its globals, and [`parse_create_table`]
-/// reads `SPACE` as the table's name. **(c) unowned**; the fix is a keyword
+/// reads `SPACE` as the table's name. The fix is a keyword
 /// ending at a word boundary.
 pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
@@ -1153,8 +1153,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             // segment's headers precede its own `\connect` (I9) and are staged
             // only where the previous segment saw a `Data` span; after one
             // that saw none (`template1`) they overwrite that segment's
-            // versions and the next database gets none. **(c) unowned**; the
-            // fix is staging on a following `\connect` rather than on
+            // versions and the next database gets none. The fix is staging on a following `\connect` rather than on
             // `preamble_complete`.
             SpanBody::VersionHeader { server_version, pg_dump_version } => {
                 if current.preamble_complete {

@@ -347,16 +347,14 @@ than reading as a phase nobody has sliced.
 - **KD60** — a zero in a negative-scale `numeric(p,s)` column (PG15+), which
   `pg_dump` writes `0`, fails to decode, so the default null mode reads it as
   NULL and counts it unrepresentable, and an unscaled zero renders back as
-  `000`. **(c) unowned**; a silent wrong answer, promoted by admitting the fix
-  out-of-band. Detail: `pgdump_query/src/decode.rs`.
+  `000`. **(b) owned by `M198`**. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD61** — a `CREATE TABLESPACE` statement, which `pg_dumpall` writes among
   its globals, is classified as a `CREATE TABLE` of a table named `space`, so
-  `info --map` lists a `TABLE space` span. **(c) unowned**; promoted by a
-  `pg_dumpall` user reading the map. Detail: `pgdump_query/src/preamble.rs`.
+  `info --map` lists a `TABLE space` span. **(b) owned by `M199`**. Detail: `pgdump_query/src/preamble.rs`.
 
 - **KD62** — in a `pg_dumpall` dump, a database whose segment follows one with
   no `COPY` block (`template1`, an empty database) loses its server and
-  `pg_dump` versions, the earlier segment taking them instead. **(c)
-  unowned**; promoted by a user reading `info` over such a dump. Detail:
+  `pg_dump` versions, the earlier segment taking them instead. **(b) owned
+  by `M200`**. Detail:
   `pgdump_query/src/preamble.rs`.

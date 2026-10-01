@@ -910,7 +910,7 @@ pub fn render_bytea(bytes: &[u8]) -> String {
 /// below is written `0`, fewer digits than the zeros the scale implies, so
 /// `cut > total` answers `None` and the value reads as one its type cannot
 /// hold; [`render_decimal`] writes an unscaled zero there as `000` in turn.
-/// **(c) unowned**; the fix is that zero answers `0` whatever the scale, and
+/// The fix is that zero answers `0` whatever the scale, and
 /// renders as `0`.
 pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     if s == "NaN" {
