@@ -1036,8 +1036,8 @@ came from beside it: `(stated)` for a `--memory` you typed, `(discovered)` for
 a cgroup limit, and `half of what the machine reports available` for a host
 that set none. A block whose statistics would pass it declines, and says so
 (above, "`--statistics-level`: what `parse` records for later queries"); on the one
-host that states no limit and reports no free memory it reads `(none: …)` and
-nothing declines. `query` gathers nothing, so the number binds nothing there.
+host that states no limit and whose available memory cannot be read it reads
+`(none: …)` and nothing declines. `query` gathers nothing, so the number binds nothing there.
 
 **This number bounds the whole scan, not each block in turn**, and what a
 finished block gathered is held until the scan ends. So on a dump long enough

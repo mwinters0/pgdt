@@ -145,7 +145,7 @@ impl ExtensionOptions for PgDumpTableOptions {
             entry(
                 "unrepresentable",
                 Some(unrepresentable.to_string()),
-                "`null`, a value its column's type cannot hold read as NULL, or `refuse`.",
+                "`null`, a value its column's type cannot hold read as NULL, `text`, a column holding one read as its text, or `refuse`.",
             ),
             entry(
                 "strict_identity",
@@ -263,4 +263,24 @@ pub fn register_table_factory(
 
 fn external(err: crate::Error) -> DataFusionError {
     DataFusionError::External(Box::new(err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **`pgdump.unrepresentable`'s help names every value `set` accepts**,
+    /// each one set and read back before its name is looked for, so the help
+    /// cannot drop a mode the option takes.
+    #[test]
+    fn the_unrepresentable_help_names_every_mode_the_option_takes() {
+        for mode in ["null", "text", "refuse"] {
+            let mut options = PgDumpTableOptions::default();
+            options.set("pgdump.unrepresentable", mode).unwrap();
+            let entries = options.entries();
+            let entry = entries.iter().find(|e| e.key == "pgdump.unrepresentable").unwrap();
+            assert_eq!(entry.value.as_deref(), Some(mode));
+            assert!(entry.description.contains(&format!("`{mode}`")), "{}", entry.description);
+        }
+    }
 }

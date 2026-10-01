@@ -549,7 +549,8 @@ impl Resolved {
     /// worded as [`Resolved::budget_display`] words the buffer budget.
     fn statistics_allowance_display(&self) -> String {
         let Some(bytes) = self.statistics_allowance() else {
-            return "(none: no limit found and the machine reports no free memory)".to_string();
+            return "(none: no limit found and the machine's available memory could not be read)"
+                .to_string();
         };
         let origin = match (self.allowance_stated, &self.limit) {
             (Some(_), _) => "stated",
@@ -4173,6 +4174,27 @@ mod tests {
             flagless.resolve_in(&runtime_root("no-limit"), &plain).budget_display(),
             format!("{} (default: no limit found)", 64 << 20)
         );
+    }
+
+    /// **The statistics line reads `(none: …)` only where `MemAvailable`
+    /// cannot be read**: a host reporting none available still states a
+    /// number, half of nothing, and says where it came from.
+    #[test]
+    fn the_statistics_line_is_none_only_where_available_memory_is_unreadable() {
+        let flagless = ParallelArgs { jobs: None, memory: None };
+        let reader = Recommends::reader(24, READER);
+
+        let unreadable = tempfile::tempdir().unwrap();
+        assert_eq!(
+            flagless.resolve_in(unreadable.path(), &reader).statistics_allowance_display(),
+            "(none: no limit found and the machine's available memory could not be read)"
+        );
+
+        let exhausted = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(exhausted.path().join("proc")).unwrap();
+        std::fs::write(exhausted.path().join("proc/meminfo"), "MemAvailable: 0 kB\n").unwrap();
+        let line = flagless.resolve_in(exhausted.path(), &reader).statistics_allowance_display();
+        assert!(line.ends_with("(half of what the machine reports available)"), "{line}");
     }
 
     /// **A plan note names the budget that bound the plan; the clause beside

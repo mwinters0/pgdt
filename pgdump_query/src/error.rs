@@ -195,7 +195,7 @@ pub enum Error {
     #[error("projection names column `{column}` more than once")]
     DuplicateProjectionColumn { column: String },
     #[error(
-        "resume token belongs to a different query — the table, projection, filter and schema mode must all match the stream being resumed"
+        "resume token belongs to a different query — a token resumes only the query that issued it"
     )]
     ResumeQueryMismatch,
     #[error(

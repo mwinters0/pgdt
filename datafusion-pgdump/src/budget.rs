@@ -78,7 +78,7 @@ pub enum AllowanceOrigin {
     Limit { read_from: PathBuf },
     /// Half of what the machine reports available, no limit being found.
     HalfAvailable,
-    /// Nothing: no limit found, and no free memory reported.
+    /// Nothing: no limit found, and the machine's available memory unreadable.
     NoneFound,
 }
 

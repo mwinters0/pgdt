@@ -3346,10 +3346,10 @@ pub enum PlanNoteKind {
     /// alone is inert exactly where this fires on a plain one. The other is
     /// the announced read chunk
     /// (`crate::scan::ScanOptions::chunk_size_bytes`), which a replay plan
-    /// never announces (`KD41`), and which a source cutting by it sizes both
-    /// terms from — `footprint` a fixed multiple of it
-    /// (`crate::io::Partitioning::partition_bytes`) and the span floored on it
-    /// ([`derived_source_span`]).
+    /// never announces (`KD41`), and which a source cutting by it sizes
+    /// `footprint` from, a fixed multiple of it
+    /// (`crate::io::Partitioning::partition_bytes`), and which floors the
+    /// span unless the span was stated below it ([`derived_source_span`]).
     ///
     /// **What a seat buys is not said here**: whether the sub-streams seated
     /// run concurrently is decided by how the caller drains them, which a plan
@@ -3579,6 +3579,15 @@ impl PlanNote {
             },
             // The span it charged is floored on the chunk wherever it fired,
             // bar a stated span already below the chunk, charged as stated.
+            //
+            // Deficiency register: `deficiency: KD59` — the chunk is listed
+            // for that span too, so on a source whose reader the chunk does
+            // not size (the default advice, `crate::io::RemoteSource`'s) the
+            // note offers a lever that moves nothing, where
+            // [`PlanNote::levers`] lists only the ones that apply. **(c)
+            // unowned**; promoted by a caller seen to lower its chunk on that
+            // advice for nothing, the fix being this constructor told whether
+            // the charged span sits on the chunk.
             levers: levers(allowance_raises, chunk_sized || max_source_span.is_some(), false),
         }
     }
@@ -3654,9 +3663,10 @@ impl Finding for PlanNote {
                      {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
                      byte(s) to decode plus {span} byte(s) held by its own batch — the batch \
                      span is already as small as the plan will make it, so what seats more is \
-                     a smaller read chunk, which a source cutting by one sizes both of those \
-                     terms from, or a larger memory budget, which is not the same as a larger \
-                     allowance on a source that recommends no per-reader cost of its own"
+                     a smaller read chunk, which a source cutting by one sizes the first from \
+                     and which floors the second unless that span was stated below it, or a \
+                     larger memory budget, which is not the same as a larger allowance on a \
+                     source that recommends no per-reader cost of its own"
                 ),
                 None => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \

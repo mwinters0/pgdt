@@ -127,7 +127,7 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
         stderr
             .lines()
             .filter(|line| {
-                line.starts_with("warning: shop.logs.events: ") && line.contains("floor")
+                line.starts_with("warning: shop.logs.events: ") && line.contains("one-slot floor")
             })
             .count()
     };
@@ -138,7 +138,7 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
     // The provider's clause, printed unchanged: the pool's grant is named by
     // the setting that moves it.
     assert!(
-        text(&out.stderr).lines().any(|line| line.contains("floor")
+        text(&out.stderr).lines().any(|line| line.contains("one-slot floor")
             && line.contains(&format!("pool is granted {} byte(s)", 1024u64 << 40))
             && line.contains("datafusion.runtime.memory_limit")),
         "{}",

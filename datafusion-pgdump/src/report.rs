@@ -233,9 +233,9 @@ impl BudgetedPlanNote {
                      {resident} byte(s) and the scans still running had drawn {drawn} byte(s)"
                 )
             }
-            None => "no allowance was found — no memory limit, and the machine reports no free \
-                     memory — so that budget is the library's own and nothing the session holds \
-                     came off it"
+            None => "no allowance was found — no memory limit, and the machine's available memory \
+                     could not be read — so that budget is the library's own and nothing the \
+                     session holds came off it"
                 .to_string(),
         };
         let mut keys = Vec::new();
