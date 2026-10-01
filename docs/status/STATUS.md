@@ -89,8 +89,8 @@ Spec: [`../design/roadmap-P28-unrepresentable-values.md`](../design/roadmap-P28-
 - [x] **28.7** The untyped mode: the widening resolution and its comparison in each semantics, "D38"'s clause; the harness green, closing `KD8`; [notes](../design/roadmap-P28.7-untyped-notes.md)
 - [x] **28.8** `IS [NOT] UNREPRESENTABLE` and `pgdump_unrepresentable`, "D53" amended; [notes](../design/roadmap-P28.8-predicate-notes.md)
 - [x] **28.11** The unrepresentable guard, the embedder's: registering a dump registers `pgdump_unrepresentable` and leaves the session's planning alone; the planning refusal a physical optimizer rule the embedder installs on a `SessionStateBuilder`, the evaluation's refusal naming it, and the shell installing it; "D101" and "RT22" rewritten; [notes](../design/roadmap-P28.11-guard-notes.md)
-- [ ] **28.9** The figures: the `census-*` figures and the census-off build retired, `statistics-gathering` pricing the data level against the metadata level, `statistics-pruning` without its `uncarried` leg, the bar lifted, and a data-level `parse` profiled; [notes](../design/roadmap-P28.9-figures-notes.md). The instrument has landed; its readings remain — the scan and statistics figures re-taken and the census's price attributed off the profile — taken in one sweep with 28.9.1's, at a commit carrying `M185`, after the first sweep failed on `/dev/shm`'s per-user quota ([2026-10-01](history/2026-10-01.md), "28.9's readings wait on a bounded warm set")
-- [ ] **28.9.1** The query figures over a data-level cache: `query-typed`, `query-strings`, `query-project-*` and `query-where-*` built untimed at the data level and queried with `--statistics none`, their readings with 28.9's; [notes](../design/roadmap-P28.9.1-query-cache-notes.md). The instrument has landed; its readings remain, taken in 28.9's sweep
+- [ ] **28.9** The figures: the `census-*` figures and the census-off build retired, `statistics-gathering` pricing the data level against the metadata level, `statistics-pruning` without its `uncarried` leg, the bar lifted, and a data-level `parse` profiled; [notes](../design/roadmap-P28.9-figures-notes.md). The instrument has landed; its readings remain — the scan and statistics figures re-taken and the census's price attributed off the profile — taken in one sweep with 28.9.1's, at a commit carrying `M185`, after the first sweep failed on `/dev/shm`'s per-user quota ([2026-10-01](history/2026-10-01.md), "28.9's readings wait on a bounded warm set"). **Blocked** on `M186` ([2026-10-01](history/2026-10-01.md), "`nested-end-to-end` co-measures control with each nested file")
+- [ ] **28.9.1** The query figures over a data-level cache: `query-typed`, `query-strings`, `query-project-*` and `query-where-*` built untimed at the data level and queried with `--statistics none`, their readings with 28.9's; [notes](../design/roadmap-P28.9.1-query-cache-notes.md). The instrument has landed; its readings remain, taken in 28.9's sweep. **Blocked** on `M186`, with 28.9
 
 ## Not started
 
@@ -121,22 +121,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`nested-end-to-end` is split into two sweeps, not one per input.** The
-  call: control and `--composite` share a sweep and `--arrays --composite`
-  runs alone (`Figure.warm_groups` in `scripts/measure.py`), where `M185`'s
-  ledger row named the figure one sweep per input. Why: `cross-file-floor`'s
-  row 1 is `_per_row_diffs(session, "nested-end-to-end", "control",
-  "composite")`, a per-rep pairing across those two inputs, and the settled
-  rule co-measures inputs a reading subtracts. The two together fit the
-  bound. Reconsidering: one sweep per input would
-  pair reps taken minutes apart in different sweeps, and that row would then
-  have to be re-derived or retired.
-- **The cold and NVMe throughput tables gain a `dd` floor per input, as the
-  warm one does.** The call: `_THROUGHPUT_ROWS` gives all three
-  `scan-throughput-*` tables the same six rows, each shape read against its
-  own floor. `M185` needed this only for the split warm table. Why: the three
-  tables are read against each other as ratios, and `test_measure.py` already
-  held them to the same rows. Reconsidering: keeping the cold and NVMe tables
-  to one control floor costs a per-regime row list, and makes "Against the
-  floor" mean a different thing in the warm table.

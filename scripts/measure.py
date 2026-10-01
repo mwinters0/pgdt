@@ -5567,10 +5567,13 @@ def _declare(*paths: str) -> tuple[str, ...]:
 
 # -- scan throughput --------------------------------------------------------
 
-#: The three shapes, then **each one's own `dd` floor**: the warm table is
-#: split one sweep per input (`Figure.warm_groups`), so a floor read in
-#: another input's sweep would be a cross-sweep ratio, and the three regimes'
-#: tables are read against each other as ratios, so they carry the same rows.
+#: The three shapes, then **each one's own `dd` floor**: a shape over its own
+#: sweep's floor of its own bytes cancels that sweep's level shift, which is
+#: what lets the warm table's rows -- a sweep per input (`Figure.warm_groups`)
+#: -- and the three regimes' tables be set beside each other as ratios, and on
+#: a cold device it takes the file's own layout out of the ratio. *Rejected:*
+#: control's floor alone for the unsplit cold and NVMe tables, which makes
+#: "Against the floor" mean a different thing per regime to save two rows.
 _THROUGHPUT_SHAPES = (
     ("control", "`COPY` block"),
     ("large_object", "Large-object region"),

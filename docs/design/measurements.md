@@ -1431,8 +1431,9 @@ there, and at ~560 MB/s the disk covers all of it.
 holding for one of the three.** At 2656 MB/s the `COPY` and large-object paths
 are still inside the device — **1.08×** and **1.19×** its time — and the
 `INSERT` path is not: **2.68×**, which is 2.04 s of a 3.25 s scan spent
-somewhere the disk is idle. **All three tables come from one sweep**, so
-their absolutes may be set beside each other as well as their ratios.
+somewhere the disk is idle. **All three tables come from one sitting**, the
+warm one a sweep per input, so it is their against-the-floor ratios that are
+set beside each other, across rows and across tables.
 
 **The one number the I/O-defaults levers are sized against is 1.08×.** Whatever
 readahead, `posix_fadvise` or a different chunk size could do, none of them can
@@ -2076,8 +2077,11 @@ refusal to stop copying nested values ([`decisions.md`](decisions.md), "D29").
 **This figure is the instrument's own calibration.** "What a column costs"
 below reads the composite column's cost within one file, so what this one is
 for is the number the standing rules are read off — what a *cross-file* per-row
-difference can resolve at all. Two readings from the same sweep, the quantity
-and the control on the instrument that measures it:
+difference can resolve at all. Two readings from one sitting, the quantity
+and the control on the instrument that measures it, each paired rep by rep
+within its own sweep — the first the nested figure's above, the second this
+figure's — so setting one beside the other is a calibration, not a subtraction
+across sweeps:
 
 <!-- figure: cross-file-floor — reproduce with `cd scripts && uv run measure.py --figure cross-file-floor` -->
 
@@ -2090,7 +2094,7 @@ Apparatus over every run in this table: CPU stall ≤0.18%, I/O stall ≤3.05%, 
 The second row is the control on the *instrument*: two files that differ only
 in their random seed should differ by zero. In this sitting they nearly do, at
 −0.09 to +0.21 µs per row, while the composite row's own reps span +0.62 to
-+0.80 in the same sitting. **In this sweep the two rows again do not overlap** —
++0.80 in the same sitting. **In this sitting the two rows again do not overlap** —
 every composite rep sits above every floor rep, by 0.41 µs where the previous
 sweep read 0.26 µs — and that is still not a resolution, because sweeps of the same binaries and inputs have
 read the same composite share at +0.31, +0.39, +0.60, +0.62, +0.62, +0.65,
