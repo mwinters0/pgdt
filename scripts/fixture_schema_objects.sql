@@ -264,6 +264,19 @@ ALTER EVENT TRIGGER objects_ddl_log DISABLE;
 -- framing pg_dump wraps its definition in (I19).
 CREATE TABLE objects.tablespaced_table (id integer) TABLESPACE fixture_ts;
 
+-- `$` outside a dollar-quoted body: a quoted table name holding `$$`, which
+-- pg_dump writes into the table's TOC comments, its COPY header and its
+-- COMMENT; a default holding `$x$`; and a comment holding `$$`. None opens a
+-- body to psql, and pgdump_query/src/lex.rs lexes as psql does -- a scanner
+-- that took any of them for a delimiter swallowed the lines after it, the
+-- table's data among them.
+CREATE TABLE objects."price$$list" (
+    id integer PRIMARY KEY,
+    note text DEFAULT 'costs $x$ here'
+);
+INSERT INTO objects."price$$list" (id) VALUES (1), (2);
+COMMENT ON TABLE objects."price$$list" IS 'priced in $$';
+
 -- REVOKE: a function's EXECUTE privilege is granted to PUBLIC by default,
 -- so revoking it is the one ACL shape whose target state has *fewer*
 -- privileges than the default -- pg_dump's ACL diff then emits a solo

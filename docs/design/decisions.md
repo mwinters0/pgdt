@@ -169,12 +169,13 @@ cache is then refused until replaced by the flag or deleted (D20), which is what
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
-`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is
-`max_line_bytes`, and exceeding it errors, never truncates. A chunk is scanned in two passes,
-carried line then chunk in place (`ChunkCarry`); a growing buffer copied every byte twice. Only a
-line matching the whole `COPY … FROM stdin;` grammar is structural, an off-grammar one being ordinary SQL; inside a
-block only an exact `\.` line is looked at (I7). A dollar-quoted region emits no lines, only a closing offset, since a
-body can match the grammar by coincidence (I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object region, skipped unread (I12).
+`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes`,
+and exceeding it errors, never truncates. A chunk is scanned in two passes, carried line then chunk in place
+(`ChunkCarry`); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar
+is structural, an off-grammar one being ordinary SQL; inside a block only an exact `\.` line is looked at (I7). Outside
+one every line is lexed as psql lexes it (`lex.rs`, I50), a line beginning inside a region is never structure, and a
+dollar-quoted one emits no lines, only a closing offset (I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object
+region, skipped unread (I12). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid every block).
 
 ### D25 Parallelize what is CPU-bound
 Decode is always split, extraction on any source, discovery only behind a decoder; the worker is
@@ -231,8 +232,8 @@ retreats to `pending_comment_start()` rather than guessing the comment's kind.
 ### D33 Bulk regions are one span kind; large objects skip at the scanner, `INSERT` runs at the map
 Only `DataBlock::Copy` has inner offsets, only `COPY` having a row reader; a data span absorbs its
 TOC comment unconditionally. `INSERT` runs fold in `feed_line` with no scanner state (their
-boundaries rest on no line-anchored invariant) and the run's end is string-aware. Two cuts stay
-untaken until the `INSERT` row reader exists (`KD9`).
+boundaries rest on no line-anchored invariant) and the run's end is lexed as the scanner lexes. Three cuts
+stay untaken until the `INSERT` row reader exists (`KD9`).
 
 ### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
 `blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
@@ -640,7 +641,7 @@ pages are snapshotted with width and bare-flag assertions. Rejected: `long_help`
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go
-L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
+L1 bytes and structure (`io`, `scan`, `copy`, `lex`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
 `statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `nested`), L3 Arrow assembly
 (`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`, `summary`); `error`, `lib` and
 `instrument` in none; CLI and embedders above L4. `use` points down or sideways; a module gets a

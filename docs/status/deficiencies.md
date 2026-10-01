@@ -100,9 +100,9 @@ than reading as a phase nobody has sliced.
 
 - **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
   warm and most of a cold NVMe scan's time (`measurements.md`,
-  `scan-throughput-warm` and `scan-throughput-nvme`), and two cuts
+  `scan-throughput-warm` and `scan-throughput-nvme`), and three cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
-  Track A row reader extends the very scan both cuts are in; the cold-NVMe
+  Track A row reader extends the very scan all three are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
   `pgdump_query/src/preamble.rs`.
 

@@ -109,41 +109,43 @@ and only the `data_offset` question remains.
 
 ---
 
-## The statement-end scan Track A needs already exists, and it is chunk-safe
+## The statement-end scan Track A needs already exists, and it is the scanner's lexer
 
-**Fact.** `preamble::StatementScan` is an incremental, byte-level, quote-aware
-scan of SQL statement text — paren depth, in-string (`''` doubling),
-in-quoted-identifier (`""`), in-`--`-comment, and the last non-whitespace byte
-— fed by `feed(&[u8])` and queried by `complete()`/`in_quote()`. It carries a
-`Pending` across calls, so a `''`, `""` or `--` pair split between two `feed`s
-is read correctly: a caller may hand it a file's chunks rather than its lines
-and get the same answer. `map::Builder`'s `INSERT` run drives it with no
-`String` per line and no statement buffer at all, and
+**Fact.** `preamble::StatementScan` is an incremental scan of a statement's
+lines — paren depth, where `lex::Lexer` leaves it (inside a literal, a quoted
+identifier, a comment or none), whether its last line ends in a `--` comment,
+and the last non-whitespace byte — fed by `feed_line(&[u8])` and queried by
+`complete()`/`in_quote()`. The lexer is the one `scan::CopyScanner` lexes every
+line outside a block with, psql's rules under the dump's own
+`standard_conforming_strings` (I50), so the run's end and the scanner's
+regions cannot disagree. It is line-at-a-time: no region boundary straddles a
+newline, and every caller holds lines. `map::Builder`'s `INSERT` run drives it
+with no `String` per line and no statement buffer at all, and
 `statement_complete`/`in_open_quote` are wrappers over it, so there is one
 implementation of the rule.
 
 **Why P8 cares.** Track A's row reader has to find where each
 `INSERT INTO … VALUES (…);` statement ends before it can split the value list,
 and that is exactly this scan. It should be extended rather than re-written —
-a second quote tracker beside this one is two places for
-`standard_conforming_strings` to be assumed. What the reader will want that the
-map does not is a *position*: the scan updates state and reports whether the
-run so far is complete, but does not return the offset of the terminating `;`.
-Adding that is a method on an existing type, and shaping it is a spec-time
-question because it decides whether a reader walks lines (as the map does) or
-chunks.
+a second quote tracker beside this one is a second reading of psql's lexer.
+What the reader will want that the map does not is a *position*: the scan
+updates state and reports whether the run so far is complete, but does not
+return the offset of the terminating `;`. Adding that is a method on an
+existing type, and the lines it walks are the ones the scanner surfaces.
 
-**This phase also owns `KD9`'s two untaken cuts**, both inside the scan above,
+**This phase also owns `KD9`'s three untaken cuts**, all in the scan above,
 because slicing P8 is when they acquire a slice and `scripts/deficiencies.py`
 holds the pairing. One is that `map::Builder::insert_run_line` feeds the
 `INSERT INTO <table>` prefix it has just matched back into `feed_line`, so
-those bytes are crossed twice; the other is that `feed` counts parens in a
-second `memchr2` pass per plain run, which no `INSERT` statement's end needs.
-The second is why the reader's requirements have to come first: skipping it is
-a mode flag, and whether the depth count is dead weight is a question only a
-caller splitting a `VALUES` tuple can answer. Neither is measured — a profile
-sizes both, and `decisions.md`'s "D33" carries the reading that
-made them worth keeping.
+those bytes are crossed twice; another is that `feed_line` counts parens in a
+`memchr2` pass per run of code, which no `INSERT` statement's end needs; the
+third is that the scanner has already lexed every line it surfaces, so the
+line's region, comment and paren count could travel with its `Event::Line`
+instead of being found again. The second is why the reader's requirements have
+to come first: skipping it is a mode flag, and whether the depth count is dead
+weight is a question only a caller splitting a `VALUES` tuple can answer. None
+is measured — a profile sizes them, and `decisions.md`'s "D33" carries the
+reading that made the first two worth keeping.
 
 **Also worth knowing at spec time.** The trailing-`;` test uses ASCII
 whitespace where `str::trim_end` used Unicode, and the map's own `feed_line`
@@ -151,5 +153,7 @@ joins lines with `\n` *between* them and never before the first — both are
 documented on the type and both are load-bearing for a caller that reuses it.
 
 **Origin.** The `INSERT` fast path, 2026-09-03
-([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)). The
-mechanism is [`decisions.md`](decisions.md), "D33".
+([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)), and
+`M191`, 2026-10-01 ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md)),
+which put it on the scanner's lexer. The mechanism is
+[`decisions.md`](decisions.md), "D33".

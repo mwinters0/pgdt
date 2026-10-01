@@ -96,6 +96,7 @@ use crate::copy::split_fields;
 use crate::index::{BlockCensus, CopyBlock, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::io::ByteRangeSource;
+use crate::lex::standard_conforming_strings;
 use crate::preamble::{
     CollationDef, ColumnDef, Extension, StatementScan, StatementShape, TypeDef, TypeKind,
     classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
@@ -576,6 +577,11 @@ pub(crate) struct Builder {
     /// pass asked for one ([`Builder::observe_block`]). Handed every row and
     /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
     pending_observer: Option<Box<dyn BlockObserver>>,
+    /// The `standard_conforming_strings` the file last stated, which every
+    /// statement's [`StatementScan`] lexes under, as the scanner does
+    /// (I50). `on` for a builder starting partway through a file, as for
+    /// the scanner resumed beside it.
+    standard_strings: bool,
 }
 
 /// **What a data-level block's values are counted against**: whether a field
@@ -740,6 +746,7 @@ impl Builder {
             pending_census: None,
             pending_counter: None,
             pending_observer: None,
+            standard_strings: true,
         }
     }
 
@@ -922,7 +929,8 @@ impl Builder {
     /// own `INSERT INTO <table>` prefix byte for byte.
     ///
     /// Raw bytes where `step` would feed a lossy conversion is no difference:
-    /// every byte [`StatementScan`] acts on is ASCII.
+    /// [`StatementScan`] tells a non-ASCII byte from an ASCII one and no
+    /// further.
     fn insert_run_line(&mut self, raw: &[u8]) -> bool {
         let Mode::InsertRun { scan, prefix, row_count, .. } = &mut self.mode else {
             return false;
@@ -1044,7 +1052,7 @@ impl Builder {
                         start,
                         table,
                         database: self.database.clone(),
-                        scan: StatementScan::new(),
+                        scan: StatementScan::new(self.standard_strings),
                         prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
                         toc,
@@ -1066,7 +1074,7 @@ impl Builder {
                 // nothing ever supplies the swallowed `;`. The `in_open_quote`
                 // guard is what keeps a `--`-looking continuation line that
                 // is really multi-line string content from counting.
-                if trimmed.starts_with("--") && !in_open_quote(buf) {
+                if trimmed.starts_with("--") && !in_open_quote(buf, self.standard_strings) {
                     let start = *start;
                     let buf = std::mem::take(buf);
                     let toc = toc.take();
@@ -1089,7 +1097,7 @@ impl Builder {
                         start,
                         table,
                         database: self.database.clone(),
-                        scan: StatementScan::new(),
+                        scan: StatementScan::new(self.standard_strings),
                         prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
                         toc,
@@ -1097,8 +1105,13 @@ impl Builder {
                     };
                     return true;
                 }
+                if buf.is_empty()
+                    && let Some(on) = standard_conforming_strings(line.as_bytes())
+                {
+                    self.standard_strings = on;
+                }
                 push_stmt_line(buf, line);
-                if statement_complete(buf) {
+                if statement_complete(buf, self.standard_strings) {
                     let start = *start;
                     let buf = std::mem::take(buf);
                     let toc = toc.take();

@@ -5656,7 +5656,12 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 #: that a change *outside* these paths that moves a figure goes unannounced —
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
-SCAN = ("pgdump_query/src/scan.rs", "pgdump_query/src/copy.rs", "pgdump_query/src/stream.rs")
+SCAN = (
+    "pgdump_query/src/scan.rs",
+    "pgdump_query/src/copy.rs",
+    "pgdump_query/src/lex.rs",
+    "pgdump_query/src/stream.rs",
+)
 #: Every figure that times a `pgdt` run over a file reads its bytes through
 #: this one module, whatever else the figure is about, so it is its own
 #: mechanism rather than part of `SCAN`: `nested-end-to-end` and

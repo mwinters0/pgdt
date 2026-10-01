@@ -19,6 +19,10 @@
 //!   other leading-backslash line) are ordinary [`Event::Line`]s: outside a
 //!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
 //!   bare `BEGIN;` opening the large-object region, is structural.
+//! * Outside a block every line is lexed ([`crate::lex`]), and only a line
+//!   that begins between tokens and touches no dollar-quoted body can be
+//!   structural: one that begins inside a string, a quoted identifier or a
+//!   comment is that region's content.
 
 use std::future::Future;
 use std::ops::ControlFlow;
@@ -30,8 +34,9 @@ use bytes::Bytes;
 use futures::future::{Either, select};
 use tokio::sync::Notify;
 
-use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
+use crate::copy::{CopyHeader, is_terminator, parse_copy_header};
 use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
+use crate::lex::{Lexer, Region, standard_conforming_strings};
 use crate::{Error, Result};
 
 /// The start of a COPY data block.
@@ -170,11 +175,11 @@ pub struct CopyScanner {
     /// Bytes of the current buffer already turned into events.
     pos: usize,
     state: State,
-    /// The `$tag$` delimiter of a dollar-quoted string currently open
-    /// outside a COPY block, if any. Always `None` while `state` is
-    /// `InCopy` — a dollar-quoted body can never appear inside COPY data,
-    /// only in the DDL around it (`docs/design/postgres-invariants.md` I1).
-    dollar_tag: Option<Vec<u8>>,
+    /// Where the SQL outside a `COPY` block stands — between tokens, or
+    /// inside a string, identifier, comment or dollar-quoted body — and the
+    /// `standard_conforming_strings` the file last stated. Always between
+    /// tokens while `state` is `InCopy`: a header line begins and ends there.
+    lexer: Lexer,
 }
 
 impl Default for CopyScanner {
@@ -185,7 +190,7 @@ impl Default for CopyScanner {
 
 impl CopyScanner {
     pub fn new() -> Self {
-        Self { base: 0, pos: 0, state: State::Outside, dollar_tag: None }
+        Self { base: 0, pos: 0, state: State::Outside, lexer: Lexer::new() }
     }
 
     /// Resume scanning at `offset`, as if `take_consumed` had just been
@@ -197,14 +202,31 @@ impl CopyScanner {
     ///
     /// A resume point is a COPY block boundary (a cached block's
     /// `data_offset` or `end_offset`) or a row start inside a block's data
-    /// (a leader piece after its resync), neither of which is inside a
-    /// dollar-quoted string, so dollar-quote tracking always restarts clean.
+    /// (a leader piece after its resync), none of them inside a quoted
+    /// region, so the lexer restarts between tokens. It restarts under
+    /// `standard_conforming_strings = on` unless
+    /// [`with_standard_strings`](Self::with_standard_strings) says otherwise:
+    /// a literal `pg_dump` writes under `off` lexes alike under either (I50).
     pub fn resume(offset: u64, in_copy: Option<(u64, u64)>) -> Self {
         let state = match in_copy {
             Some((header_offset, rows)) => State::InCopy { rows, header_offset },
             None => State::Outside,
         };
-        Self { base: offset, pos: 0, state, dollar_tag: None }
+        Self { base: offset, pos: 0, state, lexer: Lexer::new() }
+    }
+
+    /// The same scanner, lexing under the `standard_conforming_strings` a
+    /// scanner earlier in the file had reached
+    /// ([`standard_strings`](Self::standard_strings)).
+    pub fn with_standard_strings(mut self, on: bool) -> Self {
+        self.lexer.set_standard_strings(on);
+        self
+    }
+
+    /// The `standard_conforming_strings` the file last stated, `on` before
+    /// it states one.
+    pub fn standard_strings(&self) -> bool {
+        self.lexer.standard_strings()
     }
 
     /// Absolute file offset of the next unconsumed byte.
@@ -269,22 +291,27 @@ impl CopyScanner {
 
             match self.state {
                 State::Outside => {
-                    let (tag, touched) = scan_dollar_quotes(line, self.dollar_tag.take());
-                    let closed = touched && tag.is_none();
-                    self.dollar_tag = tag;
-                    if touched {
+                    let between_tokens = *self.lexer.region() == Region::Code;
+                    let lexed = self.lexer.line(line, |_| {});
+                    if lexed.dollar {
                         // Inside, entering, or leaving a dollar-quoted
                         // string: this line is body text or quoting syntax,
                         // never structure, regardless of what it looks like.
                         // A line that leaves one still reports *where* it did
                         // — see `DollarQuoteEnd`; the line itself stays
                         // unsurfaced.
-                        if closed {
+                        if !matches!(self.lexer.region(), Region::Dollar(_)) {
                             return Ok(Some(Event::DollarQuoteEnd(DollarQuoteEnd {
                                 offset: self.position(),
                             })));
                         }
                         continue;
+                    }
+                    if !between_tokens {
+                        // The continuation of a string, a quoted identifier
+                        // or a comment: content, surfaced as the statement's
+                        // next line and never read as structure.
+                        return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                     }
 
                     // Line-anchored: only a line that both starts with `COPY`
@@ -307,6 +334,11 @@ impl CopyScanner {
                         return Ok(Some(Event::LargeObjectStart(LargeObjectStart {
                             start_offset: line_offset,
                         })));
+                    }
+                    // I50: the literal syntax every line after this one is
+                    // written in.
+                    if let Some(on) = standard_conforming_strings(line) {
+                        self.lexer.set_standard_strings(on);
                     }
                     return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                 }

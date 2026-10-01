@@ -31,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::copy::Cursor;
+use crate::lex::{Lexer, Region};
 use crate::map::{Span, SpanBody};
 
 /// Everything the preamble pass recovered, per database — see
@@ -943,56 +944,33 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
     Cursor::new(rest.trim().as_bytes()).parse_ident()
 }
 
-/// An incremental, byte-level scan of SQL statement text: how deep the
-/// parens are, whether the bytes so far end inside a single-quoted string, a
-/// double-quoted identifier or a `--` line comment, and what the last
-/// non-whitespace byte was.
+/// An incremental scan of a SQL statement's lines: how deep its parens are,
+/// where [`crate::lex`] leaves it — the rules [`crate::scan::CopyScanner`]
+/// lexes the same lines by, so a statement ends where the scanner's regions
+/// say it can — whether its last line ends in a `--` comment, and what its
+/// last non-whitespace byte was.
 ///
-/// Byte-level rather than `char`-level: every byte it acts on — `'`, `"`,
-/// `-`, `(`, `)`, `\n` — is ASCII, and an ASCII byte never occurs inside a
-/// multi-byte UTF-8 sequence, so the scan gives the same answer over raw bytes
-/// as over a validated `str` and needs no validation pass in front of it.
-/// That is what lets [`crate::map`]'s `INSERT` runs be classified without a
-/// `String` per line (`docs/design/decisions.md`, "D33").
-///
-/// **A caller may split the statement's bytes anywhere.** A `''`, `""` or
-/// `--` pair straddling two [`feed`](Self::feed) calls is carried across in
-/// `pending`, so a reader walking a file in chunks gets the same answer as one
-/// holding the whole statement in a buffer.
-///
-/// Double quotes and comments are tracked because without it an apostrophe
-/// inside either (`public."it's"`, `-- it's here`) would open a string that
-/// never closes and swallow every following line. `E'…'` escapes are not a
-/// concern — `pg_dump` sets `standard_conforming_strings = on`, so `''` is the
-/// only in-string escape.
+/// Line at a time, as the lexer is: [`crate::map`] holds every statement as
+/// the lines the scanner surfaced. Byte-level rather than `char`-level: the
+/// lexer tells a non-ASCII byte from an ASCII one and no further, and no ASCII
+/// byte occurs inside a multi-byte UTF-8 sequence, so it answers alike over
+/// raw bytes and over their lossy conversion, and an `INSERT` run is
+/// classified off raw bytes with no `String` per line
+/// (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone)]
 pub(crate) struct StatementScan {
+    lexer: Lexer,
     depth: i32,
-    in_string: bool,
-    in_dquote: bool,
+    /// The last line fed ends in a `--` comment, which only the newline a
+    /// further line brings would close.
     in_comment: bool,
-    /// A quote or `-` that ended the previous [`feed`](Self::feed) and might
-    /// yet pair with the first byte of the next one.
-    pending: Pending,
     /// The last byte fed that is not [`is_sql_space`], or `0` if none is —
     /// the incremental form of `buf.trim_end()`'s last character.
     last_significant: u8,
-    /// Bytes fed since the last [`reset`](Self::reset), so that
-    /// [`is_empty`](Self::is_empty) answers what `buf.is_empty()` answered.
-    len: usize,
-}
-
-/// A two-byte token whose first byte ended a [`StatementScan::feed`] run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Pending {
-    None,
-    /// A `'` seen while inside a string: it either closes the string or is
-    /// the first half of a `''`.
-    StringQuote,
-    /// The same, for a `"` inside a quoted identifier.
-    IdentQuote,
-    /// A `-` seen outside everything: it might begin a `--` comment.
-    Dash,
+    /// A non-empty line has been fed since the last [`reset`](Self::reset),
+    /// so that [`is_empty`](Self::is_empty) answers what `buf.is_empty()`
+    /// answered.
+    fed: bool,
 }
 
 /// The whitespace `str::trim_end` strips, restricted to ASCII. A non-ASCII
@@ -1005,242 +983,106 @@ const fn is_sql_space(b: u8) -> bool {
 }
 
 impl StatementScan {
-    pub(crate) const fn new() -> Self {
+    /// A scan at a statement's start, under the dump's
+    /// `standard_conforming_strings` (I50).
+    pub(crate) const fn new(standard_strings: bool) -> Self {
         Self {
+            lexer: Lexer::with_standard_strings(standard_strings),
             depth: 0,
-            in_string: false,
-            in_dquote: false,
             in_comment: false,
-            pending: Pending::None,
             last_significant: 0,
-            len: 0,
+            fed: false,
         }
     }
 
-    /// Start a fresh statement.
+    /// Start a fresh statement, under the same setting.
     pub(crate) fn reset(&mut self) {
-        *self = Self::new();
+        *self = Self::new(self.lexer.standard_strings());
     }
 
     /// Nothing has been fed since the last [`reset`](Self::reset) — the
     /// incremental equivalent of `buf.is_empty()`, and [`crate::map`]'s
     /// signal that the next line either opens a statement or ends the run.
     pub(crate) fn is_empty(&self) -> bool {
-        self.len == 0
+        !self.fed
     }
 
-    /// Feed one more physical line, joined to what came before with `\n`
-    /// exactly as [`push_stmt_line`] joins them — only between lines, so a
-    /// trailing `-- comment` stays open at the end of a buffer, no `\n`
-    /// having followed it.
+    /// Feed one more physical line, its newline stripped, as
+    /// [`push_stmt_line`] joins them.
     pub(crate) fn feed_line(&mut self, line: &[u8]) {
-        if self.len != 0 {
-            self.feed(b"\n");
-        }
-        self.feed(line);
-    }
-
-    /// Feed the next contiguous run of statement bytes.
-    pub(crate) fn feed(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
+        if line.is_empty() && !self.fed {
             return;
         }
-        self.len += bytes.len();
-        if let Some(&b) = bytes.iter().rev().find(|&&b| !is_sql_space(b)) {
+        self.fed = true;
+        if let Some(&b) = line.iter().rev().find(|&&b| !is_sql_space(b)) {
             self.last_significant = b;
         }
-
-        let mut i = 0;
-        match self.pending {
-            Pending::None => {}
-            Pending::StringQuote => {
-                self.pending = Pending::None;
-                if bytes[0] == b'\'' {
-                    i = 1;
-                } else {
-                    self.in_string = false;
-                }
+        let depth = &mut self.depth;
+        // Deficiency register: `deficiency: KD9` — an `INSERT` run costs
+        // several times a `COPY` scan's per-byte CPU warm, and the device is
+        // what decides whether a reader meets it (`measurements.md`,
+        // `scan-throughput-warm` and `scan-throughput-nvme`). Three cuts
+        // against the remainder are known. No `INSERT` statement's end
+        // depends on `depth`, so a run-only scan would skip this count;
+        // `insert_run_line` (`map.rs`) feeds the `INSERT INTO <table>` prefix
+        // it has just matched, whose lexing is provably a run of code, so
+        // those bytes are crossed twice; and `CopyScanner` has already lexed
+        // every line it surfaces by these rules, so a line's region, comment
+        // and paren count could travel with its `Event::Line` rather than be
+        // found again here. **(b) owned by P8**, whose row reader is the
+        // caller that can say the count is dead weight; it is not a licence
+        // to drop `depth`, which `statement_complete` reads.
+        let found = self.lexer.line(line, |code| {
+            for k in memchr::memchr2_iter(b'(', b')', code) {
+                *depth += if code[k] == b'(' { 1 } else { -1 };
             }
-            Pending::IdentQuote => {
-                self.pending = Pending::None;
-                if bytes[0] == b'"' {
-                    i = 1;
-                } else {
-                    self.in_dquote = false;
-                }
-            }
-            Pending::Dash => {
-                self.pending = Pending::None;
-                if bytes[0] == b'-' {
-                    self.in_comment = true;
-                    i = 1;
-                }
-            }
-        }
-
-        while i < bytes.len() {
-            // Inside a comment, a string or a quoted identifier there is
-            // exactly one byte that matters, so the bulk of a statement's
-            // bytes — which is its string values — is crossed by `memchr`
-            // rather than one byte at a time.
-            if self.in_comment {
-                match memchr::memchr(b'\n', &bytes[i..]) {
-                    Some(k) => {
-                        self.in_comment = false;
-                        i += k + 1;
-                    }
-                    None => break,
-                }
-                continue;
-            }
-            if self.in_string {
-                match memchr::memchr(b'\'', &bytes[i..]) {
-                    Some(k) => {
-                        let p = i + k;
-                        match bytes.get(p + 1) {
-                            Some(b'\'') => i = p + 2,
-                            Some(_) => {
-                                self.in_string = false;
-                                i = p + 1;
-                            }
-                            None => {
-                                self.pending = Pending::StringQuote;
-                                i = p + 1;
-                            }
-                        }
-                    }
-                    None => break,
-                }
-                continue;
-            }
-            if self.in_dquote {
-                match memchr::memchr(b'"', &bytes[i..]) {
-                    Some(k) => {
-                        let p = i + k;
-                        match bytes.get(p + 1) {
-                            Some(b'"') => i = p + 2,
-                            Some(_) => {
-                                self.in_dquote = false;
-                                i = p + 1;
-                            }
-                            None => {
-                                self.pending = Pending::IdentQuote;
-                                i = p + 1;
-                            }
-                        }
-                    }
-                    None => break,
-                }
-                continue;
-            }
-            // Outside all three, five bytes matter and `memchr` takes at
-            // most three needles — so the run up to the next byte that could
-            // change *mode* is found with one SIMD pass, and the parens
-            // inside it, which only move a counter, are counted with a
-            // second. Both beat walking the run a byte at a time, and
-            // outside a string is where the bytes of an `INSERT` statement
-            // that are not values live.
-            //
-            // Deficiency register: `deficiency: KD9` — an `INSERT` run costs
-            // several times a `COPY` scan's per-byte CPU warm, and the device
-            // is what decides whether a reader meets it
-            // (`measurements.md`, `scan-throughput-warm` and
-            // `scan-throughput-nvme`). Two cuts against the remainder are
-            // known: no `INSERT` statement's end depends on `depth`, so a
-            // run-only scan would skip this pass; and `insert_run_line`
-            // (`map.rs`) feeds the `INSERT INTO <table>` prefix it has just
-            // matched, whose scan state is provably unchanged, so those bytes
-            // are crossed twice. **(b) owned by P8**, whose row reader is the
-            // caller that can say the count is dead weight; it is not a
-            // licence to drop `depth`, which `statement_complete` reads.
-            let rest = &bytes[i..];
-            let stop = memchr::memchr3(b'\'', b'"', b'-', rest).unwrap_or(rest.len());
-            let plain = &rest[..stop];
-            for k in memchr::memchr2_iter(b'(', b')', plain) {
-                if plain[k] == b'(' {
-                    self.depth += 1;
-                } else {
-                    self.depth -= 1;
-                }
-            }
-            i += stop;
-            if stop == rest.len() {
-                break;
-            }
-            match bytes[i] {
-                b'\'' => {
-                    self.in_string = true;
-                    i += 1;
-                }
-                b'"' => {
-                    self.in_dquote = true;
-                    i += 1;
-                }
-                // `-`, by elimination.
-                _ => match bytes.get(i + 1) {
-                    Some(b'-') => {
-                        self.in_comment = true;
-                        i += 2;
-                    }
-                    Some(_) => i += 1,
-                    None => {
-                        self.pending = Pending::Dash;
-                        i += 1;
-                    }
-                },
-            }
-        }
+        });
+        self.in_comment = found.line_comment;
     }
 
     /// Whether what has been fed so far is a complete SQL statement: parens
-    /// balanced, not mid string literal or double-quoted identifier or `--`
-    /// line comment, and ending in `;`.
-    ///
-    /// A [`Pending`] quote is resolved as *closing*, which is what the
-    /// end of the buffer means for it — the same answer a scan that could
-    /// peek past the end would give.
+    /// balanced, between tokens rather than inside a literal, identifier or
+    /// comment, and ending in `;`.
     pub(crate) fn complete(&self) -> bool {
-        !self.in_string_settled()
-            && !self.in_dquote_settled()
+        *self.lexer.region() == Region::Code
             && !self.in_comment
             && self.depth == 0
             && self.last_significant == b';'
     }
 
-    /// Whether the bytes so far end inside an open single-quoted string or
-    /// double-quoted identifier — the one case where a line that *looks* like
-    /// a fresh boundary (starts with `--`, in [`crate::map`]'s case) is really
-    /// string content spanning physical lines. `pg_dump` never emits a `--`
-    /// comment inside a non-dollar-quoted statement's own parens, so paren
-    /// depth does not gate this the same way.
+    /// Whether the lines so far end inside a literal, a quoted identifier or
+    /// a `/* */` comment — the one case where a line that *looks* like a
+    /// fresh boundary (starts with `--`, in [`crate::map`]'s case) is really
+    /// that region's content spanning physical lines. `pg_dump` never emits
+    /// a `--` comment inside a non-dollar-quoted statement's own parens, so
+    /// paren depth does not gate this the same way.
     pub(crate) fn in_quote(&self) -> bool {
-        self.in_string_settled() || self.in_dquote_settled()
+        *self.lexer.region() != Region::Code
     }
 
-    fn in_string_settled(&self) -> bool {
-        self.in_string && self.pending != Pending::StringQuote
-    }
-
-    fn in_dquote_settled(&self) -> bool {
-        self.in_dquote && self.pending != Pending::IdentQuote
+    fn feed_text(&mut self, buf: &str) {
+        for line in buf.split('\n') {
+            self.feed_line(line.as_bytes());
+        }
     }
 }
 
-/// Whether `buf` (everything accumulated for a statement so far) is a
-/// complete SQL statement — [`StatementScan::complete`] over a buffer a
-/// caller holds whole rather than feeding incrementally. One implementation
-/// for both, [`crate::map`] deciding the same question from a `String` for a
-/// DDL statement and from raw bytes for an `INSERT` run.
-pub(crate) fn statement_complete(buf: &str) -> bool {
-    let mut scan = StatementScan::new();
-    scan.feed(buf.as_bytes());
+/// Whether `buf` (everything accumulated for a statement so far, its lines
+/// joined by [`push_stmt_line`]) is a complete SQL statement —
+/// [`StatementScan::complete`] over a buffer a caller holds whole rather than
+/// feeding line by line. One implementation for both, [`crate::map`] deciding
+/// the same question from a `String` for a DDL statement and from raw bytes
+/// for an `INSERT` run.
+pub(crate) fn statement_complete(buf: &str, standard_strings: bool) -> bool {
+    let mut scan = StatementScan::new(standard_strings);
+    scan.feed_text(buf);
     scan.complete()
 }
 
 /// [`StatementScan::in_quote`] over a whole buffer — see that method.
-pub(crate) fn in_open_quote(buf: &str) -> bool {
-    let mut scan = StatementScan::new();
-    scan.feed(buf.as_bytes());
+pub(crate) fn in_open_quote(buf: &str, standard_strings: bool) -> bool {
+    let mut scan = StatementScan::new(standard_strings);
+    scan.feed_text(buf);
     scan.in_quote()
 }
 
@@ -1850,97 +1692,79 @@ mod tests {
         assert!(db.preamble_complete);
     }
 
+    fn complete(buf: &str) -> bool {
+        statement_complete(buf, true)
+    }
+
     /// Guards against an apostrophe in comment prose opening a string that
     /// never closes.
     #[test]
     fn statement_complete_is_not_confused_by_an_apostrophe_in_a_line_comment() {
-        assert!(statement_complete("CREATE TABLE t (id integer);\n-- it's here\nSELECT 1;"));
+        assert!(complete("CREATE TABLE t (id integer);\n-- it's here\nSELECT 1;"));
         // Not complete until a real `;` follows the comment.
-        assert!(!statement_complete("SELECT 1\n-- it's here"));
+        assert!(!complete("SELECT 1\n-- it's here"));
     }
 
     /// Guards against an apostrophe inside a double-quoted identifier
     /// opening a string that never closes.
     #[test]
     fn statement_complete_is_not_confused_by_an_apostrophe_in_a_double_quoted_identifier() {
-        assert!(statement_complete(r#"CREATE TABLE public."it's" (id integer);"#));
+        assert!(complete(r#"CREATE TABLE public."it's" (id integer);"#));
     }
 
     #[test]
     fn statement_complete_handles_doubled_double_quotes() {
-        assert!(statement_complete(r#"CREATE TABLE public."a""b" (id integer);"#));
-        assert!(!statement_complete(r#"CREATE TABLE public."a""b (id integer);"#));
+        assert!(complete(r#"CREATE TABLE public."a""b" (id integer);"#));
+        assert!(!complete(r#"CREATE TABLE public."a""b (id integer);"#));
     }
 
     #[test]
     fn statement_complete_a_comment_run_to_end_of_buffer_is_never_complete() {
         // No trailing `\n` to close the comment — matches a statement scan
         // whose last fed line is itself a bare comment.
-        assert!(!statement_complete("SELECT 1;\n-- trailing comment, no newline after it"));
+        assert!(!complete("SELECT 1;\n-- trailing comment, no newline after it"));
     }
 
-    /// A [`StatementScan`] fed in pieces answers what one fed the whole
-    /// buffer answers, **at every split point** — which is the property that
-    /// makes it usable by a reader walking a file in chunks rather than a
-    /// line at a time, and the one a naive byte loop gets wrong: `''`, `""`
-    /// and `--` are two-byte tokens, so a split between their halves is
-    /// exactly where a scan that cannot look back mis-reads.
+    /// A statement ends where the scanner's lexer says its regions do
+    /// (`crate::lex`): an escape string's `\'`, a `;` or paren in a block
+    /// comment, and a plain string's backslash under the dump's own setting.
     #[test]
-    fn a_statement_scan_gives_the_same_answer_at_every_chunk_boundary() {
-        let cases = [
-            "INSERT INTO t VALUES ('it''s', 1);",
-            "INSERT INTO t VALUES ('a''''b');",
-            "CREATE TABLE public.\"it''s\" (a integer);",
-            "CREATE TABLE public.\"q\"\"q\" (a integer);",
-            "SELECT 1; -- trailing",
-            "SELECT 1; -- trailing\nSELECT 2;",
-            "SELECT 1 - -2;",
-            "INSERT INTO t VALUES ('-- not a comment');",
-            "INSERT INTO t VALUES ('a\nb');",
-            "SELECT ((1));",
-            "SELECT (1;",
-        ];
-        for case in cases {
-            let mut whole = StatementScan::new();
-            whole.feed(case.as_bytes());
-            for split in 0..=case.len() {
-                let mut piecewise = StatementScan::new();
-                piecewise.feed(&case.as_bytes()[..split]);
-                piecewise.feed(&case.as_bytes()[split..]);
-                assert_eq!(
-                    piecewise.complete(),
-                    whole.complete(),
-                    "complete() disagrees for {case:?} split at {split}"
-                );
-                assert_eq!(
-                    piecewise.in_quote(),
-                    whole.in_quote(),
-                    "in_quote() disagrees for {case:?} split at {split}"
-                );
-            }
-        }
+    fn statement_complete_lexes_as_the_scanner_does() {
+        assert!(complete("COMMENT ON TABLE t IS E'it\\'s; here';"));
+        assert!(!complete("COMMENT ON TABLE t IS E'it\\';"));
+        assert!(complete("COMMENT ON TABLE t IS 'it\\';"));
+        assert!(!statement_complete("COMMENT ON TABLE t IS 'it\\';", false));
+        assert!(complete("SELECT 1 /* ( ; */;"));
+        assert!(!complete("SELECT 1; /* a\n/* b */"));
+        assert!(in_open_quote("SELECT 1; /* a\n/* b */", true));
+        assert!(complete("SELECT 'a'\n'b' /* $$ */;"));
     }
 
-    /// [`StatementScan::feed_line`] joins with `\n` the way
-    /// [`push_stmt_line`] does — *between* lines, never before the first —
-    /// so a buffer whose last line is a bare comment stays open, which is
-    /// what [`crate::map`]'s dangling-close arm relies on.
+    /// [`StatementScan::feed_line`] answers what [`statement_complete`] does
+    /// over the same lines joined by [`push_stmt_line`], so a buffer whose
+    /// last line is a bare comment stays open, which is what [`crate::map`]'s
+    /// dangling-close arm relies on.
     #[test]
     fn feeding_lines_matches_joining_them_with_newlines() {
-        let cases: [&[&str]; 4] = [
+        let cases: [&[&str]; 6] = [
             &["INSERT INTO t VALUES (1);"],
             &["INSERT INTO t VALUES (", "  'a''b'", ");"],
             &["SELECT 1;", "-- trailing comment"],
             &["INSERT INTO t VALUES ('a", "-- still string content", "');"],
+            &["", "SELECT 1;"],
+            &["INSERT INTO t VALUES (E'a'", "", "'b\\'', 1);"],
         ];
         for lines in cases {
-            let mut scan = StatementScan::new();
+            let mut scan = StatementScan::new(true);
             for line in lines {
                 scan.feed_line(line.as_bytes());
             }
-            let joined = lines.join("\n");
-            assert_eq!(scan.complete(), statement_complete(&joined), "for {joined:?}");
-            assert_eq!(scan.in_quote(), in_open_quote(&joined), "for {joined:?}");
+            let mut joined = String::new();
+            for line in lines {
+                push_stmt_line(&mut joined, line);
+            }
+            assert_eq!(scan.complete(), complete(&joined), "for {joined:?}");
+            assert_eq!(scan.in_quote(), in_open_quote(&joined, true), "for {joined:?}");
         }
     }
 
@@ -1950,7 +1774,7 @@ mod tests {
     /// so the buffer stops being empty.
     #[test]
     fn a_statement_scan_is_empty_only_before_anything_is_fed() {
-        let mut scan = StatementScan::new();
+        let mut scan = StatementScan::new(true);
         assert!(scan.is_empty());
         scan.feed_line(b"");
         assert!(scan.is_empty(), "an empty line appends nothing, as `push_stmt_line` does not");
@@ -1958,6 +1782,17 @@ mod tests {
         assert!(!scan.is_empty());
         scan.reset();
         assert!(scan.is_empty());
+    }
+
+    /// A reset keeps the dump's setting: the next statement of an `INSERT`
+    /// run is written under the same one.
+    #[test]
+    fn a_reset_keeps_the_standard_strings_setting() {
+        let mut scan = StatementScan::new(false);
+        scan.feed_line(b"SELECT 1;");
+        scan.reset();
+        scan.feed_line(br"INSERT INTO t VALUES ('a\');");
+        assert!(scan.in_quote());
     }
 
     #[test]

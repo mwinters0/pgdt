@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 7nSSDHFvjzuHt3ohCVHQ0DapTMqZzlwPE4Bq4bcGQFCD1nZSP44mDMUIV75i4qu
+\restrict efsdta4ZJ3PWpT3THsb1VPZhI7KNAZKmtg61IOv76ObrRrNZ0z3hHk8NPgpQnyn
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -331,6 +331,25 @@ ALTER SEQUENCE objects.orders_id_seq OWNED BY objects.orders.id;
 
 
 --
+-- Name: price$$list; Type: TABLE; Schema: objects; Owner: postgres
+--
+
+CREATE TABLE objects."price$$list" (
+    id integer NOT NULL,
+    note text DEFAULT 'costs $x$ here'::text
+);
+
+
+ALTER TABLE objects."price$$list" OWNER TO postgres;
+
+--
+-- Name: TABLE "price$$list"; Type: COMMENT; Schema: objects; Owner: postgres
+--
+
+COMMENT ON TABLE objects."price$$list" IS 'priced in $$';
+
+
+--
 -- Name: secrets; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -465,29 +484,29 @@ ALTER TABLE ONLY objects.widget_orders ALTER COLUMN quantity SET DEFAULT 0;
 
 
 --
--- Name: 16592; Type: BLOB; Schema: -; Owner: postgres
+-- Name: 16505; Type: BLOB; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16592');
+SELECT pg_catalog.lo_create('16505');
 
 
-ALTER LARGE OBJECT 16592 OWNER TO postgres;
-
---
--- Name: LARGE OBJECT 16592; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16592 IS 'first large object';
-
+ALTER LARGE OBJECT 16505 OWNER TO postgres;
 
 --
--- Name: 16593; Type: BLOB; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16505; Type: COMMENT; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16593');
+COMMENT ON LARGE OBJECT 16505 IS 'first large object';
 
 
-ALTER LARGE OBJECT 16593 OWNER TO postgres;
+--
+-- Name: 16506; Type: BLOB; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16506');
+
+
+ALTER LARGE OBJECT 16506 OWNER TO postgres;
 
 --
 -- Data for Name: events_2024; Type: TABLE DATA; Schema: objects; Owner: postgres
@@ -507,6 +526,16 @@ COPY objects.orders (id, widget_id, quantity) FROM stdin;
 1	1	3
 2	2	1
 3	1	7
+\.
+
+
+--
+-- Data for Name: price$$list; Type: TABLE DATA; Schema: objects; Owner: postgres
+--
+
+COPY objects."price$$list" (id, note) FROM stdin;
+1	costs $x$ here
+2	costs $x$ here
 \.
 
 
@@ -539,8 +568,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-09-01 00:10:55.345182+00
-2	beta	2026-09-01 00:10:55.345182+00
+1	alpha	2026-10-01 17:32:08.020534+00
+2	beta	2026-10-01 17:32:08.020534+00
 \.
 
 
@@ -572,11 +601,11 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16592', 131072);
+SELECT pg_catalog.lo_open('16505', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
-SELECT pg_catalog.lo_open('16593', 131072);
+SELECT pg_catalog.lo_open('16506', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
@@ -588,6 +617,14 @@ COMMIT;
 
 ALTER TABLE ONLY objects.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: price$$list price$$list_pkey; Type: CONSTRAINT; Schema: objects; Owner: postgres
+--
+
+ALTER TABLE ONLY objects."price$$list"
+    ADD CONSTRAINT "price$$list_pkey" PRIMARY KEY (id);
 
 
 --
@@ -735,6 +772,13 @@ GRANT SELECT ON TABLE objects.events_2024 TO fixture_reader;
 
 
 --
+-- Name: TABLE "price$$list"; Type: ACL; Schema: objects; Owner: postgres
+--
+
+GRANT SELECT ON TABLE objects."price$$list" TO fixture_reader;
+
+
+--
 -- Name: TABLE tablespaced_table; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -750,10 +794,10 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- Name: LARGE OBJECT 16592; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16505; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16592 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16505 TO fixture_reader;
 
 
 --
@@ -786,5 +830,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 7nSSDHFvjzuHt3ohCVHQ0DapTMqZzlwPE4Bq4bcGQFCD1nZSP44mDMUIV75i4qu
+\unrestrict efsdta4ZJ3PWpT3THsb1VPZhI7KNAZKmtg61IOv76ObrRrNZ0z3hHk8NPgpQnyn
 

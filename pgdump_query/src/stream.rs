@@ -944,7 +944,8 @@ async fn map_forward(
         // held is inside bytes the workers have since read whole, and
         // `end_offset` is a line start — and `read_pos` follows it.
         if let Some(at) = resume_at {
-            scanner = CopyScanner::resume(at, None);
+            scanner =
+                CopyScanner::resume(at, None).with_standard_strings(scanner.standard_strings());
             carry = ChunkCarry::new();
             read_pos = at;
             // The four hints this loop announced still stand: `scan_region`

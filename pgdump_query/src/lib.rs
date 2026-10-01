@@ -14,6 +14,7 @@ pub mod index;
 pub mod instrument;
 mod io;
 mod leader;
+mod lex;
 pub mod map;
 pub mod nested;
 pub mod pgtype;

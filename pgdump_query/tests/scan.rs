@@ -462,3 +462,64 @@ async fn a_single_line_dollar_quoted_region_reports_its_end() {
     .unwrap();
     assert_eq!(ends, vec![first.len() as u64], "just past the line the region closed on");
 }
+
+/// The `COPY` headers `scan` reports over `text`, by table name.
+async fn headers_of(text: &str) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dump.sql");
+    std::fs::write(&path, text).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let mut headers = Vec::new();
+    scan(&source, &ScanOptions::default(), |event| {
+        if let Event::CopyStart(start) = event {
+            headers.push(start.header.qualified_name());
+        }
+        ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+    headers
+}
+
+/// A `$` outside a dollar-quoted body opens one only where psql's lexer
+/// would (`crate::lex`): never inside a literal, a quoted identifier or a
+/// comment, each carried across lines, a plain literal's backslash read
+/// under the dump's own `standard_conforming_strings` (I50). Before, any of
+/// these swallowed every line after it, and both tables' data with them.
+#[tokio::test]
+async fn a_dollar_inside_a_literal_identifier_or_comment_opens_no_body() {
+    let blocks =
+        "COPY public.a (id) FROM stdin;\n1\n\\.\n\nCOPY public.b (id) FROM stdin;\n2\n\\.\n";
+    for ddl in [
+        "COMMENT ON TABLE public.a IS 'costs $$ here';",
+        "COMMENT ON TABLE public.a IS E'it\\'s $$ here';",
+        "COMMENT ON TABLE public.a IS 'costs\n$x$ across\nlines';",
+        "CREATE TABLE public.\"a$$\" (id integer);",
+        "-- note: $x$",
+        "/* a /* nested */ $$ still\n a comment */",
+        "SET standard_conforming_strings = off;\nCOMMENT ON TABLE public.a IS 'it\\'s $$ here';",
+        "COMMENT ON TABLE public.a IS E'a' -- continued\n'\\'$$';",
+    ] {
+        let text = format!("SET standard_conforming_strings = on;\n{ddl}\n\n{blocks}");
+        assert_eq!(headers_of(&text).await, ["public.a", "public.b"], "after {ddl:?}");
+    }
+    // A quoted table name holding `$$` is still a header.
+    let text =
+        "COPY public.\"a$$\" (id) FROM stdin;\n1\n\\.\nCOPY public.b (id) FROM stdin;\n\\.\n";
+    assert_eq!(headers_of(text).await, ["public.a$$", "public.b"]);
+}
+
+/// A line inside a literal, an identifier or a comment that spans lines is
+/// that region's content, never structure, whatever it looks like.
+#[tokio::test]
+async fn a_header_shaped_line_inside_a_quoted_region_is_not_a_block() {
+    for ddl in [
+        "COMMENT ON TABLE public.a IS 'first\nCOPY public.z (id) FROM stdin;\n';",
+        "COMMENT ON TABLE public.a IS 'first\nBEGIN;\n';",
+        "/*\nCOPY public.z (id) FROM stdin;\n*/",
+        "CREATE TABLE public.\"x\nCOPY public.z (id) FROM stdin;\n\" (id integer);",
+    ] {
+        let text = format!("{ddl}\nCOPY public.a (id) FROM stdin;\n1\n\\.\n");
+        assert_eq!(headers_of(&text).await, ["public.a"], "after {ddl:?}");
+    }
+}

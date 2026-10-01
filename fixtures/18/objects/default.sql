@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict FbQQWDb9hqRgO8OwtORP4lvDgOOEseARV8cwEs6hSjFAJRvi4V6Qipnq8VhXeul
+\restrict ItSM9DthwqRUf8vr5nTB9xIzEon9ZD0hpCHIolbTUyJcEtOhcg25806FaEIkH2i
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -331,6 +331,25 @@ ALTER SEQUENCE objects.orders_id_seq OWNED BY objects.orders.id;
 
 
 --
+-- Name: price$$list; Type: TABLE; Schema: objects; Owner: postgres
+--
+
+CREATE TABLE objects."price$$list" (
+    id integer NOT NULL,
+    note text DEFAULT 'costs $x$ here'::text
+);
+
+
+ALTER TABLE objects."price$$list" OWNER TO postgres;
+
+--
+-- Name: TABLE "price$$list"; Type: COMMENT; Schema: objects; Owner: postgres
+--
+
+COMMENT ON TABLE objects."price$$list" IS 'priced in $$';
+
+
+--
 -- Name: secrets; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -493,6 +512,16 @@ COPY objects.orders (id, widget_id, quantity) FROM stdin;
 
 
 --
+-- Data for Name: price$$list; Type: TABLE DATA; Schema: objects; Owner: postgres
+--
+
+COPY objects."price$$list" (id, note) FROM stdin;
+1	costs $x$ here
+2	costs $x$ here
+\.
+
+
+--
 -- Data for Name: secrets; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -521,8 +550,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-09-01 00:12:01.851855+00
-2	beta	2026-09-01 00:12:01.851855+00
+1	alpha	2026-10-01 17:32:37.549394+00
+2	beta	2026-10-01 17:32:37.549394+00
 \.
 
 
@@ -549,47 +578,47 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 
 --
--- Name: 16606; Type: BLOB METADATA; Schema: -; Owner: postgres
+-- Name: 16517; Type: BLOB METADATA; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16606');
+SELECT pg_catalog.lo_create('16517');
 
-ALTER LARGE OBJECT 16606 OWNER TO postgres;
-
---
--- Name: LARGE OBJECT 16606; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16606 IS 'first large object';
-
+ALTER LARGE OBJECT 16517 OWNER TO postgres;
 
 --
--- Name: 16607; Type: BLOB METADATA; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16517; Type: COMMENT; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16607');
+COMMENT ON LARGE OBJECT 16517 IS 'first large object';
 
-ALTER LARGE OBJECT 16607 OWNER TO postgres;
 
 --
--- Data for Name: 16606; Type: BLOBS; Schema: -; Owner: postgres
+-- Name: 16518; Type: BLOB METADATA; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16518');
+
+ALTER LARGE OBJECT 16518 OWNER TO postgres;
+
+--
+-- Data for Name: 16517; Type: BLOBS; Schema: -; Owner: postgres
 --
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16606', 131072);
+SELECT pg_catalog.lo_open('16517', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
 COMMIT;
 
 --
--- Data for Name: 16607; Type: BLOBS; Schema: -; Owner: postgres
+-- Data for Name: 16518; Type: BLOBS; Schema: -; Owner: postgres
 --
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16607', 131072);
+SELECT pg_catalog.lo_open('16518', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
@@ -601,6 +630,14 @@ COMMIT;
 
 ALTER TABLE ONLY objects.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: price$$list price$$list_pkey; Type: CONSTRAINT; Schema: objects; Owner: postgres
+--
+
+ALTER TABLE ONLY objects."price$$list"
+    ADD CONSTRAINT "price$$list_pkey" PRIMARY KEY (id);
 
 
 --
@@ -748,6 +785,13 @@ GRANT SELECT ON TABLE objects.events_2024 TO fixture_reader;
 
 
 --
+-- Name: TABLE "price$$list"; Type: ACL; Schema: objects; Owner: postgres
+--
+
+GRANT SELECT ON TABLE objects."price$$list" TO fixture_reader;
+
+
+--
 -- Name: TABLE tablespaced_table; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -763,10 +807,10 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- Name: LARGE OBJECT 16606; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16517; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16606 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16517 TO fixture_reader;
 
 
 --
@@ -799,5 +843,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict FbQQWDb9hqRgO8OwtORP4lvDgOOEseARV8cwEs6hSjFAJRvi4V6Qipnq8VhXeul
+\unrestrict ItSM9DthwqRUf8vr5nTB9xIzEon9ZD0hpCHIolbTUyJcEtOhcg25806FaEIkH2i
 

@@ -888,8 +888,8 @@ value containing a newline puts the remainder of its statement on the next
 line, which begins with the literal's continuation rather than `INSERT INTO`.
 There is therefore **no line-anchored marker** for the end of an `INSERT` run,
 unlike a `COPY` block (I7) or the large-object region (I12). Finding a real
-statement end requires tracking `'` with `''` doubling; `pg_dump` sets
-`standard_conforming_strings = on`, so backslash escapes are not a concern.
+statement end requires lexing its literals, under the setting I50 says the
+dump states.
 
 A `TABLE DATA` TOC entry is also emitted for tables with **zero** rows, so an
 `INSERT` run may legitimately contain no statements at all.
@@ -3623,3 +3623,63 @@ awk '/^tm2timestamp\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n 'POSTGR
 
 The first prints five lines, `MIN_TIMESTAMP` `-211813488000000000` and
 `END_TIMESTAMP` `9223371331200000000`; the second two.
+
+---
+
+## I50 — A plain dump states `standard_conforming_strings` before its first literal, and a literal it writes under `off` lexes alike under `on`
+
+**Claim.** Plain-format `pg_dump` output writes
+`SET standard_conforming_strings = on;` or `= off;` on a line of its own,
+carrying the dumped session's setting, ahead of every statement that can hold
+a literal, and again after each `\connect` it writes; `pg_dumpall` writes the
+same line in its own header. Every literal `pg_dump` writes, and every one the
+server's deparser hands it, doubles each `'` and, under `off`, each backslash,
+and neither uses `E''` — so under `off` a literal ends at the same byte whether
+a backslash is read as escaping or not, while under `on` only `on` reads it
+right. A lexer that has not seen the line is therefore right to assume `on`.
+
+**Proof.** `_doSetFixedOutputState()` in `pg_backup_archiver.c` prints
+`"SET standard_conforming_strings = %s;\n"` from `AH->public.std_strings`, which
+`pg_dump.c` takes from the connection's `standard_conforming_strings` parameter
+status; `RestoreArchive()` calls it after the banner, `\restrict` and version
+lines and before any entry, and `_reconnectToDB()` calls it again after each
+`\connect`. `pg_dumpall.c` prints the same line, from the same parameter,
+after `SET client_encoding`. `appendStringLiteral()` in
+`src/fe_utils/string_utils.c` (behind `appendStringLiteralAH`) doubles a byte
+where `SQL_STR_DOUBLE(c, !std_strings)`, which `src/include/c.h` defines as `'`
+always and `\` when its second argument is true; `simple_quote_literal()` in
+`ruleutils.c`, which deparses a constant into a view, default, constraint or
+index definition, applies the same macro under the session's own setting and
+says it never uses `E''`. psql lexes a plain literal as `xe` under `off` and
+`xq` under `on` (`src/fe_utils/psqlscan.l`, `{xqstart}`), so the setting
+governs every line after the `SET` executes.
+
+**Observed.** Every fixture at all six routine versions carries
+`SET standard_conforming_strings = on;`, and
+`pgdump_query/tests/scan.rs`,
+`a_dollar_inside_a_literal_identifier_or_comment_opens_no_body`, reads a
+hand-written `off` file whose `'it\'s $$ here'` ends where `off` says.
+
+**Scope limit.** Text the dump did not quote itself: a hand-written file under
+`off` holding `\'` in a plain literal lexes right only past its `SET` line, so
+a scan resumed past it lexes under `on`, as `CopyScanner::resume` does.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
+print both lines, call `_doSetFixedOutputState(AH)` at the same three sites and
+quote with the same two macro calls.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D23" — the lexer outside a
+`COPY` block (`pgdump_query/src/lex.rs`), which the scanner, `map::Builder` and
+`StatementScan` read the setting into, and `CopyScanner::resume`'s default.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'SET standard_conforming_strings = %s;' src/bin/pg_dump/pg_backup_archiver.c src/bin/pg_dump/pg_dumpall.c
+grep -c '_doSetFixedOutputState(AH);' src/bin/pg_dump/pg_backup_archiver.c
+grep -n 'SQL_STR_DOUBLE(c, !std_strings)' src/fe_utils/string_utils.c
+grep -n 'SQL_STR_DOUBLE(ch, !standard_conforming_strings)\|never use E' src/backend/utils/adt/ruleutils.c
+```
+
+The first prints two lines, the second `3`, the third one and the fourth two.

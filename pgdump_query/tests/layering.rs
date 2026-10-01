@@ -20,6 +20,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("io", 1),
     ("scan", 1),
     ("copy", 1),
+    ("lex", 1),
     ("map", 1),
     ("index", 1),
     ("preamble", 1),

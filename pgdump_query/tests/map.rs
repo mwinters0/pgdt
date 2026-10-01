@@ -660,3 +660,61 @@ async fn build_index_records_referenced_roles_and_tablespaces() {
     assert!(!index.roles.iter().any(|r| r.eq_ignore_ascii_case("public")));
     assert_eq!(index.tablespaces, ["fixture_ts".to_string()].into_iter().collect());
 }
+
+/// An `INSERT` run's value holding `$$` neither ends the run nor hides the
+/// block after it: the scanner and the run's end lex alike (`crate::lex`).
+#[tokio::test]
+async fn an_insert_run_holding_a_dollar_pair_keeps_every_row() {
+    use pgdump_query::DataBlock;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inserts.sql");
+    std::fs::write(
+        &path,
+        "--\n-- Data for Name: a; Type: TABLE DATA; Schema: public; Owner: -\n--\n\n\
+         INSERT INTO public.a VALUES (1, 'costs $$ here');\n\
+         INSERT INTO public.a VALUES (2, E'it\\'s $x$');\n\
+         INSERT INTO public.a VALUES (3, 'x');\n\n\
+         --\n-- Data for Name: b; Type: TABLE DATA; Schema: public; Owner: -\n--\n\n\
+         COPY public.b (id) FROM stdin;\n1\n\\.\n",
+    )
+    .unwrap();
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+    let data: Vec<(String, u64)> = spans
+        .iter()
+        .filter_map(|s| match &s.body {
+            SpanBody::Data(DataBlock::InsertRun(run)) => Some((run.table.clone(), run.row_count)),
+            SpanBody::Data(DataBlock::Copy(block)) => {
+                Some((block.header.qualified_name(), block.row_count))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(data, [("public.a".to_string(), 3), ("public.b".to_string(), 1)]);
+}
+
+/// Real output with `$` outside every dollar-quoted body
+/// (`scripts/fixture_schema_objects.sql`, `objects."price$$list"`): `$$` in a
+/// quoted name, in its TOC comments, `COPY` header, `COMMENT` and constraint,
+/// and `$x$` in a default. At every routine version the scanner finds every
+/// block the file holds, that table's two rows included.
+#[tokio::test]
+async fn a_dollar_outside_a_body_hides_no_block_on_any_routine_version() {
+    for version in [13, 14, 15, 16, 17, 18] {
+        for flavor in ["default", "verbose"] {
+            let path = objects_fixture(version, flavor);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let headers = text
+                .lines()
+                .filter(|line| line.starts_with("COPY ") && line.ends_with(" FROM stdin;"))
+                .count();
+            let source = LocalFileSource::open(&path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            assert_eq!(index.blocks().count(), headers, "pg_dump {version} {flavor}");
+            let rows: Vec<u64> =
+                index.blocks_for("objects.price$$list").map(|b| b.row_count).collect();
+            assert_eq!(rows, [2], "pg_dump {version} {flavor}");
+        }
+    }
+}
