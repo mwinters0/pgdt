@@ -10718,7 +10718,12 @@ def section_label_problems(text: str) -> list[str]:
     number its heading was rewritten from would print that number at the next
     sweep. "Begin with" rather than "equal" leaves room for a suffix telling
     two figures under one heading apart, as `map-only`'s does. A marker under
-    no heading has no heading to match, and says so."""
+    no heading has no heading to match, and says so.
+
+    **A declared section's label is not held.** `Outside.section` is read only
+    by `--list`, beside its id, and never renders as a heading, so the stale
+    number this guards against cannot reach print through one; `benches`'
+    label names its files instead, which is what `--list` wants of it."""
     marks = headings(text)
     out = []
     for match in MARKER_RE.finditer(text):

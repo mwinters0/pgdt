@@ -3584,10 +3584,10 @@ impl PlanNote {
             // for that span too, so on a source whose reader the chunk does
             // not size (the default advice, `crate::io::RemoteSource`'s) the
             // note offers a lever that moves nothing, where
-            // [`PlanNote::levers`] lists only the ones that apply. **(c)
-            // unowned**; promoted by a caller seen to lower its chunk on that
-            // advice for nothing, the fix being this constructor told whether
-            // the charged span sits on the chunk.
+            // [`PlanNote::levers`] lists only the ones that apply. The fix is
+            // this constructor told whether the charged span sits on the
+            // chunk, and the message's span arm naming the chunk only where it
+            // is listed.
             levers: levers(allowance_raises, chunk_sized || max_source_span.is_some(), false),
         }
     }

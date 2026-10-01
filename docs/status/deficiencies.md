@@ -346,5 +346,4 @@ than reading as a phase nobody has sliced.
 
 - **KD59** — a count note beside a batch span stated below the read chunk
   lists the chunk as a lever, which on a source the chunk does not size moves
-  nothing. **(c) unowned**; promoted by a caller lowering its chunk on such a
-  note for nothing. Detail: `pgdump_query/src/stream.rs`.
+  nothing. **(b) owned by `M196`**. Detail: `pgdump_query/src/stream.rs`.
