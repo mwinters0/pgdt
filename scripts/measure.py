@@ -2534,8 +2534,8 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 
 #: **The query figures query a data-level cache one untimed `parse` wrote in
 #: the same container**, as `statistics-pruning` does, stating `--statistics
-#: none` so no pruning enters the reading (the P28 spec, "Evidence"). A query
-#: over no cache (`--dtcache none`) maps inside the timer, timing the census
+#: none` so no pruning enters the reading. A query over no cache
+#: (`--dtcache none`) maps inside the timer, timing the census
 #: and the count with the rows, and one over a metadata-level cache reads its
 #: table once more for a census, inside the timer (`NO_STATISTICS`). These are the
 #: prefixes `_script` dispatches on. `query-nomatch*` is not here: it times
@@ -2547,7 +2547,9 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 #: `&&`**: a builder that failed would leave the query to map the table cold
 #: and save it inside the timer, published as a read over a cache. What the
 #: query reads carries decoding the whole cache, statistics included
-#: (`PRUNING_LEGS`), which a query after a default `parse` pays too.
+#: (`PRUNING_LEGS`), which a query after a default `parse` pays too, and the
+#: builder discovers its statistics allowance from the figure's container
+#: (D85), so the container sizes the cache the query decodes.
 DATA_LEVEL_QUERIES: tuple[str, ...] = (
     "query-typed",
     "query-strings",
@@ -2572,8 +2574,8 @@ DATA_LEVEL_QUERY = "--dtcache /tmp/x.dtcache --statistics none"
 #: That is the shipped default `parse`, which no scan figure times. **No leg
 #: states a column override** (`metadata,<table>.<column>=data`): it censuses
 #: and counts the whole table with one column's statistics, so subtracted from
-#: these it would difference the census back out, which the P28 spec retired
-#: for the profile ("The figures move with the metadata level"). The id stays
+#: these it would difference the census back out, which `D35` retired for
+#: the profile. The id stays
 #: `statistics-gathering`, `data` being a value of `--statistics-level`.
 #: **Both legs are the family's own**, the `metadata` leg included, though
 #: its argv is `parse-rss`'s: the figure's container is not the register's, so
@@ -11778,7 +11780,13 @@ PERF_FREQ = 4999
 #: `data` leg run without its resident wrapper, is what attributes that
 #: figure's Δ among the census, the unrepresentable count and the statistics
 #: (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
-#: blind"): no figure differences a build without one of them.
+#: blind"): no figure differences a build without one of them. **Every `pgdt`
+#: shape is profiled at one worker**, and the plain `parse`'s loss past four
+#: (D25, unseparated) is not profiled: its suspect, a fused worker waiting on
+#: a `POOL_DEPTH` slot, is off-CPU, where an on-CPU `perf record` sees
+#: nothing, so its attribution would be an introspective counter of time
+#: blocked on the pool, and nothing consumes one while D2 recommends one
+#: plain worker.
 PROFILE_SHAPES: tuple[str, ...] = (
     "parse",
     f"{STATISTICS_FAMILY}data-rss",

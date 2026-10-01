@@ -520,7 +520,9 @@ impl GroupStatistics for Group<'_> {
     }
 
     /// Believed only where the column's declared type is the one its tiers
-    /// were counted under, as a view's NULL count is.
+    /// were counted under, as a view's NULL count is. The test is answered off
+    /// this count, never the null mode's NULL count, in either direction: a
+    /// group of NULLs under that view may hold nothing but such values.
     fn unrepresentable(&self, column: usize) -> Option<Unrepresentable> {
         Some(self.view.believed(column)?.unrepresentable_in(self.index))
     }

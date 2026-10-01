@@ -224,6 +224,10 @@ Eighteen standing rules for reading anything below:
   control, which can read far tighter — and no number of reps moves it.
   Reasoning:
   [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
+- **About one cached-`query` rep in thirty is a slow outlier**, across the
+  nested, cross-file, allocator and parallel figures, where uncached shapes
+  read one; medians absorb it. It is unattributed, and not a mapping pass: a
+  probe of the same shape found none in a slow rep's `stderr`.
 - **A move smaller than the apparatus resolves is not a finding.** The floor is
   per regime, and each number below is read off "What a session's own drift
   costs" rather than asserted: a **warm absolute compared across sessions**

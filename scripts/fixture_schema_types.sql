@@ -707,7 +707,7 @@ INSERT INTO public.t_nested_array VALUES
 -- such arm, and the special values each admits. Each must decode to a value
 -- its Arrow type holds or be counted unrepresentable, and which is decided by
 -- DataFusion's own path rather than by a bound written here
--- (roadmap-P28-unrepresentable-values.md, "Evidence"); the ones that are not
+-- (docs/design/decisions.md, "D102"); the ones that are not
 -- held are recorded in datafusion-pgdump/tests/unrepresentable.rs.
 -- `floor_mapping.py` holds the columns to the arms both ways, so a newly
 -- typed arm arrives with its extremes.
@@ -802,8 +802,8 @@ INSERT INTO public.t_extremes (id, v_interval) VALUES
     (18, 'infinity');
 \endif
 
--- A nested value holding one is one (roadmap-P28-unrepresentable-values.md,
--- "Scope"): an array element, a range bound, a composite's field. Row 2 is
+-- A nested value holding one is one (docs/design/decisions.md, "D96"): an
+-- array element, a range bound, a composite's field. Row 2 is
 -- the same shapes holding none, and its composite's `text` field reads
 -- `infinity` beside a finite `date` -- a leaf is its own type's, so that one
 -- is text and counts for nothing.

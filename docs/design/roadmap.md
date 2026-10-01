@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P28 — unrepresentable values | Complete | [spec](roadmap-P28-unrepresentable-values.md); [notes](roadmap-P28-unrepresentable-values-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -559,15 +558,6 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
-
-## P28 — Unrepresentable values
-
-**A query's outcome never depends on which rows it happened to read**, and
-how a value its column's Arrow type cannot hold is handled is the
-user's choice among three modes — read as NULL, its column widened to text,
-or a deterministic refusal; and `parse` gains a *metadata* level recording no
-census. The spec is
-[`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md).
 
 ## P22 — The third tunable
 
@@ -1136,8 +1126,7 @@ which is what makes the difference worth minding at the moment one is found.
   keeps `metadata,<table>.<column>=data`, which censuses and counts the whole
   table while gathering one column's statistics, because it serves wide
   tables; whether it earns its place against "data means every column" is
-  weighed before 1.0 ([`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
-  "Scope"). The evidence it wants is a data-level `parse` of a wide table with
-  one column opted in against every column, read as a gate for that choice,
-  never subtracted to price the census. It is also a user's lever on the
+  weighed before 1.0. The evidence it wants is a data-level `parse` of a wide
+  table with one column opted in against every column, read as a gate for that
+  choice, never subtracted to price the census. It is also a user's lever on the
   statistics volume P23 bounds.

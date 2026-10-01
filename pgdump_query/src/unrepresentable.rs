@@ -405,7 +405,9 @@ impl Counter {
 
     /// A `date`: an infinity is past the format spec, and a finite one never
     /// is, `Date32` holding PostgreSQL's whole range; past the calendar is a
-    /// year at or past its end's, on the day's arithmetic.
+    /// year at or past its end's, on the day's arithmetic. "Does not parse" is
+    /// `decode_date32`'s grammar, not PostgreSQL's: it takes `300000-13-45` by
+    /// arithmetic, so that is counted past the calendar. No `pg_dump` writes it.
     fn date(&self, text: &str) -> Option<UnrepresentableTier> {
         if is_infinity(text) {
             return Some(Format);

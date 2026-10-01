@@ -45,6 +45,6 @@ float's `-0` as it does not; the binding decides whether it needs a variant
 of its own, whose comparison and display each set the tiers the typed mode
 nulls.
 
-**Origin.** Filed 2026-09-30, closing 28.5's call on D98. Contingent on
+**Origin.** Filed 2026-09-30, closing a call on D98. Contingent on
 `arrow-cast` still printing through `chrono` (`../status/upstream.md`, "UF2").
 

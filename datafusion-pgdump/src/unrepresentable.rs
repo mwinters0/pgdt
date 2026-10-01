@@ -147,7 +147,10 @@ impl PhysicalOptimizerRule for Guard {
 /// Refuse `plan` wherever a node holds the function among the expressions
 /// DataFusion evaluates, a scalar subquery's plan included, it being a
 /// child: a pgdump scan reports only its dynamic filters, the filters its
-/// provider answered being the library's.
+/// provider answered being the library's. A function a plan's statistics
+/// answered is gone by then, and runs unevaluated: over an empty table, a
+/// subquery's `MAX(x) … WHERE pgdump_unrepresentable(x)` plans as `NULL`,
+/// which is why the refusal test's table holds a row.
 fn refuse_evaluation(plan: &Arc<dyn ExecutionPlan>) -> Result<()> {
     let mut found = None;
     plan.apply(|node| {

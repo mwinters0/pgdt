@@ -233,7 +233,7 @@ const fn kd56(case: Case) -> Case {
 
 use Refuse::{Answers, Column};
 
-/// Every shape the spec's "Evidence" names — a `LIMIT` one partition meets
+/// Every shape that can reach a different set of rows — a `LIMIT` one partition meets
 /// first, an ungrouped `MIN`/`MAX`, a TopK, a join — and the filters and
 /// counts the typed mode's "NULL for every purpose" reaches. The row drop is
 /// [`Dynamic::OnWithRows`], under every case. Each table holds such a value

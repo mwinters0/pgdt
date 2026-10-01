@@ -123,8 +123,8 @@ and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind` can be.
-A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user can judge
-one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
+A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0` (`map_file` drops it, `KD58`): only the user
+can judge one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
 and a narrowed span (D84) one wherever the plan charged less than stated; the ordinary case is the
 invisible one. Rejected: omitting a zero; counting only believed filtered columns; announcing a narrowing
 only where the count fell short too, which `ParallelismBudgetLimited` names. Reopens: a puzzling zero,
@@ -300,7 +300,7 @@ ordered as DataFusion does — a `TODO` there; for `macaddr`, refusing a literal
 keeping the octet key for one that is, a per-literal switch bought for range pruning.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
-An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View` (`KD3`), decided on
+An opaque element delimiter (I22) and an array element (I26, `KD3`) both resolve `Utf8View`, decided on
 `domain_terminal`'s result by `resolve_array` and `array_comparison`. All `Typename` spellings collapse to element plus one level (I21, I28);
 normalizing on parse would edit the user's DDL. A walk spends a visit per definition, the list's
 length bounding an acyclic one (I24), so a cycle answers `Unknown`.
@@ -311,14 +311,15 @@ out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numer
 names are fixed, multiranges apart (I10); a `canonical` function makes a range unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair
-`retype_from_census` alone changes `(DataType, NestedPlan)` after resolution, a parameter so no
-caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
+`retype_from_census` and the text mode's `read_as_text` (D100) alone change `(DataType, NestedPlan)` after
+resolution, a parameter so no caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
 refuses a stream and degrades a listing: same output as `NotDeclared`, opposite advice.
 
-### D44 A decoder allocates only where its return type does; renderers use tables
-No scalar decoder takes an intermediate `String`; renderers write into one reused buffer through
-`DEC_PAIRS`/`HEX_PAIRS`, never `core::fmt` (`tests/render_allocations.rs` pins it). Render-back's
-third outcome, `FieldRender`, is an Arrow value no text form spells (I40), never rounded.
+### D44 The control's decoders allocate only where their return type does; its renderers use tables
+The measured control's decoders take no intermediate `String`, and its renderers write into one reused buffer
+through `DEC_PAIRS`/`HEX_PAIRS` (`tests/render_allocations.rs` pins the count); `interval`'s, a decimal's and a
+float's still go through `core::fmt`. Render-back's third outcome, `FieldRender`, is an Arrow value no text form
+spells (I40), never rounded.
 
 ### D45 One quoted-token scanner; strict decoders apart from permissive parsers
 Array, record and range literals share one scanner parameterized four ways (I20). `decode_*` reads
@@ -356,7 +357,7 @@ Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`
 vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
 
 ### D50 `ResumeToken` is opaque and fingerprints the query
-Hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
+The filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
 `scan_extent`, the batching knobs and `use_statistics` stay out, no skipped group holding a resumed row.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
@@ -393,13 +394,13 @@ re-pruning a whole block per generation; the filter handed through the plan node
 Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `pgdump_query/tests/dynamic_filter.rs`, `datafusion-pgdump/tests/dynamic_filters.rs`.
 
 ### D98 The typed mode nulls what its front end cannot hold, tested before decode where the block's count says it holds one
-Under `UnrepresentableMode::Null` a value past the tiers the query's semantics cannot hold — the format spec's under PostgreSQL's, the calendar's
-too under DataFusion's, the semantics naming its front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a
-dictionary entry) and the statistics' view (D97), a sum leaving it out; a nested value holding one is the NULL whole. It is tested lexically (D96)
-before decoding, only in a column whose block counts one in those tiers. Rejected: nulling what fails to decode (an engine-tier value decodes, and
-unparsable text must still refuse); a tier option beside the semantics, two fields for one fact, the semantics naming DataFusion, whose display is
-the calendar's; testing every block. Reopens: a front end besides DataFusion, taking semantics of its own; `arrow-cast` displaying past `chrono`
-(`upstream.md`, "UF2"), retiring the calendar tier. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
+Under `UnrepresentableMode::Null` a value past the tiers the query's semantics cannot hold — the format spec's under PostgreSQL's, the calendar's too
+under DataFusion's, the semantics naming its front end — is NULL to the batch, every filter leaf (static, dynamic, a sorted stop, a dictionary entry)
+and statistics (D97), a sum leaving it out; a nested value holding one is the NULL whole. It is tested lexically (D96) before decoding, only
+in a column whose block counts one in those tiers or carries no count. Rejected: nulling what fails to decode (an engine-tier value decodes, and
+unparsable text in a field holding no such value must still refuse); a tier option beside the semantics, two fields for one fact, the semantics naming
+DataFusion, whose display is the calendar's; testing every block. Reopens: another front end, with semantics of its own; `arrow-cast` displaying
+past `chrono` (`upstream.md`, "UF2"), retiring the calendar tier. Code: `unrepresentable::UnrepresentableRead`. Evidence: the typed mode's cases.
 
 ### D99 The refuse mode refuses at planning, per materialized column, from the map's count over every block
 Under `UnrepresentableMode::Refuse` a plan refuses the first column it materializes — projects, or hands DataFusion — whose blocks count a
@@ -423,7 +424,8 @@ Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mod
 shell's `:unrepresentable=` suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches
 it. `--schema-mode` is about ignoring the DDL, and the mode, which reads it, is moot under `strings`. The library's refusal names the modes in its
 own words, never a front end's flag, and the provider passes it through. Rejected: a `pgdump.*` session setting, changing a schema a statement
-cannot rebuild; a third `SchemaMode`, folding a choice about values into one about the DDL. Code: `UnrepresentableMode`, `PgDumpTableOptions`.
+cannot rebuild; a third `SchemaMode`, folding a choice about values into one about the DDL. `Null` is the default, such values being rare in
+real dumps and the floor's type kept (D38). Code: `UnrepresentableMode`, `PgDumpTableOptions`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test
@@ -464,7 +466,7 @@ conditional, so L4) and per column from `column_divergences` in a query's semant
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
-`refuse_where_structure` refuses any `--filter` term that tokenizes to anything but one leaf, so a string
+`refuse_where_structure` refuses a `--filter` term tokenizing to more than one leaf, an empty one `parse_filter`'s, so a string
 both flags accept means one thing. A keyword needs whitespace, a paren or the string's end on both sides
 and `NOT` after `is` stays in the term. A term splits at the earliest operator outside quotes, longest
 first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.
@@ -595,13 +597,13 @@ kept for every column, a cache being gathered typed whatever reads it: a `Utf8Vi
 kept groups. Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings`
 sized by bounds and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
 
-### D97 A group keeps a view per tier only where it holds such a value, the values within every tier the base
+### D97 A group keeps a view per tier only where it holds such a value, the values its type holds the base
 A column whose type cannot hold every value counts them per group and bounds and orders the values it holds; beside them, where a
 group holds one past the format spec, every value in PostgreSQL's order, and where one past the calendar, the values within it, for
 that group alone, read in a `StatisticsView` that adds what it takes as NULL to the NULL count, believed only under D78's DDL. The
 base is kept apart from each tier's extremes, allocated at a group's first such value, so a view folds the base with the tiers it
 takes, exactly across pieces and merges (D82); every value PostgreSQL admits keys, a timestamp from PostgreSQL's epoch (I49).
-Rejected: every value's bounds and the count alone (the spec's); a set per view per column from its first row; a timestamp key of
+Rejected: every value's bounds and the count alone; a set per view per column from its first row; a timestamp key of
 `i128` from 1970, a width chosen where PostgreSQL's is inherited. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
 
 ## The CLI (`main.rs`, `error.rs`)
@@ -627,7 +629,7 @@ meant to be read once (`KD29`). Whether a number was typed or discovered never e
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
 ### D66 Output is byte-identical whether typing is on or off
-Every value renders back to the text `pg_dump` wrote. One contradicting its type is `FieldDecode`
+Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98). One contradicting its type is `FieldDecode`
 with an offset naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
@@ -656,7 +658,7 @@ below and implemented above (`statistics::BlockObserver`), as a scan predicate h
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family
 `postgres:<major>.<minor>-trixie`, exact minor, never `-alpine`: musl's `strcoll` is `strcmp`, so every text answer would be the `C`
 answer. Four things move on regeneration (`\restrict`, `now()`, `--verbose` timestamps, OID drift) and nothing may assert on them.
-Every `ColumnResolution` variant must come from a real fixture column (I36).
+Every `ColumnResolution` variant but `MetadataNotScanned`, which no scan produces, must come from a real fixture column (I36).
 
 ### D70 "Agrees with PostgreSQL" is a generated check
 `fixtures/<major>/oracle/` commits the server's own answers, asked through two typed columns (a cast

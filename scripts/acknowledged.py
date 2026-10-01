@@ -122,7 +122,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M188: outside comments and a #[cfg(test)] assert, only "
+        why="outside comments and a #[cfg(test)] assert, only "
         "ParallelismBudgetLimited's message literal shortened, formatted at most "
         "once a plan; no scan, decode or allocation path changed",
         verified="git diff -U0 ce6ecb58^ ce6ecb58 -- pgdump_query/src/stream.rs "

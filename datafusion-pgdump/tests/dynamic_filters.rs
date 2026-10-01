@@ -178,7 +178,7 @@ const fn query(
 
 use Shape::*;
 
-/// Every shape the spec's "Evidence" names, each in a query of its own. The
+/// Every shape a dynamic filter is produced by, each in a query of its own. The
 /// build side of a join is the smaller one, as the planner picks it from the
 /// provider's row counts; a static filter on it keeps it smaller.
 const QUERIES: &[Query] = &[

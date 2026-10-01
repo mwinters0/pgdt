@@ -30,17 +30,16 @@ dropping a block's statistics.
 
 ## A query already maps a metadata-level table, and gathers nothing
 
-**Fact.** From P28, a `parse` may leave a table at the *metadata* level —
+**Fact.** A `parse` may leave a table at the *metadata* level —
 location and row count, no census, no statistics — and a query over it maps
 that table's blocks at the data level for itself, census and count only,
 holding them for the query and writing nothing to the cache
-([`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
-"A query over a table the map holds at the metadata level").
+([`decisions.md`](decisions.md), "D35").
 
 **Why P21 cares.** That pass reads every row of the table already, the case
 where a query-time gather observes a column completely; whether it gathers,
 and whether it may save what it gathered past "the library never replaces
 cache data", is P21's call.
 
-**Origin.** P28's grilling, 2026-09-29. *Contingent on* that cold-semantics
+**Origin.** A grilling, 2026-09-29. *Contingent on* that cold-semantics
 rule standing ([`decisions.md`](decisions.md), "D35").

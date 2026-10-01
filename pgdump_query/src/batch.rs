@@ -128,7 +128,7 @@ pub struct QueryOptions {
     pub schema_mode: SchemaMode,
     /// How a value PostgreSQL accepts for a column's declared type and the
     /// column's Arrow type cannot hold is read ([`UnrepresentableMode`]):
-    /// NULL, by default, or refused. Which values those are is the
+    /// NULL, by default, its column read as its text, or refused. Which values those are is the
     /// semantics' to say — Arrow's format spec under PostgreSQL's, and past
     /// the engine's calendar too under DataFusion's
     /// (`docs/design/decisions.md`, "D98"). Moot under
