@@ -42,11 +42,14 @@ features are measured legs, not a supported matrix
 ([`measurements.md`](measurements.md), "Which allocator a figure was taken
 under").
 
-**Why P29 cares.** The usual portable Linux binary is static musl, which would
-ship a binary none of the figures describe. A glibc artifact needs a symbol
+**Why P29 cares.** The usual portable Linux binary is static musl, whose own
+malloc is what the figures measured as slower. A glibc artifact needs a symbol
 floor (built against an old glibc, or targeting one explicitly), and that floor
-decides which distributions run it. Choosing musl plus a replacement allocator
-instead ships a leg the figures time but do not recommend.
+decides which distributions run it. Static musl with mimalloc as Rust's global
+allocator needs no floor. mimalloc was refused as `pgdt`'s default on its small
+gain, not on suitability ([`decisions.md`](decisions.md), "D13"), but on musl
+it is unmeasured, and the C dependencies still use musl's malloc. P30 decides
+the shipped binary's allocator, and this choice should follow it.
 
 **Origin.** Filed 2026-10-01 by the session sketching P29.
 
@@ -131,6 +134,22 @@ the first minor bump breaks the build. The `/release` skill's bump is where
 this is decided.
 
 **Origin.** Filed 2026-10-01 by the session sketching P29.
+
+---
+
+## Which binaries ship is P30's to decide
+
+**Fact.** P30 (one binary for distribution) is sketched to compose
+`datafusion-cli-pgdump`'s CLI into `pgdt` behind an opt-in feature, so that a
+release ships one binary ([`roadmap.md`](roadmap.md), "P30 — One binary for
+distribution").
+
+**Why P29 cares.** The artifact list, the release build's feature set, the
+allocator the shipped binary links, and the size users download all follow
+from P30's answer. Grill the two together, or P30 first. Otherwise P29 ships
+two binaries and the release recipe changes when P30 lands.
+
+**Origin.** Filed 2026-10-01 by the session sketching P30.
 
 ---
 
