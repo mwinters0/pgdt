@@ -16,8 +16,8 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
-| P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — decides what P29 ships |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -45,7 +45,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P28`** — nothing at or below it
+centering"). **Phase numbering continues from `P30`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -561,6 +561,28 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
+## P30 — One binary for distribution
+
+`pgdt` carrying `datafusion-cli-pgdump`'s whole CLI, flags included, as a
+subcommand (`pgdt df` or similar), so that a release ships one binary. The
+crates stay separate, and development keeps two binaries: the DataFusion crate
+stays free of Postgres-specific behaviour, and the timed `pgdt` stays free of
+DataFusion. Sketched to corner-avoidance depth. **The expected shape is
+composition, not copying.** The DataFusion CLI's arguments and entry point
+become a library that its own binary and an opt-in `pgdt` feature both call,
+so no flag is declared twice.
+
+It reopens a recorded rejection. `datafusion-cli-pgdump/Cargo.toml` refuses a
+`pgdt sql` subcommand because it would put DataFusion into the build every
+figure times. The grilling settles how that is answered; a default-off feature
+leaves the timed build alone but ships a build no figure times. It also
+settles which allocator the one binary links, the two choosing differently
+today ([`decisions.md`](decisions.md), "D13"); how the two runtimes and
+signal setups are dispatched; whether a slim `pgdt` ships beside the full one;
+and how the composed build is kept compiling. **Scheduled ahead of P29**,
+whose artifacts it decides. The facts are in [its
+inbox](roadmap-P30-one-binary-inbox.md).
+
 ## P29 — Versioned binary releases
 
 Publishing the binaries as versioned GitHub Releases, starting with `v0.1.0`,
@@ -581,28 +603,6 @@ from any other `--release` build; where the release doc lives, a pushed tag
 being a feed entry before any Release exists; and what licence and notices a
 published binary carries. The facts each turns on are in [its
 inbox](roadmap-P29-releases-inbox.md).
-
-## P30 — One binary for distribution
-
-`pgdt` carrying `datafusion-cli-pgdump`'s whole CLI, flags included, as a
-subcommand (`pgdt df` or similar), so that a release ships one binary. The
-crates stay separate, and development keeps two binaries: the DataFusion crate
-stays free of Postgres-specific behaviour, and the timed `pgdt` stays free of
-DataFusion. Sketched to corner-avoidance depth. **The expected shape is
-composition, not copying.** The DataFusion CLI's arguments and entry point
-become a library that its own binary and an opt-in `pgdt` feature both call,
-so no flag is declared twice.
-
-It reopens a recorded rejection. `datafusion-cli-pgdump/Cargo.toml` refuses a
-`pgdt sql` subcommand because it would put DataFusion into the build every
-figure times. The grilling settles how that is answered; a default-off feature
-leaves the timed build alone but ships a build no figure times. It also
-settles which allocator the one binary links, the two choosing differently
-today ([`decisions.md`](decisions.md), "D13"); how the two runtimes and
-signal setups are dispatched; whether a slim `pgdt` ships beside the full one;
-and how the composed build is kept compiling. It decides what P29 ships, so
-the two are grilled together or this one first. The facts are in [its
-inbox](roadmap-P30-one-binary-inbox.md).
 
 ## P22 — The third tunable
 

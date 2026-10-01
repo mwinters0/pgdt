@@ -101,6 +101,27 @@ DataFusion inside it, and whether the banner stays are this phase's to decide.
 
 ---
 
+## The reserve an allocator would be priced against is already known short, and P23 owns it
+
+**Fact.** `MEMORY_RESERVE` does not cover what a compressed `query` holds above
+its charge and statistics account, and wide `.xz` queries were OOM-killed under
+it (`KD34`). Setting it is P23's, which is sketched after P21 and P22 because
+the architecture it answers to is still moving ([`roadmap.md`](roadmap.md),
+"P23 — Statistics coverage and the resident reserve"). Scheduling P30 and P29
+first means the public binaries carry `KD34`.
+
+**Why P30 cares.** Re-taking `reserve` under mimalloc prices an allocator
+against a constant already known wrong, so the reading cannot settle whether
+mimalloc is safe to ship. The grilling chooses among: the platform allocator,
+leaving `KD34` exactly as it is today for P23; mimalloc with a re-take read
+only as a comparison against the platform leg's same sitting; or pulling
+`KD34` forward out of P23. Whether a beta's release doc states the workaround
+(a `--memory` under the container's limit) is P29's.
+
+**Origin.** Filed 2026-10-01, when P30 and P29 were scheduled ahead of P22.
+
+---
+
 ## DataFusion is most of the composed binary's size
 
 **Fact.** The release `datafusion-cli-pgdump` binary is over an order of

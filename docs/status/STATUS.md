@@ -91,7 +91,7 @@ instrument can see").
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eight phases remain sketched — P22, P21, P23, P26, P15, P18, P8, P24,
+  Ten phases remain sketched — P30, P29, P22, P21, P23, P26, P15, P18, P8, P24,
   in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as

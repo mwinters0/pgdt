@@ -146,8 +146,7 @@ distribution").
 
 **Why P29 cares.** The artifact list, the release build's feature set, the
 allocator the shipped binary links, and the size users download all follow
-from P30's answer. Grill the two together, or P30 first. Otherwise P29 ships
-two binaries and the release recipe changes when P30 lands.
+from P30's answer, which is why P30 is scheduled first.
 
 **Origin.** Filed 2026-10-01 by the session sketching P30.
 
