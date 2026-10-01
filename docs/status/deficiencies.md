@@ -357,7 +357,5 @@ than reading as a phase nobody has sliced.
 - **KD63** — a `numeric(p,s)` whose scale PostgreSQL 15 and later admit but
   Arrow's decimal does not — past its precision, as `numeric(2,5)`, or past
   the type's maximum scale — panics a typed query of its table, and one past
-  `i8` is typed at scale 0, so its non-zero values read as NULL. **(c)
-  unowned**; promoted by a dump holding such a column, the fix choosing
-  between text and a precision widened to the scale. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `i8` is typed at scale 0, so its non-zero values read as NULL. **(b) owned
+  by `M201`**. Detail: `pgdump_query/src/pgtype.rs`.

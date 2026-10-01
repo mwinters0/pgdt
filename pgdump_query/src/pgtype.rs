@@ -1163,8 +1163,9 @@ fn catalog_name(name: &str) -> Option<&'static str> {
 /// (`numeric(2,5)` holds `0.00012`) or past the type's `MAX_SCALE`, which
 /// `batch.rs`'s `with_precision_and_scale(..).expect(..)` then panics on; and
 /// a scale outside `i8` falls to `unwrap_or(0)`, so the column is typed at
-/// scale 0 and every non-zero value fails to decode. The fix
-/// maps either to text, or widens the precision to cover the scale.
+/// scale 0 and every non-zero value fails to decode. The fix widens the
+/// precision to cover a scale Arrow's decimal can carry, and maps one it
+/// cannot to text.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
     let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
