@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-01, against commit `183a50eb`, under the `system` allocator and glibc 2.41. **All 24 figures below come from that sitting.**
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-01, against commit `183a50eb`, under the `system` allocator and glibc 2.41. **23 of the 24 figures below come from that sitting.** The other carries its own sitting commit inside its marker, and every reader of this stamp argues from that instead: `parallel-scan-throughput` (`08ca40cf`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -2930,76 +2930,96 @@ So a worker count read off a linear extrapolation of a one-worker rate is a
 
 ## What a second scan worker buys, and where the plain path stops
 
-<!-- figure: parallel-scan-throughput — reproduce with `cd scripts && uv run measure.py --figure parallel-scan-throughput` -->
+<!-- figure: parallel-scan-throughput — taken at `08ca40cf` — under glibc 2.41 and 2.44 — reproduce with `cd scripts && uv run measure.py --figure parallel-scan-throughput` -->
 
-| `--jobs` | Plain, `parse` | Plain, typed `query` | `.xz`, `parse` | `.xz`, typed `query` |
+| `--jobs` · `target_partitions` | Plain, `parse` | Plain, typed provider scan | `.xz`, `parse` | `.xz`, typed provider scan |
 |---|---|---|---|---|
-| 1 *(serial)* | **0.398 s** (0.391–0.405) · ~8094 MB/s · 1.00× | **4.33 s** (4.32–4.82) · ~744 MB/s · 1.00× | **16.12 s** (16.08–16.37) · ~200 MB/s · 1.00× | **19.66 s** (19.54–19.76) · ~164 MB/s · 1.00× |
-| 2 | **0.293 s** (0.270–0.350) · ~10994 MB/s · 1.36× | **4.44 s** (4.41–4.46) · ~726 MB/s · 0.98× | **16.67 s** (16.63–16.71) · ~193 MB/s · 0.97× | **19.71 s** (19.59–19.78) · ~163 MB/s · 1.00× |
-| 4 | **0.328 s** (0.288–0.359) · ~9821 MB/s · 1.21× | **4.01 s** (3.99–4.08) · ~803 MB/s · 1.08× | **9.15 s** (9.02–9.20) · ~352 MB/s · 1.76× | **19.70 s** (19.63–19.81) · ~163 MB/s · 1.00× |
-| 8 | **0.382 s** (0.362–0.389) · ~8433 MB/s · 1.04× | **3.92 s** (3.89–3.95) · ~822 MB/s · 1.11× · 7 sub-streams | **5.18 s** (5.11–5.37) · ~621 MB/s · 3.11× | **19.88 s** (19.82–19.99) · ~162 MB/s · 0.99× |
-| 12 | **0.368 s** (0.363–0.384) · ~8753 MB/s · 1.08× | **3.92 s** (3.88–3.94) · ~822 MB/s · 1.11× · 7 sub-streams | **4.03 s** (3.97–4.30) · ~800 MB/s · 4.00× | **19.78 s** (19.63–19.92) · ~163 MB/s · 0.99× |
-| 16 | **0.376 s** (0.360–0.385) · ~8567 MB/s · 1.06× | **3.92 s** (3.89–3.96) · ~822 MB/s · 1.11× · 7 sub-streams | **3.40 s** (3.27–3.66) · ~946 MB/s · 4.73× | **19.79 s** (19.68–19.96) · ~163 MB/s · 0.99× |
-| 24 | **0.374 s** (0.363–0.378) · ~8613 MB/s · 1.06× | **3.92 s** (3.88–3.95) · ~822 MB/s · 1.11× · 7 sub-streams | **2.92 s** (2.74–2.97) · ~1101 MB/s · 5.51× | **19.83 s** (19.77–19.95) · ~162 MB/s · 0.99× |
+| 1 *(serial)* | **0.439 s** (0.409–0.491) · ~7338 MB/s · 1.00× | **2.88 s** (2.83–3.02) · ~1119 MB/s · 1.00× | **16.25 s** (16.16–16.33) · ~198 MB/s · 1.00× | **18.31 s** (18.14–19.06) · ~176 MB/s · 1.00× |
+| 2 | **0.328 s** (0.315–0.378) · ~9821 MB/s · 1.34× | **1.587 s** (1.568–1.603) · ~2030 MB/s · 1.81× | **16.82 s** (16.76–17.36) · ~192 MB/s · 0.97× | **10.20 s** (10.10–10.37) · ~316 MB/s · 1.79× |
+| 4 | **0.338 s** (0.307–0.340) · ~9530 MB/s · 1.30× | **0.924 s** (0.920–0.942) · ~3486 MB/s · 3.12× | **9.14 s** (9.09–9.31) · ~353 MB/s · 1.78× | **5.66 s** (5.56–5.72) · ~569 MB/s · 3.24× |
+| 8 | **0.378 s** (0.363–0.389) · ~8522 MB/s · 1.16× | **0.805 s** (0.801–1.098) · ~4003 MB/s · 3.58× · 7 sub-streams | **5.28 s** (5.14–5.41) · ~611 MB/s · 3.08× | **3.19 s** (3.15–3.48) · ~1009 MB/s · 5.73× |
+| 12 | **0.377 s** (0.363–0.379) · ~8544 MB/s · 1.16× | **0.817 s** (0.804–1.034) · ~3943 MB/s · 3.52× · 7 sub-streams | **4.18 s** (3.96–4.48) · ~770 MB/s · 3.88× | **2.44 s** (2.41–2.51) · ~1322 MB/s · 7.51× |
+| 16 | **0.378 s** (0.365–0.400) · ~8522 MB/s · 1.16× | **0.825 s** (0.808–1.073) · ~3906 MB/s · 3.49× · 7 sub-streams | **3.44 s** (3.34–3.65) · ~935 MB/s · 4.72× | **2.18 s** (2.16–2.22) · ~1479 MB/s · 8.41× |
+| 24 | **0.387 s** (0.374–0.398) · ~8324 MB/s · 1.13× | **0.857 s** (0.850–1.172) · ~3760 MB/s · 3.36× · 7 sub-streams | **2.98 s** (2.79–3.00) · ~1082 MB/s · 5.46× | **2.23 s** (2.21–2.34) · ~1443 MB/s · 8.20× |
 
-Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-job row. Both `.xz` legs decode the same 3.00 GiB of plaintext the plain legs read directly (563.8 MB on disk, 5.45×), so a rate is comparable across all four columns.
+Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. Both `.xz` legs decode the same 3.00 GiB of plaintext the plain legs read directly (563.8 MB on disk, 5.45×), so every rate is per the same bytes.
 
-Every row states `--memory 2550136832`, the allowance that leaves 2.00 GiB for read buffers, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-job row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, so an `.xz` leg's one-job row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
+**The `parse` legs run `pgdt parse` at `--jobs` N; the provider legs run `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=N`**, the session's `target_partitions`, which the provider plans a scan's sub-streams against and DataFusion polls together. `pgdt query` is not timed: its in-order merge reads one sub-stream at a time past its first round ([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The query is `SELECT count(id), …, count(v_escaped) FROM public.perf WHERE id IS NOT NULL`, a `count` of each of the table's 16 columns: every column decoded typed and one row out, the filter keeping every row and leaving the scan's exact NULL counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, "D89"). Every provider cell answered alike, byte for byte, at every count over both files. **That binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against, so a provider cell is read against its own leg and never against a `parse` cell. Each carries the program's startup and the dump's registration, which `dynamic-filter-join`'s startup leg reads.
 
-**A plain leg's `--jobs` is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
+Every row states the allowance `2550136832` — `--memory 2550136832` on a `parse` leg, `SET pgdump.memory = 2550136832` run ahead of the query in the same process on a provider leg — which leaves 2.00 GiB for read buffers, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, as is a provider scan planned at one partition, so an `.xz` leg's one-worker row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
 
-**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` solves a query's sub-stream count against the read-buffer budget, each sub-stream costing its read plus a batch span narrowed toward the chunk size before the count is cut (`docs/design/decisions.md`, "D4", "D84") — a budget the *harness* chose, not a ceiling the library ships. The rows at or above that count on such a leg state the count they actually planned: `7` on plain. Below that count a cell's sub-stream figure equals its row label; at or above it, every further worker asked for buys nothing more to plan.
+**A plain leg's count is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
 
-Each typed-`query` leg, at every `--jobs`, reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote in the same container, and states `--statistics none`, so no row group is skipped: its reading carries decoding that cache whole, statistics included, and no mapping pass.
+**A provider leg's count can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` solves a scan's sub-stream count against the read-buffer budget, each sub-stream costing its read plus a batch span narrowed toward the chunk size before the count is cut (`docs/design/decisions.md`, "D4", "D84") — a budget the *harness* chose, not a ceiling the library ships. The rows at or above that count on such a leg state the count they actually planned: `7` on plain. Below that count a cell's sub-stream figure equals its row label; at or above it, every further worker asked for buys nothing more to plan.
+
+Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote beside the dump in the same container, where `--dump` looks for it: its reading carries decoding that cache whole, statistics included, and no mapping pass, and its filter rules out no row group.
 
 **`PARALLEL_BUDGET` is 2.00 GiB so that no `.xz` row is budget-clamped;** a plain source stays on the library's default budget whatever is stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above state. A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
 
 Per-rep readings (s):
-- Plain, `parse`, 1j: 0.398, 0.399, 0.405, 0.395, 0.391
-- Plain, `parse`, 2j: 0.270, 0.350, 0.307, 0.293, 0.280
-- Plain, `parse`, 4j: 0.333, 0.359, 0.288, 0.328, 0.318
-- Plain, `parse`, 8j: 0.389, 0.362, 0.370, 0.384, 0.382
-- Plain, `parse`, 12j: 0.384, 0.368, 0.363, 0.364, 0.377
-- Plain, `parse`, 16j: 0.384, 0.360, 0.376, 0.371, 0.385
-- Plain, `parse`, 24j: 0.376, 0.369, 0.378, 0.374, 0.363
-- Plain, typed `query`, 1j: 4.82, 4.33, 4.33, 4.32, 4.35
-- Plain, typed `query`, 2j: 4.44, 4.41, 4.44, 4.46, 4.41
-- Plain, typed `query`, 4j: 4.08, 3.99, 3.99, 4.04, 4.01
-- Plain, typed `query`, 8j: 3.92, 3.95, 3.89, 3.93, 3.92
-- Plain, typed `query`, 12j: 3.92, 3.92, 3.88, 3.91, 3.94
-- Plain, typed `query`, 16j: 3.96, 3.94, 3.91, 3.89, 3.92
-- Plain, typed `query`, 24j: 3.92, 3.95, 3.88, 3.88, 3.92
-- `.xz`, `parse`, 1j: 16.12, 16.37, 16.11, 16.08, 16.12
-- `.xz`, `parse`, 2j: 16.71, 16.67, 16.65, 16.63, 16.71
-- `.xz`, `parse`, 4j: 9.15, 9.12, 9.02, 9.17, 9.20
-- `.xz`, `parse`, 8j: 5.11, 5.14, 5.37, 5.18, 5.22
-- `.xz`, `parse`, 12j: 4.30, 4.03, 3.99, 3.97, 4.04
-- `.xz`, `parse`, 16j: 3.44, 3.38, 3.66, 3.40, 3.27
-- `.xz`, `parse`, 24j: 2.92, 2.74, 2.92, 2.94, 2.97
-- `.xz`, typed `query`, 1j: 19.76, 19.66, 19.72, 19.54, 19.54
-- `.xz`, typed `query`, 2j: 19.59, 19.74, 19.71, 19.78, 19.59
-- `.xz`, typed `query`, 4j: 19.70, 19.64, 19.81, 19.63, 19.71
-- `.xz`, typed `query`, 8j: 19.88, 19.99, 19.82, 19.92, 19.82
-- `.xz`, typed `query`, 12j: 19.92, 19.63, 19.88, 19.78, 19.69
-- `.xz`, typed `query`, 16j: 19.77, 19.79, 19.68, 19.88, 19.96
-- `.xz`, typed `query`, 24j: 19.95, 19.95, 19.83, 19.77, 19.80
+- Plain, `parse`, 1j: 0.409, 0.446, 0.439, 0.435, 0.491
+- Plain, `parse`, 2j: 0.328, 0.315, 0.324, 0.378, 0.340
+- Plain, `parse`, 4j: 0.307, 0.338, 0.340, 0.326, 0.340
+- Plain, `parse`, 8j: 0.363, 0.373, 0.382, 0.378, 0.389
+- Plain, `parse`, 12j: 0.378, 0.368, 0.379, 0.363, 0.377
+- Plain, `parse`, 16j: 0.378, 0.371, 0.365, 0.379, 0.400
+- Plain, `parse`, 24j: 0.374, 0.387, 0.388, 0.398, 0.380
+- Plain, typed provider scan, 1p: 3.02, 2.85, 2.88, 2.88, 2.83
+- Plain, typed provider scan, 2p: 1.603, 1.568, 1.587, 1.588, 1.585
+- Plain, typed provider scan, 4p: 0.942, 0.940, 0.924, 0.920, 0.924
+- Plain, typed provider scan, 8p: 1.098, 0.805, 0.803, 0.801, 0.805
+- Plain, typed provider scan, 12p: 1.034, 0.804, 0.806, 0.817, 0.836
+- Plain, typed provider scan, 16p: 1.073, 0.830, 0.825, 0.808, 0.824
+- Plain, typed provider scan, 24p: 1.172, 0.850, 0.872, 0.852, 0.857
+- `.xz`, `parse`, 1j: 16.33, 16.25, 16.25, 16.16, 16.17
+- `.xz`, `parse`, 2j: 16.99, 16.76, 17.36, 16.82, 16.77
+- `.xz`, `parse`, 4j: 9.31, 9.13, 9.14, 9.19, 9.09
+- `.xz`, `parse`, 8j: 5.40, 5.17, 5.41, 5.14, 5.28
+- `.xz`, `parse`, 12j: 4.18, 4.48, 4.42, 3.96, 4.09
+- `.xz`, `parse`, 16j: 3.65, 3.39, 3.61, 3.34, 3.44
+- `.xz`, `parse`, 24j: 2.92, 2.98, 2.79, 3.00, 3.00
+- `.xz`, typed provider scan, 1p: 18.52, 18.31, 19.06, 18.14, 18.24
+- `.xz`, typed provider scan, 2p: 10.37, 10.20, 10.36, 10.12, 10.10
+- `.xz`, typed provider scan, 4p: 5.66, 5.56, 5.58, 5.72, 5.67
+- `.xz`, typed provider scan, 8p: 3.26, 3.18, 3.19, 3.48, 3.15
+- `.xz`, typed provider scan, 12p: 2.51, 2.44, 2.41, 2.43, 2.45
+- `.xz`, typed provider scan, 16p: 2.22, 2.22, 2.16, 2.18, 2.17
+- `.xz`, typed provider scan, 24p: 2.34, 2.23, 2.23, 2.21, 2.34
 
-Apparatus over every run in this table: CPU stall ≤1.06%, I/O stall ≤10.40%, machine ≤42% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤70°C.
+Apparatus over every run in this table: CPU stall ≤0.96%, I/O stall ≤11.04%, machine ≤41% busy, steal ≤0.00%, busiest core ≥3.73 GHz, ≤72°C.
 
-**A typed `query` over `.xz` gains nothing from `--jobs`**: 19.66 s at one job
-and 19.70–19.88 s at every count after it, ~163 MB/s, where the `.xz` `parse`
-beside it reaches 5.51× over the same file. The `da05a72` sitting read 1.57× on
-that column, and each of its cells less that sitting's `.xz` `parse` cell at
-the same count is 19.4–20.0 s: the gain was its mapping pass, the replay as flat
-then as now, and the column only shows it now that no mapping pass is timed.
-A plain typed `query` gains about a tenth, 1.08× by four sub-streams and 1.11×
-at the seven it seats from eight. **Both query columns time `pgdt query`'s
-in-order merge, not the library's sub-streams**: past its first round the merge
-reads one sub-stream at a time, so these columns are its first round's gain
-([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The
-harness now times these legs through the provider at each `target_partitions`
-(`M187`, `measure.PARALLEL_SCAN`); this table predates that, and its re-take
-is what reads the sub-streams.
+**Through the provider, a typed scan's sub-streams scale with
+`target_partitions`.** Over `.xz` it reads 18.31 s at one partition and 2.18 s
+at sixteen, 8.41×, and nothing more at twenty-four, whose range overlaps
+sixteen's. Over plain it reaches 3.58× at eight, the seven sub-streams the
+budget seats there, and reads 0.817–0.857 s at every count above. The
+`pgdt query` legs this table replaced read 1.11× on plain and 1.00× on `.xz` at
+the same counts in the `183a50eb` sitting: what held them flat was
+`pgdt query`'s in-order merge, not the sub-streams
+([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). Each is a
+speedup over its own leg's one-worker row, so the two sittings' ratios are set
+side by side and never subtracted.
+
+- **The plain count of seven is computed, not reported.** It is
+  `measure.QUERY_SUBSTREAM_CAP`'s hand derivation, which an `EXPLAIN` by hand
+  matched on 2026-10-01 ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md),
+  "`M187`: the provider legs"). No run in this sitting reports it: on a
+  provider leg `raw.json`'s resolution comes from the untimed builder's
+  `--jobs 1` line, one reader at every count.
+- **From four sub-streams to seven, plain gains 1.15×** (0.924 s to 0.805 s).
+  What keeps the step that far below the count is not attributed. Nothing
+  here shows whether the seven wait on the plain source's four chunk slots, as
+  `parse`'s fused workers do.
+- **The `.xz` provider column passes half its count at every row from two to
+  sixteen.** The `.xz` `parse` column does so at no row: `KD20`'s doubled
+  decode comes from a fused worker's tail read landing in its successor's
+  block. A replay sub-stream reads only the row groups the cache maps to it
+  (`pgdump_query/src/stream.rs`, `sub_stream`), but no reading here counts its
+  decodes. Nothing explains why it stops gaining past sixteen.
+- **Plain provider rep 1 is slow from eight up**: 0.22–0.32 s above its cell's
+  median at each count from eight, where reps 2–5 sit within 0.035 s of each
+  other, and within 0.14 s of the median at every lower count. The medians
+  absorb it. It is unattributed.
 
 ## What a parallel scan holds resident, at two block sizes
 

@@ -11794,17 +11794,17 @@ PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 #: The profiles read as a **pair** rather than against a baseline table, each
 #: named with the input it is taken on rather than crossed with every input.
 #:
-#: `parallel-scan-throughput`'s plain `parse` is *negative* at two workers —
-#: 0.471 s serial against 0.512 s — which is below the `POOL_DEPTH` clamp, so
-#: the clamp is not what that reading measures and nothing in the tree names
-#: what is. "Where do the extra 41 ms go" is a proportion question, so it is a
-#: profile, and the only way a profile answers it is as a difference: the two
-#: shapes are read against each other, bucket by bucket.
+#: The pair was added when `parallel-scan-throughput`'s plain `parse` read
+#: *negative* at two workers, below the `POOL_DEPTH` clamp. No sitting at
+#: `183a50eb` or since does: the figure's two-worker row now gains over its
+#: one-worker row. What a second worker's time goes on is still a proportion
+#: question, so it is still a profile, and a profile answers it only as a
+#: difference: the two shapes are read against each other, bucket by bucket.
 #:
 #: **Explicitly paired, not a second cross product.** The shapes above
 #: are crossed with both inputs because each is asking what a *path* costs and
 #: the two files reach different paths. This one is asking what one figure's
-#: one anomalous row is made of, and that row is on `control`; profiling the
+#: one row is made of, and that row is on `control`; profiling the
 #: same pair over `arrays` would take two readings nothing reads.
 #:
 #: **The shapes are the figure's own**, `-jobs-<n>` and all, so each states
@@ -12086,7 +12086,7 @@ def profile_recipe(cfg: Config) -> str:
     head(
         "The pair read against each other rather than against a table:",
         "`parallel-scan-throughput`'s plain `parse` at one worker and at two,",
-        "which is where that figure goes negative below the POOL_DEPTH clamp.",
+        "below the POOL_DEPTH clamp: what a second worker's time goes on.",
         "Read as a difference, bucket by bucket -- a single profile of either",
         "one answers nothing.",
     )

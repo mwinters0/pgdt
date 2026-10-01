@@ -2722,7 +2722,7 @@ impl XzSource {
     /// case: every fused worker's chunk-sized tail read lands in the block its
     /// *successor* owns, so a scan does about twice the decode work and its
     /// speedup is capped near half the reader count (`measurements.md`,
-    /// `parallel-scan-throughput`). **(c) unowned.** The fix left is an
+    /// `parallel-scan-throughput`'s `.xz` `parse` column). **(c) unowned.** The fix left is an
     /// in-flight map here — not taken, since it puts a second lock in front of
     /// the case that does *not* collide — a wider cut having been measured and
     /// refused ([`BOUNDARIED_PARTITION_UNITS`]).

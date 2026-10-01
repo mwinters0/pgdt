@@ -58,18 +58,17 @@ quotes a number: every figure is in
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
 && uv run measure.py --stale` names what is red and why. **Every register
-figure but `session-drift` was re-taken at `183a50eb`, with its binaries staged
-on tmpfs**, the scan figures at the metadata level and the query figures over a
-data-level cache; `session-drift` is the `da05a72` pair's, and `reserve`'s
+figure but `session-drift` was re-taken at `183a50eb` or later, with its
+binaries staged on tmpfs**, the scan figures at the metadata level and the
+query figures over a data-level cache; the stamp names the one taken in a
+sitting of its own. `session-drift` is the `da05a72` pair's, and `reserve`'s
 stated axis is a reading `KD34` names.
 What only something other than a sweep clears: `session-drift`, which only a
 second sweep on a first's commit re-takes, and the koji section, outside the
 register and red, which only a run on the HDD clears. Red with the reason
 written down is the standing requirement, not red cleared
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep"). `parallel-scan-throughput` is owed a re-take `--stale`
-cannot see: the harness times its extraction legs through the provider
-(`M187`), and its published table is `pgdt query`'s.
+not oblige a sweep").
 
 **Profiles and heap recordings are not figures.** `measure.py --profile-recipe`
 and `--heaptrack-recipe` print an instrument sequence and run none of it; what
@@ -123,3 +122,14 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`measure.PROFILE_AXIS` was kept after its premise fell.** The profile
+  recipe's paired `parse` at one worker and two on `control` was built to say
+  why `parallel-scan-throughput`'s plain `parse` read *negative* at two
+  workers. Neither the `183a50eb` sitting nor `08ca40cf`'s does: the two-worker
+  row gains. M187's fold corrected the comment and the recipe's heading to
+  name what the pair still answers, which is where a second worker's time
+  goes. The pair itself was left alone, because retiring part of the
+  instrument is not a figure fold's to do. Reconsidering retires the pair
+  and its `test_measure.py` coverage. The account it bought, a plain
+  partition re-reading a chunk-sized tail, is already `D2`'s.

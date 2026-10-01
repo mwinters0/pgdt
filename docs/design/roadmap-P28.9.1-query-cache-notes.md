@@ -8,13 +8,15 @@ The instrument and its readings have both landed, taken in 28.9's sweep at
 
 ## What exists
 
-- **Every `query-typed`, `query-strings`, `query-project-*`, `query-where-*`
-  and `query-typed-jobs-*` shape** runs `measure.DATA_LEVEL_BUILDER`, an
+- **Every `query-typed`, `query-strings`, `query-project-*` and
+  `query-where-*` shape** runs `measure.DATA_LEVEL_BUILDER`, an
   untimed `parse` stating `--jobs 1` and `GATHER_STATISTICS`, then `&&`, then
   its timed `query` stating `DATA_LEVEL_QUERY` in place of `--dtcache none`.
   That changes six figures: `nested-end-to-end`, `cross-file-floor`,
   `projection-widths`, `predicate-terms`, `allocator`'s two query rows and
-  `parallel-scan-throughput`'s typed-`query` legs. `query-nomatch*` keeps
+  `parallel-scan-throughput`'s typed-`query` legs, whose shapes are now
+  `measure.PARALLEL_SCAN`'s: provider runs over a builder of their own.
+  `query-nomatch*` keeps
   `--dtcache none`, since it times the map and its saves.
 - **The six figures declare `CACHED_QUERY`** (the map, the cache, the
   statistics). Each one's generated notes say what its query reads
@@ -58,7 +60,7 @@ The instrument and its readings have both landed, taken in 28.9's sweep at
 - **`raw.json`'s `reported` resolution is the builder's on these shapes.**
   `parse_resolution` reads the first `scan started` line in the container's
   `stderr`, and a cached `query` maps nothing and prints none, so the line is
-  the untimed builder's `--jobs 1` and every typed-`query` leg of
+  the untimed builder's `--jobs 1`, and every provider leg of
   `parallel-scan-throughput` reports one reader. Only `reserve`, whose legs
   are `parse`s, consumes the pair, so no table is wrong; what is lost is the
   check its docstring names, a row labelled 24 that ran fewer, on these legs.
