@@ -54,7 +54,8 @@ in the same change and point it at the notes.
 **5. Wrap the phase.** Consolidate the slice notes into one
 `roadmap-P<N>-<slug>-notes.md`, delete the per-slice files, and delete the
 checklist while setting the index row to `Complete` — one edit. **A wrap
-opens with a repoint** over the phase's mechanisms (below). **After a
+opens with a repoint** over the phase's mechanisms (below), **and ticks the
+README's status list** for what the phase delivered, which no check catches. **After a
 keystone the wrap is an audit, not a transcription**: mechanism decisions belong
 in the register, so the wrap moves in whatever the slices decided that has not
 reached it, and the notes doc keeps only the negative results and facts aimed at
@@ -367,7 +368,14 @@ high-water mark, unlanded items' numbers being spent too.
 
 Status and history are separated by tense, not content. **A falsified claim is
 corrected by the change that falsifies it**, not by a later slice that owns the
-file — binding absolutely in the manual, read by someone who cannot check it.
+file — binding absolutely in the manual and the README, read by someone who
+cannot check them.
+
+**The README is the maintainer's voice, not the record's.** An agent edits it
+only to keep it true: a status line ticked, amended or added when work changes
+what it says, and a plainly false claim anywhere in it corrected by the smallest
+edit that does it. It is never restructured, trimmed or rewritten for style, by a
+repoint or anything else.
 
 ## Naming and lifecycle
 

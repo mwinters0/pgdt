@@ -26,8 +26,8 @@ one exactly this and nothing else:
   `rg -n -w '<module>|<its public types and functions>'` over
   `docs/design/decisions.md`, `docs/design/roadmap.md`,
   `docs/design/*-invariants.md`, `docs/design/measurements.md`,
-  `docs/status/STATUS.md`, `docs/status/deficiencies.md` and `docs/manual/`,
-  plus the register section headed with that module's name.
+  `docs/status/STATUS.md`, `docs/status/deficiencies.md`, `docs/manual/` and
+  `README.md`, plus the register section headed with that module's name.
 
 > Read the source in full. Then read only the record lines given. For every
 > sentence in those lines, and for every comment in the source that asserts a
@@ -53,7 +53,9 @@ Every finding is a claim until you have opened both lines yourself. Then, per
 - *untestable* — a claim no test asserts is either given a test, rewritten as
   what the code does, or deleted (`evidence` skill, the comment rule).
 
-A dated entry is never rewritten; a keystone's deletions are not undone.
+A dated entry is never rewritten; a keystone's deletions are not undone. A
+`README.md` finding is corrected by the smallest edit that makes it true, never
+trimmed or struck (`docs/process.md`, "Where does this fact go?").
 
 ## 4. Trim, check, stamp, commit
 
@@ -69,7 +71,7 @@ naming each correction by file and what was true.
 
 - **Correct only what is phase-local** under `docs/process.md`, "Working
   unattended"'s refuted-record conditions: a claim in `STATUS.md`, a `KD<k>`, a
-  comment, the manual, the open phase's docs. The register, `roadmap.md`'s
+  comment, the manual, the README, the open phase's docs. The register, `roadmap.md`'s
   standing rules, the invariants, `process.md` and the skills are beyond the
   phase: **list, do not edit**, and never strike a `D<k>` unattended.
 - Listed findings go in today's dated entry under a heading beginning
