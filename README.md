@@ -14,6 +14,20 @@ Available as:
 
 _Human author, LLM autocomplete._
 
+
+## Why
+I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres with indexes.
+I want last week's data from it as Parquet.
+
+**Traditional approach:**
+1. Load it into Postgres: 36 hours + 1.5Tb of disk
+2. Extract it to Parquet: 5 minutes
+
+**With `pgdt`:**
+1. Build the cache: 1 hour + 200Mb of disk
+2. Extract it to Parquet: 20 minutes
+
+
 ## Quickstart
 
 ### `pgdt`
@@ -43,7 +57,7 @@ pgdt parse --source=foo.xz --statistics-level=metadata
 
 ### `datafusion-cli-pgdump`
 
-Use case: you want to inspect your data and/or extract some portion of it.
+Use case: you want to inspect your _data_ and/or extract some portion of it.
 
 ```bash
 # Parse a dump (builds foo.xz.dtcache)
@@ -79,18 +93,6 @@ For more, see:
 - [Our `datafusion-cli-pgdump` docs](docs/manual/datafusion-cli-pgdump.md)
 - Upstream's [`datafusion-cli` docs](https://datafusion.apache.org/user-guide/cli/index.html)
 - The [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
-
-## Why
-I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres with indexes.
-I want last week's data from it.
-
-- Traditional approach:
-    - 36 hours + 1.5Tb to load
-    - 5 minutes to extract to Parquet
-- With `pgdt`:
-    - 1 hour + 200Mb to build the cache
-    - 15 minutes to extract the Parquet
-
 
 ## Status
 ⚠️ **Functional, with extensive tests, but still early development.**  No stability guarantees for
