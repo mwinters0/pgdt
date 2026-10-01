@@ -135,10 +135,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 /// semantics alone, never by `pgdt`'s (`docs/design/decisions.md`, "D79"), so
 /// the equality leg is pruned by the dictionary it is named for — and
 /// `v_smallint` bounded in every group with no dictionary in any, so the
-/// figure's filter on it consults every group's bounds and skips none — and,
-/// against a cache `parse --statistics-level metadata` wrote, asks for statistics and
-/// consults none, returning the same rows, which is what the figure's leg over
-/// that cache is refused without.
+/// figure's filter on it consults every group's bounds and skips none.
 ///
 /// At the figure's own group size, `measure.GATHER_STATISTICS`'s, because the
 /// last of those rests on how many rows a group holds: a group of at most a

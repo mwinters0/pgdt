@@ -3834,12 +3834,15 @@ fn compressed_block_path_declined(
 /// made again at a dynamic filter's first poll cuts by ([`cut_blocks`]).
 ///
 /// Deficiency register: `deficiency: KD17` — the sub-streams planned here
-/// gain little on a plain typed `query`: throughput rises about a tenth by four
-/// and nothing after, the sub-streams seated past four buying none of it
+/// gain little on a plain typed `query`: throughput rises about a tenth, most
+/// of it by four, the sub-streams seated past four buying little of it; and on
+/// an `.xz` source they gain nothing at any count, the replay reading at one
+/// reader's rate where the same file's `parse` scales
 /// (`measurements.md`, `parallel-scan-throughput`). The named suspect, `POOL_DEPTH`
 /// clamping the chunk pool, is spent — a probe build lifting it moved no cell
-/// materially — so what caps them is unidentified. **(c) unowned**;
-/// promoted by a phase taking up plain-source extraction throughput. **That
+/// materially, and a block-decoding source sizes its pool by the count — so
+/// what caps them is unidentified. **(c) unowned**;
+/// promoted by a phase taking up extraction throughput. **That
 /// reading needs a read-chunk axis on its `query` legs**, which no figure has:
 /// [`PlanNoteKind::ParallelismBudgetLimited`] points a caller at the chunk,
 /// and the only figure pricing one measures a mapping pass.

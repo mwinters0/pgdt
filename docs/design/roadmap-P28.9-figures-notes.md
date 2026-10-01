@@ -4,9 +4,10 @@ What the slices after this one inherit. The spec is
 [`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
 "Evidence" and "Facts found while grilling"; the attribution rule it applies is
 [`roadmap.md`](roadmap.md), "Attribution is introspective; only the gate is
-blind". The instrument has landed and its readings have not: nothing in
-`measurements.md`'s tables was re-taken, so every table there is still the
-`da05a72` sitting's, the retired figures' provenance notes included.
+blind". The instrument and its readings have both landed: one `measure.py
+--all` sweep at `183a50eb`, with 28.9.1's, re-took every register figure but
+`session-drift` (`runs/measure-20261001T010810/`), and the profile recipe ran
+after it (`runs/28.9-sweep-20261001-0107/`, its handoff and logs).
 
 ## What exists
 
@@ -21,35 +22,42 @@ blind". The instrument has landed and its readings have not: nothing in
   `barred_problems` and their text in `--list`, `--stale` and `main` are
   gone, so `--all` selects every figure again.
 - **`statistics-gathering` prices the data level**: its legs are
-  `metadata` and `data` (`STATISTICS_LEGS`), its caption "What the data level
-  costs a parse", its rows the three throughput inputs and `arrays`, and it
-  declares `unrepresentable.rs`. Its id is unchanged.
+  `metadata` and `data` (`STATISTICS_LEGS`), its rows the three throughput
+  inputs and `arrays`, and it declares `unrepresentable.rs`. Its id is
+  unchanged; its section is "What the data level costs a parse".
 - **`statistics-pruning` has two legs a filter**, the `uncarried` leg gone;
   a test holds that no shape queries a cache a metadata-level `parse` wrote.
 - **`--profile-recipe` profiles the data level**:
   `parse-statistics-data-rss`, the figure's `data` leg without its resident
   wrapper, over `control` and `arrays`, landing as
   `runs/profile-parse-statistics-data-rss-<input>.{data,txt}`.
+- **The census's price is a profile share**, the samples under
+  `map::census_row` read against the data leg's wall, and the count's share
+  inside it; the shares and what they come to are
+  [`measurements.md`](measurements.md), "What the data level costs a parse".
+  They were read by bucketing `perf script --inline` samples on
+  `census_row` and, inside it, its `tier` test.
 
 ## What the next slices inherit
 
-- **The readings wait on 28.9.1**, which moves the query figures, so one
-  sweep takes both: `cd scripts && uv run measure.py --all`, detached per
-  `CLAUDE.md`, "Long-running processes", from a commit carrying both. Then
-  `uv run measure.py --profile-recipe`, run as printed; the census's price,
-  the count inside it, is the share of the data leg's profile under
-  `map::census_row` and the count it drives, read against that leg's wall.
-- **The fold renames `measurements.md`'s statistics-gathering section** to
-  the harness's caption, re-running `citations.py`, and rewrites the prose of
-  both statistics sections against their new legs. D35's Evidence already
-  cites `statistics-gathering`. **`statistics-pruning`'s rewritten prose
-  keeps the upper bound** on decoding the cache's statistics, the pruned legs'
-  floor, so the figure does not stop saying what carrying them costs.
-- **The arrays row is where the census inspects array shapes**; the
-  control's rows, holding counted columns and no array, are split too at the
-  data level, since the count joined the census
-  ([`roadmap-P28.3-count-notes.md`](roadmap-P28.3-count-notes.md)), so the
-  control's row does not price the census's pre-filter alone.
+- **A lever on what the data level costs is a statistics lever.** The census
+  is a small share of a data-level `parse` and the count under half of that;
+  the statistics are most of it ("What the data level costs a parse").
+- **The scan figures time the metadata level**, which censuses nothing, and
+  their warm absolutes moved against `da05a72`'s by less than a warm absolute
+  resolves across sessions; no move is attributed to the census they no longer
+  run.
+- **`peak-rss`'s 4,000-block row rose against `da05a72`'s, unattributed**, the
+  rise on the full `parse` and the cached no-match `query` alone and not on
+  jemalloc's `parse` ([`measurements.md`](measurements.md), "What a scan holds
+  resident, per byte and per block"). Building the commits from `da05a72`
+  under the figure's wrapper is what would name it.
+- **`statistics-pruning`'s prose keeps the upper bound** on decoding the
+  cache's statistics, the pruned legs' floor, and says that nothing prices it
+  below.
+- **`measure.py`'s `section` for `nested-end-to-end` quotes a stale number**,
+  so `tables.md` heads that figure with one the document does not; the marker,
+  not the heading, addresses a figure, and a fold rewrites the document's.
 
 ## Negative results
 

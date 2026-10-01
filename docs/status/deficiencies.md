@@ -121,13 +121,13 @@ than reading as a phase nobody has sliced.
   locale or asking for one, which the bar refuses for every other type. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD17** — a plain typed `query` gains about a tenth by four sub-streams
-  and nothing past them (`measurements.md`, `parallel-scan-throughput`). The
-  named suspect — `POOL_DEPTH` clamping the chunk pool — moved no cell
-  measurably in a probe build that lifts it, so what caps them is
-  unidentified. **(c) unowned**; promoted by a phase that
-  takes up plain-source extraction throughput, since no defaults change reaches
-  it. Detail: `pgdump_query/src/stream.rs`.
+- **KD17** — a typed `query` gains about a tenth from its sub-streams on a
+  plain source, little of it past four, and nothing on an `.xz` one
+  (`measurements.md`, `parallel-scan-throughput`). The named suspect —
+  `POOL_DEPTH` clamping the chunk pool — moved no cell measurably in a probe
+  build that lifts it, so what caps them is unidentified. **(c) unowned**;
+  promoted by a phase that takes up extraction throughput, since no defaults
+  change reaches it. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
   its own**, nothing sharing the two, so a parallel compressed scan does about

@@ -369,7 +369,7 @@ Past that the pool keeps a single buffer, which is the size you asked for.
 
 What it already holds does not grow with the *size* of the dump — a 3 GiB file
 costs no more than a 2 MB one, a few megabytes either way — but it does grow
-with the number of tables in it, by roughly 9 KB each. A dump of a few thousand
+with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
 tables is tens of megabytes resident before any chunk size is chosen.
 
 **An `.xz` source costs more than a plain one**, and by an amount the *file*
@@ -783,7 +783,7 @@ measured, a single worker already reads such a dump at the speed the disk
 delivers the bytes, and we have no measurement of several workers doing better
 on one. State `--jobs` if you want workers on one anyway — from a RAM disk or a
 page cache the file is already sitting in, where the disk is not the cost, a
-few of them are worth about 40%. An `.xz` dump on disk takes the CPUs this process was
+second is worth about a third, and more give some of it back. An `.xz` dump on disk takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
 decompression is the part of the work that more cores finish sooner, from four
 of them up: two workers read a compressed dump no faster than one — and fewer
@@ -791,7 +791,9 @@ still where the file itself has fewer blocks than that:
 pgdt splits a compressed file at its block boundaries, so a file with six
 blocks reads with at most six workers however wide the machine — and with
 fewer on a machine narrower than that, the count being the smaller of the two.
-An `.xz` dump read over HTTP takes one worker. **How many of those workers actually read is then bounded by
+That is what `parse` gains: a typed `query` reads a compressed dump's rows back
+no faster with more workers than with one, and a plain one about a tenth
+faster. An `.xz` dump read over HTTP takes one worker. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about
 106 MiB once the pool's four slots are counted, so a read-buffer budget of
 64 MiB delivers one worker whatever `--jobs` says, reading through the

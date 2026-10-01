@@ -1,10 +1,10 @@
 # P28.9.1 — The query figures over a data-level cache: notes
 
-What the readings and the fold inherit. The spec is
+What the slices after this one inherit. The spec is
 [`roadmap-P28-unrepresentable-values.md`](roadmap-P28-unrepresentable-values.md),
 "Evidence"; the instrument's rules are `measure.DATA_LEVEL_QUERIES`' comment.
-The instrument has landed and its readings have not. Every table in
-`measurements.md` is still the `da05a72` sitting's, taken with `--dtcache none`.
+The instrument and its readings have both landed, taken in 28.9's sweep at
+`183a50eb` (`runs/measure-20261001T010810/`).
 
 ## What exists
 
@@ -23,32 +23,43 @@ The instrument has landed and its readings have not. Every table in
 - **`--profile-recipe` writes the same cache before each query profile**,
   unprofiled (`profile_builder_argv`). `ProfileRecipe` holds both builders to
   `_script`'s.
+- **The readings are folded.** Every one of the six fell against `da05a72`'s
+  by about the mapping pass it no longer times, while every per-row and
+  per-column difference read off them reproduced; `measurements.md`'s prose
+  says so section by section, and its hand-written reproduce loop under
+  `cross-file-floor` runs the builder before each timed `query`.
 
-## What the readings inherit
+## What the next slices inherit
 
-- **One sweep takes 28.9's readings and these**, as 28.9's notes say, run
-  detached from a commit carrying both. `DataLevelQueries` holds the shapes.
-- **The fold rewrites what reads these figures as mapping inside the timer**:
-  the hand-written reproduce loop under `cross-file-floor` in
-  `measurements.md`, which spells `--dtcache none`, and any prose attributing
-  a row to a mapping pass or the census.
-- **`KD17`'s reading is the old column's.** "About a tenth by four
-  sub-streams" was read off a plain typed `query` that mapped before it
-  replayed. The fold re-reads it against the new column, along with its marker
-  in `stream.rs` (`plan_partitions`) and P22's inbox entry, which is
-  contingent on it.
+- **A typed `query` over `.xz` does not scale with `--jobs`**, and never did:
+  the earlier column's gain was its mapping pass ([`measurements.md`](measurements.md),
+  "What a second scan worker buys"). `KD17` is rewritten to cover it, with its
+  marker in `stream.rs` (`plan_partitions`) and P22's inbox entry, which is
+  contingent on it; the plain column still reads about a tenth.
 - **`QUERY_SUBSTREAM_CAP` stands.** With no mapping pass, no chunk is
   announced before the replay plans (`KD41`), so the plain source's slot is
   `POOL_MAX_BYTES` rather than the default chunk. `LocalFileSource::partitions`
   bills 8 MiB either way (`io.rs`), and `derived_source_span` floors at the
-  options' chunk. A debug build over a small control file planned 7
-  sub-streams at `--jobs 8` both with a cache and without, at the figure's
-  stated allowance.
+  options' chunk; the plain column planned 7 sub-streams from eight jobs, as
+  before.
 - **What a query reads carries decoding the whole cache, statistics
   included.** This is what a query after a default `parse` pays. The builder
   discovers its statistics allowance from its container, so a figure's
-  container sizes the cache it decodes. `statistics-pruning`'s legs bound
-  that decode from above.
+  container sizes the cache it decodes. `statistics-pruning`'s pruned legs
+  bound that decode from above.
+- **About one cached-`query` rep in thirty reads roughly half a second slow**,
+  across the nested, cross-file, allocator and parallel figures, where the
+  `da05a72` sitting's uncached shapes read one such rep; medians absorb it,
+  and one lands on `cross-file-floor`'s floor row. It is unattributed. It is
+  not a mapping pass: a probe of the same shape found none in a slow rep's
+  `stderr`.
+- **`raw.json`'s `reported` resolution is the builder's on these shapes.**
+  `parse_resolution` reads the first `scan started` line in the container's
+  `stderr`, and a cached `query` maps nothing and prints none, so the line is
+  the untimed builder's `--jobs 1` and every typed-`query` leg of
+  `parallel-scan-throughput` reports one reader. Only `reserve`, whose legs
+  are `parse`s, consumes the pair, so no table is wrong; what is lost is the
+  check its docstring names, a row labelled 24 that ran fewer, on these legs.
 
 ## Negative results
 

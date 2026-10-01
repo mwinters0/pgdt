@@ -662,11 +662,11 @@ What it inherits:
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` were re-taken at `da05a72`, against the reserve as
+  and `statistics-pruning` were re-taken at `183a50eb`, against the reserve as
   it stands, so a settled constant re-takes them. `reserve`'s stated axis — a
   typed `--jobs 24` under `--memory` — is where the margin lowers only the
   budget, and its worst rep has held about `MEMORY_RESERVE` above the
-  resolved budget, over it at one sitting and under it at the next
+  resolved budget, over it at one sitting and under it at the two since
   (`measurements.md`, `reserve`; `KD34`). Both statistics
   figures' inputs are owed a change as well: bare `text` is bounded bytewise
   now, so `statistics-gathering`'s control (`v_text`, `v_long_text`,
@@ -675,13 +675,15 @@ What it inherits:
   `v_category` carries bounds its fidelity guard no longer asserts absent,
   `pgdt query` still reading only its dictionary. Since `542fdfb` a
   summed column keeps an `i128` a group and every tracked column a `u64` of
-  text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times;
-  `statistics-gathering` at `da05a72` carries the heavier cache, and what it
-  adds over `542fdfb`'s is unattributed.
+  text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times since.
+  `statistics-gathering` now prices the whole data level, census and
+  unrepresentable count beside the statistics, and what the statistics alone
+  cost is a profile's share ([`measurements.md`](measurements.md), "What the
+  data level costs a parse"), not a difference against an earlier sitting.
 - **A default `parse` on NVMe may be CPU-bound, which is D10's reopen
   condition.** Every `scan-throughput-*` and `chunk-size` run gathers
   nothing, where the shipped `parse` gathers, and
-  `statistics-gathering`'s warm gathering leg takes several times what the
+  `statistics-gathering`'s warm data-level leg takes several times what the
   NVMe needs to deliver the same bytes (`measurements.md`,
   `statistics-gathering`, `scan-throughput-nvme`); no cold figure measures the
   default. A cold-NVMe figure of the default `parse` is this phase's first
