@@ -1339,6 +1339,92 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
     assert!(fired > 0, "no fixture's stop fell inside a kept group");
 }
 
+/// A dump of one table, `public.t (id integer, bad integer, pad text)`: `id`
+/// ascends from 1 to `rows`, and `bad` is `0` but in the rows `corrupt` picks,
+/// where it holds `nope`, text no `integer` decoder reads.
+fn with_undecodable(dir: &Path, rows: u32, corrupt: impl Fn(u32) -> bool) -> PathBuf {
+    let dump = dir.join("undecodable.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    id integer,\n    bad integer,\n    pad text\n);\n\n",
+    );
+    text.push_str("COPY public.t (id, bad, pad) FROM stdin;\n");
+    for id in 1..=rows {
+        let bad = if corrupt(id) { "nope" } else { "0" };
+        text.push_str(&format!("{id}\t{bad}\t{}\n", "p".repeat(24)));
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    dump
+}
+
+/// **A value no decoder reads raises only where evaluation reaches it**
+/// (`docs/design/decisions.md`, "D54"), under a filter whose first conjunct
+/// reads it, so every row the filter evaluates decodes it. Hand-written, since
+/// no value `pg_dump` writes fails a term where no kept row is emitted.
+///
+/// - **In a group statistics rule out**: `nope` deep in the ids below `id >=
+///   900`'s bound. Unpruned raises; pruned answers, serially and split.
+/// - **Past a sorted block's stop**: `nope` in every row past `id < 20`'s
+///   stopping row, the block one group. Unpruned raises; pruned answers
+///   serially, the stopping row being the last evaluated; split raises, a
+///   later piece evaluating its own first row, past the stop.
+#[tokio::test]
+async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
+    let bad_first =
+        |id: Expr| Expr::And(vec![Expr::Term(term("bad", PredicateOp::Ge, Some("0"))), id]);
+    let raises = |attempt: Attempt, what: &str| {
+        let error = attempt.outcome.err().unwrap_or_else(|| panic!("{what}: answered"));
+        assert!(error.contains("nope"), "{what}: {error}");
+    };
+    let ids = |attempt: Attempt, what: &str| -> Vec<i32> {
+        let (rows, _) = attempt.outcome.unwrap_or_else(|e| panic!("{what}: {e}"));
+        let rows = rows.unwrap();
+        let column = arrow::array::AsArray::as_primitive::<arrow::datatypes::Int32Type>(
+            rows.column(0).as_ref(),
+        );
+        column.values().to_vec()
+    };
+
+    // In a skipped group: ids 100 to 109, where a group at `SMALL_GROUP` holds
+    // some thirty rows, so every group holding one is far below the bound.
+    let dir = tempfile::tempdir().unwrap();
+    let dump = with_undecodable(dir.path(), 1000, |id| (100..110).contains(&id));
+    let (_dir, dump, _) = gathered(&dump, SMALL_GROUP).await;
+    let cache = cache::colocated_path(&dump);
+    let filter = bad_first(Expr::Term(term("id", PredicateOp::Ge, Some("900"))));
+    for jobs in [1, SPLIT_JOBS] {
+        let what = format!("a skipped group at {jobs} job(s)");
+        raises(attempt(&dump, &cache, "public.t", with(filter.clone(), false, jobs)).await, &what);
+        let pruned_attempt =
+            attempt(&dump, &cache, "public.t", with(filter.clone(), true, jobs)).await;
+        let skipped = pruned(&pruned_attempt.notes).map_or(0, |p| p.0);
+        assert!(skipped > 0, "{what}: nothing skipped");
+        assert_eq!(ids(pruned_attempt, &what), (900..=1000).collect::<Vec<_>>(), "{what}");
+    }
+
+    // Past a stop: every row after the stopping row, `20`, holds `nope`.
+    let dir = tempfile::tempdir().unwrap();
+    let dump = with_undecodable(dir.path(), 2000, |id| id > 20);
+    let (_dir, dump, index) = gathered(&dump, pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES).await;
+    assert_eq!(
+        index.blocks_for("public.t").next().unwrap().statistics.as_deref().unwrap().groups.len(),
+        1
+    );
+    let cache = cache::colocated_path(&dump);
+    let filter = bad_first(Expr::Term(term("id", PredicateOp::Lt, Some("20"))));
+    for jobs in [1, SPLIT_JOBS] {
+        let what = format!("past a stop, unpruned, at {jobs} job(s)");
+        raises(attempt(&dump, &cache, "public.t", with(filter.clone(), false, jobs)).await, &what);
+    }
+    let serial = attempt(&dump, &cache, "public.t", with(filter.clone(), true, 1)).await;
+    let unread = unread_per_block(&serial.stops);
+    assert!(unread.values().all(|bytes| bytes.is_some_and(|b| b > 0)), "{unread:?}");
+    assert_eq!(unread.len(), 1, "{unread:?}");
+    assert_eq!(ids(serial, "past a stop, serially"), (1..20).collect::<Vec<_>>());
+    let split = attempt(&dump, &cache, "public.t", with(filter, true, SPLIT_JOBS)).await;
+    raises(split, "past a stop, split");
+}
+
 /// **A stream resumed at any batch of a stopped block continues with exactly
 /// the rows it had not delivered**: a pause on the last row the filter keeps
 /// resumes into the stopping row, and stops there again.
