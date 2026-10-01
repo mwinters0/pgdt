@@ -426,13 +426,13 @@ No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column;
 Rejected: an `IN` `PredicateOp`, every operator carrying a list; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner, short-circuit defined against the root
-`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only
-the root's `True` matters; a decode failure surfaces only where evaluation reaches it, never in a row group statistics rule out or past
-a sorted block's stopping row, neither read (`prune.rs`). Resolution refusals come from the plan before any row, for the first refusing
-block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact
-Kleene everywhere; not skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
-No planner defers complexity until one buys something and refuses no evident simplification: a resolution-time rewrite removing
-redundant work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays.
+`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only the root's `True`
+matters; a decode failure surfaces only where evaluation reaches it: never in a group statistics rule out, nor serially past a sorted block's stop, but
+split a later piece evaluates one row past it, so outside the contract `--jobs` decides. Resolution refusals come from the plan before any row, for the
+first refusing block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact Kleene
+everywhere; not skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one; the stop asked first, every
+valid dump paying for invalid text. No planner defers complexity until one buys something and refuses no evident simplification: a resolution-time rewrite
+removing redundant work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —

@@ -272,8 +272,8 @@ struct Tally {
 
 /// `filter` pruned against unpruned, serially and split: **identical rows in
 /// file order** wherever the unpruned query answers. Where it raises, the
-/// pruned query may answer instead, a value in a group it skipped or past a
-/// sorted block's stop being one it never reads (`docs/design/decisions.md`,
+/// pruned query may answer instead, never evaluating a group it skipped nor,
+/// serially, a row past a sorted block's stop (`docs/design/decisions.md`,
 /// "D54") — but **one whose note skips no row's bytes and whose stops left no
 /// row unread raises the same error**, having read every row the unpruned
 /// query reads, in the same order. Not "skips no group": at [`TINY_GROUP`] a
