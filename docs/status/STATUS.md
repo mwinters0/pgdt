@@ -123,13 +123,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`measure.PROFILE_AXIS` was kept after its premise fell.** The profile
-  recipe's paired `parse` at one worker and two on `control` was built to say
-  why `parallel-scan-throughput`'s plain `parse` read *negative* at two
-  workers. Neither the `183a50eb` sitting nor `08ca40cf`'s does: the two-worker
-  row gains. M187's fold corrected the comment and the recipe's heading to
-  name what the pair still answers, which is where a second worker's time
-  goes. The pair itself was left alone, because retiring part of the
-  instrument is not a figure fold's to do. Reconsidering retires the pair
-  and its `test_measure.py` coverage. The account it bought, a plain
-  partition re-reading a chunk-sized tail, is already `D2`'s.
