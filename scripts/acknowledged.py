@@ -224,4 +224,14 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show e6ebe406 -- pgdump_query/src/map.rs; "
         "grep -n -A16 'pub(crate) struct StatisticsScope' pgdump_query/src/instrument.rs",
     ),
+    Acknowledged(
+        commit="f6ef4636",
+        figures=("session-drift",),
+        why="M194 joins two untimed builders to their timed command by && where "
+        "they had ;, which times the same command whenever the builder succeeds, "
+        "and widens _PARSE_RUN, a --check pattern no sitting runs; no shape "
+        "session-drift times changes",
+        verified="git show f6ef4636 -- scripts/measure.py | grep '^[-+]' "
+        "| grep -v '^[-+][[:space:]]*#'",
+    ),
 )
