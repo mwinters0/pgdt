@@ -4985,6 +4985,49 @@ class Markers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(measure.markers_in(self._doc(tmp, "# Measurements\n")), [])
 
+    def test_every_label_begins_with_its_marker_s_heading(self):
+        # The label renders as the sitting's heading, so one left quoting the
+        # number its heading was rewritten from prints it at the next sweep.
+        text = (measure.REPO / "docs/design/measurements.md").read_text()
+        self.assertEqual(measure.section_label_problems(text), [])
+
+    def test_a_label_quoting_a_number_its_heading_no_longer_quotes_is_reported(self):
+        fig = measure.ALL_BY_ID["nested-end-to-end"]
+        text = "## A heading rewritten when its number moved\n\n<!-- figure: nested-end-to-end -->\n"
+        self.assertEqual(
+            measure.section_label_problems(text),
+            [
+                f"nested-end-to-end: label {fig.section!r}, "
+                "heading 'A heading rewritten when its number moved'"
+            ],
+        )
+
+    def test_a_suffix_past_the_heading_is_a_label(self):
+        # `map-only` shares `per-block-quadratic`'s heading and says so.
+        heading = measure.ALL_BY_ID["per-block-quadratic"].section
+        self.assertTrue(measure.ALL_BY_ID["map-only"].section.startswith(heading + " "))
+        text = f"## {heading}\n\n<!-- figure: map-only -->\n"
+        self.assertEqual(measure.section_label_problems(text), [])
+
+    def test_the_heading_is_the_nearest_above_the_marker_outside_a_fence(self):
+        fig = measure.ALL_BY_ID["map-only"]
+        text = f"## {fig.section}\n\n```sh\n# not a heading\n```\n\n<!-- figure: map-only -->\n"
+        self.assertEqual(measure.section_label_problems(text), [])
+
+    def test_a_marker_under_no_heading_is_reported(self):
+        self.assertEqual(
+            measure.section_label_problems("<!-- figure: map-only -->\n"),
+            ["map-only sits under no heading"],
+        )
+
+    def test_check_fails_on_a_label_its_heading_left_behind(self):
+        fig = measure.ALL_BY_ID["nested-end-to-end"]
+        with unittest.mock.patch.object(fig, "section", "A typed query costs 13.2 µs"):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("Labels not beginning with their marker's heading", out.getvalue())
+
     def test_the_doc_and_the_register_agree_exactly(self):
         """Bidirectional, now that every figure has been folded in: a rename on
         either side breaks this rather than going unnoticed."""

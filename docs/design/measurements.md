@@ -607,8 +607,10 @@ pre-change bytes forever.
 **Each figure's section carries an `<!-- figure: <id> -->` marker**, and that
 marker — not the heading — is how the harness addresses it. Headings here are
 free to quote a number, and a heading whose number the next sweep moves is
-rewritten with it. `uv run measure.py --check` reconciles the markers against
-the harness's register and names, for each figure, its consumers; `--stale`
+rewritten with it, its figure's `section` label too. `uv run measure.py
+--check` reconciles the markers against the harness's register, holds each
+label to begin with its marker's heading, and names, for each figure, its
+consumers; `--stale`
 names the figures a diff has invalidated, and the sections outside the register
 it has invalidated too.
 

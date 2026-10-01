@@ -5542,8 +5542,10 @@ class Figure:
     #: A human label for the measurements.md section this table belongs under.
     #: **Not an address**: the doc addresses a figure by its `<!-- figure: id -->`
     #: marker, so a heading may quote a number and may be rewritten when the
-    #: number moves without desynchronising anything. `--check` reconciles the
-    #: two.
+    #: number moves without losing its table. The label is what a sitting
+    #: renders as that heading, so `--check` holds it to begin with the heading
+    #: its marker sits under (`section_label_problems`): a heading rewritten
+    #: takes its label with it.
     section: str
     #: The regimes this figure is taken in, `+`-separated — every token a key
     #: of `REGIMES`, or one of `NON_REGIME_STAGES` for a figure that reads no
@@ -8981,7 +8983,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="nested-end-to-end",
-        section="A typed query over nested columns costs 13.2 µs a row more than a string one",
+        section="A typed query over nested columns costs 6.3 µs a row more than a string one",
         stage="warm",
         depends=_declare(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "composite", "arrays"),
@@ -10708,6 +10710,32 @@ def headings(text: str) -> list[tuple[int, int]]:
     return out
 
 
+def section_label_problems(text: str) -> list[str]:
+    """Each figure whose `section` label does not begin with the heading its
+    marker sits under, one line each.
+
+    The label renders as a sitting's heading, so a label left quoting the
+    number its heading was rewritten from would print that number at the next
+    sweep. "Begin with" rather than "equal" leaves room for a suffix telling
+    two figures under one heading apart, as `map-only`'s does. A marker under
+    no heading has no heading to match, and says so."""
+    marks = headings(text)
+    out = []
+    for match in MARKER_RE.finditer(text):
+        fig = ALL_BY_ID.get(match.group(1))
+        if fig is None:
+            continue
+        above = [pos for pos, _ in marks if pos < match.start()]
+        if not above:
+            out.append(f"{fig.id} sits under no heading")
+            continue
+        line = text[above[-1] :].split("\n", 1)[0]
+        heading = line.lstrip("#").strip()
+        if not fig.section.startswith(heading):
+            out.append(f"{fig.id}: label {fig.section!r}, heading {heading!r}")
+    return out
+
+
 def outside_register_sections(text: str) -> list[tuple[str, list[str]]]:
     """Each section the doc declares outside the register, and the figure
     markers found inside it — which must be none.
@@ -12359,7 +12387,8 @@ def scaffolding_in(text: str) -> list[str]:
 
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
-    marker, which markers name nothing, where the register's boundary runs,
+    marker, which markers name nothing, which labels their headings left
+    behind, where the register's boundary runs,
     which figures were taken outside the stamped sweep, which documents a
     fold-in must re-read because they repeat a figure's numbers, and whether
     every command shape states the worker count it is taken at."""
@@ -12385,6 +12414,7 @@ def cmd_check(doc: Path) -> int:
     unargued_band = charge_band_problems()
     gathering = statistics_flag_problems()
     scaffolding = scaffolding_in(text)
+    mislabelled = section_label_problems(text)
 
     print(
         f"{doc.relative_to(REPO)} carries {len(set(found))} of {len(ALL_FIGURES)} figure markers.\n"
@@ -12407,6 +12437,14 @@ def cmd_check(doc: Path) -> int:
     if dangling:
         print("Borrows naming no figure — a rename that did not reach the register:")
         for line in dangling:
+            print(f"  {line}")
+        print()
+    if mislabelled:
+        print(
+            "Labels not beginning with their marker's heading — a heading rewritten when its\n"
+            "number moved, and the figure's `section` in `scripts/measure.py` left behind:"
+        )
+        for line in mislabelled:
             print(f"  {line}")
         print()
     if unpinned:
@@ -12623,6 +12661,7 @@ def cmd_check(doc: Path) -> int:
             or unknown
             or duplicated
             or dangling
+            or mislabelled
             or unpinned
             or misspinned
             or gathering
