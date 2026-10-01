@@ -6,7 +6,7 @@
 //! (`docs/design/decisions.md`, "D20"): one that is another file's, another
 //! build's, or damaged is almost always a user's accident — the wrong path, or
 //! a file that changed — so the four scan entry points answer
-//! [`Error::CacheUnusable`] before a byte of the dump is read, naming which of
+//! [`Error::CacheUnusable`] before the dump is read past its magic, naming which of
 //! those it is ([`Unusable`]). [`CacheMode::with_overwrite_unusable`] opts into
 //! starting cold and replacing it instead, for a source whose file is replaced
 //! under a stable name; a file that is not a pgdt cache at all is refused
@@ -36,8 +36,8 @@
 //! bytes, which is what the advisory default is right for. *During* a run a
 //! source whose identity changes is bytes moving underneath a read that has
 //! already returned some of them, which no answer survives — so that is an
-//! error by default, whatever the selection, and [`SourceWatch`] is the
-//! mechanism.
+//! error under every selection but `none`, which only warns, and
+//! [`SourceWatch`] is the mechanism.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -874,7 +874,7 @@ pub enum CacheLoad {
     /// every scan entry point starts cold on unasked.
     Missing,
     /// [`CacheStatus::Unusable`]. **The four scan entry points refuse on it**
-    /// before a byte of the dump is read, unless the mode may overwrite it —
+    /// before the dump is read past its magic, unless the mode may overwrite it —
     /// [`CacheMode::refusal`] is that decision, in one place
     /// (`docs/design/decisions.md`, "D20").
     Unusable(Unusable),

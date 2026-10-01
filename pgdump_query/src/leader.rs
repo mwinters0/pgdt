@@ -43,8 +43,8 @@ use crate::{Error, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PieceEntry {
     /// The piece begins exactly on a row start — the block's own
-    /// `data_offset`, just past the header line's LF. The first piece of a
-    /// block, and the only one that needs no resync.
+    /// `data_offset`, just past the header line's LF, or where the piece
+    /// before it read through — and needs no resync.
     RowStart,
     /// The piece begins at a cut that knows nothing about rows: its first row
     /// is the one starting just past the first LF at or after the cut.
@@ -313,7 +313,8 @@ impl BoundBy {
 /// serial and are deliberately not reported: each is an end-of-file
 /// condition and would fire on the last block of every file.
 ///
-/// **Silence means the announced count was dispatched**, never that every
+/// **Silence means the announced count was dispatched, or one of those two
+/// refused the block**, never that every
 /// worker read at once or that the arrangement was a good one
 /// (`KD22`, `docs/design/decisions.md`, "D52").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

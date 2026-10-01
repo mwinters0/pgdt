@@ -2,8 +2,9 @@
 //!
 //! Parens group; `NOT` binds tighter than `AND`, which binds tighter than
 //! `OR`; the three keywords are case-insensitive and recognised **only
-//! outside quotes**. Everything that is not a paren or a keyword is a
-//! **leaf**, handed to `parse_filter` — the same term grammar
+//! outside a quoted region**, which a quote opens only where the term
+//! grammar reads one ([`tokenize`]). Everything that is not a paren or a
+//! keyword is a **leaf**, handed to `parse_filter` — the same term grammar
 //! `--filter` uses, unchanged (`docs/design/decisions.md`, "D60") — and an
 //! `IN` list, its parens and whatever they hold, is part of its leaf.
 //!

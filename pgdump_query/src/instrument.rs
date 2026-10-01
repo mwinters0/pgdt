@@ -6,8 +6,8 @@
 //! `introspect` feature turns it on, and only a binary's own `introspect`
 //! feature does — `pgdt`'s and `datafusion-cli-pgdump`'s
 //! (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is an
-//! empty guard, [`timed!`] and [`row_evaluated!`] are what they wrap and
-//! nothing more, and every function recording or reading a figure does
+//! empty guard, [`timed!`] is what it wraps beside its part evaluated and
+//! dropped, [`row_evaluated!`] what it wraps and nothing more, and every function recording or reading a figure does
 //! nothing.
 //! The library still installs no allocator; the binary's counting allocator
 //! calls `allocated` and `freed`, and this module decides what counts.
@@ -102,7 +102,7 @@ impl EvaluationPart {
 
 /// `$body`, timed as `$part` where the instrument is built in — a leaf part
 /// only inside [`row_evaluated!`]. **Without the instrument it expands to
-/// `$body` and nothing else**, so a shipped build compiles what it wraps
+/// `$body`, `$part` evaluated and dropped beside it**, so a shipped build compiles what it wraps
 /// exactly as written; an inlined closure is not enough to promise that.
 /// With it, `$body` runs in a closure passed to [`timed_span`], which the
 /// calling module imports under the feature — in a `use`, where

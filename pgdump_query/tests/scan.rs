@@ -51,7 +51,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
                 );
             }
             // DDL/comment/meta-command lines outside a COPY block —
-            // `crate::preamble`'s input, not the scanner's own concern.
+            // `crate::map::Builder`'s input, not the scanner's own concern.
             Event::Line(_) | Event::DollarQuoteEnd(_) => {}
             Event::LargeObjectStart(start) => {
                 let _ = writeln!(out, "LOSTART @{}", start.start_offset);

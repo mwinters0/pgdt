@@ -1001,7 +1001,8 @@ async fn map_forward(
 /// what was asked for, the source's advice not having been read when it fires;
 /// on a query the same fact is a [`PlanNote`] on a `TableStream`.
 ///
-/// **Silence means the leader dispatched the announced count** — and never
+/// **Silence means the leader dispatched the announced count, or refused the
+/// block on its own account** — and never
 /// that every worker read at once. A decline is *not* silent: the shortfall is
 /// computed before it and returned with it ([`crate::leader::Shortfall`]), so
 /// a region left serial by the budget or by the source still prints. Only
@@ -1115,7 +1116,7 @@ const SAVE_THROTTLE_K: u32 = 20;
 /// **The rule is self-tuning, not an interval**: skip a block's save unless at
 /// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
 /// since it. **Exits are exempt** — EOF, a settled target and an interrupt all
-/// save unconditionally once the pass has read anything.
+/// save unconditionally, an interrupt before the first read included.
 ///
 /// **The gate also decides when the map is rebuilt.** `stream::splice` fires
 /// at the openings of this gate rather than at every `CopyEnd` (see
@@ -1174,7 +1175,8 @@ pub struct MapRun {
     pub resumed_from: u64,
     /// Whether [`ScanOptions::cancel`] stopped the run short of EOF, or short
     /// of re-reading every block that lacked the requested statistics. The
-    /// index and the cache agree either way; what differs is whether the
+    /// index and the cache agree either way, but after an interrupt inside the
+    /// preamble prepass, which writes nothing; what differs is whether the
     /// index describes the whole file, which [`DumpIndex::is_complete`] tells
     /// apart from a stop inside the back-fill.
     pub interrupted: bool,
@@ -1237,8 +1239,7 @@ pub struct MapRun {
 ///   recomputes them at its own EOF exit too — and what is this function's
 ///   is keeping what [`CacheMode::load`] reported about the cache file's
 ///   identity ahead of them.
-/// - The cache is saved once more at the end, persisting the finished index;
-///   it is also the only save when nothing was scanned at all.
+/// - The cache is saved once more at the end, persisting the finished index.
 ///
 /// **A run interrupted before EOF states none of the three**, and returns
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
@@ -1269,7 +1270,7 @@ async fn map_file_watched(
         CacheLoad::Index(index) => index,
         // Nothing to build forward from, and nothing at the path to keep.
         CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
-        // Refused before a byte of the dump is read, unless the caller said
+        // Refused before the dump is read past its magic, unless the caller said
         // this cache may be replaced (`docs/design/decisions.md`, "D20").
         CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
             Some(refusal) => return Err(refusal),
@@ -1442,9 +1443,9 @@ async fn map_file_watched(
 /// an interrupt reached during the mapping pass never ran one, so the caller
 /// is told the map is short rather than that nothing was re-read.
 ///
-/// The caller banks first: whether that is the pass's own save at a check
-/// point or one made where an unwinding read was caught is this function's
-/// business either way.
+/// The caller banks first where there is anything to bank — the prepass's
+/// interrupt has nothing — whether that is the pass's own save at a check
+/// point or one made where an unwinding read was caught.
 fn interrupted_run(
     index: DumpIndex,
     resumed_from: u64,
@@ -3038,7 +3039,7 @@ async fn map_for_query(
         CacheLoad::Index(index) => index,
         // Nothing to build forward from, and nothing at the path to keep.
         CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
-        // Refused before a byte of the dump is read, unless the caller said
+        // Refused before the dump is read past its magic, unless the caller said
         // this cache may be replaced (`docs/design/decisions.md`, "D20").
         CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
             Some(refusal) => return Err(refusal),
@@ -4157,8 +4158,8 @@ fn replay<'a>(
         source.hint_parallelism(query_options.parallelism);
         announce_cancellation(source, scan_options);
         // **The replay loop could not grant a wait**
-        // (`docs/design/decisions.md`, "D5"): `RetainedChunks` pins every
-        // chunk a batch has taken a `Utf8View` into until that batch flushes,
+        // (`docs/design/decisions.md`, "D5"): a batch's `StringViewBuilder`
+        // holds every chunk it has taken a `Utf8View` into until it flushes,
         // so this loop can never be the task that frees one it waits on.
         // Stated rather than left to the default, so whatever the mapping pass
         // granted is un-stated on the same source.
@@ -4896,8 +4897,8 @@ impl DynamicRead {
 ///
 /// `query_options.filter` is the post-parse row filter, one `Expr` tree
 /// (`docs/design/decisions.md`, "D54"): the empty conjunction yields every row,
-/// and otherwise a row is kept only where the tree is `True`, tested after that
-/// row has been fully unescaped. A term referencing a column absent from a
+/// and otherwise a row is kept only where the tree is `True`, tested on the raw
+/// row, each term unescaping only the field it reads (D28). A term referencing a column absent from a
 /// matching block's own schema is `Error::UnknownPredicateColumn`. Every
 /// refusal resolving a block raises — schema, filter or projection — is
 /// yielded before any row of the table, for the first refusing block in file

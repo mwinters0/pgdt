@@ -78,7 +78,7 @@ pub struct CopyEnd {
 /// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
 /// `crate::map::Builder::feed_line` classifies into spans, using
-/// `crate::preamble`'s grammar. No line reaches `crate::preamble` itself:
+/// `crate::preamble`'s grammar. No line reaches a `DumpMetadata` directly:
 /// [`crate::index::DumpMetadata`] is derived from the finished spans
 /// (`docs/design/decisions.md`, "D34"), never from a second pass. A COPY block's data
 /// rows never reach this arm.
@@ -152,8 +152,8 @@ enum State {
     },
     /// Between a `BEGIN;` and its `COMMIT;` — the large-object data region
     /// (`docs/design/decisions.md`, "D33").
-    /// Every line in between is skipped unread, the same way [`State::InCopy`]
-    /// skips row bytes: I12 guarantees a bytea hex literal can never contain a
+    /// Every line in between is skipped unread, nothing surfaced where
+    /// [`State::InCopy`] surfaces each row: I12 guarantees a bytea hex literal can never contain a
     /// line break, so nothing in here can be mistaken for structure.
     InLargeObjectRegion {
         start_offset: u64,
@@ -314,8 +314,9 @@ impl CopyScanner {
                         return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                     }
 
-                    // Line-anchored: only a line that both starts with `COPY`
-                    // and matches the full header grammar is structural.
+                    // Line-anchored: only a line that both starts with `COPY`,
+                    // past spaces and tabs, and matches the full header
+                    // grammar is structural.
                     // Everything else — SQL, comments, psql meta-commands —
                     // is skipped.
                     if let Some(header) = parse_copy_header(line) {
@@ -711,7 +712,7 @@ where
     let size = source.size().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `index::scan_preamble`, and `stream::map_forward` announces itself as
-    // "scan". `index::build_index` and `map::build_map` share this label
+    // "scan". `index::build_index` and `stream::build_map` share this label
     // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(

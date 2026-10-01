@@ -22,7 +22,7 @@
 //! terminating `;` — and it filters TOC-shaped lines inside such a body out
 //! before any event reaches this module (I3).
 //!
-//! Two fallbacks cover input carrying **no** TOC headers:
+//! Two fallbacks complete a statement no TOC header closes, on any input:
 //! [`crate::scan::Event::DollarQuoteEnd`], which
 //! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
 //! is in flight, and [`crate::preamble::statement_complete`] for any
@@ -130,7 +130,7 @@ pub struct Span {
     /// the two (`docs/design/decisions.md`, "D31"). `None` for a span with no
     /// governing entry at all: the header-less-input fallback, or a span of
     /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
-    /// `VersionHeader`), or a `COPY` block's or large-object region's, with
+    /// `VersionHeader`) carrying no TOC comment of its own, or a `COPY` block's or large-object region's, with
     /// no TOC comment of its own. Not a substitute for
     /// [`SpanBody`]'s own per-kind
     /// fields: the two are separately-sourced observations of one object
@@ -392,8 +392,9 @@ pub enum SpanBody {
     /// block, ...) — never a real database object, and none of the more
     /// specific framing-adjacent kinds above.
     Framing,
-    /// A recognized statement (trailing `;`, parens/quotes balanced) that is
-    /// none of this module's classified shapes — including every object kind
+    /// A statement — complete (trailing `;`, parens/quotes balanced), or
+    /// closed early by a `--` line or a dollar body's end — or a TOC comment
+    /// no statement followed, that is none of this module's classified shapes — including every object kind
     /// TOC enrichment would otherwise label, and any statement not grouped
     /// into its owning entry's span (the module docs' "no grouping").
     Unparsed,
@@ -1122,8 +1123,9 @@ impl Builder {
                 false
             }
             // Only the lines [`insert_run_line`](Self::insert_run_line)
-            // declines reach this arm — a boundary signal, a blank line, or a
-            // fresh statement that may not continue the run. It feeds the
+            // declines reach this arm — a boundary signal, a blank line, a
+            // line opening on `-` or a non-ASCII byte, or a fresh statement
+            // that may not continue the run. It feeds the
             // *same* `scan`, so a run's classification does not depend on
             // which of the two saw a given line.
             Mode::InsertRun { start, table, database, scan, row_count, toc, toc_owned, .. } => {
@@ -1183,8 +1185,9 @@ impl Builder {
     /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
     /// statement (`docs/design/decisions.md`, "D32").
     ///
-    /// This is the header-less fallback; real `pg_dump` output is unaffected.
-    /// A producer that puts the `;` on a *later* line leaves that line as its
+    /// This is what completes every dollar-quoted statement, `pg_dump`'s
+    /// included, so an entry's `ALTER … OWNER TO` after its `$$;` is a span of
+    /// its own. A producer that puts the `;` on a *later* line leaves that line as its
     /// own small span — coarser, still tiling.
     pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
         if let Mode::Statement { start, buf, toc, toc_owned } =
@@ -1283,8 +1286,8 @@ impl Builder {
     }
 
     pub(crate) fn on_copy_end(&mut self, end: CopyEnd) {
-        // `crate::scan::CopyScanner` never emits `CopyEnd` without a prior
-        // `CopyStart`, so this is always `Some`.
+        // `None` only after a scanner resumed inside a block
+        // (`CopyScanner::resume`), whose `CopyEnd` has no `CopyStart`.
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
             return;
         };

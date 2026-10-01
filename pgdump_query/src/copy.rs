@@ -61,9 +61,9 @@ impl CopyHeader {
 ///
 /// Returns `None` for anything that does not match the grammar exactly —
 /// including `COPY ... TO stdout;` and `COPY ... FROM stdin WITH (...)`. A
-/// non-match is deliberately *not* an error: a line starting with `COPY ` can
-/// legitimately appear inside a dollar-quoted function body, and treating it
-/// as ordinary SQL is the safe reading. The consequence is that COPY variants
+/// non-match is deliberately *not* an error: a `COPY` line this grammar does
+/// not cover is not one `pg_dump` writes for a data block, and treating it as
+/// ordinary SQL is the safe reading. The consequence is that COPY variants
 /// this grammar does not cover are silently invisible rather than
 /// misinterpreted as data; see `docs/design/pg-dump-compatibility.md`.
 pub fn parse_copy_header(line: &[u8]) -> Option<CopyHeader> {
@@ -193,8 +193,8 @@ pub struct RowSplit {
 
 impl RowSplit {
     /// Begin a new row, keeping the capacity the last one discovered. Every
-    /// row of a block has the same width, so after the first the buffer never
-    /// grows again.
+    /// row of a block has the same width, so once one row has been split to
+    /// its end the buffer never grows again.
     pub fn restart(&mut self) {
         self.ends.clear();
         self.complete = false;
@@ -470,9 +470,9 @@ fn unescape_field(field: &[u8]) -> Result<String> {
 
 /// Re-apply COPY TEXT escaping to already-unescaped text — the exact inverse
 /// of [`decode_field`], restricted to the escapes `pg_dump`'s `COPY TO` ever
-/// emits: a doubled backslash, the six control-character mnemonics `\b \f \n
-/// \r \t \v`, and a backslashed delimiter (postgres-invariants.md I15). The
-/// octal/hex forms `decode_field` accepts on input are a `COPY FROM` reader
+/// emits: a doubled backslash and the six control-character mnemonics `\b \f
+/// \n \r \t \v`, the delimiter, a tab, among them (postgres-invariants.md
+/// I15). The octal/hex forms `decode_field` accepts on input are a `COPY FROM` reader
 /// convenience only; `COPY TO` never produces them, so `encode_field` doesn't
 /// need to reproduce them for a round trip against real `pg_dump` output to
 /// hold — see `copy_text_escaping_round_trips_through_postgres` in
@@ -734,7 +734,7 @@ mod tests {
         // decode_field also accepts octal/hex escapes and unknown
         // "stands for itself" escapes, but pg_dump's COPY TO never emits
         // them (postgres-invariants.md I15), so encode_field only needs to
-        // invert the six mnemonics, `\\`, and the delimiter -- exercised
+        // invert the six mnemonics, the tab delimiter's among them, and `\\` -- exercised
         // against real pg_dump output in
         // `copy_text_escaping_round_trips_through_postgres` (tests/scan.rs).
         for field in [None, Some(""), Some("plain"), Some("a\\b\tc\nd\re\u{8}f\u{c}g\u{b}h")] {

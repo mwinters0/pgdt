@@ -9,7 +9,7 @@
 //! leaf, and a `text` field reading `infinity` beside a `date` one counts for
 //! nothing. A container holding one such leaf is one value, counted once.
 //!
-//! **The test is lexical and never otherwise a decode**: the spellings
+//! **A leaf's test is lexical and never otherwise a decode of it**: the spellings
 //! `infinity`, `-infinity`, `NaN` and `24:00:00` exactly, an `interval`'s hour
 //! part of seven digits or more, and a `date` or timestamp year at or past the
 //! calendar's end — and only those last two, rare by construction, take the
@@ -124,8 +124,8 @@ pub(crate) struct Counter {
 
 /// The count for a block under `header`, its columns resolved against the
 /// DDL `metadata` states for `database` as a statistics observer resolves
-/// them: typed, and against no census, which moves only an array's depth and
-/// never a leaf.
+/// them: typed, and against no census, which moves only an array — its depth,
+/// or a varying shape to text — and never a leaf's declared type.
 pub(crate) fn counter_for(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,

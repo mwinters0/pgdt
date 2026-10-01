@@ -125,19 +125,18 @@ pub enum Error {
         path.display()
     )]
     StrictIdentityUnmet { path: PathBuf, term: &'static str, unmet: String },
-    /// A block re-read for the statistics it lacks did not end where the
-    /// map records it ending, so the source was rewritten at the same stored
+    /// A block re-read — for the statistics it lacks, or for a typed query's
+    /// array census — did not end where the map records it ending, so the source was rewritten at the same stored
     /// size — which the cache's identity check cannot see
-    /// (`docs/design/decisions.md`, "D21") — or, handed to the per-block
-    /// entry point, is cut short of that end, and statistics gathered from it
-    /// would describe other bytes than the map does. Raised before they are
-    /// stored (`crate::stream::gather_block_statistics`), never worked around
+    /// (`docs/design/decisions.md`, "D21") — or is cut short of that end, and
+    /// what was read would describe other bytes than the map does. Raised
+    /// before it is used (`crate::stream`'s `reread_rows`), never worked around
     /// (`docs/design/decisions.md`, "D20").
     ///
     /// `path` is the cache the map was loaded from, named as
     /// [`Error::CacheUnusable`] names it, so a caller whose cache is not
     /// beside the dump knows which file to remove. `crate::map_file`'s
-    /// back-fill always has one; the per-block entry point is handed a map
+    /// back-fill has one under an enabled cache; the per-block entry point is handed a map
     /// with no cache attached, and leaves it `None`.
     #[error("{}", cached_block_changed(.path.as_deref(), *.header_offset))]
     CachedBlockChanged { path: Option<PathBuf>, header_offset: u64 },

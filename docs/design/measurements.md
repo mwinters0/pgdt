@@ -1082,7 +1082,7 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `getrusage(RUSAGE_CHILDREN)` — `rss_wrapper` | peak RSS, one scalar | every term separately | a sitting per subtraction |
 | `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
-| a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | an atomic per allocation |
+| a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics per allocation |
 | jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | glibc's behaviour — it is a different allocator | a feature flag and a build |
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
@@ -3607,7 +3607,7 @@ does not read the byte total back at all; that is `pgdt info --dtcache <cache>
 <!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->
 
 `pgdt parse` and every cold query open with `index::scan_preamble`, which reads
-from byte 0 to the first `COPY` header. It is the one region that ignores
+from byte 0 to the first `COPY` header. It is the one region that never polls
 `ScanOptions::cancel` (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
 
 **koji: 63,333 bytes of 784,019,857,152** — 0.00000008 of the file. The whole

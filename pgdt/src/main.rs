@@ -1395,7 +1395,8 @@ fn parse_in_list(rest: &str, spec: &str) -> Result<Vec<String>> {
 /// **The earliest position wins, and the longest spelling at that position**
 /// (`docs/design/decisions.md`, "D60") — scanning by position rather than by
 /// operator is what keeps a value holding an operator byte from stealing the
-/// split, the two worded operators ([`distinct_from_at`]) included.
+/// split, the three worded operators ([`distinct_from_at`], [`in_at`])
+/// included.
 ///
 /// **The scan skips quoted regions**, so a column named `a=b` is askable as
 /// `"a=b"=x`. A quote that never closes is its own outcome rather than "no
@@ -1963,7 +1964,8 @@ fn die_by(signal: i32) -> ! {
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field_into`], so output is byte-identical whether `--schema-mode`
-/// is `typed` or `strings` (`docs/design/decisions.md`, "D66").
+/// is `typed` or `strings`, but for a value its type cannot hold
+/// (`docs/design/decisions.md`, "D66").
 ///
 /// **One buffer for the whole batch.** The line is assembled in a `String`
 /// that is cleared per row and keeps its capacity across the batch, so a
@@ -3209,8 +3211,8 @@ fn level_label(block: &pgdump_query::CopyBlock) -> &'static str {
     }
 }
 
-/// `--detail`'s statistics section: a line per table and one beneath it per
-/// column, or one line saying no block carries any
+/// `--detail`'s statistics section: a line per table and, under one that
+/// gathered any block, one per column, or one line saying no block carries any
 /// ([`info_statistics::table_statistics`]).
 fn print_statistics(index: &DumpIndex) {
     let tables = info_statistics::table_statistics(index);

@@ -476,8 +476,8 @@ pub(crate) fn non_seekable_compression_diagnostic(
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
-/// (not including) the first `COPY` block header in the file, or to EOF if
-/// none exists. Per I1 nothing `crate::preamble` cares about can follow that
+/// (not including) the first `COPY` block, its TOC comment included where one
+/// precedes the header, or to EOF if none exists. Per I1 nothing `crate::preamble` cares about can follow that
 /// point for the database open when it is reached, and no earlier database in
 /// a multi-`\connect` dump has a `COPY` block before it, so this one offset
 /// closes out the *first* database's preamble. The bounded prepass is what
@@ -485,8 +485,8 @@ pub(crate) fn non_seekable_compression_diagnostic(
 /// (`docs/design/decisions.md`, "D30", "D36").
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (no
-/// `COPY` block among them, the scan stopping at the first `COPY` header
-/// rather than walking into the block — though a file with large objects and
+/// `COPY` block among them, the scan stopping before the first `COPY` block
+/// rather than walking into it — though a file with large objects and
 /// no `COPY` block maps that region as a `Data` span), that offset itself — a safe watermark
 /// for a later scan to continue from — and whatever roles/tablespaces the
 /// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
@@ -578,7 +578,7 @@ async fn preamble_only_watched(
         CacheLoad::Index(index) => index,
         // Nothing to build forward from, and nothing at the path to keep.
         CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
-        // Refused before a byte of the dump is read, unless the caller said
+        // Refused before the dump is read past its magic, unless the caller said
         // this cache may be replaced (`docs/design/decisions.md`, "D20").
         CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
             Some(refusal) => return Err(refusal),

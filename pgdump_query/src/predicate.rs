@@ -72,8 +72,8 @@ pub enum PredicateOp {
 
 impl PredicateOp {
     /// Whether this operator compares by the column's own order rather than
-    /// as text — the four that need, in PostgreSQL's semantics, a `Mapped`
-    /// column the register gives an order.
+    /// as text — the four that need, in PostgreSQL's semantics, a column
+    /// compared as its declared type (`compares_as_declared`).
     pub fn is_ordering(self) -> bool {
         matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
     }
@@ -3118,7 +3118,9 @@ impl ResolvedMembership {
     /// [`Self::truths`], every term reading the group's bounds out of
     /// `keyed`, so they are keyed once for the whole list. The sorted list is
     /// not searched within the bounds, which would stop the cost scaling with
-    /// the list: what remains per term is a key comparison, no parse.
+    /// the list: what remains per term against the bounds is a key
+    /// comparison, no parse. A dictionary is still answered per term through
+    /// the row path, which parses each entry of a decoded kind.
     fn truths_keyed<'a>(
         &'a self,
         group: &impl GroupStatistics,

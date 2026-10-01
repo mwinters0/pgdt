@@ -12,7 +12,10 @@
 //! escapes under `standard_conforming_strings = off`, which the dump states
 //! itself (`docs/design/postgres-invariants.md`, I50). What it does not
 //! model, no region boundary depends on: psql variables (`:name`, `:'name'`),
-//! which `pg_dump` never writes, and what an escape *means*.
+//! which `pg_dump` never writes, and what an escape *means*. One departure
+//! moves a boundary, on text `pg_dump` never writes either: a `$` opening no
+//! tag takes the identifier after it, so `$e'…'` opens a plain literal where
+//! psql gives the `e` back and reads an escape string.
 //!
 //! [`crate::scan::CopyScanner`] lexes every line outside a block, so a `$$`
 //! inside any of these opens no body (`docs/design/decisions.md`, "D23"), and
@@ -136,9 +139,10 @@ impl Lexer {
     }
 
     /// Lex one line, its newline stripped. `code` is handed every run of
-    /// bytes that lies between tokens or inside an unquoted one — what a
-    /// caller counting parentheses wants — though not necessarily as one
-    /// maximal run.
+    /// bytes outside a quoted region but the stops the lexer steps over — a
+    /// lone `-` or `/`, a `$` token, a `\;` — which is what a caller counting
+    /// parentheses wants, a paren never being one, though not necessarily as
+    /// one maximal run.
     pub(crate) fn line(&mut self, line: &[u8], mut code: impl FnMut(&[u8])) -> LineLex {
         let mut dollar = matches!(self.region, Region::Dollar(_));
         if let Some((_, newline)) = &mut self.continuation {

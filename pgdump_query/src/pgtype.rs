@@ -1816,9 +1816,10 @@ fn array_comparison(
             Some(TypeKind::Base | TypeKind::Shell)
         );
     let child = if opaque || array_element(terminal).is_some() {
-        // No divergence, because nothing reads one: both shapes resolve the
-        // *column* to text (I22, I26), so `crate::predicate::resolve_term`
-        // takes the plan away before this tree is reached.
+        // No divergence: a position only this build declines makes no claim
+        // about the server's `=` (I22, I26). A column of either shape resolves
+        // to text, so `crate::predicate::resolve_term` takes its plan away
+        // first; a composite's field of either shape reaches this node.
         NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
     } else {
         match nested_position(element, collation, types, collations, visits) {

@@ -22,7 +22,7 @@
 //! of statement scan this module owns: unlike [`classify_statement`], it
 //! doesn't try to fully parse a statement into a `SpanBody` — it just pulls
 //! out whatever role/tablespace references `crate::map::Builder::push_statement_span`
-//! feeds it, from statement shapes this module otherwise leaves `Unparsed`
+//! feeds it, from statement shapes [`classify_statement`] does not recognize
 //! (`OWNER TO`, `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, `SET
 //! default_tablespace`).
 
@@ -803,7 +803,7 @@ fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str
 }
 
 /// Case-insensitively find `marker` in `haystack` and parse the identifier
-/// (bare or double-quoted, `''`/`""`-doubled — [`Cursor::parse_ident`]'s two
+/// (bare, or double-quoted with `""` doubled — [`Cursor::parse_ident`]'s two
 /// shapes, matching `fmtId()`'s two output forms) immediately following it.
 fn ident_after(haystack: &str, marker: &str) -> Option<String> {
     let idx = find_ci(haystack, marker)?;
@@ -912,6 +912,12 @@ pub(crate) enum StatementShape {
 /// including `ALTER TYPE ADD VALUE`, which needs an already-open `TypeDef`
 /// to fold into (see [`StatementShape`]'s docs) rather than being
 /// classifiable from its own text alone.
+///
+/// Deficiency register: `deficiency: KD61` — [`strip_kw`] checks no word
+/// boundary, so `CREATE TABLE` also matches `CREATE TABLESPACE fast OWNER …`,
+/// which `pg_dumpall` writes among its globals, and [`parse_create_table`]
+/// reads `SPACE` as the table's name. **(c) unowned**; the fix is a keyword
+/// ending at a word boundary.
 pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
     if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
@@ -1116,7 +1122,7 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
 /// end of file, or (per I1) the start of the current database's first `COPY`
-/// block — [`crate::map::build_map`] and `crate::index::scan_preamble`'s own
+/// block — [`crate::stream::build_map`] and `crate::index::scan_preamble`'s own
 /// span builder both only ever produce spans this way. A span list with an
 /// `Unscanned` tail cut off anywhere else (e.g. `crate::stream::table_stream`'s
 /// live segment) would make the trailing database's `preamble_complete` a lie.
@@ -1143,6 +1149,13 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
                 }
                 seen_connect = true;
             }
+            // Deficiency register: `deficiency: KD62` — a `pg_dumpall`
+            // segment's headers precede its own `\connect` (I9) and are staged
+            // only where the previous segment saw a `Data` span; after one
+            // that saw none (`template1`) they overwrite that segment's
+            // versions and the next database gets none. **(c) unowned**; the
+            // fix is staging on a following `\connect` rather than on
+            // `preamble_complete`.
             SpanBody::VersionHeader { server_version, pg_dump_version } => {
                 if current.preamble_complete {
                     if server_version.is_some() {

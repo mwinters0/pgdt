@@ -3889,7 +3889,7 @@ const ORIGIN_LEADING_BYTES: usize = XZ_MAGIC.len();
 ///
 /// **It exists because two things are settled before a source is built, and
 /// both were reading a `&Path`.** A cache recorded against another stored
-/// size is refused before a byte of the dump is read
+/// size is refused before the dump is read past its magic
 /// (`docs/design/decisions.md`, "D20"), and recognition has to know what the
 /// file's first bytes are in order to choose which source to build
 /// (`docs/design/decisions.md`, "D14"). Doing either through the filesystem

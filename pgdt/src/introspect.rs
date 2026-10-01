@@ -36,7 +36,8 @@
 //!   their peaks, and the worst difference either way any update of the
 //!   account read (`docs/design/decisions.md`, "D81"). Where no pass returned
 //!   an account — a `query`, which loads a cache's statistics and bills them
-//!   only as held when its workers are carved — the lines are `statistics_account=none`,
+//!   only as held when its workers are carved, or a `parse --preamble-only`,
+//!   which runs no mapping pass — the lines are `statistics_account=none`,
 //!   `statistics_loaded_bytes`, the heap the cache handed the pass, which is
 //!   the only statistics term a query has, and the counter's live bytes and
 //!   their peak.
@@ -141,9 +142,9 @@ mod enabled {
 
     /// `Relaxed` throughout: the atomics are read only after every thread
     /// that touched them has finished its work, so nothing here orders
-    /// anything else. A
-    /// concurrent allocation landing between the `fetch_add` and the
-    /// `fetch_max` can only understate the peak, so `PEAK` is a lower bound.
+    /// anything else. Every value `LIVE` takes is one `fetch_add`'s result,
+    /// which that thread then hands to `fetch_max`, so `PEAK` is the
+    /// counter's high-water however allocations interleave.
     fn took(bytes: usize) {
         let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
         PEAK.fetch_max(live, Ordering::Relaxed);
@@ -170,9 +171,9 @@ mod enabled {
 
     /// The `statistics_*` lines.
     ///
-    /// **Two shapes, because two commands hold statistics.** A mapping pass
-    /// returns an account and the account's terms are the reading; a `query`
-    /// returns none — it loads the cache, bills it only as held when its
+    /// **Two shapes, because only a mapping pass returns an account**, whose
+    /// terms are the reading; a `parse --preamble-only` runs none, and a
+    /// `query` returns none — it loads the cache, bills it only as held when its
     /// workers are carved, and prints no `statistics held` line. The second shape says `statistics_account=none`
     /// and leans on `statistics_loaded_bytes`, the heap the cache handed the
     /// pass, beside the scope counter's live bytes and their peak.

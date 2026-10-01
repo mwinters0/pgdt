@@ -230,8 +230,8 @@ A blank line does not close a pending comment (`_printTocEntry` writes `--\n\n`)
 retreats to `pending_comment_start()` rather than guessing the comment's kind.
 
 ### D33 Bulk regions are one span kind; large objects skip at the scanner, `INSERT` runs at the map
-Only `DataBlock::Copy` has inner offsets, only `COPY` having a row reader; a data span absorbs its
-TOC comment unconditionally. `INSERT` runs fold in `feed_line` with no scanner state (their
+Only `DataBlock::Copy` has inner offsets, only `COPY` having a row reader; a data span absorbs the
+TOC comment pending at its start (`KD1` where none is). `INSERT` runs fold in `feed_line` with no scanner state (their
 boundaries rest on no line-anchored invariant) and the run's end is lexed as the scanner lexes. Three cuts
 stay untaken until the `INSERT` row reader exists (`KD9`).
 
@@ -262,7 +262,7 @@ Rejected: a decode per field; a type-blind test (a `text` field reading `infinit
 `every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
-Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on
+Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6); a `CREATE TABLESPACE` read as a table is `KD61`. `record_type` keys on
 name (I11); a composite's field list is all-or-nothing, `record_out` being positional (I23); a
 `--create` dump's pre-`\connect` segment is not a database (I9). L1 stores text, never a conclusion:
 a declared type is its words, comments and spacing dropped, a collation clause verbatim, `None` collation is "no clause" (I37), and
@@ -309,16 +309,16 @@ length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 ### D42 `interval` is the struct; its special values are unrepresentable
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
 out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are. Twelve built-in range
-names are fixed, multiranges apart (I10); a `canonical` function makes a range unanswerable (I46).
+names are fixed, multiranges apart (I10); a user-defined range declaring `canonical` is unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair
 `retype_from_census` and the text mode's `read_as_text` (D100) alone change `(DataType, NestedPlan)` after
-resolution, a parameter so no caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
+resolution, the census a parameter so no caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
 refuses a stream and degrades a listing: same output as `NotDeclared`, opposite advice.
 
 ### D44 The control's decoders allocate only where their return type does; its renderers use tables
 The measured control's decoders take no intermediate `String`, and its renderers write into one reused buffer
-through `DEC_PAIRS`/`HEX_PAIRS` (`tests/render_allocations.rs` pins the count); `interval`'s, a decimal's and a
+through `DEC_PAIRS`, `uuid`'s and `bytea`'s into one pre-sized `String` each through `HEX_PAIRS` (`tests/render_allocations.rs` pins the count); `interval`'s, a decimal's and a
 float's still go through `core::fmt`. Render-back's third outcome, `FieldRender`, is an Arrow value no text form
 spells (I40), never rounded.
 
@@ -467,7 +467,7 @@ conditional, so L4) and per column from `column_divergences` in a query's semant
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
-`refuse_where_structure` refuses a `--filter` term tokenizing to more than one leaf, an empty one `parse_filter`'s, so a string
+`refuse_where_structure` refuses a `--filter` term tokenizing to anything but one leaf, an empty one `parse_filter`'s, so a string
 both flags accept means one thing. A keyword needs whitespace, a paren or the string's end on both sides
 and `NOT` after `is` stays in the term. A term splits at the earliest operator outside quotes, longest
 first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.
@@ -629,7 +629,7 @@ in two lines, before and after the open, because a fresh `.xz` walks footers fir
 meant to be read once (`KD29`). Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
-### D66 Output is byte-identical whether typing is on or off
+### D66 Output is byte-identical whether typing is on or off, but for a value its type cannot hold
 Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98). One contradicting its type is `FieldDecode`
 with an offset naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting.
 

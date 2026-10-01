@@ -359,8 +359,8 @@ pub fn decode_date32(s: &str) -> Option<i32> {
 }
 
 pub fn render_date32(days: i32) -> String {
-    // `YYYY-MM-DD`, with room for the era marker; a year outside four digits
-    // grows it once and is not a value any dump holds.
+    // Room for every `Date32` PostgreSQL writes: a seven-digit year, `-MM-DD`
+    // and ` BC`.
     let mut out = String::with_capacity(16);
     render_date32_into(days, &mut out);
     out
@@ -905,6 +905,13 @@ pub fn render_bytea(bytes: &[u8]) -> String {
 /// approximation — including PG15+'s negative-scale numerics, which print
 /// with no fractional digits at all and where this divides out the implied
 /// trailing zeros instead of appending them.
+///
+/// Deficiency register: `deficiency: KD60` — a zero at a scale of `-2` or
+/// below is written `0`, fewer digits than the zeros the scale implies, so
+/// `cut > total` answers `None` and the value reads as one its type cannot
+/// hold; [`render_decimal`] writes an unscaled zero there as `000` in turn.
+/// **(c) unowned**; the fix is that zero answers `0` whatever the scale, and
+/// renders as `0`.
 pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     if s == "NaN" {
         return None;
@@ -971,7 +978,8 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
 
 /// Render an unscaled decimal integer (`i128`/`i256`'s own `Display`, e.g.
 /// `"-15000000000"`) back to PostgreSQL's fixed-`scale` text form. Exact
-/// inverse of [`decimal_unscaled_digits`].
+/// inverse of [`decimal_unscaled_digits`] but for a negative scale's zero
+/// (`KD60`).
 pub fn render_decimal(unscaled: &str, scale: i8) -> String {
     let (neg, digits) = match unscaled.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -1479,8 +1487,8 @@ mod differential {
     }
 
     /// Bytes that reach a hex or digit loop: the valid ones, the ones that
-    /// sit just outside each accepted range, the separators the grammars
-    /// use, and one multi-byte character.
+    /// sit just outside each accepted range, and the separators the grammars
+    /// use; `fuzz` and `shaped` add one multi-byte character.
     const ALPHABET: &[u8] = b"0123456789abcdefABCDEFgGxX-.:+ \\/`z@\x7f";
 
     fn fuzz(seed: u64, len: usize, f: impl Fn(&str)) {
