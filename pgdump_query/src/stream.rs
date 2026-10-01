@@ -3833,19 +3833,10 @@ fn compressed_block_path_declined(
 /// name a count the budget cut. The fourth is each block's advice, which a cut
 /// made again at a dynamic filter's first poll cuts by ([`cut_blocks`]).
 ///
-/// Deficiency register: `deficiency: KD17` — the sub-streams planned here
-/// gain little on a plain typed `query`: throughput rises about a tenth, most
-/// of it by four, the sub-streams seated past four buying little of it; and on
-/// an `.xz` source they gain nothing at any count, the replay reading at one
-/// reader's rate where the same file's `parse` scales
-/// (`measurements.md`, `parallel-scan-throughput`). The named suspect, `POOL_DEPTH`
-/// clamping the chunk pool, is spent — a probe build lifting it moved no cell
-/// materially, and a block-decoding source sizes its pool by the count — so
-/// what caps them is unidentified. **(c) unowned**;
-/// promoted by a phase taking up extraction throughput. **That
-/// reading needs a read-chunk axis on its `query` legs**, which no figure has:
-/// [`PlanNoteKind::ParallelismBudgetLimited`] points a caller at the chunk,
-/// and the only figure pricing one measures a mapping pass.
+/// **What these sub-streams buy is the caller's to collect**: they run
+/// concurrently only where every one is polled, as a DataFusion scan polls its
+/// partitions, and `pgdt query`'s in-order merge reads one at a time past its
+/// first round (`KD57`).
 ///
 /// Deficiency register: `deficiency: KD23` — the cut here is over a whole
 /// `CopyBlock` rather than through the leader's window, so a piece spans as

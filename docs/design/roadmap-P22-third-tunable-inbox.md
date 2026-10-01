@@ -59,14 +59,13 @@ gap.
 **Fact.** `PlanNoteKind::ParallelismBudgetLimited` no longer offers "raise the
 memory budget to get more" alone. Both arms name the **announced read chunk**
 (`crate::scan::ScanOptions::chunk_size_bytes`) as the lever a plain source
-actually has — a source cutting by it sizes both terms of the charge from it —
-and both say in the same sentence that either lever buys seats rather than
-speed, and that a plain source's sub-streams may not run concurrently at all.
-That qualification is `KD17`: `measurements.md`'s `parallel-scan-throughput`
-has the plain typed `query` column gaining little from `--jobs`, and little
-of that from the sub-streams seated past four.
+actually has — a source cutting by it sizes both terms of the charge from it.
 [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--chunk-size`: you almost certainly do not need it" says the same to a user.
+Both arms also say that seats are not speed and that a plain source's
+sub-streams may not run concurrently, which is false of the library and comes
+off them with `M188` ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md),
+"`KD17` struck: the cap is `pgdt query`'s merge").
 
 **Why P22 cares.** The sketch's last open decision is whether the plain-source
 inertness `KD32` names is fixed by the same change or stays, and that is no
@@ -74,15 +73,12 @@ longer an internal question. **If the phase makes a stated allowance reach a
 plain source**, both surfaces above stop being true and move in that change —
 the remedy becomes the budget again and the manual paragraph goes. **If it
 leaves the inertness standing**, the phase is choosing to keep a diagnostic and
-a manual section pointing a user at `--chunk-size`, whose gain on this path
-nothing has measured; what such a reading would need is recorded at `KD17`'s
-marker in `pgdump_query/src/stream.rs`. Either way the wording is part of the
+a manual section pointing a user at the read chunk, whose gain on a query's
+replay nothing has measured: the one figure pricing a chunk size,
+`chunk-size`, measures a mapping pass. Either way the wording is part of the
 decision's cost rather than a follow-up to it.
 
 **Origin.** 2026-09-19, out-of-band `M119` and the review that closed the entry
 it raised under STATUS's "Decisions worth another look";
 [`../status/history/2026-09-19.md`](../status/history/2026-09-19.md).
-*Contingent on* `KD17` standing: if what serializes a plain source's
-sub-streams is identified and fixed, seats do become throughput, the
-qualification comes off both surfaces, and the chunk is a remedy rather than a
-trade.
+*Contingent on* `KD32` standing.

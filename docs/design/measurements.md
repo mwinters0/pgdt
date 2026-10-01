@@ -2990,10 +2990,12 @@ beside it reaches 5.51× over the same file. The `da05a72` sitting read 1.57× o
 that column, and each of its cells less that sitting's `.xz` `parse` cell at
 the same count is 19.4–20.0 s: the gain was its mapping pass, the replay as flat
 then as now, and the column only shows it now that no mapping pass is timed.
-The arrangement is not what holds it: a `--jobs 24` run of this shape resolves
-24 readers and a 1.4 GB budget. A plain typed `query` gains about a tenth, 1.08×
-by four sub-streams and 1.11× at the seven it seats from eight. Neither is
-attributed ([`../status/deficiencies.md`](../status/deficiencies.md), `KD17`).
+A plain typed `query` gains about a tenth, 1.08× by four sub-streams and 1.11×
+at the seven it seats from eight. **Both query columns time `pgdt query`'s
+in-order merge, not the library's sub-streams**: past its first round the merge
+reads one sub-stream at a time, so these columns are its first round's gain
+([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The
+sub-streams themselves are what `M187` moves these legs to measure.
 
 ## What a parallel scan holds resident, at two block sizes
 

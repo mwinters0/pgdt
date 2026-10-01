@@ -1707,6 +1707,22 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
 /// file order and the sub-streams themselves are in file order, so emitting
 /// the held batch with the lowest source offset re-assembles the serial order
 /// while never holding more than N batches.
+///
+/// Deficiency register: `deficiency: KD57` — the same two facts make it
+/// serial: only the slot just printed from is refilled, and the earliest live
+/// sub-stream always holds the lowest offset, so the merge prints sub-stream 0
+/// dry before polling 1 again. Past the first round one sub-stream reads and
+/// the rest each hold a batch, so `--jobs` buys the first round's batches and
+/// nothing after, and the work the later sub-streams did for that round is CPU
+/// with no wall-clock return. The library's sub-streams run concurrently where
+/// every one is polled; holding file order at N batches is what forgoes it.
+/// Keeping both takes a reorder buffer growing toward every sub-stream's output
+/// but the first, runs interleaved across sub-streams so an in-order drain
+/// keeps each near the front (an arrangement "D51" does not weigh), or output
+/// that gives up file order. **(c) unowned**; promoted by a phase taking up
+/// `pgdt query`'s throughput. Planning one sub-stream until then is refused:
+/// interleaved runs keep the N-way plan, and the first round is a small gain
+/// on a plain file.
 enum Slot {
     /// Nothing held: this sub-stream is polled in the next fill round.
     Empty,

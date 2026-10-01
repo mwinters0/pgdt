@@ -388,9 +388,9 @@ no room for one such reader is read a different way — see `--memory` below.
 **A parallel `query` may point you at this flag.** Where the memory budget
 seats fewer sub-streams than `--jobs` asked for, the plan says a smaller read
 chunk is what would seat more. That is true about seats and says nothing about
-speed: on a plain dump the sub-streams a query plans gain little from running
-concurrently today, so a smaller chunk buys a larger count, the per-chunk
-cost above, and little measured gain. Raising `--memory` instead does not help there either — see
+speed: `query` reads its sub-streams one after another once each has handed
+over its first batch (see "`--jobs` and `--memory`"), so a smaller chunk buys a
+larger count, the per-chunk cost above, and little measured gain. Raising `--memory` instead does not help there either — see
 "`--jobs` and `--memory`".
 
 The flag exists for a device unlike any of those three. If you have one and
@@ -818,16 +818,16 @@ would buy them back. The four-worker ceiling on a plain file, below, prints no
 such line.
 
 For `query` it cuts the row reading up: the parts of the file holding the rows
-you asked for are split into at most this many pieces, read at the same time,
-and printed back in the file's own order — so the rows and their order are the
-same at every setting, and only the reading changes. **A failure is the same at
-every setting too**: if two rows in the file cannot be read, the one that comes
-first is the one you are told about, whichever reader happened to reach its row
-first, so re-running to confirm a failure names the same row again. What it buys today is
-overlap in the *reading*; the rows are still turned into output one thread at
-a time, so on a plain file on a fast disk raising it will not show up on a
-clock. On a compressed file the reading is the expensive part, and there it
-can.
+you asked for are split into at most this many pieces and printed back in the
+file's own order — so the rows and their order are the same at every setting,
+and only the reading changes. **A failure is the same at every setting too**:
+if two rows in the file cannot be read, the one that comes first is the one you
+are told about, whichever reader happened to reach its row first, so re-running
+to confirm a failure names the same row again. **What it buys today is
+little**: to keep the file's order while holding at most one batch from each
+piece, `query` reads the pieces one after another once each has handed over
+its first batch, so the extra workers read only those first batches at the same
+time, on a plain file or a compressed one.
 
 > **A query's read-buffer budget covers two costs on a plain file and one on
 > a compressed one.** Every piece costs what its worker holds to read. On a

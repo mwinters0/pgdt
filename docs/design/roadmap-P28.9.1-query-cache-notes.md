@@ -31,11 +31,13 @@ The instrument and its readings have both landed, taken in 28.9's sweep at
 
 ## What the next slices inherit
 
-- **A typed `query` over `.xz` does not scale with `--jobs`**, and never did:
-  the earlier column's gain was its mapping pass ([`measurements.md`](measurements.md),
-  "What a second scan worker buys"). `KD17` is rewritten to cover it, with its
-  marker in `stream.rs` (`plan_partitions`) and P22's inbox entry, which is
-  contingent on it; the plain column still reads about a tenth.
+- **A typed `pgdt query` over `.xz` does not scale with `--jobs`**, and never
+  did: the earlier column's gain was its mapping pass
+  ([`measurements.md`](measurements.md), "What a second scan worker buys").
+  What holds it, and the plain column's tenth, is `pgdt query`'s in-order
+  merge, which reads one sub-stream at a time past its first round (`KD57`);
+  the library's sub-streams run concurrently under DataFusion, and `M187`
+  moves the figure's query legs there.
 - **`QUERY_SUBSTREAM_CAP` stands.** With no mapping pass, no chunk is
   announced before the replay plans (`KD41`), so the plain source's slot is
   `POOL_MAX_BYTES` rather than the default chunk. `LocalFileSource::partitions`
