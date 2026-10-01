@@ -280,4 +280,31 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         why="extends section_label_problems' docstring; no code changes",
         verified="git show c112e3e4 -- scripts/measure.py",
     ),
+    Acknowledged(
+        commit="0112e9da",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "peak-rss",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="a repoint: comments only in lex.rs and preamble.rs, which "
+        "comment_only_commit cannot place, so it reads neither file's change as "
+        "comment-only; every other path the commit touched it does",
+        verified="git show 0112e9da -- pgdump_query/src/lex.rs pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
