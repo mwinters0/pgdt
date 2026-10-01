@@ -62,10 +62,6 @@ memory budget to get more" alone. Both arms name the **announced read chunk**
 actually has — a source cutting by it sizes both terms of the charge from it.
 [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--chunk-size`: you almost certainly do not need it" says the same to a user.
-Both arms also say that seats are not speed and that a plain source's
-sub-streams may not run concurrently, which is false of the library and comes
-off them with `M188` ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md),
-"`KD17` struck: the cap is `pgdt query`'s merge").
 
 **Why P22 cares.** The sketch's last open decision is whether the plain-source
 inertness `KD32` names is fixed by the same change or stays, and that is no
