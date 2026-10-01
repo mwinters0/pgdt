@@ -125,13 +125,16 @@ our API, CLI, or data until we reach v1.0.
     - Data types
         - [x] Almost all common base types parsed into Arrow types (see: [type
         handling](docs/manual/type-handling.md))
-            - [ ] User-configurable handling for Postgres types which cannot be represented in Arrow:
-                - [ ] `infinity`, `-infinity` and `NaN` in a `numeric`, `date` or `timestamp`
+            - [x] User-configurable handling for Postgres values which cannot be represented in
+            Arrow: read as NULL (the default), refuse the query, or read the column as text; `IS
+            UNREPRESENTABLE` tells them from real NULLs (see: [type
+            handling](docs/manual/type-handling.md#a-value-its-column-cannot-hold-reads-as-null)):
+                - [x] `infinity`, `-infinity` and `NaN` in a `numeric`, `date` or `timestamp`
                 column
-                - [ ] An `interval` past Arrow's range
-                - [ ] A `timestamp` in PostgreSQL's last three decades, past `294247-01-10`
-                - [ ] A `date` or `timestamp` past `262142-12-31`, which DataFusion cannot display
-                - [ ] `time` `24:00:00`
+                - [x] An `interval` past Arrow's range
+                - [x] A `timestamp` in PostgreSQL's last three decades, past `294247-01-10`
+                - [x] A `date` or `timestamp` past `262142-12-31`, which DataFusion cannot display
+                - [x] `time` `24:00:00`
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.
         - [ ] Common extension types, e.g. PostGIS
