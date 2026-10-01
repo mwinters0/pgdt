@@ -191,4 +191,37 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 1bd3d789 -- pgdump_query/src pgdt/src "
         "datafusion-pgdump/src | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="e6ebe406",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M193 moves map.rs's Arc::new(statistics) inside the StatisticsScope "
+        "on_copy_end already entered; without introspect that scope is an empty "
+        "struct with no Drop, so a timed build does the same work, and an "
+        "introspect build only attributes one small allocation per block to "
+        "statistics, a line no table reads",
+        verified="git show e6ebe406 -- pgdump_query/src/map.rs; "
+        "grep -n -A16 'pub(crate) struct StatisticsScope' pgdump_query/src/instrument.rs",
+    ),
 )
