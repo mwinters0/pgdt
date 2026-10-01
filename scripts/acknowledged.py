@@ -98,4 +98,34 @@ class Acknowledged:
 #: path and `--stale` skips the commit without being told — which is what the
 #: three entries that used to stand here were doing by hand, at one extra
 #: commit apiece.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="ce6ecb58",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M188: outside comments and a #[cfg(test)] assert, only "
+        "ParallelismBudgetLimited's message literal shortened, formatted at most "
+        "once a plan; no scan, decode or allocation path changed",
+        verified="git diff -U0 ce6ecb58^ ce6ecb58 -- pgdump_query/src/stream.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
+)
