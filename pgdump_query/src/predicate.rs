@@ -188,8 +188,8 @@ impl Truth {
 /// row satisfies, so "no filter" is a degenerate tree rather than a case of
 /// its own.
 ///
-/// Nothing here is parsed: `Expr` is a struct an embedder fills in field by
-/// field, and the `--where` grammar that builds one from text lives in the
+/// Nothing here is parsed: `Expr` is a tree an embedder builds variant by
+/// variant, and the `--where` grammar that builds one from text lives in the
 /// CLI (`docs/design/decisions.md`, "D60").
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -1144,8 +1144,8 @@ enum OrderKey {
     NotANumber,
 }
 
-/// The rank of a finite value — the middle of the four [`OrderKey::rank`]
-/// classes, and the only one whose members are compared by value.
+/// The rank of a finite value — the second of the four [`OrderKey::rank`]
+/// classes, above `-infinity` and below `infinity` and `NaN`, and the only one whose members are compared by value.
 const FINITE: u8 = 1;
 
 impl OrderKey {
@@ -2444,7 +2444,9 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 ///
 /// The two operator families part company on a column with no plan, in
 /// PostgreSQL's semantics. An ordering operator is *refused*, before a row of this block flows, unless
-/// the column resolved `Mapped` and the register gave it a comparison — a
+/// the column compares by its register plan ([`compares_as_declared`]: it
+/// resolved `Mapped`, or the untyped mode reads it as its text) and that plan
+/// gives it a comparison — a
 /// nested column's included, where every position is compared; `Eq`/`Ne` fall
 /// back to comparing the canonical `*_out` text the file holds. So a nested
 /// column with an uncompared position still answers `=` and refuses `<`.
@@ -2713,10 +2715,10 @@ impl ResolvedTerm {
     /// a field that does not unescape raises the row's own error.
     ///
     /// A NULL field is [`Truth::Unknown`] under every comparing operator. The
-    /// four that answer two-valued instead are `IsNull`/`IsNotNull`, which
-    /// compare nothing, and the two `IS DISTINCT FROM` forms, which count
-    /// NULL as a value — so `IsDistinctFrom` on a NULL field is `True` where
-    /// `Ne` is `Unknown`.
+    /// six that answer two-valued instead are `IsNull`/`IsNotNull` and the two
+    /// unrepresentable tests, which compare nothing, and the two
+    /// `IS DISTINCT FROM` forms, which count NULL as a value — so
+    /// `IsDistinctFrom` on a NULL field is `True` where `Ne` is `Unknown`.
     fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -3105,8 +3107,9 @@ impl ResolvedMembership {
     /// the `Or` of `=` over the same list gives, not a tighter one. Tighter,
     /// though a row equals at most one value, would break the per-group
     /// agreement with the `Or` its generated check proves, for pruning
-    /// nobody has measured; so only the row path is constant in the list's
-    /// length, a group being answered term by term.
+    /// nobody has measured; so only the row path answers by one lookup — a
+    /// hash, or a binary search over the sorted keys, but for
+    /// [`Lookup::Each`] — a group being answered term by term.
     #[cfg(test)]
     fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
         self.truths_keyed(group, &mut KeyedBounds::default())

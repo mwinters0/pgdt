@@ -493,15 +493,17 @@ impl Resolved {
     /// stated it (`memory.high` throttles where `memory.max` kills, and either
     /// may be an ancestor's); the source's own recommendation; and the
     /// library's constant, which is what "no limit found" leaves a source that
-    /// recommends nothing.
+    /// recommends nothing, spelled so where that leaves the arrangement serial.
     ///
-    /// Deficiency register: `deficiency: KD50` — there is a fifth way to a
-    /// number, half of `MemAvailable` on a host stating no limit, and it is
-    /// spelled as the source's recommendation: a source asking for 24 readers,
-    /// cut to 4, prints a budget "what this source asks for" and a count
-    /// "lowered … by the allocation" beside a first line saying nothing
-    /// enforces one. **(c) unowned**; closing it means a spelling of its own,
-    /// on this line and on [`Resolved::jobs_display`]'s.
+    /// Deficiency register: `deficiency: KD50` — two more ways to a number
+    /// are spelled as the source's recommendation, both on a host stating no
+    /// limit. Half of `MemAvailable`: a source asking for 24 readers, cut to
+    /// 4, prints a budget "what this source asks for" and a count "lowered …
+    /// by the allocation" beside a first line saying nothing enforces one.
+    /// And the library's constant under a stated `--jobs` past one over a
+    /// source recommending nothing, which the library carries as a budget
+    /// rather than as none. **(c) unowned**; closing it means a spelling of
+    /// each one's own, on this line and on [`Resolved::jobs_display`]'s.
     fn budget_display(&self) -> String {
         let bytes = self.parallelism.memory_bytes().unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
         if let Some(allowance) = self.allowance_stated {
@@ -2941,8 +2943,10 @@ struct BlockResolutionJson<'a> {
 }
 
 /// One column's resolution: what the DDL declared, what it became, and why.
-/// `arrow_type` is the exact string `info --detail` prints for the same
-/// column, so the two renderings cannot disagree about the type either.
+/// `arrow_type` is the exact string `info --detail` prints for a column that
+/// resolved `Mapped` to a type other than `Utf8View`, so the two renderings
+/// cannot disagree about such a column's type; `--detail` prints no type for
+/// any other column.
 #[derive(serde::Serialize)]
 struct ColumnResolutionJson<'a> {
     name: &'a str,
@@ -3011,7 +3015,7 @@ fn completion_line(scanned_through: u64, total_size: u64) -> String {
 }
 
 /// Every `pgdt info` rendering goes through here: the coverage line, then the
-/// listing or the export.
+/// listing — or the export alone, which carries its coverage as fields.
 fn report(
     index: &DumpIndex,
     total_size: u64,

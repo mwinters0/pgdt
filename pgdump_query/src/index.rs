@@ -379,7 +379,7 @@ pub struct DumpIndex {
     /// a tiling failure, a cache mtime mismatch. **Not persisted**
     /// (`#[serde(skip)]`, `docs/design/decisions.md`, "D34"): recomputed
     /// wherever an index is mapped or loaded. A preamble-only run maps
-    /// nothing, so it returns a loaded cache's figures as they were, or none
+    /// only the preamble, so it returns a loaded cache's figures as they were, or none
     /// but its source's. See [`crate::diagnostic`].
     #[serde(skip)]
     pub diagnostics: Vec<Diagnostic>,

@@ -109,7 +109,8 @@ impl SortedStop {
 /// declared type and collation they were gathered under**
 /// (`docs/design/decisions.md`, "D78"), compared against
 /// what `metadata` declares now; its NULL counts are read off the text and
-/// believed regardless. What the comparison itself believes is settled when
+/// believed regardless where every value is read, and in a view taking some
+/// as NULL only under that same declared type. What the comparison itself believes is settled when
 /// the filter resolved ([`ResolvedExpr::truths`]), **and which stored set of
 /// bounds a term reads is this block's**: the one gathering stored under the
 /// kind the term compares by, gathering's kinds recomputed from the DDL the

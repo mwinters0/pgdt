@@ -15,8 +15,8 @@
 //!
 //! # What it reports
 //!
-//! A snapshot at exit, and no sampler, because each quantity carries its own
-//! high-water:
+//! A snapshot at exit, and no sampler: a quantity whose peak is reported
+//! carries its own high-water, and the rest are read as they stand at exit:
 //!
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
 //!   for and had not freed, and the largest that figure ever reached, kept by

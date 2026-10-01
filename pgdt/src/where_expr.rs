@@ -194,8 +194,10 @@ enum Part {
 /// anywhere before a term's operator, which `split_filter_op` scans past
 /// quoted regions to find, and at the start of its value past ASCII
 /// whitespace, which `dequote` strips — nowhere else, a quote inside an
-/// unquoted value being data there. A value opened past other Unicode
-/// whitespace, which `filter_part` trims, is refused here rather than read.
+/// unquoted value being data there. A quote past other Unicode whitespace,
+/// which `filter_part` trims, opens no region here: the term grammar reads
+/// that value as quoted where nothing inside it is structure, and refuses
+/// the unbalanced quote a paren or keyword inside it splits off.
 /// So `--where "note=don't and x=1"` is a conjunction and a paren or the word
 /// `and` inside a quoted value is data. A region is skipped whole, a doubled
 /// quote an escaped one, and one that never closes swallows the rest of the
@@ -441,7 +443,7 @@ mod tests {
     }
 
     /// One term is one term: no wrapper node, so the simplest `--where` is
-    /// the same tree the same string builds under `--filter`.
+    /// the leaf a `--filter` of the same string puts in its conjunction.
     #[test]
     fn a_single_term_is_the_term_itself() {
         assert_eq!(ok("name=alpha"), "name=alpha");
@@ -495,7 +497,8 @@ mod tests {
         assert_eq!(ok("not not a=1"), "not(not(a=1))");
     }
 
-    /// **A keyword is recognised only against whitespace or a paren**, so a
+    /// **A keyword is recognised only against whitespace, a paren or the
+    /// string's ends**, so a
     /// value that happens to be `and` stays a value and a column whose name
     /// contains one stays a column.
     #[test]
@@ -655,7 +658,8 @@ mod tests {
     }
 
     /// **The refusal is exactly the tokenizer's boundary rule**: a keyword
-    /// needs whitespace or a paren before it, and a term-level `NOT` is
+    /// needs whitespace, a paren or the string's start before it, and a
+    /// term-level `NOT` is
     /// claimed by its `is`.
     #[test]
     fn a_term_that_is_one_leaf_is_untouched() {

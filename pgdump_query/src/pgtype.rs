@@ -127,8 +127,8 @@ pub enum NestedPlan {
 /// **Not `Copy`**: several variants carry the column's own facts — an enum's
 /// labels, a typmodded `numeric`'s scale, whether one held as text admits the
 /// infinities — and the labels are not `Copy`.
-/// The kind is cloned once, into the `OrderTerm` the block's resolution
-/// builds, never on the per-row path.
+/// The kind is cloned into a term as the term's literal is resolved
+/// (`crate::predicate`'s `Comparison::Decoded`), once per term.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,
@@ -308,9 +308,10 @@ pub enum ComparisonDivergence {
     /// The column is held as text and compared bytewise where the server has
     /// no comparison at all. **`json` is its one member**: PostgreSQL defines
     /// no `=`, no order and no operator class for it, so bytewise offers
-    /// *more* than the server does rather than less. Every other text-held
-    /// type carries a comparison of its own, and a collatable one either
-    /// agrees or carries one of the three collation variants below.
+    /// *more* than the server does rather than less. Every other type the
+    /// register holds as text carries a comparison of its own, and a
+    /// collatable one either agrees or carries one of the three collation
+    /// variants below; a type it does not model is [`Self::UnmodelledType`].
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the

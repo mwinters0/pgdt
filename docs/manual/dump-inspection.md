@@ -476,8 +476,10 @@ things differ.
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
 and cache space that grow with the dump; the workers `--jobs` asks for gather
-as they read, and record exactly what one worker would. The metadata level
-reads no value at all, and scans as fast as the file allows:
+as they read, and record exactly what one worker would — bar a block several
+of them read at once, whose statistics they can together run out of the
+allowance for where one would not, so that it declines (below). The metadata
+level reads no value at all, and scans as fast as the file allows:
 
 ```sh
 pgdt parse --source big.sql --statistics-level metadata                  # nothing drawn from the rows

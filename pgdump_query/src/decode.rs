@@ -635,13 +635,15 @@ fn interval_time_micros(text: &str) -> Option<i128> {
 /// span (`interval_cmp_value`, I40), where the *decode* narrows to Arrow's
 /// three fields — one walk, two consumers, and the fusing belongs to neither.
 ///
-/// **The grammar is `interval_out`'s under `IntervalStyle = postgres`,
-/// exactly**, which `pg_dump` pins on its own connection (I4): an optional
+/// **The grammar covers `interval_out`'s under `IntervalStyle = postgres`**,
+/// which `pg_dump` pins on its own connection (I4): an optional
 /// `<n> year[s]`, `<n> mon[s]` and `<n> day[s]`, then an optional signed time
 /// part, separated by single spaces, with a wholly-zero interval written
-/// `00:00:00`. Nothing broader is accepted — `1 hour`, `1.5 hours`, `P1Y2M`
-/// and `1 month` are all spellings `interval_in` takes and `interval_out`
-/// never writes. `infinity`/`-infinity` (v17's, I34) are not in the grammar
+/// `00:00:00`. It is a little wider than that grammar — the counted parts are
+/// taken in any order, repeated, either number of their unit, a `+` on any
+/// of them, and the hours at any width — but no other unit: `1 hour`,
+/// `1.5 hours`, `P1Y2M` and `1 month` are all spellings `interval_in` takes
+/// and `interval_out` never writes, and are refused. `infinity`/`-infinity` (v17's, I34) are not in the grammar
 /// either, so they fail here and each consumer says what it does about them.
 pub(crate) fn interval_parts(text: &str) -> Option<(i64, i64, i128)> {
     let tokens: Vec<&str> = text.split(' ').collect();
@@ -762,8 +764,8 @@ pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {
 }
 
 /// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
-/// The two hex decoders below are the only per-*byte* loops on the typed
-/// scalar path, so they read a table rather than branching through
+/// The two hex decoders below loop per *byte* over a field of any length,
+/// so they read a table rather than branching through
 /// [`crate::copy::hex_val`]'s three ranges: a pair becomes two loads, a
 /// shift and an or, and validity is one bit test on the accumulated `or`.
 const HEX_NIBBLE: [u8; 256] = {
@@ -810,8 +812,8 @@ pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
 
 /// The 256 lowercase hex pairs end to end, so byte `b`'s pair is the two
 /// bytes at `b * 2` — [`HEX_NIBBLE`]'s counterpart in the render direction.
-/// The two renderers below are the only per-*byte* loops on the render-back
-/// path, and each knows its whole output length before it starts, so a byte
+/// The two renderers below loop per *byte* over a value of any length, and
+/// each knows its whole output length before it starts, so a byte
 /// becomes an indexed slice and a two-byte copy into a pre-sized `String`
 /// rather than a trip through `core::fmt`
 /// (`docs/design/decisions.md`, "D44").

@@ -125,7 +125,8 @@ impl<'a> TableStatistics<'a> {
             let summary = &mut self.columns[at];
             summary.gathered_blocks += 1;
             summary.groups_with_rows += with_rows.iter().filter(|&&r| r).count() as u64;
-            // Every value, in PostgreSQL's order: what a query's pruning reads.
+            // The primary set over every value: what a query's pruning reads
+            // under the refuse and untyped modes (`QueryOptions::statistics_view`).
             if let Some(sortedness) = column.sortedness(BoundsSet::Primary, StatisticsView::Every) {
                 summary.groups_with_bounds += counted(&mut (0..statistics.groups.len()).map(|g| {
                     column.group_bounds(BoundsSet::Primary, StatisticsView::Every, g).is_some()

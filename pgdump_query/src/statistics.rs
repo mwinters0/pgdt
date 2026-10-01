@@ -135,8 +135,8 @@ impl StatisticsRequest {
 
     /// The most groups a block this request gathers may hold:
     /// [`BLOCK_MAX_ROW_GROUPS`] under an unstated size and an unstated
-    /// maximum, `None` under either, both being sizes a caller asked for
-    /// exactly.
+    /// maximum, `None` under either: a stated size is gathered exactly, and a
+    /// stated maximum bounds the merging in the cap's place.
     pub fn group_cap(&self) -> Option<usize> {
         (self.group_size.is_none() && self.max_rows.is_none()).then_some(BLOCK_MAX_ROW_GROUPS)
     }
@@ -346,8 +346,9 @@ pub enum StatisticsLevel {
 
 /// Each table's and column's [`StatisticsLevel`]: a default for every one,
 /// then overrides, **the most specific entry naming a column deciding its
-/// level** — a column entry, then a qualified table, then a bare one, then
-/// the default; among equally specific entries naming one column, the last.
+/// level** — a qualified column entry, then a bare one, then a qualified
+/// table, then a bare one, then the default; among equally specific entries
+/// naming one column, the last.
 /// The type's `Default` is the data level everywhere
 /// (`docs/design/decisions.md`, "D77").
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1144,7 +1145,7 @@ impl Drop for Charge {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StatisticsTerms {
     /// Finished blocks this pass gathered, which the map holds until it is
-    /// dropped.
+    /// dropped, less any a back-fill has replaced.
     pub retained: u64,
     /// Blocks' statistics decoded from the cache the pass loaded, less any a
     /// back-fill has replaced.

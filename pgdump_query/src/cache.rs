@@ -407,8 +407,8 @@ impl WeakIdentity {
 }
 
 /// A modification time as a refusal states it: seconds and nanoseconds since
-/// the Unix epoch. That rather than a calendar date because nothing this
-/// crate links can render one, and the value is what `date -d @<n>` takes. A
+/// the Unix epoch, rather than a calendar date: the value is what
+/// `date -d @<n>` takes. A
 /// time before the epoch, which no source here has offered, reads as the
 /// epoch itself.
 fn epoch_stamp(t: SystemTime) -> String {
@@ -1620,8 +1620,6 @@ mod tests {
         }
     }
 
-    /// A kill mid-save leaves the previous cache whole. No test races a
-    /// signal (`docs/design/decisions.md`, "D73"), so the save is stopped at
     /// **A cache counted under another calendar is refused, and one holding
     /// no count is not**: counts past a calendar's end are the calendar's, so
     /// a build whose calendar ends elsewhere reads none of them as current,
@@ -1680,6 +1678,8 @@ mod tests {
         }
     }
 
+    /// A kill mid-save leaves the previous cache whole. No test races a
+    /// signal (`docs/design/decisions.md`, "D73"), so the save is stopped at
     /// the moment a kill would land — partway through its encoding — and what
     /// it leaves on disk is read there: the previous cache, untouched, and the
     /// partial file beside it. A save that fails removes that file, and one

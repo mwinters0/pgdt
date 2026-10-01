@@ -11,9 +11,10 @@
 //!
 //! **The chunks those views point into are held here too**, in
 //! [`RetainedChunks`]: a read loop says what it read and how far the scanner
-//! has got, and this module decides when a chunk becomes an Arrow `Buffer`,
-//! how long it is kept, and when a cached builder block index stops being
-//! valid (`docs/design/decisions.md`, "D68").
+//! has got, and this module decides when a chunk becomes an Arrow `Buffer`
+//! and how long it is kept, and holds the cached builder block indices the
+//! read loop invalidates at a flush (`docs/design/decisions.md`, "D46",
+//! "D68").
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -290,8 +291,9 @@ impl SourceChunk {
 /// order. A replay loop hands each chunk it reads to [`Self::retain`] and
 /// tells it where the scanner has got to; everything else about the
 /// arrangement — that a chunk becomes an Arrow `Buffer` at all, that the
-/// buffer is what a view is taken against, when a cached block index stops
-/// being valid — is Arrow assembly's business, which is why this type lives
+/// buffer is what a view is taken against, that a flush leaves a cached
+/// block index stale ([`Self::invalidate_block_cache`], which the loop calls)
+/// — is Arrow assembly's business, which is why this type lives
 /// beside the builders (`docs/design/decisions.md`, "D68").
 pub(crate) struct RetainedChunks {
     chunks: VecDeque<SourceChunk>,
@@ -345,9 +347,9 @@ impl RetainedChunks {
 /// One column's typed builder, chosen from a [`crate::resolve::ResolvedSchema`]
 /// field's [`DataType`] — the complete set [`crate::pgtype::resolve_declared_type`]
 /// and [`crate::resolve::resolve_columns`] can ever produce.
-/// `with_precision_and_scale`/`with_timezone_opt` tag the two builders whose
-/// default type carries no parameters, every other arm's default already
-/// matching, so a `finish()`ed array's type matches the schema exactly, which
+/// `with_precision_and_scale`/`with_timezone_opt` tag the three builders
+/// whose default type is not the schema's — the two decimals and the
+/// timestamp — every other arm's default already matching, so a `finish()`ed array's type matches the schema exactly, which
 /// `RecordBatch::try_new` checks.
 enum ColumnBuilder {
     Utf8View(StringViewBuilder),
@@ -894,8 +896,8 @@ impl RowBatcher {
     /// `resolved` is the **projected** schema — what this batcher's
     /// `RecordBatch`es carry — and `field_targets` maps the block's own
     /// fields onto it. Both come from `crate::stream::project`;
-    /// `unrepresentable` is parallel to `field_targets`, and empty for a
-    /// block none of whose fields is tested.
+    /// `unrepresentable` is parallel to `field_targets`, `None` for each
+    /// field that is not tested.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,

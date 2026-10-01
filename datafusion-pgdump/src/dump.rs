@@ -172,8 +172,8 @@ impl PgDump {
         &self.tables
     }
 
-    /// The databases the file holds, in file order: each `\connect`ed
-    /// database by name, and `None` for one no `\connect` names — a plain
+    /// The databases the file holds: each `\connect`ed database by name, in
+    /// file order, then `None` for one no `\connect` names — a plain
     /// single-database dump taken without `--create` — where it holds a
     /// table, one holding none yielding no entry. The stretch of a
     /// `pg_dumpall` file before its first `\connect`, which holds roles and

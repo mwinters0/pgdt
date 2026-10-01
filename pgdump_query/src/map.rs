@@ -129,7 +129,8 @@ pub struct Span {
     /// the two (`docs/design/decisions.md`, "D31"). `None` for a span with no
     /// governing entry at all: the header-less-input fallback, or a span of
     /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
-    /// `VersionHeader`) with no TOC comment of its own. Not a substitute for
+    /// `VersionHeader`), or a `COPY` block's or large-object region's, with
+    /// no TOC comment of its own. Not a substitute for
     /// [`SpanBody`]'s own per-kind
     /// fields: the two are separately-sourced observations of one object
     /// (`docs/design/decisions.md`, "D30").
@@ -1162,8 +1163,9 @@ impl Builder {
     }
 
     /// A dollar-quoted region closed at `offset`
-    /// ([`crate::scan::Event::DollarQuoteEnd`]). Whatever statement is in
-    /// flight ends with it: `pg_dump` writes the statement's own terminating
+    /// ([`crate::scan::Event::DollarQuoteEnd`]). A statement in flight ends
+    /// with it, and any other mode in flight is set idle with no span of its
+    /// own: `pg_dump` writes the statement's own terminating
     /// `;` on the closing line (`AS $$ … $$;`), and that line never reaches
     /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
     /// statement (`docs/design/decisions.md`, "D32").
@@ -1315,8 +1317,8 @@ impl Builder {
     ///
     /// Where v13-16's single archive entry and v17+'s one-per-object entries
     /// end up producing the same map. Neither this method nor
-    /// [`on_large_object_end`](Self::on_large_object_end) pushes a span: the
-    /// region stays *pending* until
+    /// [`on_large_object_end`](Self::on_large_object_end) pushes the region's
+    /// span: the region stays *pending* until
     /// [`flush_large_objects`](Self::flush_large_objects) closes it, which
     /// happens only when something else is about to open, so consecutive
     /// `BEGIN;`/`COMMIT;` pairs merge into one span. I12 is what makes that

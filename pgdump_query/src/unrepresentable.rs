@@ -14,9 +14,12 @@
 //! part of seven digits or more, and a `date` or timestamp year at or past the
 //! calendar's end — and only those last two, rare by construction, take the
 //! arithmetic that says which side of the bound they fall.
-//! A value that does not decode is not counted, and refuses in every mode:
-//! text its PostgreSQL type would not read is outside the input contract, and
-//! a nested array `KD2` leaves on the optimistic path is that deficiency's.
+//! A value that does not decode is not counted, and refuses wherever it is
+//! decoded: text its PostgreSQL type would not read is outside the input
+//! contract, and a nested array `KD2` leaves on the optimistic path is that
+//! deficiency's. It is not decoded in a column the untyped mode reads as its
+//! text, nor in a container the null mode takes as NULL whole for another
+//! leaf past its tiers.
 
 use std::sync::Arc;
 
@@ -489,8 +492,8 @@ impl FieldCount for Counter {
         if *leaf == Leaf::Held {
             return None;
         }
-        // `\N` is NULL, and no value these leaves spell holds an escape, so
-        // an escaped field is text the decoder undoes before it walks one.
+        // `\N` is NULL, and an escaped field — a container's text position
+        // can hold one — is undone before it is walked.
         let text = decode_field(field).ok()??;
         self.tier_of(leaf, &text)
     }

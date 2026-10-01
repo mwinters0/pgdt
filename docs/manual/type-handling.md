@@ -38,7 +38,10 @@ public.t_composite (3 rows)
 value is rendered back to the same PostgreSQL text `pg_dump` itself would
 have written, so switching `--schema-mode` never changes what shows up on
 your terminal or in a pipeline downstream — only whether `pgdt info` (and a
-caller reading `RecordBatch` types directly) sees a narrower Arrow type.
+caller reading `RecordBatch` types directly) sees a narrower Arrow type. The
+one exception is a value its column's type cannot hold, which typing reads as
+NULL by default (see "A value its column cannot hold reads as NULL" below)
+and `--schema-mode strings` prints as its text.
 
 A partitioned table dumped through its root — with `--load-via-partition-root`,
 or by `pg_dump` on its own for a table hash-partitioned on an enum column — is

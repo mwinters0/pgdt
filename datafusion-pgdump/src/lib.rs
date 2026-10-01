@@ -44,8 +44,9 @@
 //! query DataFusion would have to evaluate the function in refuses when it
 //! does, rather than at planning (`docs/design/decisions.md`, "D101").
 //!
-//! **Two figures time it, through `datafusion-cli-pgdump`**:
-//! `dynamic-filter-join` and `dynamic-filter-topk`, naming that shell's
+//! **Three figures time it, through `datafusion-cli-pgdump`**:
+//! `dynamic-filter-join`, `dynamic-filter-topk` and
+//! `parallel-scan-throughput`'s provider legs, naming that shell's
 //! allocator, which is the embedder's (`docs/design/decisions.md`, "D13").
 //! Every other `query` figure in `docs/design/measurements.md` times `pgdt`,
 //! its text rendering included and, cold, a mapping pass, neither of which an

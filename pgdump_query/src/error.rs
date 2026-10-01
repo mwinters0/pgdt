@@ -70,9 +70,10 @@ pub enum Error {
     /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
     /// points — `crate::map_file`, `crate::table_stream`,
     /// `crate::table_stream_partitions` and `crate::index::preamble_only` —
-    /// before any byte of the dump is read, and by a caller pre-empting them,
-    /// all through `crate::cache::CacheMode::refusal`, which answers none
-    /// where the mode may overwrite the cache instead.
+    /// before any byte of the dump is read, through
+    /// `crate::cache::CacheMode::refusal`, which answers none where the mode
+    /// may overwrite the cache instead; and by a caller pre-empting them, as
+    /// the DataFusion provider does from the cache's claim.
     #[error("{}", cache_unusable(path, unusable))]
     CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the

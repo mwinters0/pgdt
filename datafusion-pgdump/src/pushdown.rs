@@ -30,8 +30,9 @@ use crate::unrepresentable::UNREPRESENTABLE_FUNCTION;
 ///
 /// What translates: `AND`, `OR`, `NOT`; a column compared with a literal by
 /// any of the eight comparing operators, either side first; `IS [NOT] NULL`;
-/// `BETWEEN`, which DataFusion evaluates as the two comparisons; `IN` over
-/// literals, a `NULL` among them, as one membership, but for a float column;
+/// `BETWEEN`, which DataFusion evaluates as the two comparisons; `IN` over a
+/// non-empty list of literals, a `NULL` among them, as one membership, but
+/// for a float column;
 /// a boolean column standing alone or under `IS [NOT] TRUE|FALSE|UNKNOWN`;
 /// and `pgdump_unrepresentable` over a bare column, any type, nested included,
 /// which only this translation answers ([`crate::unrepresentable`]). A column

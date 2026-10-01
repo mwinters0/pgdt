@@ -54,7 +54,8 @@ pub(crate) enum PieceEntry {
 /// **How a data-level block is censused and counted**: its header's width,
 /// which sizes both, and what its values are counted against
 /// (`docs/design/decisions.md`, "D35", "D96"). `None` wherever one is taken
-/// is a block at the metadata level, whose rows are counted and never split.
+/// is a block at the metadata level, whose rows are counted and never split
+/// into fields.
 #[derive(Clone)]
 pub(crate) struct CensusPlan {
     pub(crate) width: usize,
@@ -120,7 +121,7 @@ pub(crate) struct PieceObserver {
 /// `census` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list, and a row wider than it grows it
 /// (`crate::map::census_row`); `None` is a block at the metadata level, whose
-/// rows are counted and never split (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
+/// rows are counted and never split into fields (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
@@ -271,7 +272,8 @@ pub(crate) struct RegionOutcome {
     /// What the arrangement delivered, where it delivered less than
     /// [`crate::Parallelism::jobs`] asked for and the reason will still hold at
     /// the next block. `None` where the full count ran, where one reader was
-    /// asked for, or where only this region's own size stood in the way
+    /// asked for, or where only this region stood in the way — its size, or
+    /// the source advising it one partition where the file advises more
     /// ([`Shortfall`]).
     pub(crate) shortfall: Option<Shortfall>,
 }
@@ -306,9 +308,10 @@ impl BoundBy {
 /// **It reports the rules that answer for the arrangement, and not the one
 /// that answers for a block.** Both are read off the source's advice over *the
 /// rest of the file* and the caller's budget, so one line stands for the whole
-/// scan. [`scan_region`]'s floor is the other way to be left serial
-/// and is deliberately not reported: it is an end-of-file condition and would
-/// fire on the last block of every file.
+/// scan. [`scan_region`]'s floor, and a region the source advises one
+/// partition of where the file advises more, are the other ways to be left
+/// serial and are deliberately not reported: each is an end-of-file
+/// condition and would fire on the last block of every file.
 ///
 /// **Silence means the announced count was dispatched**, never that every
 /// worker read at once or that the arrangement was a good one

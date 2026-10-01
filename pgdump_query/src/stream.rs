@@ -619,9 +619,10 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
 /// frontier, which it cannot infer; [`splice`] places its spans after the
 /// frontier (`docs/design/decisions.md`, "D48").
 ///
-/// **Not every completed block is persisted; every exit past the first read
-/// but an error is** — see [`SaveThrottle`]; the two that return before one,
-/// the map unchanged, save nothing. **`index.metadata` is restated at each `\connect`ed
+/// **Not every completed block is persisted; every exit from the loop but
+/// an error is** — see [`SaveThrottle`], an interrupt before the first read
+/// included; the two that return before the loop, the map unchanged, save
+/// nothing. **`index.metadata` is restated at each `\connect`ed
 /// database's first `COPY` block**, which per I1 is one of the two boundaries
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
@@ -1003,7 +1004,9 @@ async fn map_forward(
 /// that every worker read at once. A decline is *not* silent: the shortfall is
 /// computed before it and returned with it ([`crate::leader::Shortfall`]), so
 /// a region left serial by the budget or by the source still prints. Only
-/// `scan_region`'s own floor is unreported, deliberately. `flag` keeps one scan-wide fact from printing
+/// `scan_region`'s refusals about its own block are unreported, deliberately:
+/// its floor, and a region the source advises one partition of where the
+/// rest of the file advises more. `flag` keeps one scan-wide fact from printing
 /// once per block, which is also why [`crate::leader::Shortfall`] reports no
 /// reason a later block could answer differently.
 fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
@@ -1068,8 +1071,10 @@ async fn close_copy_block(
     let cancelled = scan_options.cancelled();
     let due = throttle.due();
     // **The splice rides the throttle's gate** (`docs/design/decisions.md`,
-    // "D62"). Nothing between gate openings reads `index.spans`: the metadata
-    // recompute in the `CopyStart` arm splices its own copy, and
+    // "D62"). Nothing between gate openings needs `index.spans` current: an
+    // interrupt's save persists the last spliced map, consistent as it
+    // stands, the metadata recompute in the `CopyStart` arm splices its own
+    // copy, and
     // `target_settled` is the one reader that would — which is why a block
     // whose header could satisfy it opens the gate too.
     if targets || cancelled || due {
@@ -1226,10 +1231,11 @@ pub struct MapRun {
 ///   boundary [`dump_metadata_from_spans`] may be called at (I1), covering a
 ///   trailing database with no `COPY` block of its own, and a file with no
 ///   blocks at all.
-/// - `diagnostics` are recomputed rather than inherited, being
-///   `#[serde(skip)]` — [`map_forward`] recomputes them at its own EOF exit
-///   too, and what is this function's is keeping whatever
-///   [`CacheMode::load`] reported about the cache *file* ahead of them.
+/// - `diagnostics` are the tiling and TOC-coverage figures, recomputed
+///   rather than inherited, being `#[serde(skip)]` — [`map_forward`]
+///   recomputes them at its own EOF exit too — and what is this function's
+///   is keeping what [`CacheMode::load`] reported about the cache file's
+///   identity ahead of them.
 /// - The cache is saved once more at the end, persisting the finished index;
 ///   it is also the only save when nothing was scanned at all.
 ///
@@ -1283,8 +1289,15 @@ async fn map_file_watched(
         .map(|b| b.header_offset)
         .collect();
     // The diagnostics about the cache *file* rather than about the map — what
-    // the load said about its identity; everything else it computed is
-    // recomputed below.
+    // the load said about its identity; of the rest, tiling and TOC coverage
+    // are recomputed below.
+    //
+    // Deficiency register: `deficiency: KD58` — the non-seekable warning the
+    // load adds is dropped here and never recomputed, so this function's index
+    // lacks the `NonSeekableCompressedSource` [`build_index`] and a loaded
+    // cache carry, and `pgdt parse` of a one-block `.xz` does not list it
+    // where `pgdt info` does. **(c) unowned**; promoted by a user who parses
+    // such a file and is not told, the fix being one more recomputed figure.
     let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
@@ -2035,7 +2048,8 @@ impl<'a> TableStream<'a> {
 
     /// Facts about *this query's plan* rather than about a column or a
     /// predicate ([`PlanNoteKind`]): the memory budget in force declining
-    /// something, and the row groups statistics let the replay skip. A fourth
+    /// something, the row groups statistics let the replay skip, and each
+    /// column's values read as NULL ([`PlanNoteKind::ReadAsNull`]). A fourth
     /// channel beside `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes`
     /// (L2) and [`Self::comparison_notes`] (L4).
     ///
@@ -2043,8 +2057,8 @@ impl<'a> TableStream<'a> {
     /// advice. A
     /// [`table_stream_partitions`] sub-stream holds them when it is handed
     /// back; [`table_stream`]'s serial replay, which plans no partitions and
-    /// so never notes a budget, holds its pruning note once its first item is
-    /// polled, and nothing before.
+    /// so never notes a budget, holds its pruning and read-as-NULL notes once
+    /// its first item is polled, and nothing before.
     pub fn plan_notes(&self) -> Vec<PlanNote> {
         self.plan_notes.lock().unwrap().clone()
     }
@@ -3297,7 +3311,8 @@ pub enum PlanLever {
     /// A smaller read chunk (`crate::scan::ScanOptions::chunk_size_bytes`) —
     /// listed only where the source sizes a reader from it
     /// ([`crate::io::Partitioning::sized_by_read_chunk`]) or the plan charged
-    /// a batch span floored on it ([`derived_source_span`]).
+    /// a batch span ([`derived_source_span`]), which it floors on the chunk
+    /// unless the stated span is already below it.
     SmallerReadChunk,
     /// Fewer sub-streams asked for (`Parallelism::jobs`), which leaves each a
     /// larger batch ([`PlanNoteKind::BatchSpanNarrowed`]).
@@ -3561,7 +3576,8 @@ impl PlanNote {
                 max_source_span,
                 memory_bytes,
             },
-            // The span it charged is floored on the chunk wherever it fired.
+            // The span it charged is floored on the chunk wherever it fired,
+            // bar a stated span already below the chunk, charged as stated.
             levers: levers(allowance_raises, chunk_sized || max_source_span.is_some(), false),
         }
     }
@@ -5063,7 +5079,8 @@ fn plan_replay(
 ///
 /// It is the schema every batch of that query carries, projection included
 /// ([`TableColumns`]), or the refusal its plan would raise — a table whose
-/// blocks name different column sets, a projected name no block carries. A
+/// blocks name different column sets, a projected name no block carries —
+/// but for the refuse mode's, which only planning the replay raises. A
 /// table the map holds no block for has the empty schema, as its stream has
 /// no rows. **Believe it only over a complete map**: a table's later blocks
 /// are part of its census and of its column-set check

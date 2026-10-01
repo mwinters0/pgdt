@@ -161,7 +161,9 @@ impl Finding for ColumnNote {
     /// The column, its declared type where DDL named one, and
     /// [`ColumnResolution::describe`] — and, for a column that fell back,
     /// that its value is the file's text and compares as that text, which is
-    /// the only finding such a column earns about its comparison
+    /// the only finding such a column earns about its comparison under
+    /// DataFusion's semantics; under PostgreSQL's, an `UnknownType` or
+    /// `OpaqueBaseType` column is also announced as unmodelled
     /// (`crate::predicate::column_divergences`).
     fn message(&self) -> String {
         let declared = self.declared.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
@@ -209,7 +211,10 @@ pub struct ResolvedSchema {
     ///
     /// A column that did not resolve `Mapped` is [`ComparisonPlan::Refused`]
     /// whatever its declared type said — the census can take a column out of
-    /// `Mapped` after the declared type has been read.
+    /// `Mapped` after the declared type has been read — but for
+    /// [`ColumnResolution::UnrepresentableValues`] under
+    /// [`crate::ComparisonSemantics::Postgres`], which keeps the declared
+    /// type's plan ([`read_as_text`]).
     pub comparisons: Vec<ComparisonPlan>,
 }
 
@@ -305,8 +310,9 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 }
 
 /// Retype one column's `(DataType, NestedPlan)` pair from its census —
-/// **the pair, never a half** (`docs/design/decisions.md`, "D39"). This is the only
-/// place after `resolve_declared_type` where either changes.
+/// **the pair, never a half** (`docs/design/decisions.md`, "D39"). This and
+/// [`read_as_text`] are the only places after `resolve_declared_type` where
+/// either changes.
 ///
 /// Only a column the DDL resolved to an array is touched. The census is keyed
 /// by column and records the shape of the whole field, so it says nothing
@@ -1075,9 +1081,6 @@ mod tests {
         assert_eq!(resolved_b.schema.field(0).data_type(), &arrow::datatypes::DataType::Int32);
     }
 
-    /// A [`ColumnNote`]'s severity is derived from its resolution, never
-    /// stored — so it cannot drift out of agreement with the outcome it
-    /// describes.
     /// **The untyped mode widens a marked column still `Mapped` and no
     /// other**: to `Utf8View` at a scalar plan, keeping the declared type's
     /// comparison in PostgreSQL's semantics and none in DataFusion's, which
@@ -1121,6 +1124,9 @@ mod tests {
         }
     }
 
+    /// A [`ColumnNote`]'s severity is derived from its resolution, never
+    /// stored — so it cannot drift out of agreement with the outcome it
+    /// describes.
     #[test]
     fn column_note_severity_follows_its_resolution() {
         let note = |resolution| ColumnNote { column: "c".to_string(), declared: None, resolution };
