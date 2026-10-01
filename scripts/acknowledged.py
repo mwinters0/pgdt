@@ -128,4 +128,34 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git diff -U0 ce6ecb58^ ce6ecb58 -- pgdump_query/src/stream.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="8cffbac3",
+        figures=(
+            "chunk-size",
+            "nested-end-to-end",
+            "cross-file-floor",
+            "peak-rss",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "session-drift",
+        ),
+        why="M191's lexer runs only on lines outside a COPY block (CopyScanner's "
+        "State::Outside arm, map.rs's INSERT-run end), a few KB of preamble on "
+        "these COPY-dominated inputs; the in-block per-row path is untouched, the "
+        "scanner's state changes by a Lexer replacing a dollar tag, and "
+        "measure.py only adds lex.rs to SCAN. Owed re-takes, not excused: "
+        "scan-throughput-* (insert_run legs), preamble-prepass, "
+        "per-block-quadratic, map-only",
+        verified="git show 8cffbac3 -- pgdump_query/src/scan.rs pgdump_query/src/stream.rs "
+        "scripts/measure.py | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
