@@ -1290,14 +1290,19 @@ impl Builder {
         };
         // Shared (`docs/design/decisions.md`, "D34"); a block that declined
         // records the allowance instead (`docs/design/decisions.md`, "D85").
-        let gathered = self.pending_observer.take().map(|observer| {
+        // The `Arc` is sealed inside the scope too, its allocation being part
+        // of what the account retains (`crate::instrument`).
+        let (statistics, statistics_declined) = {
             let _attributed = StatisticsScope::enter();
-            observer.finish(end.terminator_offset - copy_start.data_offset)
-        });
-        let (statistics, statistics_declined) = match gathered {
-            Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
-            Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
-            None => (None, None),
+            let gathered = self
+                .pending_observer
+                .take()
+                .map(|observer| observer.finish(end.terminator_offset - copy_start.data_offset));
+            match gathered {
+                Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
+                Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
+                None => (None, None),
+            }
         };
         let mut block = CopyBlock {
             header: copy_start.header,

@@ -16,11 +16,9 @@
 //! `StatisticsScope`**, which the gatherer enters for everything it does —
 //! building, observing, closing, folding, finishing and dropping an observer —
 //! and which a block's statistics are decoded and replaced under, and sealed
-//! into their `Arc` under on a re-read. A free is attributed the same way, so
-//! a statistic freed outside every scope reads as still live: the instrument
-//! errs towards finding the account short. The one exception is the mapping
-//! pass's `Arc`, sealed outside a scope (`crate::map`'s `on_copy_end`): where
-//! it is freed inside one, what that subtracts was never counted.
+//! into their `Arc` under, by a mapping pass and a re-read alike. A free is
+//! attributed the same way, so a statistic freed outside every scope reads as
+//! still live: the instrument errs towards finding the account short.
 //!
 //! What it answers is the reconciliation of `crate::statistics`'
 //! account against the heap (`docs/design/decisions.md`, "D81"): at every
