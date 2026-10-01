@@ -243,4 +243,10 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 79917ef8 -- scripts/measure.py | grep '^[-+]' "
         "| grep -v '^[-+][[:space:]]*#'",
     ),
+    Acknowledged(
+        commit="c112e3e4",
+        figures=("session-drift",),
+        why="extends section_label_problems' docstring; no code changes",
+        verified="git show c112e3e4 -- scripts/measure.py",
+    ),
 )
