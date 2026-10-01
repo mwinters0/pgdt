@@ -708,9 +708,7 @@ What it inherits:
   `v_escaped`) should grow, every retained column carrying one more
   `Option<ColumnBounds>` the account charges; and `statistics-pruning`'s
   `v_category` carries bounds its fidelity guard no longer asserts absent,
-  `pgdt query` still reading only its dictionary, and its builder still
-  joins the timed query by `;` where every cached-query figure's joins by
-  `&&` (`measure.py`, `DATA_LEVEL_QUERIES`). Since `542fdfb` a
+  `pgdt query` still reading only its dictionary. Since `542fdfb` a
   summed column keeps an `i128` a group and every tracked column a `u64` of
   text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times since.
   `statistics-gathering` now prices the whole data level, census and

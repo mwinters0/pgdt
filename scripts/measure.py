@@ -2543,9 +2543,10 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 #:
 #: **Every row of a figure reads one cache**: the builder states `SWEEP_JOBS`
 #: whatever its query states, as `PARALLEL_SCAN`'s does on every row of its
-#: axis. **Builder and query are joined by
-#: `&&`**: a builder that failed would leave the query to map the table cold
-#: and save it inside the timer, published as a read over a cache. What the
+#: axis. **Builder and query are joined by `&&`**, as every shape's untimed
+#: builder joins its timed command (`test_measure.py`, `Scripts`): a builder
+#: that failed would leave the query to map the table cold and save it inside
+#: the timer, published as a read over a cache. What the
 #: query reads carries decoding the whole cache, statistics included
 #: (`PRUNING_LEGS`), which a query after a default `parse` pays too, and the
 #: builder discovers its statistics allowance from the figure's container
@@ -3682,7 +3683,7 @@ def _script(command: str) -> str:
         # none**: `info` takes no `--jobs` because it starts no workers, so
         # there is no default for it to inherit.
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null; "
+            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null && "
             f"time {rss_wrapper(platform.machine())} /pgdt info --dtcache /tmp/x.dtcache "
             ">/dev/null"
         )
@@ -3766,7 +3767,7 @@ def _script(command: str) -> str:
         expr = PRUNING_FILTERS[name][0]
         return (
             f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} "
-            f"{GATHER_STATISTICS} >/dev/null; "
+            f"{GATHER_STATISTICS} >/dev/null && "
             f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
             f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
         )
@@ -4072,8 +4073,8 @@ def stated_threads(command: str) -> int | None:
 
 
 #: One `pgdt parse` invocation inside a command shape's script, up to the next
-#: command separator.
-_PARSE_RUN = re.compile(r"/pgdt parse [^;]*")
+#: command separator: a `;`, or the `&&` every builder is joined by.
+_PARSE_RUN = re.compile(r"/pgdt parse (?:(?!&&)[^;])*")
 
 
 #: The command-shape prefixes `statistics_flag_problems` lets state

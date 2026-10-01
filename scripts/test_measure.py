@@ -227,6 +227,33 @@ class Scripts(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(len(self.TIMER.findall(measure._script(command))), 1)
 
+    def unjoined_builder(self, script: str) -> bool | None:
+        """Whether `script` runs a builder its timed command does not follow by
+        `&&`; `None` where nothing ahead of the timer runs `pgdt`, `rm -f`
+        being no builder."""
+        timer = self.TIMER.search(script)
+        ahead = script[: timer.start()]
+        if "/pgdt " not in ahead:
+            return None
+        return "; " in ahead or not script[timer.start():].startswith("&& time ")
+
+    def test_every_builder_joins_its_timed_command_by_and(self):
+        # A `;` would run the timed command after a builder that failed, timing
+        # whatever it does over no cache -- a cold map and its save, published
+        # as a read over the cache.
+        verdicts = {c: self.unjoined_builder(measure._script(c)) for c in measure.command_shapes()}
+        self.assertEqual([c for c, unjoined in verdicts.items() if unjoined], [])
+        self.assertIn(False, verdicts.values())
+
+    def test_a_builder_joined_by_a_semicolon_is_caught(self):
+        self.assertTrue(self.unjoined_builder(
+            "/pgdt parse --source /dump.sql >/dev/null; time /pgdt info >/dev/null"
+        ))
+        self.assertTrue(self.unjoined_builder(
+            "/pgdt parse >/dev/null; rm -f /x && time /pgdt info >/dev/null"
+        ))
+        self.assertIsNone(self.unjoined_builder("rm -f /x; time /pgdt parse >/dev/null"))
+
     def test_no_command_redirects_stderr_inside_the_timer(self):
         # Some shells route `time`'s own report through the timed command's
         # redirection, which deletes the figure.
@@ -392,12 +419,15 @@ class StatisticsFlag(unittest.TestCase):
     def test_a_later_parse_in_the_same_script_is_checked_too(self):
         # A builder ahead of the timed command, as `info-cache-rss` has, is a
         # `parse` of its own.
-        script = (
-            f"/pgdt parse --source /dump.sql {measure.NO_STATISTICS} >/dev/null; "
-            "time /pgdt parse --source /dump.sql >/dev/null"
-        )
-        with unittest.mock.patch.object(measure, "_script", lambda c: script):
-            self.assertTrue(measure.statistics_flag_problems())
+        for join in ("&&", ";"):
+            script = (
+                f"/pgdt parse --source /dump.sql {measure.NO_STATISTICS} >/dev/null{join} "
+                "time /pgdt parse --source /dump.sql >/dev/null"
+            ).replace("null&&", "null &&")
+            with self.subTest(join=join), unittest.mock.patch.object(
+                measure, "_script", lambda c: script
+            ):
+                self.assertTrue(measure.statistics_flag_problems())
 
     def test_the_preamble_shapes_are_exempt_and_state_none(self):
         # `--preamble-only` reads no row, and the CLI refuses a statistics flag
@@ -542,7 +572,7 @@ class StatisticsFigures(unittest.TestCase):
             for leg in measure.PRUNING_LEGS:
                 with self.subTest(filter=name, leg=leg):
                     script = measure._script(f"{measure.PRUNING_FAMILY}{name}-{leg}")
-                    builder, _, timed = script.partition("; ")
+                    builder, _, timed = script.partition(" && ")
                     self.assertIn("/pgdt parse", builder)
                     self.assertIn(measure.GATHER_STATISTICS, builder)
                     self.assertNotIn("time ", builder)
@@ -725,15 +755,6 @@ class DataLevelQueries(unittest.TestCase):
                 self.assertTrue(timed.startswith("time /pgdt query "), timed)
                 self.assertIn(measure.DATA_LEVEL_QUERY, timed)
                 self.assertNotIn("--dtcache none", script)
-
-    def test_a_builder_that_fails_leaves_nothing_timed(self):
-        # Joined by `&&`: a `;` would let the query map the table cold and save
-        # it, inside the timer, over a cache the builder never wrote.
-        for command in self.shapes():
-            with self.subTest(command=command):
-                script = measure._script(command)
-                self.assertEqual(script.count(" && "), 1)
-                self.assertNotIn("; ", script)
 
     def test_every_query_figure_row_is_one_of_them(self):
         specs = [
