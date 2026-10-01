@@ -158,4 +158,37 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 8cffbac3 -- pgdump_query/src/scan.rs pgdump_query/src/stream.rs "
         "scripts/measure.py | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="1bd3d789",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M192 rewords four messages (an error's Display, an option's help, "
+        "pgdt's statistics line when MemAvailable is unreadable, a plan note's "
+        "text), each built once per plan or only when printed, and adds "
+        "#[cfg(test)] code; no scan, decode or map path changes, so no timing or "
+        "RSS reading can move",
+        verified="git show 1bd3d789 -- pgdump_query/src pgdt/src "
+        "datafusion-pgdump/src | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
