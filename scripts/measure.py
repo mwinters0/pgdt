@@ -11791,38 +11791,14 @@ PROFILE_SHAPES: tuple[str, ...] = (
 #: where the census inspects array shapes.
 PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 
-#: The profiles read as a **pair** rather than against a baseline table, each
-#: named with the input it is taken on rather than crossed with every input.
-#:
-#: The pair was added when `parallel-scan-throughput`'s plain `parse` read
-#: *negative* at two workers, below the `POOL_DEPTH` clamp. No sitting at
-#: `183a50eb` or since does: the figure's two-worker row now gains over its
-#: one-worker row. What a second worker's time goes on is still a proportion
-#: question, so it is still a profile, and a profile answers it only as a
-#: difference: the two shapes are read against each other, bucket by bucket.
-#:
-#: **Explicitly paired, not a second cross product.** The shapes above
-#: are crossed with both inputs because each is asking what a *path* costs and
-#: the two files reach different paths. This one is asking what one figure's
-#: one row is made of, and that row is on `control`; profiling the
-#: same pair over `arrays` would take two readings nothing reads.
-#:
-#: **The shapes are the figure's own**, `-jobs-<n>` and all, so each states
-#: `--memory` exactly as the timed row does — including on the
-#: one-worker leg, where `Serial` makes it inert. The reconciliation against
-#: `_script` covers these the same way it covers the three above.
-PROFILE_AXIS: tuple[tuple[str, str], ...] = (
-    ("parse-jobs-1", "control"),
-    ("parse-jobs-2", "control"),
-)
-
 #: The row of a `datafusion-cli-pgdump` figure whose legs are profiled as a
 #: pair and read by the introspection build, as `(figure, query)`:
 #: `dynamic-filter-join`'s costing row, where evaluating rows rejects none.
-#: **A pair for the axis pair's reason**: what one leg adds over the other is
-#: a difference, read bucket by bucket. Its input is `dynfilter`, its cache
-#: the figure's own `GATHER_STATISTICS`, and each leg's command
-#: `dfcli_invocation`'s, so the profiled run is the timed one.
+#: **A pair because the row is a difference**: what evaluating rows adds over
+#: the default leg is read bucket by bucket, one leg's profile against the
+#: other's, and a profile of either alone answers nothing. Its input is
+#: `dynfilter`, its cache the figure's own `GATHER_STATISTICS`, and each leg's
+#: command `dfcli_invocation`'s, so the profiled run is the timed one.
 DFCLI_ACCOUNT: tuple[str, str] = ("join", "costing")
 #: The pair's legs: the filter on at the provider's default against rows
 #: evaluated, so the setting alone separates them — the comparison
@@ -11878,23 +11854,6 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "--schema-mode", mode,
             "--jobs", str(SWEEP_JOBS),
         ]
-    if command.startswith(JOBS_AXIS):
-        # A shape whose worker count is a figure's axis states that count and
-        # the budget the axis is taken under, exactly as `_script` does. The
-        # count comes from the shape's own name, which is what makes a pair of
-        # profiles nameable as two rows of one table.
-        shape, _, jobs = command.rpartition("-jobs-")
-        if not jobs.isdigit() or int(jobs) not in PARALLEL_JOBS:
-            raise ValueError(f"{command!r} names a job count the figure does not carry")
-        if shape == "parse":
-            return [
-                "parse",
-                "--source", str(source),
-                "--dtcache", str(cache),
-                "--jobs", jobs,
-                "--memory", str(stated_allowance(PARALLEL_BUDGET)),
-                *NO_STATISTICS.split(),
-            ]
     raise ValueError(f"unknown profile shape {command!r}")
 
 
@@ -11954,12 +11913,11 @@ def profile_recipe(cfg: Config) -> str:
       one for the same reason `_script` does, and here the consequence is
       sharper than a moved number: a sampling profile's buckets are per
       *thread*, so a profile taken at the machine's available parallelism
-      attributes a scan among workers the figure it explains never ran. The
-      cross-product shapes state `SWEEP_JOBS`; the `PROFILE_AXIS` pair
-      states the count in its own name, which is the whole of what separates
-      those two profiles. The shape-equality assertion is what holds this
-      function and `_script` together, and it compares two shapes that each
-      pin a count rather than two that each inherit one.
+      attributes a scan among workers the figure it explains never ran. Every
+      `pgdt` shape states `SWEEP_JOBS`, and `DFCLI_ACCOUNT`'s legs the
+      partition count `dfcli_invocation` states. The shape-equality assertion
+      is what holds this function and `_script` together, and it compares two
+      shapes that each pin a count rather than two that each inherit one.
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
@@ -12049,10 +12007,8 @@ def profile_recipe(cfg: Config) -> str:
         ]
 
     # Every input any profile below reads, in declaration order and without
-    # repetition: the cross product's, then the paired shapes'. Computed rather
-    # than restated, so a pair taken on an input the cross product does not
-    # carry is staged and torn down without a second edit.
-    staged = list(PROFILE_INPUTS) + [n for _, n in PROFILE_AXIS if n not in PROFILE_INPUTS]
+    # repetition: the cross product's, then the `datafusion-cli-pgdump` pair's.
+    staged = list(PROFILE_INPUTS)
     staged += [account_input] if account_input not in staged else []
 
     head("Stage the inputs warm, on the host.")
@@ -12082,16 +12038,6 @@ def profile_recipe(cfg: Config) -> str:
     for name in PROFILE_INPUTS:
         for shape in PROFILE_SHAPES:
             record(shape, name)
-    lines.append("")
-    head(
-        "The pair read against each other rather than against a table:",
-        "`parallel-scan-throughput`'s plain `parse` at one worker and at two,",
-        "below the POOL_DEPTH clamp: what a second worker's time goes on.",
-        "Read as a difference, bucket by bucket -- a single profile of either",
-        "one answers nothing.",
-    )
-    for shape, name in PROFILE_AXIS:
-        record(shape, name)
     lines.append("")
     head(
         f"The pair `{figure}`'s `{query}` row is read as: its legs",

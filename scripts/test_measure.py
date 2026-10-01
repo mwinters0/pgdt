@@ -423,7 +423,6 @@ class StatisticsFlag(unittest.TestCase):
         flag = measure.NO_STATISTICS.split()
         argvs = [
             measure.profile_argv("parse", "/dump.sql", "/tmp/x.dtcache"),
-            measure.profile_argv(f"parse-jobs-{measure.PARALLEL_JOBS[-1]}", "/d", "/c"),
             *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_AXIS),
         ]
         for argv in argvs:
@@ -5619,10 +5618,7 @@ class ProfileRecipe(unittest.TestCase):
     def test_every_profiled_invocation_states_its_worker_count(self):
         # The sixth silent failure: a sampling profile's buckets are per
         # thread, so a profile that inherited the CLI's default would attribute
-        # a scan among workers the figure it explains never ran. The axis pair
-        # states a count too -- its own, which is the only thing separating the
-        # two profiles -- so what is asserted is that every recorded line pins
-        # one, not that every one pins the same one.
+        # a scan among workers the figure it explains never ran.
         lines = self._recipe().splitlines()
         recorded = [
             (lines[i - 1], ln) for i, ln in enumerate(lines) if ln.strip().startswith("-- ")
@@ -5630,49 +5626,17 @@ class ProfileRecipe(unittest.TestCase):
         self.assertEqual(
             len(recorded),
             len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)
-            + len(measure.PROFILE_AXIS)
             + len(measure.DFCLI_ACCOUNT_LEGS),
         )
-        axis = {f"--jobs {s.rpartition('-jobs-')[2]}" for s, _ in measure.PROFILE_AXIS}
         for record, line in recorded:
             with self.subTest(line=line):
                 # `datafusion-cli-pgdump` states its count as the figure does,
                 # in the environment `perf` hands on.
                 self.assertTrue(
                     f"--jobs {measure.SWEEP_JOBS}" in line
-                    or any(f"{j} " in line for j in axis)
                     or f"{measure.DFCLI_PARTITIONS}={measure.SWEEP_JOBS} " in record,
                     line,
                 )
-
-    def test_the_axis_pair_differs_only_in_its_worker_count(self):
-        """A difference read bucket by bucket is only a difference if the two
-        argvs are otherwise identical -- a budget or a cache path that moved
-        with the count would put a second variable in the one reading this
-        pair exists to isolate."""
-        argvs = [
-            measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
-            for shape, _ in measure.PROFILE_AXIS
-        ]
-        self.assertEqual(len(argvs), 2)
-        first, second = argvs
-        self.assertEqual(len(first), len(second))
-        differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
-        self.assertEqual(len(differing), 1, f"{first} vs {second}")
-        self.assertEqual(first[differing[0] - 1], "--jobs")
-
-    def test_the_axis_pair_is_taken_on_one_input_it_stages(self):
-        # It is a pair, not a second cross product: profiling it over `arrays`
-        # too would take readings nothing reads. Whatever input it names is
-        # still copied in and removed again.
-        cfg = measure.Config()
-        recipe = measure.profile_recipe(cfg)
-        for shape, name in measure.PROFILE_AXIS:
-            with self.subTest(shape=shape):
-                self.assertIn(f"profile-{shape}-{name}.data", recipe)
-                self.assertIn(f"profile-{shape}-{name}.txt", recipe)
-                self.assertIn(f"cp -n {cfg.cache_dir / f'{name}.sql'}", recipe)
-                self.assertIn(str(cfg.warm_dir / f"{name}.sql"), recipe.splitlines()[-1])
 
     def test_no_container_is_involved(self):
         # A profile is about proportions, and the 512 MB cgroup adds capability
@@ -5695,9 +5659,8 @@ class ProfileRecipe(unittest.TestCase):
         argv, so the two cannot be one function — but a flag that moves in one
         and not the other gives a profile of something no figure measures, and
         nothing else would notice."""
-        shapes = list(measure.PROFILE_SHAPES) + [s for s, _ in measure.PROFILE_AXIS]
         wrapper = measure.rss_wrapper(measure.platform.machine())
-        for shape in shapes:
+        for shape in measure.PROFILE_SHAPES:
             with self.subTest(shape=shape):
                 # A resident leg's wrapper is a second process a profile leaves
                 # off, and nothing else of the timed line.
