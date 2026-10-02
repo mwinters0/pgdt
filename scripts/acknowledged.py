@@ -483,4 +483,12 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 8bae73d7 -- pgdump_query/src/map.rs pgdump_query/src/preamble.rs "
         "pgdt/src/main.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="db949970",
+        figures=("reserve",),
+        why="31.8: in reserve's set only cache.rs changed, and there only "
+        "CACHE_FORMAT_VERSION's u32 value, written and compared in the header alike",
+        verified="git show db949970 -- pgdump_query/src/cache.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
