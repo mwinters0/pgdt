@@ -76,16 +76,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         case: Case::DataSpansAttributed,
     },
     KnownFailure {
-        kd: "KD64",
-        fixture: "emitters/default",
-        control: Some("emitters/binary-upgrade"),
-        case: Case::Resolves {
-            table: "emitters.child",
-            column: "label",
-            to: ColumnResolution::Mapped,
-        },
-    },
-    KnownFailure {
         kd: "KD65",
         fixture: "emitters/default",
         control: None,
@@ -106,16 +96,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         fixture: "emitters/dumpall",
         control: None,
         case: Case::DatabaseListed { name: "pgdt-emitters" },
-    },
-    KnownFailure {
-        kd: "KD70",
-        fixture: "emitters/default",
-        control: Some("emitters/binary-upgrade"),
-        case: Case::Resolves {
-            table: "emitters.people",
-            column: "born",
-            to: ColumnResolution::Mapped,
-        },
     },
     KnownFailure {
         kd: "KD73",

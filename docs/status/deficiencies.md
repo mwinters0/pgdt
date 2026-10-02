@@ -344,12 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD64** — an inheritance child's inherited columns are absent from its
-  `CREATE TABLE` (`shouldPrintColumn`: `attislocal || ispartition`) and present
-  in its `COPY` header, and the `INHERITS (…)` clause is not read, so every
-  inherited column resolves `NotDeclared`: text, ordering refused, and placed
-  after the declared columns in a merged schema. **(b) owned by `P31`**, slice 31.6 closing it. Detail: `pgdump_query/src/preamble.rs`.
-
 - **KD65** — `CREATE UNLOGGED TABLE`, and `CREATE FOREIGN TABLE` under
   `--include-foreign-data`, are not `CREATE TABLE` to `classify_statement`, so
   every column of such a table resolves `NotDeclared` and reads as text.
@@ -374,10 +368,6 @@ than reading as a phase nobody has sliced.
   `--create` or `pg_dumpall` its segment is attributed to the database before
   it, `info` never lists it and `--database` cannot name it. **(b) owned by
   `P31`**, slice 31.7 closing it. Detail: `pgdump_query/src/preamble.rs`.
-
-- **KD70** — a typed table, `CREATE TABLE x OF t`, gets no columns from its
-  composite, so every column resolves `NotDeclared` and reads as text.
-  **(b) owned by `P31`**, slice 31.6 closing it. Detail: `pgdump_query/src/preamble.rs`.
 
 - **KD71** — under `--quote-all-identifiers` a built-in type is written
   quoted, and the `box` test at the end of a domain chain reads the spelling

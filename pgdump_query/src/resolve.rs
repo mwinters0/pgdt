@@ -399,7 +399,6 @@ pub fn resolve_columns(
     // DDL at all, which is exactly `NotDeclared`.
     let unscanned_database =
         mode == SchemaMode::Typed && metadata.is_some() && !db.is_some_and(|d| d.preamble_complete);
-    let declared_cols = db.and_then(|d| d.tables.get(qualified_table));
 
     let mut fields = Vec::with_capacity(columns.len());
     let mut resolutions = Vec::with_capacity(columns.len());
@@ -409,7 +408,7 @@ pub fn resolve_columns(
 
     let string = || (arrow::datatypes::DataType::Utf8View, NestedPlan::Scalar);
     for (i, name) in columns.iter().enumerate() {
-        let declared = declared_cols.and_then(|cols| cols.iter().find(|c| &c.name == name));
+        let declared = db.and_then(|d| d.declared_column(qualified_table, name));
         let (resolution, pair, comparison) = match declared {
             None if unscanned_database => {
                 (ColumnResolution::MetadataNotScanned, string(), ComparisonPlan::Refused)
@@ -417,8 +416,8 @@ pub fn resolve_columns(
             None => (ColumnResolution::NotDeclared, string(), ComparisonPlan::Refused),
             Some(column) => {
                 let ty = &column.declared_type;
-                // `db` is always `Some` here: `declared_cols` came from
-                // `db.tables`, so `db.types` is this same database's list.
+                // `db` is always `Some` here: `declared` came from it, so
+                // `db.types` is this same database's list.
                 let types = &db.unwrap().types;
                 let refused = ComparisonPlan::Refused;
                 // Asked per column rather than per declared type: the column's
@@ -468,8 +467,7 @@ pub fn resolve_columns(
             Some(column) if resolution == ColumnResolution::Mapped => with_extension(
                 field,
                 &column.declared_type,
-                // `db` is `Some` wherever `declared` is: `declared_cols` came
-                // out of it.
+                // `db` is `Some` wherever `declared` is: it came out of it.
                 &db.expect("a declared column came from a database entry").types,
             ),
             _ => field,
@@ -545,7 +543,7 @@ pub(crate) fn read_as_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preamble::{ColumnDef, DatabaseMetadata, TypeDef, TypeKind};
+    use crate::preamble::{ColumnDef, DatabaseMetadata, TableDef, TypeDef, TypeKind};
 
     fn one_db(tables: &[(&str, &[(&str, &str)])], types: Vec<TypeDef>) -> DumpMetadata {
         let mut db = DatabaseMetadata {
@@ -561,7 +559,7 @@ mod tests {
         for (name, cols) in tables {
             db.tables.insert(
                 name.to_string(),
-                cols.iter().map(|(c, t)| ColumnDef::new(*c, *t)).collect(),
+                TableDef::with_columns(cols.iter().map(|(c, t)| ColumnDef::new(*c, *t)).collect()),
             );
         }
         DumpMetadata { databases: vec![db] }
@@ -965,7 +963,7 @@ mod tests {
         use crate::pgtype::{CompareKind, ComparisonDivergence};
 
         let mut meta = one_db(&[("public.t", &[("plain", "text"), ("bytewise", "text")])], vec![]);
-        meta.databases[0].tables.get_mut("public.t").unwrap()[1].collation =
+        meta.databases[0].tables.get_mut("public.t").unwrap().columns[1].collation =
             Some("pg_catalog.\"C\"".to_string());
 
         let cols = vec!["plain".to_string(), "bytewise".to_string()];
@@ -998,7 +996,7 @@ mod tests {
 
         let build = |deterministic: bool| {
             let mut meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
-            meta.databases[0].tables.get_mut("public.t").unwrap()[0].collation =
+            meta.databases[0].tables.get_mut("public.t").unwrap().columns[0].collation =
                 Some("public.icu_ci".to_string());
             meta.databases[0].collations =
                 vec![CollationDef { name: "public.icu_ci".to_string(), deterministic }];

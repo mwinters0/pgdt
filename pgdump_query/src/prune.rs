@@ -24,7 +24,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::copy::{RawRow, RowSplit};
-use crate::gather::{declared_columns, stored_bounds_kinds};
+use crate::gather::{declared_column, stored_bounds_kinds};
 use crate::index::{CopyBlock, Unrepresentable};
 use crate::pgtype::{CompareKind, bounds_set_keyed_by};
 use crate::preamble::DumpMetadata;
@@ -213,8 +213,7 @@ fn believed_columns(
     {
         return None;
     }
-    let declared =
-        declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
+    let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
     let believed: Vec<bool> = block
         .header
         .columns
@@ -222,7 +221,7 @@ fn believed_columns(
         .zip(&statistics.columns)
         .map(|(name, column)| {
             let Some(column) = column else { return false };
-            let def = declared.and_then(|columns| columns.iter().find(|c| &c.name == name));
+            let def = declared_column(metadata, database, &qualified, name);
             column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
                 && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
         })

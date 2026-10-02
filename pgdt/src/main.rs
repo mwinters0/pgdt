@@ -22,7 +22,8 @@ use pgdump_query::{
     DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
     Parallelism, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized,
     ScanOptions, Severity, Span, SpanBody, StatisticsLevel, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, TypeKind, UnrepresentableMode, open, preamble_only, render_field_into,
+    StatisticsTarget, TableReference, TypeKind, UnrepresentableMode, open, preamble_only,
+    render_field_into,
 };
 use tracing::Instrument;
 
@@ -3338,6 +3339,10 @@ fn span_summary(span: &Span) -> String {
         SpanBody::AlterTypeAddValue { type_name, label } => {
             format!("ALTER TYPE {type_name} ADD VALUE {label:?}")
         }
+        SpanBody::AlterTableReference { table, reference } => match reference {
+            TableReference::Parent(parent) => format!("ALTER TABLE {table} INHERIT {parent}"),
+            TableReference::OfType(of_type) => format!("ALTER TABLE {table} OF {of_type}"),
+        },
         SpanBody::Framing => "framing".to_string(),
         SpanBody::Unparsed => match &span.toc {
             Some(toc) => format!("{} {}", toc.kind, toc.name),

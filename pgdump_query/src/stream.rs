@@ -2251,7 +2251,7 @@ impl TableColumns {
         }
         let declared: Option<Vec<&str>> = metadata
             .and_then(|metadata| database_for_name(metadata, first.database.as_deref()))
-            .and_then(|db| db.tables.get(&first.header.qualified_name()))
+            .map(|db| db.declared_columns(&first.header.qualified_name()))
             .map(|columns| columns.iter().map(|c| c.name.as_str()).collect());
         // Stable, so a name the DDL does not declare keeps the first block's
         // place for it, after every declared one.

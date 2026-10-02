@@ -31,7 +31,7 @@ async fn metadata(path: &Path) -> DumpMetadata {
 fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdump_query::ResolvedSchema {
     let db = meta.databases.first().unwrap();
     let cols: Vec<String> =
-        db.tables.get(qualified).unwrap().iter().map(|c| c.name.clone()).collect();
+        db.tables.get(qualified).unwrap().columns.iter().map(|c| c.name.clone()).collect();
     // No census: this file pins what the *DDL alone* resolves to, which is
     // the optimistic type every array column starts from
     // (`docs/design/decisions.md`, "D35" — consuming
@@ -491,8 +491,14 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
         assert_eq!(meta.databases.len(), 2, "pg_dump {version}");
 
         for db in &meta.databases {
-            let cols: Vec<String> =
-                db.tables.get("public.widgets").unwrap().iter().map(|c| c.name.clone()).collect();
+            let cols: Vec<String> = db
+                .tables
+                .get("public.widgets")
+                .unwrap()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
             let resolved = resolve_columns(
                 "public.widgets",
                 &cols,

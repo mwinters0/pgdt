@@ -317,8 +317,8 @@ async fn create_table_span_carries_name_and_columns() {
         .iter()
         .find(|s| matches!(&s.body, SpanBody::Table { name, .. } if name == "public.widgets"))
         .expect("public.widgets must be a Table span");
-    let SpanBody::Table { columns, .. } = &widgets.body else { unreachable!() };
-    assert!(columns.iter().any(|c| c.name == "id"));
+    let SpanBody::Table { definition, .. } = &widgets.body else { unreachable!() };
+    assert!(definition.columns.iter().any(|c| c.name == "id"));
 }
 
 /// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles

@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
-use crate::gather::{declared_columns, dictionary_holds_field_text, keeps_sums, stored_resolution};
+use crate::gather::{declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution};
 use crate::index::{CopyBlock, DumpIndex, TableName, UnrepresentableTier};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use crate::preamble::{ColumnDef, DumpMetadata};
@@ -151,9 +151,8 @@ pub fn table_summary(
             accumulators.iter_mut().for_each(Accumulator::uncounted);
             continue;
         }
-        let declared =
-            declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
-        let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
+        let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
+        let gathered = stored_resolution(&block.header, metadata, database);
         let tiers = column_tiers(&gathered);
         let mut seen = vec![false; fields.len()];
         for (c, name) in block.header.columns.iter().enumerate() {
@@ -168,7 +167,7 @@ pub fn table_summary(
             // under the DDL they were gathered under; the NULL counts are
             // read off the text and are believed regardless, bar a value a
             // view adds to them, counted under that DDL too (D78, D97).
-            let believed = believed(column, declared, name);
+            let believed = believed(column, declared_column(metadata, database, &qualified, name));
             let groups = statistics.groups.len();
             let view_nulls = |g: usize| match believed || reading == StatisticsView::Every {
                 true => column.null_count(g, reading),
@@ -371,10 +370,9 @@ impl<'a> Accumulator<'a> {
 }
 
 /// Whether `column`'s bounds, row order and dictionary were gathered under the
-/// declared type and `COLLATE` clause `declared` still gives column `name`: the
-/// only DDL they are believed under (`docs/design/decisions.md`, "D78").
-fn believed(column: &ColumnStatistics, declared: Option<&[ColumnDef]>, name: &str) -> bool {
-    let def = declared.and_then(|columns| columns.iter().find(|d| d.name == name));
+/// declared type and `COLLATE` clause its declaration `def` still gives it:
+/// the only DDL they are believed under (`docs/design/decisions.md`, "D78").
+fn believed(column: &ColumnStatistics, def: Option<&ColumnDef>) -> bool {
     column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
         && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
 }
@@ -445,9 +443,8 @@ fn column_order(
         }
         let c = block.header.columns.iter().position(|column| column == name)?;
         let column = statistics.columns[c].as_ref()?;
-        let declared =
-            declared_columns(metadata, block.database.as_deref(), &block.header.qualified_name());
-        if !believed(column, declared, name) {
+        let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
+        if !believed(column, declared_column(metadata, database, &qualified, name)) {
             return None;
         }
         if column.null_counts.len() != statistics.groups.len()

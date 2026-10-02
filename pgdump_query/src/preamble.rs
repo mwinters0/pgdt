@@ -71,8 +71,11 @@ pub struct DatabaseMetadata {
     /// `COLLATE "en_US.utf8"` clause resolves to nothing here (I42).
     pub collations: Vec<CollationDef>,
     /// Qualified table name (`schema.table`, folded the same way
-    /// [`crate::copy::CopyHeader::qualified_name`] is) -> its columns in DDL
-    /// order.
+    /// [`crate::copy::CopyHeader::qualified_name`] is) -> what its `CREATE
+    /// TABLE` declared, and the `--binary-upgrade` `ALTER TABLE` forms that
+    /// add a reference to it. A column is looked up through
+    /// [`DatabaseMetadata::declared_column`], which reaches the columns the
+    /// table takes from elsewhere.
     ///
     /// Deficiency register: `deficiency: KD14` — this is the structure a scan
     /// holds per table, and peak resident set grows with the table count while
@@ -81,10 +84,101 @@ pub struct DatabaseMetadata {
     /// **(c) unowned**; promoted by a dump with tens of thousands of tables,
     /// nothing in hand being one. It is also why every "resident set" claim
     /// about this system is the *one-block* reading and says so.
-    pub tables: BTreeMap<String, Vec<ColumnDef>>,
+    pub tables: BTreeMap<String, TableDef>,
 }
 
 impl DatabaseMetadata {
+    /// The declaration of column `column` of table `table`: the table's own,
+    /// else its `OF` type's field, else the first parent's, in `INHERITS`
+    /// order, that declares it — each parent asked the same way, so a
+    /// grandparent's column is found. `None` where the table is not declared
+    /// here or nothing it reaches declares the column.
+    ///
+    /// Read against the preamble's final state, never folded into the
+    /// table's own list (`docs/design/decisions.md`, "D36"). A reference that
+    /// names a table or type the preamble does not hold, or a composite whose
+    /// field list did not parse, reaches nothing; a cycle, which no server
+    /// can hold and a hand-written file can, ends at the table it returns to.
+    ///
+    /// The server merges a column declared on two of these into one of a
+    /// single type and collation, refusing the table otherwise, so which one
+    /// is found first decides nothing `pg_dump` can write.
+    pub fn declared_column(&self, table: &str, column: &str) -> Option<&ColumnDef> {
+        self.declared_column_from(table, column, &mut BTreeSet::new())
+    }
+
+    fn declared_column_from<'a>(
+        &'a self,
+        table: &str,
+        column: &str,
+        visited: &mut BTreeSet<&'a str>,
+    ) -> Option<&'a ColumnDef> {
+        let (name, def) = self.tables.get_key_value(table)?;
+        if !visited.insert(name) {
+            return None;
+        }
+        if let Some(found) = def.columns.iter().find(|c| c.name == column) {
+            return Some(found);
+        }
+        if let Some(of_type) = &def.of_type {
+            return self.composite_fields(of_type)?.iter().find(|f| f.name == column);
+        }
+        def.parents.iter().find_map(|parent| self.declared_column_from(parent, column, visited))
+    }
+
+    /// Every column of `table`, in the order the server gives them — each
+    /// parent's, in `INHERITS` order, then the `OF` type's fields, then the
+    /// table's own — a column two of them declare appearing once, at its
+    /// first place, as the declaration [`declared_column`](Self::declared_column)
+    /// returns. Empty where the table is not declared here.
+    pub fn declared_columns(&self, table: &str) -> Vec<&ColumnDef> {
+        let mut columns = Vec::new();
+        self.declared_columns_from(table, &mut BTreeSet::new(), &mut columns);
+        columns
+    }
+
+    fn declared_columns_from<'a>(
+        &'a self,
+        table: &str,
+        visited: &mut BTreeSet<&'a str>,
+        columns: &mut Vec<&'a ColumnDef>,
+    ) {
+        let Some((name, def)) = self.tables.get_key_value(table) else { return };
+        if !visited.insert(name) {
+            return;
+        }
+        for parent in &def.parents {
+            let mut inherited = Vec::new();
+            self.declared_columns_from(parent, visited, &mut inherited);
+            for column in inherited {
+                if !columns.iter().any(|c| c.name == column.name) {
+                    columns.push(column);
+                }
+            }
+        }
+        let typed = def.of_type.as_deref().and_then(|t| self.composite_fields(t));
+        for column in typed.into_iter().flatten().chain(&def.columns) {
+            match columns.iter_mut().find(|c| c.name == column.name) {
+                Some(merged) => *merged = column,
+                None => columns.push(column),
+            }
+        }
+    }
+
+    /// The fields of the composite `type_name` names, where it parsed, the
+    /// two names compared in their canonical spelling (I29).
+    fn composite_fields(&self, type_name: &str) -> Option<&[ColumnDef]> {
+        let key = canonical_type_name(type_name)?;
+        self.types.iter().find_map(|t| match &t.kind {
+            TypeKind::Composite { fields: Some(fields) }
+                if canonical_type_name(&t.name).is_some_and(|name| name == key) =>
+            {
+                Some(fields.as_slice())
+            }
+            _ => None,
+        })
+    }
+
     fn empty(name: Option<String>) -> Self {
         Self {
             name,
@@ -158,6 +252,58 @@ impl ColumnDef {
     pub fn new(name: impl Into<String>, declared_type: impl Into<String>) -> Self {
         Self { name: name.into(), declared_type: declared_type.into(), collation: None }
     }
+}
+
+/// One table's declaration, as the DDL wrote it: its own columns, and the
+/// objects it takes the rest of its columns from.
+///
+/// `pg_dump` writes a column only where the table declares it, so an
+/// inheritance child's `CREATE TABLE` omits every column it inherits
+/// (`shouldPrintColumn`), and a typed table's writes none with its type, only
+/// the options of one carrying a default or `NOT NULL` — which hold no type
+/// and so are no [`ColumnDef`] here. Both are found through
+/// [`DatabaseMetadata::declared_column`]. Under `--binary-upgrade` every
+/// column is written, and the references arrive after the `CREATE TABLE`, as
+/// `ALTER TABLE ONLY … INHERIT …` and `… OF …` ([`TableReference`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableDef {
+    /// The columns the table declares itself, in DDL order.
+    pub columns: Vec<ColumnDef>,
+    /// The `INHERITS (…)` parents, in the order written, each qualified as a
+    /// key of [`DatabaseMetadata::tables`] is.
+    pub parents: Vec<String>,
+    /// The `OF <type>` composite, in [`TypeDef::name`]'s canonical spelling.
+    pub of_type: Option<String>,
+}
+
+impl TableDef {
+    /// A table declaring `columns` and referring to nothing — the ordinary
+    /// shape, and the one a test or an embedder building metadata by hand
+    /// wants.
+    pub fn with_columns(columns: Vec<ColumnDef>) -> Self {
+        Self { columns, ..Self::default() }
+    }
+
+    fn add(&mut self, reference: &TableReference) {
+        match reference {
+            TableReference::Parent(parent) if !self.parents.contains(parent) => {
+                self.parents.push(parent.clone());
+            }
+            TableReference::Parent(_) => {}
+            TableReference::OfType(of_type) => self.of_type = Some(of_type.clone()),
+        }
+    }
+}
+
+/// A reference `ALTER TABLE` adds to a table already declared: the forms
+/// `--binary-upgrade` writes after a full column list in place of the
+/// `CREATE TABLE`'s own clauses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TableReference {
+    /// `INHERIT <parent>`, qualified as [`TableDef::parents`] is.
+    Parent(String),
+    /// `OF <type>`, spelled as [`TableDef::of_type`] is.
+    OfType(String),
 }
 
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
@@ -619,41 +765,79 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
     Some(ColumnDef { name, declared_type, collation: extract_collation(rest) })
 }
 
-/// `CREATE TABLE <name> (<col> <type>, ...);` (or, for a typed/partition
-/// table with no column list at all — I5 — just `<name>`).
+/// `CREATE TABLE <name> (<col> <type>, ...) [INHERITS (<parent>, ...)] …;`,
+/// or a typed table's `CREATE TABLE <name> OF <type> [(<options>, ...)] …;`
+/// (gram.y's `CreateStmt`), or a table with no list at all — I5 — just
+/// `<name>`.
 ///
-/// Deficiency register: `deficiency: KD70` — a typed table, `CREATE TABLE
-/// <name> OF <type>`, has no column list, and the `OF` clause is not read, so
-/// it gets no `ColumnDef` and every column resolves `NotDeclared`, though the
-/// composite's `CREATE TYPE … AS (…)` precedes it with the same names and
-/// types in the same order. The fix records the type and resolves a column
-/// missing here through its field, as `KD64` resolves through a parent.
-/// **(b) owned by `P31`**.
-///
-/// Deficiency register: `deficiency: KD64` — the `INHERITS (<parent>, …)`
-/// clause after the column list is not read, and `pg_dump` prints only a
-/// child's *local* columns (`shouldPrintColumn`: `attislocal || ispartition`,
-/// `--binary-upgrade` excepted), so an inherited column has no `ColumnDef`
-/// here while the `COPY` header lists it, and `crate::resolve` answers
-/// `NotDeclared` for it. The fix records the parents on the table and lets
-/// resolution walk to a parent's definition for a name the child lacks, the
-/// join staying by name. **(b) owned by `P31`**.
-fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
+/// A typed table's list is gram.y's `TypedTableElement`, a column's options
+/// or a table constraint, and never holds a type, so it declares no column of
+/// its own: each is its type's field ([`TableDef`]).
+fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
     let (name, consumed) = parse_qualified_name(rest)?;
-    let after = rest[consumed..].trim_start();
+    let mut after = rest[consumed..].trim_start();
+    let mut table = TableDef::default();
+    if let Some(of) = strip_kw(after, "OF") {
+        let (of_type, consumed) = parse_type_name(of)?;
+        table.of_type = Some(of_type);
+        after = of[consumed..].trim_start();
+    }
     if !after.starts_with('(') {
-        return Some((name, Vec::new()));
+        return Some((name, table));
     }
     let close = matching_paren(after.as_bytes(), 0)?;
-    let inner = &after[1..close];
-    let columns = split_top_level_commas(inner)
-        .into_iter()
-        .filter_map(|fragment| match parse_table_element(fragment)? {
-            TableElement::Column(column) => Some(column),
-            TableElement::Constraint | TableElement::Like => None,
-        })
-        .collect();
-    Some((name, columns))
+    if table.of_type.is_none() {
+        table.columns = split_top_level_commas(&after[1..close])
+            .into_iter()
+            .filter_map(|fragment| match parse_table_element(fragment)? {
+                TableElement::Column(column) => Some(column),
+                TableElement::Constraint | TableElement::Like => None,
+            })
+            .collect();
+    }
+    // A parent the identifier grammar refuses reaches nothing, as an unparsed
+    // column fragment does, rather than costing the table its own columns.
+    if let Some(inherits) = strip_kw(after[close + 1..].trim_start(), "INHERITS")
+        && inherits.starts_with('(')
+        && let Some(close) = matching_paren(inherits.as_bytes(), 0)
+    {
+        table.parents = split_top_level_commas(&inherits[1..close])
+            .into_iter()
+            .filter_map(whole_table_name)
+            .collect();
+    }
+    Some((name, table))
+}
+
+/// `s`, trimmed, as one table name and nothing more, qualified as
+/// [`parse_qualified_name`] qualifies it.
+fn whole_table_name(s: &str) -> Option<String> {
+    let (name, consumed) = parse_qualified_name(s)?;
+    s[consumed..].trim().is_empty().then_some(name)
+}
+
+/// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `ALTER TABLE
+/// [ONLY] <name> OF <type>;` — the two references `--binary-upgrade` writes
+/// after a table's full column list (`dumpTableSchema`) — as the table they
+/// alter and the reference they add. `None` for every other `ALTER TABLE`,
+/// one listing several subcommands included, which the dump never writes for
+/// these. `pub(crate)` for [`crate::map::classify`], as
+/// [`parse_alter_type_add_value_body`] is.
+pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableReference)> {
+    let stmt = stmt.trim_start();
+    let rest = strip_kw(stmt, "ALTER TABLE").or_else(|| strip_kw(stmt, "ALTER FOREIGN TABLE"))?;
+    let rest = strip_kw(rest, "ONLY").unwrap_or(rest);
+    let (table, consumed) = parse_qualified_name(rest)?;
+    let rest = rest[consumed..].trim_start();
+    let (reference, tail) = if let Some(inherit) = strip_kw(rest, "INHERIT") {
+        let (parent, consumed) = parse_qualified_name(inherit)?;
+        (TableReference::Parent(parent), &inherit[consumed..])
+    } else {
+        let of = strip_kw(rest, "OF")?;
+        let (of_type, consumed) = parse_type_name(of)?;
+        (TableReference::OfType(of_type), &of[consumed..])
+    };
+    (tail.trim() == ";").then_some((table, reference))
 }
 
 /// One top-level fragment of a `CREATE TABLE` list: gram.y's `TableElement`,
@@ -968,10 +1152,12 @@ pub(crate) fn extract_statement_cross_refs(
 /// `ALTER TYPE ADD VALUE` is not among them: it mutates an already-declared
 /// object rather than introducing one, so it has its own two entry points —
 /// [`parse_alter_type_add_value_body`] for [`crate::map::classify`] and
-/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`].
+/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`] — and so,
+/// for the same reason, has an `ALTER TABLE` adding a [`TableReference`]
+/// ([`parse_alter_table_reference`], folded by [`TableDef`]).
 #[derive(Debug)]
 pub(crate) enum StatementShape {
-    Table { name: String, columns: Vec<ColumnDef> },
+    Table { name: String, definition: TableDef },
     Type(TypeDef),
     Extension(Extension),
     Collation(CollationDef),
@@ -994,7 +1180,7 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
     if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
         return parse_create_table(rest)
-            .map(|(name, columns)| StatementShape::Table { name, columns });
+            .map(|(name, definition)| StatementShape::Table { name, definition });
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE TYPE") {
         return parse_create_type(rest).map(StatementShape::Type);
@@ -1199,7 +1385,8 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 /// calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
-/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`].
+/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] and
+/// table-reference folding on [`crate::map::SpanBody::AlterTableReference`].
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
 /// end of file, or (per I1) the start of the current database's first `COPY`
@@ -1264,12 +1451,17 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::Data(_) => {
                 current.preamble_complete = true;
             }
-            // I1 guarantees none of these five can genuinely follow a `Data`
+            // I1 guarantees none of these six can genuinely follow a `Data`
             // span for the current database before its next `Connect` — the
             // guard is defensive, matching what a line-triggered scan would
             // have done, rather than assuming the invariant holds.
-            SpanBody::Table { name, columns } if !current.preamble_complete => {
-                current.tables.insert(name.clone(), columns.clone());
+            SpanBody::Table { name, definition } if !current.preamble_complete => {
+                current.tables.insert(name.clone(), definition.clone());
+            }
+            SpanBody::AlterTableReference { table, reference } if !current.preamble_complete => {
+                if let Some(definition) = current.tables.get_mut(table) {
+                    definition.add(reference);
+                }
             }
             SpanBody::TypeDef { name, kind } if !current.preamble_complete => {
                 record_type(&mut current.types, name, kind);
@@ -1287,6 +1479,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             | SpanBody::TypeDef { .. }
             | SpanBody::Extension { .. }
             | SpanBody::AlterTypeAddValue { .. }
+            | SpanBody::AlterTableReference { .. }
             | SpanBody::Collation { .. }
             | SpanBody::Framing
             | SpanBody::Unparsed
@@ -1311,8 +1504,13 @@ mod tests {
     }
 
     fn parse_table(lines: &[&str]) -> (String, Vec<ColumnDef>) {
+        let (name, definition) = parse_table_def(lines);
+        (name, definition.columns)
+    }
+
+    fn parse_table_def(lines: &[&str]) -> (String, TableDef) {
         match parse(lines) {
-            StatementShape::Table { name, columns } => (name, columns),
+            StatementShape::Table { name, definition } => (name, definition),
             other => panic!("expected a Table shape, got {other:?}"),
         }
     }
@@ -1440,6 +1638,198 @@ mod tests {
                 ColumnDef::new("now", "integer"),
             ]
         );
+    }
+
+    /// An inheritance child as `dumpTableSchema` writes it, its own columns
+    /// in the list and its parents after it, each parent qualified as a table
+    /// key is — an unquoted part folded, a quoted one kept.
+    #[test]
+    fn an_inherits_clause_records_the_parents_in_order() {
+        let (name, table) = parse_table_def(&[
+            "CREATE TABLE emitters.child (",
+            "    NOT NULL label,",
+            "    extra numeric(6,2)",
+            ")",
+            "INHERITS (emitters.parent, \"Other\".Second);",
+        ]);
+        assert_eq!(name, "emitters.child");
+        assert_eq!(
+            table,
+            TableDef {
+                columns: vec![ColumnDef::new("extra", "numeric(6,2)")],
+                parents: vec!["emitters.parent".to_string(), "Other.second".to_string()],
+                of_type: None,
+            }
+        );
+        // A child declaring nothing of its own keeps its empty list and its
+        // parents.
+        let (_, table) = parse_table_def(&["CREATE TABLE public.c (", ")", "INHERITS (public.p);"]);
+        assert_eq!((table.columns.len(), table.parents), (0, vec!["public.p".to_string()]));
+    }
+
+    /// A typed table's list is a column's options, never its type — the
+    /// `NOT NULL` or default `pg_dump` writes beside the name alone — so it
+    /// declares no column of its own, its type naming them all; with no such
+    /// option there is no list at all.
+    #[test]
+    fn a_typed_table_records_its_type_and_declares_no_column() {
+        let (name, table) = parse_table_def(&[
+            "CREATE TABLE emitters.people OF emitters.person (",
+            "    name NOT NULL,",
+            "    born DEFAULT '2000-01-01'::date",
+            ");",
+        ]);
+        assert_eq!(name, "emitters.people");
+        assert_eq!(
+            table,
+            TableDef {
+                columns: Vec::new(),
+                parents: Vec::new(),
+                of_type: Some("emitters.person".to_string()),
+            }
+        );
+        let (_, table) = parse_table_def(&["CREATE TABLE public.t OF PUBLIC.\"Person\";"]);
+        assert_eq!(table.of_type.as_deref(), Some("public.\"Person\""));
+    }
+
+    /// The two references `--binary-upgrade` writes after a full column list,
+    /// and nothing else an `ALTER TABLE` says: the removals, a statement
+    /// holding more than the one subcommand, and every other subcommand are
+    /// none of them.
+    #[test]
+    fn only_an_added_parent_or_type_is_a_table_reference() {
+        let parent = |p: &str| Some(TableReference::Parent(p.to_string()));
+        let reference = |stmt: &str| parse_alter_table_reference(stmt).map(|(t, r)| (t, Some(r)));
+        assert_eq!(
+            reference("ALTER TABLE ONLY emitters.child INHERIT emitters.parent;\n"),
+            Some(("emitters.child".to_string(), parent("emitters.parent")))
+        );
+        assert_eq!(
+            reference("ALTER FOREIGN TABLE ONLY public.f INHERIT \"P\".p;"),
+            Some(("public.f".to_string(), parent("P.p")))
+        );
+        assert_eq!(
+            reference("ALTER TABLE ONLY emitters.people OF emitters.person;"),
+            Some((
+                "emitters.people".to_string(),
+                Some(TableReference::OfType("emitters.person".to_string()))
+            ))
+        );
+        assert_eq!(
+            reference("alter table public.c inherit public.p;"),
+            Some(("public.c".to_string(), parent("public.p")))
+        );
+        for other in [
+            "ALTER TABLE ONLY public.c NO INHERIT public.p;",
+            "ALTER TABLE ONLY public.t NOT OF;",
+            "ALTER TABLE ONLY public.c INHERIT public.p, ADD COLUMN x integer;",
+            "ALTER TABLE ONLY public.c ADD CONSTRAINT c_pkey PRIMARY KEY (id);",
+            "ALTER TABLE public.c OWNER TO postgres;",
+            "ALTER TABLE ONLY public.c INHERIT public.p",
+        ] {
+            assert_eq!(parse_alter_table_reference(other), None, "{other}");
+        }
+    }
+
+    /// A table as [`with_tables`] takes it: name, own columns, parents, `OF`
+    /// type.
+    type TableSpec<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [&'a str], Option<&'a str>);
+
+    /// `metadata` holding `tables` and `types`, one database.
+    fn with_tables(tables: &[TableSpec<'_>], types: Vec<TypeDef>) -> DatabaseMetadata {
+        let mut db = DatabaseMetadata::empty(None);
+        db.types = types;
+        for (name, columns, parents, of_type) in tables {
+            db.tables.insert(
+                name.to_string(),
+                TableDef {
+                    columns: columns.iter().map(|(c, t)| ColumnDef::new(*c, *t)).collect(),
+                    parents: parents.iter().map(|p| p.to_string()).collect(),
+                    of_type: of_type.map(str::to_string),
+                },
+            );
+        }
+        db
+    }
+
+    /// A column the table lacks is found through its references: a parent's,
+    /// a grandparent's, the first parent's of two declaring it, its own where
+    /// it declares one too, and its type's field; and in the server's order —
+    /// each parent's, then the table's own, a column two declare at its first
+    /// place.
+    #[test]
+    fn a_column_is_found_through_parents_and_a_type() {
+        let person = TypeDef {
+            name: "public.person".to_string(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![ColumnDef::new("name", "text"), ColumnDef::new("born", "date")]),
+            },
+        };
+        let db = with_tables(
+            &[
+                ("public.g", &[("gid", "bigint")], &[], None),
+                ("public.p1", &[("id", "integer"), ("shared", "text")], &["public.g"], None),
+                ("public.p2", &[("shared", "varchar"), ("other", "date")], &[], None),
+                (
+                    "public.c",
+                    &[("other", "date"), ("own", "boolean")],
+                    &["public.p1", "public.p2"],
+                    None,
+                ),
+                ("public.people", &[], &[], Some("public.person")),
+            ],
+            vec![person],
+        );
+        let declared = |table: &str, column: &str| {
+            db.declared_column(table, column).map(|c| c.declared_type.as_str())
+        };
+        assert_eq!(declared("public.c", "own"), Some("boolean"));
+        assert_eq!(declared("public.c", "id"), Some("integer"));
+        assert_eq!(declared("public.c", "gid"), Some("bigint"));
+        assert_eq!(declared("public.c", "shared"), Some("text"));
+        assert_eq!(declared("public.c", "absent"), None);
+        assert_eq!(declared("public.people", "born"), Some("date"));
+        assert_eq!(declared("public.people", "height"), None);
+        assert_eq!(declared("public.missing", "id"), None);
+
+        let names = |table: &str| -> Vec<&str> {
+            db.declared_columns(table).iter().map(|c| c.name.as_str()).collect()
+        };
+        assert_eq!(names("public.c"), ["gid", "id", "shared", "other", "own"]);
+        assert_eq!(names("public.people"), ["name", "born"]);
+        assert!(names("public.missing").is_empty());
+        // Each column of the order is the declaration the lookup returns.
+        for column in db.declared_columns("public.c") {
+            assert_eq!(db.declared_column("public.c", &column.name), Some(column));
+        }
+    }
+
+    /// A reference reaching nothing — a parent or type the preamble does not
+    /// hold, a composite whose list did not parse, a cycle only a
+    /// hand-written file can hold — answers `None` rather than guessing or
+    /// looping.
+    #[test]
+    fn a_reference_reaching_nothing_declares_nothing() {
+        let unparsed = TypeDef {
+            name: "public.opaque".to_string(),
+            kind: TypeKind::Composite { fields: None },
+        };
+        let db = with_tables(
+            &[
+                ("public.orphan", &[], &["public.gone"], None),
+                ("public.typed", &[], &[], Some("public.opaque")),
+                ("public.untyped", &[], &[], Some("public.nowhere")),
+                ("public.a", &[("x", "integer")], &["public.b"], None),
+                ("public.b", &[], &["public.a"], None),
+            ],
+            vec![unparsed],
+        );
+        assert_eq!(db.declared_column("public.orphan", "id"), None);
+        assert_eq!(db.declared_column("public.typed", "id"), None);
+        assert_eq!(db.declared_column("public.untyped", "id"), None);
+        assert_eq!(db.declared_column("public.b", "x").map(|c| c.name.as_str()), Some("x"));
+        assert_eq!(db.declared_column("public.b", "y"), None);
+        assert_eq!(db.declared_columns("public.b").len(), 1);
     }
 
     /// The `COLLATE` clause, in the shape `pg_dump` actually writes it (I37):
@@ -1571,6 +1961,39 @@ mod tests {
         assert_eq!(
             meta.databases[0].types[0].kind,
             TypeKind::Enum { labels: vec!["sad".to_string(), "has'quote".to_string()] }
+        );
+    }
+
+    /// `--binary-upgrade`'s references arrive after the full column list and
+    /// fold into the table they name, a parent named twice once; one naming
+    /// a table not declared is dropped rather than declaring one.
+    #[test]
+    fn binary_upgrade_table_references_arrive_via_alter_table() {
+        let reference = |table: &str, reference: TableReference| {
+            span(SpanBody::AlterTableReference { table: table.to_string(), reference })
+        };
+        let parent = || TableReference::Parent("public.p".to_string());
+        let spans = vec![
+            span(SpanBody::Table {
+                name: "public.c".to_string(),
+                definition: TableDef::with_columns(vec![ColumnDef::new("id", "integer")]),
+            }),
+            span(SpanBody::Unparsed),
+            reference("public.c", parent()),
+            reference("public.c", parent()),
+            reference("public.c", TableReference::OfType("public.t".to_string())),
+            reference("public.elsewhere", parent()),
+        ];
+        let meta = dump_metadata_from_spans(&spans);
+        let tables = &meta.databases[0].tables;
+        assert_eq!(tables.len(), 1);
+        assert_eq!(
+            tables["public.c"],
+            TableDef {
+                columns: vec![ColumnDef::new("id", "integer")],
+                parents: vec!["public.p".to_string()],
+                of_type: Some("public.t".to_string()),
+            }
         );
     }
 
@@ -1748,7 +2171,7 @@ mod tests {
     fn plain_dump_has_no_connect_and_names_no_database() {
         let meta = dump_metadata_from_spans(&[span(SpanBody::Table {
             name: "public.t".to_string(),
-            columns: vec![ColumnDef::new("id", "integer")],
+            definition: TableDef::with_columns(vec![ColumnDef::new("id", "integer")]),
         })]);
         assert_eq!(meta.databases.len(), 1);
         assert_eq!(meta.databases[0].name, None);
@@ -1769,7 +2192,7 @@ mod tests {
             span(SpanBody::Connect { database: "koji".to_string() }),
             span(SpanBody::Table {
                 name: "public.t".to_string(),
-                columns: vec![ColumnDef::new("id", "integer")],
+                definition: TableDef::with_columns(vec![ColumnDef::new("id", "integer")]),
             }),
         ]);
 
@@ -1791,12 +2214,15 @@ mod tests {
         // first database here starts via `Connect`, same as the second.
         let meta = dump_metadata_from_spans(&[
             span(SpanBody::Connect { database: "one".to_string() }),
-            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table { name: "public.a".to_string(), definition: TableDef::default() }),
             dummy_data_span(),
             // Per I1, nothing more should be captured for this database now.
-            span(SpanBody::Table { name: "public.ignored".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table {
+                name: "public.ignored".to_string(),
+                definition: TableDef::default(),
+            }),
             span(SpanBody::Connect { database: "two".to_string() }),
-            span(SpanBody::Table { name: "public.b".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table { name: "public.b".to_string(), definition: TableDef::default() }),
         ]);
 
         assert_eq!(meta.databases.len(), 2);
@@ -1821,14 +2247,14 @@ mod tests {
                 pg_dump_version: Some("16.14".to_string()),
             }),
             span(SpanBody::Connect { database: "one".to_string() }),
-            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table { name: "public.a".to_string(), definition: TableDef::default() }),
             dummy_data_span(),
             span(SpanBody::VersionHeader {
                 server_version: Some("16.15".to_string()),
                 pg_dump_version: Some("16.15".to_string()),
             }),
             span(SpanBody::Connect { database: "two".to_string() }),
-            span(SpanBody::Table { name: "public.b".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table { name: "public.b".to_string(), definition: TableDef::default() }),
         ]);
 
         assert_eq!(meta.databases.len(), 2);
@@ -1857,7 +2283,7 @@ mod tests {
             header("app"),
             span(SpanBody::Unparsed),
             span(SpanBody::Connect { database: "app".to_string() }),
-            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            span(SpanBody::Table { name: "public.a".to_string(), definition: TableDef::default() }),
             dummy_data_span(),
             span(SpanBody::Connect { database: "postgres".to_string() }),
             header("pg"),

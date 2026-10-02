@@ -6,11 +6,13 @@
 
 use std::path::Path;
 
+use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
+use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
-    DatabaseMetadata, DumpMetadata, LocalFileSource, ScanOptions, StatisticsRequest, build_index,
-    cache, map_file,
+    DatabaseMetadata, DumpMetadata, LocalFileSource, QueryOptions, ResolvedSchema, ScanOptions,
+    StatisticsRequest, build_index, cache, map_file, table_stream,
 };
 
 mod common;
@@ -38,7 +40,11 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert!(db.pg_dump_version.is_some(), "pg_dump {version}");
         assert!(db.extensions.is_empty(), "pg_dump {version}: the types schema defines none");
 
-        let int_cols = db.tables.get("public.t_int").unwrap_or_else(|| panic!("pg_dump {version}"));
+        let int_cols = db
+            .tables
+            .get("public.t_int")
+            .map(|t| &t.columns)
+            .unwrap_or_else(|| panic!("pg_dump {version}"));
         assert_eq!(
             int_cols,
             &vec![
@@ -50,7 +56,7 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
-        let numeric_cols = db.tables.get("public.t_numeric").unwrap();
+        let numeric_cols = db.tables.get("public.t_numeric").map(|t| &t.columns).unwrap();
         assert_eq!(
             numeric_cols,
             &vec![
@@ -63,7 +69,7 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
-        let text_cols = db.tables.get("public.t_text").unwrap();
+        let text_cols = db.tables.get("public.t_text").map(|t| &t.columns).unwrap();
         assert_eq!(
             text_cols[1..],
             [
@@ -171,7 +177,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         // back as plain `integer[]`, indistinguishable from the column beside
         // it that holds 1-D values. This is the whole reason an array
         // column's Arrow type cannot be settled from the declared type.
-        let shape_cols = db.tables.get("public.t_array_shape").unwrap();
+        let shape_cols = db.tables.get("public.t_array_shape").map(|t| &t.columns).unwrap();
         assert_eq!(
             shape_cols[1..],
             [
@@ -188,7 +194,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         // parser, never reach `pg_type`, and so cannot reach the file — which
         // is why the spellings themselves are pinned by unit test over a
         // hand-built type list, and this table pins the collapse.
-        let spelling_cols = db.tables.get("public.t_array_spelling").unwrap();
+        let spelling_cols = db.tables.get("public.t_array_spelling").map(|t| &t.columns).unwrap();
         assert_eq!(
             spelling_cols[1..],
             [
@@ -203,7 +209,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         // Neither the domain-over-`box` column nor its array says anything
         // about the `;` delimiter its values are actually written with — the
         // declared strings are indistinguishable from any other domain's.
-        let delim_cols = db.tables.get("public.t_delimiter").unwrap();
+        let delim_cols = db.tables.get("public.t_delimiter").map(|t| &t.columns).unwrap();
         assert_eq!(
             delim_cols[1..],
             [
@@ -215,7 +221,7 @@ async fn default_dump_declares_every_mapped_column_type() {
 
         // A user-defined type used as a column's declared type is recorded
         // schema-qualified (I8), matching the type's own name.
-        let enum_domain_cols = db.tables.get("public.t_enum_domain").unwrap();
+        let enum_domain_cols = db.tables.get("public.t_enum_domain").map(|t| &t.columns).unwrap();
         assert_eq!(enum_domain_cols[1].declared_type, "public.mood");
         assert_eq!(enum_domain_cols[2].declared_type, "public.derived_domain");
     }
@@ -331,7 +337,7 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
     for version in VERSIONS {
         let db = single_database(&types_fixture(version, "default")).await;
         assert_eq!(
-            db.tables.get("public.t_collate").unwrap(),
+            db.tables.get("public.t_collate").map(|t| &t.columns).unwrap(),
             &vec![
                 ColumnDef::new("id", "integer"),
                 collated("v_text_c", "text", r#"pg_catalog."C""#),
@@ -368,7 +374,7 @@ async fn v18_s_column_shapes_keep_their_type_and_their_displaced_collation() {
     };
     for version in VERSIONS {
         let db = single_database(&types_fixture(version, "default")).await;
-        let table = db.tables.get("public.t_v18_columns");
+        let table = db.tables.get("public.t_v18_columns").map(|t| &t.columns);
         if version < 18 {
             assert_eq!(table, None, "pg_dump {version}: the sidecar loads at 18 alone");
             continue;
@@ -530,7 +536,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
     for version in [13, 16, 18] {
         let db = single_database(&edge_cases_fixture(version, "default")).await;
         assert_eq!(
-            db.tables.get("public.widgets").unwrap(),
+            db.tables.get("public.widgets").map(|t| &t.columns).unwrap(),
             &vec![
                 ColumnDef::new("id", "integer"),
                 ColumnDef::new("name", "text"),
@@ -545,7 +551,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         // from the DDL entirely — the DDL here has exactly the same 3 live
         // columns the COPY header lists, no dummy placeholder.
         assert_eq!(
-            db.tables.get("public.dropped_column").unwrap(),
+            db.tables.get("public.dropped_column").map(|t| &t.columns).unwrap(),
             &vec![
                 ColumnDef::new("id", "integer"),
                 ColumnDef::new("keep_me", "text"),
@@ -557,7 +563,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         // Generated columns are declared in the DDL (unlike dropped ones)
         // but never appear in the COPY column list — the DDL's declared
         // type is still exactly what a by-name lookup should find.
-        let generated = db.tables.get("public.generated_column").unwrap();
+        let generated = db.tables.get("public.generated_column").map(|t| &t.columns).unwrap();
         assert_eq!(generated.last().unwrap(), &ColumnDef::new("total", "integer"));
     }
 }
@@ -572,7 +578,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
 async fn emitters_tables_declare_their_columns_and_nothing_else() {
     for version in VERSIONS {
         let db = single_database(&fixture(version, "emitters", "default")).await;
-        let declared = |table: &str| db.tables.get(table).unwrap().clone();
+        let declared = |table: &str| db.tables.get(table).unwrap().columns.clone();
         assert_eq!(
             declared("emitters.parent"),
             vec![
@@ -599,11 +605,72 @@ async fn emitters_tables_declare_their_columns_and_nothing_else() {
     }
 }
 
+/// An inheritance child and a typed table declare every column they hold,
+/// wherever `pg_dump` wrote it: the parent's and the type's through the
+/// `INHERITS` and `OF` clauses, and under `--binary-upgrade`, where the full
+/// list is the table's own, through the `ALTER TABLE ONLY` forms after it.
+/// Each column in the server's order, as its `COPY` header lists it, and
+/// each reads typed.
+#[tokio::test]
+async fn inherited_and_typed_columns_are_declared_through_their_references() {
+    let child = [("id", "integer"), ("label", "text"), ("born", "date"), ("extra", "numeric(6,2)")];
+    let people = [("name", "text"), ("born", "date"), ("height", "integer")];
+    for version in VERSIONS {
+        for flag_set in ["default", "binary-upgrade"] {
+            let path = fixture(version, "emitters", flag_set);
+            let db = single_database(&path).await;
+            let label = format!("pg_dump {version} {flag_set}");
+            assert_eq!(db.tables["emitters.child"].parents, ["emitters.parent"], "{label}");
+            assert_eq!(
+                db.tables["emitters.people"].of_type.as_deref(),
+                Some("emitters.person"),
+                "{label}"
+            );
+            for (table, expected) in [("emitters.child", &child[..]), ("emitters.people", &people)]
+            {
+                let declared: Vec<(&str, &str)> = db
+                    .declared_columns(table)
+                    .iter()
+                    .map(|c| (c.name.as_str(), c.declared_type.as_str()))
+                    .collect();
+                assert_eq!(declared, expected, "{label}: {table}");
+                let resolved = typed_schema(&path, table).await;
+                let names: Vec<&str> =
+                    resolved.schema.fields().iter().map(|f| f.name().as_str()).collect();
+                let expected_names: Vec<&str> = expected.iter().map(|(name, _)| *name).collect();
+                assert_eq!(names, expected_names, "{label}: {table}");
+                assert!(
+                    resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                    "{label}: {table} resolves {:?}",
+                    resolved.columns
+                );
+            }
+        }
+    }
+}
+
+/// The schema a typed read of `table` commits to, every row read.
+async fn typed_schema(path: &Path, table: &str) -> ResolvedSchema {
+    let source = LocalFileSource::open(path).unwrap();
+    let mut stream = table_stream(
+        &source,
+        table,
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
+        CacheMode::DISABLED,
+    );
+    while let Some(batch) = stream.next().await {
+        batch.unwrap();
+    }
+    stream.resolved_schema()
+}
+
 #[tokio::test]
 async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy() {
     for version in [13, 16, 18] {
         let db = single_database(&edge_cases_fixture(version, "binary-upgrade")).await;
-        let cols = db.tables.get("public.dropped_column").unwrap();
+        let cols = db.tables.get("public.dropped_column").map(|t| &t.columns).unwrap();
         assert_eq!(cols[0], ColumnDef::new("id", "integer"));
         assert_eq!(cols[1], ColumnDef::new("keep_me", "text"));
         // I5: the mangled, quoted placeholder name and the C-comment-suffixed

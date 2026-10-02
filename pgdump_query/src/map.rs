@@ -83,8 +83,9 @@
 //! **every** `DumpIndex` tiles its file, one built by a query included.
 //! `DumpMetadata` is [`crate::preamble::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
-//! [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist for
-//! rather than generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
+//! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`] and
+//! [`SpanBody::AlterTableReference`] exist for rather than generic
+//! [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -98,10 +99,10 @@ use crate::instrument::StatisticsScope;
 use crate::io::ByteRangeSource;
 use crate::lex::standard_conforming_strings;
 use crate::preamble::{
-    CollationDef, ColumnDef, Extension, StatementScan, StatementShape, TypeDef, TypeKind,
-    classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
-    insert_tablespace, parse_alter_type_add_value_body, parse_connect, parse_qualified_name,
-    push_stmt_line, statement_complete, strip_kw,
+    CollationDef, Extension, StatementScan, StatementShape, TableDef, TableReference, TypeDef,
+    TypeKind, classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
+    insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body, parse_connect,
+    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart};
 use crate::statistics::{BlockGathered, BlockObserver};
@@ -341,7 +342,7 @@ pub struct LargeObjectRegion {
 pub enum SpanBody {
     Table {
         name: String,
-        columns: Vec<ColumnDef>,
+        definition: TableDef,
     },
     TypeDef {
         name: String,
@@ -386,6 +387,14 @@ pub enum SpanBody {
     AlterTypeAddValue {
         type_name: String,
         label: String,
+    },
+    /// A `--binary-upgrade` dump's `ALTER TABLE ONLY <name> INHERIT
+    /// <parent>;` or `… OF <type>;` — recognized so
+    /// [`crate::preamble::dump_metadata_from_spans`] can fold the reference
+    /// into the [`Table`](SpanBody::Table) span it targets.
+    AlterTableReference {
+        table: String,
+        reference: TableReference,
     },
     /// File prologue/epilogue framing (the `PostgreSQL database dump`
     /// banner, `\restrict`/`\unrestrict`, the `SET`/`set_config` preamble
@@ -1522,8 +1531,11 @@ fn classify(stmt: &str) -> SpanBody {
     {
         return SpanBody::AlterTypeAddValue { type_name, label };
     }
+    if let Some((table, reference)) = parse_alter_table_reference(stmt) {
+        return SpanBody::AlterTableReference { table, reference };
+    }
     match classify_statement(stmt) {
-        Some(StatementShape::Table { name, columns }) => SpanBody::Table { name, columns },
+        Some(StatementShape::Table { name, definition }) => SpanBody::Table { name, definition },
         Some(StatementShape::Type(TypeDef { name, kind })) => SpanBody::TypeDef { name, kind },
         Some(StatementShape::Extension(Extension { name, schema })) => {
             SpanBody::Extension { name, schema }

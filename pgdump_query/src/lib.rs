@@ -58,8 +58,8 @@ pub use pgtype::{
     comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
-    CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
-    dump_metadata_from_spans,
+    CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TableDef, TableReference,
+    TypeDef, TypeKind, dump_metadata_from_spans,
 };
 pub use predicate::{
     ComparisonNote, Expr, Membership, Predicate, PredicateOp, Truth, column_divergences,

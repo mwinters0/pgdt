@@ -6655,7 +6655,7 @@ mod tests {
         use crate::copy::{decode_field, encode_field, split_fields};
         use crate::index::preamble_only;
         use crate::io::LocalFileSource;
-        use crate::preamble::{ColumnDef, DatabaseMetadata, DumpMetadata};
+        use crate::preamble::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
         use crate::resolve::{SchemaMode, resolve_columns};
         use crate::scan::ScanOptions;
 
@@ -6893,7 +6893,9 @@ mod tests {
                     extensions: Vec::new(),
                     types: types.to_vec(),
                     collations: Vec::new(),
-                    tables: [("public.t".to_string(), vec![column])].into_iter().collect(),
+                    tables: [("public.t".to_string(), TableDef::with_columns(vec![column]))]
+                        .into_iter()
+                        .collect(),
                 }],
             };
             resolve_columns(
@@ -7198,7 +7200,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (35, 2_008_420_983_373_127_703);
+        const GOLDEN_ORDER: (u32, u64) = (36, 2_008_420_983_373_127_703);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

@@ -108,14 +108,13 @@ pub(crate) fn observer_tracking(
     let qualified = header.qualified_name();
     let resolved = stored_resolution(header, metadata, database);
     let tiers = column_tiers(&resolved);
-    let declared = declared_columns(metadata, database, &qualified);
     let columns: Vec<Option<ColumnGatherer>> = header
         .columns
         .iter()
         .enumerate()
         .map(|(i, name)| {
             plan.columns.get(i).is_some_and(|&t| t).then(|| {
-                let def = declared.and_then(|cols| cols.iter().find(|c| &c.name == name));
+                let def = declared_column(metadata, database, &qualified, name);
                 ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
                     def.and_then(|d| d.collation.clone()),
@@ -200,18 +199,20 @@ pub(crate) fn keeps_sums(data_type: &DataType) -> bool {
     Summand::of(data_type).is_some()
 }
 
-/// The columns `metadata` declares for the table `qualified` in `database` —
-/// what a column's statistics record their declared type and collation from,
-/// and what a query compares those against (`crate::prune`).
-pub(crate) fn declared_columns<'m>(
+/// The declaration `metadata` holds for column `name` of the table
+/// `qualified` in `database`, wherever the table takes it from
+/// ([`crate::preamble::DatabaseMetadata::declared_column`]) — what a column's
+/// statistics record their declared type and collation from, and what a
+/// query compares those against (`crate::prune`).
+pub(crate) fn declared_column<'m>(
     metadata: Option<&'m DumpMetadata>,
     database: Option<&str>,
     qualified: &str,
-) -> Option<&'m [ColumnDef]> {
+    name: &str,
+) -> Option<&'m ColumnDef> {
     metadata
         .and_then(|m| m.databases.iter().find(|db| db.name.as_deref() == database))
-        .and_then(|db| db.tables.get(qualified))
-        .map(Vec::as_slice)
+        .and_then(|db| db.declared_column(qualified, name))
 }
 
 /// The group a row is being added to.

@@ -7,7 +7,7 @@
 -- beside it, so a reading that misses one is a register row going uncovered
 -- rather than a gap nobody sees. Each table carries rows, so a reading that
 -- mis-types a column shows in a typed read and not only in the map. Several
--- shapes are filed defects (`KD64`, `KD65`, `KD66`, `KD70`), held failing by
+-- shapes are filed defects (`KD65`, `KD66`), held failing by
 -- pgdump_query/tests/known_failures.rs until their slices land.
 --
 -- The cluster-global half -- a commented tablespace with options, and a
@@ -207,7 +207,7 @@ INSERT INTO emitters.grown (id, b) VALUES (3, 'b3');
 CREATE UNLOGGED TABLE emitters.scratch (id integer, at date, ok boolean);
 INSERT INTO emitters.scratch VALUES (1, '2024-03-01', true), (2, NULL, false);
 
--- Inheritance, `KD64`: `INHERITS (`, and under `--binary-upgrade` the
+-- Inheritance: `INHERITS (`, and under `--binary-upgrade` the
 -- inherited columns', the inherited `CHECK`'s and (at 18) the inherited not-null
 -- constraint's fix-ups. The child's `label` is `NOT NULL` where the parent's
 -- is not, which 13-17 write as a separate `SET NOT NULL`.
@@ -236,7 +236,7 @@ INSERT INTO emitters.stamped VALUES
     (1, '{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}', 7),
     (2, NULL, NULL);
 
--- A typed table, `KD70`: `OF`, with a column written without its type
+-- A typed table: `OF`, with a column written without its type
 -- because it carries `NOT NULL`, and under `--binary-upgrade` the typed-table
 -- fix-up.
 CREATE TYPE emitters.person AS (name text, born date, height integer);

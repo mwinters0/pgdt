@@ -35,7 +35,7 @@ use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ColumnDef, ComparisonDivergence, ComparisonSemantics, DatabaseMetadata, DumpMetadata,
     LocalFileSource, NestedPlan, ResolvedSchema, ScanOptions, SchemaMode, StatisticsRequest,
-    column_divergences, map_file, resolve_columns,
+    TableDef, column_divergences, map_file, resolve_columns,
 };
 
 fn fixtures_root() -> PathBuf {
@@ -484,9 +484,12 @@ fn one_column(declared: &str) -> ResolvedSchema {
             extensions: Vec::new(),
             types: Vec::new(),
             collations: Vec::new(),
-            tables: [("public.t".to_string(), vec![ColumnDef::new("v", declared)])]
-                .into_iter()
-                .collect(),
+            tables: [(
+                "public.t".to_string(),
+                TableDef::with_columns(vec![ColumnDef::new("v", declared)]),
+            )]
+            .into_iter()
+            .collect(),
         }],
     };
     resolve_columns("public.t", &["v".to_string()], Some(&metadata), None, SchemaMode::Typed, &[])
