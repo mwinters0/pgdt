@@ -865,7 +865,7 @@ pub fn render_uuid(bytes: &[u8; 16]) -> String {
 /// byte is `\ooo`. This reads the hex form alone, so a dump from a server,
 /// database or role set to `escape` fails here on its first non-hex value and
 /// `crate::batch` raises `FieldDecode`. The fix reads both forms; the render
-/// stays hex. **(c) unowned**; promoted by such a dump.
+/// stays hex. **(b) owned by `P31`**.
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     let hex = s.strip_prefix("\\x")?;
     let b = hex.as_bytes();

@@ -16,7 +16,8 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P31 — correctness evidence: the emitter register and value oracles | Sketched; not grilled | this file, below; [inbox](roadmap-P31-correctness-evidence-inbox.md) — placed first by the audit that allocated it; the maintainer sets its order |
+| P31 — correctness evidence: the emitter register and value oracles | Current | [spec](roadmap-P31-correctness-evidence.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — allocated by P31's grilling; the maintainer sets its order |
 | P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
@@ -46,7 +47,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P31`** — nothing at or below it
+centering"). **Phase numbering continues from `P32`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -564,29 +565,23 @@ item; see below.
 
 ## P31 — Correctness evidence: the emitter register and value oracles
 
-Sketched to corner-avoidance depth by the parsing audit of
-[2026-10-02](../status/history/2026-10-02.md). Nine defects found in two days
-(`KD60`–`KD68`) share one shape: a form `pg_dump` can write that no fixture
-held, each sitting where a grammar or decoder was right about everything it
-had seen. The thesis is that this class is enumerable, the way the
-register-to-oracle and floor-to-mapping reconciliations already enumerate
-theirs ([`decisions.md`](decisions.md), "D71", "D38"): an **emitter
-register** read out of `pg_dump`'s own source — each branch of
-`dumpTableSchema`, `dumpCompositeType` and `appendPsqlMetaConnect`,
-`shouldPrintColumn`'s cases, and each `*_out` form a GUC `pg_dump` leaves
-unpinned can select (I4) — each resolving to a fixture shape that reaches it
-or to an invariant saying no producer can, checked by a script in `scripts/`
-as `oracle_register.py` checks the comparison arms. Beside it a **value oracle
-independent of the text**: the round-trip test compares the typed read against
-`SchemaMode::Strings`, which is self-consistency and cannot see a decoder that
-is wrong and invertible, or a value no fixture holds; the server can record a
-second reading of each value — an epoch, an unscaled integer, hex bytes —
-beside the comparison oracle (D70). The grilling settles the register's unit
-and which upstream files it is read from, how a new major re-reads it, whether
-`generate_fixtures.py` gains version-conditioned schemas
-([`pg-dump-compatibility.md`](pg-dump-compatibility.md), the v18 column-shapes
-row), and which of the open `KD`s the phase absorbs. The facts are in [its
-inbox](roadmap-P31-correctness-evidence-inbox.md).
+Specified in [its spec](roadmap-P31-correctness-evidence.md). Allocated by the parsing audit of
+[2026-10-02](../status/history/2026-10-02.md): the coverage gap behind
+`KD60`–`KD70` is enumerated from `pg_dump`'s own source, and a value oracle the
+server writes gives the typed read a second reading.
+
+## P32 — The schema model: every object and property a dump declares
+
+**pgdt's aim is to capture every object and property a dump declares**, not
+the subset a typed read needs today. The preamble holds columns, types,
+collations and extensions; the map's TOC enrichment and census name the
+rest without reading them ([`decisions.md`](decisions.md), "D31" and "D36").
+Every valid statement — table constraints, `ALTER TABLE` in each of its forms,
+indexes, `ATTACH PARTITION` — folded into one model of each object's state at
+the end of the file, so a reader that wants a property finds it held. Sketched
+to corner-avoidance depth; P31's emitter register enumerates the same
+emitters, and is the candidate completeness criterion. Allocated by P31's
+grilling, 2026-10-02. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
 ## P30 — One binary for distribution
 

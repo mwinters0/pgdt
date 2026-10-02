@@ -598,6 +598,16 @@ fn extract_type_words(rest: &str) -> String {
 
 /// Parse one `<name> <type> [constraints...]` fragment from a column or
 /// composite-field list.
+///
+/// Deficiency register: `deficiency: KD69` — any fragment whose first token
+/// is an identifier is a column, so a table-level `CONSTRAINT c CHECK (…)`
+/// becomes a column named `constraint`, and [`split_top_level_commas`] does
+/// not track `[`/`]`, so `DEFAULT ARRAY[a, b]` yields a second fragment, a
+/// column `b` of type `]`. Resolution joins by the `COPY` header's names and
+/// a table's real columns come first, so a later real column named like a
+/// word inside an earlier default's brackets finds the bogus definition. The
+/// fix is a `CREATE TABLE` grammar returning columns and table constraints
+/// as different things. **(b) owned by `P31`**.
 fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
     let frag = frag.trim();
     if frag.is_empty() {
@@ -616,6 +626,14 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 /// `CREATE TABLE <name> (<col> <type>, ...);` (or, for a typed/partition
 /// table with no column list at all — I5 — just `<name>`).
 ///
+/// Deficiency register: `deficiency: KD70` — a typed table, `CREATE TABLE
+/// <name> OF <type>`, has no column list, and the `OF` clause is not read, so
+/// it gets no `ColumnDef` and every column resolves `NotDeclared`, though the
+/// composite's `CREATE TYPE … AS (…)` precedes it with the same names and
+/// types in the same order. The fix records the type and resolves a column
+/// missing here through its field, as `KD64` resolves through a parent.
+/// **(b) owned by `P31`**.
+///
 /// Deficiency register: `deficiency: KD64` — the `INHERITS (<parent>, …)`
 /// clause after the column list is not read, and `pg_dump` prints only a
 /// child's *local* columns (`shouldPrintColumn`: `attislocal || ispartition`,
@@ -623,8 +641,7 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 /// here while the `COPY` header lists it, and `crate::resolve` answers
 /// `NotDeclared` for it. The fix records the parents on the table and lets
 /// resolution walk to a parent's definition for a name the child lacks, the
-/// join staying by name. **(c) unowned**; promoted by a dump using
-/// inheritance.
+/// join staying by name. **(b) owned by `P31`**.
 fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after = rest[consumed..].trim_start();
@@ -812,8 +829,7 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 /// type), so the `Composite` keeps the field, `record_out` writes one value
 /// fewer (it skips dropped attributes), and `crate::batch` refuses every row
 /// on the field count. The fix parses the statement as [`classify`] parses
-/// `ADD VALUE` and removes the named field. **(c) unowned**; promoted by such
-/// a dump.
+/// `ADD VALUE` and removes the named field. **(b) owned by `P31`**.
 fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
     if let Some(TypeDef { kind: TypeKind::Enum { labels }, .. }) =
         types.iter_mut().find(|t| t.name == type_name)
@@ -945,7 +961,7 @@ pub(crate) enum StatementShape {
 /// `--include-foreign-data`, never reach [`parse_create_table`]: the span is
 /// `Unparsed`, the table has no columns in `DatabaseMetadata::tables`, and
 /// every column resolves `NotDeclared`. The fix admits both prefixes here.
-/// **(c) unowned**; promoted by a dump holding an unlogged table.
+/// **(b) owned by `P31`**.
 pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
     if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
@@ -981,8 +997,7 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 /// identifier grammar below refuses `-`, so the line is `Framing` and no
 /// database boundary: the segment's DDL and blocks join the database before
 /// it (`None` under `--create`, `template1` under `pg_dumpall`). The fix reads
-/// the `dbname=` value out of the quoted identifier. **(c) unowned**; promoted
-/// by such a dump.
+/// the `dbname=` value out of the quoted identifier. **(b) owned by `P31`**.
 pub(crate) fn parse_connect(line: &str) -> Option<String> {
     let rest = line.trim_start().strip_prefix("\\connect ")?;
     Cursor::new(rest.trim().as_bytes()).parse_ident()

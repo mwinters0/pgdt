@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `numeric` scale Arrow's decimal cannot carry panics a typed query (`KD63`), an inheritance child's inherited columns and an unlogged or foreign table's every column are text (`KD64`, `KD65`), a `bytea_output = escape` dump's `bytea` refuses (`KD67`), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `numeric` scale Arrow's decimal cannot carry panics a typed query (`KD63`), an inheritance child's inherited columns and an unlogged, foreign or typed table's every column are text (`KD64`, `KD65`, `KD70`), a `bytea_output = escape` dump's `bytea` refuses (`KD67`), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working; a `\connect` in its connection-string form is no database boundary (`KD68`) | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
@@ -76,12 +76,29 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
+## P31 progress
+
+Spec: [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md).
+**A `KD<k>` of the phase's class that a round files is appended here as the
+next `31.<M>` in the same change, without asking**: the maintainer's standing
+approval, in the spec's opening note. `M199` and `M200` land before 31.5,
+both editing `preamble.rs`.
+
+- [ ] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code
+- [ ] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it
+- [ ] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line
+- [ ] **31.4** Schema content reaching every remaining uncovered literal and option, findings filed as `KD`s and appended here; the register a gate in `mise run check`
+- [ ] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69`
+- [ ] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70`
+- [ ] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68`
+- [ ] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67`
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain and `.xz`,
+- **P31 is the open phase**, its checklist above. A dump is readable over HTTP, plain and `.xz`,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -91,7 +108,7 @@ instrument can see").
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eleven phases remain sketched — P31, P30, P29, P22, P21, P23, P26, P15, P18, P8, P24,
+  Eleven phases remain sketched — P32, P30, P29, P22, P21, P23, P26, P15, P18, P8, P24,
   in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
