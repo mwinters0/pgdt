@@ -71,8 +71,12 @@ use crate::{Error, Result};
 /// already stored. A new way of *choosing* what an unchanged field holds does:
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
-/// unusable as one of another shape.
-pub const CACHE_FORMAT_VERSION: u32 = 33;
+/// unusable as one of another shape. So does a parse fix that saves other
+/// bytes for the same dump: `tests/cache.rs`'s
+/// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
+/// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
+/// pins the comparison order, and each fails until it is bumped.
+pub const CACHE_FORMAT_VERSION: u32 = 34;
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read

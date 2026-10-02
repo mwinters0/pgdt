@@ -1109,3 +1109,76 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
         "the run must end on the block's check: {last:?}"
     );
 }
+
+/// The persisted format version and the digest of every fixture's persisted
+/// index it was pinned beside, re-pinned together
+/// (`persisted_index_is_pinned_to_the_format_version`).
+const PERSISTED_INDEX: (u32, u64) = (34, 16_287_219_434_641_137_189);
+
+/// **Every fixture's persisted [`DumpIndex`](pgdump_query::DumpIndex)
+/// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
+/// by a build that parsed or gathered the same input into other bytes answers
+/// as that build did, so any change to what a save writes for an unchanged
+/// dump is a persisted reshape that bumps the version
+/// (`docs/design/decisions.md`, "D22"); this fails until it is bumped and the
+/// digest re-pinned. A regenerated or added fixture moves the digest with no
+/// change to any parse, and is re-pinned alone.
+///
+/// The bytes are the index exactly as [`cache::save`] encodes it — spans with
+/// their bodies and text, `scanned_through`, metadata, roles, tablespaces and
+/// every block's statistics — and nothing else the file holds: the source's
+/// identity, its size and the calendar are the envelope's, and observed
+/// rather than parsed. So no list of persisted fields is kept to drift from
+/// the types. One fixed setting maps every file: the serial path, the default
+/// chunk and line limit, every table at the data level, no cache. It sees only
+/// what the fixtures exercise, as `golden_order_is_pinned_to_the_format_version`
+/// does; a digest of the preamble alone would see less, the statistics and
+/// the data spans being persisted beside it.
+///
+/// FNV-1a over each file's path under the fixture tree, in sorted order — the
+/// hand-written `tests/data/edge_cases.sql` among them — then the length and
+/// bytes of its encoded index.
+#[tokio::test]
+async fn persisted_index_is_pinned_to_the_format_version() {
+    fn fnv(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    let root = common::fixtures_root();
+    let mut files: Vec<(String, PathBuf)> = common::all_fixtures()
+        .into_iter()
+        .map(|path| {
+            let name = path.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
+            (name, path)
+        })
+        .collect();
+    files.push(("tests/data/edge_cases.sql".to_owned(), edge_cases()));
+    files.sort();
+    let mut digest = 0xcbf2_9ce4_8422_2325u64;
+    for (name, path) in &files {
+        let source = LocalFileSource::open(path).unwrap();
+        let run = map_file(
+            &source,
+            &ScanOptions::default(),
+            &CacheMode::DISABLED,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(!run.interrupted, "{name}");
+        let bytes = bincode::serde::encode_to_vec(&run.index, bincode::config::standard()).unwrap();
+        fnv(&mut digest, name.as_bytes());
+        fnv(&mut digest, &(bytes.len() as u64).to_le_bytes());
+        fnv(&mut digest, &bytes);
+    }
+    // A floor, not a count: six majors of every schema's flag sets.
+    assert!(files.len() > 250, "only {} fixtures mapped", files.len());
+    assert_eq!(
+        (CACHE_FORMAT_VERSION, digest),
+        PERSISTED_INDEX,
+        "what a cache persists for the fixtures moved, or CACHE_FORMAT_VERSION did: bump \
+         CACHE_FORMAT_VERSION if the same dump now saves other bytes, then re-pin both here"
+    );
+}

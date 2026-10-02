@@ -167,6 +167,7 @@ falling back to a cold query's early-stopping map, which brings each of those ba
 `Unusable` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
+Code: `cache::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
