@@ -24,10 +24,19 @@ functions and a line number would move with every edit above it.
 literal or a dump's field -- refused because the type's `*_in` refuses the
 text, so a release widening that function would lift it. Not one: a spelling
 refused because this build does not read it (`docs/design/decisions.md`,
-"D55", a shortfall); a value our front end cannot hold (`D96`); a comparison
-PostgreSQL refuses, the rule naming `*_in`; a declaration resolved to text. A function porting an `*_in` grammar
-whole, whose every refusal is the server's, carries one marker; a function
-mixing a refusal of the server's with shortfalls of ours marks the check.
+"D55", a shortfall); a value our front end cannot hold (`D96`); a declaration
+resolved to text. A function porting an `*_in` grammar whole, whose every
+refusal is the server's, carries one marker; a function mixing a refusal of the
+server's with shortfalls of ours marks the check.
+
+**No operator refusal is one**, because none is made on the server's terms. A
+comparison the server lacks is answered where this build can (`json`'s, as text,
+`ComparisonDivergence::AsText`), and every operator `predicate.rs` refuses is
+this build's own: a type the register models no order for (a `D55` shortfall)
+or a server-side function it cannot run (`UnanswerableReason`, whose `=` the
+server answers). A release adding an operator therefore lifts none of them, and
+a marker on one would name an invariant no release can falsify. A
+`ComparisonPlan` variant that is the server's refusal would reopen this.
 
 Usage:
 

@@ -725,6 +725,10 @@ impl NestedCompare {
 /// Carried per column in [`crate::resolve::ResolvedSchema::comparisons`] and
 /// consumed by `crate::predicate`, which reads it instead of inspecting the
 /// Arrow type.
+///
+/// **No variant refuses on PostgreSQL's terms**, so no operator refusal
+/// carries a `pg-refuses` marker; a variant that would is the case
+/// `scripts/pg_refuses.py`'s docstring says reopens that.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ComparisonPlan {
     /// Values decode through `kind` and compare by that order; `divergence`

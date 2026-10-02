@@ -85,3 +85,4 @@ table as a work queue.
 | M207 | | An interval literal's months and days narrowed to `i32`, and a literal's and field's minute and second bounded, closing `KD78` | P31 | [2026-10-02](../status/history/2026-10-02.md) |
 | M208 | | A `numeric`, `numeric(p,s)` and `jsonb` number, literal and field, capped at `numeric_in`'s display scale and weight, closing `KD79` | P31 | [2026-10-02](../status/history/2026-10-02.md) |
 | M209 | | A `uuid` literal and field take a hyphen only after a group of four digits, closing `KD80` | P31 | [2026-10-02](../status/history/2026-10-02.md) |
+| M210 | | `nested_refusal` worded by the position's divergence: an `AsText` one (`json`) saying PostgreSQL refuses the same comparison, an unmodelled one (`money`, `bit`, `tsvector`, a user base type) that this build models no order for it, with no claim about the server; each tested | | [2026-10-02](../status/history/2026-10-02.md) |
