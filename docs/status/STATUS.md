@@ -95,6 +95,9 @@ approval, in the spec's opening note.
 - [x] **31.9** A built-in type written quoted under `--quote-all-identifiers` read as its bare name wherever a spelling is compared, closing `KD71` — [notes](../design/roadmap-P31.9-quoted-builtin-notes.md)
 - [x] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72` — [notes](../design/roadmap-P31.10-float-past-dbl-max-notes.md)
 - [x] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73` — [notes](../design/roadmap-P31.11-reconnect-notes.md)
+- [ ] **31.12** A field `*_in` refuses fails the parse reading it at the first, naming table, column, line and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75`
+- [ ] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal
+- [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check; the manual says what `default` leaves to a query
 
 ## Not started
 

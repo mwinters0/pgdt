@@ -553,6 +553,12 @@ impl NumericKey {
     /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
     /// typmod'd column. The two differ only on the typmod, which a bare
     /// `numeric` has none of.
+    ///
+    /// Deficiency register: `deficiency: KD79` — no cap at `numeric_in`'s
+    /// display scale of 16383 or its weight, so a literal `numeric_in` refuses
+    /// as overflowing the format reads as a number; `decimal_unscaled_digits`
+    /// for `numeric(p,s)` and a `jsonb` number's bound, at a point position of
+    /// ±100000, share the gap.
     fn parse(text: &str) -> Option<Self> {
         let (negative, rest) = match text.strip_prefix('-') {
             Some(rest) => (true, rest),
@@ -1328,15 +1334,25 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     }
     Some(match kind {
         CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
-        // Parsed as `i64` whatever the column's width: a literal outside a
-        // `smallint`'s range still orders correctly against every value the
-        // column can hold.
+        // deficiency: KD76 — parsed as `i64` whatever the column's width, so a
+        // literal outside a `smallint`'s or `integer`'s range orders against the
+        // column where `int2in`/`int4in` refuse it (`roadmap.md`, "A literal is
+        // guaranteed in `*_out`'s form and never read past `*_in`'s"). The fix
+        // carries the width in `CompareKind::Int`.
         CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
         // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
         // 4294967295 and this build does not implement that wrap, so a
         // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
+        // deficiency: KD74 — a float literal goes through the field's reader,
+        // so an out-of-range one is clamped by I57's rule (`1e400` as
+        // `DBL_MAX`) or underflows to zero (`1e-400`), where `float8in` raises.
+        // The fix is a literal reader of its own, taking any spelling
+        // `float8in` reads and comparing by value (D55), refusing an
+        // out-of-range one but for a spelling `*_out` writes for `±DBL_MAX` or
+        // `±FLT_MAX` at some `extra_float_digits`, so a value copied from the
+        // dump still finds its row.
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {

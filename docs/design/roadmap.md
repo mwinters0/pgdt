@@ -283,6 +283,47 @@ When another producer is identified, its output is incorporated into the
 fixture generators the same way `pg_dump`'s is — the rule below is about the
 method, not about `pg_dump`.
 
+### A literal is guaranteed in `*_out`'s form and never read past `*_in`'s
+
+**A filter literal is read on its type's `*_out` form at least and its `*_in`
+grammar at most.** `*_out` is the 1.0 floor and target: it is how a value
+copied from the dump is spelled, and reading it is the guarantee. `*_in` is the
+ceiling: a literal PostgreSQL refuses is refused here too, never given a
+meaning the server would not give it. Between the two, effort is minimized. An
+`*_in` spelling is read where that is free or makes the code simpler or
+faster, no runtime is spent refusing one, and one not read is a shortfall, not
+a defect. **The ceiling outranks the floor, and binds a field too**: a spelling
+`pg_dump` writes that `*_in` refuses, which a restore would refuse, is refused
+here — I57's float rounded past its largest finite value is the known case,
+and the manual says so, since it reads as a fault and is not one. **A field is
+refused loudly, at parse**: the parse reading one fails at the first, naming
+its table, column, line and value, and aborts, as a restore under
+`ON_ERROR_STOP` fails; a query mapping the block itself fails the same way.
+A parse refuses what it decodes, and decodes no field for the check alone, so a
+nested leaf, a declined block's rows and a metadata-level column are caught when
+a query decodes them. `--postgres-invalid-values`, on every surface the
+unrepresentable mode has (D103), is `default` for that; `strict` has the parse
+decode every field, so a clean parse means what a clean restore does; `ignore`
+opts a dump's fields out with no contract, the decoders reading them as they
+read them. A literal has no opt-out, rewriting it being its remedy. A hand-written dump is in scope (the rule above), so any field `*_in`
+refuses counts, not only the spellings `pg_dump` writes. The mechanism is
+`decisions.md`, "D55".
+
+**The ceiling is the server's reading of `col op 'lit'`**: the literal is
+coerced to the column's base type by its `*_in`, the typmod not applied, so
+`'12345678901'` against a `numeric(10,2)` compares, as it does in the server,
+while `'70000'` against a `smallint` is refused. **The `*_in` is the newest
+supported major's**, `*_in` only ever widening, so a literal an older dump's
+server would refuse is read as a newer one reads it, never with a meaning no
+server gives. **The literal ceiling governs the PostgreSQL semantics only**:
+under DataFusion's a literal is DataFusion's value, compared as DataFusion
+compares the emitted column.
+
+**Each refusal on PostgreSQL's terms carries a `pg-refuses: I<n>` marker**, and
+the invariant it names lists the site under "Relied on by", so walking the
+invariants at a new major finds every refusal that release may have lifted.
+Unrepresentable is not one of these: it is our front end's limit (D96).
+
 ### Expand the generated fixtures freely; verify objectively wherever possible
 
 **When a decision depends on the exact bytes some producer writes for a shape,

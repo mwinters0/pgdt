@@ -259,8 +259,8 @@ Every census-taking read counts per block and column what the declared type's ty
 by its own type, lexically, the boundary years alone by arithmetic; a nested value once, in its worst leaf's tier:
 `format` past Arrow's spec, `engine` past `calendar_end` (RT21). It persists as counts (D74); a type holding more or
 less bumps `CACHE_FORMAT_VERSION`, as D78's order does, and a cache counted under another calendar is refused (D20).
-Rejected: a decode per field; a type-blind test (a `text` field reading `infinity`); counting as a query reads
-(timing decides); one tier. Code: `unrepresentable::Counter`, `map::FieldCount`. Evidence:
+Rejected: a decode per field; a type-blind test (`text` reading `infinity`); counting as a query reads (timing decides);
+one tier; a value the server refuses, a decode error, this being our front end's limit. Code: `unrepresentable::Counter`, `map::FieldCount`. Evidence:
 `every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
@@ -446,11 +446,11 @@ skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never ke
 for invalid text. No planner defers complexity until one buys something and refuses no evident simplification: a resolution-time rewrite removing redundant
 work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`.
 
-### D55 A literal is read in the type's `*_out` form and no wider
-`*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. The exceptions —
-one value's other spellings, field and literal alike, and `jsonb` (its canonical form is untypeable) — are
-listed on `accepted_form`; `boolean` deliberately not. A literal finer than the column's scale is
-refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
+### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
+`*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in`
+spelling is read where free, simpler or faster, none is refused at runtime cost, and the rest are `PredicateValueDecode`,
+a shortfall, never a rule. What a kind reads past its floor (one value's other spellings, field and literal alike; `jsonb`,
+its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH` is fixed: a Rust stack overflow aborts.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).

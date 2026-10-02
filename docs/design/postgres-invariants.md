@@ -3995,9 +3995,13 @@ formats anything else with `%g`'s rule. `pg_dump.c` bounds
 six majors, and the value oracle reads the first as `DBL_MAX`'s bits.
 
 **Scope limit.** What `*_out` writes. `float8in` refuses the overflowing
-spelling as out of range, so such a dump does not restore that value; pgdt
-reads it, as it reads every lossy spelling, as the nearest value the type
-holds.
+spelling as out of range — on a quoted literal and an unquoted constant alike,
+`numeric_float8` going through it — so the table's `COPY` fails and a restore
+loses all its rows. The value is reachable only by an explicit
+`--extra-float-digits` of zero or below, `pg_dump` otherwise setting `3`. pgdt
+is to refuse it as the server does (`roadmap.md`, "A literal is guaranteed in
+`*_out`'s form and never read past `*_in`'s"); today it reads the nearest
+value the type holds.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 

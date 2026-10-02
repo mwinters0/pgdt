@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD73 -->
-**`KD1`–`KD73` are allocated, and nothing at or below `KD73` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD80 -->
+**`KD1`–`KD80` are allocated, and nothing at or below `KD80` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -343,3 +343,38 @@ than reading as a phase nobody has sliced.
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD74** — a float literal is read by the field's reader, so an
+  out-of-range one is clamped by I57's rule or underflows to zero where
+  `float8in` raises: `x = 1e400` matches a row holding `DBL_MAX`. **(b) owned
+  by `M203`**. Detail: `pgdump_query/src/predicate.rs`.
+
+- **KD75** — a float field spelled past the type's largest finite value, which
+  `pg_dump --extra-float-digits` at zero or below writes and `float8in`
+  refuses, reads as that largest value where a restore fails the table, and
+  no parse refuses a field on PostgreSQL's terms.
+  **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD76** — an integer literal is read as `i64` whatever the column's width,
+  so `70000` against a `smallint` orders where `int2in` refuses it. **(b)
+  owned by `M205`**. Detail: `pgdump_query/src/predicate.rs`.
+
+- **KD77** — a date, time or timestamp literal's or field's parts are not bounded as
+  `datetime.c` bounds them, so `2020-02-30` matches March 1, `12:60:00` 13:00
+  and a `+16` offset shifts the instant, and `12:-5:00` means 11:55 where the
+  server reads a zone. **(b) owned by `M206`**. Detail:
+  `pgdump_query/src/decode.rs`.
+
+- **KD78** — an interval literal's months and days are not narrowed to `i32`,
+  nor a literal's or field's minute and second bounded, so `00:90:00` reads as
+  01:30:00.
+  **(b) owned by `M207`**. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD79** — a `numeric`, `numeric(p,s)` or `jsonb` number, literal or field,
+  is not capped at `numeric_in`'s display scale or weight, so `1.` and 16384
+  zeros matches 1. **(b) owned by `M208`**. Detail:
+  `pgdump_query/src/predicate.rs`.
+
+- **KD80** — a `uuid` literal or field takes a hyphen anywhere, where `uuid_in` takes
+  one only after a group of four digits. **(b) owned by `M209`**. Detail:
+  `pgdump_query/src/decode.rs`.

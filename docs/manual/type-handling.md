@@ -430,6 +430,10 @@ Write it the way the dump writes it — a `timestamp` carries a time part
 value in the file is already in that form, so the only thing this rules out is
 a spelling you would have had to guess at anyway.
 
+**The dump's own spelling is the guarantee.** Some other spellings PostgreSQL
+accepts are read too where that comes free — a `double precision` reads `1.50`
+and `1E5` as well as `1.5` and `100000` — and which those are may grow.
+
 **One thing `=` does not do is search.** It is exact equality against one
 column; there is no `LIKE`, no pattern and no case folding.
 

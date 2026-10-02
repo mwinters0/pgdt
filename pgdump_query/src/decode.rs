@@ -116,6 +116,12 @@ pub fn decode_f64(s: &str) -> Option<f64> {
 /// value of `parsed`'s sign nearest the text. A spelling ending in a letter
 /// keeps the parse's reading: it is one of the infinity's spellings, which the
 /// parse accepts more of than `*_out` writes.
+// deficiency: KD75 — a field spelled past the largest finite value is read
+// as it, where `float8in` refuses the spelling and a restore fails the table's
+// `COPY` (I57). The ceiling binds a field (`roadmap.md`, "A literal is
+// guaranteed in `*_out`'s form and never read past `*_in`'s"), so it is to fail
+// the parse reading it, aborting it — not an unrepresentable value, that
+// category being our front end's limit (D96) — a known-failure row first.
 #[inline]
 fn finite_spelling<F: Copy>(s: &str, parsed: F, is_infinite: fn(F) -> bool, largest: F) -> F {
     if is_infinite(parsed) && s.as_bytes().last().is_some_and(u8::is_ascii_digit) {
@@ -340,6 +346,15 @@ fn split_era(s: &str) -> (&str, bool) {
 /// `YYYY-MM-DD`, year unpadded past 4 digits and never negative (BCE is the
 /// `" BC"` suffix, handled by the caller) — `split_era` runs first, so this
 /// never sees one.
+///
+/// Deficiency register: `deficiency: KD77` — a literal read through this and
+/// the time and offset parsers beside it is bounded only by its integer types:
+/// no month or day range (`2020-02-30` rolls to March 1), a year of zero or
+/// under three digits, a `+` sign, the Julian and `MIN_TIMESTAMP`/
+/// `END_TIMESTAMP` ranges, `time_overflows`' bounds and a `±15:59:59` offset,
+/// where `datetime.c` refuses each; and `12:-5:00`, which the server reads as a
+/// zone. A hand-written dump's field can hold any of them, and the ceiling
+/// binds it too, so the bounds bind the field path, refused at parse.
 fn parse_ymd(s: &str) -> Option<(i64, u32, u32)> {
     let mut parts = s.splitn(3, '-');
     let y: i64 = parts.next()?.parse().ok()?;
@@ -671,6 +686,12 @@ fn interval_time_micros(text: &str) -> Option<i128> {
 /// `1.5 hours`, `P1Y2M` and `1 month` are all spellings `interval_in` takes
 /// and `interval_out` never writes, and are refused. `infinity`/`-infinity` (v17's, I34) are not in the grammar
 /// either, so they fail here and each consumer says what it does about them.
+///
+/// Deficiency register: `deficiency: KD78` — months and days are `i64` here,
+/// narrowed to `i32` on the field path only, and the minute and second fields
+/// are checked for two digits but not bounded, so `00:90:00` reads as
+/// 01:30:00 where `interval_in` refuses it and `3000000000 days` orders where
+/// it overflows.
 pub(crate) fn interval_parts(text: &str) -> Option<(i64, i64, i128)> {
     let tokens: Vec<&str> = text.split(' ').collect();
     let (mut months, mut days) = (0i64, 0i64);
@@ -820,6 +841,10 @@ const BAD_NIBBLE: u8 = 0xFF;
 /// remain. The filter runs over bytes rather than chars: `-` is ASCII, so
 /// the two leave the same sequence, and a non-ASCII byte is not a hex digit
 /// either way.
+///
+/// Deficiency register: `deficiency: KD80` — `uuid_in` takes a hyphen only
+/// after a group of four digits, so a literal with one leading, trailing,
+/// doubled or mid-group reads here where the server refuses it.
 pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
     let mut nibbles = s.bytes().filter(|b| *b != b'-');
     let mut bytes = [0u8; 16];
