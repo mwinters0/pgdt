@@ -676,7 +676,9 @@ existence rather than branch coverage, and an exemption carries `Evidence(file, 
 `Typed` against `Strings` over a fixture and `encode(decode(raw))` against on-disk bytes; boundary
 values are unit tests; blind at `v_box_domain_array` (I22), pinned directly. A shape under test is
 asserted (`is_seekable()`, a stated `--jobs`), never assumed. No test races a signal: `CancelsPast`
-trips the flag at an offset, and koji covers the real scale.
+trips the flag at an offset, and koji covers the real scale. The round trip holds that render inverts
+decode; that decode is right is the value oracle's (`oracle/values.tsv`): each typed node as the server
+reads it, by send function or arithmetic, over every `types` flag set with DDL (`value_oracle.rs`).
 
 ### D92 The test build optimizes: the workspace at `opt-level = 1`, its dependencies at `2`
 The fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone leaves most of

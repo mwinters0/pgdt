@@ -1012,6 +1012,7 @@ class KnownFailureTables(unittest.TestCase):
     TABLES = (
         "pgdump_query/tests/known_failures.rs",
         "datafusion-pgdump/tests/statistics.rs",
+        "pgdump_query/tests/value_oracle.rs",
     )
 
     def test_every_row_names_an_open_entry(self):

@@ -1,0 +1,872 @@
+public.t_array	id	1		integer	00000001
+public.t_array	id	2		integer	00000002
+public.t_array	v_empty	1		integer[]	0
+public.t_array	v_empty	2		integer[]	3
+public.t_array	v_empty	2	[1]	integer	00000001
+public.t_array	v_empty	2	[2]	integer	00000002
+public.t_array	v_empty	2	[3]	integer	00000003
+public.t_array	v_with_null	1		integer[]	1
+public.t_array	v_with_null	1	[1]	integer	\N
+public.t_array	v_with_null	2		integer[]	3
+public.t_array	v_with_null	2	[1]	integer	00000001
+public.t_array	v_with_null	2	[2]	integer	\N
+public.t_array	v_with_null	2	[3]	integer	00000003
+public.t_array	v_null_array	1		integer[]	\N
+public.t_array	v_null_array	2		integer[]	2
+public.t_array	v_null_array	2	[1]	integer	00000001
+public.t_array	v_null_array	2	[2]	integer	00000002
+public.t_array	v_text_special	1		text[]	4
+public.t_array	v_text_special	2		text[]	2
+public.t_array	v_enum_array	1		mood[]	4
+public.t_array	v_enum_array	2		mood[]	2
+public.t_array_shape	id	1		integer	00000001
+public.t_array_shape	id	2		integer	00000002
+public.t_array_shape	id	3		integer	00000003
+public.t_array_shape	v_multidim	1		integer[]	2x2
+public.t_array_shape	v_multidim	1	[1]	integer	00000001
+public.t_array_shape	v_multidim	1	[2]	integer	00000002
+public.t_array_shape	v_multidim	1	[3]	integer	00000003
+public.t_array_shape	v_multidim	1	[4]	integer	00000004
+public.t_array_shape	v_multidim	2		integer[]	\N
+public.t_array_shape	v_multidim	3		integer[]	2x2
+public.t_array_shape	v_multidim	3	[1]	integer	00000005
+public.t_array_shape	v_multidim	3	[2]	integer	00000006
+public.t_array_shape	v_multidim	3	[3]	integer	00000007
+public.t_array_shape	v_multidim	3	[4]	integer	00000008
+public.t_array_shape	v_mixed_dim	1		integer[]	2
+public.t_array_shape	v_mixed_dim	1	[1]	integer	00000001
+public.t_array_shape	v_mixed_dim	1	[2]	integer	00000002
+public.t_array_shape	v_mixed_dim	2		integer[]	2x2
+public.t_array_shape	v_mixed_dim	2	[1]	integer	00000001
+public.t_array_shape	v_mixed_dim	2	[2]	integer	00000002
+public.t_array_shape	v_mixed_dim	2	[3]	integer	00000003
+public.t_array_shape	v_mixed_dim	2	[4]	integer	00000004
+public.t_array_shape	v_mixed_dim	3		integer[]	\N
+public.t_array_shape	v_lbound	1		integer[]	3
+public.t_array_shape	v_lbound	1	[1]	integer	00000007
+public.t_array_shape	v_lbound	1	[2]	integer	00000008
+public.t_array_shape	v_lbound	1	[3]	integer	00000009
+public.t_array_shape	v_lbound	2		integer[]	2
+public.t_array_shape	v_lbound	2	[1]	integer	0000000a
+public.t_array_shape	v_lbound	2	[2]	integer	0000000b
+public.t_array_shape	v_lbound	3		integer[]	\N
+public.t_array_spelling	id	1		integer	00000001
+public.t_array_spelling	id	2		integer	00000002
+public.t_array_spelling	id	3		integer	00000003
+public.t_array_spelling	v_bounded	1		integer[]	4
+public.t_array_spelling	v_bounded	1	[1]	integer	00000001
+public.t_array_spelling	v_bounded	1	[2]	integer	00000002
+public.t_array_spelling	v_bounded	1	[3]	integer	00000003
+public.t_array_spelling	v_bounded	1	[4]	integer	00000004
+public.t_array_spelling	v_bounded	2		integer[]	0
+public.t_array_spelling	v_bounded	3		integer[]	\N
+public.t_array_spelling	v_bounded_2d	1		integer[]	2
+public.t_array_spelling	v_bounded_2d	1	[1]	integer	00000005
+public.t_array_spelling	v_bounded_2d	1	[2]	integer	00000006
+public.t_array_spelling	v_bounded_2d	2		integer[]	\N
+public.t_array_spelling	v_bounded_2d	3		integer[]	\N
+public.t_array_spelling	v_array_kw	1		integer[]	2
+public.t_array_spelling	v_array_kw	1	[1]	integer	00000007
+public.t_array_spelling	v_array_kw	1	[2]	integer	00000008
+public.t_array_spelling	v_array_kw	2		integer[]	2
+public.t_array_spelling	v_array_kw	2	[1]	integer	\N
+public.t_array_spelling	v_array_kw	2	[2]	integer	0000000a
+public.t_array_spelling	v_array_kw	3		integer[]	\N
+public.t_array_spelling	v_array_kw_n	1		integer[]	1
+public.t_array_spelling	v_array_kw_n	1	[1]	integer	00000009
+public.t_array_spelling	v_array_kw_n	2		integer[]	0
+public.t_array_spelling	v_array_kw_n	3		integer[]	\N
+public.t_base_type	id	1		integer	00000001
+public.t_base_type	id	2		integer	00000002
+public.t_base_type	v_mybase_array	1		mybase[]	2
+public.t_base_type	v_mybase_array	2		mybase[]	\N
+public.t_bytea	id	1		integer	00000001
+public.t_bytea	id	2		integer	00000002
+public.t_bytea	id	3		integer	00000003
+public.t_bytea	id	4		integer	00000004
+public.t_bytea	v_bytea	1		bytea	
+public.t_bytea	v_bytea	2		bytea	\N
+public.t_bytea	v_bytea	3		bytea	deadbeef00ff
+public.t_bytea	v_bytea	4		bytea	5c6261636b736c617368
+public.t_collate	id	1		integer	00000001
+public.t_collate	id	2		integer	00000002
+public.t_collate	id	3		integer	00000003
+public.t_collate	id	4		integer	00000004
+public.t_collate	id	5		integer	00000005
+public.t_collate	id	6		integer	00000006
+public.t_collate	id	7		integer	00000007
+public.t_collate	id	8		integer	00000008
+public.t_collate	id	9		integer	00000009
+public.t_collate	v_pair	1		collated_pair	()
+public.t_collate	v_pair	2		collated_pair	()
+public.t_collate	v_pair	3		collated_pair	()
+public.t_collate	v_pair	4		collated_pair	()
+public.t_collate	v_pair	5		collated_pair	()
+public.t_collate	v_pair	6		collated_pair	()
+public.t_collate	v_pair	7		collated_pair	()
+public.t_collate	v_pair	8		collated_pair	()
+public.t_collate	v_pair	9		collated_pair	\N
+public.t_composite	id	1		integer	00000001
+public.t_composite	id	2		integer	00000002
+public.t_composite	id	3		integer	00000003
+public.t_composite	v_point	1		point2d	()
+public.t_composite	v_point	1	.x	integer	00000001
+public.t_composite	v_point	2		point2d	\N
+public.t_composite	v_point	3		point2d	()
+public.t_composite	v_point	3	.x	integer	\N
+public.t_composite	v_points	1		point2d[]	2
+public.t_composite	v_points	1	[1]	point2d	()
+public.t_composite	v_points	1	[1].x	integer	00000001
+public.t_composite	v_points	1	[2]	point2d	()
+public.t_composite	v_points	1	[2].x	integer	00000002
+public.t_composite	v_points	2		point2d[]	\N
+public.t_composite	v_points	3		point2d[]	2
+public.t_composite	v_points	3	[1]	point2d	\N
+public.t_composite	v_points	3	[2]	point2d	()
+public.t_composite	v_points	3	[2].x	integer	00000003
+public.t_composite	v_tagged	1		tagged	()
+public.t_composite	v_tagged	1	.tags	text[]	3
+public.t_composite	v_tagged	2		tagged	\N
+public.t_composite	v_tagged	3		tagged	()
+public.t_composite	v_tagged	3	.tags	text[]	0
+public.t_composite	v_empty_comp	1		empty_comp	()
+public.t_composite	v_empty_comp	2		empty_comp	\N
+public.t_composite	v_empty_comp	3		empty_comp	()
+public.t_composite_matrix	id	1		integer	00000001
+public.t_composite_matrix	id	2		integer	00000002
+public.t_composite_matrix	id	3		integer	00000003
+public.t_composite_matrix	id	4		integer	00000004
+public.t_composite_matrix	id	5		integer	00000005
+public.t_composite_matrix	id	6		integer	00000006
+public.t_composite_matrix	id	7		integer	00000007
+public.t_composite_matrix	id	8		integer	00000008
+public.t_composite_matrix	id	9		integer	00000009
+public.t_composite_matrix	id	10		integer	0000000a
+public.t_composite_matrix	id	11		integer	0000000b
+public.t_composite_matrix	v_tagged	1		tagged	()
+public.t_composite_matrix	v_tagged	1	.tags	text[]	2
+public.t_composite_matrix	v_tagged	2		tagged	()
+public.t_composite_matrix	v_tagged	2	.tags	text[]	1
+public.t_composite_matrix	v_tagged	3		tagged	\N
+public.t_composite_matrix	v_tagged	4		tagged	()
+public.t_composite_matrix	v_tagged	4	.tags	text[]	2
+public.t_composite_matrix	v_tagged	5		tagged	()
+public.t_composite_matrix	v_tagged	5	.tags	text[]	0
+public.t_composite_matrix	v_tagged	6		tagged	()
+public.t_composite_matrix	v_tagged	6	.tags	text[]	2x2
+public.t_composite_matrix	v_tagged	7		tagged	()
+public.t_composite_matrix	v_tagged	7	.tags	text[]	1
+public.t_composite_matrix	v_tagged	8		tagged	\N
+public.t_composite_matrix	v_tagged	9		tagged	()
+public.t_composite_matrix	v_tagged	9	.tags	text[]	2
+public.t_composite_matrix	v_tagged	10		tagged	()
+public.t_composite_matrix	v_tagged	10	.tags	text[]	1
+public.t_composite_matrix	v_tagged	11		tagged	()
+public.t_composite_matrix	v_tagged	11	.tags	text[]	\N
+public.t_date	id	1		integer	00000001
+public.t_date	id	2		integer	00000002
+public.t_date	id	3		integer	00000003
+public.t_date	id	4		integer	00000004
+public.t_date	id	5		integer	00000005
+public.t_date	id	6		integer	00000006
+public.t_date	id	7		integer	00000007
+public.t_date	v_date	1		date	infinity
+public.t_date	v_date	2		date	-infinity
+public.t_date	v_date	3		date	1721426
+public.t_date	v_date	4		date	5373484
+public.t_date	v_date	5		date	1705355
+public.t_date	v_date	6		date	5373485
+public.t_date	v_date	7		date	\N
+public.t_delimiter	id	1		integer	00000001
+public.t_delimiter	id	2		integer	00000002
+public.t_delimiter	v_box_domain_array	1		box_domain[]	2
+public.t_delimiter	v_box_domain_array	2		box_domain[]	\N
+public.t_enum_domain	id	1		integer	00000001
+public.t_enum_domain	id	2		integer	00000002
+public.t_enum_domain	id	3		integer	00000003
+public.t_enum_domain	id	4		integer	00000004
+public.t_enum_domain	v_domain	1		integer	00000005
+public.t_enum_domain	v_domain	2		integer	00000000
+public.t_enum_domain	v_domain	3		integer	fffffffb
+public.t_enum_domain	v_domain	4		integer	00000064
+public.t_extremes	id	1		integer	00000001
+public.t_extremes	id	2		integer	00000002
+public.t_extremes	id	3		integer	00000003
+public.t_extremes	id	4		integer	00000004
+public.t_extremes	id	5		integer	00000005
+public.t_extremes	id	6		integer	00000006
+public.t_extremes	id	7		integer	00000007
+public.t_extremes	id	8		integer	00000008
+public.t_extremes	id	9		integer	00000009
+public.t_extremes	id	10		integer	0000000a
+public.t_extremes	id	11		integer	0000000b
+public.t_extremes	id	12		integer	0000000c
+public.t_extremes	id	13		integer	0000000d
+public.t_extremes	id	14		integer	0000000e
+public.t_extremes	id	15		integer	0000000f
+public.t_extremes	id	16		integer	00000010
+public.t_extremes	id	17		integer	00000011
+public.t_extremes	id	18		integer	00000012
+public.t_extremes	v_smallint	1		smallint	8000
+public.t_extremes	v_smallint	2		smallint	7fff
+public.t_extremes	v_smallint	3		smallint	\N
+public.t_extremes	v_smallint	4		smallint	\N
+public.t_extremes	v_smallint	5		smallint	\N
+public.t_extremes	v_smallint	6		smallint	\N
+public.t_extremes	v_smallint	7		smallint	\N
+public.t_extremes	v_smallint	8		smallint	\N
+public.t_extremes	v_smallint	9		smallint	\N
+public.t_extremes	v_smallint	10		smallint	\N
+public.t_extremes	v_smallint	11		smallint	\N
+public.t_extremes	v_smallint	12		smallint	\N
+public.t_extremes	v_smallint	13		smallint	\N
+public.t_extremes	v_smallint	14		smallint	\N
+public.t_extremes	v_smallint	15		smallint	\N
+public.t_extremes	v_smallint	16		smallint	\N
+public.t_extremes	v_smallint	17		smallint	\N
+public.t_extremes	v_smallint	18		smallint	\N
+public.t_extremes	v_integer	1		integer	80000000
+public.t_extremes	v_integer	2		integer	7fffffff
+public.t_extremes	v_integer	3		integer	\N
+public.t_extremes	v_integer	4		integer	\N
+public.t_extremes	v_integer	5		integer	\N
+public.t_extremes	v_integer	6		integer	\N
+public.t_extremes	v_integer	7		integer	\N
+public.t_extremes	v_integer	8		integer	\N
+public.t_extremes	v_integer	9		integer	\N
+public.t_extremes	v_integer	10		integer	\N
+public.t_extremes	v_integer	11		integer	\N
+public.t_extremes	v_integer	12		integer	\N
+public.t_extremes	v_integer	13		integer	\N
+public.t_extremes	v_integer	14		integer	\N
+public.t_extremes	v_integer	15		integer	\N
+public.t_extremes	v_integer	16		integer	\N
+public.t_extremes	v_integer	17		integer	\N
+public.t_extremes	v_integer	18		integer	\N
+public.t_extremes	v_bigint	1		bigint	8000000000000000
+public.t_extremes	v_bigint	2		bigint	7fffffffffffffff
+public.t_extremes	v_bigint	3		bigint	\N
+public.t_extremes	v_bigint	4		bigint	\N
+public.t_extremes	v_bigint	5		bigint	\N
+public.t_extremes	v_bigint	6		bigint	\N
+public.t_extremes	v_bigint	7		bigint	\N
+public.t_extremes	v_bigint	8		bigint	\N
+public.t_extremes	v_bigint	9		bigint	\N
+public.t_extremes	v_bigint	10		bigint	\N
+public.t_extremes	v_bigint	11		bigint	\N
+public.t_extremes	v_bigint	12		bigint	\N
+public.t_extremes	v_bigint	13		bigint	\N
+public.t_extremes	v_bigint	14		bigint	\N
+public.t_extremes	v_bigint	15		bigint	\N
+public.t_extremes	v_bigint	16		bigint	\N
+public.t_extremes	v_bigint	17		bigint	\N
+public.t_extremes	v_bigint	18		bigint	\N
+public.t_extremes	v_oid	1		oid	00000000
+public.t_extremes	v_oid	2		oid	ffffffff
+public.t_extremes	v_oid	3		oid	\N
+public.t_extremes	v_oid	4		oid	\N
+public.t_extremes	v_oid	5		oid	\N
+public.t_extremes	v_oid	6		oid	\N
+public.t_extremes	v_oid	7		oid	\N
+public.t_extremes	v_oid	8		oid	\N
+public.t_extremes	v_oid	9		oid	\N
+public.t_extremes	v_oid	10		oid	\N
+public.t_extremes	v_oid	11		oid	\N
+public.t_extremes	v_oid	12		oid	\N
+public.t_extremes	v_oid	13		oid	\N
+public.t_extremes	v_oid	14		oid	\N
+public.t_extremes	v_oid	15		oid	\N
+public.t_extremes	v_oid	16		oid	\N
+public.t_extremes	v_oid	17		oid	\N
+public.t_extremes	v_oid	18		oid	\N
+public.t_extremes	v_boolean	1		boolean	00
+public.t_extremes	v_boolean	2		boolean	01
+public.t_extremes	v_boolean	3		boolean	\N
+public.t_extremes	v_boolean	4		boolean	\N
+public.t_extremes	v_boolean	5		boolean	\N
+public.t_extremes	v_boolean	6		boolean	\N
+public.t_extremes	v_boolean	7		boolean	\N
+public.t_extremes	v_boolean	8		boolean	\N
+public.t_extremes	v_boolean	9		boolean	\N
+public.t_extremes	v_boolean	10		boolean	\N
+public.t_extremes	v_boolean	11		boolean	\N
+public.t_extremes	v_boolean	12		boolean	\N
+public.t_extremes	v_boolean	13		boolean	\N
+public.t_extremes	v_boolean	14		boolean	\N
+public.t_extremes	v_boolean	15		boolean	\N
+public.t_extremes	v_boolean	16		boolean	\N
+public.t_extremes	v_boolean	17		boolean	\N
+public.t_extremes	v_boolean	18		boolean	\N
+public.t_extremes	v_real	1		real	ff7fffff
+public.t_extremes	v_real	2		real	7f7fffff
+public.t_extremes	v_real	3		real	ff800000
+public.t_extremes	v_real	4		real	7f800000
+public.t_extremes	v_real	5		real	7fc00000
+public.t_extremes	v_real	6		real	\N
+public.t_extremes	v_real	7		real	\N
+public.t_extremes	v_real	8		real	\N
+public.t_extremes	v_real	9		real	\N
+public.t_extremes	v_real	10		real	\N
+public.t_extremes	v_real	11		real	\N
+public.t_extremes	v_real	12		real	\N
+public.t_extremes	v_real	13		real	\N
+public.t_extremes	v_real	14		real	\N
+public.t_extremes	v_real	15		real	\N
+public.t_extremes	v_real	16		real	\N
+public.t_extremes	v_real	17		real	\N
+public.t_extremes	v_real	18		real	\N
+public.t_extremes	v_double	1		double precision	ffefffffffffffff
+public.t_extremes	v_double	2		double precision	7fefffffffffffff
+public.t_extremes	v_double	3		double precision	fff0000000000000
+public.t_extremes	v_double	4		double precision	7ff0000000000000
+public.t_extremes	v_double	5		double precision	7ff8000000000000
+public.t_extremes	v_double	6		double precision	\N
+public.t_extremes	v_double	7		double precision	\N
+public.t_extremes	v_double	8		double precision	\N
+public.t_extremes	v_double	9		double precision	\N
+public.t_extremes	v_double	10		double precision	\N
+public.t_extremes	v_double	11		double precision	\N
+public.t_extremes	v_double	12		double precision	\N
+public.t_extremes	v_double	13		double precision	\N
+public.t_extremes	v_double	14		double precision	\N
+public.t_extremes	v_double	15		double precision	\N
+public.t_extremes	v_double	16		double precision	\N
+public.t_extremes	v_double	17		double precision	\N
+public.t_extremes	v_double	18		double precision	\N
+public.t_extremes	v_numeric38	1		numeric(38,0)	-99999999999999999999999999999999999999 0
+public.t_extremes	v_numeric38	2		numeric(38,0)	99999999999999999999999999999999999999 0
+public.t_extremes	v_numeric38	3		numeric(38,0)	\N
+public.t_extremes	v_numeric38	4		numeric(38,0)	\N
+public.t_extremes	v_numeric38	5		numeric(38,0)	NaN
+public.t_extremes	v_numeric38	6		numeric(38,0)	\N
+public.t_extremes	v_numeric38	7		numeric(38,0)	\N
+public.t_extremes	v_numeric38	8		numeric(38,0)	\N
+public.t_extremes	v_numeric38	9		numeric(38,0)	\N
+public.t_extremes	v_numeric38	10		numeric(38,0)	\N
+public.t_extremes	v_numeric38	11		numeric(38,0)	\N
+public.t_extremes	v_numeric38	12		numeric(38,0)	\N
+public.t_extremes	v_numeric38	13		numeric(38,0)	\N
+public.t_extremes	v_numeric38	14		numeric(38,0)	\N
+public.t_extremes	v_numeric38	15		numeric(38,0)	\N
+public.t_extremes	v_numeric38	16		numeric(38,0)	\N
+public.t_extremes	v_numeric38	17		numeric(38,0)	\N
+public.t_extremes	v_numeric38	18		numeric(38,0)	\N
+public.t_extremes	v_numeric76	1		numeric(76,0)	-9999999999999999999999999999999999999999999999999999999999999999999999999999 0
+public.t_extremes	v_numeric76	2		numeric(76,0)	9999999999999999999999999999999999999999999999999999999999999999999999999999 0
+public.t_extremes	v_numeric76	3		numeric(76,0)	\N
+public.t_extremes	v_numeric76	4		numeric(76,0)	\N
+public.t_extremes	v_numeric76	5		numeric(76,0)	NaN
+public.t_extremes	v_numeric76	6		numeric(76,0)	\N
+public.t_extremes	v_numeric76	7		numeric(76,0)	\N
+public.t_extremes	v_numeric76	8		numeric(76,0)	\N
+public.t_extremes	v_numeric76	9		numeric(76,0)	\N
+public.t_extremes	v_numeric76	10		numeric(76,0)	\N
+public.t_extremes	v_numeric76	11		numeric(76,0)	\N
+public.t_extremes	v_numeric76	12		numeric(76,0)	\N
+public.t_extremes	v_numeric76	13		numeric(76,0)	\N
+public.t_extremes	v_numeric76	14		numeric(76,0)	\N
+public.t_extremes	v_numeric76	15		numeric(76,0)	\N
+public.t_extremes	v_numeric76	16		numeric(76,0)	\N
+public.t_extremes	v_numeric76	17		numeric(76,0)	\N
+public.t_extremes	v_numeric76	18		numeric(76,0)	\N
+public.t_extremes	v_date	1		date	0
+public.t_extremes	v_date	2		date	2147483493
+public.t_extremes	v_date	3		date	-infinity
+public.t_extremes	v_date	4		date	infinity
+public.t_extremes	v_date	5		date	\N
+public.t_extremes	v_date	6		date	\N
+public.t_extremes	v_date	7		date	\N
+public.t_extremes	v_date	8		date	\N
+public.t_extremes	v_date	9		date	\N
+public.t_extremes	v_date	10		date	\N
+public.t_extremes	v_date	11		date	\N
+public.t_extremes	v_date	12		date	\N
+public.t_extremes	v_date	13		date	\N
+public.t_extremes	v_date	14		date	97466824
+public.t_extremes	v_date	15		date	97466825
+public.t_extremes	v_date	16		date	\N
+public.t_extremes	v_date	17		date	\N
+public.t_extremes	v_date	18		date	\N
+public.t_extremes	v_ts	1		timestamp without time zone	-210866803200000000
+public.t_extremes	v_ts	2		timestamp without time zone	9224318015999999999
+public.t_extremes	v_ts	3		timestamp without time zone	-infinity
+public.t_extremes	v_ts	4		timestamp without time zone	infinity
+public.t_extremes	v_ts	5		timestamp without time zone	\N
+public.t_extremes	v_ts	6		timestamp without time zone	\N
+public.t_extremes	v_ts	7		timestamp without time zone	\N
+public.t_extremes	v_ts	8		timestamp without time zone	\N
+public.t_extremes	v_ts	9		timestamp without time zone	\N
+public.t_extremes	v_ts	10		timestamp without time zone	\N
+public.t_extremes	v_ts	11		timestamp without time zone	\N
+public.t_extremes	v_ts	12		timestamp without time zone	9223372036854775807
+public.t_extremes	v_ts	13		timestamp without time zone	9223372036854775808
+public.t_extremes	v_ts	14		timestamp without time zone	8210266876799999999
+public.t_extremes	v_ts	15		timestamp without time zone	8210266876800000000
+public.t_extremes	v_ts	16		timestamp without time zone	\N
+public.t_extremes	v_ts	17		timestamp without time zone	\N
+public.t_extremes	v_ts	18		timestamp without time zone	\N
+public.t_extremes	v_tstz	1		timestamp with time zone	-210866803200000000
+public.t_extremes	v_tstz	2		timestamp with time zone	9224318015999999999
+public.t_extremes	v_tstz	3		timestamp with time zone	-infinity
+public.t_extremes	v_tstz	4		timestamp with time zone	infinity
+public.t_extremes	v_tstz	5		timestamp with time zone	\N
+public.t_extremes	v_tstz	6		timestamp with time zone	\N
+public.t_extremes	v_tstz	7		timestamp with time zone	\N
+public.t_extremes	v_tstz	8		timestamp with time zone	\N
+public.t_extremes	v_tstz	9		timestamp with time zone	\N
+public.t_extremes	v_tstz	10		timestamp with time zone	\N
+public.t_extremes	v_tstz	11		timestamp with time zone	\N
+public.t_extremes	v_tstz	12		timestamp with time zone	9223372036854775807
+public.t_extremes	v_tstz	13		timestamp with time zone	9223372036854775808
+public.t_extremes	v_tstz	14		timestamp with time zone	8210266876799999999
+public.t_extremes	v_tstz	15		timestamp with time zone	8210266876800000000
+public.t_extremes	v_tstz	16		timestamp with time zone	\N
+public.t_extremes	v_tstz	17		timestamp with time zone	\N
+public.t_extremes	v_tstz	18		timestamp with time zone	\N
+public.t_extremes	v_time	1		time without time zone	0
+public.t_extremes	v_time	2		time without time zone	86400000000
+public.t_extremes	v_time	3		time without time zone	\N
+public.t_extremes	v_time	4		time without time zone	\N
+public.t_extremes	v_time	5		time without time zone	\N
+public.t_extremes	v_time	6		time without time zone	\N
+public.t_extremes	v_time	7		time without time zone	\N
+public.t_extremes	v_time	8		time without time zone	\N
+public.t_extremes	v_time	9		time without time zone	\N
+public.t_extremes	v_time	10		time without time zone	\N
+public.t_extremes	v_time	11		time without time zone	\N
+public.t_extremes	v_time	12		time without time zone	\N
+public.t_extremes	v_time	13		time without time zone	\N
+public.t_extremes	v_time	14		time without time zone	\N
+public.t_extremes	v_time	15		time without time zone	\N
+public.t_extremes	v_time	16		time without time zone	\N
+public.t_extremes	v_time	17		time without time zone	\N
+public.t_extremes	v_time	18		time without time zone	\N
+public.t_extremes	v_interval	1		interval	-2147483648 0 0
+public.t_extremes	v_interval	2		interval	2147483647 0 0
+public.t_extremes	v_interval	3		interval	0 -2147483648 0
+public.t_extremes	v_interval	4		interval	0 2147483647 0
+public.t_extremes	v_interval	5		interval	\N
+public.t_extremes	v_interval	6		interval	0 0 -9223372036854775807
+public.t_extremes	v_interval	7		interval	0 0 9223372036854775807
+public.t_extremes	v_interval	8		interval	0 0 9223372036854776
+public.t_extremes	v_interval	9		interval	0 0 9223372036854775
+public.t_extremes	v_interval	10		interval	0 0 -9223372036854776
+public.t_extremes	v_interval	11		interval	0 0 -9223372036854775
+public.t_extremes	v_interval	12		interval	\N
+public.t_extremes	v_interval	13		interval	\N
+public.t_extremes	v_interval	14		interval	\N
+public.t_extremes	v_interval	15		interval	\N
+public.t_extremes	v_interval	16		interval	\N
+public.t_extremes	v_interval	17		interval	-infinity
+public.t_extremes	v_interval	18		interval	infinity
+public.t_extremes	v_uuid	1		uuid	00000000000000000000000000000000
+public.t_extremes	v_uuid	2		uuid	ffffffffffffffffffffffffffffffff
+public.t_extremes	v_uuid	3		uuid	\N
+public.t_extremes	v_uuid	4		uuid	\N
+public.t_extremes	v_uuid	5		uuid	\N
+public.t_extremes	v_uuid	6		uuid	\N
+public.t_extremes	v_uuid	7		uuid	\N
+public.t_extremes	v_uuid	8		uuid	\N
+public.t_extremes	v_uuid	9		uuid	\N
+public.t_extremes	v_uuid	10		uuid	\N
+public.t_extremes	v_uuid	11		uuid	\N
+public.t_extremes	v_uuid	12		uuid	\N
+public.t_extremes	v_uuid	13		uuid	\N
+public.t_extremes	v_uuid	14		uuid	\N
+public.t_extremes	v_uuid	15		uuid	\N
+public.t_extremes	v_uuid	16		uuid	\N
+public.t_extremes	v_uuid	17		uuid	\N
+public.t_extremes	v_uuid	18		uuid	\N
+public.t_extremes	v_bytea	1		bytea	
+public.t_extremes	v_bytea	2		bytea	ff
+public.t_extremes	v_bytea	3		bytea	\N
+public.t_extremes	v_bytea	4		bytea	\N
+public.t_extremes	v_bytea	5		bytea	\N
+public.t_extremes	v_bytea	6		bytea	\N
+public.t_extremes	v_bytea	7		bytea	\N
+public.t_extremes	v_bytea	8		bytea	\N
+public.t_extremes	v_bytea	9		bytea	\N
+public.t_extremes	v_bytea	10		bytea	\N
+public.t_extremes	v_bytea	11		bytea	\N
+public.t_extremes	v_bytea	12		bytea	\N
+public.t_extremes	v_bytea	13		bytea	\N
+public.t_extremes	v_bytea	14		bytea	\N
+public.t_extremes	v_bytea	15		bytea	\N
+public.t_extremes	v_bytea	16		bytea	\N
+public.t_extremes	v_bytea	17		bytea	\N
+public.t_extremes	v_bytea	18		bytea	\N
+public.t_extremes	v_int2vector	1		int2vector	1
+public.t_extremes	v_int2vector	1	[1]	smallint	8000
+public.t_extremes	v_int2vector	2		int2vector	1
+public.t_extremes	v_int2vector	2	[1]	smallint	7fff
+public.t_extremes	v_int2vector	3		int2vector	\N
+public.t_extremes	v_int2vector	4		int2vector	\N
+public.t_extremes	v_int2vector	5		int2vector	\N
+public.t_extremes	v_int2vector	6		int2vector	\N
+public.t_extremes	v_int2vector	7		int2vector	\N
+public.t_extremes	v_int2vector	8		int2vector	\N
+public.t_extremes	v_int2vector	9		int2vector	\N
+public.t_extremes	v_int2vector	10		int2vector	\N
+public.t_extremes	v_int2vector	11		int2vector	\N
+public.t_extremes	v_int2vector	12		int2vector	\N
+public.t_extremes	v_int2vector	13		int2vector	\N
+public.t_extremes	v_int2vector	14		int2vector	\N
+public.t_extremes	v_int2vector	15		int2vector	\N
+public.t_extremes	v_int2vector	16		int2vector	\N
+public.t_extremes	v_int2vector	17		int2vector	\N
+public.t_extremes	v_int2vector	18		int2vector	\N
+public.t_extremes_nested	id	1		integer	00000001
+public.t_extremes_nested	id	2		integer	00000002
+public.t_extremes_nested	id	3		integer	00000003
+public.t_extremes_nested	v_date_array	1		date[]	2
+public.t_extremes_nested	v_date_array	1	[1]	date	2460311
+public.t_extremes_nested	v_date_array	1	[2]	date	infinity
+public.t_extremes_nested	v_date_array	2		date[]	1
+public.t_extremes_nested	v_date_array	2	[1]	date	2460311
+public.t_extremes_nested	v_date_array	3		date[]	\N
+public.t_extremes_nested	v_daterange	1		daterange	()
+public.t_extremes_nested	v_daterange	1	.lower	date	2460311
+public.t_extremes_nested	v_daterange	1	.upper	date	infinity
+public.t_extremes_nested	v_daterange	1	.lower_inclusive	boolean	01
+public.t_extremes_nested	v_daterange	1	.upper_inclusive	boolean	00
+public.t_extremes_nested	v_daterange	1	.empty	boolean	00
+public.t_extremes_nested	v_daterange	2		daterange	()
+public.t_extremes_nested	v_daterange	2	.lower	date	2460311
+public.t_extremes_nested	v_daterange	2	.upper	date	2460342
+public.t_extremes_nested	v_daterange	2	.lower_inclusive	boolean	01
+public.t_extremes_nested	v_daterange	2	.upper_inclusive	boolean	00
+public.t_extremes_nested	v_daterange	2	.empty	boolean	00
+public.t_extremes_nested	v_daterange	3		daterange	\N
+public.t_extremes_nested	v_dated	1		dated	()
+public.t_extremes_nested	v_dated	1	.d	date	infinity
+public.t_extremes_nested	v_dated	2		dated	()
+public.t_extremes_nested	v_dated	2	.d	date	2460311
+public.t_extremes_nested	v_dated	3		dated	\N
+public.t_extremes_nested	v_interval_array	1		interval[]	2
+public.t_extremes_nested	v_interval_array	1	[1]	interval	0 1 0
+public.t_extremes_nested	v_interval_array	1	[2]	interval	0 0 9223372036854776
+public.t_extremes_nested	v_interval_array	2		interval[]	1
+public.t_extremes_nested	v_interval_array	2	[1]	interval	0 0 9223372036854775
+public.t_extremes_nested	v_interval_array	3		interval[]	\N
+public.t_float	id	1		integer	00000001
+public.t_float	id	2		integer	00000002
+public.t_float	id	3		integer	00000003
+public.t_float	id	4		integer	00000004
+public.t_float	id	5		integer	00000005
+public.t_float	id	6		integer	00000006
+public.t_float	id	7		integer	00000007
+public.t_float	v_real	1		real	7fc00000
+public.t_float	v_real	2		real	7f800000
+public.t_float	v_real	3		real	ff800000
+public.t_float	v_real	4		real	80000000
+public.t_float	v_real	5		real	00800000
+public.t_float	v_real	6		real	40490fdb
+public.t_float	v_real	7		real	\N
+public.t_float	v_double	1		double precision	7ff8000000000000
+public.t_float	v_double	2		double precision	7ff0000000000000
+public.t_float	v_double	3		double precision	fff0000000000000
+public.t_float	v_double	4		double precision	8000000000000000
+public.t_float	v_double	5		double precision	0010000000000000
+public.t_float	v_double	6		double precision	400921fb54442d11
+public.t_float	v_double	7		double precision	\N
+public.t_int	id	1		integer	00000001
+public.t_int	id	2		integer	00000002
+public.t_int	id	3		integer	00000003
+public.t_int	id	4		integer	00000004
+public.t_int	v_smallint	1		smallint	8000
+public.t_int	v_smallint	2		smallint	7fff
+public.t_int	v_smallint	3		smallint	0000
+public.t_int	v_smallint	4		smallint	\N
+public.t_int	v_integer	1		integer	80000000
+public.t_int	v_integer	2		integer	7fffffff
+public.t_int	v_integer	3		integer	00000000
+public.t_int	v_integer	4		integer	\N
+public.t_int	v_bigint	1		bigint	8000000000000000
+public.t_int	v_bigint	2		bigint	7fffffffffffffff
+public.t_int	v_bigint	3		bigint	0000000000000000
+public.t_int	v_bigint	4		bigint	\N
+public.t_int2vector	id	1		integer	00000001
+public.t_int2vector	id	2		integer	00000002
+public.t_int2vector	id	3		integer	00000003
+public.t_int2vector	id	4		integer	00000004
+public.t_int2vector	id	5		integer	00000005
+public.t_int2vector	v_vec	1		int2vector	3
+public.t_int2vector	v_vec	1	[1]	smallint	0001
+public.t_int2vector	v_vec	1	[2]	smallint	0002
+public.t_int2vector	v_vec	1	[3]	smallint	0003
+public.t_int2vector	v_vec	2		int2vector	0
+public.t_int2vector	v_vec	3		int2vector	2
+public.t_int2vector	v_vec	3	[1]	smallint	8000
+public.t_int2vector	v_vec	3	[2]	smallint	7fff
+public.t_int2vector	v_vec	4		int2vector	1
+public.t_int2vector	v_vec	4	[1]	smallint	0000
+public.t_int2vector	v_vec	5		int2vector	\N
+public.t_interval	id	1		integer	00000001
+public.t_interval	id	2		integer	00000002
+public.t_interval	id	3		integer	00000003
+public.t_interval	id	4		integer	00000004
+public.t_interval	id	5		integer	00000005
+public.t_interval	v_interval	1		interval	14 3 14706000000
+public.t_interval	v_interval	2		interval	0 -1 0
+public.t_interval	v_interval	3		interval	0 0 0
+public.t_interval	v_interval	4		interval	0 0 5400000000
+public.t_interval	v_interval	5		interval	\N
+public.t_json	id	1		integer	00000001
+public.t_json	id	2		integer	00000002
+public.t_json	id	3		integer	00000003
+public.t_multirange	id	1		integer	00000001
+public.t_multirange	id	2		integer	00000002
+public.t_multirange	id	3		integer	00000003
+public.t_multirange	v_int4multirange	1		int4multirange	1
+public.t_multirange	v_int4multirange	1	[1]	int4range	()
+public.t_multirange	v_int4multirange	1	[1].lower	integer	00000001
+public.t_multirange	v_int4multirange	1	[1].upper	integer	0000000a
+public.t_multirange	v_int4multirange	1	[1].lower_inclusive	boolean	01
+public.t_multirange	v_int4multirange	1	[1].upper_inclusive	boolean	00
+public.t_multirange	v_int4multirange	1	[1].empty	boolean	00
+public.t_multirange	v_int4multirange	2		int4multirange	0
+public.t_multirange	v_int4multirange	3		int4multirange	\N
+public.t_multirange	v_myrange_multi	1		myrange_multi	1
+public.t_multirange	v_myrange_multi	1	[1]	myrange	()
+public.t_multirange	v_myrange_multi	1	[1].lower	double precision	3ff8000000000000
+public.t_multirange	v_myrange_multi	1	[1].upper	double precision	4025000000000000
+public.t_multirange	v_myrange_multi	1	[1].lower_inclusive	boolean	01
+public.t_multirange	v_myrange_multi	1	[1].upper_inclusive	boolean	00
+public.t_multirange	v_myrange_multi	1	[1].empty	boolean	00
+public.t_multirange	v_myrange_multi	2		myrange_multi	0
+public.t_multirange	v_myrange_multi	3		myrange_multi	\N
+public.t_nested_array	id	1		integer	00000001
+public.t_nested_array	id	2		integer	00000002
+public.t_nested_array	id	3		integer	00000003
+public.t_nested_array	v_nested_array	1		intarr[]	2
+public.t_nested_array	v_nested_array	1	[1]	integer[]	2
+public.t_nested_array	v_nested_array	1	[1][1]	integer	00000001
+public.t_nested_array	v_nested_array	1	[1][2]	integer	00000002
+public.t_nested_array	v_nested_array	1	[2]	integer[]	1
+public.t_nested_array	v_nested_array	1	[2][1]	integer	00000003
+public.t_nested_array	v_nested_array	2		intarr[]	2
+public.t_nested_array	v_nested_array	2	[1]	integer[]	0
+public.t_nested_array	v_nested_array	2	[2]	integer[]	2
+public.t_nested_array	v_nested_array	2	[2][1]	integer	00000005
+public.t_nested_array	v_nested_array	2	[2][2]	integer	\N
+public.t_nested_array	v_nested_array	3		intarr[]	\N
+public.t_nested_array	v_arr_holder	1		arr_holder	()
+public.t_nested_array	v_arr_holder	1	.arr	intarr[]	1
+public.t_nested_array	v_arr_holder	1	.arr[1]	integer[]	2
+public.t_nested_array	v_arr_holder	1	.arr[1][1]	integer	00000001
+public.t_nested_array	v_arr_holder	1	.arr[1][2]	integer	00000002
+public.t_nested_array	v_arr_holder	2		arr_holder	()
+public.t_nested_array	v_arr_holder	2	.arr	intarr[]	\N
+public.t_nested_array	v_arr_holder	3		arr_holder	\N
+public.t_nested_array	v_pointdom	1		point2d	()
+public.t_nested_array	v_pointdom	1	.x	integer	00000001
+public.t_nested_array	v_pointdom	2		point2d	()
+public.t_nested_array	v_pointdom	2	.x	integer	\N
+public.t_nested_array	v_pointdom	3		point2d	\N
+public.t_nested_array	v_pointdom_array	1		pointdom[]	2
+public.t_nested_array	v_pointdom_array	1	[1]	point2d	()
+public.t_nested_array	v_pointdom_array	1	[1].x	integer	00000001
+public.t_nested_array	v_pointdom_array	1	[2]	point2d	()
+public.t_nested_array	v_pointdom_array	1	[2].x	integer	00000002
+public.t_nested_array	v_pointdom_array	2		pointdom[]	1
+public.t_nested_array	v_pointdom_array	2	[1]	point2d	\N
+public.t_nested_array	v_pointdom_array	3		pointdom[]	\N
+public.t_nested_array	v_boxed_point	1		boxed_point	()
+public.t_nested_array	v_boxed_point	1	.pt	point2d	()
+public.t_nested_array	v_boxed_point	1	.pt.x	integer	00000003
+public.t_nested_array	v_boxed_point	2		boxed_point	()
+public.t_nested_array	v_boxed_point	2	.pt	point2d	\N
+public.t_nested_array	v_boxed_point	3		boxed_point	\N
+public.t_nested_array	v_myrange_array	1		myrange[]	2
+public.t_nested_array	v_myrange_array	1	[1]	myrange	()
+public.t_nested_array	v_myrange_array	1	[1].lower	double precision	3ff8000000000000
+public.t_nested_array	v_myrange_array	1	[1].upper	double precision	4025000000000000
+public.t_nested_array	v_myrange_array	1	[1].lower_inclusive	boolean	01
+public.t_nested_array	v_myrange_array	1	[1].upper_inclusive	boolean	00
+public.t_nested_array	v_myrange_array	1	[1].empty	boolean	00
+public.t_nested_array	v_myrange_array	1	[2]	myrange	()
+public.t_nested_array	v_myrange_array	1	[2].lower	double precision	\N
+public.t_nested_array	v_myrange_array	1	[2].upper	double precision	\N
+public.t_nested_array	v_myrange_array	1	[2].lower_inclusive	boolean	00
+public.t_nested_array	v_myrange_array	1	[2].upper_inclusive	boolean	00
+public.t_nested_array	v_myrange_array	1	[2].empty	boolean	01
+public.t_nested_array	v_myrange_array	2		myrange[]	1
+public.t_nested_array	v_myrange_array	2	[1]	myrange	\N
+public.t_nested_array	v_myrange_array	3		myrange[]	\N
+public.t_nested_array	v_rangedom	1		myrange	()
+public.t_nested_array	v_rangedom	1	.lower	double precision	4004000000000000
+public.t_nested_array	v_rangedom	1	.upper	double precision	400c000000000000
+public.t_nested_array	v_rangedom	1	.lower_inclusive	boolean	01
+public.t_nested_array	v_rangedom	1	.upper_inclusive	boolean	00
+public.t_nested_array	v_rangedom	1	.empty	boolean	00
+public.t_nested_array	v_rangedom	2		myrange	\N
+public.t_nested_array	v_rangedom	3		myrange	\N
+public.t_net	id	1		integer	00000001
+public.t_net	id	2		integer	00000002
+public.t_net	id	3		integer	00000003
+public.t_numeric	id	1		integer	00000001
+public.t_numeric	id	2		integer	00000002
+public.t_numeric	id	3		integer	00000003
+public.t_numeric	id	4		integer	00000004
+public.t_numeric	id	5		integer	00000005
+public.t_numeric	id	6		integer	00000006
+public.t_numeric	id	7		integer	00000007
+public.t_numeric	v_typed	1		numeric(38,10)	12345678901234567890123456781234567890 10
+public.t_numeric	v_typed	2		numeric(38,10)	\N
+public.t_numeric	v_typed	3		numeric(38,10)	\N
+public.t_numeric	v_typed	4		numeric(38,10)	0 10
+public.t_numeric	v_typed	5		numeric(38,10)	-15000000000 10
+public.t_numeric	v_typed	6		numeric(38,10)	\N
+public.t_numeric	v_typed	7		numeric(38,10)	\N
+public.t_numeric	v_typed39	1		numeric(39,10)	\N
+public.t_numeric	v_typed39	2		numeric(39,10)	1234567891234567890 10
+public.t_numeric	v_typed39	3		numeric(39,10)	\N
+public.t_numeric	v_typed39	4		numeric(39,10)	0 10
+public.t_numeric	v_typed39	5		numeric(39,10)	-15000000000 10
+public.t_numeric	v_typed39	6		numeric(39,10)	\N
+public.t_numeric	v_typed39	7		numeric(39,10)	\N
+public.t_numeric	v_small	1		numeric(10,2)	\N
+public.t_numeric	v_small	2		numeric(10,2)	\N
+public.t_numeric	v_small	3		numeric(10,2)	NaN
+public.t_numeric	v_small	4		numeric(10,2)	0 2
+public.t_numeric	v_small	5		numeric(10,2)	-150 2
+public.t_numeric	v_small	6		numeric(10,2)	\N
+public.t_numeric	v_small	7		numeric(10,2)	\N
+public.t_numeric	v_untyped	1		numeric	\N
+public.t_numeric	v_untyped	2		numeric	\N
+public.t_numeric	v_untyped	3		numeric	NaN
+public.t_numeric	v_untyped	4		numeric	0 0
+public.t_numeric	v_untyped	5		numeric	10000 2
+public.t_numeric	v_untyped	6		numeric	123456789 4
+public.t_numeric	v_untyped	7		numeric	\N
+public.t_oid	id	1		integer	00000001
+public.t_oid	id	2		integer	00000002
+public.t_oid	id	3		integer	00000003
+public.t_oid	id	4		integer	00000004
+public.t_oid	id	5		integer	00000005
+public.t_oid	v_oid	1		oid	00000000
+public.t_oid	v_oid	2		oid	7fffffff
+public.t_oid	v_oid	3		oid	80000000
+public.t_oid	v_oid	4		oid	ffffffff
+public.t_oid	v_oid	5		oid	\N
+public.t_range	id	1		integer	00000001
+public.t_range	id	2		integer	00000002
+public.t_range	id	3		integer	00000003
+public.t_range	id	4		integer	00000004
+public.t_range	v_range	1		int4range	()
+public.t_range	v_range	1	.lower	integer	00000001
+public.t_range	v_range	1	.upper	integer	0000000a
+public.t_range	v_range	1	.lower_inclusive	boolean	01
+public.t_range	v_range	1	.upper_inclusive	boolean	00
+public.t_range	v_range	1	.empty	boolean	00
+public.t_range	v_range	2		int4range	()
+public.t_range	v_range	2	.lower	integer	\N
+public.t_range	v_range	2	.upper	integer	\N
+public.t_range	v_range	2	.lower_inclusive	boolean	00
+public.t_range	v_range	2	.upper_inclusive	boolean	00
+public.t_range	v_range	2	.empty	boolean	01
+public.t_range	v_range	3		int4range	()
+public.t_range	v_range	3	.lower	integer	\N
+public.t_range	v_range	3	.upper	integer	00000005
+public.t_range	v_range	3	.lower_inclusive	boolean	00
+public.t_range	v_range	3	.upper_inclusive	boolean	00
+public.t_range	v_range	3	.empty	boolean	00
+public.t_range	v_range	4		int4range	\N
+public.t_text	id	1		integer	00000001
+public.t_text	id	2		integer	00000002
+public.t_text	id	3		integer	00000003
+public.t_text_range	id	1		integer	00000001
+public.t_text_range	id	2		integer	00000002
+public.t_text_range	id	3		integer	00000003
+public.t_text_range	id	4		integer	00000004
+public.t_text_range	id	5		integer	00000005
+public.t_text_range	id	6		integer	00000006
+public.t_text_range	v_textrange	1		textrange	()
+public.t_text_range	v_textrange	1	.lower_inclusive	boolean	01
+public.t_text_range	v_textrange	1	.upper_inclusive	boolean	00
+public.t_text_range	v_textrange	1	.empty	boolean	00
+public.t_text_range	v_textrange	2		textrange	()
+public.t_text_range	v_textrange	2	.lower_inclusive	boolean	01
+public.t_text_range	v_textrange	2	.upper_inclusive	boolean	00
+public.t_text_range	v_textrange	2	.empty	boolean	00
+public.t_text_range	v_textrange	3		textrange	()
+public.t_text_range	v_textrange	3	.lower_inclusive	boolean	01
+public.t_text_range	v_textrange	3	.upper_inclusive	boolean	00
+public.t_text_range	v_textrange	3	.empty	boolean	00
+public.t_text_range	v_textrange	4		textrange	()
+public.t_text_range	v_textrange	4	.lower_inclusive	boolean	00
+public.t_text_range	v_textrange	4	.upper_inclusive	boolean	00
+public.t_text_range	v_textrange	4	.empty	boolean	00
+public.t_text_range	v_textrange	5		textrange	()
+public.t_text_range	v_textrange	5	.lower_inclusive	boolean	00
+public.t_text_range	v_textrange	5	.upper_inclusive	boolean	00
+public.t_text_range	v_textrange	5	.empty	boolean	01
+public.t_text_range	v_textrange	6		textrange	\N
+public.t_time	id	1		integer	00000001
+public.t_time	id	2		integer	00000002
+public.t_time	id	3		integer	00000003
+public.t_time	v_time	1		time without time zone	86400000000
+public.t_time	v_time	2		time without time zone	1
+public.t_time	v_time	3		time without time zone	\N
+public.t_timestamp	id	1		integer	00000001
+public.t_timestamp	id	2		integer	00000002
+public.t_timestamp	id	3		integer	00000003
+public.t_timestamp	id	4		integer	00000004
+public.t_timestamp	id	5		integer	00000005
+public.t_timestamp	id	6		integer	00000006
+public.t_timestamp	id	7		integer	00000007
+public.t_timestamp	id	8		integer	00000008
+public.t_timestamp	v_ts	1		timestamp without time zone	infinity
+public.t_timestamp	v_ts	2		timestamp without time zone	-infinity
+public.t_timestamp	v_ts	3		timestamp without time zone	1704067200000000
+public.t_timestamp	v_ts	4		timestamp without time zone	1704067200123456
+public.t_timestamp	v_ts	5		timestamp without time zone	-62135596800000000
+public.t_timestamp	v_ts	6		timestamp without time zone	-63524131200000000
+public.t_timestamp	v_ts	7		timestamp without time zone	9224318015999999999
+public.t_timestamp	v_ts	8		timestamp without time zone	\N
+public.t_timestamp	v_tstz	1		timestamp with time zone	infinity
+public.t_timestamp	v_tstz	2		timestamp with time zone	-infinity
+public.t_timestamp	v_tstz	3		timestamp with time zone	1704047400000000
+public.t_timestamp	v_tstz	4		timestamp with time zone	1704067200123456
+public.t_timestamp	v_tstz	5		timestamp with time zone	-62135596800000000
+public.t_timestamp	v_tstz	6		timestamp with time zone	-63524131200000000
+public.t_timestamp	v_tstz	7		timestamp with time zone	9224318015999999999
+public.t_timestamp	v_tstz	8		timestamp with time zone	\N
+public.t_type_spelling	id	1		integer	00000001
+public.t_type_spelling	id	2		integer	00000002
+public.t_type_spelling	v_ts3	1		timestamp(3) without time zone	1704067200123000
+public.t_type_spelling	v_ts3	2		timestamp(3) without time zone	\N
+public.t_type_spelling	v_tstz0	1		timestamp(0) with time zone	1704067201000000
+public.t_type_spelling	v_tstz0	2		timestamp(0) with time zone	\N
+public.t_type_spelling	v_time3	1		time(3) without time zone	45296789000
+public.t_type_spelling	v_time3	2		time(3) without time zone	\N
+public.t_type_spelling	v_ym	1		interval year to month	14 0 0
+public.t_type_spelling	v_ym	2		interval year to month	\N
+public.t_type_spelling	v_ds2	1		interval day to second(2)	0 3 14706790000
+public.t_type_spelling	v_ds2	2		interval day to second(2)	\N
+public.t_user_range	id	1		integer	00000001
+public.t_user_range	id	2		integer	00000002
+public.t_user_range	id	3		integer	00000003
+public.t_user_range	v_myrange	1		myrange	()
+public.t_user_range	v_myrange	1	.lower	double precision	3ff8000000000000
+public.t_user_range	v_myrange	1	.upper	double precision	4025000000000000
+public.t_user_range	v_myrange	1	.lower_inclusive	boolean	01
+public.t_user_range	v_myrange	1	.upper_inclusive	boolean	00
+public.t_user_range	v_myrange	1	.empty	boolean	00
+public.t_user_range	v_myrange	2		myrange	()
+public.t_user_range	v_myrange	2	.lower	double precision	\N
+public.t_user_range	v_myrange	2	.upper	double precision	\N
+public.t_user_range	v_myrange	2	.lower_inclusive	boolean	00
+public.t_user_range	v_myrange	2	.upper_inclusive	boolean	00
+public.t_user_range	v_myrange	2	.empty	boolean	01
+public.t_user_range	v_myrange	3		myrange	\N
+public.t_uuid	id	1		integer	00000001
+public.t_uuid	id	2		integer	00000002
+public.t_uuid	id	3		integer	00000003
+public.t_uuid	v_uuid	1		uuid	00000000000000000000000000000000
+public.t_uuid	v_uuid	2		uuid	a0eebc999c0b4ef8bb6d6bb9bd380a11
+public.t_uuid	v_uuid	3		uuid	\N
+public.t_v18_columns	id	1		integer	00000001
+public.t_v18_columns	id	2		integer	00000002
+public.t_v18_columns	v_after	1		date	2460311
+public.t_v18_columns	v_after	2		date	\N

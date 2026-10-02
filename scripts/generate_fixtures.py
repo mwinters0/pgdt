@@ -24,6 +24,12 @@ reconciliation (scripts/oracle_register.py), which is where a case added for a
 type fixture_schema_types.sql does not declare surfaces -- the moment it is
 generated, rather than as a column of `E42704` nobody reads.
 
+A second pass in the same database takes the **value oracle** -- the server's
+own reading of every typed value of the `types` schema, not in its output
+spelling, written to fixtures/<major-version>/oracle/values.tsv
+(scripts/value_oracle.py, which also holds the reconciliation the pass ends
+with: every typed arm read at every major).
+
 A third pass takes the **ADBC floor oracle** -- what the Arrow ADBC PostgreSQL
 driver returns for every declarable `pg_catalog` type, written under
 fixtures/<major-version>/adbc/ (docs/design/decisions.md, "D38"). Its sweep and file format are scripts/adbc_floor.py, and the pass
@@ -55,6 +61,7 @@ import floor_mapping
 import comparison_oracle
 import oracle_differences
 import oracle_register
+import value_oracle
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -461,6 +468,30 @@ def write_oracle(name: str, version: str) -> None:
         print(f"  oracle/{filename}: {out_path.relative_to(REPO_ROOT)} ({rows} rows)")
 
 
+def psql_output(name: str, sql: str, *flags: str) -> str:
+    """What a quiet `psql` session over the fixture database prints for
+    `sql` on stdin."""
+    return run(
+        DOCKER
+        + ["exec", "-i", name, "psql", "-U", DB_USER, "-d", DB_NAME, "-q", "-X"]
+        + ["-v", "ON_ERROR_STOP=1", *flags],
+        input=sql,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+
+
+def write_values(name: str, version: str) -> None:
+    """The value oracle over a loaded ORACLE_SCHEMA database: the catalog
+    first, which the reading script is built from, then the script."""
+    catalog = value_oracle.parse_catalog(psql_output(name, value_oracle.CATALOG_SQL, "-A", "-t"))
+    out = psql_output(name, value_oracle.values_script(catalog))
+    out_path = value_oracle.values_path(version)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(out)
+    print(f"  oracle/{out_path.name}: {out_path.relative_to(REPO_ROOT)} ({out.count(chr(10))} rows)")
+
+
 def take_floor(version: str) -> None:
     """Take the ADBC floor oracle for one server and write `adbc/floor.tsv`.
 
@@ -482,7 +513,13 @@ def take_floor(version: str) -> None:
 
 
 def generate_for_version(
-    version: str, image: str, schemas: list[str], dumps: bool, oracle: bool, floor: bool
+    version: str,
+    image: str,
+    schemas: list[str],
+    dumps: bool,
+    oracle: bool,
+    floor: bool,
+    values: bool,
 ) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
@@ -507,10 +544,13 @@ def generate_for_version(
                         f"{out_path.relative_to(REPO_ROOT)} ({size} bytes)"
                     )
                 drop_fixture_db(name)
-        if oracle:
+        if oracle or values:
             create_fixture_db(name, version, ORACLE_SCHEMA)
             try:
-                write_oracle(name, version)
+                if oracle:
+                    write_oracle(name, version)
+                if values:
+                    write_values(name, version)
             finally:
                 drop_fixture_db(name)
     finally:
@@ -583,11 +623,20 @@ def _run() -> int:
         help="don't regenerate fixtures/<version>/adbc/floor.tsv, the ADBC "
         "floor oracle; it is a third pass over the same containers",
     )
+    parser.add_argument(
+        "--skip-values",
+        action="store_true",
+        help="don't regenerate fixtures/<version>/oracle/values.tsv, the value "
+        "oracle; a pass of its own over the comparison oracle's database",
+    )
     args = parser.parse_args()
     versions = args.versions or sorted(ROUTINE_VERSIONS)
     schemas = args.schemas or sorted(SCHEMAS)
-    if args.skip_dumps and args.skip_oracle and args.skip_floor:
-        parser.error("--skip-dumps, --skip-oracle and --skip-floor together leave nothing to do")
+    if args.skip_dumps and args.skip_oracle and args.skip_floor and args.skip_values:
+        parser.error(
+            "--skip-dumps, --skip-oracle, --skip-floor and --skip-values together "
+            "leave nothing to do"
+        )
 
     for version in versions:
         generate_for_version(
@@ -597,6 +646,7 @@ def _run() -> int:
             dumps=not args.skip_dumps,
             oracle=not args.skip_oracle,
             floor=not args.skip_floor,
+            values=not args.skip_values,
         )
 
     if not args.skip_oracle:
@@ -616,6 +666,16 @@ def _run() -> int:
                 "the comparison register and the case table no longer cover each "
                 "other — read what `uv run oracle_register.py` names before "
                 "committing.",
+                file=sys.stderr,
+            )
+            return 1
+
+    if not args.skip_values:
+        print("\nvalue-oracle reconciliation:")
+        if value_oracle.check() != 0:
+            print(
+                "a typed arm has no value-oracle reading — read what "
+                "`uv run value_oracle.py` names before committing.",
                 file=sys.stderr,
             )
             return 1
