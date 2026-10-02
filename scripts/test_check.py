@@ -470,6 +470,42 @@ class Literals(unittest.TestCase):
             )
 
 
+class CodeOf(unittest.TestCase):
+    """What a comment-only change may touch, and what it may not."""
+
+    def same(self, a: str, b: str) -> bool:
+        return check.code_of(a) == check.code_of(b)
+
+    def test_comments_and_doc_prose_are_not_code(self):
+        base = "/// Does f.\nfn f() -> u8 {\n    1 // one\n}\n"
+        self.assertTrue(self.same(base, "/// Does f, rewritten\n/// over two lines.\nfn f() -> u8 {\n    1\n}\n"))
+        self.assertTrue(self.same(base, "//! Module.\n/* block /* nested */ */\n/// Does f.\nfn f() -> u8 {\n    1\n}\n"))
+        self.assertTrue(self.same(base, "/// Does f.\n//// four slashes is ordinary\nfn f() -> u8 { 1 }\n"))
+
+    def test_a_doctest_is_code(self):
+        doc = "/// ```\n/// assert_eq!(f(), 1);\n/// ```\nfn f() -> u8 { 1 }\n"
+        self.assertFalse(self.same(doc, doc.replace("1);", "2);")))
+        self.assertFalse(self.same(doc, doc.replace("/// ```\n///", "/// ```text\n///", 1)))
+        self.assertTrue(self.same(doc, "/// Prose.\n" + doc))
+        block = "/** ```\nf()\n``` */\nfn f() {}\n"
+        self.assertFalse(self.same(block, block.replace("f()\n", "g()\n")))
+
+    def test_a_comment_separates_tokens(self):
+        self.assertFalse(self.same("let ab = 1;", "let a/* c */b = 1;"))
+        self.assertTrue(self.same("let a b = 1;", "let a/* c */b = 1;"))
+
+    def test_literals_are_verbatim(self):
+        self.assertFalse(self.same('f("a  b")', 'f("a b")'))
+        self.assertFalse(self.same('f("x // y")', 'f("x")'))
+        self.assertFalse(self.same('f(r#"a\n\nb"#)', 'f(r#"a\nb"#)'))
+        self.assertFalse(self.same("f(' ')", "f('_')"))
+        self.assertTrue(self.same("fn f<'a>(x: &'a u8) {}", "fn f<'a>(x: &'a u8) {} // tail"))
+
+    def test_code_and_its_spacing_are_code(self):
+        self.assertFalse(self.same("f(a, b)", "f(a,b)"))
+        self.assertFalse(self.same("f(a)", "g(a)"))
+
+
 WORKSPACE = {
     "Cargo.toml": '[workspace]\nresolver = "2"\nmembers = ["base", "app"]\n',
     "base/Cargo.toml": '[package]\nname = "base"\nversion = "0.1.0"\nedition = "2021"\n',
@@ -541,6 +577,44 @@ class Affected(unittest.TestCase):
         self.assertEqual(argv["clippy"], ["cargo", "clippy", "--all-targets", "-p", "app", "-p", "base"])
         # `app` has no library, so no doctests.
         self.assertEqual(argv["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"])
+
+    def test_a_comment_only_change_lints_its_package_and_runs_no_test(self):
+        plan = check.plan_changes(
+            self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
+        )
+        self.assertEqual([c.name for c in plan.checks], ["fmt", "clippy", "unittest", "repoint"])
+        self.assertEqual(argv_of(plan)["clippy"][-2:], ["-p", "base"])
+        self.assertIn("linted only, their changes being comments, base", plan.note)
+
+    def test_a_comment_only_change_still_runs_a_target_reading_it(self):
+        changed = ["base/tests/data/x.sql", "app/src/main.rs"]
+        plan = check.plan_changes(self.repo, changed, lambda _: self.packages, {"app/src/main.rs"})
+        argv = argv_of(plan)
+        self.assertEqual(argv["nextest"][-2:], ["-E", "package(=base) | binary_id(=app::bin/app)"])
+        self.assertEqual(argv["clippy"][-4:], ["-p", "app", "-p", "base"])
+        self.assertNotIn("app", argv["doctest"])
+
+    def test_a_comment_beside_a_code_change_to_its_package_changes_nothing(self):
+        changed = ["base/src/lib.rs", "base/src/other.rs"]
+        plan = check.plan_changes(self.repo, changed, lambda _: self.packages, {"base/src/other.rs"})
+        self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "app", "-p", "base"])
+        self.assertNotIn("linted only", plan.note)
+
+    def test_comment_only_paths_compares_the_two_trees(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            write(repo, "c.rs", "fn c() {}\n")
+            write(repo, "d.rs", "fn d() {}\n")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "rs")
+            head = check.head_tree(repo)[1]
+            write(repo, "c.rs", "/// Says c.\nfn c() {}\n")
+            write(repo, "d.rs", "fn d() { () }\n")
+            write(repo, "e.rs", "// new\n")
+            write(repo, "a.txt", "edited\n")
+            tree = check.tree_stamp(repo)
+            changed = check.changed_paths(repo, head, tree)
+            self.assertEqual(check.comment_only_paths(repo, head, tree, changed), {"c.rs"})
 
     def test_a_test_change_runs_its_own_package_only(self):
         argv = argv_of(self.plan("base/tests/t.rs"))
@@ -624,6 +698,16 @@ class RealWorkspace(unittest.TestCase):
         self.assertIn("binary_id(=datafusion-pgdump::pushdown)", nextest[-1])
         plan = check.plan_changes(check.REPO, ["pgdt/src/main.rs"], load)
         self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "pgdt"])
+
+    def test_the_commit_editing_only_doc_comments_runs_no_test(self):
+        # 5c835d4b filed two deficiencies by marker comments in two library
+        # files; path rules alone ran the whole suite for it.
+        commit = "5c835d4b"
+        head, tree = (git(check.REPO, "rev-parse", f"{c}^{{tree}}") for c in (f"{commit}^", commit))
+        changed = check.changed_paths(check.REPO, head, tree)
+        rs = [p for p in changed if p.endswith(".rs")]
+        self.assertEqual(rs, ["pgdump_query/src/decode.rs", "pgdump_query/src/preamble.rs"])
+        self.assertEqual(check.comment_only_paths(check.REPO, head, tree, changed), set(rs))
 
 
 if __name__ == "__main__":

@@ -54,6 +54,11 @@ first of the other three rules it meets gives it:
   transitively, too. Those packages are the ones formatted and linted, and
   doc-tested where they have a library, as is a library whose own tests read
   a changed path.
+- **A comment, inside a workspace member** -- a `.rs` file in both trees
+  whose `code_of` is unchanged, a doc comment's fenced doctest counting as
+  code -- formats and lints that package alone and runs none of its tests,
+  doctests or dependents: clippy reads doc comments, and no build reads the
+  rest. A target reading the file still runs, by the first rule.
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
   names such a path or reads `docs/` or `.claude/` whole, a Markdown file in
   a data directory documenting it; the one Rust test reaching one does so
@@ -86,7 +91,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence, TextIO
+from typing import Callable, Collection, Sequence, TextIO
 
 REPO = Path(__file__).resolve().parent.parent
 #: Where the runs go, relative to the repository; gitignored with `runs/`.
@@ -405,6 +410,75 @@ def string_literals(src: str) -> list[str]:
     return out
 
 
+_FENCE = "```"
+
+
+def code_of(src: str) -> str:
+    """Rust source as the compiler and the test suite see it: each comment
+    replaced by one space, as the lexer treats it, and every run of whitespace
+    outside a literal collapsed to one space; literals verbatim. A doc
+    comment's fenced block is a doctest, so each line inside one and each fence
+    line is kept verbatim, as is every block doc comment; its prose is dropped.
+    Two sources with equal `code_of` differ only in what no build reads."""
+    out: list[str] = []
+    in_fence = False
+
+    def space() -> None:
+        if out and out[-1] != " ":
+            out.append(" ")
+
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            end = src.find("\n", i)
+            end = n if end < 0 else end
+            if src.startswith(("///", "//!"), i) and not src.startswith("////", i):
+                body = src[i + 3 : end].strip()
+                fence = body.startswith(_FENCE)
+                if fence or in_fence:
+                    out.append(src[i:end])
+                if fence:
+                    in_fence = not in_fence
+            space()
+            i = end
+        elif src.startswith("/*", i):
+            start, depth, i = i, 1, i + 2
+            while i < n and depth:
+                if src.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif src.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            if src.startswith(("/**", "/*!"), start) and not src.startswith(("/***", "/**/"), start):
+                out.append(src[start:i])
+            space()
+        elif (m := _RAW_RE.match(src, i)) and not (i and (src[i - 1].isalnum() or src[i - 1] == "_")):
+            close = '"' + m.group(1)
+            end = src.find(close, m.end())
+            end = n if end < 0 else end + len(close)
+            out.append(src[i:end])
+            i = end
+        elif c == '"':
+            m = _PLAIN_STRING_RE.match(src, i)
+            end = m.end() if m else n
+            out.append(src[i:end])
+            i = end
+        elif c == "'":
+            m = _CHAR_RE.match(src, i)
+            end = m.end() if m else i + 1  # a lifetime or a label
+            out.append(src[i:end])
+            i = end
+        elif c.isspace():
+            space()
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out).strip()
+
+
 def read_prefixes(repo: Path, package_dir: str, source: str) -> set[str]:
     """The repo-relative paths a source's literals can name: each literal with no
     whitespace, cut at its first `{`, taken from the package's directory (a
@@ -499,6 +573,22 @@ def changed_paths(repo: Path, head_tree: str, tree: str) -> list[str]:
     return [line for line in out.splitlines() if line]
 
 
+def comment_only_paths(repo: Path, head_tree: str, tree: str, changed: Sequence[str]) -> set[str]:
+    """The changed `.rs` files present in both trees whose `code_of` is equal."""
+    out = set()
+    for path in changed:
+        if not path.endswith(".rs"):
+            continue
+        try:
+            old = _git(repo, "cat-file", "blob", f"{head_tree}:{path}")
+            new = _git(repo, "cat-file", "blob", f"{tree}:{path}")
+        except subprocess.CalledProcessError:
+            continue  # added or deleted
+        if code_of(old) == code_of(new):
+            out.add(path)
+    return out
+
+
 def plan_affected(
     repo: Path,
     tree: str,
@@ -507,11 +597,15 @@ def plan_affected(
 ) -> Plan:
     if head_tree is None:
         return Plan(CHECKS, "affected: no commit to compare with, so every check runs")
-    return plan_changes(repo, changed_paths(repo, head_tree, tree), load)
+    changed = changed_paths(repo, head_tree, tree)
+    return plan_changes(repo, changed, load, comment_only_paths(repo, head_tree, tree, changed))
 
 
 def plan_changes(
-    repo: Path, changed: Sequence[str], load: Callable[[Path], list[Package]] = workspace
+    repo: Path,
+    changed: Sequence[str],
+    load: Callable[[Path], list[Package]] = workspace,
+    comment_only: Collection[str] = (),
 ) -> Plan:
     always = tuple(c for c in CHECKS if c.name in ("unittest", "repoint"))
     if not changed:
@@ -529,7 +623,7 @@ def plan_changes(
         for p in packages
         for t in p.targets
     }
-    whole, roots, local = None, set(), set()
+    whole, roots, local, linted = None, set(), set(), set()
     reader_ids: set[tuple[str, str]] = set()
     for path in changed:
         found = {
@@ -543,7 +637,10 @@ def plan_changes(
         home = next((p for p in packages if path.startswith(p.dir + "/")), None)
         if home is not None:
             rest = path[len(home.dir) + 1 :]
-            (local if rest.startswith(PACKAGE_LOCAL) else roots).add(home.name)
+            if path in comment_only:
+                linted.add(home.name)
+            else:
+                (local if rest.startswith(PACKAGE_LOCAL) else roots).add(home.name)
         elif not found and whole is None:
             whole = path
     if whole is not None:
@@ -562,9 +659,10 @@ def plan_changes(
         {n for n in whole_pkgs if by_name[n].has_lib}
         | {pkg for pkg, bid in binaries if bid == pkg}
     )
+    lint_only = sorted(linted - set(whole_pkgs))
     checks: list[Check] = []
-    p_args = tuple(a for n in whole_pkgs for a in ("-p", n))
-    if whole_pkgs:
+    p_args = tuple(a for n in sorted({*whole_pkgs, *lint_only}) for a in ("-p", n))
+    if p_args:
         checks.append(Check("fmt", ("cargo", "fmt", "--check", *p_args), ".", summarize_fmt))
         checks.append(
             Check("clippy", ("cargo", "clippy", "--all-targets", *p_args), ".", summarize_clippy)
@@ -583,6 +681,8 @@ def plan_changes(
     parts = [f"{_paths(len(changed))} changed since HEAD"]
     if whole_pkgs:
         parts.append(f"packages {', '.join(whole_pkgs)}")
+    if lint_only:
+        parts.append(f"linted only, their changes being comments, {', '.join(lint_only)}")
     if len(binaries) > NOTE_BINARIES:
         per = {pkg: sum(1 for p, _ in binaries if p == pkg) for pkg, _ in binaries}
         counts = ", ".join(f"{pkg} {k}" for pkg, k in per.items())
