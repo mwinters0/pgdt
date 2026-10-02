@@ -126,14 +126,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A preamble fix leaves `CACHE_FORMAT_VERSION` alone.** 31.5 changes which
-  columns a `CREATE TABLE` declares, and `M199` and `M200` changed which
-  statements declare a table and which versions a database keeps, all of it
-  persisted in the cache's `DumpIndex`; none bumped, so a cache saved before
-  any of them is still loaded and answers as the old parse did — `now`
-  resolving through `()]` — until `parse` replaces it, which nothing prompts.
-  Made that way to follow the two precedents and D22's "persisted reshape"
-  wording, which none of them is. Against it, `CACHE_FORMAT_VERSION`'s own
-  rustdoc bumps for "a new way of *choosing* what an unchanged field holds",
-  and D22 calls a bump free pre-1.0. Reconsidering means one bump now and a
-  rule for 31.6–31.11, each of which changes parsed metadata too.
+*(None open.)*

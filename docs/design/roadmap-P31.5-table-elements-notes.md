@@ -26,9 +26,9 @@ What the slices after this one inherit. The spec is
   with them. `fixtures/18/emitters/default.sql`'s `emitters.child` held it,
   read as a column `not` of type `NULL label`.
 - **A `LIKE` clause's columns are not followed**: P32's inbox carries it.
-- **No cache-format bump**, as `M199` and `M200` made none: a cache saved
-  before this keeps the definitions it parsed until it is replaced. STATUS's
-  "Decisions worth another look" asks whether that should hold.
+- **No cache-format bump landed with it**, nor with `M199` or `M200`, though
+  each changes what the cache persists: `M202` makes the one bump owed for all
+  three (D22).
 - **Regenerating `emitters` rewrites every file's `\restrict` key and
   timestamps**; a file whose diff was only those was restored, so the change
   touches only the files holding `stamped` and the OIDs it shifted under
