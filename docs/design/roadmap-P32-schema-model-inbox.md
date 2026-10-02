@@ -85,3 +85,24 @@ property states the goal as a check rather than an aspiration.
 
 **Origin.** P31 grilling, 2026-10-02. *Contingent on* P31 landing the
 register in the shape its spec gives.
+
+---
+
+## Widening the emitter register's function list needs a finer query rule
+
+**Fact.** The extraction drops a buffer whose `data` an execute call reads,
+as a catalog query, and stops on one whose `data` is read anywhere else too
+(`scripts/emitter_register.py`, `query_buffers`). At 18.6, `dumpDatabase`,
+`dumpTableData_copy`, `dumpTableData_insert`, `_selectOutputSchema`,
+`_selectTablespace`, `_selectTableAccessMethod` and
+`_printTableAccessMethodNoStorage` each trip it: the archiver's helpers
+execute a statement when connected and print it otherwise, and the others
+reuse a buffer across both.
+
+**Why P32 cares.** Its completeness criterion is the register widened to
+every `dump*` function; these are among the first it would add, and each
+needs a rule telling a buffer's query uses from its output ones before its
+literals can be rows.
+
+**Origin.** P31.1, 2026-10-02, a trial extraction over the widened list.
+*Contingent on* the extraction keeping its buffer-level rule.

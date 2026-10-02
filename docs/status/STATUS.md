@@ -41,6 +41,7 @@ quotes a number: every figure is in
 | Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault; a query may compare as DataFusion compares the emitted value instead, which refuses a nested column and orders one with no plan bytewise | `predicate.rs`, `pgtype.rs`; D40, D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced on its own channel per term, or per column in a query's semantics; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py` | D70, D71 |
+| Emitter register | `pg_dump`'s and `pg_dumpall`'s literals and options, read out of their source into `fixtures/<major>/emitters.tsv` by `scripts/emitter_register.py --extract` and joined against the fixtures, reporting what no fixture reaches without failing on it | [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md), "The emitter register" |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38 |
 | Compressed input (`--source foo.dump.xz`) | working serially and at any `--jobs`; the seek table is cached; a file the budget cannot block-decode streams and says so; gzip, zstd and lz4 are not read (P15, P18) | `io.rs` (`XzSource`), `cache.rs`; D14–D19; [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md) |
 | Partitioned replay and the interior split | working; `query` is the replay's consumer and the mapping pass the split's, and each answers what the serial path answers; a sub-stream can pin more than the budget bills (`KD23`) and a window over small blocks over-reads (`KD22`) | `stream.rs`, `leader.rs`; D5, D7, D8, D48, D51, D52 |
@@ -84,7 +85,7 @@ next `31.<M>` in the same change, without asking**: the maintainer's standing
 approval, in the spec's opening note. `M199` and `M200` land before 31.5,
 both editing `preamble.rs`.
 
-- [ ] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code
+- [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
 - [ ] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it
 - [ ] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line
 - [ ] **31.4** Schema content reaching every remaining uncovered literal and option, findings filed as `KD`s and appended here; the register a gate in `mise run check`
@@ -123,3 +124,13 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **The emitter register's value-form half has no slice row.** 31.1 landed
+  the two mechanical halves; the third, the hand-listed `*_out` spellings an
+  unpinned setting or a typmod selects
+  ([`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md),
+  "The emitter register"), is named by no row: 31.2 builds the variants that
+  reach those spellings, and 31.4 the content reaching "every remaining
+  uncovered literal and option". It was left out of 31.1 rather than guessed
+  into it, its unit being a spelling a hand list names rather than a literal
+  the source yields. Reconsidering names its slice — 31.2, beside the
+  variants, is the natural home — or widens 31.4's row to say value forms.

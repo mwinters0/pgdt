@@ -26,6 +26,7 @@ cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying eac
 cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
+cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts
 cd scripts && uv run python -m unittest test_<script>   # one script's own tests
 ```
 

@@ -1,0 +1,294 @@
+# The emitter register of PostgreSQL 18.6, written by `scripts/emitter_register.py --extract`; never edited by hand.
+kind	file	function	entry	detail
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	DROP VIEW 	DROP VIEW %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	CREATE VIEW 	CREATE VIEW %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 WITH (	 WITH (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 AS\n	 AS\n%s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 CHECK OPTION	\n  WITH %s CHECK OPTION
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	DROP 	DROP %s %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	CREATE 	CREATE %s%s %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UNLOGGED 	UNLOGGED 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 OF 	 OF %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n    	\n    
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 INTEGER /* dummy */	 INTEGER /* dummy */
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 GENERATED ALWAYS AS (	 GENERATED ALWAYS AS (%s) STORED
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 DEFAULT 	 DEFAULT %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 NOT NULL	 NOT NULL
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 CONSTRAINT 	 CONSTRAINT %s NOT NULL
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 NO INHERIT	 NO INHERIT
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 COLLATE 	 COLLATE %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	NOT NULL 	NOT NULL %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	CONSTRAINT 	CONSTRAINT %s NOT NULL %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 (\n    	 (\n    
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	,\n    	,\n    
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 (\n)	 (\n)
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\nINHERITS (	\nINHERITS (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\nPARTITION BY 	\nPARTITION BY %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\nSERVER 	\nSERVER %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\nWITH (	\nWITH (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\nOPTIONS (\n    	\nOPTIONS (\n    %s\n)
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n  WITH NO DATA;\n	 AS\n%s\n  WITH NO DATA;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- set missing value.\n	\n-- set missing value.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	SELECT pg_catalog.binary_upgrade_set_missing_value(	SELECT pg_catalog.binary_upgrade_set_missing_value(
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass,	::pg_catalog.regclass,
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	);\n\n	);\n\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, recreate dropped columns.\nUPDATE pg_catalog.pg_attribute\nSET attlen = v.dlen, attalign = v.dalign, attbyval = false\nFROM (VALUES 	\n-- For binary upgrade, recreate dropped columns.\nUPDATE pg_catalog.pg_attribute\nSET attlen = v.dlen, attalign = v.dalign, attbyval = false\nFROM (VALUES 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	,\n             	,\n             
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	, '	, %d, '%c')
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	TABLE ONLY 	ALTER %sTABLE ONLY %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	DROP COLUMN 	DROP COLUMN %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	) v(dname, dlen, dalign)\nWHERE attrelid = 	) v(dname, dlen, dalign)\nWHERE attrelid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass\n  AND attname = v.dname;\n	::pg_catalog.regclass\n  AND attname = v.dname;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, recreate inherited columns.\n	\n-- For binary upgrade, recreate inherited columns.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UPDATE pg_catalog.pg_attribute\nSET attislocal = false\nWHERE attrelid = 	UPDATE pg_catalog.pg_attribute\nSET attislocal = false\nWHERE attrelid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass\n  AND attname IN (	::pg_catalog.regclass\n  AND attname IN (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	);\n	);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UPDATE pg_catalog.pg_constraint\nSET conislocal = false\nWHERE contype = 'n' AND conrelid = 	UPDATE pg_catalog.pg_constraint\nSET conislocal = false\nWHERE contype = 'n' AND conrelid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass AND\nconname IN (	::pg_catalog.regclass AND\nconname IN (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass AND\nconkey IN (	::pg_catalog.regclass AND\nconkey IN (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, set up inherited constraints.\n	\n-- For binary upgrade, set up inherited constraints.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 ADD CONSTRAINT 	ALTER %sTABLE ONLY %s ADD CONSTRAINT %s %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UPDATE pg_catalog.pg_constraint\nSET conislocal = false\nWHERE contype = 'c' AND conrelid = 	UPDATE pg_catalog.pg_constraint\nSET conislocal = false\nWHERE contype = 'c' AND conrelid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass\n	::pg_catalog.regclass\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	  AND conname IN (	  AND conname IN (
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, set up inheritance this way.\n	\n-- For binary upgrade, set up inheritance this way.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, set up typed tables this way.\n	\n-- For binary upgrade, set up typed tables this way.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	ALTER TABLE ONLY 	ALTER TABLE ONLY %s OF %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, set heap's relfrozenxid and relminmxid\n	\n-- For binary upgrade, set heap's relfrozenxid and relminmxid\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UPDATE pg_catalog.pg_class\nSET relfrozenxid = '	UPDATE pg_catalog.pg_class\nSET relfrozenxid = '%u', relminmxid = '%u'\nWHERE oid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	::pg_catalog.regclass;\n	::pg_catalog.regclass;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, set toast's relfrozenxid and relminmxid\n	\n-- For binary upgrade, set toast's relfrozenxid and relminmxid\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	\n-- For binary upgrade, mark materialized view as populated\n	\n-- For binary upgrade, mark materialized view as populated\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	UPDATE pg_catalog.pg_class\nSET relispopulated = 't'\nWHERE oid = 	UPDATE pg_catalog.pg_class\nSET relispopulated = 't'\nWHERE oid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 SET STATISTICS 	ALTER %sTABLE ONLY %s ALTER COLUMN %s SET STATISTICS %d;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 ALTER COLUMN 	ALTER %sTABLE ONLY %s ALTER COLUMN %s SET STORAGE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 SET COMPRESSION 	ALTER %sTABLE ONLY %s ALTER COLUMN %s SET COMPRESSION %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	ALTER FOREIGN TABLE ONLY 	ALTER FOREIGN TABLE ONLY %s ALTER COLUMN %s OPTIONS (\n    %s\n);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 REPLICA IDENTITY NOTHING;\n	\nALTER TABLE ONLY %s REPLICA IDENTITY NOTHING;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 REPLICA IDENTITY FULL;\n	\nALTER TABLE ONLY %s REPLICA IDENTITY FULL;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 FORCE ROW LEVEL SECURITY;\n	\nALTER TABLE ONLY %s FORCE ROW LEVEL SECURITY;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	COMMENT ON CONSTRAINT 	COMMENT ON CONSTRAINT %s ON %s IS 
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	CREATE TYPE 	CREATE TYPE %s AS (
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	 COLLATE 	 COLLATE %s
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	 INTEGER /* dummy */	%s INTEGER /* dummy */
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	\n-- For binary upgrade, recreate dropped column.\n	\n-- For binary upgrade, recreate dropped column.\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	UPDATE pg_catalog.pg_attribute\nSET attlen = 	UPDATE pg_catalog.pg_attribute\nSET attlen = %s, attalign = '%s', attbyval = false\nWHERE attname = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	\n  AND attrelid = 	\n  AND attrelid = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	::pg_catalog.regclass;\n	::pg_catalog.regclass;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	ALTER TYPE 	ALTER TYPE %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	DROP ATTRIBUTE 	DROP ATTRIBUTE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	\n);\n	\n);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	DROP TYPE 	DROP TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	DROP TYPE 	DROP TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	CREATE TYPE 	CREATE TYPE %s AS ENUM (
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	\n    	\n    
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	\n);\n	\n);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	\n-- For binary upgrade, must preserve pg_enum oids\n	\n-- For binary upgrade, must preserve pg_enum oids\n
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	SELECT pg_catalog.binary_upgrade_set_next_pg_enum_oid('	SELECT pg_catalog.binary_upgrade_set_next_pg_enum_oid('%u'::pg_catalog.oid);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	ALTER TYPE 	ALTER TYPE %s ADD VALUE 
+literal	src/bin/pg_dump/pg_dump.c	dumpEnumType	;\n\n	;\n\n
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	DROP TYPE 	DROP TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	CREATE TYPE 	CREATE TYPE %s AS RANGE (
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	\n    subtype = 	\n    subtype = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	,\n    multirange_type_name = 	,\n    multirange_type_name = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	,\n    subtype_opclass = 	,\n    subtype_opclass = %s.
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	,\n    collation = 	,\n    collation = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	,\n    canonical = 	,\n    canonical = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	,\n    subtype_diff = 	,\n    subtype_diff = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpRangeType	\n);\n	\n);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	CREATE DOMAIN 	CREATE DOMAIN %s AS %s
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	 COLLATE 	 COLLATE %s
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	 NOT NULL	 NOT NULL
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	 CONSTRAINT 	 CONSTRAINT %s %s
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	 DEFAULT 	 DEFAULT 
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	\n\tCONSTRAINT 	\n\tCONSTRAINT %s %s
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	DROP DOMAIN 	DROP DOMAIN %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpDomain	CONSTRAINT 	CONSTRAINT %s ON DOMAIN
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	DROP TYPE 	DROP TYPE %s CASCADE;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	 (\n    INTERNALLENGTH = 	CREATE TYPE %s (\n    INTERNALLENGTH = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	variable	variable
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    INPUT = 	,\n    INPUT = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    OUTPUT = 	,\n    OUTPUT = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    RECEIVE = 	,\n    RECEIVE = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    SEND = 	,\n    SEND = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    TYPMOD_IN = 	,\n    TYPMOD_IN = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    TYPMOD_OUT = 	,\n    TYPMOD_OUT = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ANALYZE = 	,\n    ANALYZE = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    COLLATABLE = true	,\n    COLLATABLE = true
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    DEFAULT = 	,\n    DEFAULT = 
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    SUBSCRIPT = 	,\n    SUBSCRIPT = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ELEMENT = 	,\n    ELEMENT = %s
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    CATEGORY = 	,\n    CATEGORY = 
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    PREFERRED = true	,\n    PREFERRED = true
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    DELIMITER = 	,\n    DELIMITER = 
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ALIGNMENT = char	,\n    ALIGNMENT = char
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ALIGNMENT = int2	,\n    ALIGNMENT = int2
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ALIGNMENT = int4	,\n    ALIGNMENT = int4
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    ALIGNMENT = double	,\n    ALIGNMENT = double
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = plain	,\n    STORAGE = plain
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = external	,\n    STORAGE = external
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = extended	,\n    STORAGE = extended
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = main	,\n    STORAGE = main
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    PASSEDBYVALUE	,\n    PASSEDBYVALUE
+literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	\n);\n	\n);\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	--\n	--\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	-- TOC entry 	-- TOC entry %d (class %u OID %u)\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	-- Dependencies:	-- Dependencies:
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	; Schema: 	-- %sName: %s; Type: %s; Schema: %s; Owner: %s
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	; Tablespace: 	; Tablespace: %s
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	--\n\n	--\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	CREATE SCHEMA 	CREATE SCHEMA %s;\n\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	 OWNER TO 	ALTER %s OWNER TO %s;\n\n
+literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\encoding SQL_ASCII\n	\\encoding SQL_ASCII\n
+literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\connect -reuse-previous=on 	\\connect -reuse-previous=on 
+literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	dbname=	dbname=
+literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\connect 	\\connect 
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	--\n-- Tablespaces\n--\n\n	--\n-- Tablespaces\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	\n-- For binary upgrade, must preserve pg_tablespace oid\n	\n-- For binary upgrade, must preserve pg_tablespace oid\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	SELECT pg_catalog.binary_upgrade_set_next_pg_tablespace_oid('	SELECT pg_catalog.binary_upgrade_set_next_pg_tablespace_oid('%u'::pg_catalog.oid);\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	CREATE TABLESPACE 	CREATE TABLESPACE %s
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	 OWNER 	 OWNER %s
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	 LOCATION 	 LOCATION 
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	ALTER TABLESPACE 	ALTER TABLESPACE %s SET (%s);\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	COMMENT ON TABLESPACE 	COMMENT ON TABLESPACE %s IS 
+literal	src/bin/pg_dump/pg_dumpall.c	dropTablespaces	--\n-- Drop tablespaces\n--\n\n	--\n-- Drop tablespaces\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dropTablespaces	DROP TABLESPACE 	DROP TABLESPACE %s%s;\n
+literal	src/bin/pg_dump/pg_dumpall.c	dropTablespaces	IF EXISTS 	IF EXISTS 
+literal	src/bin/pg_dump/pg_dumpall.c	dumpDatabases	--\n-- Databases\n--\n\n	--\n-- Databases\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpDatabases	--\n-- Database "	--\n-- Database "%s" dump\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpDatabases	\\connect 	\\connect %s\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dropDBs	--\n-- Drop databases (except postgres and template1)\n--\n\n	--\n-- Drop databases (except postgres and template1)\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dropDBs	DROP DATABASE 	DROP DATABASE %s%s;\n
+literal	src/bin/pg_dump/pg_dumpall.c	dropDBs	IF EXISTS 	IF EXISTS 
+option	src/bin/pg_dump/pg_dump.c	pg_dump	data-only	a
+option	src/bin/pg_dump/pg_dump.c	pg_dump	blobs	b
+option	src/bin/pg_dump/pg_dump.c	pg_dump	large-objects	b
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-blobs	B
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-large-objects	B
+option	src/bin/pg_dump/pg_dump.c	pg_dump	clean	c
+option	src/bin/pg_dump/pg_dump.c	pg_dump	create	C
+option	src/bin/pg_dump/pg_dump.c	pg_dump	dbname	d
+option	src/bin/pg_dump/pg_dump.c	pg_dump	extension	e
+option	src/bin/pg_dump/pg_dump.c	pg_dump	file	f
+option	src/bin/pg_dump/pg_dump.c	pg_dump	format	F
+option	src/bin/pg_dump/pg_dump.c	pg_dump	host	h
+option	src/bin/pg_dump/pg_dump.c	pg_dump	jobs	j
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-reconnect	R
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-owner	O
+option	src/bin/pg_dump/pg_dump.c	pg_dump	port	p
+option	src/bin/pg_dump/pg_dump.c	pg_dump	schema	n
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-schema	N
+option	src/bin/pg_dump/pg_dump.c	pg_dump	schema-only	s
+option	src/bin/pg_dump/pg_dump.c	pg_dump	superuser	S
+option	src/bin/pg_dump/pg_dump.c	pg_dump	table	t
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-table	T
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-password	w
+option	src/bin/pg_dump/pg_dump.c	pg_dump	password	W
+option	src/bin/pg_dump/pg_dump.c	pg_dump	username	U
+option	src/bin/pg_dump/pg_dump.c	pg_dump	verbose	v
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-privileges	x
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-acl	x
+option	src/bin/pg_dump/pg_dump.c	pg_dump	compress	Z
+option	src/bin/pg_dump/pg_dump.c	pg_dump	encoding	E
+option	src/bin/pg_dump/pg_dump.c	pg_dump	help	?
+option	src/bin/pg_dump/pg_dump.c	pg_dump	version	V
+option	src/bin/pg_dump/pg_dump.c	pg_dump	attribute-inserts	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	binary-upgrade	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	column-inserts	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	disable-dollar-quoting	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	disable-triggers	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	enable-row-security	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-table-data	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	extra-float-digits	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	if-exists	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	inserts	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	lock-wait-timeout	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-table-access-method	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-tablespaces	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	quote-all-identifiers	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	load-via-partition-root	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	role	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	section	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	serializable-deferrable	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	snapshot	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	statistics	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	statistics-only	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	strict-names	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	use-set-session-authorization	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-comments	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-data	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-policies	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-publications	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-schema	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-security-labels	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-statistics	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-subscriptions	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-toast-compression	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-unlogged-table-data	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	no-sync	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	on-conflict-do-nothing	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	rows-per-insert	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	include-foreign-data	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	table-and-children	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-table-and-children	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-table-data-and-children	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	sync-method	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	filter	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	exclude-extension	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	sequence-data	
+option	src/bin/pg_dump/pg_dump.c	pg_dump	restrict-key	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	data-only	a
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	clean	c
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	encoding	E
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	file	f
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	globals-only	g
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	host	h
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	dbname	d
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	database	l
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-owner	O
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	port	p
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	roles-only	r
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	schema-only	s
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	superuser	S
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	tablespaces-only	t
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	username	U
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	verbose	v
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-password	w
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	password	W
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-privileges	x
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-acl	x
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	attribute-inserts	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	binary-upgrade	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	column-inserts	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	disable-dollar-quoting	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	disable-triggers	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	exclude-database	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	extra-float-digits	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	if-exists	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	inserts	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	lock-wait-timeout	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-table-access-method	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-tablespaces	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	quote-all-identifiers	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	load-via-partition-root	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	role	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	use-set-session-authorization	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-comments	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-data	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-policies	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-publications	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-role-passwords	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-schema	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-security-labels	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-subscriptions	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-statistics	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-sync	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-toast-compression	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-unlogged-table-data	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	on-conflict-do-nothing	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	rows-per-insert	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	statistics	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	statistics-only	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	filter	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	sequence-data	
+option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	restrict-key	

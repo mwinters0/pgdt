@@ -179,6 +179,12 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
 }
 
 
+# What every run passes besides its flag set, named so the emitter register
+# (scripts/emitter_register.py) counts these options as run too.
+PG_DUMP_ARGS = ["-U", DB_USER]
+PG_DUMPALL_ARGS = ["-U", DB_USER, "--no-role-passwords"]
+
+
 def schema_file(schema: str) -> Path:
     return SCRIPT_DIR / f"fixture_schema_{schema}.sql"
 
@@ -327,9 +333,9 @@ def dump_flag_set(
         # a `pg_dump` invocation against one database -- `--no-role-passwords`
         # keeps the output deterministic (no password hashes to vary run to
         # run). Run before drop_fixture_db so DB_NAME is still loaded.
-        cmd = DOCKER + ["exec", name, "pg_dumpall", "-U", DB_USER, "--no-role-passwords"]
+        cmd = DOCKER + ["exec", name, "pg_dumpall", *PG_DUMPALL_ARGS]
     else:
-        cmd = DOCKER + ["exec", name, "pg_dump", "-U", DB_USER, *flags, DB_NAME]
+        cmd = DOCKER + ["exec", name, "pg_dump", *PG_DUMP_ARGS, *flags, DB_NAME]
     result = run(cmd, stdout=subprocess.PIPE, text=True)
     out_path.write_text(result.stdout)
     return out_path
