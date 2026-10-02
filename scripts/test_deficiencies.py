@@ -1011,7 +1011,6 @@ class KnownFailureTables(unittest.TestCase):
 
     TABLES = (
         "pgdump_query/tests/known_failures.rs",
-        "datafusion-pgdump/tests/statistics.rs",
         "pgdump_query/tests/value_oracle.rs",
     )
 

@@ -15,17 +15,16 @@
 //! Every row's `KD<k>` is an open entry of `docs/status/deficiencies.md`,
 //! which `scripts/test_deficiencies.py` checks, no Rust test reading `docs/`.
 //! A sweep elsewhere that the same defect trips carries a strict exclusion of
-//! its own, naming the entry (`datafusion-pgdump/tests/statistics.rs`).
+//! its own, naming the entry (`tests/value_oracle.rs`'s `EXCLUSIONS`).
 
 use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::map::SpanBody;
-use pgdump_query::resolve::{ColumnResolution, SchemaMode};
+use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
-    DataBlock, LocalFileSource, NestedPlan, QueryOptions, ResolvedSchema, ScanOptions, build_map,
-    render_field, table_stream,
+    DataBlock, LocalFileSource, QueryOptions, ResolvedSchema, ScanOptions, build_map, table_stream,
 };
 
 mod common;
@@ -38,8 +37,6 @@ enum Case {
     DataSpansAttributed,
     /// The column resolves as stated.
     Resolves { table: &'static str, column: &'static str, to: ColumnResolution },
-    /// No value of the column whose text is finite reads as an infinity.
-    FiniteStaysFinite { table: &'static str, column: &'static str },
 }
 
 struct KnownFailure {
@@ -80,12 +77,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
             column: "amount",
             to: ColumnResolution::Mapped,
         },
-    },
-    KnownFailure {
-        kd: "KD72",
-        fixture: "types/extra-float-digits-0",
-        control: Some("types/default"),
-        case: Case::FiniteStaysFinite { table: "public.t_extremes", column: "v_double" },
     },
 ];
 
@@ -130,54 +121,7 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
             let found = &schema.columns[index];
             if found == to { Ok(()) } else { Err(format!("{column} resolves {found:?}")) }
         }
-        Case::FiniteStaysFinite { table, column } => {
-            let typed = rows(path, table, SchemaMode::Typed).await.unwrap();
-            let text = rows(path, table, SchemaMode::Strings).await.unwrap();
-            let index = resolved(path, table).await.schema.index_of(column).unwrap();
-            let infinite = ["Infinity", "-Infinity"];
-            let mut wrong = Vec::new();
-            for (typed, text) in typed.iter().zip(&text) {
-                let (Some(read), Some(written)) = (&typed[index], &text[index]) else {
-                    continue;
-                };
-                if infinite.contains(&read.as_str()) && !infinite.contains(&written.as_str()) {
-                    wrong.push(format!("{written} read as {read}"));
-                }
-            }
-            if wrong.is_empty() { Ok(()) } else { Err(wrong.join(", ")) }
-        }
     }
-}
-
-/// Every row of `table`, rendered back to text, or the error that ended the
-/// read.
-async fn rows(
-    path: &Path,
-    table: &str,
-    mode: SchemaMode,
-) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
-    let source = LocalFileSource::open(path).unwrap();
-    let options = QueryOptions { schema_mode: mode, ..Default::default() };
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
-    let mut out = Vec::new();
-    while let Some(batch) = stream.next().await.transpose()? {
-        let plans = stream.resolved_schema().plans;
-        for row in 0..batch.num_rows() {
-            out.push(
-                batch
-                    .columns()
-                    .iter()
-                    .enumerate()
-                    .map(|(col, c)| {
-                        render_field(c.as_ref(), row, plans.get(col).unwrap_or(&NestedPlan::Scalar))
-                            .expect("a decoded value renders back")
-                    })
-                    .collect(),
-            );
-        }
-    }
-    Ok(out)
 }
 
 /// The schema a typed read of `table` commits to.

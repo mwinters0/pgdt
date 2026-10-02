@@ -61,15 +61,12 @@ struct Exclusion {
     column: &'static str,
 }
 
-const EXCLUSIONS: &[Exclusion] = &[
-    Exclusion { kd: "KD2", flag_set: None, table: "public.t_composite_matrix", column: "v_tagged" },
-    Exclusion {
-        kd: "KD72",
-        flag_set: Some("extra-float-digits-0"),
-        table: "public.t_extremes",
-        column: "v_double",
-    },
-];
+const EXCLUSIONS: &[Exclusion] = &[Exclusion {
+    kd: "KD2",
+    flag_set: None,
+    table: "public.t_composite_matrix",
+    column: "v_tagged",
+}];
 
 impl Exclusion {
     fn applies(&self, flag_set: &str) -> bool {

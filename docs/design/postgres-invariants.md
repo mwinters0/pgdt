@@ -3966,3 +3966,52 @@ grep -n 'bytea_output' src/bin/pg_dump/*.c
 ```
 
 The first still prints the two branches above; the second prints nothing.
+
+---
+
+## I57 — A `real` or `double precision` is written in digits only when it is finite
+
+**Claim.** `float4out` and `float8out` write an infinity as `Infinity` or
+`-Infinity` and a NaN as `NaN`, and every other value in digits. At
+`extra_float_digits` above zero the digits are the shortest that read back
+exactly (I14); at zero or below they are `%.<n>g` with `n` = `FLT_DIG` or
+`DBL_DIG` plus the setting, bounded below at one, which `pg_dump
+--extra-float-digits` reaches down to `-15`. That rounding can carry the
+largest finite value past it — `DBL_MAX` is `1.79769313486232e+308` at
+fifteen digits, `FLT_MAX` `3.403e+38` at four — so **a spelling in digits that
+overflows the type is that largest value of its sign**, the nearest finite
+value to the text.
+
+**Proof.** `float4out` and `float8out_internal` in
+`src/backend/utils/adt/float.c` call `pg_strfromd(ascii, 32, ndig, num)` with
+`ndig = FLT_DIG/DBL_DIG + extra_float_digits` when the setting is not above
+zero; `pg_strfromd` in `src/port/snprintf.c` clamps the precision to `[1,
+32]`, writes `NaN` for a NaN and `Infinity` for an infinity, signed, and
+formats anything else with `%g`'s rule. `pg_dump.c` bounds
+`--extra-float-digits` to `-15..3`.
+
+**Observed.** `fixtures/<major>/types/extra-float-digits-0.sql`'s
+`t_extremes.v_double` holds `1.79769313486232e+308` beside `Infinity` at all
+six majors, and the value oracle reads the first as `DBL_MAX`'s bits.
+
+**Scope limit.** What `*_out` writes. `float8in` refuses the overflowing
+spelling as out of range, so such a dump does not restore that value; pgdt
+reads it, as it reads every lossy spelling, as the nearest value the type
+holds.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::decode_f32` and `decode::decode_f64`, and through
+them every typed read, ordering key and statistics bound of a float column.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'pg_strfromd(ascii, 32, ndig, num)' src/backend/utils/adt/float.c
+awk '/^pg_strfromd\(/,/^}/' src/port/snprintf.c | grep -n 'Infinity\|NaN\|precision'
+grep -n 'extra.float.digits' src/bin/pg_dump/pg_dump.c
+```
+
+The first prints both output functions; the second the two special spellings
+and the `[1, 32]` clamp; the third the `-15..3` bound.

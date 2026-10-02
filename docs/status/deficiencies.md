@@ -344,12 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD72** — under `--extra-float-digits=0` `float8out` writes `DBL_MAX` as
-  `1.79769313486232e+308`, which `decode_f64` reads as an infinity the column
-  never held, and a distinct count from the statistics, taken over the text,
-  disagrees with the rows'. **(b) owned by `P31`**, slice 31.10 closing it.
-  Detail: `pgdump_query/src/decode.rs`.
-
 - **KD73** — a `--create` dump `\connect`s its database a second time after
   its `DATABASE PROPERTIES` entry, as every `pg_dumpall --binary-upgrade` and
   every database carrying a setting does, and the second `\connect` opens a

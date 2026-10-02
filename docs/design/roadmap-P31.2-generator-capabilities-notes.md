@@ -37,7 +37,8 @@ but two `deficiency:` markers.
   a **control**, a fixture the case passes on, so a case failing for an
   unrelated reason reads as a broken row. A sweep the same defect trips keeps
   a strict exclusion of its own naming the entry, asserting the fixture still
-  fails there: `datafusion-pgdump/tests/statistics.rs`, KD72's.
+  fails there, and loses it with the entry's last row (`value_oracle.rs`'s
+  `EXCLUSIONS` is one).
 - **Regenerated**: `types`, `objects` and `edge_cases` at all six majors;
   every other diff in their files is D69's four movers. The oracles, the
   floor and `partitions`/`statistics` were not re-taken.

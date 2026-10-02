@@ -81,29 +81,47 @@ fn format_shortest(neg: bool, digits: &str, exp: i32, sig_digits: i32) -> String
     out
 }
 
+/// `real`'s text. A finite spelling reads as a finite value: one rounding past
+/// the type's largest finite one, as `float4out` can at `extra_float_digits`
+/// of `-2` or less, is that largest value of its sign (I57).
 pub fn decode_f32(s: &str) -> Option<f32> {
     match s {
         "NaN" => Some(f32::NAN),
         "Infinity" => Some(f32::INFINITY),
         "-Infinity" => Some(f32::NEG_INFINITY),
-        _ => s.parse().ok(),
+        _ => s
+            .parse::<f32>()
+            .ok()
+            .map(|v| finite_spelling(s, v, f32::is_infinite, f32::MAX.copysign(v))),
     }
 }
 
-/// Deficiency register: `deficiency: KD72` — `pg_dump --extra-float-digits=0`
-/// puts `float8out` at `DBL_DIG` significant digits, which rounds `DBL_MAX` up
-/// to `1.79769313486232e+308`, past every finite `f64`: this parse reads that
-/// text as an infinity the column never held (PostgreSQL's own `float8in`
-/// refuses it as out of range), and a distinct count the statistics take from
-/// the text then disagrees with the rows'. `t_extremes` in
-/// `fixtures/<major>/types/extra-float-digits-0.sql` holds it. **(b) owned by
-/// `P31`**.
+/// `double precision`'s text, read as [`decode_f32`] reads `real`'s: a finite
+/// spelling past `DBL_MAX` — `float8out`'s `1.79769313486232e+308` under
+/// `--extra-float-digits=0` — is `±DBL_MAX` (I57).
 pub fn decode_f64(s: &str) -> Option<f64> {
     match s {
         "NaN" => Some(f64::NAN),
         "Infinity" => Some(f64::INFINITY),
         "-Infinity" => Some(f64::NEG_INFINITY),
-        _ => s.parse().ok(),
+        _ => s
+            .parse::<f64>()
+            .ok()
+            .map(|v| finite_spelling(s, v, f64::is_infinite, f64::MAX.copysign(v))),
+    }
+}
+
+/// `parsed` unless the parse overflowed a spelling written in digits, which
+/// `*_out` writes only for a finite value (I57): then `largest`, the finite
+/// value of `parsed`'s sign nearest the text. A spelling ending in a letter
+/// keeps the parse's reading: it is one of the infinity's spellings, which the
+/// parse accepts more of than `*_out` writes.
+#[inline]
+fn finite_spelling<F: Copy>(s: &str, parsed: F, is_infinite: fn(F) -> bool, largest: F) -> F {
+    if is_infinite(parsed) && s.as_bytes().last().is_some_and(u8::is_ascii_digit) {
+        largest
+    } else {
+        parsed
     }
 }
 
@@ -1101,6 +1119,26 @@ mod tests {
             assert_eq!(render_f64(decoded), text);
         }
         assert_eq!(render_f64(decode_f64("-0").unwrap()), "-0");
+    }
+
+    /// `float8out` and `float4out` at a precision short enough to round the
+    /// largest finite value past it (I57): every `--extra-float-digits` that
+    /// does, down to `-15`'s one digit, reads as that value, and a spelling
+    /// nearer zero than the rounding keeps its own reading.
+    #[test]
+    fn a_finite_spelling_past_the_largest_finite_value_reads_as_it() {
+        for text in ["1.79769313486232e+308", "1.8e+308", "2e+308", "1e+309"] {
+            assert_eq!(decode_f64(text), Some(f64::MAX), "{text}");
+            assert_eq!(decode_f64(&format!("-{text}")), Some(-f64::MAX), "-{text}");
+        }
+        for text in ["3.403e+38", "3.4e+39", "4e+38"] {
+            assert_eq!(decode_f32(text), Some(f32::MAX), "{text}");
+            assert_eq!(decode_f32(&format!("-{text}")), Some(-f32::MAX), "-{text}");
+        }
+        assert_eq!(decode_f64("1.7976931348623157e+308"), Some(f64::MAX));
+        assert_eq!(decode_f32("3.40282e+38"), Some(3.40282e38));
+        assert_eq!(decode_f64("Infinity"), Some(f64::INFINITY));
+        assert_eq!(decode_f64("-Infinity"), Some(f64::NEG_INFINITY));
     }
 
     /// Ground truth from a live server under `extra_float_digits = 3` —
