@@ -368,4 +368,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 28fb62ae -- pgdump_query/src/lex.rs pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="1014ac5c",
+        figures=("preamble-prepass", "rss-attribution"),
+        why="M200: dump_metadata_from_spans changes only its Connect and "
+        "VersionHeader arms, a handful of spans per file, with the same clones "
+        "and no new allocation; no per-line or per-row path moves",
+        verified="git show 1014ac5c -- pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
