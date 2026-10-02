@@ -19,13 +19,8 @@
 
 use std::path::{Path, PathBuf};
 
-use futures::StreamExt;
-use pgdump_query::cache::CacheMode;
 use pgdump_query::map::SpanBody;
-use pgdump_query::resolve::ColumnResolution;
-use pgdump_query::{
-    DataBlock, LocalFileSource, QueryOptions, ResolvedSchema, ScanOptions, build_map, table_stream,
-};
+use pgdump_query::{DataBlock, LocalFileSource, ScanOptions, build_map};
 
 mod common;
 use common::all_fixtures;
@@ -35,8 +30,6 @@ use common::all_fixtures;
 enum Case {
     /// Every `COPY` block and `INSERT` run carries a TOC entry.
     DataSpansAttributed,
-    /// The column resolves as stated.
-    Resolves { table: &'static str, column: &'static str, to: ColumnResolution },
 }
 
 struct KnownFailure {
@@ -44,7 +37,7 @@ struct KnownFailure {
     fixture: &'static str,
     /// A fixture the case passes on, where the tree holds the table read
     /// correctly; `None` where no fixture does, the case then resting on its
-    /// own panics for a table or column that is not there.
+    /// own panics for a fixture holding nothing it reads.
     control: Option<&'static str>,
     case: Case,
 }
@@ -67,16 +60,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         fixture: "emitters/dumpall-data-only",
         control: Some("emitters/dumpall"),
         case: Case::DataSpansAttributed,
-    },
-    KnownFailure {
-        kd: "KD73",
-        fixture: "emitters/dumpall-binary-upgrade",
-        control: Some("emitters/dumpall"),
-        case: Case::Resolves {
-            table: "emitters.tuned",
-            column: "amount",
-            to: ColumnResolution::Mapped,
-        },
     },
 ];
 
@@ -112,33 +95,7 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
             assert!(data > 0, "{}: no data span to attribute", path.display());
             if bare.is_empty() { Ok(()) } else { Err(format!("unattributed: {bare:?}")) }
         }
-        Case::Resolves { table, column, to } => {
-            let schema = resolved(path, table).await;
-            let index = schema
-                .schema
-                .index_of(column)
-                .unwrap_or_else(|_| panic!("{}: {table} has no column {column}", path.display()));
-            let found = &schema.columns[index];
-            if found == to { Ok(()) } else { Err(format!("{column} resolves {found:?}")) }
-        }
     }
-}
-
-/// The schema a typed read of `table` commits to.
-async fn resolved(path: &Path, table: &str) -> ResolvedSchema {
-    let source = LocalFileSource::open(path).unwrap();
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
-    while let Some(batch) = stream.next().await {
-        batch.unwrap();
-    }
-    stream.resolved_schema()
 }
 
 #[tokio::test]

@@ -908,3 +908,38 @@ async fn a_connection_string_connect_opens_its_own_database() {
         assert_eq!(blocks, [Some("pgdt-emitters")], "pg_dump {version}");
     }
 }
+
+/// A `--create` dump `\connect`s its database again after its `DATABASE
+/// PROPERTIES` entry (I58), and that reconnect continues the database rather
+/// than opening a second, empty one of the same name ahead of it: each name is
+/// listed once, and a table declared after the reconnect resolves typed.
+/// `dumpall-binary-upgrade` reconnects to every `--create` database,
+/// `dumpall-clean` to `template1`.
+#[tokio::test]
+async fn a_reconnect_after_database_properties_continues_its_database() {
+    for version in VERSIONS {
+        for flags in ["dumpall-binary-upgrade", "dumpall-clean"] {
+            let path = fixture(version, "emitters", flags);
+            let source = LocalFileSource::open(&path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let names: Vec<Option<&str>> = index
+                .metadata
+                .as_ref()
+                .unwrap()
+                .databases
+                .iter()
+                .map(|db| db.name.as_deref())
+                .collect();
+            let mut unique = names.clone();
+            unique.sort();
+            unique.dedup();
+            assert_eq!(unique.len(), names.len(), "pg_dump {version} {flags}: {names:?}");
+            let resolved = typed_schema(&path, "emitters.tuned").await;
+            assert!(
+                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                "pg_dump {version} {flags}: {:?}",
+                resolved.columns
+            );
+        }
+    }
+}

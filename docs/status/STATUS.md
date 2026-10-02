@@ -94,7 +94,7 @@ approval, in the spec's opening note.
 - [x] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67` — [notes](../design/roadmap-P31.8-bytea-escape-form-notes.md)
 - [x] **31.9** A built-in type written quoted under `--quote-all-identifiers` read as its bare name wherever a spelling is compared, closing `KD71` — [notes](../design/roadmap-P31.9-quoted-builtin-notes.md)
 - [x] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72` — [notes](../design/roadmap-P31.10-float-past-dbl-max-notes.md)
-- [ ] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73`
+- [x] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73` — [notes](../design/roadmap-P31.11-reconnect-notes.md)
 
 ## Not started
 

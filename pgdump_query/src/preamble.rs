@@ -1436,17 +1436,18 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
 
     for span in spans {
         match &span.body {
-            // Deficiency register: `deficiency: KD73` — a `--create` dump
-            // `\connect`s its database again after a `DATABASE PROPERTIES`
-            // entry (`RestoreArchive`'s `_reconnectToDB`), which every
-            // `--binary-upgrade` dump and every database carrying a setting
-            // writes, and `pg_dumpall` passes `--create`. The second
-            // `\connect` opens a second segment of the same name, holding
-            // every table, behind an empty first one that a lookup by name
-            // (`database_for_name`) finds first, so every column resolves
-            // `NotDeclared`. The fix continues the current segment on a
-            // `\connect` to the database it already names. **(b) owned by
-            // `P31`**.
+            // I58: one `pg_dump` invocation `\connect`s only the database it
+            // created, again after its `DATABASE PROPERTIES` entry and before
+            // any data, so a `\connect` naming the current segment's database,
+            // with no new invocation's header pair staged (I9) and no block
+            // read, is that reconnect and continues the segment. Every other
+            // one opens a segment: two concatenated dumps of one database
+            // stay two, as `target_settled` and `database_for_name` expect.
+            SpanBody::Connect { database }
+                if seen_connect
+                    && current.name.as_deref() == Some(database.as_str())
+                    && pending_headers == (None, None)
+                    && !current.preamble_complete => {}
             SpanBody::Connect { database } => {
                 let mut next = DatabaseMetadata::empty(Some(database.clone()));
                 if pending_headers.0.is_some() || pending_headers.1.is_some() {
@@ -2366,6 +2367,72 @@ mod tests {
         assert!(!meta.databases[0].tables.contains_key("public.ignored"));
         assert_eq!(meta.databases[1].name.as_deref(), Some("two"));
         assert!(meta.databases[1].tables.contains_key("public.b"));
+    }
+
+    /// I58: a `--create` dump `\connect`s its database again after `DATABASE
+    /// PROPERTIES`, before any data and with no header pair of its own, and
+    /// that continues the database rather than opening an empty one.
+    #[test]
+    fn a_reconnect_to_the_current_database_continues_its_segment() {
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::VersionHeader {
+                server_version: Some("18.6".to_string()),
+                pg_dump_version: Some("18.6".to_string()),
+            }),
+            span(SpanBody::Connect { database: "one".to_string() }),
+            span(SpanBody::Table { name: "public.a".to_string(), definition: TableDef::default() }),
+            span(SpanBody::Unparsed),
+            span(SpanBody::Connect { database: "one".to_string() }),
+            span(SpanBody::Table { name: "public.b".to_string(), definition: TableDef::default() }),
+            dummy_data_span(),
+        ]);
+
+        assert_eq!(meta.databases.len(), 1);
+        let db = &meta.databases[0];
+        assert_eq!(db.name.as_deref(), Some("one"));
+        assert_eq!(db.server_version.as_deref(), Some("18.6"));
+        assert!(db.tables.contains_key("public.a") && db.tables.contains_key("public.b"));
+    }
+
+    /// Two dumps of one database concatenated stay two databases: the second
+    /// `\connect` follows a header pair of its own (I9), or the first's data,
+    /// and neither is a reconnect inside one invocation (I58).
+    #[test]
+    fn a_connect_to_the_current_database_from_another_invocation_opens_a_segment() {
+        let header = || {
+            span(SpanBody::VersionHeader {
+                server_version: Some("18.6".to_string()),
+                pg_dump_version: Some("18.6".to_string()),
+            })
+        };
+        let table = |name: &str| {
+            span(SpanBody::Table { name: name.to_string(), definition: TableDef::default() })
+        };
+        let connect = || span(SpanBody::Connect { database: "one".to_string() });
+        let after_header = dump_metadata_from_spans(&[
+            header(),
+            connect(),
+            table("public.a"),
+            header(),
+            connect(),
+            table("public.b"),
+        ]);
+        let after_data = dump_metadata_from_spans(&[
+            connect(),
+            table("public.a"),
+            dummy_data_span(),
+            connect(),
+            table("public.b"),
+        ]);
+
+        for meta in [after_header, after_data] {
+            let tables: Vec<Vec<&str>> = meta
+                .databases
+                .iter()
+                .map(|db| db.tables.keys().map(String::as_str).collect())
+                .collect();
+            assert_eq!(tables, [["public.a"], ["public.b"]]);
+        }
     }
 
     /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump

@@ -343,10 +343,3 @@ than reading as a phase nobody has sliced.
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
-
-- **KD73** — a `--create` dump `\connect`s its database a second time after
-  its `DATABASE PROPERTIES` entry, as every `pg_dumpall --binary-upgrade` and
-  every database carrying a setting does, and the second `\connect` opens a
-  second segment of the same name behind an empty first one, so every column
-  of that database resolves `NotDeclared` and reads as text. **(b) owned by
-  `P31`**, slice 31.11 closing it. Detail: `pgdump_query/src/preamble.rs`.

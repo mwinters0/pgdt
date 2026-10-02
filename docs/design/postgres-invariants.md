@@ -4015,3 +4015,53 @@ grep -n 'extra.float.digits' src/bin/pg_dump/pg_dump.c
 
 The first prints both output functions; the second the two special spellings
 and the `[1, 32]` clamp; the third the `-15..3` bound.
+
+---
+
+## I58 — One `pg_dump` invocation `\connect`s only the database it dumps, and only ahead of its first data entry
+
+**Claim.** Under `--create`, a plain-format `pg_dump` writes `\connect
+<database>` after its `DATABASE` entry and again after its `DATABASE
+PROPERTIES` entry, when it has one — a setting, a template flag, any
+`--binary-upgrade` — and both name the database being dumped. Both entries
+are the archive's first after the encoding, `standard_conforming_strings` and
+`search_path` ones, so **every `\connect` one invocation writes precedes all
+its data**, and a second one names the database the first did. A `\connect`
+to another database, or one following data, belongs to another invocation.
+
+**Proof.** `RestoreArchive()` in `src/bin/pg_dump/pg_backup_archiver.c`
+calls `_reconnectToDB(AH, te->tag)` for an entry whose `desc` is `DATABASE`
+or `DATABASE PROPERTIES` and for nothing else, and `_reconnectToDB` is
+`appendPsqlMetaConnect`'s one caller there (I55). `dumpDatabase()` in
+`pg_dump.c` makes both entries with `.tag = datname` in `SECTION_PRE_DATA`,
+and `main()` calls it ahead of every `dumpDumpableObject`, so both precede
+every `TABLE DATA` entry in the archive's order and in its main restore pass.
+
+**Observed.** `fixtures/<major>/emitters/dumpall-binary-upgrade.sql`
+reconnects to each `--create` database, and `emitters/dumpall-clean.sql` to
+`template1`, at all six majors, each before that database's first `COPY`.
+
+**Scope limit.** One invocation's output. `pg_dumpall` concatenates one per
+database, each opening with its own version-header pair (I9), and writes
+`\connect template1` and `\connect postgres` itself; a hand concatenation of
+two dumps of one database names it twice across two invocations.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `preamble::dump_metadata_from_spans`, which continues the
+current database at a `\connect` naming it when no header pair is staged and
+no block has been read.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump
+grep -n '_reconnectToDB(AH, te->tag)\|object_is_db\|desc, "DATABASE' pg_backup_archiver.c
+grep -n '"DATABASE PROPERTIES"' -B4 -A2 pg_dump.c | grep 'tag\|section'
+grep -n 'outputCreateDB)' -A5 pg_dump.c
+```
+
+The first prints one `_reconnectToDB` call, under the `DATABASE` and
+`DATABASE PROPERTIES` tests directly or through `object_is_db`; the second
+`.tag = datname` and `SECTION_PRE_DATA`; the third `dumpDatabase(fout)` ahead
+of the `dumpDumpableObject` loop.
