@@ -1655,7 +1655,7 @@ fn range_bound(
 /// [`TypeOutcome::NestedArrayElement`] for why each shape is refused.
 fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcome {
     let terminal = domain_terminal(element, types);
-    let opaque = terminal.eq_ignore_ascii_case("box")
+    let opaque = is_box(terminal)
         || matches!(
             find_type(terminal, types).map(|t| &t.kind),
             Some(TypeKind::Base | TypeKind::Shell)
@@ -1756,8 +1756,7 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 /// Walk a chain of domains to the type name it bottoms out at — the declared
 /// spelling of the first non-domain it reaches, or of `name` itself when that
 /// is not a domain. The terminal is returned as the DDL spelled it, and its
-/// two readers compare it to `box` ignoring case only, the bare name being the
-/// spelling `pg_dump` writes a built-in in (I8, I29).
+/// two readers test it with [`is_box`].
 ///
 /// [`resolve_array`] and [`array_comparison`] test this terminal rather than
 /// the declared spelling (I22, I26; `docs/design/decisions.md`, "D41").
@@ -1765,15 +1764,6 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 /// The loop is bounded by the type list's length — a domain chain visits each
 /// `CREATE DOMAIN` at most once — which keeps a hand-edited file from
 /// spinning rather than merely failing.
-///
-/// Deficiency register: `deficiency: KD71` — under `--quote-all-identifiers`
-/// `format_type` quotes every built-in name it does not spell as a keyword, so
-/// a domain over `box` is written `AS "box"` and its terminal comes back
-/// `"box"`, which the `box` comparison misses: an array of that domain
-/// resolves to a list split at `,` rather than refusing (I22), each element a
-/// fragment of a box. `t_delimiter` in
-/// `fixtures/<major>/types/quote-all-identifiers.sql` holds it. **(b) owned by
-/// `P31`**.
 fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
     let mut name = name.trim();
     for _ in 0..=types.len() {
@@ -1783,6 +1773,13 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
         }
     }
     name
+}
+
+/// Whether `terminal` names the built-in `box`, read as [`builtin_name`]
+/// reads every built-in: unqualified, and bare in any case or quoted in the
+/// catalog's, as `--quote-all-identifiers` writes it (I8).
+fn is_box(terminal: &str) -> bool {
+    !split_typmod(terminal).0.contains('.') && builtin_name(terminal).0 == "box"
 }
 
 /// Map one declared type string — exactly as `pg_dump` wrote it, e.g. from
@@ -1834,7 +1831,7 @@ fn array_comparison(
         return ComparisonPlan::Refused;
     };
     let terminal = domain_terminal(element, types);
-    let opaque = terminal.eq_ignore_ascii_case("box")
+    let opaque = is_box(terminal)
         || matches!(
             find_type(terminal, types).map(|t| &t.kind),
             Some(TypeKind::Base | TypeKind::Shell)
@@ -2442,13 +2439,18 @@ mod tests {
             ty("public.shellonly", TypeKind::Shell),
             ty("public.box_domain", TypeKind::domain("box")),
             ty("public.box_domain2", TypeKind::domain("public.box_domain")),
+            // `--quote-all-identifiers` quotes the built-in (I8).
+            ty("public.quoted_box_domain", TypeKind::domain("\"box\"")),
         ];
         for declared in [
             "box[]",
+            "BOX[]",
+            "\"box\"[]",
             "public.mybase[]",
             "public.shellonly[]",
             "public.box_domain[]",
             "public.box_domain2[]",
+            "public.quoted_box_domain[]",
         ] {
             assert_eq!(
                 resolve_declared_type(declared, &types),
@@ -3614,6 +3616,7 @@ mod tests {
             // I22: an opaque element type, refused for the delimiter as much
             // as for the order.
             ("box[]", "[]", "box", false),
+            ("\"box\"[]", "[]", "\"box\"", false),
             ("public.gtype[]", "[]", "public.gtype", false),
             // An element this walk cannot find, `types` declaring no
             // `public.intarr`: refused as an unknown type. The fixture's own

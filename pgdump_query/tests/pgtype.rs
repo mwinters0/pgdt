@@ -421,6 +421,30 @@ async fn the_canonical_extension_names_land_on_the_columns_that_claim_them() {
     }
 }
 
+/// `--quote-all-identifiers` quotes every built-in `format_type` does not
+/// spell as a keyword (I8), and quoting changes no type: every column of the
+/// `types` schema resolves to the Arrow field, the outcome, the literal form
+/// and the ordering verdict it does unquoted, at every major.
+#[tokio::test]
+async fn every_column_resolves_alike_with_every_identifier_quoted() {
+    for version in common::VERSIONS {
+        let quoted = metadata(&types_fixture(version, "quote-all-identifiers")).await;
+        let bare = metadata(&types_fixture(version, "default")).await;
+        let tables = &bare.databases.first().unwrap().tables;
+        assert!(!tables.is_empty(), "pg_dump {version}: no tables");
+        for table in tables.keys() {
+            let (q, b) = (resolve_table(&quoted, table), resolve_table(&bare, table));
+            let orders = |r: &pgdump_query::ResolvedSchema| {
+                r.comparisons.iter().map(|c| c.orders()).collect::<Vec<_>>()
+            };
+            assert_eq!(q.schema, b.schema, "pg_dump {version}: {table}");
+            assert_eq!(q.columns, b.columns, "pg_dump {version}: {table}");
+            assert_eq!(q.plans, b.plans, "pg_dump {version}: {table}");
+            assert_eq!(orders(&q), orders(&b), "pg_dump {version}: {table}");
+        }
+    }
+}
+
 /// I29's own dump, as `pg_dump 16.14` wrote it: every type name needs quoting,
 /// and each column resolves to the type it names, the arrays included — the
 /// definition and the declaration compared in one spelling.

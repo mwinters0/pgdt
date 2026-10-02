@@ -381,7 +381,8 @@ at all six majors; `pgtype.rs`'s `builtin_name` reads them.
 `fixtures/<13–18>/types/quote-all-identifiers.sql` writes `"text"`, `"date"`,
 `"box"` and `"bpchar"` where `default.sql` writes them bare, and `integer`,
 `timestamp(3) with time zone` and `interval day to second(2)` alike in both. A
-reader comparing a built-in's spelling unquotes it first (`KD71`).
+reader comparing a built-in's spelling reads it through `pgtype.rs`'s
+`builtin_name`, which takes a quoted name as a catalog name.
 
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.

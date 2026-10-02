@@ -64,12 +64,6 @@ struct Exclusion {
 const EXCLUSIONS: &[Exclusion] = &[
     Exclusion { kd: "KD2", flag_set: None, table: "public.t_composite_matrix", column: "v_tagged" },
     Exclusion {
-        kd: "KD71",
-        flag_set: Some("quote-all-identifiers"),
-        table: "public.t_delimiter",
-        column: "v_box_domain_array",
-    },
-    Exclusion {
         kd: "KD72",
         flag_set: Some("extra-float-digits-0"),
         table: "public.t_extremes",

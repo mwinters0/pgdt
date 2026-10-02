@@ -344,12 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD71** — under `--quote-all-identifiers` a built-in type is written
-  quoted, and the `box` test at the end of a domain chain reads the spelling
-  verbatim, so an array over a domain over `box` is split at `,` instead of
-  refused, its elements fragments of a box. **(b) owned by `P31`**, slice 31.9
-  closing it. Detail: `pgdump_query/src/pgtype.rs`.
-
 - **KD72** — under `--extra-float-digits=0` `float8out` writes `DBL_MAX` as
   `1.79769313486232e+308`, which `decode_f64` reads as an infinity the column
   never held, and a distinct count from the statistics, taken over the text,

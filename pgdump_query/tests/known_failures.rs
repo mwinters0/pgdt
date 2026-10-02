@@ -82,16 +82,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         },
     },
     KnownFailure {
-        kd: "KD71",
-        fixture: "types/quote-all-identifiers",
-        control: Some("types/default"),
-        case: Case::Resolves {
-            table: "public.t_delimiter",
-            column: "v_box_domain_array",
-            to: ColumnResolution::OpaqueElementType,
-        },
-    },
-    KnownFailure {
         kd: "KD72",
         fixture: "types/extra-float-digits-0",
         control: Some("types/default"),
