@@ -554,4 +554,22 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 39466c97 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "pgdump_query/src/preamble.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="4d946f8e",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "projection-widths",
+            "statistics-pruning",
+        ),
+        why="31.10, acknowledged by the maintainer without a re-take: one is_infinite "
+        "test per float decoded, changing the value only for a digit spelling past the "
+        "type's largest finite value, which no generated input holds",
+        verified="git show 4d946f8e -- pgdump_query/src/decode.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
