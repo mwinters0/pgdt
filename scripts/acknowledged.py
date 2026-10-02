@@ -387,4 +387,26 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show a5b5f99f -- pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="f6aedf59",
+        figures=(
+            "allocator",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="M202: CACHE_FORMAT_VERSION's value moves 33 -> 34, a fixed-width u32 "
+        "written and compared in the cache header alike; the rest is rustdoc and "
+        "GOLDEN_ORDER, a constant inside a #[cfg(test)] module",
+        verified="git show f6aedf59 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
