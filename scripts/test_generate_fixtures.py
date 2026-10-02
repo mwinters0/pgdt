@@ -73,6 +73,19 @@ class CommittedSchemas(unittest.TestCase):
                 self.assertIn(schema, gf.SCHEMAS)
                 self.assertIn(major, gf.ROUTINE_VERSIONS)
 
+    def test_a_cluster_script_belongs_to_a_schema_and_makes_what_is_dropped(self):
+        # What the script creates is what drop_fixture_db removes, or the next
+        # schema's `pg_dumpall` in the same container would hold it.
+        for schema, cluster in gf.CLUSTER_SCRIPTS.items():
+            text = (gf.SCRIPT_DIR / cluster.file).read_text()
+            with self.subTest(schema=schema):
+                self.assertIn(schema, gf.SCHEMAS)
+                self.assertIn(f"LOCATION '{cluster.tablespace_dir}'", text)
+                for tablespace in cluster.tablespaces:
+                    self.assertIn(f"CREATE TABLESPACE {tablespace} ", text)
+                for database in cluster.databases:
+                    self.assertIn(f'CREATE DATABASE "{database}"', text)
+
     def test_a_setting_variant_names_one_setting_and_carries_no_flags(self):
         settings = [
             spec

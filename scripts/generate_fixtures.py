@@ -128,12 +128,11 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # list -- see docs/design/decisions.md ("D69") for
 # why the split exists and why each gets exactly this set.
 #
-# `None` is a sentinel meaning "run pg_dumpall instead of pg_dump" -- see
-# dump_flag_set. It isn't a `pg_dump` flag set at all, so it can't be
-# expressed as a flag list.
+# A [`Dumpall`] runs `pg_dumpall` over the whole cluster instead of `pg_dump`
+# over the schema's database, with its own flags -- see dump_flag_set.
 #
-# A flag-set value is normally a plain flags list (or None, above). It can
-# also be a `(min_version, flags)` pair restricting the run to versions >=
+# A flag-set value is normally a plain flags list (or a `Dumpall`, above). It
+# can also be a `(min_version, flags)` pair restricting the run to versions >=
 # min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
 # decisions.md, "D69") is PG18+ only, and the
 # routine matrix runs versions 13-18.
@@ -154,7 +153,15 @@ class Setting:
     value: str
 
 
-FlagSet = list[str] | None | Setting
+@dataclass(frozen=True)
+class Dumpall:
+    """A flag set that is a `pg_dumpall` run over the cluster, with these
+    flags besides [`PG_DUMPALL_ARGS`]."""
+
+    flags: tuple[str, ...] = ()
+
+
+FlagSet = list[str] | Dumpall | Setting
 SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
     "edge_cases": {
         "default": [],
@@ -167,7 +174,7 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "binary-upgrade": ["--binary-upgrade"],
         "create": ["--create"],
         "no-comments": ["--no-comments", "--no-security-labels"],
-        "dumpall": None,
+        "dumpall": Dumpall(),
         # The `INSERT` shapes the two run above do not write, and the one
         # `--data-only` shape that wraps each block in trigger toggles.
         "rows-per-insert": ["--rows-per-insert=2"],
@@ -193,6 +200,111 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "stats": ("18", ["--statistics"]),
         # The foreign table's rows, which no other flag set dumps.
         "include-foreign-data": ["--include-foreign-data=objects_files"],
+        # Every other `pg_dump` option that moves output bytes, each passed by
+        # some set here, since this schema holds an object of every kind an
+        # option selects or omits (`emitter_register.py`'s option half). Sets
+        # combine options that do not conflict; one a major lacks waits for
+        # its minimum.
+        "selection-schema": [
+            "--schema=objects",
+            "--exclude-table=objects.secrets",
+            "--exclude-table-data=objects.orders",
+            "--blobs",
+            "--strict-names",
+        ],
+        "selection-table": ["--table=objects.widgets", "--table=objects.orders"],
+        "omit": [
+            "--exclude-schema=public",
+            "--no-tablespaces",
+            "--no-publications",
+            "--no-subscriptions",
+            "--no-unlogged-table-data",
+            "--no-blobs",
+            "--no-acl",
+            "--enable-row-security",
+            "--disable-dollar-quoting",
+            "--use-set-session-authorization",
+            "--attribute-inserts",
+        ],
+        "sections": ["--section=pre-data", "--section=post-data", "--restrict-key=pgdtfixture"],
+        "extension": ("14", ["--extension=file_fdw", "--no-toast-compression"]),
+        "no-table-access-method": ("15", ["--schema=objects", "--no-table-access-method"]),
+        "large-objects": (
+            "16",
+            [
+                "--schema=objects",
+                "--large-objects",
+                "--exclude-table-and-children=objects.events",
+                "--exclude-table-data-and-children=objects.orders",
+            ],
+        ),
+        "table-and-children": ("16", ["--table-and-children=objects.events", "--no-large-objects"]),
+        # The filter file is written by the schema's own script.
+        "filter": ("17", ["--filter=/tmp/objects_filter.txt", "--exclude-extension=postgres_fdw"]),
+        "no-data": ("18", ["--no-data", "--no-policies", "--no-statistics", "--sequence-data"]),
+        "no-schema": ("18", ["--no-schema"]),
+        "statistics-only": ("18", ["--statistics-only"]),
+    },
+    # A literal of `pg_dump`'s emitters no other schema reaches
+    # (fixture_schema_emitters.sql), and the `pg_dumpall` runs: its globals
+    # come from `CLUSTER_SCRIPTS`, and each of its options is passed by some
+    # set here.
+    "emitters": {
+        "default": [],
+        "binary-upgrade": ["--binary-upgrade"],
+        "clean": ["--clean", "--if-exists"],
+        "data-only": ["--data-only", "--disable-triggers", "--superuser=postgres"],
+        "dumpall": Dumpall(),
+        "dumpall-clean": Dumpall(("--clean", "--if-exists", "--exclude-database=postgres")),
+        "dumpall-binary-upgrade": Dumpall(("--binary-upgrade",)),
+        "dumpall-data-only": Dumpall(
+            (
+                "--data-only",
+                "--inserts",
+                "--column-inserts",
+                "--attribute-inserts",
+                "--rows-per-insert=2",
+                "--on-conflict-do-nothing",
+                "--disable-triggers",
+                "--superuser=postgres",
+                "--extra-float-digits=3",
+                "--load-via-partition-root",
+            )
+        ),
+        "dumpall-schema-only": Dumpall(
+            (
+                "--schema-only",
+                "--no-comments",
+                "--no-owner",
+                "--no-privileges",
+                "--no-acl",
+                "--no-security-labels",
+                "--no-publications",
+                "--no-subscriptions",
+                "--no-tablespaces",
+                "--no-unlogged-table-data",
+                "--use-set-session-authorization",
+                "--disable-dollar-quoting",
+                "--quote-all-identifiers",
+                "--restrict-key=pgdtfixture",
+            )
+        ),
+        "dumpall-globals-only": Dumpall(("--globals-only", "--verbose")),
+        "dumpall-roles-only": Dumpall(("--roles-only",)),
+        "dumpall-tablespaces-only": Dumpall(("--tablespaces-only",)),
+        "dumpall-no-toast-compression": ("14", Dumpall(("--schema-only", "--no-toast-compression"))),
+        "dumpall-no-table-access-method": (
+            "15",
+            Dumpall(("--schema-only", "--no-table-access-method")),
+        ),
+        # The filter file is written by the schema's own script.
+        "dumpall-filter": ("17", Dumpall(("--filter=/tmp/emitters_dumpall_filter.txt",))),
+        "dumpall-no-data": (
+            "18",
+            Dumpall(("--no-data", "--no-policies", "--no-statistics", "--sequence-data")),
+        ),
+        "dumpall-statistics": ("18", Dumpall(("--no-schema", "--statistics"))),
+        "dumpall-statistics-only": ("18", Dumpall(("--statistics-only",))),
     },
     # decisions.md's "D48": the one shape where a single `COPY <name>` header
     # owns several blocks (I2). `default` already produces it -- pg_dump
@@ -251,6 +363,31 @@ def schema_files(schema: str, version: str, directory: Path = SCRIPT_DIR) -> lis
     ]
 
 
+@dataclass(frozen=True)
+class ClusterScript:
+    """Cluster-global objects a schema's `pg_dumpall` runs read: a script run
+    in the `postgres` database before the schema loads, the tablespace
+    directory it needs, and what [`drop_fixture_db`] removes after."""
+
+    file: str
+    tablespace_dir: str
+    tablespaces: tuple[str, ...]
+    databases: tuple[str, ...]
+
+
+#: The `emitters` schema's globals: a tablespace with options and a comment,
+#: and a database whose name `appendPsqlMetaConnect` cannot write bare
+#: (fixture_schema_emitters_cluster.sql).
+CLUSTER_SCRIPTS: dict[str, ClusterScript] = {
+    "emitters": ClusterScript(
+        file="fixture_schema_emitters_cluster.sql",
+        tablespace_dir="/var/lib/postgresql/emitters_tablespace",
+        tablespaces=("emitters_ts",),
+        databases=("pgdt-emitters",),
+    ),
+}
+
+
 def tenant_schema_file() -> Path:
     # Named for the fixture set it belongs to, not as a fifth fixture set:
     # nothing dumps `pgdt_tenant` on its own, it only ever shows up inside
@@ -304,15 +441,15 @@ def wait_ready(name: str, timeout: float = 30.0) -> None:
     raise TimeoutError(f"postgres in container {name} did not become ready in {timeout}s")
 
 
-def prepare_tablespace_dir(name: str) -> None:
+def prepare_tablespace_dir(name: str, directory: str = TABLESPACE_DIR) -> None:
     # `docker exec` defaults to root in the official postgres image (the
     # entrypoint drops to the postgres OS user itself via gosu, but that
     # doesn't apply to a fresh exec) -- root can mkdir here, but CREATE
     # TABLESPACE needs the directory owned by the user postgres itself
     # connects as, so chown it explicitly rather than relying on the
     # container's default exec user.
-    run(DOCKER + ["exec", name, "mkdir", "-p", TABLESPACE_DIR])
-    run(DOCKER + ["exec", name, "chown", "postgres:postgres", TABLESPACE_DIR])
+    run(DOCKER + ["exec", name, "mkdir", "-p", directory])
+    run(DOCKER + ["exec", name, "chown", "postgres:postgres", directory])
 
 
 def load_sql(name: str, database: str, sql: str) -> None:
@@ -345,6 +482,9 @@ def create_fixture_db(
         raise last_error
     if schema == "objects":
         prepare_tablespace_dir(name)
+    if (cluster := CLUSTER_SCRIPTS.get(schema)) is not None:
+        prepare_tablespace_dir(name, cluster.tablespace_dir)
+        load_sql(name, "postgres", (SCRIPT_DIR / cluster.file).read_text())
     for path in schema_files(schema, version):
         load_sql(name, DB_NAME, path.read_text())
     if schema == TENANT_SCHEMA:
@@ -385,6 +525,11 @@ def drop_fixture_db(name: str) -> None:
         DOCKER + ["exec", name, "psql", "-U", DB_USER, "-c", "DROP TABLESPACE IF EXISTS fixture_ts"],
         capture_output=True,
     )
+    for cluster in CLUSTER_SCRIPTS.values():
+        for database in cluster.databases:
+            run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, "--if-exists", database], capture_output=True)
+        for tablespace in cluster.tablespaces:
+            psql_command(name, "postgres", f"DROP TABLESPACE IF EXISTS {tablespace}")
 
 
 def psql_command(name: str, database: str, sql: str) -> None:
@@ -408,12 +553,12 @@ def dump_flag_set(
             psql_command(name, DB_NAME, f"ALTER DATABASE {DB_NAME} RESET {flags.name}")
         out_path.write_text(result.stdout)
         return out_path
-    if flags is None:
+    if isinstance(flags, Dumpall):
         # dumpall: the whole cluster (postgres/template1 plus DB_NAME), not
         # a `pg_dump` invocation against one database -- `--no-role-passwords`
         # keeps the output deterministic (no password hashes to vary run to
         # run). Run before drop_fixture_db so DB_NAME is still loaded.
-        cmd = DOCKER + ["exec", name, "pg_dumpall", *PG_DUMPALL_ARGS]
+        cmd = DOCKER + ["exec", name, "pg_dumpall", *PG_DUMPALL_ARGS, *flags.flags]
     else:
         cmd = DOCKER + ["exec", name, "pg_dump", *PG_DUMP_ARGS, *flags, DB_NAME]
     result = run(cmd, stdout=subprocess.PIPE, text=True)

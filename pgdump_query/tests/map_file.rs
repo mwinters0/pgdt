@@ -77,7 +77,7 @@ fn assert_matches_eager(actual: &DumpIndex, eager: &DumpIndex, label: &str) {
 /// another route — the baseline the resumed cases below are measured against.
 #[tokio::test]
 async fn a_cold_map_file_matches_build_index() {
-    for schema_dir in ["edge_cases", "objects", "partitions", "statistics", "types"] {
+    for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only", "schema-only"] {
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../fixtures/16")
@@ -120,7 +120,7 @@ async fn a_cold_map_file_matches_build_index() {
 /// the one announcement only its scheduler makes.
 #[tokio::test]
 async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
-    for schema_dir in ["edge_cases", "objects", "partitions", "statistics", "types"] {
+    for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only"] {
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../fixtures/16")

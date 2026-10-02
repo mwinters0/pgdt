@@ -3740,3 +3740,42 @@ grep -n 'scale %d must be between' src/backend/utils/adt/numeric.c
 
 The first prints three lines from v15 on; the second names `%d and %d`
 (-1000 and 1000) from v15 on, and `0 and precision %d` before.
+
+---
+
+## I52 — `pg_dump` 18 writes a `--binary-upgrade` inherited not-null fix-up by column number only against an older server
+
+**Claim.** Under `--binary-upgrade`, `pg_dump` 18 resets an inherited
+not-null constraint's `conislocal` by name, `… contype = 'n' AND conrelid =
+… AND conname IN (…)`, and writes the by-number form, `… AND conkey IN
+('{<attnum>}')`, only for a constraint whose name it holds as empty — which
+it does only when the server it dumps is older than 18. A fixture, taken
+from a server of its own `pg_dump`'s major (D69), never holds the second.
+
+**Proof.** `getTableAttrs`'s per-column pass in `src/bin/pg_dump/pg_dump.c`
+sets `notnull_constrs[j]` to `""` for every not-null column when
+`fout->remoteVersion < 180000` ("< 18 doesn't have not-null names"); from 18
+on it keeps the server's name wherever `binary_upgrade && !ispartition &&
+!notnull_islocal[j]`, which is every inherited not-null constraint
+`dumpTableSchema`'s fix-up visits. `dumpTableSchema` appends `conkey IN (` to
+its `extra` buffer only in the branch for `notnull_constrs[j][0] == '\0'`.
+
+**Scope limit.** A dump `pg_dump` 18 takes of a 13–17 server holds it; the
+generator takes none (`scripts/generate_fixtures.py`, `ROUTINE_VERSIONS`).
+
+**Verified against:** v18.6. Majors 13–17 write neither form's `contype =
+'n'`.
+
+**Relied on by:** `scripts/emitter_register.py`'s exemption of the literal,
+`EXEMPTIONS`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n "doesn't have not-null names" src/bin/pg_dump/pg_dump.c
+awk '/^dumpTableSchema\(/,/^}/' src/bin/pg_dump/pg_dump.c | grep -n "conkey IN (\|notnull_constrs\[j\]\[0\] != '\\\\0'"
+```
+
+The first prints one line; the second prints the branch test and, below it,
+the `conkey IN (` append.

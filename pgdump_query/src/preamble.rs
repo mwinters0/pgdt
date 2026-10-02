@@ -1187,6 +1187,17 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
 
     for span in spans {
         match &span.body {
+            // Deficiency register: `deficiency: KD73` — a `--create` dump
+            // `\connect`s its database again after a `DATABASE PROPERTIES`
+            // entry (`RestoreArchive`'s `_reconnectToDB`), which every
+            // `--binary-upgrade` dump and every database carrying a setting
+            // writes, and `pg_dumpall` passes `--create`. The second
+            // `\connect` opens a second segment of the same name, holding
+            // every table, behind an empty first one that a lookup by name
+            // (`database_for_name`) finds first, so every column resolves
+            // `NotDeclared`. The fix continues the current segment on a
+            // `\connect` to the database it already names. **(b) owned by
+            // `P31`**.
             SpanBody::Connect { database } => {
                 if seen_connect {
                     let mut next = DatabaseMetadata::empty(Some(database.clone()));

@@ -58,10 +58,21 @@ so is a value form:
 any `fixtures/<major>/<schema>/*.sql` of a schema the generator dumps. No C
 parser: a branch is reached when what it appends is in some fixture.
 
-**The join reports and does not gate.** It exits non-zero on a problem -- a
-major with no register, a malformed row, a flag naming no option -- and lists
-what is uncovered without failing on it; dispositions (an `I<n>` or a
-`KD<k>` exempting a row) and the gate arrive together.
+**A row no fixture reaches is exempt or it fails the join** -- and so
+`mise run check`, through `test_emitter_register`. [`EXEMPTIONS`] says why
+each such row need not be reached, resolved against the committed record: an
+`I<n>` proving no producer the generator runs writes it, or a `KD<k>` naming
+it a known failure -- the only two a literal may take, since every byte
+passes through the map -- and, for an option, a line of the program's source
+showing it changes no output byte ([`NoOutput`]), or a
+`pg-dump-compatibility.md` row saying its other values write input this build
+does not read ([`Unsupported`]). A `NoOutput` needle is found by the
+extraction, which no check may repeat, and written into the register as an
+`evidence` row, so the join holds the exemption to the source at every major
+holding the option. An exemption whose row a fixture reaches, or that no
+register holds, is a problem: it is struck. Besides those, the join exits
+non-zero on a major with no register, a malformed row or a flag naming no
+option.
 
 Usage:
 
@@ -479,13 +490,15 @@ def longest_run(constant: str, is_format: bool) -> str | None:
 
 @dataclass(frozen=True)
 class Row:
-    """One register row: a literal, or an option."""
+    """One register row: a literal, an option, or the evidence that an
+    option exempt as changing no output byte is consumed where its exemption
+    says ([`NoOutput`])."""
 
-    kind: str  # "literal" or "option"
+    kind: str  # "literal", "option" or "evidence"
     file: str
     function: str  # the C function, or the program, for an option
     entry: str  # the run, or the long option's name
-    detail: str  # the whole constant, or the option's short letter
+    detail: str  # the whole constant, the option's short letter, or the needle
 
     def tsv(self) -> str:
         return "\t".join(
@@ -630,7 +643,7 @@ def parse(text: str, where: str = "<register>") -> Register:
                 problems.append(f"{where}:{number}: header is not {HEADER}")
             header_seen = True
             continue
-        if len(fields) != len(HEADER) or fields[0] not in ("literal", "option"):
+        if len(fields) != len(HEADER) or fields[0] not in ("literal", "option", "evidence"):
             problems.append(f"{where}:{number}: malformed row {line!r}")
             continue
         kind, file, function, entry, detail = fields
@@ -680,14 +693,19 @@ def extract(checkout: Path) -> tuple[list[Row], list[str]]:
             found, more = literals(body, file, name)
             rows.extend(found)
             problems.extend(more)
+    text_of: dict[str, str] = {}
     for file, program in OPTION_TABLES:
         path = checkout / file
         if not path.is_file():
             problems.append(f"{path}: missing")
             continue
-        found, more = options(path.read_text(errors="replace"), file, program)
+        text_of[file] = path.read_text(errors="replace")
+        found, more = options(text_of[file], file, program)
         rows.extend(found)
         problems.extend(more)
+    found, more = evidence_rows(text_of, rows)
+    rows.extend(found)
+    problems.extend(more)
     return rows, problems
 
 
@@ -731,8 +749,8 @@ class ValueForm:
 
 
 #: The value forms the session-setting variants and the float option reach,
-#: hand-listed (I4 names what `pg_dump` pins; everything else is a server's).
-#: Typmod-selected spellings are this half's too, and are not listed yet.
+#: and those a column's typmod selects, hand-listed (I4 names what `pg_dump`
+#: pins; everything else is a server's, or the column's).
 VALUE_FORMS: tuple[ValueForm, ...] = (
     ValueForm(
         "src/backend/utils/adt/varlena.c",
@@ -776,6 +794,55 @@ VALUE_FORMS: tuple[ValueForm, ...] = (
         "types/extra-float-digits-0",
         "`extra_float_digits = 0`: a `double precision` at `DBL_DIG` significant digits",
     ),
+    ValueForm(
+        "src/backend/utils/adt/numeric.c",
+        "numeric_out",
+        "\t-1.5000000000\t",
+        "types/default",
+        "`numeric(38,10)`: a value written with every fractional digit its scale holds (I51)",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/numeric.c",
+        "numeric_out",
+        "\t0.00\t",
+        "types/default",
+        "`numeric(10,2)`: zero written at its scale",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/varchar.c",
+        "bpcharout",
+        "\thi        \n",
+        "types/default",
+        "`char(10)`: a value padded with spaces to its length",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/timestamp.c",
+        "timestamp_out",
+        "2024-01-01 00:00:00.123\t",
+        "types/default",
+        "`timestamp(3)`: fractional seconds rounded to the precision",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/timestamp.c",
+        "timestamptz_out",
+        "2024-01-01 00:00:01+00",
+        "types/default",
+        "`timestamp(0) with time zone`: a fraction rounded up into the next second",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/date.c",
+        "timetz_out",
+        "12:34:56.79+02",
+        "types/default",
+        "`time(2) with time zone`: fractional seconds rounded to the precision",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/timestamp.c",
+        "interval_out",
+        "3 days 04:05:06.79",
+        "types/default",
+        "`interval day to second(2)`: fractional seconds rounded to the precision",
+    ),
 )
 
 
@@ -787,6 +854,176 @@ def value_form_problems(forms: Sequence[ValueForm] = VALUE_FORMS) -> list[str]:
         schema, _, flag_set = form.selector.partition("/")
         if flag_set not in gf.SCHEMAS.get(schema, {}):
             problems.append(f"value form {form.spelling!r}: {form.selector!r} is no flag set")
+    return problems
+
+
+# --------------------------------------------------------------------------
+# Dispositions
+# --------------------------------------------------------------------------
+
+POSTGRES_INVARIANTS = REPO / "docs/design/postgres-invariants.md"
+COMPATIBILITY = REPO / "docs/design/pg-dump-compatibility.md"
+
+
+@dataclass(frozen=True)
+class Invariant:
+    """An `I<n>` proving that no producer the generator runs writes the row."""
+
+    id: str
+
+
+@dataclass(frozen=True)
+class Known:
+    """A `KD<k>` naming the row's form as a known failure."""
+
+    id: str
+
+
+@dataclass(frozen=True)
+class NoOutput:
+    """An option that changes no byte of the dump: `needle` is the line of the
+    program's source that consumes it, which the extraction finds at every
+    major holding the option and records as an `evidence` row."""
+
+    needle: str
+
+
+@dataclass(frozen=True)
+class Unsupported:
+    """An option whose every value but the default writes input this build
+    reads no form of: `row` is the first cell of the
+    `docs/design/pg-dump-compatibility.md` row saying so."""
+
+    row: str
+
+
+Reason = Invariant | Known | NoOutput | Unsupported
+
+
+@dataclass(frozen=True)
+class Exemption:
+    """A row no fixture holds, and why. `function` is the C function for a
+    literal and the program for an option, as a row's is."""
+
+    kind: str  # "literal" or "option"
+    function: str
+    entry: str
+    reason: Reason
+
+
+def _no_output(program: str, entry: str, needle: str) -> Exemption:
+    return Exemption("option", program, entry, NoOutput(needle))
+
+
+#: Every row a fixture does not reach, with the reason it need not. A
+#: literal may be exempt only by an `I<n>` or a `KD<k>`: every byte passes
+#: through the map, so there is no "pgdt does not read this"
+#: (docs/design/roadmap-P31-correctness-evidence.md, "The emitter register").
+EXEMPTIONS: tuple[Exemption, ...] = (
+    Exemption(
+        "literal",
+        "dumpTableSchema",
+        "::pg_catalog.regclass AND\nconkey IN (",
+        Invariant("I52"),
+    ),
+    Exemption("option", "pg_dump", "format", Unsupported("`--format=custom`")),
+    Exemption(
+        "option",
+        "pg_dump",
+        "compress",
+        Unsupported("Dump-level compression (`-Z`/`--compress`) for plain format"),
+    ),
+    Exemption("option", "pg_dump", "encoding", Unsupported("Non-UTF8 `client_encoding`")),
+    Exemption("option", "pg_dumpall", "encoding", Unsupported("Non-UTF8 `client_encoding`")),
+    _no_output("pg_dump", "dbname", "dopt.cparams.dbname = pg_strdup(optarg);"),
+    _no_output("pg_dump", "host", "dopt.cparams.pghost = pg_strdup(optarg);"),
+    _no_output("pg_dump", "port", "dopt.cparams.pgport = pg_strdup(optarg);"),
+    _no_output("pg_dump", "password", "dopt.cparams.promptPassword = TRI_YES;"),
+    _no_output("pg_dump", "no-password", "dopt.cparams.promptPassword = TRI_NO;"),
+    _no_output("pg_dump", "role", "use_role = pg_strdup(optarg);"),
+    _no_output("pg_dump", "file", "filename = pg_strdup(optarg);"),
+    _no_output("pg_dump", "jobs", "parallel backup only supported by the directory format"),
+    _no_output("pg_dump", "lock-wait-timeout", "dopt.lockWaitTimeout = pg_strdup(optarg);"),
+    _no_output("pg_dump", "no-sync", "dosync = false;"),
+    _no_output("pg_dump", "sync-method", "parse_sync_method(optarg, &sync_method)"),
+    _no_output("pg_dump", "snapshot", "dumpsnapshot = pg_strdup(optarg);"),
+    _no_output("pg_dump", "serializable-deferrable", "SERIALIZABLE, READ ONLY, DEFERRABLE"),
+    _no_output("pg_dump", "no-synchronized-snapshots", "dopt.no_synchronized_snapshots"),
+    _no_output("pg_dump", "no-reconnect", "no-op, still accepted for backwards compatibility"),
+    _no_output("pg_dump", "help", "help(progname);"),
+    _no_output("pg_dump", "version", 'puts("pg_dump (PostgreSQL) " PG_VERSION);'),
+    _no_output("pg_dumpall", "dbname", "connstr = pg_strdup(optarg);"),
+    _no_output("pg_dumpall", "database", "pgdb = pg_strdup(optarg);"),
+    _no_output("pg_dumpall", "host", "pghost = pg_strdup(optarg);"),
+    _no_output("pg_dumpall", "port", "pgport = pg_strdup(optarg);"),
+    _no_output("pg_dumpall", "password", "prompt_password = TRI_YES;"),
+    _no_output("pg_dumpall", "no-password", "prompt_password = TRI_NO;"),
+    _no_output("pg_dumpall", "role", "use_role = pg_strdup(optarg);"),
+    _no_output("pg_dumpall", "file", "filename = pg_strdup(optarg);"),
+    # Forwarded to each database's `pg_dump`, whose own exemption covers it.
+    _no_output("pg_dumpall", "lock-wait-timeout", '" --lock-wait-timeout "'),
+    _no_output("pg_dumpall", "no-sync", "dosync = false;"),
+)
+
+
+def option_file(program: str) -> str | None:
+    return next((file for file, name in OPTION_TABLES if name == program), None)
+
+
+def evidence_rows(text_of: dict[str, str], rows: Sequence[Row]) -> tuple[list[Row], list[str]]:
+    """The `evidence` rows a checkout yields: each `NoOutput` exemption whose
+    option this checkout's table holds, with its needle found in the file
+    holding the program's `main`. A needle not found is a problem."""
+    out: list[Row] = []
+    problems: list[str] = []
+    present = {(r.function, r.entry) for r in rows if r.kind == "option"}
+    for ex in EXEMPTIONS:
+        if not isinstance(ex.reason, NoOutput) or (ex.function, ex.entry) not in present:
+            continue
+        file = option_file(ex.function)
+        if file is None or ex.reason.needle not in text_of.get(file, ""):
+            problems.append(
+                f"{file}: no {ex.reason.needle!r} — `{ex.function} --{ex.entry}`'s evidence has moved"
+            )
+            continue
+        out.append(Row("evidence", file, ex.function, ex.entry, ex.reason.needle))
+    return out, problems
+
+
+def reason_problems(
+    exemptions: Sequence[Exemption] = EXEMPTIONS,
+    invariants: str | None = None,
+    compatibility: str | None = None,
+    open_kds: set[str] | None = None,
+) -> list[str]:
+    """Each exemption's reason resolved against the committed record: an
+    `I<n>` to a heading, a `KD<k>` to an open entry, a compatibility row to a
+    row of that table. A literal exempt by anything but an `I<n>` or a `KD<k>`
+    is a problem."""
+    if invariants is None:
+        invariants = POSTGRES_INVARIANTS.read_text()
+    if compatibility is None:
+        compatibility = COMPATIBILITY.read_text()
+    if open_kds is None:
+        import deficiencies
+
+        entries, _ = deficiencies.parse_index(deficiencies.REGISTER.read_text())
+        open_kds = {e.id for e in entries}
+    problems = []
+    for ex in exemptions:
+        name = f"{ex.kind} {ex.function} {ex.entry!r}"
+        reason = ex.reason
+        if ex.kind == "literal" and not isinstance(reason, (Invariant, Known)):
+            problems.append(f"{name}: a literal is exempt only by an I<n> or a KD<k>")
+        if isinstance(reason, Invariant):
+            if not re.search(rf"^## {re.escape(reason.id)} —", invariants, re.MULTILINE):
+                problems.append(f"{name}: {reason.id} is no entry of postgres-invariants.md")
+        elif isinstance(reason, Known):
+            if reason.id not in open_kds:
+                problems.append(f"{name}: {reason.id} is no open entry of deficiencies.md")
+        elif isinstance(reason, Unsupported):
+            if not re.search(rf"^\| {re.escape(reason.row)} \|", compatibility, re.MULTILINE):
+                problems.append(f"{name}: no pg-dump-compatibility.md row {reason.row!r}")
     return problems
 
 
@@ -808,6 +1045,8 @@ def flags_at(major: str) -> dict[str, list[str]]:
                 flags = value
             if isinstance(flags, list):
                 out["pg_dump"].extend(flags)
+            elif isinstance(flags, gf.Dumpall):
+                out["pg_dumpall"].extend(flags.flags)
     return out
 
 
@@ -847,7 +1086,12 @@ class MajorResult:
     literals: int = 0
     options: int = 0
     values: int = 0
+    #: Rows no fixture reaches and no exemption covers: the gate fails on one.
     uncovered: list[Row] = field(default_factory=list)
+    #: Rows no fixture reaches, each with the exemption that covers it.
+    exempt: list[tuple[Row, Exemption]] = field(default_factory=list)
+    #: Exemptions whose row a fixture of this major reaches.
+    stale: list[Exemption] = field(default_factory=list)
 
 
 def join_major(major: str, fixtures: Path = FIXTURES) -> tuple[MajorResult, list[str]]:
@@ -875,21 +1119,55 @@ def join_major(major: str, fixtures: Path = FIXTURES) -> tuple[MajorResult, list
         found, more = resolve_flags(argv, table)
         covered_options[program] = found
         problems.extend(f"{major}: {p}" for p in more)
+    evidence = {(r.function, r.entry): r.detail for r in rows if r.kind == "evidence"}
+    exemptions = {(ex.kind, ex.function, ex.entry): ex for ex in EXEMPTIONS}
     for row in rows:
         if row.kind == "literal":
             result.literals += 1
             needle = row.entry.encode("latin-1")
-            if not any(needle in dump for dump in dumps):
-                result.uncovered.append(row)
-        else:
+            reached = any(needle in dump for dump in dumps)
+        elif row.kind == "option":
             result.options += 1
-            if row.entry not in covered_options.get(row.function, set()):
-                result.uncovered.append(row)
+            reached = row.entry in covered_options.get(row.function, set())
+        else:
+            continue
+        ex = exemptions.get((row.kind, row.function, row.entry))
+        if reached:
+            if ex is not None:
+                result.stale.append(ex)
+        elif ex is None:
+            result.uncovered.append(row)
+        else:
+            result.exempt.append((row, ex))
+            if isinstance(ex.reason, NoOutput) and evidence.get((row.function, row.entry)) != ex.reason.needle:
+                problems.append(
+                    f"{path}: no evidence row for `{row.function} --{row.entry}` holding its "
+                    "exemption's needle — re-run `emitter_register.py --extract`"
+                )
     for form in VALUE_FORMS:
         result.values += 1
         if not any(form.spelling.encode() in dump for dump in dumps):
             result.uncovered.append(form.row())
     return result, problems
+
+
+def exemption_problems(
+    results: Sequence[MajorResult], exemptions: Sequence[Exemption] = EXEMPTIONS
+) -> list[str]:
+    """An exemption is wrong where a fixture reaches its row, and dead where
+    no major's register holds the row: either way it is struck."""
+    problems = []
+    used = {id(ex) for r in results for _, ex in r.exempt}
+    for r in results:
+        for ex in r.stale:
+            problems.append(
+                f"{r.major}: {ex.kind} {ex.function} {ex.entry!r} is reached by a fixture "
+                "and still exempt — strike the exemption"
+            )
+    for ex in exemptions:
+        if id(ex) not in used and not any(ex in r.stale for r in results):
+            problems.append(f"{ex.kind} {ex.function} {ex.entry!r}: exempt, and no register holds it")
+    return problems
 
 
 def majors() -> list[str]:
@@ -902,9 +1180,11 @@ def report(results: Sequence[MajorResult]) -> str:
         n_lit = sum(1 for u in r.uncovered if u.kind == "literal")
         n_opt = sum(1 for u in r.uncovered if u.kind == "option")
         n_val = sum(1 for u in r.uncovered if u.kind == "value")
+        x_lit = sum(1 for u, _ in r.exempt if u.kind == "literal")
+        x_opt = sum(1 for u, _ in r.exempt if u.kind == "option")
         lines.append(
-            f"{r.major}: {r.literals} literals, {n_lit} uncovered; "
-            f"{r.options} options, {n_opt} uncovered; "
+            f"{r.major}: {r.literals} literals, {n_lit} uncovered, {x_lit} exempt; "
+            f"{r.options} options, {n_opt} uncovered, {x_opt} exempt; "
             f"{r.values} value forms, {n_val} uncovered"
         )
     where: dict[tuple[str, str, str, str], list[str]] = defaultdict(list)
@@ -912,7 +1192,10 @@ def report(results: Sequence[MajorResult]) -> str:
         for u in r.uncovered:
             where[(u.kind, u.file.rsplit("/", 1)[-1], u.function, u.entry)].append(r.major)
     lines.append("")
-    lines.append("uncovered (majors):")
+    if not where:
+        lines.append("every row is held by a fixture or exempt.")
+        return "\n".join(lines)
+    lines.append("uncovered, which fails the join (majors):")
     for (kind, file, function, entry), at in sorted(where.items()):
         lines.append(f"  {kind:7} {file}:{function} {entry!r}  [{_span(at)}]")
     return "\n".join(lines)
@@ -945,15 +1228,17 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
             print(f"problem: {p}", file=sys.stderr)
         return 1 if problems else 0
     results = []
-    problems = value_form_problems()
+    problems = value_form_problems() + reason_problems()
     for major in chosen:
         result, more = join_major(major)
         results.append(result)
         problems.extend(more)
+    if args.major is None:
+        problems.extend(exemption_problems(results))
     print(report(results), file=out)
     for p in problems:
         print(f"problem: {p}", file=sys.stderr)
-    return 1 if problems else 0
+    return 1 if problems or any(r.uncovered for r in results) else 0
 
 
 if __name__ == "__main__":

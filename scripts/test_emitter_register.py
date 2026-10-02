@@ -154,7 +154,7 @@ class Options(unittest.TestCase):
         self.assertEqual(len(problems), 1)
 
     def test_a_flag_set_counts_only_at_its_minimum_major_and_above(self):
-        schemas = {"s": {"default": [], "late": ("18", ["--statistics"]), "all": None}}
+        schemas = {"s": {"default": [], "late": ("18", ["--statistics"]), "all": gf.Dumpall()}}
         with unittest.mock.patch.object(gf, "SCHEMAS", schemas):
             self.assertNotIn("--statistics", er.flags_at("17")["pg_dump"])
             self.assertIn("--statistics", er.flags_at("18")["pg_dump"])
@@ -191,11 +191,19 @@ class Joining(unittest.TestCase):
         er.Row("option", "b.c", "pg_dumpall", "no-role-passwords", ""),
     ]
 
-    def join(self, register: str, dump: str = "CREATE TABLE t (a int);\n"):
+    def join(
+        self,
+        register: str,
+        dump: str = "CREATE TABLE t (a int);\n",
+        exemptions: tuple[er.Exemption, ...] = (),
+    ):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_tree(root, "18", register, dump)
-            with unittest.mock.patch.object(gf, "SCHEMAS", {"types": {"default": []}}):
+            with (
+                unittest.mock.patch.object(gf, "SCHEMAS", {"types": {"default": []}}),
+                unittest.mock.patch.object(er, "EXEMPTIONS", exemptions),
+            ):
                 return er.join_major("18", root)
 
     def test_a_literal_no_dump_holds_and_an_option_no_run_passes_are_uncovered(self):
@@ -231,6 +239,41 @@ class Joining(unittest.TestCase):
                 er.value_form_problems((er.ValueForm("v.c", "f", "x", "types/default", ""),)), []
             )
 
+    def test_an_exempt_row_is_not_uncovered(self):
+        exempt = er.Exemption("literal", "f", "UNLOGGED ", er.Known("KD65"))
+        result, problems = self.join(
+            er.render(self.ROWS, er.pinned_release("18")), exemptions=(exempt,)
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual([u.entry for u in result.uncovered if u.kind != "value"], ["jobs"])
+        self.assertEqual(result.exempt, [(self.ROWS[1], exempt)])
+
+    def test_an_exemption_a_fixture_reaches_is_stale(self):
+        exempt = er.Exemption("literal", "f", "CREATE TABLE ", er.Known("KD65"))
+        result, _ = self.join(er.render(self.ROWS, er.pinned_release("18")), exemptions=(exempt,))
+        self.assertEqual(result.stale, [exempt])
+        self.assertEqual(len(er.exemption_problems([result], (exempt,))), 1)
+
+    def test_an_exemption_no_register_holds_is_dead(self):
+        exempt = er.Exemption("option", "pg_dump", "no-such-option", er.NoOutput("x"))
+        result, _ = self.join(er.render(self.ROWS, er.pinned_release("18")), exemptions=(exempt,))
+        problems = er.exemption_problems([result], (exempt,))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no register holds it", problems[0])
+
+    def test_a_no_output_exemption_needs_its_evidence_row(self):
+        exempt = er.Exemption("option", "pg_dump", "jobs", er.NoOutput("numWorkers"))
+        bare = er.render(self.ROWS, er.pinned_release("18"))
+        _, problems = self.join(bare, exemptions=(exempt,))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("re-run", problems[0])
+        evidence = er.Row("evidence", "a.c", "pg_dump", "jobs", "numWorkers")
+        result, problems = self.join(
+            er.render(self.ROWS + [evidence], er.pinned_release("18")), exemptions=(exempt,)
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual([u.entry for u in result.uncovered if u.kind != "value"], ["UNLOGGED "])
+
     def test_a_register_from_another_minor_is_a_problem(self):
         _, problems = self.join(er.render(self.ROWS, "18.0"))
         self.assertTrue(any("read from 18.0" in p for p in problems), problems)
@@ -239,6 +282,61 @@ class Joining(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             _, problems = er.join_major("18", Path(tmp))
         self.assertTrue(problems)
+
+
+class Dispositions(unittest.TestCase):
+    INVARIANTS = "## I52 — a property\n"
+    COMPATIBILITY = "| `--format=custom` | Planned (P8) | prose |\n"
+
+    def problems(self, *exemptions: er.Exemption) -> list[str]:
+        return er.reason_problems(exemptions, self.INVARIANTS, self.COMPATIBILITY, {"KD65"})
+
+    def test_each_reason_resolves_against_the_record(self):
+        self.assertEqual(
+            self.problems(
+                er.Exemption("literal", "f", "x", er.Invariant("I52")),
+                er.Exemption("literal", "f", "y", er.Known("KD65")),
+                er.Exemption("option", "pg_dump", "format", er.Unsupported("`--format=custom`")),
+                er.Exemption("option", "pg_dump", "host", er.NoOutput("pghost")),
+            ),
+            [],
+        )
+
+    def test_an_unresolved_reason_is_a_problem(self):
+        for exemption in (
+            er.Exemption("literal", "f", "x", er.Invariant("I9999")),
+            er.Exemption("literal", "f", "y", er.Known("KD1")),
+            er.Exemption("option", "pg_dump", "format", er.Unsupported("`--format=tar`")),
+        ):
+            with self.subTest(exemption=exemption):
+                self.assertEqual(len(self.problems(exemption)), 1)
+
+    def test_a_literal_is_exempt_only_by_an_invariant_or_a_deficiency(self):
+        # Every byte passes through the map, so "pgdt does not read this" is
+        # no reason a literal may go unfixtured.
+        self.assertEqual(
+            len(self.problems(er.Exemption("literal", "f", "x", er.NoOutput("x")))), 1
+        )
+
+    def test_the_extraction_records_a_found_needle_and_refuses_a_missing_one(self):
+        rows = [er.Row("option", "src/bin/pg_dump/pg_dump.c", "pg_dump", "host", "h")]
+        ok = er.Exemption("option", "pg_dump", "host", er.NoOutput("pghost = x;"))
+        gone = er.Exemption("option", "pg_dump", "host", er.NoOutput("not there"))
+        text = {"src/bin/pg_dump/pg_dump.c": "case 'h': pghost = x; break;"}
+        with unittest.mock.patch.object(er, "EXEMPTIONS", (ok,)):
+            found, problems = er.evidence_rows(text, rows)
+        self.assertEqual(
+            (found, problems),
+            ([er.Row("evidence", "src/bin/pg_dump/pg_dump.c", "pg_dump", "host", "pghost = x;")], []),
+        )
+        with unittest.mock.patch.object(er, "EXEMPTIONS", (gone,)):
+            found, problems = er.evidence_rows(text, rows)
+        self.assertEqual((found, len(problems)), ([], 1))
+
+    def test_an_option_a_major_lacks_needs_no_evidence_there(self):
+        exempt = er.Exemption("option", "pg_dump", "sync-method", er.NoOutput("anything"))
+        with unittest.mock.patch.object(er, "EXEMPTIONS", (exempt,)):
+            self.assertEqual(er.evidence_rows({}, []), ([], []))
 
 
 class Extracting(unittest.TestCase):
@@ -274,10 +372,15 @@ class CommittedTree(unittest.TestCase):
     def test_every_value_form_names_a_flag_set_the_generator_runs(self):
         self.assertEqual(er.value_form_problems(), [])
 
-    def test_the_join_reports_without_failing(self):
+    def test_every_row_is_held_by_a_fixture_or_exempt(self):
+        # The gate: a literal, option or value form no fixture reaches and no
+        # exemption covers fails here, and so fails `mise run check`.
         out = io.StringIO()
-        self.assertEqual(er.main([], out=out), 0)
-        self.assertIn("uncovered", out.getvalue())
+        self.assertEqual(er.main([], out=out), 0, out.getvalue())
+        self.assertIn("every row is held by a fixture or exempt", out.getvalue())
+
+    def test_every_exemption_s_reason_resolves(self):
+        self.assertEqual(er.reason_problems(), [])
 
     def test_the_literals_the_unit_was_chosen_to_catch_are_rows(self):
         # KD61, KD64, KD65, KD66 and KD68, each a literal (the spec, "The

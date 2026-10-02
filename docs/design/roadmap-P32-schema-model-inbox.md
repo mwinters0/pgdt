@@ -106,3 +106,23 @@ literals can be rows.
 
 **Origin.** P31.1, 2026-10-02, a trial extraction over the widened list.
 *Contingent on* the extraction keeping its buffer-level rule.
+
+---
+
+## The `emitters` fixtures hold properties no model captures
+
+**Fact.** `fixtures/<major>/emitters/` holds, at every major, a form of each
+property P31's listed emitters write that pgdt reads into nothing: a base
+type's `CREATE TYPE` properties, a range's `canonical`, `subtype_diff` and
+`subtype_opclass`, a domain's named `CHECK`, reloptions and toast
+reloptions, a view's check option, forced row security, replica identity, a
+column's statistics target and compression, and a tablespace's options and
+comment under `pg_dumpall` (`scripts/fixture_schema_emitters.sql`,
+`fixture_schema_emitters_cluster.sql`).
+
+**Why P32 cares.** Capturing each of them needs a real dump holding it, and
+these are already generated and committed; a property captured can be
+asserted against them without a new schema.
+
+**Origin.** P31.4, 2026-10-02. *Contingent on* the `emitters` schema keeping
+those objects.

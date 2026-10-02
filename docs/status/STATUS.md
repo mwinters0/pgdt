@@ -41,7 +41,7 @@ quotes a number: every figure is in
 | Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault; a query may compare as DataFusion compares the emitted value instead, which refuses a nested column and orders one with no plan bytewise | `predicate.rs`, `pgtype.rs`; D40, D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced on its own channel per term, or per column in a query's semantics; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation; the value oracle | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py`; `values.tsv` beside them, the server's reading of every typed value of the `types` schema, which every typed read of its flag sets is held to and every typed arm has a case in (`scripts/value_oracle.py`) | D70, D71, D73 |
-| Emitter register | `pg_dump`'s and `pg_dumpall`'s literals and options, read out of their source into `fixtures/<major>/emitters.tsv` by `scripts/emitter_register.py --extract`, and the value forms a setting `pg_dump` leaves unpinned writes, hand-listed beside the extraction, all joined against the fixtures, reporting what no fixture reaches without failing on it; a fixture exposing a filed defect is held failing by `pgdump_query/tests/known_failures.rs` | [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md), "The emitter register" |
+| Emitter register | `pg_dump`'s and `pg_dumpall`'s literals and options, read out of their source into `fixtures/<major>/emitters.tsv` by `scripts/emitter_register.py --extract`, and the value forms a setting or a typmod selects, hand-listed beside the extraction, all joined against the fixtures; a row no fixture reaches is exempt with a reason the record resolves or it fails `mise run check`, and a fixture exposing a filed defect is held failing by `pgdump_query/tests/known_failures.rs` | [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md), "The emitter register" |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38 |
 | Compressed input (`--source foo.dump.xz`) | working serially and at any `--jobs`; the seek table is cached; a file the budget cannot block-decode streams and says so; gzip, zstd and lz4 are not read (P15, P18) | `io.rs` (`XzSource`), `cache.rs`; D14–D19; [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md) |
 | Partitioned replay and the interior split | working; `query` is the replay's consumer and the mapping pass the split's, and each answers what the serial path answers; a sub-stream can pin more than the budget bills (`KD23`) and a window over small blocks over-reads (`KD22`) | `stream.rs`, `leader.rs`; D5, D7, D8, D48, D51, D52 |
@@ -88,13 +88,14 @@ both editing `preamble.rs`.
 - [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
 - [x] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are — [notes](../design/roadmap-P31.2-generator-capabilities-notes.md)
 - [x] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line — [notes](../design/roadmap-P31.3-value-oracle-notes.md)
-- [ ] **31.4** Schema content reaching every remaining uncovered literal, value form and option, findings filed as `KD`s and appended here; the register a gate in `mise run check`
+- [x] **31.4** Schema content reaching every remaining uncovered literal, value form and option, findings filed as `KD`s and appended here; the register a gate in `mise run check` — [notes](../design/roadmap-P31.4-register-gate-notes.md)
 - [ ] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69`
 - [ ] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70`
 - [ ] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68`
 - [ ] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67`
 - [ ] **31.9** A built-in type written quoted under `--quote-all-identifiers` read as its bare name wherever a spelling is compared, closing `KD71`
 - [ ] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72`
+- [ ] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73`
 
 ## Not started
 
@@ -125,3 +126,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **An option may be exempt as writing unsupported input** (31.4). The spec
+  lets an option resolve to a flag set, to having no output effect, or to a
+  `KD<k>`; `--format`, `--compress` and `--encoding` fit none, their every
+  value but the default writing what `pg-dump-compatibility.md` already
+  lists as unsupported or planned (P8, P15, P18, the `client_encoding` row),
+  which is coverage rather than a deficiency. So
+  `scripts/emitter_register.py` gained a fourth disposition, `Unsupported`,
+  resolved to that table's row. The alternative was a flag set passing each
+  option's plain value (`--format=plain --compress=0 --encoding=UTF8`), which
+  satisfies the join and exercises nothing. Reconsidering replaces the four
+  exemptions (`pg_dumpall --encoding` the fourth) with that flag set, or with
+  a `KD<k>` each, which `deficiencies.md` says a coverage row is not.

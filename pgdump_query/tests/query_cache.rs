@@ -463,7 +463,7 @@ async fn no_duplication_on_repeat_queries() {
 /// the trailing `Unscanned` span disappears entirely.
 #[tokio::test]
 async fn a_query_built_index_tiles_in_every_cache_state() {
-    for schema_dir in ["edge_cases", "objects", "partitions", "statistics", "types"] {
+    for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only"] {
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../fixtures/16")

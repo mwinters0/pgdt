@@ -1,0 +1,884 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict yNe1TFhFeVGAZtgCp1gcLDifLoYCpdlPxC2PfOCXLfevZRQPDLgLGf3SnSrwGtN
+
+-- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
+-- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+ALTER TABLE IF EXISTS ONLY emitters.tuned DROP CONSTRAINT IF EXISTS tuned_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.trios DROP CONSTRAINT IF EXISTS trios_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.range_values DROP CONSTRAINT IF EXISTS range_values_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.grown DROP CONSTRAINT IF EXISTS grown_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.domain_values DROP CONSTRAINT IF EXISTS domain_values_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.base_values DROP CONSTRAINT IF EXISTS base_values_pkey;
+DROP TABLE IF EXISTS emitters.unidentified;
+DROP MATERIALIZED VIEW IF EXISTS emitters.tuned_totals;
+DROP TABLE IF EXISTS emitters.trios;
+DROP TABLE IF EXISTS emitters.scratch;
+DROP TABLE IF EXISTS emitters.range_values;
+DROP VIEW IF EXISTS emitters.positive_tuned;
+DROP TABLE IF EXISTS emitters.tuned;
+DROP TABLE IF EXISTS emitters.people;
+DROP TABLE IF EXISTS emitters.grown;
+DROP FOREIGN TABLE IF EXISTS emitters.external;
+DROP TABLE IF EXISTS emitters.domain_values;
+DROP TABLE IF EXISTS emitters.child;
+DROP TABLE IF EXISTS emitters.parent;
+DROP TABLE IF EXISTS emitters.base_values;
+DROP SERVER IF EXISTS emitters_files;
+DROP TYPE IF EXISTS emitters.trio;
+DROP TYPE IF EXISTS emitters.r_pattern;
+DROP TYPE IF EXISTS emitters.r_diff;
+DROP TYPE IF EXISTS emitters.r_canon;
+DROP FUNCTION IF EXISTS emitters.r_canon_canonical(emitters.r_canon);
+DROP DOMAIN IF EXISTS emitters.positive;
+DROP TYPE IF EXISTS emitters.person;
+DROP TYPE IF EXISTS emitters.pair;
+DROP TYPE IF EXISTS emitters.mood;
+DROP TYPE IF EXISTS emitters.bt_varchar CASCADE;
+DROP FUNCTION IF EXISTS emitters.bt_varchar_typmod_out(integer);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_typmod_in(cstring[]);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_send(emitters.bt_varchar);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_recv(internal, oid, integer);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_out(emitters.bt_varchar);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_in(cstring, oid, integer);
+DROP FUNCTION IF EXISTS emitters.bt_varchar_analyze(internal);
+DROP TYPE IF EXISTS emitters.bt_text_main CASCADE;
+DROP FUNCTION IF EXISTS emitters.bt_text_main_out(emitters.bt_text_main);
+DROP FUNCTION IF EXISTS emitters.bt_text_main_in(cstring);
+DROP TYPE IF EXISTS emitters.bt_pair CASCADE;
+DROP FUNCTION IF EXISTS emitters.bt_pair_out(emitters.bt_pair);
+DROP FUNCTION IF EXISTS emitters.bt_pair_in(cstring);
+DROP TYPE IF EXISTS emitters.bt_int2 CASCADE;
+DROP FUNCTION IF EXISTS emitters.bt_int2_out(emitters.bt_int2);
+DROP FUNCTION IF EXISTS emitters.bt_int2_in(cstring);
+DROP TYPE IF EXISTS emitters.bt_char CASCADE;
+DROP FUNCTION IF EXISTS emitters.bt_char_out(emitters.bt_char);
+DROP FUNCTION IF EXISTS emitters.bt_char_in(cstring);
+DROP EXTENSION IF EXISTS file_fdw;
+DROP SCHEMA IF EXISTS emitters;
+--
+-- Name: emitters; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA emitters;
+
+
+ALTER SCHEMA emitters OWNER TO postgres;
+
+--
+-- Name: file_fdw; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS file_fdw WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION file_fdw; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION file_fdw IS 'foreign-data wrapper for flat file access';
+
+
+--
+-- Name: bt_char; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_char;
+
+
+--
+-- Name: bt_char_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_char_in(cstring) RETURNS emitters.bt_char
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$charin$$;
+
+
+ALTER FUNCTION emitters.bt_char_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_char_out(emitters.bt_char); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_char_out(emitters.bt_char) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$charout$$;
+
+
+ALTER FUNCTION emitters.bt_char_out(emitters.bt_char) OWNER TO postgres;
+
+--
+-- Name: bt_char; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_char (
+    INTERNALLENGTH = 1,
+    INPUT = emitters.bt_char_in,
+    OUTPUT = emitters.bt_char_out,
+    ALIGNMENT = char,
+    STORAGE = plain,
+    PASSEDBYVALUE
+);
+
+
+ALTER TYPE emitters.bt_char OWNER TO postgres;
+
+--
+-- Name: bt_int2; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_int2;
+
+
+--
+-- Name: bt_int2_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_int2_in(cstring) RETURNS emitters.bt_int2
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$int2in$$;
+
+
+ALTER FUNCTION emitters.bt_int2_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_int2_out(emitters.bt_int2); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_int2_out(emitters.bt_int2) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$int2out$$;
+
+
+ALTER FUNCTION emitters.bt_int2_out(emitters.bt_int2) OWNER TO postgres;
+
+--
+-- Name: bt_int2; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_int2 (
+    INTERNALLENGTH = 2,
+    INPUT = emitters.bt_int2_in,
+    OUTPUT = emitters.bt_int2_out,
+    ALIGNMENT = int2,
+    STORAGE = plain,
+    PASSEDBYVALUE
+);
+
+
+ALTER TYPE emitters.bt_int2 OWNER TO postgres;
+
+--
+-- Name: bt_pair; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_pair;
+
+
+--
+-- Name: bt_pair_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_pair_in(cstring) RETURNS emitters.bt_pair
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$point_in$$;
+
+
+ALTER FUNCTION emitters.bt_pair_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_pair_out(emitters.bt_pair); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_pair_out(emitters.bt_pair) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$point_out$$;
+
+
+ALTER FUNCTION emitters.bt_pair_out(emitters.bt_pair) OWNER TO postgres;
+
+--
+-- Name: bt_pair; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_pair (
+    INTERNALLENGTH = 16,
+    INPUT = emitters.bt_pair_in,
+    OUTPUT = emitters.bt_pair_out,
+    ELEMENT = double precision,
+    ALIGNMENT = double,
+    STORAGE = plain
+);
+
+
+ALTER TYPE emitters.bt_pair OWNER TO postgres;
+
+--
+-- Name: bt_text_main; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_text_main;
+
+
+--
+-- Name: bt_text_main_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_text_main_in(cstring) RETURNS emitters.bt_text_main
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textin$$;
+
+
+ALTER FUNCTION emitters.bt_text_main_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_text_main_out(emitters.bt_text_main); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textout$$;
+
+
+ALTER FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) OWNER TO postgres;
+
+--
+-- Name: bt_text_main; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_text_main (
+    INTERNALLENGTH = variable,
+    INPUT = emitters.bt_text_main_in,
+    OUTPUT = emitters.bt_text_main_out,
+    ALIGNMENT = int4,
+    STORAGE = main
+);
+
+
+ALTER TYPE emitters.bt_text_main OWNER TO postgres;
+
+--
+-- Name: bt_varchar; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_varchar;
+
+
+--
+-- Name: bt_varchar_analyze(internal); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_analyze(internal) RETURNS boolean
+    LANGUAGE internal STRICT
+    AS $$ts_typanalyze$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_analyze(internal) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_in(cstring, oid, integer); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_in(cstring, oid, integer) RETURNS emitters.bt_varchar
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$varcharin$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_in(cstring, oid, integer) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_out(emitters.bt_varchar); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_out(emitters.bt_varchar) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$varcharout$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_out(emitters.bt_varchar) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_recv(internal, oid, integer); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_recv(internal, oid, integer) RETURNS emitters.bt_varchar
+    LANGUAGE internal STABLE STRICT
+    AS $$varcharrecv$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_recv(internal, oid, integer) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_send(emitters.bt_varchar); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_send(emitters.bt_varchar) RETURNS bytea
+    LANGUAGE internal STABLE STRICT
+    AS $$varcharsend$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_send(emitters.bt_varchar) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_typmod_in(cstring[]); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_typmod_in(cstring[]) RETURNS integer
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$varchartypmodin$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_typmod_in(cstring[]) OWNER TO postgres;
+
+--
+-- Name: bt_varchar_typmod_out(integer); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_varchar_typmod_out(integer) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$varchartypmodout$$;
+
+
+ALTER FUNCTION emitters.bt_varchar_typmod_out(integer) OWNER TO postgres;
+
+--
+-- Name: bt_varchar; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_varchar (
+    INTERNALLENGTH = variable,
+    INPUT = emitters.bt_varchar_in,
+    OUTPUT = emitters.bt_varchar_out,
+    RECEIVE = emitters.bt_varchar_recv,
+    SEND = emitters.bt_varchar_send,
+    TYPMOD_IN = emitters.bt_varchar_typmod_in,
+    TYPMOD_OUT = emitters.bt_varchar_typmod_out,
+    ANALYZE = emitters.bt_varchar_analyze,
+    COLLATABLE = true,
+    DEFAULT = 'none',
+    CATEGORY = 'S',
+    PREFERRED = true,
+    DELIMITER = ';',
+    ALIGNMENT = int4,
+    STORAGE = external
+);
+
+
+ALTER TYPE emitters.bt_varchar OWNER TO postgres;
+
+--
+-- Name: mood; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.mood AS ENUM (
+    'calm',
+    'busy'
+);
+
+
+ALTER TYPE emitters.mood OWNER TO postgres;
+
+--
+-- Name: pair; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.pair AS (
+	left_part integer,
+	right_part text
+);
+
+
+ALTER TYPE emitters.pair OWNER TO postgres;
+
+--
+-- Name: person; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.person AS (
+	name text,
+	born date,
+	height integer
+);
+
+
+ALTER TYPE emitters.person OWNER TO postgres;
+
+--
+-- Name: positive; Type: DOMAIN; Schema: emitters; Owner: postgres
+--
+
+CREATE DOMAIN emitters.positive AS integer
+	CONSTRAINT positive_check CHECK ((VALUE > 0));
+
+
+ALTER DOMAIN emitters.positive OWNER TO postgres;
+
+--
+-- Name: r_canon; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.r_canon;
+
+
+--
+-- Name: r_canon_canonical(emitters.r_canon); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.r_canon_canonical(emitters.r_canon) RETURNS emitters.r_canon
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$int4range_canonical$$;
+
+
+ALTER FUNCTION emitters.r_canon_canonical(emitters.r_canon) OWNER TO postgres;
+
+--
+-- Name: r_canon; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.r_canon AS RANGE (
+    subtype = integer,
+    canonical = emitters.r_canon_canonical
+);
+
+
+ALTER TYPE emitters.r_canon OWNER TO postgres;
+
+--
+-- Name: r_diff; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.r_diff AS RANGE (
+    subtype = double precision,
+    subtype_diff = float8mi
+);
+
+
+ALTER TYPE emitters.r_diff OWNER TO postgres;
+
+--
+-- Name: r_pattern; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.r_pattern AS RANGE (
+    subtype = text,
+    subtype_opclass = pg_catalog.text_pattern_ops
+);
+
+
+ALTER TYPE emitters.r_pattern OWNER TO postgres;
+
+--
+-- Name: trio; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.trio AS (
+	a integer,
+	c date
+);
+
+
+ALTER TYPE emitters.trio OWNER TO postgres;
+
+--
+-- Name: emitters_files; Type: SERVER; Schema: -; Owner: postgres
+--
+
+CREATE SERVER emitters_files FOREIGN DATA WRAPPER file_fdw;
+
+
+ALTER SERVER emitters_files OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: base_values; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.base_values (
+    id integer NOT NULL,
+    v_varchar emitters.bt_varchar(8),
+    v_char emitters.bt_char,
+    v_int2 emitters.bt_int2,
+    v_main emitters.bt_text_main,
+    v_pair emitters.bt_pair
+);
+
+
+ALTER TABLE emitters.base_values OWNER TO postgres;
+
+--
+-- Name: parent; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.parent (
+    id integer NOT NULL,
+    label text,
+    born date,
+    CONSTRAINT parent_id_positive CHECK ((id > 0))
+);
+
+
+ALTER TABLE emitters.parent OWNER TO postgres;
+
+--
+-- Name: child; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.child (
+    extra numeric(6,2)
+)
+INHERITS (emitters.parent);
+ALTER TABLE ONLY emitters.child ALTER COLUMN label SET NOT NULL;
+
+
+ALTER TABLE emitters.child OWNER TO postgres;
+
+--
+-- Name: domain_values; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.domain_values (
+    id integer NOT NULL,
+    v_positive emitters.positive,
+    v_mood emitters.mood,
+    v_pair emitters.pair
+);
+
+
+ALTER TABLE emitters.domain_values OWNER TO postgres;
+
+--
+-- Name: external; Type: FOREIGN TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE FOREIGN TABLE emitters.external (
+    id integer,
+    label text
+)
+SERVER emitters_files
+OPTIONS (
+    filename '/tmp/emitters_external.tsv'
+);
+ALTER FOREIGN TABLE emitters.external ALTER COLUMN label OPTIONS (
+    force_not_null 'true'
+);
+
+
+ALTER FOREIGN TABLE emitters.external OWNER TO postgres;
+
+--
+-- Name: grown; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.grown (
+    id integer NOT NULL,
+    b text,
+    added date DEFAULT '2024-02-29'::date
+);
+
+
+ALTER TABLE emitters.grown OWNER TO postgres;
+
+--
+-- Name: people; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.people OF emitters.person (
+    name NOT NULL
+);
+
+
+ALTER TABLE emitters.people OWNER TO postgres;
+
+--
+-- Name: tuned; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.tuned (
+    id integer NOT NULL,
+    note text,
+    amount numeric(8,2)
+)
+WITH (fillfactor='70', toast.autovacuum_enabled='false');
+ALTER TABLE ONLY emitters.tuned ALTER COLUMN amount SET STATISTICS 500;
+
+ALTER TABLE ONLY emitters.tuned REPLICA IDENTITY FULL;
+
+ALTER TABLE ONLY emitters.tuned FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE emitters.tuned OWNER TO postgres;
+
+--
+-- Name: positive_tuned; Type: VIEW; Schema: emitters; Owner: postgres
+--
+
+CREATE VIEW emitters.positive_tuned WITH (security_barrier='true') AS
+ SELECT tuned.id,
+    tuned.note
+   FROM emitters.tuned
+  WHERE (tuned.id > 0)
+  WITH LOCAL CHECK OPTION;
+
+
+ALTER TABLE emitters.positive_tuned OWNER TO postgres;
+
+--
+-- Name: range_values; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.range_values (
+    id integer NOT NULL,
+    v_canon emitters.r_canon,
+    v_diff emitters.r_diff,
+    v_pattern emitters.r_pattern
+);
+
+
+ALTER TABLE emitters.range_values OWNER TO postgres;
+
+--
+-- Name: scratch; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE UNLOGGED TABLE emitters.scratch (
+    id integer,
+    at date,
+    ok boolean
+);
+
+
+ALTER TABLE emitters.scratch OWNER TO postgres;
+
+--
+-- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.trios (
+    id integer NOT NULL,
+    v emitters.trio
+);
+
+
+ALTER TABLE emitters.trios OWNER TO postgres;
+
+--
+-- Name: tuned_totals; Type: MATERIALIZED VIEW; Schema: emitters; Owner: postgres
+--
+
+CREATE MATERIALIZED VIEW emitters.tuned_totals AS
+ SELECT count(*) AS n
+   FROM emitters.tuned
+  WITH NO DATA;
+
+
+ALTER TABLE emitters.tuned_totals OWNER TO postgres;
+
+--
+-- Name: unidentified; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.unidentified (
+    id integer,
+    label text
+);
+
+ALTER TABLE ONLY emitters.unidentified REPLICA IDENTITY NOTHING;
+
+
+ALTER TABLE emitters.unidentified OWNER TO postgres;
+
+--
+-- Data for Name: base_values; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.base_values (id, v_varchar, v_char, v_int2, v_main, v_pair) FROM stdin;
+1	alpha	a	7	main text	(1.5,2)
+2	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: child; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.child (id, label, born, extra) FROM stdin;
+2	c	2024-01-02	1.25
+3	d	\N	\N
+\.
+
+
+--
+-- Data for Name: domain_values; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.domain_values (id, v_positive, v_mood, v_pair) FROM stdin;
+1	3	busy	(1,one)
+2	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: grown; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.grown (id, b, added) FROM stdin;
+1	b	2024-02-29
+2	b2	2024-02-29
+3	b3	2024-02-29
+\.
+
+
+--
+-- Data for Name: parent; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.parent (id, label, born) FROM stdin;
+1	p	2024-01-01
+\.
+
+
+--
+-- Data for Name: people; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.people (name, born, height) FROM stdin;
+ann	1990-05-01	170
+bob	\N	\N
+\.
+
+
+--
+-- Data for Name: range_values; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.range_values (id, v_canon, v_diff, v_pattern) FROM stdin;
+1	[1,6)	[1.5,2.5)	[a,m)
+2	empty	(,0]	[n,)
+3	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: scratch; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.scratch (id, at, ok) FROM stdin;
+1	2024-03-01	t
+2	\N	f
+\.
+
+
+--
+-- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.trios (id, v) FROM stdin;
+1	(1,2024-01-01)
+2	\N
+\.
+
+
+--
+-- Data for Name: tuned; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.tuned (id, note, amount) FROM stdin;
+1	one	1.50
+2	\N	\N
+\.
+
+
+--
+-- Data for Name: unidentified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.unidentified (id, label) FROM stdin;
+1	x
+\.
+
+
+--
+-- Name: base_values base_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.base_values
+    ADD CONSTRAINT base_values_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: domain_values domain_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.domain_values
+    ADD CONSTRAINT domain_values_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: grown grown_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.grown
+    ADD CONSTRAINT grown_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: range_values range_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.range_values
+    ADD CONSTRAINT range_values_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.trios
+    ADD CONSTRAINT trios_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tuned tuned_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.tuned
+    ADD CONSTRAINT tuned_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tuned; Type: ROW SECURITY; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.tuned ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tuned_totals; Type: MATERIALIZED VIEW DATA; Schema: emitters; Owner: postgres
+--
+
+REFRESH MATERIALIZED VIEW emitters.tuned_totals;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict yNe1TFhFeVGAZtgCp1gcLDifLoYCpdlPxC2PfOCXLfevZRQPDLgLGf3SnSrwGtN
+

@@ -24,8 +24,8 @@ use pgdump_query::cache::CacheMode;
 use pgdump_query::map::SpanBody;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    DataBlock, LocalFileSource, NestedPlan, QueryOptions, ResolvedSchema, ScanOptions, build_map,
-    render_field, table_stream,
+    DataBlock, LocalFileSource, NestedPlan, QueryOptions, ResolvedSchema, ScanOptions, build_index,
+    build_map, render_field, table_stream,
 };
 
 mod common;
@@ -42,6 +42,10 @@ enum Case {
     Resolves { table: &'static str, column: &'static str, to: ColumnResolution },
     /// No value of the column whose text is finite reads as an infinity.
     FiniteStaysFinite { table: &'static str, column: &'static str },
+    /// No span is classified as the `CREATE TABLE` of a table so named.
+    NoTableSpan { name: &'static str },
+    /// The file's metadata lists a database so named.
+    DatabaseListed { name: &'static str },
 }
 
 struct KnownFailure {
@@ -60,6 +64,76 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         fixture: "edge_cases/disable-triggers",
         control: Some("edge_cases/data-only"),
         case: Case::DataSpansAttributed,
+    },
+    KnownFailure {
+        kd: "KD1",
+        fixture: "emitters/data-only",
+        control: Some("emitters/default"),
+        case: Case::DataSpansAttributed,
+    },
+    KnownFailure {
+        kd: "KD1",
+        fixture: "emitters/dumpall-data-only",
+        control: Some("emitters/dumpall"),
+        case: Case::DataSpansAttributed,
+    },
+    KnownFailure {
+        kd: "KD61",
+        fixture: "emitters/dumpall",
+        control: Some("emitters/default"),
+        case: Case::NoTableSpan { name: "space" },
+    },
+    KnownFailure {
+        kd: "KD64",
+        fixture: "emitters/default",
+        control: Some("emitters/binary-upgrade"),
+        case: Case::Resolves {
+            table: "emitters.child",
+            column: "label",
+            to: ColumnResolution::Mapped,
+        },
+    },
+    KnownFailure {
+        kd: "KD65",
+        fixture: "emitters/default",
+        control: None,
+        case: Case::Resolves {
+            table: "emitters.scratch",
+            column: "at",
+            to: ColumnResolution::Mapped,
+        },
+    },
+    KnownFailure {
+        kd: "KD66",
+        fixture: "emitters/binary-upgrade",
+        control: Some("emitters/default"),
+        case: Case::TypedRead { table: "emitters.trios" },
+    },
+    KnownFailure {
+        kd: "KD68",
+        fixture: "emitters/dumpall",
+        control: None,
+        case: Case::DatabaseListed { name: "pgdt-emitters" },
+    },
+    KnownFailure {
+        kd: "KD70",
+        fixture: "emitters/default",
+        control: Some("emitters/binary-upgrade"),
+        case: Case::Resolves {
+            table: "emitters.people",
+            column: "born",
+            to: ColumnResolution::Mapped,
+        },
+    },
+    KnownFailure {
+        kd: "KD73",
+        fixture: "emitters/dumpall-binary-upgrade",
+        control: Some("emitters/dumpall"),
+        case: Case::Resolves {
+            table: "emitters.tuned",
+            column: "amount",
+            to: ColumnResolution::Mapped,
+        },
     },
     KnownFailure {
         kd: "KD65",
@@ -138,6 +212,26 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
                 .unwrap_or_else(|_| panic!("{}: {table} has no column {column}", path.display()));
             let found = &schema.columns[index];
             if found == to { Ok(()) } else { Err(format!("{column} resolves {found:?}")) }
+        }
+        Case::NoTableSpan { name } => {
+            let source = LocalFileSource::open(path).unwrap();
+            let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+            let named = spans
+                .iter()
+                .filter(|span| matches!(&span.body, SpanBody::Table { name: n, .. } if n == name))
+                .count();
+            if named == 0 { Ok(()) } else { Err(format!("{named} span(s) read as TABLE {name}")) }
+        }
+        Case::DatabaseListed { name } => {
+            let source = LocalFileSource::open(path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let listed: Vec<Option<String>> =
+                index.metadata.iter().flat_map(|m| &m.databases).map(|d| d.name.clone()).collect();
+            if listed.iter().any(|n| n.as_deref() == Some(*name)) {
+                Ok(())
+            } else {
+                Err(format!("databases listed: {listed:?}"))
+            }
         }
         Case::FiniteStaysFinite { table, column } => {
             let typed = rows(path, table, SchemaMode::Typed).await.unwrap();

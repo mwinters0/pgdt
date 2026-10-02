@@ -251,3 +251,29 @@ option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-unlogged-table-data
 option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	on-conflict-do-nothing	
 option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	rows-per-insert	
 option	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	restrict-key	
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	dbname	dopt.cparams.dbname = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	host	dopt.cparams.pghost = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	port	dopt.cparams.pgport = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	password	dopt.cparams.promptPassword = TRI_YES;
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	no-password	dopt.cparams.promptPassword = TRI_NO;
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	role	use_role = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	file	filename = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	jobs	parallel backup only supported by the directory format
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	lock-wait-timeout	dopt.lockWaitTimeout = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	no-sync	dosync = false;
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	snapshot	dumpsnapshot = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	serializable-deferrable	SERIALIZABLE, READ ONLY, DEFERRABLE
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	no-synchronized-snapshots	dopt.no_synchronized_snapshots
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	no-reconnect	no-op, still accepted for backwards compatibility
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	help	help(progname);
+evidence	src/bin/pg_dump/pg_dump.c	pg_dump	version	puts("pg_dump (PostgreSQL) " PG_VERSION);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	dbname	connstr = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	database	pgdb = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	host	pghost = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	port	pgport = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	password	prompt_password = TRI_YES;
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-password	prompt_password = TRI_NO;
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	role	use_role = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	file	filename = pg_strdup(optarg);
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	lock-wait-timeout	" --lock-wait-timeout "
+evidence	src/bin/pg_dump/pg_dumpall.c	pg_dumpall	no-sync	dosync = false;

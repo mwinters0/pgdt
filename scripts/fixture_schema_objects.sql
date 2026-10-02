@@ -318,3 +318,8 @@ BEGIN
     EXECUTE format('GRANT SELECT ON LARGE OBJECT %s TO fixture_reader', lo_with_meta);
 END;
 $$;
+
+-- The filter file `pg_dump --filter` reads at 17 and later
+-- (scripts/generate_fixtures.py, `objects/filter`); writing it creates no
+-- object, so no dump of this schema changes.
+COPY (VALUES ('exclude table objects.secrets')) TO '/tmp/objects_filter.txt';

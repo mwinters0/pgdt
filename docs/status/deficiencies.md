@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD72 -->
-**`KD1`–`KD72` are allocated, and nothing at or below `KD72` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD73 -->
+**`KD1`–`KD73` are allocated, and nothing at or below `KD73` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -412,3 +412,10 @@ than reading as a phase nobody has sliced.
   never held, and a distinct count from the statistics, taken over the text,
   disagrees with the rows'. **(b) owned by `P31`**, slice 31.10 closing it.
   Detail: `pgdump_query/src/decode.rs`.
+
+- **KD73** — a `--create` dump `\connect`s its database a second time after
+  its `DATABASE PROPERTIES` entry, as every `pg_dumpall --binary-upgrade` and
+  every database carrying a setting does, and the second `\connect` opens a
+  second segment of the same name behind an empty first one, so every column
+  of that database resolves `NotDeclared` and reads as text. **(b) owned by
+  `P31`**, slice 31.11 closing it. Detail: `pgdump_query/src/preamble.rs`.
