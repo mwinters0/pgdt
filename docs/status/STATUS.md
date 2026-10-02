@@ -86,9 +86,9 @@ approval, in the spec's opening note. `M199` and `M200` land before 31.5,
 both editing `preamble.rs`.
 
 - [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
-- [ ] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it
+- [ ] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are
 - [ ] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line
-- [ ] **31.4** Schema content reaching every remaining uncovered literal and option, findings filed as `KD`s and appended here; the register a gate in `mise run check`
+- [ ] **31.4** Schema content reaching every remaining uncovered literal, value form and option, findings filed as `KD`s and appended here; the register a gate in `mise run check`
 - [ ] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69`
 - [ ] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70`
 - [ ] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68`
@@ -123,14 +123,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The emitter register's value-form half has no slice row.** 31.1 landed
-  the two mechanical halves; the third, the hand-listed `*_out` spellings an
-  unpinned setting or a typmod selects
-  ([`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md),
-  "The emitter register"), is named by no row: 31.2 builds the variants that
-  reach those spellings, and 31.4 the content reaching "every remaining
-  uncovered literal and option". It was left out of 31.1 rather than guessed
-  into it, its unit being a spelling a hand list names rather than a literal
-  the source yields. Reconsidering names its slice — 31.2, beside the
-  variants, is the natural home — or widens 31.4's row to say value forms.
