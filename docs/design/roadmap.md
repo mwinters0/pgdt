@@ -16,6 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P31 — correctness evidence: the emitter register and value oracles | Sketched; not grilled | this file, below; [inbox](roadmap-P31-correctness-evidence-inbox.md) — placed first by the audit that allocated it; the maintainer sets its order |
 | P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
@@ -45,7 +46,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P30`** — nothing at or below it
+centering"). **Phase numbering continues from `P31`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -560,6 +561,32 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
+
+## P31 — Correctness evidence: the emitter register and value oracles
+
+Sketched to corner-avoidance depth by the parsing audit of
+[2026-10-02](../status/history/2026-10-02.md). Nine defects found in two days
+(`KD60`–`KD68`) share one shape: a form `pg_dump` can write that no fixture
+held, each sitting where a grammar or decoder was right about everything it
+had seen. The thesis is that this class is enumerable, the way the
+register-to-oracle and floor-to-mapping reconciliations already enumerate
+theirs ([`decisions.md`](decisions.md), "D71", "D38"): an **emitter
+register** read out of `pg_dump`'s own source — each branch of
+`dumpTableSchema`, `dumpCompositeType` and `appendPsqlMetaConnect`,
+`shouldPrintColumn`'s cases, and each `*_out` form a GUC `pg_dump` leaves
+unpinned can select (I4) — each resolving to a fixture shape that reaches it
+or to an invariant saying no producer can, checked by a script in `scripts/`
+as `oracle_register.py` checks the comparison arms. Beside it a **value oracle
+independent of the text**: the round-trip test compares the typed read against
+`SchemaMode::Strings`, which is self-consistency and cannot see a decoder that
+is wrong and invertible, or a value no fixture holds; the server can record a
+second reading of each value — an epoch, an unscaled integer, hex bytes —
+beside the comparison oracle (D70). The grilling settles the register's unit
+and which upstream files it is read from, how a new major re-reads it, whether
+`generate_fixtures.py` gains version-conditioned schemas
+([`pg-dump-compatibility.md`](pg-dump-compatibility.md), the v18 column-shapes
+row), and which of the open `KD`s the phase absorbs. The facts are in [its
+inbox](roadmap-P31-correctness-evidence-inbox.md).
 
 ## P30 — One binary for distribution
 

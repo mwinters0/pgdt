@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD63 -->
-**`KD1`–`KD63` are allocated, and nothing at or below `KD63` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD68 -->
+**`KD1`–`KD68` are allocated, and nothing at or below `KD68` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -359,3 +359,40 @@ than reading as a phase nobody has sliced.
   the type's maximum scale — panics a typed query of its table, and one past
   `i8` is typed at scale 0, so its non-zero values read as NULL. **(b) owned
   by `M201`**. Detail: `pgdump_query/src/pgtype.rs`.
+
+- **KD64** — an inheritance child's inherited columns are absent from its
+  `CREATE TABLE` (`shouldPrintColumn`: `attislocal || ispartition`) and present
+  in its `COPY` header, and the `INHERITS (…)` clause is not read, so every
+  inherited column resolves `NotDeclared`: text, ordering refused, and placed
+  after the declared columns in a merged schema. **(c) unowned**; promoted by a
+  dump using inheritance, the fix recording a table's parents and resolving a
+  missing column through them. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD65** — `CREATE UNLOGGED TABLE`, and `CREATE FOREIGN TABLE` under
+  `--include-foreign-data`, are not `CREATE TABLE` to `classify_statement`, so
+  every column of such a table resolves `NotDeclared` and reads as text.
+  **(c) unowned**; promoted by a dump holding an unlogged table, the fix
+  admitting the two prefixes `dumpTableSchema` writes. Detail:
+  `pgdump_query/src/preamble.rs`.
+
+- **KD66** — under `--binary-upgrade` a composite's dropped attribute is
+  recreated as a `/* dummy */` field and then dropped by `ALTER TYPE … DROP
+  ATTRIBUTE`, which nothing reads, so the type keeps the field, `record_out`'s
+  positional literal is one field short, and a typed query of any column of
+  the type refuses its first row. **(c) unowned**; promoted by such a dump, the
+  fix folding the statement as `ADD VALUE` is folded. Detail:
+  `pgdump_query/src/preamble.rs`.
+
+- **KD67** — `pg_dump` pins no `bytea_output`, so a server, database or role
+  set to `escape` dumps `byteaout`'s octal form, which `decode_bytea` reads
+  only in hex, and a typed query of a `bytea` column refuses its first such
+  value as not parsing. **(c) unowned**; promoted by such a dump, the fix
+  reading both of `byteaout`'s forms. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD68** — a database whose name holds a byte outside `[A-Za-z0-9_.]` is
+  entered as `\connect -reuse-previous=on "dbname='…'"`
+  (`appendPsqlMetaConnect`), which `parse_connect` does not read, so under
+  `--create` or `pg_dumpall` its segment is attributed to the database before
+  it, `info` never lists it and `--database` cannot name it. **(c) unowned**;
+  promoted by such a dump, the fix reading the connstring form's `dbname`.
+  Detail: `pgdump_query/src/preamble.rs`.

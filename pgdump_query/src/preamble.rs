@@ -615,6 +615,16 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 
 /// `CREATE TABLE <name> (<col> <type>, ...);` (or, for a typed/partition
 /// table with no column list at all — I5 — just `<name>`).
+///
+/// Deficiency register: `deficiency: KD64` — the `INHERITS (<parent>, …)`
+/// clause after the column list is not read, and `pg_dump` prints only a
+/// child's *local* columns (`shouldPrintColumn`: `attislocal || ispartition`,
+/// `--binary-upgrade` excepted), so an inherited column has no `ColumnDef`
+/// here while the `COPY` header lists it, and `crate::resolve` answers
+/// `NotDeclared` for it. The fix records the parents on the table and lets
+/// resolution walk to a parent's definition for a name the child lacks, the
+/// join staying by name. **(c) unowned**; promoted by a dump using
+/// inheritance.
 fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after = rest[consumed..].trim_start();
@@ -794,6 +804,16 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 /// Used by [`dump_metadata_from_spans`], which encounters the label as its
 /// own [`crate::map::SpanBody::AlterTypeAddValue`] span, separate from the
 /// [`crate::map::SpanBody::TypeDef`] span it targets.
+///
+/// Deficiency register: `deficiency: KD66` — `ALTER TYPE <name> DROP
+/// ATTRIBUTE <attr>;` has no fold of this kind. A `--binary-upgrade` dump
+/// recreates a composite's dropped attribute as `"........pg.dropped.N........"
+/// INTEGER /* dummy */` and drops it with that statement (I5's shape, on a
+/// type), so the `Composite` keeps the field, `record_out` writes one value
+/// fewer (it skips dropped attributes), and `crate::batch` refuses every row
+/// on the field count. The fix parses the statement as [`classify`] parses
+/// `ADD VALUE` and removes the named field. **(c) unowned**; promoted by such
+/// a dump.
 fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
     if let Some(TypeDef { kind: TypeKind::Enum { labels }, .. }) =
         types.iter_mut().find(|t| t.name == type_name)
@@ -918,6 +938,14 @@ pub(crate) enum StatementShape {
 /// which `pg_dumpall` writes among its globals, and [`parse_create_table`]
 /// reads `SPACE` as the table's name. The fix is a keyword
 /// ending at a word boundary.
+///
+/// Deficiency register: `deficiency: KD65` — `dumpTableSchema` writes
+/// `CREATE %s%s %s` with `UNLOGGED ` ahead of the kind and `FOREIGN TABLE`
+/// as a kind, so an unlogged table, and a foreign table under
+/// `--include-foreign-data`, never reach [`parse_create_table`]: the span is
+/// `Unparsed`, the table has no columns in `DatabaseMetadata::tables`, and
+/// every column resolves `NotDeclared`. The fix admits both prefixes here.
+/// **(c) unowned**; promoted by a dump holding an unlogged table.
 pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
     if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
@@ -945,6 +973,16 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 /// tracking which database a `CopyBlock` belongs to needs only the name a
 /// `\connect` yields, never a column type, so it isn't "reading preamble as
 /// it goes" in the sense that section rules out.
+///
+/// Deficiency register: `deficiency: KD68` — `appendPsqlMetaConnect` writes
+/// `\connect <name>` only for a name of `[A-Za-z0-9_.]`, and otherwise
+/// `\encoding SQL_ASCII` then `\connect -reuse-previous=on "dbname='<name>'"`,
+/// the name inside the identifier quoted as a connection-string value. The
+/// identifier grammar below refuses `-`, so the line is `Framing` and no
+/// database boundary: the segment's DDL and blocks join the database before
+/// it (`None` under `--create`, `template1` under `pg_dumpall`). The fix reads
+/// the `dbname=` value out of the quoted identifier. **(c) unowned**; promoted
+/// by such a dump.
 pub(crate) fn parse_connect(line: &str) -> Option<String> {
     let rest = line.trim_start().strip_prefix("\\connect ")?;
     Cursor::new(rest.trim().as_bytes()).parse_ident()

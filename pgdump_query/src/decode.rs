@@ -857,6 +857,15 @@ pub fn render_uuid(bytes: &[u8; 16]) -> String {
 /// lowercase hex pairs — the decoded text (a single backslash), not the
 /// doubled-backslash form COPY escaping writes to disk (see the module
 /// docs).
+///
+/// Deficiency register: `deficiency: KD67` — `byteaout` has a second form,
+/// selected by `bytea_output = escape`, which `pg_dump` does not pin on its
+/// connection (I4 pins `DateStyle`, `IntervalStyle` and `extra_float_digits`
+/// only): a printable byte stands for itself, `\` is `\\`, and every other
+/// byte is `\ooo`. This reads the hex form alone, so a dump from a server,
+/// database or role set to `escape` fails here on its first non-hex value and
+/// `crate::batch` raises `FieldDecode`. The fix reads both forms; the render
+/// stays hex. **(c) unowned**; promoted by such a dump.
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     let hex = s.strip_prefix("\\x")?;
     let b = hex.as_bytes();
