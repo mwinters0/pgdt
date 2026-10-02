@@ -449,6 +449,15 @@ class Literals(unittest.TestCase):
             check.string_literals(src), ["../fixtures/{m}", 'raw/"path', 'by\\"te', "../scripts"]
         )
 
+    def test_a_templated_literal_names_its_directory_and_a_bare_dot_nothing(self):
+        self.assertEqual(check.literal_path("../fixtures/{major}/types"), "../fixtures/")
+        self.assertEqual(check.literal_path("../fixtures/v{major}"), "../fixtures/")
+        self.assertEqual(check.literal_path("tests/data/x.sql"), "tests/data/x.sql")
+        self.assertEqual(check.literal_path("src"), "src")
+        self.assertEqual(check.literal_path(".."), "..")
+        for value in (".", "./", ".{}-{}.tmp", "{x}", "name{}", "./{x}", "a b/c", "/abs", "\\."):
+            self.assertIsNone(check.literal_path(value), value)
+
     def test_a_literal_names_a_path_from_the_package_and_from_its_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -698,6 +707,21 @@ class RealWorkspace(unittest.TestCase):
         self.assertIn("binary_id(=datafusion-pgdump::pushdown)", nextest[-1])
         plan = check.plan_changes(check.REPO, ["pgdt/src/main.rs"], load)
         self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "pgdt"])
+
+    def test_a_library_reads_its_data_and_not_its_whole_package(self):
+        # `copy.rs` holds the value "." and `cache.rs` the template
+        # ".{}-{}.tmp", each of which read as the package directory once.
+        (lib,) = [t for p in self.packages if p.name == "pgdump_query" for t in p.targets if t.kind == "lib"]
+        prefixes = self.prefixes[lib.binary_id]
+        self.assertIn("pgdump_query/tests/data/edge_cases.sql", prefixes)
+        self.assertNotIn("pgdump_query", prefixes)
+        self.assertNotIn("pgdump_query/src", prefixes)
+        load = lambda _: self.packages  # noqa: E731
+        plan = check.plan_changes(
+            check.REPO, ["pgdump_query/src/copy.rs"], load, {"pgdump_query/src/copy.rs"}
+        )
+        self.assertEqual(argv_of(plan)["nextest"][-1], "binary_id(=pgdump_query::layering)")
+        self.assertNotIn("doctest", argv_of(plan))
 
     def test_the_commit_editing_only_doc_comments_runs_no_test(self):
         # 5c835d4b filed two deficiencies by marker comments in two library

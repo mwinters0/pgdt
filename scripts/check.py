@@ -46,9 +46,9 @@ first of the other three rules it meets gives it:
 - **Read by a test target** -- a string literal in one of its sources, taken
   relative to its package and to its file, names the path or a directory
   above it -- runs that target (`binary_id` in nextest's terms), in any
-  package. A test's working directory is its package's, and a literal is
-  truncated at the first `{`, so `format!("../fixtures/{major}")` reads all
-  of `fixtures/`.
+  package. A test's working directory is its package's, and a templated
+  literal names the directory it fills, so `format!("../fixtures/{major}")`
+  reads all of `fixtures/`; a bare `.` names nothing (`literal_path`).
 - **Inside a workspace member** runs that package whole; outside its
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
   transitively, too. Those packages are the ones formatted and linted, and
@@ -479,16 +479,31 @@ def code_of(src: str) -> str:
     return "".join(out).strip()
 
 
+def literal_path(lit: str) -> str | None:
+    """The path a literal can name, or `None`. A templated one names the
+    directory it fills a name into, so it is cut at its first `{` and then to
+    its last `/` (`"../fixtures/{major}"` is `../fixtures/`, and `".{}.tmp"`
+    names no directory). A bare `.` names the working directory itself, which is
+    a value (a decimal point, a decoded `\\.`) far oftener than a read of
+    it, and as a read would make every file in a package one its library's unit
+    tests read; whitespace, a backslash or a leading `/` is not a repo path."""
+    if "{" in lit:
+        lit = lit.split("{", 1)[0]
+        lit = lit[: lit.rfind("/") + 1]
+    if lit in ("", ".", "./") or any(ch.isspace() for ch in lit) or "\\" in lit or lit.startswith("/"):
+        return None
+    return lit
+
+
 def read_prefixes(repo: Path, package_dir: str, source: str) -> set[str]:
-    """The repo-relative paths a source's literals can name: each literal with no
-    whitespace, cut at its first `{`, taken from the package's directory (a
-    test's working directory, and `CARGO_MANIFEST_DIR`) and from the file's own
-    (`include_str!`). `.` is the whole repository."""
+    """The repo-relative paths a source's literals can name (`literal_path`),
+    taken from the package's directory (a test's working directory, and
+    `CARGO_MANIFEST_DIR`) and from the file's own (`include_str!`). `.` is the
+    whole repository."""
     text = (repo / source).read_text(encoding="utf-8", errors="replace")
     out: set[str] = set()
-    for lit in string_literals(text):
-        lit = lit.split("{", 1)[0]
-        if not lit or any(ch.isspace() for ch in lit) or "\\" in lit or lit.startswith("/"):
+    for lit in map(literal_path, string_literals(text)):
+        if lit is None:
             continue
         for base in (package_dir, str(Path(source).parent)):
             norm = os.path.normpath(os.path.join(base, lit))
