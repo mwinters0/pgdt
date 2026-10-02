@@ -341,4 +341,31 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show c68568ea -- pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="28fb62ae",
+        figures=(
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "peak-rss",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+        ),
+        why="M199: lex.rs only widens ident_cont's visibility; preamble.rs's "
+        "strip_kw adds one byte check after a keyword match, allocating nothing, "
+        "and re-classifies only CREATE TABLESPACE, which no measured input holds",
+        verified="git show 28fb62ae -- pgdump_query/src/lex.rs pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
