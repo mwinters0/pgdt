@@ -126,16 +126,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An option may be exempt as writing unsupported input** (31.4). The spec
-  lets an option resolve to a flag set, to having no output effect, or to a
-  `KD<k>`; `--format`, `--compress` and `--encoding` fit none, their every
-  value but the default writing what `pg-dump-compatibility.md` already
-  lists as unsupported or planned (P8, P15, P18, the `client_encoding` row),
-  which is coverage rather than a deficiency. So
-  `scripts/emitter_register.py` gained a fourth disposition, `Unsupported`,
-  resolved to that table's row. The alternative was a flag set passing each
-  option's plain value (`--format=plain --compress=0 --encoding=UTF8`), which
-  satisfies the join and exercises nothing. Reconsidering replaces the four
-  exemptions (`pg_dumpall --encoding` the fourth) with that flag set, or with
-  a `KD<k>` each, which `deficiencies.md` says a coverage row is not.

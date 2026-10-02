@@ -94,7 +94,14 @@ comparison oracle's (D70), which already stands in for them.
   also be exempt as having no output effect (`--host`, `--jobs`,
   `--no-sync`), carrying `Evidence(file, needle)` at the upstream line that
   consumes it so the check resolves it at every major, as D71's exemptions
-  do. A format-string run under three characters is no entry.
+  do; or as writing, at every value but those whose bytes a fixture already
+  holds, input [`pg-dump-compatibility.md`](pg-dump-compatibility.md) says is
+  not read yet (`--format`, `--compress`, `--encoding`), resolved to that
+  row only while its Status opens `Planned` or `Unsupported`, so the change
+  that reads the input owes the option its flag set
+  ([`../status/history/2026-10-02.md`](../status/history/2026-10-02.md), "An
+  option exempt as input not read yet"). A format-string run under three
+  characters is no entry.
 - **Where it lives**: the dispositions are data inside
   `scripts/emitter_register.py`, beside the extraction, as
   `oracle_register.py` holds its own.

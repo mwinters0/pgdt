@@ -65,8 +65,8 @@ each such row need not be reached, resolved against the committed record: an
 it a known failure -- the only two a literal may take, since every byte
 passes through the map -- and, for an option, a line of the program's source
 showing it changes no output byte ([`NoOutput`]), or a
-`pg-dump-compatibility.md` row saying its other values write input this build
-does not read ([`Unsupported`]). A `NoOutput` needle is found by the
+`pg-dump-compatibility.md` row whose Status says the input its other values
+write is not read yet ([`Unsupported`]), which lapses when that row is. A `NoOutput` needle is found by the
 extraction, which no check may repeat, and written into the register as an
 `evidence` row, so the join holds the exemption to the source at every major
 holding the option. An exemption whose row a fixture reaches, or that no
@@ -890,9 +890,12 @@ class NoOutput:
 
 @dataclass(frozen=True)
 class Unsupported:
-    """An option whose every value but the default writes input this build
-    reads no form of: `row` is the first cell of the
-    `docs/design/pg-dump-compatibility.md` row saying so."""
+    """An option whose values this build reads write only bytes some fixture
+    already holds, the rest writing input it does not yet read: `row` is the
+    first cell of the `docs/design/pg-dump-compatibility.md` row saying so,
+    resolving only while that row's Status opens `Planned` or `Unsupported`.
+    The change that makes the input read moves the row and so fails the join,
+    and gives the option its flag set."""
 
     row: str
 
@@ -998,7 +1001,7 @@ def reason_problems(
 ) -> list[str]:
     """Each exemption's reason resolved against the committed record: an
     `I<n>` to a heading, a `KD<k>` to an open entry, a compatibility row to a
-    row of that table. A literal exempt by anything but an `I<n>` or a `KD<k>`
+    row of that table still saying its input is not read. A literal exempt by anything but an `I<n>` or a `KD<k>`
     is a problem."""
     if invariants is None:
         invariants = POSTGRES_INVARIANTS.read_text()
@@ -1022,8 +1025,16 @@ def reason_problems(
             if reason.id not in open_kds:
                 problems.append(f"{name}: {reason.id} is no open entry of deficiencies.md")
         elif isinstance(reason, Unsupported):
-            if not re.search(rf"^\| {re.escape(reason.row)} \|", compatibility, re.MULTILINE):
+            row = re.search(
+                rf"^\| {re.escape(reason.row)} \| ([^|]*)\|", compatibility, re.MULTILINE
+            )
+            if row is None:
                 problems.append(f"{name}: no pg-dump-compatibility.md row {reason.row!r}")
+            elif not row.group(1).strip().startswith(("Planned", "Unsupported")):
+                problems.append(
+                    f"{name}: pg-dump-compatibility.md's {reason.row!r} row reads "
+                    f"{row.group(1).strip()!r}, so the input is read now; give the option a flag set"
+                )
     return problems
 
 

@@ -311,6 +311,22 @@ class Dispositions(unittest.TestCase):
             with self.subTest(exemption=exemption):
                 self.assertEqual(len(self.problems(exemption)), 1)
 
+    def test_an_unsupported_exemption_lapses_once_its_row_is_read(self):
+        # The phase landing the reader moves the row, and the option then
+        # needs a flag set rather than an exemption.
+        exemption = er.Exemption("option", "pg_dump", "format", er.Unsupported("`--format=custom`"))
+        for status, lapsed in (
+            ("Planned (P8)", False),
+            ("Unsupported (errors)", False),
+            ("Tested (fixture)", True),
+            ("Untested", True),
+        ):
+            with self.subTest(status=status):
+                problems = er.reason_problems(
+                    (exemption,), self.INVARIANTS, f"| `--format=custom` | {status} | prose |\n", set()
+                )
+                self.assertEqual(len(problems), int(lapsed))
+
     def test_a_literal_is_exempt_only_by_an_invariant_or_a_deficiency(self):
         # Every byte passes through the map, so "pgdt does not read this" is
         # no reason a literal may go unfixtured.
