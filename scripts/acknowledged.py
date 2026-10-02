@@ -491,4 +491,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show db949970 -- pgdump_query/src/cache.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="d1caf819",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="31.9: is_box runs once per array column as its schema resolves and changes "
+        "the answer only for a quoted box element, which no generated input holds; the "
+        "rest is CACHE_FORMAT_VERSION's u32 value and a #[cfg(test)] pin",
+        verified="git show d1caf819 -- pgdump_query/src/pgtype.rs pgdump_query/src/cache.rs "
+        "pgdump_query/src/predicate.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
