@@ -1353,10 +1353,9 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         // so an out-of-range one is clamped by I57's rule (`1e400` as
         // `DBL_MAX`) or underflows to zero (`1e-400`), where `float8in` raises.
         // The fix is a literal reader of its own, taking any spelling
-        // `float8in` reads and comparing by value (D55), refusing an
-        // out-of-range one but for a spelling `*_out` writes for `±DBL_MAX` or
-        // `±FLT_MAX` at some `extra_float_digits`, so a value copied from the
-        // dump still finds its row.
+        // `float8in` reads and comparing by value (D55), refusing every
+        // out-of-range one `float8in`/`float4in` refuses, I57's rounded
+        // `±DBL_MAX` and `±FLT_MAX` spellings included.
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
