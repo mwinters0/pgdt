@@ -82,8 +82,8 @@ instrument can see").
 Spec: [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md).
 **A `KD<k>` of the phase's class that a round files is appended here as the
 next `31.<M>` in the same change, without asking**: the maintainer's standing
-approval, in the spec's opening note. `M199` and `M200` land before 31.5,
-both editing `preamble.rs`.
+approval, in the spec's opening note. `M200` lands before 31.5, editing
+`preamble.rs`.
 
 - [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
 - [x] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are — [notes](../design/roadmap-P31.2-generator-capabilities-notes.md)

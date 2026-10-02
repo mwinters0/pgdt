@@ -105,8 +105,9 @@ const fn dolq_cont(b: u8) -> bool {
     ident_start(b) || b.is_ascii_digit()
 }
 
-/// `scan.l`'s `ident_cont`.
-const fn ident_cont(b: u8) -> bool {
+/// `scan.l`'s `ident_cont`. `pub(crate)` for [`crate::preamble::strip_kw`]'s
+/// word boundary.
+pub(crate) const fn ident_cont(b: u8) -> bool {
     dolq_cont(b) || b == b'$'
 }
 

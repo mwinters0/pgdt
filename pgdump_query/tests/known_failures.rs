@@ -42,8 +42,6 @@ enum Case {
     Resolves { table: &'static str, column: &'static str, to: ColumnResolution },
     /// No value of the column whose text is finite reads as an infinity.
     FiniteStaysFinite { table: &'static str, column: &'static str },
-    /// No span is classified as the `CREATE TABLE` of a table so named.
-    NoTableSpan { name: &'static str },
     /// The file's metadata lists a database so named.
     DatabaseListed { name: &'static str },
 }
@@ -76,12 +74,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
         fixture: "emitters/dumpall-data-only",
         control: Some("emitters/dumpall"),
         case: Case::DataSpansAttributed,
-    },
-    KnownFailure {
-        kd: "KD61",
-        fixture: "emitters/dumpall",
-        control: Some("emitters/default"),
-        case: Case::NoTableSpan { name: "space" },
     },
     KnownFailure {
         kd: "KD64",
@@ -212,15 +204,6 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
                 .unwrap_or_else(|_| panic!("{}: {table} has no column {column}", path.display()));
             let found = &schema.columns[index];
             if found == to { Ok(()) } else { Err(format!("{column} resolves {found:?}")) }
-        }
-        Case::NoTableSpan { name } => {
-            let source = LocalFileSource::open(path).unwrap();
-            let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
-            let named = spans
-                .iter()
-                .filter(|span| matches!(&span.body, SpanBody::Table { name: n, .. } if n == name))
-                .count();
-            if named == 0 { Ok(()) } else { Err(format!("{named} span(s) read as TABLE {name}")) }
         }
         Case::DatabaseListed { name } => {
             let source = LocalFileSource::open(path).unwrap();

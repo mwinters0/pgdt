@@ -217,6 +217,37 @@ async fn concatenated_dumpall_tiles_and_attributes_databases_by_connect() {
     assert!(databases.len() > 1, "a concatenated dumpall must span more than one database");
 }
 
+/// A `CREATE TABLESPACE` among a `pg_dumpall`'s globals is no `CREATE TABLE`:
+/// the keyword ends at a word boundary (`crate::preamble::strip_kw`). Every
+/// fixture holding one is walked, at every major and flag set.
+#[tokio::test]
+async fn a_tablespace_among_the_globals_is_no_table() {
+    let mut walked = 0;
+    for path in all_fixtures() {
+        if !std::fs::read_to_string(&path).unwrap().contains("CREATE TABLESPACE ") {
+            continue;
+        }
+        walked += 1;
+        let (spans, _) = map_of(&path).await;
+        let holding: Vec<_> = spans
+            .iter()
+            .filter(|s| s.text.as_ref().is_some_and(|t| t.text.contains("CREATE TABLESPACE ")))
+            .collect();
+        assert!(!holding.is_empty(), "{}: no span holds the statement", path.display());
+        for span in holding {
+            assert!(
+                !matches!(span.body, SpanBody::Table { .. }),
+                "{}: [{}, {}) reads as {:?}",
+                path.display(),
+                span.start,
+                span.end,
+                span.body
+            );
+        }
+    }
+    assert!(walked >= 6, "a pg_dumpall fixture holding a tablespace at every major");
+}
+
 /// The `objects` fixture is the one place large objects (I12) and every
 /// dollar-quoted-body TOC kind (`FUNCTION`, `AGGREGATE`, `EVENT TRIGGER`,
 /// ...) actually appear — the case the module docs' "why TOC-block

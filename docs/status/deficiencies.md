@@ -344,10 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD61** — a `CREATE TABLESPACE` statement, which `pg_dumpall` writes among
-  its globals, is classified as a `CREATE TABLE` of a table named `space`, so
-  `info --map` lists a `TABLE space` span. **(b) owned by `M199`**. Detail: `pgdump_query/src/preamble.rs`.
-
 - **KD62** — in a `pg_dumpall` dump, a database whose segment follows one with
   no `COPY` block (`template1`, an empty database) loses its server and
   `pg_dump` versions, the earlier segment taking them instead. **(b) owned

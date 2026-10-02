@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::copy::Cursor;
-use crate::lex::{Lexer, Region};
+use crate::lex::{Lexer, Region, ident_cont};
 use crate::map::{Span, SpanBody};
 
 /// Everything the preamble pass recovered, per database — see
@@ -249,11 +249,17 @@ fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
     (0..=hay.len() - pat.len()).find(|&i| hay[i..i + pat.len()].eq_ignore_ascii_case(pat))
 }
 
-/// Case-insensitively strip a leading keyword, returning the (whitespace
-/// stripped) remainder. `pub(crate)` for [`crate::map::classify`]'s own
+/// Case-insensitively strip a leading keyword ending at a word boundary,
+/// returning the (whitespace stripped) remainder: the byte after it may not
+/// continue an identifier, so `CREATE TABLE` is no prefix of
+/// `CREATE TABLESPACE`. `pub(crate)` for [`crate::map::classify`]'s own
 /// `ALTER TYPE` check.
 pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
-    if s.len() < kw.len() || !s.as_bytes()[..kw.len()].eq_ignore_ascii_case(kw.as_bytes()) {
+    let bytes = s.as_bytes();
+    if bytes.len() < kw.len()
+        || !bytes[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
+        || bytes.get(kw.len()).is_some_and(|&b| ident_cont(b))
+    {
         return None;
     }
     Some(s[kw.len()..].trim_start())
@@ -948,12 +954,6 @@ pub(crate) enum StatementShape {
 /// including `ALTER TYPE ADD VALUE`, which needs an already-open `TypeDef`
 /// to fold into (see [`StatementShape`]'s docs) rather than being
 /// classifiable from its own text alone.
-///
-/// Deficiency register: `deficiency: KD61` — [`strip_kw`] checks no word
-/// boundary, so `CREATE TABLE` also matches `CREATE TABLESPACE fast OWNER …`,
-/// which `pg_dumpall` writes among its globals, and [`parse_create_table`]
-/// reads `SPACE` as the table's name. The fix is a keyword
-/// ending at a word boundary.
 ///
 /// Deficiency register: `deficiency: KD65` — `dumpTableSchema` writes
 /// `CREATE %s%s %s` with `UNLOGGED ` ahead of the kind and `FOREIGN TABLE`
@@ -1890,6 +1890,11 @@ mod tests {
             Some(StatementShape::Collation(_))
         ));
         assert!(classify_statement("ALTER TABLE t OWNER TO postgres;").is_none());
+        assert!(
+            classify_statement("CREATE TABLESPACE fast OWNER postgres LOCATION '/srv/fast';")
+                .is_none()
+        );
+        assert!(classify_statement("CREATE TYPES x;").is_none());
         assert!(classify_statement("ALTER TYPE t ADD VALUE 'x';").is_none());
         // `ALTER COLLATION ... OWNER TO` follows every `CREATE COLLATION` in
         // a real dump and must not be mistaken for one.

@@ -262,8 +262,8 @@ Rejected: a decode per field; a type-blind test (a `text` field reading `infinit
 `every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
-Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6); a `CREATE TABLESPACE` read as a table is `KD61`. `record_type` keys on
-name (I11); a composite's field list is all-or-nothing, `record_out` being positional (I23); a
+Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on name
+(I11); a composite's field list is all-or-nothing, `record_out` being positional (I23); a
 `--create` dump's pre-`\connect` segment is not a database (I9). L1 stores text, never a conclusion:
 a declared type is its words, comments and spacing dropped, a collation clause verbatim, `None` collation is "no clause" (I37), and
 `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
