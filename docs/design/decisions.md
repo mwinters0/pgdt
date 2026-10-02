@@ -632,8 +632,8 @@ meant to be read once (`KD29`). Whether a number was typed or discovered never e
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
 ### D66 Output is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
-Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56).
-One contradicting its type is `FieldDecode` naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting; a `bytea`'s form kept per column.
+Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.
+One contradicting its type is `FieldDecode` naming `--schema-mode strings`, never a null. Rejected: Arrow's display; a `bytea`'s form kept per database or flagged, read by no comparison.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:

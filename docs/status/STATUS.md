@@ -126,14 +126,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A typed `bytea` from a `bytea_output = escape` dump renders `hex`**
-  (31.8; `decode::render_bytea`, D66). The call: typed output prints `\x…`
-  where `--schema-mode strings` prints the dump's `escape` text, a second
-  exception to D66's byte-identical output beside a value its type cannot
-  hold. Why: an Arrow `Binary` keeps no spelling, `hex` is PostgreSQL's
-  default and the form a `bytea` statistic's bounds are stored in, and
-  `KD67`'s own detail named it as the fix's render.
-  Reconsidering means carrying a column's `bytea_output` form beside its
-  resolution, read off its first value, so render could return `escape` —
-  which would make typed output depend on the file's server setting rather
-  than on the value.
+*(None open.)*
