@@ -530,4 +530,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 4d946f8e -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="39466c97",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="31.11: one match guard on a \\connect span that follows another, which no "
+        "generated input holds; the rest is CACHE_FORMAT_VERSION's u32 value, a "
+        "#[cfg(test)] pin and unit tests",
+        verified="git show 39466c97 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
+        "pgdump_query/src/preamble.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
