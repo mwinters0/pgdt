@@ -409,4 +409,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show f6aedf59 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="5d99d7a9",
+        figures=(
+            "allocator",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="M201: map_numeric runs once per column as a schema resolves, never per "
+        "row, and every generated input declares numeric(20,6) or numeric(12,2), "
+        "which map to the type they did; cache.rs moves CACHE_FORMAT_VERSION's u32 "
+        "value and predicate.rs a #[cfg(test)] constant",
+        verified="git show 5d99d7a9 -- pgdump_query/src/pgtype.rs pgdump_query/src/cache.rs "
+        "pgdump_query/src/predicate.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'; "
+        "grep -n 'numeric(' scripts/generate_*.py",
+    ),
 )
