@@ -13,7 +13,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 -- A database whose name holds a byte outside `[A-Za-z0-9_.]`, which
 -- `appendPsqlMetaConnect` enters by `\encoding SQL_ASCII` and `\connect
--- -reuse-previous=on "dbname=..."` (`KD68`), and which `--clean` drops by name.
+-- -reuse-previous=on "dbname=..."`, and which `--clean` drops by name.
 -- By I30 it follows `template1` and precedes `pgdt_fixture`, `-` sorting
 -- below `_`, and it carries a table, so a segment attributed to the database
 -- before it shows.

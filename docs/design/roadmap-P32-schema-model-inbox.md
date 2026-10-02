@@ -52,7 +52,7 @@ complete", is this phase's first decision.
 
 **Fact.** P31 reads two `ALTER` forms beyond today's `ALTER TYPE … ADD
 VALUE`: `ALTER TABLE ONLY … INHERIT` and `… OF`, which `--binary-upgrade`
-writes after a full column list, and `ALTER TYPE … DROP ATTRIBUTE` (`KD66`).
+writes after a full column list, and `ALTER TYPE … DROP ATTRIBUTE`.
 It resolves inherited and typed-table columns by walking the references
 against the preamble's final state, so a later `ALTER TABLE parent ADD
 COLUMN` or `ALTER TYPE … ADD ATTRIBUTE … CASCADE` is reached by

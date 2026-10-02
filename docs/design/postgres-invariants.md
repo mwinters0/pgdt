@@ -246,6 +246,10 @@ match position-for-position. It can also be **absent entirely**.
 all — when that leaves no columns. Separately, under `--binary-upgrade`,
 `dumpTableSchema()` re-creates dropped columns in the `CREATE TABLE` body as
 `INTEGER /* dummy */`, so the DDL there contains columns the data never will.
+`dumpCompositeType()` does the same for a composite's dropped attribute, then
+drops it again with `ALTER TYPE <type> DROP ATTRIBUTE <placeholder>;`, so the
+type's list holds a field `record_out` never writes until that statement is
+read.
 
 Nor can two blocks of one table (I2) be assumed to match each other: under
 load-via-partition-root `dumpTableData()` takes the header's *name* from
@@ -266,8 +270,11 @@ flag sets.
 the `COPY` header is authoritative; the DDL is a by-name type lookup);
 `stream.rs`'s `TableColumns`, which reorders a table's blocks by name,
 unions their census by name, and reads a header listing no columns as a
-block copying none.
+block copying none; `preamble.rs`'s `fold_alter_type_drop_attribute`, for
+the composite (`fixtures/<version>/emitters/binary-upgrade.sql`'s
+`emitters.trio`, all six majors).
 **Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`,
+`grep -n 'DROP ATTRIBUTE %s' src/bin/pg_dump/pg_dump.c` inside `dumpCompositeType`,
 and `grep -n 'fmtCopyColumnList(tbinfo' src/bin/pg_dump/pg_dump.c` still
 passing the leaf's `tbinfo` where `copyFrom` is the root's.
 
@@ -3837,3 +3844,79 @@ awk '/^ConstraintElem:/,/^\t\t;/' src/backend/parser/gram.y | grep -E "^\t\t\t(\
 The first prints `exclude` alone as `UNRESERVED_KEYWORD`; the third prints
 `ConstraintElem`'s arms, the first being `CHECK`, and none opening with a word
 the claim does not name.
+
+---
+
+## I54 — A table is written `CREATE TABLE`, `CREATE UNLOGGED TABLE` or `CREATE FOREIGN TABLE`, its list and `INHERITS` alike in each
+
+**Claim.** `dumpTableSchema` opens every table's definition with `CREATE
+%s%s %s`: `UNLOGGED ` or nothing, then `TABLE` or `FOREIGN TABLE`, then the
+name. Whatever follows — `OF`, the column list, `INHERITS` — is written the
+same for all three; a foreign table adds `SERVER <name>` and its `OPTIONS`
+after them. No foreign table is unlogged, and from 18 a partitioned table is
+never written `UNLOGGED`.
+
+**Proof.** `src/bin/pg_dump/pg_dump.c`, `dumpTableSchema`: the
+`RELKIND_FOREIGN_TABLE` arm sets `reltypename = "FOREIGN TABLE"` and the
+default arm `"TABLE"`, and one `appendPQExpBuffer(q, "CREATE %s%s %s", …)`
+writes `"UNLOGGED "` where `relpersistence` is `RELPERSISTENCE_UNLOGGED`; the
+`SERVER` clause is appended after the `INHERITS` clause.
+
+**Scope limit.** Tables only; a sequence's `CREATE UNLOGGED SEQUENCE` and a
+materialized view are other emitters.
+
+**Verified against:** v13.23 and v18.6 (source);
+`fixtures/<version>/emitters/default.sql`'s `emitters.scratch` and
+`emitters.external`, and `objects/include-foreign-data.sql`'s
+`objects.imported`, at all six majors.
+
+**Relied on by:** `preamble.rs`'s `classify_statement`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'CREATE %s%s %s\|reltypename = "FOREIGN TABLE"' src/bin/pg_dump/pg_dump.c
+```
+
+Both still print, the first inside `dumpTableSchema`.
+
+---
+
+## I55 — A `\connect` names its database bare, quoted, or as a connection string `dbname='…'`
+
+**Claim.** Every `\connect` `pg_dump` writes is `appendPsqlMetaConnect`'s: a
+name of `[A-Za-z0-9_.]` alone is written `\connect` and the name as `fmtId`
+spells it; any other is written `\encoding SQL_ASCII`, then `\connect
+-reuse-previous=on` and the connection string `dbname='<name>'` as one
+identifier, the name's `'` and `\` escaped by `\` inside it and its `"`
+doubled around it. `pg_dumpall` writes `\connect <name>` itself only for
+`template1` and `postgres`, both bare. No name holds a newline: both refuse
+one.
+
+**Proof.** `src/fe_utils/string_utils.c`, `appendPsqlMetaConnect` and
+`appendConnStrVal`, identical at 13.23 through 18.6;
+`src/bin/pg_dump/pg_backup_archiver.c`'s `_reconnectToDB` is its one caller in
+`pg_dump`, and `pg_dumpall.c`'s `fprintf(OPF, "\\connect %s\n\n", dbname)` is
+guarded by the `template1`/`postgres` test.
+
+**Scope limit.** What `pg_dump` and `pg_dumpall` write; a hand-written
+`\connect` may carry other connection-string keys, which read as no boundary.
+
+**Verified against:** v13.23 through v18.6 (source);
+`fixtures/<version>/emitters/dumpall.sql`'s `pgdt-emitters` at all six
+majors.
+
+**Relied on by:** `preamble.rs`'s `parse_connect`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^appendPsqlMetaConnect\(/,/^}$/' src/fe_utils/string_utils.c
+awk '/^appendConnStrVal\(/,/^}$/' src/fe_utils/string_utils.c
+grep -n 'appendPsqlMetaConnect\|\\\\connect' src/bin/pg_dump/*.c
+```
+
+The first two still write the forms above; the third names only
+`_reconnectToDB`'s call and `pg_dumpall`'s guarded `fprintf`.

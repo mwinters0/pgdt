@@ -344,30 +344,10 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD65** — `CREATE UNLOGGED TABLE`, and `CREATE FOREIGN TABLE` under
-  `--include-foreign-data`, are not `CREATE TABLE` to `classify_statement`, so
-  every column of such a table resolves `NotDeclared` and reads as text.
-  **(b) owned by `P31`**, slice 31.7 closing it. Detail:
-  `pgdump_query/src/preamble.rs`.
-
-- **KD66** — under `--binary-upgrade` a composite's dropped attribute is
-  recreated as a `/* dummy */` field and then dropped by `ALTER TYPE … DROP
-  ATTRIBUTE`, which nothing reads, so the type keeps the field, `record_out`'s
-  positional literal is one field short, and a typed query of any column of
-  the type refuses its first row. **(b) owned by `P31`**, slice 31.7 closing it. Detail:
-  `pgdump_query/src/preamble.rs`.
-
 - **KD67** — `pg_dump` pins no `bytea_output`, so a server, database or role
   set to `escape` dumps `byteaout`'s octal form, which `decode_bytea` reads
   only in hex, and a typed query of a `bytea` column refuses its first such
   value as not parsing. **(b) owned by `P31`**, slice 31.8 closing it. Detail: `pgdump_query/src/decode.rs`.
-
-- **KD68** — a database whose name holds a byte outside `[A-Za-z0-9_.]` is
-  entered as `\connect -reuse-previous=on "dbname='…'"`
-  (`appendPsqlMetaConnect`), which `parse_connect` does not read, so under
-  `--create` or `pg_dumpall` its segment is attributed to the database before
-  it, `info` never lists it and `--database` cannot name it. **(b) owned by
-  `P31`**, slice 31.7 closing it. Detail: `pgdump_query/src/preamble.rs`.
 
 - **KD71** — under `--quote-all-identifiers` a built-in type is written
   quoted, and the `box` test at the end of a domain chain reads the spelling

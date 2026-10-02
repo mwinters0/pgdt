@@ -788,3 +788,123 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         assert_eq!(versions(mapped.metadata.as_ref().unwrap()), want, "pg_dump {version}: mapped");
     }
 }
+
+/// `dumpTableSchema` writes an unlogged table and a foreign table as `CREATE
+/// UNLOGGED TABLE` and `CREATE FOREIGN TABLE`, and each declares its columns
+/// as a plain table does: the unlogged one, with and without
+/// `--binary-upgrade`, and the foreign one where `--include-foreign-data`
+/// writes its rows, each reading typed; and the foreign one with no rows,
+/// whose `--binary-upgrade` list carries its dropped column's placeholder as a
+/// table's does (I5).
+#[tokio::test]
+async fn unlogged_and_foreign_tables_declare_their_columns() {
+    let scratch = [("id", "integer"), ("at", "date"), ("ok", "boolean")];
+    let imported = [("id", "integer"), ("born", "date"), ("label", "text")];
+    for version in VERSIONS {
+        for (schema, flag_set, table, expected) in [
+            ("emitters", "default", "emitters.scratch", &scratch[..]),
+            ("emitters", "binary-upgrade", "emitters.scratch", &scratch),
+            ("objects", "include-foreign-data", "objects.imported", &imported),
+        ] {
+            let path = fixture(version, schema, flag_set);
+            let label = format!("pg_dump {version} {schema}/{flag_set}: {table}");
+            let db = single_database(&path).await;
+            let declared: Vec<(&str, &str)> = db
+                .declared_columns(table)
+                .iter()
+                .map(|c| (c.name.as_str(), c.declared_type.as_str()))
+                .collect();
+            assert_eq!(declared, expected, "{label}");
+            let resolved = typed_schema(&path, table).await;
+            assert!(
+                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                "{label} resolves {:?}",
+                resolved.columns
+            );
+        }
+        for (flag_set, expected) in [
+            ("default", &[("id", "integer"), ("label", "text")][..]),
+            (
+                "binary-upgrade",
+                &[
+                    ("id", "integer"),
+                    ("........pg.dropped.2........", "INTEGER"),
+                    ("label", "text"),
+                ],
+            ),
+        ] {
+            let db = single_database(&fixture(version, "emitters", flag_set)).await;
+            let declared: Vec<(&str, &str)> = db
+                .declared_columns("emitters.external")
+                .iter()
+                .map(|c| (c.name.as_str(), c.declared_type.as_str()))
+                .collect();
+            assert_eq!(declared, expected, "pg_dump {version} {flag_set}");
+        }
+    }
+}
+
+/// `--binary-upgrade` recreates a composite's dropped attribute as a
+/// placeholder field and drops it with `ALTER TYPE … DROP ATTRIBUTE`, so the
+/// type holds the fields `record_out` writes, and a column of it reads every
+/// row typed, as it does without the flag.
+#[tokio::test]
+async fn a_composite_s_dropped_attribute_is_dropped_under_binary_upgrade() {
+    for version in VERSIONS {
+        for flag_set in ["default", "binary-upgrade"] {
+            let path = fixture(version, "emitters", flag_set);
+            let label = format!("pg_dump {version} {flag_set}");
+            let db = single_database(&path).await;
+            assert_eq!(
+                find_type(&db, "emitters.trio").kind,
+                TypeKind::Composite {
+                    fields: Some(
+                        vec![ColumnDef::new("a", "integer"), ColumnDef::new("c", "date"),]
+                    )
+                },
+                "{label}"
+            );
+            let resolved = typed_schema(&path, "emitters.trios").await;
+            assert!(
+                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                "{label} resolves {:?}",
+                resolved.columns
+            );
+        }
+    }
+}
+
+/// A database whose name holds a byte outside `[A-Za-z0-9_.]` is entered by
+/// `\connect -reuse-previous=on "dbname='…'"`, and is a database of its own:
+/// listed under its name, with its version pair, holding its table and its
+/// table's block, none of which the database before it holds.
+#[tokio::test]
+async fn a_connection_string_connect_opens_its_own_database() {
+    for version in VERSIONS {
+        let source = LocalFileSource::open(fixture(version, "emitters", "dumpall")).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let metadata = index.metadata.as_ref().unwrap();
+        let names: Vec<Option<&str>> =
+            metadata.databases.iter().map(|db| db.name.as_deref()).collect();
+        let at = names
+            .iter()
+            .position(|n| *n == Some("pgdt-emitters"))
+            .unwrap_or_else(|| panic!("pg_dump {version}: databases {names:?}"));
+        let db = &metadata.databases[at];
+        assert!(db.server_version.is_some() && db.pg_dump_version.is_some(), "pg_dump {version}");
+        let declared: Vec<(&str, &str)> = db
+            .declared_columns("public.named")
+            .iter()
+            .map(|c| (c.name.as_str(), c.declared_type.as_str()))
+            .collect();
+        assert_eq!(
+            declared,
+            [("id", "integer"), ("label", "text"), ("born", "date")],
+            "pg_dump {version}"
+        );
+        assert!(metadata.databases[at - 1].tables.is_empty(), "pg_dump {version}: {names:?}");
+        let blocks: Vec<Option<&str>> =
+            index.blocks_for("public.named").map(|b| b.database.as_deref()).collect();
+        assert_eq!(blocks, [Some("pgdt-emitters")], "pg_dump {version}");
+    }
+}

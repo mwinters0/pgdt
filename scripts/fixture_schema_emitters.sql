@@ -6,9 +6,7 @@
 -- Every object below exists for a literal some listed emitter appends, named
 -- beside it, so a reading that misses one is a register row going uncovered
 -- rather than a gap nobody sees. Each table carries rows, so a reading that
--- mis-types a column shows in a typed read and not only in the map. Several
--- shapes are filed defects (`KD65`, `KD66`), held failing by
--- pgdump_query/tests/known_failures.rs until their slices land.
+-- mis-types a column shows in a typed read and not only in the map.
 --
 -- The cluster-global half -- a commented tablespace with options, and a
 -- database whose name `appendPsqlMetaConnect` cannot write bare -- is set up
@@ -162,7 +160,7 @@ INSERT INTO emitters.domain_values VALUES
     (2, NULL, NULL, NULL);
 
 -- dumpCompositeType under `--binary-upgrade`: a dropped attribute is
--- recreated and then dropped by `ALTER TYPE ... DROP ATTRIBUTE`, `KD66`.
+-- recreated and then dropped by `ALTER TYPE ... DROP ATTRIBUTE`.
 CREATE TYPE emitters.trio AS (a integer, b text, c date);
 ALTER TYPE emitters.trio DROP ATTRIBUTE b;
 CREATE TABLE emitters.trios (id integer PRIMARY KEY, v emitters.trio);
@@ -203,7 +201,7 @@ ALTER TABLE emitters.grown DROP COLUMN a;
 ALTER TABLE emitters.grown DROP COLUMN c;
 INSERT INTO emitters.grown (id, b) VALUES (3, 'b3');
 
--- `CREATE UNLOGGED TABLE`, `KD65`.
+-- `CREATE UNLOGGED TABLE`.
 CREATE UNLOGGED TABLE emitters.scratch (id integer, at date, ok boolean);
 INSERT INTO emitters.scratch VALUES (1, '2024-03-01', true), (2, NULL, false);
 

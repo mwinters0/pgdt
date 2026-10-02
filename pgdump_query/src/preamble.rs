@@ -1015,6 +1015,20 @@ pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, Str
     Some((name, label))
 }
 
+/// Parse the body of `ALTER TYPE <name> DROP ATTRIBUTE <attr>;`, after `ALTER
+/// TYPE` has been stripped — the statement a `--binary-upgrade` dump drops a
+/// composite's placeholder for a dropped attribute with (I5) — as the type
+/// and the attribute. `None` for anything more than that
+/// one subcommand, which `dumpCompositeType` never writes. `pub(crate)` for
+/// [`crate::map::classify`], as [`parse_alter_type_add_value_body`] is.
+pub(crate) fn parse_alter_type_drop_attribute_body(rest: &str) -> Option<(String, String)> {
+    let (name, consumed) = parse_type_name(rest)?;
+    let after = strip_kw(rest[consumed..].trim_start(), "DROP ATTRIBUTE")?;
+    let mut cur = Cursor::new(after.as_bytes());
+    let attribute = cur.parse_ident()?;
+    (after[cur.pos()..].trim() == ";").then_some((name, attribute))
+}
+
 /// Record one `CREATE TYPE`/`CREATE DOMAIN` into `types`, keyed on the type
 /// name rather than on the statement — one entry per type, not one per
 /// statement (`docs/design/decisions.md`, "D36"): `pg_dump` emits a completed
@@ -1039,20 +1053,25 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 /// Used by [`dump_metadata_from_spans`], which encounters the label as its
 /// own [`crate::map::SpanBody::AlterTypeAddValue`] span, separate from the
 /// [`crate::map::SpanBody::TypeDef`] span it targets.
-///
-/// Deficiency register: `deficiency: KD66` — `ALTER TYPE <name> DROP
-/// ATTRIBUTE <attr>;` has no fold of this kind. A `--binary-upgrade` dump
-/// recreates a composite's dropped attribute as `"........pg.dropped.N........"
-/// INTEGER /* dummy */` and drops it with that statement (I5's shape, on a
-/// type), so the `Composite` keeps the field, `record_out` writes one value
-/// fewer (it skips dropped attributes), and `crate::batch` refuses every row
-/// on the field count. The fix parses the statement as [`classify`] parses
-/// `ADD VALUE` and removes the named field. **(b) owned by `P31`**.
 fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
     if let Some(TypeDef { kind: TypeKind::Enum { labels }, .. }) =
         types.iter_mut().find(|t| t.name == type_name)
     {
         labels.push(label.to_string());
+    }
+}
+
+/// Fold an already-parsed `ALTER TYPE <type_name> DROP ATTRIBUTE <attribute>`
+/// (see [`parse_alter_type_drop_attribute_body`]) into the matching composite
+/// in `types`, removing the field so named — a no-op where the type, or the
+/// field, is not there. The field is the placeholder `--binary-upgrade`
+/// writes for an attribute the type has dropped, which `record_out` skips, so
+/// a composite that kept it would expect a value more than every row holds.
+fn fold_alter_type_drop_attribute(types: &mut [TypeDef], type_name: &str, attribute: &str) {
+    if let Some(TypeDef { kind: TypeKind::Composite { fields: Some(fields) }, .. }) =
+        types.iter_mut().find(|t| t.name == type_name)
+    {
+        fields.retain(|field| field.name != attribute);
     }
 }
 
@@ -1149,12 +1168,14 @@ pub(crate) fn extract_statement_cross_refs(
 }
 
 /// The four statement shapes [`classify_statement`] recognizes directly.
-/// `ALTER TYPE ADD VALUE` is not among them: it mutates an already-declared
-/// object rather than introducing one, so it has its own two entry points —
-/// [`parse_alter_type_add_value_body`] for [`crate::map::classify`] and
-/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`] — and so,
-/// for the same reason, has an `ALTER TABLE` adding a [`TableReference`]
-/// ([`parse_alter_table_reference`], folded by [`TableDef`]).
+/// `ALTER TYPE ADD VALUE` and `DROP ATTRIBUTE` are not among them: each
+/// mutates an already-declared object rather than introducing one, so it has
+/// its own two entry points — [`parse_alter_type_add_value_body`] and
+/// [`parse_alter_type_drop_attribute_body`] for [`crate::map::classify`],
+/// [`fold_alter_type_add_value`] and [`fold_alter_type_drop_attribute`] for
+/// [`dump_metadata_from_spans`] — and so, for the same reason, has an `ALTER
+/// TABLE` adding a [`TableReference`] ([`parse_alter_table_reference`],
+/// folded by [`TableDef`]).
 #[derive(Debug)]
 pub(crate) enum StatementShape {
     Table { name: String, definition: TableDef },
@@ -1169,16 +1190,15 @@ pub(crate) enum StatementShape {
 /// to fold into (see [`StatementShape`]'s docs) rather than being
 /// classifiable from its own text alone.
 ///
-/// Deficiency register: `deficiency: KD65` — `dumpTableSchema` writes
-/// `CREATE %s%s %s` with `UNLOGGED ` ahead of the kind and `FOREIGN TABLE`
-/// as a kind, so an unlogged table, and a foreign table under
-/// `--include-foreign-data`, never reach [`parse_create_table`]: the span is
-/// `Unparsed`, the table has no columns in `DatabaseMetadata::tables`, and
-/// every column resolves `NotDeclared`. The fix admits both prefixes here.
-/// **(b) owned by `P31`**.
+/// A table is any of the three `dumpTableSchema` writes as `CREATE %s%s %s`
+/// (I54): a plain one, an `UNLOGGED` one and a `FOREIGN TABLE`, whose list
+/// and `INHERITS` are a plain table's, its `SERVER` clause after them.
 pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     let trimmed = stmt.trim_start();
-    if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
+    if let Some(rest) = ["CREATE TABLE", "CREATE UNLOGGED TABLE", "CREATE FOREIGN TABLE"]
+        .into_iter()
+        .find_map(|kw| strip_kw(trimmed, kw))
+    {
         return parse_create_table(rest)
             .map(|(name, definition)| StatementShape::Table { name, definition });
     }
@@ -1204,17 +1224,30 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 /// `\connect` yields, never a column type, so it isn't "reading preamble as
 /// it goes" in the sense that section rules out.
 ///
-/// Deficiency register: `deficiency: KD68` — `appendPsqlMetaConnect` writes
-/// `\connect <name>` only for a name of `[A-Za-z0-9_.]`, and otherwise
-/// `\encoding SQL_ASCII` then `\connect -reuse-previous=on "dbname='<name>'"`,
-/// the name inside the identifier quoted as a connection-string value. The
-/// identifier grammar below refuses `-`, so the line is `Framing` and no
-/// database boundary: the segment's DDL and blocks join the database before
-/// it (`None` under `--create`, `template1` under `pg_dumpall`). The fix reads
-/// the `dbname=` value out of the quoted identifier. **(b) owned by `P31`**.
+/// Both of `appendPsqlMetaConnect`'s forms (I55): the name as an identifier,
+/// and for a name holding a byte outside `[A-Za-z0-9_.]`, `-reuse-previous=on`
+/// and a connection string `dbname='<name>'` written as one.
 pub(crate) fn parse_connect(line: &str) -> Option<String> {
-    let rest = line.trim_start().strip_prefix("\\connect ")?;
-    Cursor::new(rest.trim().as_bytes()).parse_ident()
+    let rest = line.trim_start().strip_prefix("\\connect ")?.trim();
+    match rest.strip_prefix("-reuse-previous=on ") {
+        Some(conninfo) => conninfo_dbname(&Cursor::new(conninfo.trim().as_bytes()).parse_ident()?),
+        None => Cursor::new(rest.as_bytes()).parse_ident(),
+    }
+}
+
+/// The name in a connection string that is `dbname='<name>'` and nothing
+/// more, read as `appendConnStrVal` writes it: single-quoted, `\` escaping a
+/// `'` or a `\`.
+fn conninfo_dbname(conninfo: &str) -> Option<String> {
+    let mut chars = conninfo.strip_prefix("dbname='")?.chars();
+    let mut name = String::new();
+    loop {
+        match chars.next()? {
+            '\\' => name.push(chars.next()?),
+            '\'' => return chars.as_str().is_empty().then_some(name),
+            c => name.push(c),
+        }
+    }
 }
 
 /// An incremental scan of a SQL statement's lines: how deep its parens are,
@@ -1385,8 +1418,9 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 /// calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
-/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] and
-/// table-reference folding on [`crate::map::SpanBody::AlterTableReference`].
+/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`],
+/// dropped-attribute folding on [`crate::map::SpanBody::AlterTypeDropAttribute`]
+/// and table-reference folding on [`crate::map::SpanBody::AlterTableReference`].
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
 /// end of file, or (per I1) the start of the current database's first `COPY`
@@ -1451,7 +1485,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::Data(_) => {
                 current.preamble_complete = true;
             }
-            // I1 guarantees none of these six can genuinely follow a `Data`
+            // I1 guarantees none of these seven can genuinely follow a `Data`
             // span for the current database before its next `Connect` — the
             // guard is defensive, matching what a line-triggered scan would
             // have done, rather than assuming the invariant holds.
@@ -1472,6 +1506,11 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::AlterTypeAddValue { type_name, label } if !current.preamble_complete => {
                 fold_alter_type_add_value(&mut current.types, type_name, label);
             }
+            SpanBody::AlterTypeDropAttribute { type_name, attribute }
+                if !current.preamble_complete =>
+            {
+                fold_alter_type_drop_attribute(&mut current.types, type_name, attribute);
+            }
             SpanBody::Collation { collation } if !current.preamble_complete => {
                 current.collations.push(collation.clone());
             }
@@ -1479,6 +1518,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             | SpanBody::TypeDef { .. }
             | SpanBody::Extension { .. }
             | SpanBody::AlterTypeAddValue { .. }
+            | SpanBody::AlterTypeDropAttribute { .. }
             | SpanBody::AlterTableReference { .. }
             | SpanBody::Collation { .. }
             | SpanBody::Framing
@@ -1962,6 +2002,101 @@ mod tests {
             meta.databases[0].types[0].kind,
             TypeKind::Enum { labels: vec!["sad".to_string(), "has'quote".to_string()] }
         );
+    }
+
+    /// `--binary-upgrade`'s placeholder for a composite's dropped attribute is
+    /// dropped again by name, quoted as `fmtId` quotes it; the statement
+    /// carrying anything more is no such drop.
+    #[test]
+    fn a_dropped_attribute_s_placeholder_leaves_its_composite() {
+        assert_eq!(
+            parse_alter_type_drop_attribute_body(
+                "emitters.trio DROP ATTRIBUTE \"........pg.dropped.2........\";"
+            ),
+            Some(("emitters.trio".to_string(), "........pg.dropped.2........".to_string()))
+        );
+        assert_eq!(
+            parse_alter_type_drop_attribute_body("public.t DROP ATTRIBUTE b CASCADE;"),
+            None
+        );
+        assert_eq!(parse_alter_type_drop_attribute_body("public.t ADD VALUE 'x';"), None);
+
+        let TypeDef { name, kind } = parse_type(&[
+            "CREATE TYPE emitters.trio AS (",
+            "\ta integer,",
+            "\t\"........pg.dropped.2........\" INTEGER /* dummy */,",
+            "\tc date",
+            ");",
+        ]);
+        let spans = vec![
+            span(SpanBody::TypeDef { name, kind }),
+            span(SpanBody::Unparsed),
+            span(SpanBody::AlterTypeDropAttribute {
+                type_name: "emitters.trio".to_string(),
+                attribute: "........pg.dropped.2........".to_string(),
+            }),
+        ];
+        let meta = dump_metadata_from_spans(&spans);
+        assert_eq!(
+            meta.databases[0].types[0].kind,
+            TypeKind::Composite {
+                fields: Some(vec![ColumnDef::new("a", "integer"), ColumnDef::new("c", "date")])
+            }
+        );
+    }
+
+    /// Both of `appendPsqlMetaConnect`'s forms name their database, the
+    /// connection string's escapes and the identifier's doubled `"` undone;
+    /// a connection string holding more than the name is no boundary.
+    #[test]
+    fn a_connect_names_its_database_in_either_form() {
+        assert_eq!(parse_connect("\\connect koji").as_deref(), Some("koji"));
+        assert_eq!(parse_connect("\\connect \"Koji\"").as_deref(), Some("Koji"));
+        assert_eq!(
+            parse_connect("\\connect -reuse-previous=on \"dbname='pgdt-emitters'\"").as_deref(),
+            Some("pgdt-emitters")
+        );
+        assert_eq!(
+            parse_connect(r#"\connect -reuse-previous=on "dbname='it\'s ""a\\b"" db'""#).as_deref(),
+            Some(r#"it's "a\b" db"#)
+        );
+        assert_eq!(
+            parse_connect("\\connect -reuse-previous=on \"dbname='a' host=b\"").as_deref(),
+            None
+        );
+        assert_eq!(parse_connect("\\encoding SQL_ASCII"), None);
+    }
+
+    /// `dumpTableSchema`'s `CREATE %s%s %s` writes three kinds of table; each
+    /// is read as a table, a foreign one's `SERVER` clause after its list.
+    #[test]
+    fn unlogged_and_foreign_tables_are_tables() {
+        let (name, cols) = parse_table(&[
+            "CREATE UNLOGGED TABLE emitters.scratch (",
+            "    id integer,",
+            "    at date",
+            ");",
+        ]);
+        assert_eq!(name, "emitters.scratch");
+        assert_eq!(cols, [ColumnDef::new("id", "integer"), ColumnDef::new("at", "date")]);
+        let (name, table) = parse_table_def(&[
+            "CREATE FOREIGN TABLE objects.imported (",
+            "    id integer NOT NULL,",
+            "    born date",
+            ")",
+            "INHERITS (objects.base)",
+            "SERVER objects_files",
+            "OPTIONS (",
+            "    filename '/tmp/objects_imported.tsv'",
+            ");",
+        ]);
+        assert_eq!(name, "objects.imported");
+        assert_eq!(
+            table.columns,
+            [ColumnDef::new("id", "integer"), ColumnDef::new("born", "date")]
+        );
+        assert_eq!(table.parents, ["objects.base"]);
+        assert!(classify_statement("CREATE UNLOGGED SEQUENCE public.s;").is_none());
     }
 
     /// `--binary-upgrade`'s references arrive after the full column list and

@@ -3339,6 +3339,9 @@ fn span_summary(span: &Span) -> String {
         SpanBody::AlterTypeAddValue { type_name, label } => {
             format!("ALTER TYPE {type_name} ADD VALUE {label:?}")
         }
+        SpanBody::AlterTypeDropAttribute { type_name, attribute } => {
+            format!("ALTER TYPE {type_name} DROP ATTRIBUTE {attribute:?}")
+        }
         SpanBody::AlterTableReference { table, reference } => match reference {
             TableReference::Parent(parent) => format!("ALTER TABLE {table} INHERIT {parent}"),
             TableReference::OfType(of_type) => format!("ALTER TABLE {table} OF {of_type}"),

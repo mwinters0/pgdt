@@ -83,7 +83,8 @@
 //! **every** `DumpIndex` tiles its file, one built by a query included.
 //! `DumpMetadata` is [`crate::preamble::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
-//! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`] and
+//! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`],
+//! [`SpanBody::AlterTypeDropAttribute`] and
 //! [`SpanBody::AlterTableReference`] exist for rather than generic
 //! [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
@@ -101,8 +102,9 @@ use crate::lex::standard_conforming_strings;
 use crate::preamble::{
     CollationDef, Extension, StatementScan, StatementShape, TableDef, TableReference, TypeDef,
     TypeKind, classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
-    insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body, parse_connect,
-    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
+    insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body,
+    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, push_stmt_line,
+    statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart};
 use crate::statistics::{BlockGathered, BlockObserver};
@@ -387,6 +389,15 @@ pub enum SpanBody {
     AlterTypeAddValue {
         type_name: String,
         label: String,
+    },
+    /// A `--binary-upgrade` dump's `ALTER TYPE <name> DROP ATTRIBUTE
+    /// <attr>;`, dropping a composite's placeholder for an attribute the type
+    /// has dropped — recognized so
+    /// [`crate::preamble::dump_metadata_from_spans`] can remove the field from
+    /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
+    AlterTypeDropAttribute {
+        type_name: String,
+        attribute: String,
     },
     /// A `--binary-upgrade` dump's `ALTER TABLE ONLY <name> INHERIT
     /// <parent>;` or `… OF <type>;` — recognized so
@@ -1526,10 +1537,13 @@ fn classify(stmt: &str) -> SpanBody {
     if looks_like_framing_statement(stmt) {
         return SpanBody::Framing;
     }
-    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE")
-        && let Some((type_name, label)) = parse_alter_type_add_value_body(rest)
-    {
-        return SpanBody::AlterTypeAddValue { type_name, label };
+    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
+        if let Some((type_name, label)) = parse_alter_type_add_value_body(rest) {
+            return SpanBody::AlterTypeAddValue { type_name, label };
+        }
+        if let Some((type_name, attribute)) = parse_alter_type_drop_attribute_body(rest) {
+            return SpanBody::AlterTypeDropAttribute { type_name, attribute };
+        }
     }
     if let Some((table, reference)) = parse_alter_table_reference(stmt) {
         return SpanBody::AlterTableReference { table, reference };
@@ -2173,6 +2187,21 @@ mod tests {
             SpanBody::AlterTypeAddValue {
                 type_name: "public.mood".to_string(),
                 label: "sad".to_string(),
+            }
+        );
+    }
+
+    /// So does its `ALTER TYPE ... DROP ATTRIBUTE ...;`, the fold removing the
+    /// composite's placeholder field.
+    #[test]
+    fn binary_upgrade_drop_attribute_becomes_its_own_span() {
+        let spans =
+            spans_of(&["ALTER TYPE public.trio DROP ATTRIBUTE \"........pg.dropped.2........\";"]);
+        assert_eq!(
+            spans[0].body,
+            SpanBody::AlterTypeDropAttribute {
+                type_name: "public.trio".to_string(),
+                attribute: "........pg.dropped.2........".to_string(),
             }
         );
     }

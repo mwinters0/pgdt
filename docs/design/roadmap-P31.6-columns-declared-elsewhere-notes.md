@@ -19,7 +19,7 @@ What the slices after this one inherit. The spec is
   order (`stream.rs`'s `TableColumns`). The walk is in L1, being a lookup of
   what the file declares rather than a conclusion about a type (D74). D36
   carries its refusal.
-- **`CACHE_FORMAT_VERSION` is 36**, both pins re-pinned beside it.
+- **`CACHE_FORMAT_VERSION` was bumped**, both pins re-pinned beside it.
 - **Evidence**: `tests/preamble.rs`'s
   `inherited_and_typed_columns_are_declared_through_their_references` over
   `emitters/default` and `emitters/binary-upgrade` at every major, and
