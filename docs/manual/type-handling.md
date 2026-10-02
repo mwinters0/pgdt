@@ -39,9 +39,11 @@ value is rendered back to the same PostgreSQL text `pg_dump` itself would
 have written, so switching `--schema-mode` never changes what shows up on
 your terminal or in a pipeline downstream — only whether `pgdt info` (and a
 caller reading `RecordBatch` types directly) sees a narrower Arrow type. The
-one exception is a value its column's type cannot hold, which typing reads as
+exceptions are a value its column's type cannot hold, which typing reads as
 NULL by default (see "A value its column cannot hold reads as NULL" below)
-and `--schema-mode strings` prints as its text.
+and `--schema-mode strings` prints as its text, and a `bytea` from a server
+set to `bytea_output = escape`, which typing reads and prints in the default
+`\x` hex form and `--schema-mode strings` prints as the dump wrote it.
 
 A partitioned table dumped through its root — with `--load-via-partition-root`,
 or by `pg_dump` on its own for a table hash-partitioned on an enum column — is
@@ -423,9 +425,10 @@ Error: filter value `true` for `v_flag = ...` does not parse as the column's dec
 
 Write it the way the dump writes it — a `timestamp` carries a time part
 (`2020-01-01 00:00:00`), an `interval` uses the spellings `interval` prints, a
-`macaddr` is colon-separated. Every value in the file is already in that form,
-so the only thing this rules out is a spelling you would have had to guess at
-anyway.
+`macaddr` is colon-separated, and a `bytea` is either of the forms
+`bytea_output` selects (`\x5c41` or `\\A`), matching a dump in either. Every
+value in the file is already in that form, so the only thing this rules out is
+a spelling you would have had to guess at anyway.
 
 **One thing `=` does not do is search.** It is exact equality against one
 column; there is no `LIKE`, no pattern and no case folding.

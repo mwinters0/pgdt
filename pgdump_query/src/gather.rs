@@ -50,6 +50,7 @@
 //! allowance; the next block declines at its first charge.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem::{self, align_of, size_of};
@@ -58,7 +59,7 @@ use std::sync::{Arc, OnceLock};
 use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
-use crate::decode::{decimal_unscaled_digits, decode_bytea, render_bytea};
+use crate::decode::{decimal_unscaled_digits, decode_bytea, decode_bytea_escape, render_bytea};
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
@@ -1297,28 +1298,36 @@ enum Canonical {
     /// `character`: the text without its trailing blanks, which its comparison
     /// ignores — so a bound is stored unpadded.
     PaddedText,
-    /// `bytea`: `\x` and lowercase hex pairs, which order as the bytes do. A
-    /// value in any other spelling is not placed.
+    /// `bytea`: `\x` and lowercase hex pairs, which order as the bytes do —
+    /// an `escape` value's head put in that form, as much as a bound reads
+    /// ([`BYTEA_ESCAPE_HEAD_BYTES`]). A value in any other spelling is not
+    /// placed.
     Bytea,
 }
 
 impl Canonical {
     /// The text whose bytes order `text` among its column's values, `None`
     /// where this kind cannot place it.
-    fn of(self, text: &str) -> Option<&str> {
+    fn of(self, text: &str) -> Option<Cow<'_, str>> {
         match self {
-            Self::Text => Some(text),
-            Self::PaddedText => Some(text.trim_end_matches(' ')),
-            Self::Bytea => text
-                .strip_prefix("\\x")
-                .is_some_and(|hex| {
-                    hex.len() % 2 == 0
-                        && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                })
-                .then_some(text),
+            Self::Text => Some(Cow::Borrowed(text)),
+            Self::PaddedText => Some(Cow::Borrowed(text.trim_end_matches(' '))),
+            Self::Bytea => match text.strip_prefix("\\x") {
+                Some(hex) => (hex.len() % 2 == 0
+                    && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+                .then_some(Cow::Borrowed(text)),
+                None => decode_bytea_escape(text, BYTEA_ESCAPE_HEAD_BYTES)
+                    .map(|head| Cow::Owned(render_bytea(&head))),
+            },
         }
     }
 }
+
+/// How many of an `escape` value's bytes [`Canonical::of`] renders: enough
+/// that a value cut there renders past [`CLIP_BYTES`], so its head is the
+/// whole value's and it reads as no whole value, as the value itself does
+/// (`docs/design/decisions.md`, "D76").
+const BYTEA_ESCAPE_HEAD_BYTES: usize = CLIP_BYTES / 2;
 
 /// How much of a bytewise value is kept: past the cap by one character's
 /// width, so a kept head longer than the cap says its value is too.
@@ -1835,6 +1844,7 @@ impl BoundsGatherer {
             Order::Bytewise(canonical) => {
                 debug_assert!(tier.is_none(), "a bytewise kind's type holds every value");
                 let Some(text) = canonical.of(text) else { return self.lose_value(group, None) };
+                let text = text.as_ref();
                 let GroupBounds::Bytewise { min, max, .. } = group else {
                     unreachable!("a bytewise order keeps bytewise bounds")
                 };
@@ -3601,5 +3611,61 @@ mod tests {
         assert!(upper.len() <= DICTIONARY_ENTRY_MAX_BYTES);
         assert!(decode_bytea(&upper).unwrap() > value);
         assert!(bytea_upper(&render_bytea(&[0xFF; 300])).is_none());
+    }
+
+    /// **A `bytea` column gathers alike in `hex` and in `escape`**: bounds
+    /// and row order over random groups, sorted in some rounds, of values
+    /// short, either side of [`BYTEA_ESCAPE_HEAD_BYTES`] and past it, half
+    /// sharing a head that long, over bytes each escaping differently.
+    #[test]
+    fn a_bytea_column_gathers_alike_in_either_output_form() {
+        use crate::decode::render_bytea_escape;
+
+        let mut rng = Rng(0x000b_17ea);
+        let byte = |rng: &mut Rng| [0x00, 0x41, 0x5c, 0x7f, 0xff][rng.below(5) as usize];
+        let (mut bounded, mut ordered) = (0usize, 0usize);
+        for round in 0..300 {
+            let shared: Vec<u8> = (0..BYTEA_ESCAPE_HEAD_BYTES).map(|_| byte(&mut rng)).collect();
+            let mut groups: Vec<Vec<Vec<u8>>> = (0..1 + rng.below(4))
+                .map(|_| {
+                    (0..rng.below(6))
+                        .map(|_| {
+                            let len = match rng.below(3) {
+                                0 => rng.below(4) as usize,
+                                1 => BYTEA_ESCAPE_HEAD_BYTES - 2 + rng.below(5) as usize,
+                                _ => 250 + rng.below(40) as usize,
+                            };
+                            let mut v: Vec<u8> = (0..len).map(|_| byte(&mut rng)).collect();
+                            if rng.below(2) == 0 {
+                                v.splice(0..0, shared.iter().copied());
+                            }
+                            v
+                        })
+                        .collect()
+                })
+                .collect();
+            if round % 3 == 0 {
+                let mut all = groups.concat();
+                all.sort();
+                groups = vec![all];
+            }
+            let gathered = |render: fn(&[u8]) -> String| {
+                let mut gatherer = BoundsGatherer::new(CompareKind::Bytea);
+                let mut charge = Charge::new(Arc::default(), Term::Gathering);
+                for group in &groups {
+                    let mut state = gatherer.fresh_group();
+                    for v in group {
+                        gatherer.observe(&mut state, &render(v), None);
+                    }
+                    gatherer.close_group(state, &mut charge);
+                }
+                gatherer.finish()
+            };
+            let hex = gathered(render_bytea);
+            assert_eq!(gathered(render_bytea_escape), hex, "round {round}");
+            bounded += hex.groups.iter().flatten().count();
+            ordered += usize::from(hex.sortedness != Sortedness::Unsorted);
+        }
+        assert!(bounded > 300 && ordered > 50, "{bounded} groups bounded, {ordered} ordered");
     }
 }

@@ -3920,3 +3920,48 @@ grep -n 'appendPsqlMetaConnect\|\\\\connect' src/bin/pg_dump/*.c
 
 The first two still write the forms above; the third names only
 `_reconnectToDB`'s call and `pg_dumpall`'s guarded `fprintf`.
+
+---
+
+## I56 — A `bytea` is written `\x` and hex pairs, or in `escape` form, which never opens `\x`
+
+**Claim.** `byteaout` writes a value in one of two forms, chosen by the
+session's `bytea_output`, which `pg_dump` leaves to the server, database or
+role (I4). `hex` is `\x` followed by two lowercase hex digits a byte.
+`escape` writes each byte from `0x20` to `0x7E` as itself but `\`, which is
+`\\`, and every other byte as `\` and three octal digits, the first `0`–`3`;
+the empty value is the empty text. So a backslash in `escape` form is always
+followed by a backslash or a digit, never by `x`, and **no text is a value's
+spelling in both forms**: a field opening `\x` is `hex`, any other `escape`.
+Each form is one spelling per value.
+
+**Proof.** `byteaout` in `src/backend/utils/adt/varlena.c` (`bytea.c` on
+master): the `BYTEA_OUTPUT_HEX` branch writes a backslash, `x` and
+`hex_encode`'s lowercase pairs; the `BYTEA_OUTPUT_ESCAPE` branch writes two
+backslashes for a backslash, a backslash and three `DIG`-built octal digits
+for a byte below `0x20` or above `0x7e`, and the byte itself otherwise. No
+`pg_dump` source sets `bytea_output`.
+
+**Observed.** The koji replica, v16.15: `set bytea_output = escape; select
+'\x005c7f41'::bytea` prints `\000\\\177A`. `fixtures/<major>/types/bytea-output-escape.sql`
+holds `t_bytea` in `escape` form at all six majors.
+
+**Scope limit.** What `byteaout` writes; `byteain` reads wider (`\101` for
+`A`), which a dump never holds and a filter literal is refused for (D55).
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source;
+both branches identical bar v17's overflow check).
+
+**Relied on by:** `decode::decode_bytea`, which tells the forms apart by the
+prefix; `predicate.rs`'s `Spellings`, an equality literal rendered in both;
+`gather::Canonical::of`, which puts an `escape` value's head in `hex`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^byteaout\(/,/^}/' src/backend/utils/adt/varlena.c src/backend/utils/adt/bytea.c
+grep -n 'bytea_output' src/bin/pg_dump/*.c
+```
+
+The first still prints the two branches above; the second prints nothing.

@@ -1113,7 +1113,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (37, 10_738_007_464_832_843_393);
+const PERSISTED_INDEX: (u32, u64) = (38, 9_144_775_680_965_560_825);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdump_query::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved

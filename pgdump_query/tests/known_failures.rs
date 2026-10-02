@@ -36,8 +36,6 @@ use common::all_fixtures;
 enum Case {
     /// Every `COPY` block and `INSERT` run carries a TOC entry.
     DataSpansAttributed,
-    /// A typed read of the table returns every row.
-    TypedRead { table: &'static str },
     /// The column resolves as stated.
     Resolves { table: &'static str, column: &'static str, to: ColumnResolution },
     /// No value of the column whose text is finite reads as an infinity.
@@ -82,12 +80,6 @@ const KNOWN_FAILURES: &[KnownFailure] = &[
             column: "amount",
             to: ColumnResolution::Mapped,
         },
-    },
-    KnownFailure {
-        kd: "KD67",
-        fixture: "types/bytea-output-escape",
-        control: Some("types/default"),
-        case: Case::TypedRead { table: "public.t_bytea" },
     },
     KnownFailure {
         kd: "KD71",
@@ -138,9 +130,6 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
             }
             assert!(data > 0, "{}: no data span to attribute", path.display());
             if bare.is_empty() { Ok(()) } else { Err(format!("unattributed: {bare:?}")) }
-        }
-        Case::TypedRead { table } => {
-            rows(path, table, SchemaMode::Typed).await.map(drop).map_err(|e| e.to_string())
         }
         Case::Resolves { table, column, to } => {
             let schema = resolved(path, table).await;

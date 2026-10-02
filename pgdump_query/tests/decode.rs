@@ -23,8 +23,9 @@ use futures::StreamExt;
 use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    Error, Expr, LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions,
-    StatisticsRequest, UnrepresentableMode, map_file, read_table, render_field, table_stream,
+    Error, Expr, LocalFileSource, Membership, NestedPlan, Predicate, PredicateOp, QueryOptions,
+    ScanOptions, StatisticsRequest, UnrepresentableMode, map_file, read_table, render_field,
+    table_stream,
 };
 
 mod common;
@@ -683,4 +684,55 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     }
     let (kept, _) = try_rows_in(&path, "public.t", zero("v2")).await.unwrap();
     assert_eq!(kept, [vec![Some("1".to_string())]], "v2 = 0");
+}
+
+/// **A `bytea_output = escape` dump reads as its `hex` twin does** (I4,
+/// I56): a typed read of `t_bytea` renders the rows `default`'s does, and
+/// every filter over `v_bytea` — each value's `=`, `!=`, `<` and `>=`, and an
+/// `IN` of every value, each written in either form — keeps the rows it keeps
+/// there.
+#[tokio::test]
+async fn an_escape_output_dump_reads_and_filters_as_its_hex_twin() {
+    async fn kept(path: &Path, filter: &Expr) -> Vec<Vec<Option<String>>> {
+        let options = QueryOptions { filter: filter.clone(), ..Default::default() };
+        try_rows_in(path, "public.t_bytea", options).await.unwrap().0
+    }
+    let table = "public.t_bytea";
+    let mut matched = 0;
+    for version in common::VERSIONS {
+        let hex = types_fixture(version, "default");
+        let escape = types_fixture(version, "bytea-output-escape");
+        let typed = rows(&hex, table, SchemaMode::Typed).await;
+        assert_eq!(rows(&escape, table, SchemaMode::Typed).await, typed, "{version}");
+        let spelled = |rows: Vec<Vec<Option<String>>>| {
+            rows.into_iter().filter_map(|row| row[1].clone()).collect::<Vec<_>>()
+        };
+        let mut literals = spelled(rows(&hex, table, SchemaMode::Strings).await);
+        let escaped = spelled(rows(&escape, table, SchemaMode::Strings).await);
+        assert_ne!(literals, escaped, "{version}: the fixture holds the escape form");
+        literals.extend(escaped);
+        let term = |op, value: &str| {
+            Expr::Term(Predicate { column: "v_bytea".into(), op, value: Some(value.into()) })
+        };
+        let mut filters: Vec<Expr> = literals
+            .iter()
+            .flat_map(|literal| {
+                [PredicateOp::Eq, PredicateOp::Ne, PredicateOp::Lt, PredicateOp::Ge]
+                    .map(|op| term(op, literal))
+            })
+            .collect();
+        filters.push(Expr::In(Membership {
+            column: "v_bytea".into(),
+            values: literals.iter().cloned().map(Some).collect(),
+        }));
+        for filter in &filters {
+            let want = kept(&hex, filter).await;
+            assert_eq!(kept(&escape, filter).await, want, "{version}: {filter:?}");
+            if matches!(filter, Expr::Term(Predicate { op: PredicateOp::Eq, .. })) {
+                matched += want.len();
+            }
+        }
+    }
+    // Each of the three values, in both spellings, at six majors.
+    assert_eq!(matched, 3 * 2 * 6);
 }

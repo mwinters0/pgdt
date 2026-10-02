@@ -2058,12 +2058,42 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         ),
         K::MacAddr { octets } => render_macaddr(text, *octets)?,
         K::Uuid => decode::render_uuid(&decode::decode_uuid(text)?),
-        K::Bytea => decode::render_bytea(&decode::decode_bytea(text)?),
+        K::Bytea => {
+            let bytes = decode::decode_bytea(text)?;
+            return Some(Comparison::Canonical(Spellings {
+                first: decode::render_bytea(&bytes),
+                other: Some(decode::render_bytea_escape(&bytes)),
+            }));
+        }
         // The identity: `=` on a text column is a byte comparison, with no
         // per-row work added.
         K::Text => text.to_string(),
     };
-    Some(Comparison::Canonical(rendered))
+    Some(Comparison::Canonical(Spellings::one(rendered)))
+}
+
+/// A literal in each `*_out` form a file can write it in: one, but for a
+/// `bytea`, whose `bytea_output` the dump does not pin (I4), so a file holds
+/// `hex` or `escape`. No text is a spelling in both (I56), so a field is the
+/// literal exactly where it is one of these.
+#[derive(Debug, Clone)]
+struct Spellings {
+    first: String,
+    other: Option<String>,
+}
+
+impl Spellings {
+    fn one(text: String) -> Self {
+        Self { first: text, other: None }
+    }
+
+    fn matches(&self, text: &str) -> bool {
+        text == self.first || self.other.as_deref() == Some(text)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &String> {
+        std::iter::once(&self.first).chain(&self.other)
+    }
 }
 
 /// The form a **nested** literal has to be written in, as one clause of
@@ -2186,7 +2216,9 @@ fn accepted_form(kind: &CompareKind) -> String {
         K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs".into(),
         K::MacAddr { .. } => "as six colon-separated hex pairs".into(),
         K::Uuid => "as 32 hex digits, grouped `8-4-4-4-12`".into(),
-        K::Bytea => "as `\\x` followed by hex pairs".into(),
+        K::Bytea => {
+            "as `\\x` followed by hex pairs, or as `bytea_output = escape` writes it".into()
+        }
         K::Jsonb => "as a JSON document".into(),
         K::Text | K::PaddedText => "as any text".into(),
     }
@@ -2260,9 +2292,10 @@ enum Comparison {
     /// The four ordering operators: the field is decoded per row with the
     /// column's own decoder and its key compared against `bound`.
     Ordered { kind: CompareKind, bound: OrderKey },
-    /// `=`/`!=` against the literal already rendered into the `*_out` form the
-    /// file holds — a byte comparison per row (see [`equality_comparison`]).
-    Canonical(String),
+    /// `=`/`!=` against the literal already rendered into each `*_out` form
+    /// the file can hold it in — a byte comparison per row (see
+    /// [`equality_comparison`]).
+    Canonical(Spellings),
     /// `=`/`!=` on a `character(n)` column, against the literal with its own
     /// trailing blanks already gone.
     Trimmed(String),
@@ -2647,7 +2680,7 @@ pub(crate) fn resolve_term(
         // ([`ComparisonDivergence::UnmodelledType`]). Every other outcome is
         // silent, there being no declared type to qualify.
         _ => (
-            Comparison::Canonical(text.to_string()),
+            Comparison::Canonical(Spellings::one(text.to_string())),
             match fell_back {
                 Some(tree) => tree
                     .divergences()
@@ -2814,7 +2847,7 @@ impl ResolvedTerm {
                 }
             }
             Comparison::Canonical(bound) => {
-                timed!(Part::Compare, text == bound.as_str()) == self.wants_equal()
+                timed!(Part::Compare, bound.matches(text)) == self.wants_equal()
             }
             Comparison::Trimmed(bound) => {
                 timed!(Part::Compare, text.trim_end_matches(' ') == bound.as_str())
@@ -2919,8 +2952,8 @@ pub(crate) struct ResolvedMembership {
 // `pgdt --where`'s `in (…)`.
 #[derive(Debug, Clone)]
 enum Lookup {
-    /// [`Comparison::Canonical`]: the literals as the file spells them, the
-    /// field probed as it stands.
+    /// [`Comparison::Canonical`]: the literals in every spelling the file
+    /// can hold them in, the field probed as it stands.
     Canonical(std::collections::HashSet<String>),
     /// [`Comparison::Trimmed`]: the literals trimmed, the field trimmed
     /// before it is probed.
@@ -2945,11 +2978,14 @@ impl Lookup {
             comparisons.iter().map(|c| wanted(c).cloned()).collect::<Option<_>>()
         };
         let built = match comparisons.first() {
-            None | Some(Comparison::Canonical(_)) => texts(|c| match c {
-                Comparison::Canonical(text) => Some(text),
-                _ => None,
-            })
-            .map(Self::Canonical),
+            None | Some(Comparison::Canonical(_)) => comparisons
+                .iter()
+                .map(|c| match c {
+                    Comparison::Canonical(spellings) => Some(spellings.iter().cloned()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|spellings| Self::Canonical(spellings.into_iter().flatten().collect())),
             Some(Comparison::Trimmed(_)) => texts(|c| match c {
                 Comparison::Trimmed(text) => Some(text),
                 _ => None,
@@ -3167,7 +3203,7 @@ impl ResolvedMembership {
             Lookup::Canonical(_) => self.terms.iter().all(|value| {
                 matches!(
                     value.compared.as_ref().map(|c| &c.comparison),
-                    Some(Comparison::Canonical(text)) if term.eval_value(Some(text)) == Some(Truth::True)
+                    Some(Comparison::Canonical(spellings)) if term.eval_value(Some(&spellings.first)) == Some(Truth::True)
                 )
             }),
             Lookup::Decoded { kind, keys } => kind == ordered && keys.iter().all(meets),
@@ -3783,7 +3819,7 @@ mod tests {
     fn text_term(p: &Predicate, index: usize) -> ResolvedTerm {
         let compared = p.value.as_ref().map(|value| ComparedTerm {
             column: p.column.clone(),
-            comparison: Comparison::Canonical(value.clone()),
+            comparison: Comparison::Canonical(Spellings::one(value.clone())),
             declared_type: String::new(),
             divergences: Vec::new(),
             statistics: BelievedStatistics::NONE,
@@ -5916,6 +5952,57 @@ mod tests {
         assert!(ordered("bytea", DataType::Binary, PredicateOp::Gt, "\\x00", "\\\\x00ff").unwrap());
     }
 
+    /// **A `bytea` literal matches its value in whichever form the dump
+    /// wrote it**, `hex` or `escape` (I4, I56), written in either form
+    /// itself: under `=` and `!=`, in an `IN` list, through a group's
+    /// dictionary, and under an ordering operator.
+    #[test]
+    fn a_bytea_literal_matches_its_value_in_either_output_form() {
+        use Truth::{False, True};
+        // Bytes `00 41 5c` and `00 41 5d`, each as a literal and as a field
+        // COPY-escaped on disk.
+        let literals = ["\\x00415c", "\\000A\\\\"];
+        let fields = ["\\\\x00415c", "\\\\000A\\\\\\\\"];
+        let others = ["\\\\x00415d", "\\\\000A]"];
+        let compare =
+            |op, literal, field| ordered("bytea", DataType::Binary, op, literal, field).unwrap();
+        for literal in literals {
+            for field in fields {
+                assert!(compare(PredicateOp::Eq, literal, field), "{literal:?} = {field:?}");
+                assert!(!compare(PredicateOp::Ne, literal, field), "{literal:?} != {field:?}");
+                assert!(compare(PredicateOp::Le, literal, field), "{literal:?} <= {field:?}");
+            }
+            for field in others {
+                assert!(!compare(PredicateOp::Eq, literal, field), "{literal:?} = {field:?}");
+                assert!(compare(PredicateOp::Ne, literal, field), "{literal:?} != {field:?}");
+                assert!(compare(PredicateOp::Gt, literal, field), "{literal:?} < {field:?}");
+            }
+        }
+        let schema = one_column("bytea", DataType::Binary);
+        for list in [[Some(literals[0]), Some("\\x01")], [Some("\\001"), Some(literals[1])]] {
+            let resolved = ResolvedExpr::In(membership(&schema, 0, &list).unwrap());
+            for field in fields {
+                assert_eq!(exact_over(&resolved, field.as_bytes()).unwrap(), True, "{list:?}");
+            }
+            for field in others {
+                assert_eq!(exact_over(&resolved, field.as_bytes()).unwrap(), False, "{list:?}");
+            }
+        }
+        for literal in literals {
+            let p = order_predicate(PredicateOp::Eq, literal);
+            let term = ResolvedExpr::Term(resolve_term(&p, 0, &schema, 0).unwrap());
+            for (entry, want) in [("\\000A\\\\", True), ("\\x00415c", True), ("\\000A]", False)] {
+                let group = Group {
+                    rows: 1,
+                    nulls: Some(0),
+                    bounds: None,
+                    dictionary: Some(vec![entry.into()]),
+                };
+                assert_eq!(term.truths(&group), sets(&[want]), "{literal:?} over {entry:?}");
+            }
+        }
+    }
+
     /// Dates and timestamps compare as the instant they decode to, so a
     /// BC date is below every AD one however its text sorts.
     #[test]
@@ -6056,7 +6143,7 @@ mod tests {
             ("integer", DataType::Int32, "abc"),
             ("boolean", DataType::Boolean, "true"),
             ("oid", DataType::UInt32, "-1"),
-            ("bytea", DataType::Binary, "abc"),
+            ("bytea", DataType::Binary, "\\101"),
             ("public.mood", DataType::Utf8View, "furious"),
             ("numeric(10,2)", DataType::Decimal128(10, 2), "1.005"),
             ("interval", DataType::Interval(IntervalUnit::MonthDayNano), "1 month"),
@@ -7200,7 +7287,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (37, 2_008_420_983_373_127_703);
+        const GOLDEN_ORDER: (u32, u64) = (38, 2_008_420_983_373_127_703);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

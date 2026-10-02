@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` refuses (`KD67`), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
@@ -91,7 +91,7 @@ approval, in the spec's opening note.
 - [x] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69` — [notes](../design/roadmap-P31.5-table-elements-notes.md)
 - [x] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70` — [notes](../design/roadmap-P31.6-columns-declared-elsewhere-notes.md)
 - [x] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68` — [notes](../design/roadmap-P31.7-preamble-point-fixes-notes.md)
-- [ ] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67`
+- [x] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67` — [notes](../design/roadmap-P31.8-bytea-escape-form-notes.md)
 - [ ] **31.9** A built-in type written quoted under `--quote-all-identifiers` read as its bare name wherever a spelling is compared, closing `KD71`
 - [ ] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72`
 - [ ] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73`
@@ -126,4 +126,14 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **A typed `bytea` from a `bytea_output = escape` dump renders `hex`**
+  (31.8; `decode::render_bytea`, D66). The call: typed output prints `\x…`
+  where `--schema-mode strings` prints the dump's `escape` text, a second
+  exception to D66's byte-identical output beside a value its type cannot
+  hold. Why: an Arrow `Binary` keeps no spelling, `hex` is PostgreSQL's
+  default and the form a `bytea` statistic's bounds are stored in, and
+  `KD67`'s own detail named it as the fix's render.
+  Reconsidering means carrying a column's `bytea_output` form beside its
+  resolution, read off its first value, so render could return `escape` —
+  which would make typed output depend on the file's server setting rather
+  than on the value.

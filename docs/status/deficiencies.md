@@ -344,11 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD67** — `pg_dump` pins no `bytea_output`, so a server, database or role
-  set to `escape` dumps `byteaout`'s octal form, which `decode_bytea` reads
-  only in hex, and a typed query of a `bytea` column refuses its first such
-  value as not parsing. **(b) owned by `P31`**, slice 31.8 closing it. Detail: `pgdump_query/src/decode.rs`.
-
 - **KD71** — under `--quote-all-identifiers` a built-in type is written
   quoted, and the `box` test at the end of a domain chain reads the spelling
   verbatim, so an array over a domain over `box` is split at `,` instead of

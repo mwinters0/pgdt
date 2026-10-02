@@ -453,9 +453,9 @@ listed on `accepted_form`; `boolean` deliberately not. A literal finer than the 
 refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
-`infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives
-no `Ord`. Rejected: excluding the row like a NULL, which has no order (I33, I34).
+`infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).
 `v=1.5` hits a `numeric(10,2)` written `1.50`; rendering `timetz`, `inet` once is refused (I33, I38, I41).
+A `bytea` literal renders in both `bytea_output` forms, which share no spelling (I56); decoding per row is refused.
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
 Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container
@@ -631,9 +631,9 @@ in two lines, before and after the open, because a fresh `.xz` walks footers fir
 meant to be read once (`KD29`). Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
-### D66 Output is byte-identical whether typing is on or off, but for a value its type cannot hold
-Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98). One contradicting its type is `FieldDecode`
-with an offset naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting.
+### D66 Output is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
+Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56).
+One contradicting its type is `FieldDecode` naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting; a `bytea`'s form kept per column.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:

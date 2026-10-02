@@ -861,23 +861,23 @@ pub fn render_uuid(bytes: &[u8; 16]) -> String {
     out
 }
 
-/// PostgreSQL's default `bytea_output = hex` form, `\x` followed by
-/// lowercase hex pairs — the decoded text (a single backslash), not the
-/// doubled-backslash form COPY escaping writes to disk (see the module
-/// docs).
-///
-/// Deficiency register: `deficiency: KD67` — `byteaout` has a second form,
-/// selected by `bytea_output = escape`, which `pg_dump` does not pin on its
-/// connection (I4 pins `DateStyle`, `IntervalStyle` and `extra_float_digits`
-/// only): a printable byte stands for itself, `\` is `\\`, and every other
-/// byte is `\ooo`. This reads the hex form alone, so a dump from a server,
-/// database or role set to `escape` fails here on its first non-hex value and
-/// `crate::batch` raises `FieldDecode`. The fix reads both forms; the render
-/// stays hex. **(b) owned by `P31`**.
+/// Either of `byteaout`'s forms, chosen by a `bytea_output` `pg_dump` does
+/// not pin (I4): `hex`, `\x` followed by hex pairs, and `escape`
+/// ([`decode_bytea_escape`]). An `escape` value never opens `\x`, so the
+/// prefix tells the two apart (I56). The decoded text (a single backslash),
+/// not the doubled-backslash form COPY escaping writes to disk (see the
+/// module docs).
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
-    let hex = s.strip_prefix("\\x")?;
+    match s.strip_prefix("\\x") {
+        Some(hex) => decode_bytea_hex(hex),
+        None => decode_bytea_escape(s, usize::MAX),
+    }
+}
+
+/// The hex pairs after the `\x`.
+fn decode_bytea_hex(hex: &str) -> Option<Vec<u8>> {
     let b = hex.as_bytes();
-    if b.len() % 2 != 0 {
+    if !b.len().is_multiple_of(2) {
         return None;
     }
     // The whole field is one `bytea` value, so validity is accumulated and
@@ -897,6 +897,63 @@ pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// `byteaout`'s `escape` form, and no wider (`docs/design/decisions.md`,
+/// "D55"): a byte from space to `~` stands for itself but `\`, which is
+/// `\\`, and every other byte is `\ooo`. Only the first `limit` bytes are
+/// kept, the whole text still checked, so a caller wanting a value's head
+/// pays for no more of it.
+pub fn decode_bytea_escape(s: &str, limit: usize) -> Option<Vec<u8>> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len().min(limit));
+    let mut at = 0;
+    while let Some(&first) = b.get(at) {
+        let (byte, width) = match first {
+            b'\\' => match b.get(at + 1..at + 4) {
+                _ if b.get(at + 1) == Some(&b'\\') => (b'\\', 2),
+                Some(&[o1 @ b'0'..=b'3', o2 @ b'0'..=b'7', o3 @ b'0'..=b'7']) => {
+                    let byte = (o1 - b'0') << 6 | (o2 - b'0') << 3 | (o3 - b'0');
+                    if ESCAPE_PRINTS_ITSELF.contains(&byte) {
+                        return None;
+                    }
+                    (byte, 4)
+                }
+                _ => return None,
+            },
+            byte if ESCAPE_PRINTS_ITSELF.contains(&byte) => (byte, 1),
+            _ => return None,
+        };
+        if out.len() < limit {
+            out.push(byte);
+        }
+        at += width;
+    }
+    Some(out)
+}
+
+/// The bytes `byteaout`'s `escape` form writes as themselves, `\` aside.
+const ESCAPE_PRINTS_ITSELF: std::ops::RangeInclusive<u8> = 0x20..=0x7E;
+
+/// [`decode_bytea_escape`]'s inverse: `byteaout`'s `escape` form of `bytes`.
+pub fn render_bytea_escape(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            byte if ESCAPE_PRINTS_ITSELF.contains(&byte) => out.push(char::from(byte)),
+            byte => {
+                out.push('\\');
+                for shift in [6, 3, 0] {
+                    out.push(char::from(b'0' + (byte >> shift & 0o7)));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `byteaout`'s `hex` form, PostgreSQL's default and the one a typed
+/// `bytea` renders back as whichever form the dump held
+/// (`docs/design/decisions.md`, "D66").
 pub fn render_bytea(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(2 + bytes.len() * 2);
     out.push_str("\\x");
@@ -1278,7 +1335,38 @@ mod tests {
             let bytes = decode_bytea(text).expect(text);
             assert_eq!(render_bytea(&bytes), text);
         }
-        assert_eq!(decode_bytea("nope"), None);
+        assert_eq!(decode_bytea("\\xnope"), None);
+    }
+
+    /// `byteaout`'s `escape` form, every byte through it and back, beside
+    /// what the server writes for a few (`select '\x005c7f41'::bytea` under
+    /// `bytea_output = escape` is `\000\\\177A`).
+    #[test]
+    fn bytea_escape_form_round_trips_every_byte() {
+        let every_byte: Vec<u8> = (0..=u8::MAX).collect();
+        let text = render_bytea_escape(&every_byte);
+        assert_eq!(decode_bytea(&text), Some(every_byte.clone()));
+        assert_eq!(decode_bytea_escape(&text, 3), Some(every_byte[..3].to_vec()));
+        for b in 0..=u8::MAX {
+            assert_eq!(decode_bytea(&render_bytea_escape(&[b])), Some(vec![b]), "{b}");
+        }
+        assert_eq!(render_bytea_escape(&[0x00, 0x5c, 0x7f, 0x41]), "\\000\\\\\\177A");
+        assert_eq!(decode_bytea("\\000\\\\\\177A"), Some(vec![0x00, 0x5c, 0x7f, 0x41]));
+        // The empty value is the empty text, and no escape spelling opens
+        // `\x` (I56).
+        assert_eq!(decode_bytea(""), Some(Vec::new()));
+        assert!(!text.starts_with("\\x"));
+    }
+
+    /// What `byteaout` never writes is refused (`docs/design/decisions.md`,
+    /// "D55"), though `byteain` reads some of it: a printable byte in octal,
+    /// an octal escape past a byte, one cut short, a lone backslash, a byte
+    /// outside space to `~` written bare.
+    #[test]
+    fn bytea_escape_form_refuses_what_byteaout_never_writes() {
+        for text in ["\\101", "\\134", "\\400", "\\08", "\\00", "a\\", "\\y", "tab\there", "é"] {
+            assert_eq!(decode_bytea(text), None, "{text:?}");
+        }
     }
 
     #[test]
@@ -1652,8 +1740,9 @@ mod differential {
     fn bytea_agrees_with_the_shape_it_replaced() {
         let check = |s: &str| {
             let escaped = format!("\\x{s}");
+            // A text without the prefix is the `escape` form, which the
+            // shape replaced did not read.
             assert_eq!(decode_bytea(&escaped), prior_shape::decode_bytea(&escaped), "{escaped:?}");
-            assert_eq!(decode_bytea(s), prior_shape::decode_bytea(s), "{s:?}");
         };
         fuzz(3, 24, check);
         // Both parities of length, including the empty `\x`.
