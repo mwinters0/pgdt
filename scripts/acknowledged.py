@@ -377,4 +377,14 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 1014ac5c -- pgdump_query/src/preamble.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="a5b5f99f",
+        figures=("preamble-prepass", "rss-attribution"),
+        why="31.5: parse_table_element adds at most seven keyword-prefix checks "
+        "per CREATE TABLE column-list entry, and the comma split two byte arms; "
+        "both run on the preamble's table statements only, allocate nothing new, "
+        "and keep fewer column definitions",
+        verified="git show a5b5f99f -- pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
