@@ -1349,13 +1349,8 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
-        // deficiency: KD74 — a float literal goes through the field's reader,
-        // so an out-of-range one is clamped by I57's rule (`1e400` as
-        // `DBL_MAX`) or underflows to zero (`1e-400`), where `float8in` raises.
-        // The fix is a literal reader of its own, taking any spelling
-        // `float8in` reads and comparing by value (D55), refusing every
-        // out-of-range one `float8in`/`float4in` refuses, I57's rounded
-        // `±DBL_MAX` and `±FLT_MAX` spellings included.
+        // The field's reader. A literal in PostgreSQL's semantics is read by
+        // [`float_literal`] instead, through [`literal_key`].
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
@@ -1390,6 +1385,50 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         // ASCII `0x20` and nothing else; a tab is a value byte.
         CompareKind::PaddedText => OrderKey::Text(text.trim_end_matches(' ').to_string()),
     })
+}
+
+/// A filter literal's key, which is [`order_key`]'s but for a `real` or
+/// `double precision` literal in PostgreSQL's semantics: that one is read by
+/// [`float_literal`] into the column's own type, where a field is read by the
+/// decoder, which takes I57's rounded largest finite value as that value. In
+/// DataFusion's semantics a literal is DataFusion's value, not the server's
+/// (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never read
+/// past `*_in`'s").
+fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
+    match (semantics, kind) {
+        (ComparisonSemantics::Postgres, CompareKind::Float32) => {
+            Some(OrderKey::Float(f64::from(float_literal(text, f32::is_infinite)?)))
+        }
+        (ComparisonSemantics::Postgres, CompareKind::Float64) => {
+            Some(OrderKey::Float(float_literal(text, f64::is_infinite)?))
+        }
+        _ => order_key(kind, text),
+    }
+}
+
+/// A `real` or `double precision` literal, read as `float4in` and `float8in`
+/// read it and compared by value (`docs/design/decisions.md`, "D55"). Rust's
+/// parse is the grammar: every spelling `*_out` writes, and of `*_in`'s the
+/// ones it reads for free — a sign, a point with no digit on one side, an
+/// exponent in either case, `inf`, `infinity` and `nan` in any case. A blank
+/// around the number and a hexadecimal one, which glibc's `strtod` reads, are
+/// refused as a shortfall.
+///
+/// **A value past the type's range is refused, as the server refuses it**: a
+/// spelling in digits read as an infinity, I57's rounded largest finite value
+/// among them, and a nonzero one read as zero. A subnormal is read. Both are
+/// told from the parse's result alone, the parse rounding correctly to the
+/// type as `strtod` and `strtof` do (I59).
+fn float_literal<F: std::str::FromStr + Default + PartialEq + Copy>(
+    text: &str,
+    is_infinite: fn(F) -> bool,
+) -> Option<F> {
+    let value = text.parse::<F>().ok()?;
+    let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+    // pg-refuses: I59 — out of range for the type: overflowed, or underflowed to zero.
+    let out_of_range = (is_infinite(value) && text.bytes().any(|b| b.is_ascii_digit()))
+        || (value == F::default() && mantissa.bytes().any(|b| matches!(b, b'1'..=b'9')));
+    (!out_of_range).then_some(value)
 }
 
 /// PostgreSQL's float order, not Rust's: `NaN` is greater than every other
@@ -1585,13 +1624,19 @@ impl RangeKey {
 ///
 /// The leaf grammar does not widen with it (`docs/design/decisions.md`,
 /// "D58"): a leaf is read by [`order_key`], which implements that type's
-/// `*_out` form and no more, so `--filter 'p=( 1 , a )'` is refused.
+/// `*_out` form and no more, so `--filter 'p=( 1 , a )'` is refused — a
+/// literal's by [`literal_key`], which only narrows it.
 ///
 /// `None` is "not a value of this type", which is
 /// `Error::PredicateValueDecode` for a literal and `Error::FieldDecode` for a
 /// field.
 fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey> {
     Some(match plan {
+        // A nested comparison is PostgreSQL's alone, DataFusion's semantics
+        // refusing one.
+        NestedCompare::Leaf { kind, .. } if input => {
+            NestedKey::Leaf(literal_key(kind, text, ComparisonSemantics::Postgres)?)
+        }
         NestedCompare::Leaf { kind, .. } => NestedKey::Leaf(order_key(kind, text)?),
         // Refused before any value is read: `resolve_term` never builds a
         // comparison over a tree holding one.
@@ -2040,7 +2085,11 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
 /// makes, on the same output-form-only grammar (`docs/design/decisions.md`,
 /// "D55").
-fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
+fn equality_comparison(
+    kind: &CompareKind,
+    text: &str,
+    semantics: ComparisonSemantics,
+) -> Option<Comparison> {
     use CompareKind as K;
     let rendered = match kind {
         // Both sides per row. `order_key` reads a special value on the way,
@@ -2054,7 +2103,8 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         | K::Jsonb
         | K::TimeTz
         | K::Network { .. } => {
-            return Some(Comparison::Decoded { kind: kind.clone(), bound: order_key(kind, text)? });
+            let bound = literal_key(kind, text, semantics)?;
+            return Some(Comparison::Decoded { kind: kind.clone(), bound });
         }
         K::PaddedText => return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string())),
         // A special value is written in its own type's `*_out` spelling on
@@ -2165,8 +2215,9 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// `Error::PredicateValueDecode`'s sentence — read after "which is written".
 ///
 /// It lives beside the grammar rather than beside [`CompareKind`] because it
-/// describes what [`order_key`] and [`equality_comparison`] accept, which is
+/// describes what [`literal_key`] and [`equality_comparison`] accept, which is
 /// each type's `*_out` form, widened by an integer's sign and leading zeros,
+/// a float's sign, bare point, exponent case and `inf` or `nan` in any case,
 /// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement,
 /// either `numeric` kind's leading or trailing point and leading zeros, a
 /// network value's full-width or zero-padded netmask, an IPv6 address's
@@ -2191,7 +2242,13 @@ fn accepted_form(kind: &CompareKind) -> String {
         // The width *is* the refusal: `oidin` wraps a negative and this does
         // not, so the range is the useful half of the sentence.
         K::UnsignedInt => "as a whole number from 0 to 4294967295".into(),
-        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`".into(),
+        K::Float32 => {
+            "as a number within `real`'s range, or `Infinity`, `-Infinity` or `NaN`".into()
+        }
+        K::Float64 => {
+            "as a number within `double precision`'s range, or `Infinity`, `-Infinity` or `NaN`"
+                .into()
+        }
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
         // `numeric` past 76 digits — has `NaN` and nothing else. Only the
         // typed arm carries a scale to be finer than: a `p > 76` column is
@@ -2623,10 +2680,11 @@ pub(crate) fn resolve_term(
             let comparison = if ordering {
                 Comparison::Ordered {
                     kind: kind.clone(),
-                    bound: order_key(kind, text).ok_or_else(|| refuse_literal(kind))?,
+                    bound: literal_key(kind, text, semantics)
+                        .ok_or_else(|| refuse_literal(kind))?,
                 }
             } else {
-                equality_comparison(kind, text).ok_or_else(|| refuse_literal(kind))?
+                equality_comparison(kind, text, semantics).ok_or_else(|| refuse_literal(kind))?
             };
             let divergences: Vec<_> = divergence
                 .filter(|d| ordering || d.affects_equality())
@@ -2758,7 +2816,7 @@ fn believed_bounds(
     text: &str,
 ) -> Option<Box<(CompareKind, OrderKey)>> {
     (plan.bounds_read_by(semantics).as_ref() == Some(kind)).then_some(())?;
-    order_key(kind, text).map(|key| Box::new((kind.clone(), key)))
+    literal_key(kind, text, semantics).map(|key| Box::new((kind.clone(), key)))
 }
 
 impl ResolvedTerm {
@@ -4981,6 +5039,89 @@ mod tests {
         assert!(f(PredicateOp::Lt, "NaN", "-Infinity"));
     }
 
+    /// **A float literal past its type's range is refused, as `float4in` and
+    /// `float8in` refuse it** (I59) — overflowing, I57's rounded largest
+    /// finite value included, or a nonzero spelling underflowing to zero —
+    /// under `=`, an ordering operator and inside a nested literal alike,
+    /// while a subnormal, a zero spelled with any exponent and the server's
+    /// other spellings of a value in range are read by value. Each case was
+    /// cast on PostgreSQL 16.
+    #[test]
+    fn a_float_literal_past_its_range_is_refused_and_one_inside_it_read() {
+        let refused = |declared: &str, data_type: DataType, literal: &str| {
+            for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                let p = order_predicate(op, literal);
+                let err =
+                    resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
+                assert!(
+                    matches!(&err, Error::PredicateValueDecode { value, .. } if value == literal),
+                    "{declared} {op:?} {literal}: {err:?}"
+                );
+            }
+        };
+        for literal in [
+            "1e400",
+            "-1e400",
+            "1e-400",
+            "-1e-400",
+            "2e-324",
+            "1.79769313486232e+308",
+            "-1.79769313486232e+308",
+            "1.7976931348623159e+308",
+        ] {
+            refused("double precision", DataType::Float64, literal);
+        }
+        for literal in ["1e400", "1e-400", "1e-46", "3.403e+38", "-3.403e+38", "3.4028236e+38"] {
+            refused("real", DataType::Float32, literal);
+        }
+
+        let double = |literal, field| {
+            ordered("double precision", DataType::Float64, PredicateOp::Eq, literal, field).unwrap()
+        };
+        for (literal, field) in [
+            ("1e-310", "1e-310"),
+            ("3e-324", "5e-324"),
+            ("1.7976931348623158e+308", "1.7976931348623157e+308"),
+            ("0e-999", "0"),
+            ("-0e-400", "0"),
+            ("0.0000e-500", "-0"),
+            ("+inf", "Infinity"),
+            ("INFINITY", "Infinity"),
+            ("-Inf", "-Infinity"),
+            ("-nan", "NaN"),
+            ("1E5", "100000"),
+            (".5", "0.5"),
+            ("5.", "5"),
+        ] {
+            assert!(double(literal, field), "{literal} = {field}");
+        }
+        let real = |literal, field| {
+            ordered("real", DataType::Float32, PredicateOp::Eq, literal, field).unwrap()
+        };
+        assert!(real("1e-45", "1e-45"));
+        assert!(real("3.4028235e+38", "3.4028235e+38"));
+        // The field's reader is not the literal's: I57's spelling in a field
+        // is read as the largest finite value (`KD75`).
+        assert!(double("1.7976931348623157e+308", "1.79769313486232e+308"));
+
+        let nested = nested_verdict("double precision[]", &[], PredicateOp::Eq, "{1}", "{1,1e400}");
+        assert!(matches!(nested, Err(Error::PredicateValueDecode { .. })), "{nested:?}");
+        let nested =
+            nested_verdict("double precision[]", &[], PredicateOp::Eq, "{1e-310}", "{1e-310}");
+        assert_eq!(nested.unwrap(), Truth::True);
+    }
+
+    /// **In DataFusion's semantics a float literal is not read on
+    /// PostgreSQL's terms** (`roadmap.md`, "A literal is guaranteed in
+    /// `*_out`'s form and never read past `*_in`'s"): the reading is the
+    /// field's, unchanged.
+    #[test]
+    fn a_float_literal_past_its_range_is_not_refused_in_datafusion_semantics() {
+        let p = order_predicate(PredicateOp::Ge, "1e400");
+        let resolved = one_column("double precision", DataType::Float64);
+        super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::DataFusion).unwrap();
+    }
+
     /// A NULL field is excluded by every ordering operator, as under
     /// `Eq`/`Ne`.
     #[test]
@@ -7067,6 +7208,45 @@ mod tests {
             metadata.databases.into_iter().next().expect("a dump names a database").types
         }
 
+        /// **A float literal the server refuses is refused, and one it reads
+        /// that this build reads means what it does to the server**: every
+        /// `real` and `double precision` row of `literals.tsv` at every
+        /// major, the range's edges among them (I59), each put to `=` against
+        /// a field holding the server's output for it.
+        #[test]
+        fn a_float_literal_is_read_as_the_server_reads_it() {
+            let mut asserted = 0usize;
+            for major in MAJORS {
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    let declared = row[0].as_deref().expect("a case names a type");
+                    if !matches!(declared, "real" | "double precision") {
+                        continue;
+                    }
+                    let Some(literal) = row[1].as_deref() else { continue };
+                    let status = row[2].as_deref().expect("a row has a status");
+                    let (got, _) =
+                        answer(declared, None, &[], PredicateOp::Eq, row[3].as_deref(), literal);
+                    if status == "ok" {
+                        // A spelling this build does not read is a shortfall,
+                        // not a disagreement (D55).
+                        if let Err(e) = &got {
+                            assert!(
+                                e.contains("filter value"),
+                                "{major} {declared} {literal}: {e}"
+                            );
+                        } else {
+                            assert_eq!(got, Ok(Truth::True), "{major} {declared} {literal}");
+                        }
+                    } else {
+                        let e = got.expect_err(&format!("{major} {declared} {literal} is refused"));
+                        assert!(e.contains("filter value"), "{major} {declared} {literal}: {e}");
+                    }
+                    asserted += 1;
+                }
+            }
+            assert!(asserted > 0, "no float row was read");
+        }
+
         #[tokio::test]
         async fn the_register_answers_every_committed_oracle_cell() {
             // Keyed by case so one disagreement is reported as the pair it
@@ -7308,7 +7488,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (41, 2_008_420_983_373_127_703);
+        const GOLDEN_ORDER: (u32, u64) = (41, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

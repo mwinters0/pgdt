@@ -433,6 +433,10 @@ a spelling you would have had to guess at anyway.
 **The dump's own spelling is the guarantee.** Some other spellings PostgreSQL
 accepts are read too where that comes free — a `double precision` reads `1.50`
 and `1E5` as well as `1.5` and `100000` — and which those are may grow.
+**A value PostgreSQL itself refuses is refused here too**, rather than given a
+meaning the server would not give it: `1e400` and `1e-400` are out of range
+for a `double precision`, so `--filter 'v>1e400'` is an error, not a filter
+matching nothing.
 
 **One thing `=` does not do is search.** It is exact equality against one
 column; there is no `LIKE`, no pattern and no case folding.

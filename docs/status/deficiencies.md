@@ -344,11 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD74** — a float literal is read by the field's reader, so an
-  out-of-range one is clamped by I57's rule or underflows to zero where
-  `float8in` raises: `x = 1e400` matches a row holding `DBL_MAX`. **(b) owned
-  by `M203`**. Detail: `pgdump_query/src/predicate.rs`.
-
 - **KD75** — a float field spelled past the type's largest finite value, which
   `pg_dump --extra-float-digits` at zero or below writes and `float8in`
   refuses, reads as that largest value where a restore fails the table, and

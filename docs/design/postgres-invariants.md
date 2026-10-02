@@ -4006,8 +4006,8 @@ spelling as out of range — on a quoted literal and an unquoted constant alike,
 loses all its rows. The value is reachable only by an explicit
 `--extra-float-digits` of zero or below, `pg_dump` otherwise setting `3`. pgdt
 is to refuse it as the server does (`roadmap.md`, "A literal is guaranteed in
-`*_out`'s form and never read past `*_in`'s"); today it reads the nearest
-value the type holds.
+`*_out`'s form and never read past `*_in`'s"); today a field reads as the
+nearest value the type holds, and a filter literal is refused (I59).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
@@ -4075,3 +4075,47 @@ The first prints one `_reconnectToDB` call, under the `DATABASE` and
 `DATABASE PROPERTIES` tests directly or through `object_is_db`; the second
 `.tag = datname` and `SECTION_PRE_DATA`; the third `dumpDatabase(fout)` ahead
 of the `dumpDumpableObject` loop.
+
+---
+
+## I59 — `float4in` and `float8in` refuse a value past the type's range, and read a subnormal
+
+**Claim.** A `real` or `double precision` input whose correctly rounded value
+is an infinity while it is spelled in digits, or zero while a digit of it is
+not, is refused as out of range — `1e400`, `1e-400`, I57's
+`1.79769313486232e+308` as `double precision` and `3.403e+38` as `real`. A
+value that rounds to a subnormal is read as it, and so is a zero spelled in
+zeros, whatever its exponent. `Infinity`, `inf` and `NaN` are words, not
+digits, and are read.
+
+**Proof.** `float4in_internal` and `float8in_internal` in
+`src/backend/utils/adt/float.c` call `strtof` and `strtod`, and on `ERANGE`
+raise "is out of range for type real" or "double precision" when the result is
+`0.0` or at least `HUGE_VALF`/`HUGE_VAL` in magnitude, and keep it otherwise —
+the subnormal case, for which glibc sets `ERANGE` too. glibc rounds correctly
+to the type in the current rounding mode, and sets `ERANGE` on a zero only when
+the text was not one.
+
+**Observed.** `fixtures/<major>/oracle/literals.tsv` refuses `1e400`,
+`1e-400` and `1.79769313486232e+308` as `double precision` and `1e400`,
+`1e-400` and `3.403e+38` as `real`, `E22003`, and reads `1e-310` and `1e-45`
+respectively, at all six majors.
+
+**Scope limit.** The rounding is the C library's; on glibc it is correct, which
+is what lets a correctly rounding parser tell the same values apart. A
+platform whose `strtod` does not set `ERANGE` on underflow reads the zero.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `predicate::float_literal`, which refuses a filter literal
+of either type on the same two conditions.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'val == 0.0 ||\|HUGE_VAL\|is out of range for type \(real\|double\)' src/backend/utils/adt/float.c
+```
+
+It prints the `0.0` and `HUGE_VAL` tests of both input functions beside their
+two messages.

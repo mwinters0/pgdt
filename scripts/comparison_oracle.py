@@ -164,16 +164,18 @@ TYPE_CASES: list[TypeCases] = [
     # IEEE has all three specials, so `real`/`double precision` reach them
     # through the column's own decoder rather than as a carried position.
     # `-0` and `0` are equal and written differently, which is the float
-    # analogue of the `numeric` scale case below.
+    # analogue of the `numeric` scale case below. The inputs are the range's
+    # edges (I59): an overflow, an underflow to zero, I57's rounded largest
+    # finite value, all refused, and a subnormal, read.
     TypeCases(
         "real",
         ("-Infinity", "-0", "0", "1.5", "Infinity", "NaN", None),
-        ("1e400", "inf"),
+        ("1e400", "inf", "1e-400", "3.403e+38", "1e-45"),
     ),
     TypeCases(
         "double precision",
         ("-Infinity", "-0", "0", "1.5", "Infinity", "NaN", None),
-        ("1e400", "inf"),
+        ("1e400", "inf", "1e-400", "1.79769313486232e+308", "1e-310"),
     ),
     # A typmod'd numeric rounds the literal to the column's scale, so `1.5`
     # and `1.50` are one value written two ways -- the equality trap the

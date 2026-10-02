@@ -38,6 +38,9 @@ real	NaN	ok	NaN
 real	\N	ok	\N
 real	1e400	E22003	\N
 real	inf	ok	Infinity
+real	1e-400	E22003	\N
+real	3.403e+38	E22003	\N
+real	1e-45	ok	1e-45
 double precision	-Infinity	ok	-Infinity
 double precision	-0	ok	-0
 double precision	0	ok	0
@@ -47,6 +50,9 @@ double precision	NaN	ok	NaN
 double precision	\N	ok	\N
 double precision	1e400	E22003	\N
 double precision	inf	ok	Infinity
+double precision	1e-400	E22003	\N
+double precision	1.79769313486232e+308	E22003	\N
+double precision	1e-310	ok	1e-310
 numeric(10,2)	-1.50	ok	-1.50
 numeric(10,2)	0	ok	0.00
 numeric(10,2)	1.5	ok	1.50
