@@ -458,4 +458,29 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         "pgdump_query/src/stream.rs pgdump_query/src/prune.rs pgdump_query/src/summary.rs "
         "pgdump_query/src/resolve.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="8bae73d7",
+        figures=(
+            "allocator",
+            "chunk-size",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "map-only",
+            "nested-end-to-end",
+            "parallel-peak-rss",
+            "parallel-scan-throughput",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="31.7: two keyword prefixes per non-table CREATE, one parse per ALTER TYPE "
+        "that adds no value and one prefix per \\connect, all per statement; no "
+        "generated input holds an unlogged or foreign table, a DROP ATTRIBUTE or a "
+        "connection-string \\connect; the rest is a constant, a test pin and a --map label",
+        verified="git show 8bae73d7 -- pgdump_query/src/map.rs pgdump_query/src/preamble.rs "
+        "pgdt/src/main.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
