@@ -433,4 +433,29 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         "pgdump_query/src/predicate.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'; "
         "grep -n 'numeric(' scripts/generate_*.py",
     ),
+    Acknowledged(
+        commit="6418a001",
+        figures=(
+            "allocator",
+            "chunk-size",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "map-only",
+            "nested-end-to-end",
+            "parallel-peak-rss",
+            "parallel-scan-throughput",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="31.6: no measured input declares an INHERITS or OF table, so every column "
+        "resolves as before; classify tries one more keyword prefix per statement, and "
+        "gather, prune and summary look a column up per block and column, never per row",
+        verified="git show 6418a001 -- pgdump_query/src/gather.rs pgdump_query/src/map.rs "
+        "pgdump_query/src/stream.rs pgdump_query/src/prune.rs pgdump_query/src/summary.rs "
+        "pgdump_query/src/resolve.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
