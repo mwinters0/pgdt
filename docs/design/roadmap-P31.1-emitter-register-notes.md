@@ -105,7 +105,7 @@ set already runs is the last row but one.
 
 | Options | Class |
 |---|---|
-| `--quote-all-identifiers` | **suspected defect**: `format_type` quotes a type name it does not special-case, so a declared type may reach the mapping as `"date"`; unprobed, so not filed |
+| `--quote-all-identifiers` | **a defect**: `format_type` quotes a type name it does not special-case, which every reader unquotes but the `box` test at the end of a domain chain — `KD71`, filed by 31.2 |
 | `--disable-triggers`, and `--superuser`, which only it makes write | `KD1` |
 | `--include-foreign-data` | `KD65`, with a foreign table's `COPY` block |
 | `--format` other than plain, `--compress` | unsupported input: archives are P8's, compressed plain P15's |

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 3y5uabBynCt3jbUG0TySCRjubf1B7Ih86q0o1KYsu6oDZvbVJTh4lTfbwLM1MHV
+\restrict QivVulkt64Q1pv1KdMQcFODJMTqNjWkAqfiU2Z7lEfZMQXvjVybY91mJMn4rOXG
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -735,6 +735,29 @@ CREATE TABLE public.t_uuid (
 ALTER TABLE public.t_uuid OWNER TO postgres;
 
 --
+-- Name: t_v18_columns; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_v18_columns (
+    id integer NOT NULL,
+    v_named text CONSTRAINT t_v18_named_present NOT NULL COLLATE pg_catalog."C",
+    v_no_inherit text NOT NULL NO INHERIT COLLATE pg_catalog."C",
+    v_virtual text GENERATED ALWAYS AS (upper(v_named)) COLLATE pg_catalog."C",
+    v_virtual_len integer GENERATED ALWAYS AS (length(v_no_inherit)),
+    v_after date
+);
+
+
+ALTER TABLE public.t_v18_columns OWNER TO postgres;
+
+--
+-- Name: CONSTRAINT t_v18_named_present ON t_v18_columns; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON CONSTRAINT t_v18_named_present ON public.t_v18_columns IS 'a named not-null constraint';
+
+
+--
 -- Data for Name: t_array; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1131,6 +1154,16 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 
 
 --
+-- Data for Name: t_v18_columns; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_v18_columns (id, v_named, v_no_inherit, v_after) FROM stdin;
+1	alpha	beta	2024-01-01
+2	gamma		\N
+\.
+
+
+--
 -- Name: t_array t_array_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1379,8 +1412,16 @@ ALTER TABLE ONLY public.t_uuid
 
 
 --
+-- Name: t_v18_columns t_v18_columns_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_v18_columns
+    ADD CONSTRAINT t_v18_columns_pkey PRIMARY KEY (id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 3y5uabBynCt3jbUG0TySCRjubf1B7Ih86q0o1KYsu6oDZvbVJTh4lTfbwLM1MHV
+\unrestrict QivVulkt64Q1pv1KdMQcFODJMTqNjWkAqfiU2Z7lEfZMQXvjVybY91mJMn4rOXG
 

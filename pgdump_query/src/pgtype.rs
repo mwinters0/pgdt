@@ -1760,6 +1760,15 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 /// The loop is bounded by the type list's length — a domain chain visits each
 /// `CREATE DOMAIN` at most once — which keeps a hand-edited file from
 /// spinning rather than merely failing.
+///
+/// Deficiency register: `deficiency: KD71` — under `--quote-all-identifiers`
+/// `format_type` quotes every built-in name it does not spell as a keyword, so
+/// a domain over `box` is written `AS "box"` and its terminal comes back
+/// `"box"`, which the `box` comparison misses: an array of that domain
+/// resolves to a list split at `,` rather than refusing (I22), each element a
+/// fragment of a box. `t_delimiter` in
+/// `fixtures/<major>/types/quote-all-identifiers.sql` holds it. **(b) owned by
+/// `P31`**.
 fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
     let mut name = name.trim();
     for _ in 0..=types.len() {

@@ -43,9 +43,11 @@ passwordless `sudo`.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import adbc_floor
@@ -128,7 +130,24 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
 # decisions.md, "D69") is PG18+ only, and the
 # routine matrix runs versions 13-18.
-FlagSet = list[str] | None
+#
+# A third shape is a **session-setting variant**, [`Setting`]: a plain `pg_dump`
+# run while the schema's database carries one setting `pg_dump` does not pin
+# (I4), set by `ALTER DATABASE ... SET` as a real server's would be. One
+# variant per setting, never a cross product
+# (docs/design/roadmap-P31-correctness-evidence.md, "The session-setting axis").
+
+
+@dataclass(frozen=True)
+class Setting:
+    """A flag set that is a setting rather than a flag: `name = value` on the
+    database for the length of one plain dump, reset after it."""
+
+    name: str
+    value: str
+
+
+FlagSet = list[str] | None | Setting
 SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
     "edge_cases": {
         "default": [],
@@ -142,11 +161,20 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "create": ["--create"],
         "no-comments": ["--no-comments", "--no-security-labels"],
         "dumpall": None,
+        # The `INSERT` shapes the two run above do not write, and the one
+        # `--data-only` shape that wraps each block in trigger toggles.
+        "rows-per-insert": ["--rows-per-insert=2"],
+        "on-conflict-do-nothing": ["--inserts", "--on-conflict-do-nothing"],
+        "disable-triggers": ["--data-only", "--disable-triggers"],
     },
     "types": {
         "default": [],
         "data-only": ["--data-only"],
         "binary-upgrade": ["--binary-upgrade"],
+        "quote-all-identifiers": ["--quote-all-identifiers"],
+        "extra-float-digits-0": ["--extra-float-digits=0"],
+        "bytea-output-escape": Setting("bytea_output", "escape"),
+        "timezone-monrovia": Setting("TimeZone", "Africa/Monrovia"),
     },
     # decisions.md, "D69": `--verbose` is the one
     # documented way to widen the TOC comment block past three lines (the
@@ -156,6 +184,8 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "default": [],
         "verbose": ["--verbose"],
         "stats": ("18", ["--statistics"]),
+        # The foreign table's rows, which no other flag set dumps.
+        "include-foreign-data": ["--include-foreign-data=objects_files"],
     },
     # decisions.md's "D48": the one shape where a single `COPY <name>` header
     # owns several blocks (I2). `default` already produces it -- pg_dump
@@ -187,6 +217,31 @@ PG_DUMPALL_ARGS = ["-U", DB_USER, "--no-role-passwords"]
 
 def schema_file(schema: str) -> Path:
     return SCRIPT_DIR / f"fixture_schema_{schema}.sql"
+
+
+_SIDECAR = re.compile(r"^fixture_schema_(?P<schema>[a-z_]+)\.(?P<major>[0-9]+)\.sql$")
+
+
+def schema_files(schema: str, version: str, directory: Path = SCRIPT_DIR) -> list[Path]:
+    """The files loaded for `schema` at `version`, in load order: the base
+    file, then each **version sidecar** `fixture_schema_<schema>.<major>.sql`
+    whose major is at or below `version`, lowest first.
+
+    A sidecar holds DDL an older major refuses, so the base file loads on
+    every major and the sidecar only where it parses
+    (docs/design/roadmap-P31-correctness-evidence.md, "Version-conditioned
+    schemas"). A file named like a sidecar of this schema whose middle is not
+    a major is an error, not a file skipped.
+    """
+    sidecars: list[tuple[int, Path]] = []
+    for path in directory.glob(f"fixture_schema_{schema}.*.sql"):
+        match = _SIDECAR.match(path.name)
+        if match is None or match["schema"] != schema:
+            raise ValueError(f"{path.name}: a sidecar is fixture_schema_{schema}.<major>.sql")
+        sidecars.append((int(match["major"]), path))
+    return [directory / f"fixture_schema_{schema}.sql"] + [
+        path for major, path in sorted(sidecars) if major <= int(version)
+    ]
 
 
 def tenant_schema_file() -> Path:
@@ -263,7 +318,9 @@ def load_sql(name: str, database: str, sql: str) -> None:
     )
 
 
-def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float = 1.0) -> None:
+def create_fixture_db(
+    name: str, version: str, schema: str, attempts: int = 10, delay: float = 1.0
+) -> None:
     # The official postgres image briefly starts a *temporary* instance to
     # run init scripts before restarting for real; pg_isready can succeed
     # against that transient instance. Retry the actual DDL-capable command
@@ -281,7 +338,8 @@ def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float =
         raise last_error
     if schema == "objects":
         prepare_tablespace_dir(name)
-    load_sql(name, DB_NAME, schema_file(schema).read_text())
+    for path in schema_files(schema, version):
+        load_sql(name, DB_NAME, path.read_text())
     if schema == TENANT_SCHEMA:
         # A second database in the same cluster, so this schema's `dumpall`
         # flag set has two `COPY`-carrying segments. Gated here rather than in
@@ -322,12 +380,27 @@ def drop_fixture_db(name: str) -> None:
     )
 
 
+def psql_command(name: str, database: str, sql: str) -> None:
+    run(DOCKER + ["exec", name, "psql", "-U", DB_USER, "-d", database, "-c", sql], capture_output=True)
+
+
 def dump_flag_set(
-    name: str, version: str, schema: str, flag_name: str, flags: list[str] | None
+    name: str, version: str, schema: str, flag_name: str, flags: FlagSet
 ) -> Path:
     out_dir = FIXTURES_DIR / version / schema
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{flag_name}.sql"
+    if isinstance(flags, Setting):
+        # On the database, so the dump's own new session takes it as a
+        # server's would hand it over; reset before any other flag set runs.
+        psql_command(name, DB_NAME, f"ALTER DATABASE {DB_NAME} SET {flags.name} = '{flags.value}'")
+        try:
+            cmd = DOCKER + ["exec", name, "pg_dump", *PG_DUMP_ARGS, DB_NAME]
+            result = run(cmd, stdout=subprocess.PIPE, text=True)
+        finally:
+            psql_command(name, DB_NAME, f"ALTER DATABASE {DB_NAME} RESET {flags.name}")
+        out_path.write_text(result.stdout)
+        return out_path
     if flags is None:
         # dumpall: the whole cluster (postgres/template1 plus DB_NAME), not
         # a `pg_dump` invocation against one database -- `--no-role-passwords`
@@ -419,7 +492,7 @@ def generate_for_version(
             take_floor(version)
         if dumps:
             for schema in schemas:
-                create_fixture_db(name, schema)
+                create_fixture_db(name, version, schema)
                 for flag_name, flag_spec in SCHEMAS[schema].items():
                     if isinstance(flag_spec, tuple):
                         min_version, flags = flag_spec
@@ -435,7 +508,7 @@ def generate_for_version(
                     )
                 drop_fixture_db(name)
         if oracle:
-            create_fixture_db(name, ORACLE_SCHEMA)
+            create_fixture_db(name, version, ORACLE_SCHEMA)
             try:
                 write_oracle(name, version)
             finally:

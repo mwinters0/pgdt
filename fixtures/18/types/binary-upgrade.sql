@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict s57SAqj2C4MEsw8thmoJROhZbIL7ZIzpyNV1E2768llLzgs54qrWoDBK7DzFx3g
+\restrict RduCliF1DbupIeBiAIfW0BjX6I1yce25LGxYLhvRvSiXFFG0SJtAXZi2kg5LBso
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -1704,6 +1704,56 @@ WHERE oid = 'public.t_uuid'::pg_catalog.regclass;
 ALTER TABLE public.t_uuid OWNER TO postgres;
 
 --
+-- Name: t_v18_columns; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16697'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16696'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16695'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16695'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16703'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16703'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16704'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16704'::pg_catalog.oid);
+
+CREATE TABLE public.t_v18_columns (
+    id integer NOT NULL,
+    v_named text CONSTRAINT t_v18_named_present NOT NULL COLLATE pg_catalog."C",
+    v_no_inherit text NOT NULL NO INHERIT COLLATE pg_catalog."C",
+    v_virtual text GENERATED ALWAYS AS (upper(v_named)) COLLATE pg_catalog."C",
+    v_virtual_len integer GENERATED ALWAYS AS (length(v_no_inherit)),
+    v_after date
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '847', relminmxid = '1'
+WHERE oid = 'public.t_v18_columns'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '847', relminmxid = '1'
+WHERE oid = '16703';
+
+
+ALTER TABLE public.t_v18_columns OWNER TO postgres;
+
+--
+-- Name: CONSTRAINT t_v18_named_present ON t_v18_columns; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON CONSTRAINT t_v18_named_present ON public.t_v18_columns IS 'a named not-null constraint';
+
+
+--
 -- Data for Name: t_array; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -2096,6 +2146,16 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 1	00000000-0000-0000-0000-000000000000
 2	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 3	\N
+\.
+
+
+--
+-- Data for Name: t_v18_columns; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_v18_columns (id, v_named, v_no_inherit, v_after) FROM stdin;
+1	alpha	beta	2024-01-01
+2	gamma		\N
 \.
 
 
@@ -2503,8 +2563,21 @@ ALTER TABLE ONLY public.t_uuid
 
 
 --
+-- Name: t_v18_columns t_v18_columns_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16705'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16705'::pg_catalog.oid);
+
+ALTER TABLE ONLY public.t_v18_columns
+    ADD CONSTRAINT t_v18_columns_pkey PRIMARY KEY (id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict s57SAqj2C4MEsw8thmoJROhZbIL7ZIzpyNV1E2768llLzgs54qrWoDBK7DzFx3g
+\unrestrict RduCliF1DbupIeBiAIfW0BjX6I1yce25LGxYLhvRvSiXFFG0SJtAXZi2kg5LBso
 

@@ -347,6 +347,43 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
     }
 }
 
+/// `public.t_v18_columns`, the `types` schema's v18 sidecar: the three shapes
+/// v18 writes between a column's type and its displaced `COLLATE` clause —
+/// `CONSTRAINT <name> NOT NULL`, `NOT NULL NO INHERIT`, and a virtual
+/// `GENERATED ALWAYS AS (expr)` with no `STORED` (I37) — each read to its
+/// type and its clause. The virtual columns are declared and never in `COPY`
+/// (I5), so, like `v_gen_nn` above, this is the one place they are asserted;
+/// below 18 the table does not exist.
+#[tokio::test]
+async fn v18_s_column_shapes_keep_their_type_and_their_displaced_collation() {
+    let c = r#"pg_catalog."C""#;
+    let collated = |name: &str| ColumnDef {
+        name: name.to_string(),
+        declared_type: "text".to_string(),
+        collation: Some(c.to_string()),
+    };
+    for version in VERSIONS {
+        let db = single_database(&types_fixture(version, "default")).await;
+        let table = db.tables.get("public.t_v18_columns");
+        if version < 18 {
+            assert_eq!(table, None, "pg_dump {version}: the sidecar loads at 18 alone");
+            continue;
+        }
+        assert_eq!(
+            table.unwrap(),
+            &vec![
+                ColumnDef::new("id", "integer"),
+                collated("v_named"),
+                collated("v_no_inherit"),
+                collated("v_virtual"),
+                ColumnDef::new("v_virtual_len", "integer"),
+                ColumnDef::new("v_after", "date"),
+            ],
+            "pg_dump {version}"
+        );
+    }
+}
+
 /// The two `CREATE COLLATION`s the `types` schema declares, read at every
 /// major — and **both determinism answers come off committed bytes**.
 ///

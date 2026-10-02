@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict oI946gAxCRBcSYBLxeqhj20Evm825N37YYkTVnb9F1eNPrIyQIpMzvazxANTS7A
+\restrict IMdOKdCmv3d4PWu0g6pAya9gKomHxIMCvgcFWHutztHrIOFBCmwzqqi1tlUDV2F
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -36,6 +36,20 @@ CREATE COLLATION objects.c_collation (provider = libc, locale = 'C');
 
 
 ALTER COLLATION objects.c_collation OWNER TO postgres;
+
+--
+-- Name: file_fdw; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS file_fdw WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION file_fdw; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION file_fdw IS 'foreign-data wrapper for flat file access';
+
 
 --
 -- Name: postgres_fdw; Type: EXTENSION; Schema: -; Owner: -
@@ -243,6 +257,15 @@ ALTER TEXT SEARCH CONFIGURATION objects.simple_config
 ALTER TEXT SEARCH CONFIGURATION objects.simple_config OWNER TO postgres;
 
 --
+-- Name: objects_files; Type: SERVER; Schema: -; Owner: postgres
+--
+
+CREATE SERVER objects_files FOREIGN DATA WRAPPER file_fdw;
+
+
+ALTER SERVER objects_files OWNER TO postgres;
+
+--
 -- Name: objects_remote; Type: SERVER; Schema: -; Owner: postgres
 --
 
@@ -294,6 +317,23 @@ CREATE TABLE objects.events_2024 (
 
 
 ALTER TABLE objects.events_2024 OWNER TO postgres;
+
+--
+-- Name: imported; Type: FOREIGN TABLE; Schema: objects; Owner: postgres
+--
+
+CREATE FOREIGN TABLE objects.imported (
+    id integer NOT NULL,
+    born date,
+    label text
+)
+SERVER objects_files
+OPTIONS (
+    filename '/tmp/objects_imported.tsv'
+);
+
+
+ALTER FOREIGN TABLE objects.imported OWNER TO postgres;
 
 --
 -- Name: orders; Type: TABLE; Schema: objects; Owner: postgres
@@ -550,8 +590,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-10-01 17:32:31.869308+00
-2	beta	2026-10-01 17:32:31.869308+00
+1	alpha	2026-10-02 03:00:35.928079+00
+2	beta	2026-10-02 03:00:35.928079+00
 \.
 
 
@@ -578,47 +618,47 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 
 --
--- Name: 16506; Type: BLOB METADATA; Schema: -; Owner: postgres
+-- Name: 16792; Type: BLOB METADATA; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16506');
+SELECT pg_catalog.lo_create('16792');
 
-ALTER LARGE OBJECT 16506 OWNER TO postgres;
-
---
--- Name: LARGE OBJECT 16506; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16506 IS 'first large object';
-
+ALTER LARGE OBJECT 16792 OWNER TO postgres;
 
 --
--- Name: 16507; Type: BLOB METADATA; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16792; Type: COMMENT; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16507');
+COMMENT ON LARGE OBJECT 16792 IS 'first large object';
 
-ALTER LARGE OBJECT 16507 OWNER TO postgres;
 
 --
--- Data for Name: 16506; Type: BLOBS; Schema: -; Owner: postgres
+-- Name: 16793; Type: BLOB METADATA; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16793');
+
+ALTER LARGE OBJECT 16793 OWNER TO postgres;
+
+--
+-- Data for Name: 16792; Type: BLOBS; Schema: -; Owner: postgres
 --
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16506', 131072);
+SELECT pg_catalog.lo_open('16792', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
 COMMIT;
 
 --
--- Data for Name: 16507; Type: BLOBS; Schema: -; Owner: postgres
+-- Data for Name: 16793; Type: BLOBS; Schema: -; Owner: postgres
 --
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16507', 131072);
+SELECT pg_catalog.lo_open('16793', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
@@ -785,6 +825,13 @@ GRANT SELECT ON TABLE objects.events_2024 TO fixture_reader;
 
 
 --
+-- Name: TABLE imported; Type: ACL; Schema: objects; Owner: postgres
+--
+
+GRANT SELECT ON TABLE objects.imported TO fixture_reader;
+
+
+--
 -- Name: TABLE "price$$list"; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -807,10 +854,10 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- Name: LARGE OBJECT 16506; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16792; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16506 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16792 TO fixture_reader;
 
 
 --
@@ -843,5 +890,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict oI946gAxCRBcSYBLxeqhj20Evm825N37YYkTVnb9F1eNPrIyQIpMzvazxANTS7A
+\unrestrict IMdOKdCmv3d4PWu0g6pAya9gKomHxIMCvgcFWHutztHrIOFBCmwzqqi1tlUDV2F
 

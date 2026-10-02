@@ -201,8 +201,35 @@ class Joining(unittest.TestCase):
     def test_a_literal_no_dump_holds_and_an_option_no_run_passes_are_uncovered(self):
         result, problems = self.join(er.render(self.ROWS, er.pinned_release("18")))
         self.assertEqual(problems, [])
-        self.assertEqual([u.entry for u in result.uncovered], ["UNLOGGED ", "jobs"])
+        self.assertEqual(
+            [u.entry for u in result.uncovered if u.kind != "value"], ["UNLOGGED ", "jobs"]
+        )
         self.assertEqual((result.literals, result.options), (2, 4))
+
+    def test_a_value_form_is_covered_by_a_dump_holding_its_spelling(self):
+        forms = (
+            er.ValueForm("v.c", "byteaout", "\\\\000", "types/default", "held"),
+            er.ValueForm("v.c", "byteaout", "\\\\377", "types/default", "not held"),
+        )
+        with unittest.mock.patch.object(er, "VALUE_FORMS", forms):
+            result, problems = self.join(
+                er.render(self.ROWS, er.pinned_release("18")),
+                dump="CREATE TABLE t (a int);\n1\t\\\\000\n",
+            )
+        self.assertEqual(problems, [])
+        self.assertEqual(result.values, 2)
+        self.assertEqual(
+            [(u.kind, u.entry) for u in result.uncovered if u.kind == "value"],
+            [("value", "\\\\377")],
+        )
+
+    def test_a_value_form_naming_no_flag_set_is_a_problem(self):
+        form = er.ValueForm("v.c", "byteaout", "x", "types/no-such-set", "")
+        with unittest.mock.patch.object(gf, "SCHEMAS", {"types": {"default": []}}):
+            self.assertEqual(len(er.value_form_problems((form,))), 1)
+            self.assertEqual(
+                er.value_form_problems((er.ValueForm("v.c", "f", "x", "types/default", ""),)), []
+            )
 
     def test_a_register_from_another_minor_is_a_problem(self):
         _, problems = self.join(er.render(self.ROWS, "18.0"))
@@ -243,6 +270,9 @@ class CommittedTree(unittest.TestCase):
             with self.subTest(major=major):
                 _, problems = er.join_major(major)
                 self.assertEqual(problems, [])
+
+    def test_every_value_form_names_a_flag_set_the_generator_runs(self):
+        self.assertEqual(er.value_form_problems(), [])
 
     def test_the_join_reports_without_failing(self):
         out = io.StringIO()

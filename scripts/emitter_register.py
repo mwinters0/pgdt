@@ -44,7 +44,17 @@ runs anywhere the scripts' tests do. The checkout is
 `configure` must say it is that release -- a register read from a different
 minor than the fixtures were taken at would join two different producers.
 
-**A literal is covered when a fixture of the same major holds its bytes**:
+* **The value-form half: a spelling.** What a backend `*_out` function writes
+  under a setting `pg_dump` leaves unpinned (I4), or under an option that
+  overrides one it pins, is no literal in `pg_dump`'s source, so it is
+  hand-listed here ([`VALUE_FORMS`]) rather than extracted: each row the bytes
+  a `COPY` block holds for it -- after `COPY`'s own escaping -- and the
+  session-setting variant or flag set `generate_fixtures.py` runs to reach it
+  (`docs/design/roadmap-P31-correctness-evidence.md`, "The session-setting
+  axis"). A row is joined at every major, as a literal is.
+
+**A literal is covered when a fixture of the same major holds its bytes**, and
+so is a value form:
 any `fixtures/<major>/<schema>/*.sql` of a schema the generator dumps. No C
 parser: a branch is reached when what it appends is in some fixture.
 
@@ -699,6 +709,88 @@ def extract_major(major: str, root: Path, fixtures: Path = FIXTURES) -> list[str
 
 
 # --------------------------------------------------------------------------
+# The value-form half
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ValueForm:
+    """One spelling a backend output function writes into `COPY` text under a
+    selector `pg_dump` does not pin. `spelling` is the file's bytes, `COPY`'s
+    backslash doubling included; `selector` is the flag set's name in
+    `generate_fixtures.SCHEMAS` that reaches it."""
+
+    file: str  # the backend file holding the output function
+    function: str  # the `*_out` function, or the one it calls that decides
+    spelling: str
+    selector: str  # "<schema>/<flag set>"
+    what: str
+
+    def row(self) -> Row:
+        return Row("value", self.file, self.function, self.spelling, self.selector)
+
+
+#: The value forms the session-setting variants and the float option reach,
+#: hand-listed (I4 names what `pg_dump` pins; everything else is a server's).
+#: Typmod-selected spellings are this half's too, and are not listed yet.
+VALUE_FORMS: tuple[ValueForm, ...] = (
+    ValueForm(
+        "src/backend/utils/adt/varlena.c",
+        "byteaout",
+        "\\\\000",
+        "types/bytea-output-escape",
+        "`bytea_output = escape`: a byte outside printable ASCII as a three-digit octal escape",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/varlena.c",
+        "byteaout",
+        "\\\\\\\\backslash",
+        "types/bytea-output-escape",
+        "`bytea_output = escape`: a backslash byte as a doubled backslash",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/datetime.c",
+        "EncodeTimezone",
+        "-00:43:08",
+        "types/timezone-monrovia",
+        "a `TimeZone` whose offset at the instant has seconds (`Africa/Monrovia`'s LMT)",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/datetime.c",
+        "EncodeDateTime",
+        "23:16:52-00:43:08 BC",
+        "types/timezone-monrovia",
+        "an instant in the first year AD written in the year before it, the zone's offset carrying it across the era",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/float.c",
+        "float4out",
+        "1.17549e-38",
+        "types/extra-float-digits-0",
+        "`extra_float_digits = 0`: a `real` at `FLT_DIG` significant digits, not the shortest exact form",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/float.c",
+        "float8out",
+        "2.2250738585072e-308",
+        "types/extra-float-digits-0",
+        "`extra_float_digits = 0`: a `double precision` at `DBL_DIG` significant digits",
+    ),
+)
+
+
+def value_form_problems(forms: Sequence[ValueForm] = VALUE_FORMS) -> list[str]:
+    """A value form naming a flag set the generator does not run is a problem:
+    its selector is what says how the spelling is reached."""
+    problems = []
+    for form in forms:
+        schema, _, flag_set = form.selector.partition("/")
+        if flag_set not in gf.SCHEMAS.get(schema, {}):
+            problems.append(f"value form {form.spelling!r}: {form.selector!r} is no flag set")
+    return problems
+
+
+# --------------------------------------------------------------------------
 # The join
 # --------------------------------------------------------------------------
 
@@ -714,7 +806,7 @@ def flags_at(major: str) -> dict[str, list[str]]:
                     continue
             else:
                 flags = value
-            if flags is not None:
+            if isinstance(flags, list):
                 out["pg_dump"].extend(flags)
     return out
 
@@ -754,6 +846,7 @@ class MajorResult:
     major: str
     literals: int = 0
     options: int = 0
+    values: int = 0
     uncovered: list[Row] = field(default_factory=list)
 
 
@@ -792,6 +885,10 @@ def join_major(major: str, fixtures: Path = FIXTURES) -> tuple[MajorResult, list
             result.options += 1
             if row.entry not in covered_options.get(row.function, set()):
                 result.uncovered.append(row)
+    for form in VALUE_FORMS:
+        result.values += 1
+        if not any(form.spelling.encode() in dump for dump in dumps):
+            result.uncovered.append(form.row())
     return result, problems
 
 
@@ -804,9 +901,11 @@ def report(results: Sequence[MajorResult]) -> str:
     for r in results:
         n_lit = sum(1 for u in r.uncovered if u.kind == "literal")
         n_opt = sum(1 for u in r.uncovered if u.kind == "option")
+        n_val = sum(1 for u in r.uncovered if u.kind == "value")
         lines.append(
             f"{r.major}: {r.literals} literals, {n_lit} uncovered; "
-            f"{r.options} options, {n_opt} uncovered"
+            f"{r.options} options, {n_opt} uncovered; "
+            f"{r.values} value forms, {n_val} uncovered"
         )
     where: dict[tuple[str, str, str, str], list[str]] = defaultdict(list)
     for r in results:
@@ -846,7 +945,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
             print(f"problem: {p}", file=sys.stderr)
         return 1 if problems else 0
     results = []
-    problems = []
+    problems = value_form_problems()
     for major in chosen:
         result, more = join_major(major)
         results.append(result)

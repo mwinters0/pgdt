@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD70 -->
-**`KD1`–`KD70` are allocated, and nothing at or below `KD70` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD72 -->
+**`KD1`–`KD72` are allocated, and nothing at or below `KD72` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -400,3 +400,15 @@ than reading as a phase nobody has sliced.
 - **KD70** — a typed table, `CREATE TABLE x OF t`, gets no columns from its
   composite, so every column resolves `NotDeclared` and reads as text.
   **(b) owned by `P31`**, slice 31.6 closing it. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD71** — under `--quote-all-identifiers` a built-in type is written
+  quoted, and the `box` test at the end of a domain chain reads the spelling
+  verbatim, so an array over a domain over `box` is split at `,` instead of
+  refused, its elements fragments of a box. **(b) owned by `P31`**, slice 31.9
+  closing it. Detail: `pgdump_query/src/pgtype.rs`.
+
+- **KD72** — under `--extra-float-digits=0` `float8out` writes `DBL_MAX` as
+  `1.79769313486232e+308`, which `decode_f64` reads as an infinity the column
+  never held, and a distinct count from the statistics, taken over the text,
+  disagrees with the rows'. **(b) owned by `P31`**, slice 31.10 closing it.
+  Detail: `pgdump_query/src/decode.rs`.

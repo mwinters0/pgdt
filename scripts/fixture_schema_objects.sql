@@ -204,6 +204,19 @@ CREATE SERVER objects_remote FOREIGN DATA WRAPPER postgres_fdw
 CREATE USER MAPPING FOR postgres SERVER objects_remote
     OPTIONS (user 'nobody', password 'unused');
 
+-- FOREIGN TABLE, and its rows: `file_fdw` reads a file the server writes
+-- here, so the `include-foreign-data` flag set has rows to dump. The columns
+-- are typed so that a reading which leaves them text shows.
+CREATE EXTENSION IF NOT EXISTS file_fdw;
+CREATE SERVER objects_files FOREIGN DATA WRAPPER file_fdw;
+COPY (VALUES (1, '2024-01-01'::date, 'first'), (2, NULL, 'second'))
+    TO '/tmp/objects_imported.tsv';
+CREATE FOREIGN TABLE objects.imported (
+    id integer NOT NULL,
+    born date,
+    label text
+) SERVER objects_files OPTIONS (filename '/tmp/objects_imported.tsv');
+
 -- CAST: between two independent enum types, so this doesn't collide with
 -- any implicit cast PostgreSQL already defines.
 CREATE TYPE objects.color_rgb AS ENUM ('red', 'green', 'blue');

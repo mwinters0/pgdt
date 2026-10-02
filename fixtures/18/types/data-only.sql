@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict RskgO2lUe89umXU5PapWvmNQa9JpA2bMVDcdyYO0W5yKVOmAfegeJZMZ6IzU6qq
+\restrict 8MGseggIuae6GhwautSQwZL6vfGS8lx0fxSe3vhQjS1OJAyYgS4hKOxg1Aat7YY
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -416,8 +416,18 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 
 
 --
+-- Data for Name: t_v18_columns; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_v18_columns (id, v_named, v_no_inherit, v_after) FROM stdin;
+1	alpha	beta	2024-01-01
+2	gamma		\N
+\.
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict RskgO2lUe89umXU5PapWvmNQa9JpA2bMVDcdyYO0W5yKVOmAfegeJZMZ6IzU6qq
+\unrestrict 8MGseggIuae6GhwautSQwZL6vfGS8lx0fxSe3vhQjS1OJAyYgS4hKOxg1Aat7YY
 

@@ -90,6 +90,14 @@ pub fn decode_f32(s: &str) -> Option<f32> {
     }
 }
 
+/// Deficiency register: `deficiency: KD72` — `pg_dump --extra-float-digits=0`
+/// puts `float8out` at `DBL_DIG` significant digits, which rounds `DBL_MAX` up
+/// to `1.79769313486232e+308`, past every finite `f64`: this parse reads that
+/// text as an infinity the column never held (PostgreSQL's own `float8in`
+/// refuses it as out of range), and a distinct count the statistics take from
+/// the text then disagrees with the rows'. `t_extremes` in
+/// `fixtures/<major>/types/extra-float-digits-0.sql` holds it. **(b) owned by
+/// `P31`**.
 pub fn decode_f64(s: &str) -> Option<f64> {
     match s {
         "NaN" => Some(f64::NAN),

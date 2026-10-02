@@ -368,6 +368,14 @@ word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
 cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries each
 at all six majors; `pgtype.rs`'s `builtin_name` reads them.
 
+**Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
+`format_type` passes a name it does not spell as a keyword through
+`quote_identifier`, which `pg_dump` then sets to quote everything, so
+`fixtures/<13–18>/types/quote-all-identifiers.sql` writes `"text"`, `"date"`,
+`"box"` and `"bpchar"` where `default.sql` writes them bare, and `integer`,
+`timestamp(3) with time zone` and `interval day to second(2)` alike in both. A
+reader comparing a built-in's spelling unquotes it first (`KD71`).
+
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.
 **Relied on by:** `decisions.md` ("Type resolution and decoders").
@@ -1666,7 +1674,10 @@ CREATE TABLE s.t (
 ```
 
 **Scope limit.** Nothing here is reachable from a dump of a database whose type
-names are all ordinary identifiers, which is every fixture and the koji sample.
+names are all ordinary identifiers, which is the koji sample and every fixture
+but one flag set: under `--quote-all-identifiers` `fmtId()` quotes every name,
+so `fixtures/<13–18>/types/quote-all-identifiers.sql` writes the quoted name
+and its unquoted `[]` (`"public"."mood"[]`) for ordinary names.
 It bears on the input contract (`roadmap.md`, "The input contract is valid
 PostgreSQL"), and on the one spelling a type's name is compared in
 (`decisions.md`, "D36").
@@ -2153,7 +2164,6 @@ Four consequences:
   emits three further shapes in that window: a *named* not-null constraint,
   `CONSTRAINT <name> NOT NULL`; a following `NO INHERIT`; and a **virtual**
   generated column, `GENERATED ALWAYS AS (expr)` with no `STORED`.
-  Two of the three have no fixture — see the scope limit below.
 - **Its absence is a fact about the type, not about the column.** The four
   collatable built-ins split two ways: `text`, `varchar` and `bpchar` have
   `typcollation = default`, so a bare column of one is on the database's
@@ -2238,12 +2248,12 @@ is inside a `CREATE VIEW`, which is not one of the five statement shapes the
 preamble grammar triggers on, so it never reaches a column definition — but a
 count of `COLLATE %s` in `pg_dump.c` finds four, not three.
 
-Two of the three v18-only shapes have no fixture: `CONSTRAINT <name> NOT
-NULL`/`NO INHERIT` and a virtual `GENERATED` rest on the source reading above
-alone. Neither can be fixtured until the generator can run version-conditional
-schema SQL — it conditions dump *flag sets* on version, but one schema `.sql`
-runs against every major, so an 18-only DDL shape fails on 13-17. The row is in
-[`pg-dump-compatibility.md`](pg-dump-compatibility.md).
+The three v18-only shapes are in the `types` schema's v18 sidecar,
+`scripts/fixture_schema_types.18.sql`, so `fixtures/18/types/*.sql` alone
+carry them, `t_v18_columns` writing each with its clause displaced behind it:
+`text CONSTRAINT t_v18_named_present NOT NULL COLLATE pg_catalog."C"`,
+`text NOT NULL NO INHERIT COLLATE pg_catalog."C"` and
+`text GENERATED ALWAYS AS (upper(v_named)) COLLATE pg_catalog."C"`.
 
 Beyond that, the entry says nothing about which collations *exist* on a server,
 nor about what a named collation orders like: `pg_collation.collversion` is the
@@ -2256,7 +2266,7 @@ own grammar.
 carry the same three comments and four `COLLATE %s` emissions, and in all six
 the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends. The
 placement and every form above are observed in the committed fixtures at all
-six; the two v18-only window shapes are read from v18.6's source only.
+six, the three v18-only window shapes at 18.
 
 **Relied on by.** `crate::preamble`'s `extract_collation` (the placement and the
 form) and `ColumnDef::collation`/`TypeKind::Domain::collation`; the comparison

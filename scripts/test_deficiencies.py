@@ -1002,5 +1002,30 @@ class ThisRepo(unittest.TestCase):
             )
 
 
+class KnownFailureTables(unittest.TestCase):
+    """A row of a strict known-failure table (`pgdump_query/tests/
+    known_failures.rs`, and a sweep's own exclusion beside it) asserts that a
+    filed defect still shows: one naming an entry the index does not carry
+    asserts a defect nobody can look up. Checked here, the register's own
+    reconciliation, because no Rust test reads `docs/`."""
+
+    TABLES = (
+        "pgdump_query/tests/known_failures.rs",
+        "datafusion-pgdump/tests/statistics.rs",
+    )
+
+    def test_every_row_names_an_open_entry(self):
+        import re
+
+        entries, problems = deficiencies.parse_index(deficiencies.REGISTER.read_text())
+        self.assertEqual(problems, [])
+        open_ids = {e.id for e in entries}
+        for table in self.TABLES:
+            named = set(re.findall(r'"(KD\d+)"', (deficiencies.REPO / table).read_text()))
+            with self.subTest(table=table):
+                self.assertTrue(named, "the table names no entry")
+                self.assertEqual(named - open_ids, set())
+
+
 if __name__ == "__main__":
     unittest.main()
