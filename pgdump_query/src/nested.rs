@@ -1037,6 +1037,7 @@ fn skip_space(s: &[u8], mut i: usize) -> usize {
 /// **A literal with no elements is the zero-dimensional empty array**, however
 /// it was written: `{}`, `{ }` and (on v17+) `{{},{}}` are all the value
 /// `array_out` writes as `{}`.
+// pg-refuses: I44 — every refusal here is `array_in`'s.
 pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
     let b = s.as_bytes();
     let mut i = 0;
@@ -1150,6 +1151,7 @@ fn read_quoted_run(s: &[u8], mut i: usize, terminators: &[u8]) -> Option<(String
 /// one-field one holding NULL, and a fault for every other arity. A caller
 /// that does not know the field list cannot ask this question, and neither
 /// can the server.
+// pg-refuses: I44 — every refusal here is `record_in`'s, arity included.
 pub fn parse_record(s: &str, columns: usize) -> Option<RecordLiteral> {
     let b = s.as_bytes();
     let mut i = skip_space(b, 0);
@@ -1188,6 +1190,7 @@ pub fn parse_record(s: &str, columns: usize) -> Option<RecordLiteral> {
 /// here, where the server would rewrite it to `[1,11)` for a discrete subtype.
 /// That needs the subtype's own successor function, which this module does not
 /// have.
+// pg-refuses: I44 — every refusal here is `range_in`'s grammar's.
 pub fn parse_range(s: &str) -> Option<RangeLiteral> {
     let b = s.as_bytes();
     let i = skip_space(b, 0);
@@ -1250,6 +1253,7 @@ enum MultirangeState {
 /// member that is *equivalent* to empty — `[1,1)` — is kept here and dropped
 /// by the server, which is the same missing successor function
 /// [`parse_range`] records.
+// pg-refuses: I44 — every refusal here is `multirange_in`'s grammar's.
 pub fn parse_multirange(s: &str) -> Option<Vec<RangeLiteral>> {
     let b = s.as_bytes();
     let mut i = skip_space(b, 0);
@@ -1338,6 +1342,7 @@ pub fn parse_multirange(s: &str) -> Option<Vec<RangeLiteral>> {
 /// *after* the number to be a space or the end of the string. That last rule
 /// is the one worth reproducing rather than smoothing into "any whitespace
 /// separates": `\t1 2` is accepted and `1\t2` is not.
+// pg-refuses: I47 — every refusal here is `int2vectorin`'s, the `int16` bound included.
 pub fn parse_int2vector(s: &str) -> Option<Vec<i16>> {
     let b = s.as_bytes();
     let mut i = 0;

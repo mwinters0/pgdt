@@ -321,8 +321,9 @@ compares the emitted column.
 
 **Each refusal on PostgreSQL's terms carries a `pg-refuses: I<n>` marker**, and
 the invariant it names lists the site under "Relied on by", so walking the
-invariants at a new major finds every refusal that release may have lifted.
-Unrepresentable is not one of these: it is our front end's limit (D96).
+invariants at a new major finds every refusal that release may have lifted;
+`scripts/pg_refuses.py` resolves each and says what counts. Unrepresentable is
+not one of these: it is our front end's limit (D96).
 
 ### Expand the generated fixtures freely; verify objectively wherever possible
 

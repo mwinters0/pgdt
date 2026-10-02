@@ -129,4 +129,16 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **`pg-refuses` marks refused values, not refused comparisons** (`M204`).
+  The call: a marker goes where a literal's or field's text is refused because
+  the type's `*_in` refuses it — eleven sites today — and not where
+  `predicate.rs` refuses an operator because PostgreSQL has none for the
+  column (an ordering on a container with no plan, an `Unanswerable` `=`), nor
+  on a declaration `pgtype.rs` resolves to text. Why: the roadmap's rule sits
+  under the literal ceiling and names `*_in`, and the work queued behind the
+  marker (`M203`, `M205`–`M209`, 31.12) is all refused values; a comparison
+  the server stops refusing is seen today only where `oracle_differences.py`
+  walks a case the oracle lists. Reconsidering means marking those
+  refusals in `predicate.rs` and listing each site in I45, I46 or the
+  register's invariants, with the criterion in `scripts/pg_refuses.py`'s
+  docstring widened to match.

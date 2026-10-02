@@ -929,6 +929,7 @@ impl<'a> JsonCursor<'a> {
     /// refused, which is what the server refuses and what `escape_json` never
     /// writes — it renders every one of them as `\b`/`\f`/`\n`/`\r`/`\t` or a
     /// `\u00xx` (I41).
+    // pg-refuses: I41 — an unescaped byte below `0x20`.
     fn string(&mut self) -> Option<String> {
         if !self.eat(b'"') {
             return None;
@@ -972,6 +973,7 @@ impl<'a> JsonCursor<'a> {
     /// `\uXXXX`, its `\u` already eaten. Surrogates must come as a matched
     /// high-then-low pair, and `\u0000` is refused outright: `jsonb` stores
     /// strings as `text`, which cannot hold a NUL (I41).
+    // pg-refuses: I41 — `\u0000`, and a surrogate out of its pair.
     fn unicode_escape(&mut self) -> Option<char> {
         let first = self.hex4()?;
         if first == 0 {
@@ -1008,6 +1010,7 @@ impl<'a> JsonCursor<'a> {
     /// The result is the [`NumericKey`] the stored `numeric` would compare by,
     /// so the exponent is applied by moving the decimal point rather than
     /// kept: `1e2`, `100` and `100.00` are one value (I41).
+    // pg-refuses: I41 — `01`, `+1`, `.5`, `1.` and `NaN`.
     fn number(&mut self) -> Option<NumericKey> {
         let negative = self.eat(b'-');
         let int = self.digits()?;
@@ -1291,6 +1294,7 @@ fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
     if bits > maxbits {
         return None;
     }
+    // pg-refuses: I40 — a bit set below the netmask.
     if cidr && (bits..maxbits).any(|bit| addr[usize::from(bit / 8)] & (0x80 >> (bit % 8)) != 0) {
         return None;
     }
@@ -1736,6 +1740,7 @@ fn make_range(
     // date `infinity` decodes to `OrderKey::PositiveInfinity` rather than to
     // a day count, so it matches no arm here and is left as written, which is
     // what makes `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
+    // pg-refuses: I46 — a successor past the subtype's largest value.
     let successor = |bound: &RangeBoundKey| match &bound.value {
         Some(NestedKey::Leaf(OrderKey::Int(n))) => (*n < discrete.largest()).then(|| {
             Some(RangeBoundKey {
@@ -1773,6 +1778,7 @@ fn serialize_range(
         return Some(RangeKey::empty());
     }
     match compare_bound_values(&lower, &upper) {
+        // pg-refuses: I46 — `22000`, a lower bound above its upper.
         Ordering::Greater => return None,
         // Equal bounds are a value only when both ends include it: `[1,1]` is
         // one point and `[1,1)`, `(1,1]` and `(1,1)` are all `empty`. This

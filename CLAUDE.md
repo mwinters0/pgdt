@@ -24,6 +24,7 @@ cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --he
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site
+cd scripts && uv run pg_refuses.py    # each `pg-refuses: I<n>` marker vs its invariant's "Relied on by"
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts

@@ -2511,7 +2511,9 @@ dump can hold, and the order PostgreSQL puts two such values in.
   `bitncmp` over the **shorter** of the two netmasks, then the netmask lengths,
   then `bitncmp` over the family's full width. The middle step is what makes
   this not a byte order: `10.1.0.0/8` sorts *below* `10.0.0.0/16`, because
-  their first eight bits agree and `8 < 16`.
+  their first eight bits agree and `8 < 16`. One input rule tells the two
+  types apart: `cidr_in` refuses a value with a bit set below its netmask
+  (`22P02`, "Value has bits set to right of mask"), where `inet_in` keeps it.
 - **`macaddr` and `macaddr8`.** Written as six (resp. eight) lowercase hex
   pairs joined by `:`. `macaddr_cmp_internal` and `macaddr8_cmp_internal`
   compare the high half then the low half of the octets, which is the plain
@@ -2536,7 +2538,8 @@ remainder before doing the same sum, which is the identical value. `date.c`'s
 `timetz_cmp_internal` is the `t1 = time1->time + (time1->zone * USECS_PER_SEC)`
 comparison with the zone tiebreak, under the comment *"we only want to say
 that two timetz's are equal if both the time and zone parts are equal"*.
-`network.c` carries `network_cmp_internal`, `bitncmp` and `network_out`;
+`network.c` carries `network_cmp_internal`, `bitncmp` and `network_out`, and
+`network_in`'s `if (is_cidr)` refusal through `addressOK`;
 `mac.c`/`mac8.c` carry the two `*_cmp_internal`.
 
 The behavioural half is committed:
@@ -2547,7 +2550,7 @@ spelling beside the input that produced it (`interval  1.5 hours  ok
 01:30:00`, `inet  192.168.1.1  ok  192.168.1.1`, `macaddr  08-00-2b-01-02-04
 ok  08:00:2b:01:02:04`).
 
-**Scope limit.** The *output* forms only. Each type's `*_in` accepts a far
+**Scope limit.** The *output* forms only, but for `cidr_in`'s one refusal. Each type's `*_in` accepts a far
 wider grammar — `1.5 hours` and `P1Y2M` for an interval, an abbreviated
 `10` for an IPv4 address, four separator conventions for a MAC — and this
 entry says nothing about those beyond that they exist; `pgtype.rs`'s register
@@ -2558,7 +2561,8 @@ reads the output form alone, and refuses the rest. Says nothing about
 `EncodeInterval`'s `INTSTYLE_POSTGRES` arm, `EncodeTimezone`,
 `timetz_cmp_internal`, `network_cmp_internal` and `bitncmp` are byte-identical
 across all six but for v13's `interval_cmp_value`, noted above, and v17's
-addition of the `INTERVAL_NOT_FINITE` branch ahead of `EncodeInterval`.
+addition of the `INTERVAL_NOT_FINITE` branch ahead of `EncodeInterval`;
+`network_in` differs only in v16's soft-error plumbing.
 `AddPostgresIntPart` differs only in the width of its `value` argument and the
 matching `printf` conversion — `int`/`%d` at v13–v14, `int64`/`%lld` at
 v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
@@ -2567,7 +2571,7 @@ type can hold.
 **Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
 and `MacAddr` arms and `predicate.rs`'s parsers for them —
 [`decisions.md`](decisions.md), "D55",
-where these are four *Agrees* rows. The `macaddr` output form is also what
+where these are four *Agrees* rows; `cidr_in`'s refusal is `network_key`'s. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
 column as text — `ComparisonPlan::bounds_kinds` and
 [`decisions.md`](decisions.md), "D79". The hour field's ceiling is also what keeps
@@ -2585,6 +2589,7 @@ awk '/^interval_cmp_value/,/^}/' src/backend/utils/adt/timestamp.c
 awk '/^timetz_cmp_internal/,/^}/' src/backend/utils/adt/date.c
 awk '/^network_cmp_internal/,/^}/' src/backend/utils/adt/network.c
 awk '/^bitncmp/,/^}/' src/backend/utils/adt/network.c
+awk '/^network_in\(/,/^}/' src/backend/utils/adt/network.c | grep -n 'is_cidr\|addressOK'
 awk '/^macaddr_cmp_internal/,/^}/' src/backend/utils/adt/mac.c
 ```
 
@@ -2714,7 +2719,8 @@ across all six. `json_lex_number` gained the incremental-parser branch at v17,
 which `jsonb_in` does not enter.
 
 **Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `predicate.rs`'s
-`Jsonb`, `JsonCursor` and `storage_order` —
+`Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
+what the input bullet says `jsonb_in` refuses — and `storage_order` —
 [`decisions.md`](decisions.md), "D55", where
 this is the row that agrees about structure and diverges at a string.
 
@@ -3346,7 +3352,7 @@ read (see `decisions.md`, "D58").
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6, its out-of-range lines against 13.23 too.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `predicate.rs`'s `make_range`, `compare_range`,
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `predicate.rs`'s `make_range`, `serialize_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
 `NestedCompare::Range`/`Multirange` and the `Discrete` value
 `builtin_range_subtype` sets. The first claim is also what makes a
