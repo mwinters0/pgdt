@@ -332,4 +332,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 4ecb705d -- pgdump_query/src/decode.rs; "
         "grep -n 'numeric(' scripts/generate_*.py",
     ),
+    Acknowledged(
+        commit="c68568ea",
+        figures=("preamble-prepass", "rss-attribution"),
+        why="31.4 files KD73: one deficiency marker added in preamble.rs above "
+        "the Connect arm, comments only, which comment_only_commit cannot place "
+        "in that file",
+        verified="git show c68568ea -- pgdump_query/src/preamble.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
