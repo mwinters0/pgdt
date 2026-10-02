@@ -502,6 +502,109 @@ async fn timestamp_infinity_is_read_as_null_or_refused_naming_its_context() {
     .await;
 }
 
+/// Columns whose scale PostgreSQL 15 and later admit and no fixture holds:
+/// past the precision (`v2_5`), past `Decimal128`'s (`v1_40`), past every
+/// Arrow decimal's (`v1_200`) and below `i8` (`v2_m129`), each value as
+/// `numeric_out` writes it (I51) — row 1 positive, row 2 zero (`-0.00099` in
+/// `v2_5`), row 4 negative (zero in `v2_5`).
+fn wide_scale_dump(dir: &Path) -> PathBuf {
+    let dump = dir.join("wide_scale.sql");
+    let fraction =
+        |digits: usize, tail: &str| format!("0.{}{tail}", "0".repeat(digits - tail.len()));
+    let rows = [
+        [
+            "1",
+            "0.00012",
+            &fraction(40, "3"),
+            &fraction(200, "5"),
+            &format!("12{}", "0".repeat(129)),
+        ],
+        ["2", "-0.00099", &fraction(40, ""), &fraction(200, ""), "0"],
+        ["3", "\\N", "\\N", "\\N", "\\N"],
+        [
+            "4",
+            "0.00000",
+            &format!("-{}", fraction(40, "3")),
+            &format!("-{}", fraction(200, "5")),
+            &format!("-12{}", "0".repeat(129)),
+        ],
+    ];
+    let rows: String = rows.iter().map(|row| format!("{}\n", row.join("\t"))).collect();
+    let text = format!(
+        "CREATE TABLE public.t (\n    id integer,\n    v2_5 numeric(2,5),\n    \
+         v1_40 numeric(1,40),\n    v1_200 numeric(1,200),\n    v2_m129 numeric(2,-129)\n);\n\n\
+         COPY public.t (id, v2_5, v1_40, v1_200, v2_m129) FROM stdin;\n{rows}\\.\n\nSELECT 1;\n"
+    );
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A scale Arrow's decimal can carry is typed at a precision widened to
+/// it, and one it cannot is text compared by value**: a typed query renders
+/// every value back as written, in the default and the refuse mode, a
+/// data-level `parse` counts nothing unrepresentable, and `>`, `<` and `=`
+/// against zero keep the rows PostgreSQL would.
+#[tokio::test]
+async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = wide_scale_dump(dir.path());
+
+    let (typed, schema) = try_rows_in(&path, "public.t", QueryOptions::default()).await.unwrap();
+    assert_eq!(typed, rows(&path, "public.t", SchemaMode::Strings).await);
+    assert!(
+        typed.iter().all(|row| row[0].as_deref() == Some("3") || row.iter().all(Option::is_some))
+    );
+    let types: Vec<&DataType> = schema.schema.fields().iter().map(|f| f.data_type()).collect();
+    assert_eq!(
+        types,
+        [
+            &DataType::Int32,
+            &DataType::Decimal128(5, 5),
+            &DataType::Decimal256(40, 40),
+            &DataType::Utf8View,
+            &DataType::Utf8View,
+        ]
+    );
+
+    let refuse =
+        QueryOptions { unrepresentable: UnrepresentableMode::Refuse, ..Default::default() };
+    let (refused, _) = try_rows_in(&path, "public.t", refuse).await.unwrap();
+    assert_eq!(refused, typed, "the refuse mode answers");
+
+    let source = LocalFileSource::open(&path).unwrap();
+    let mode = CacheMode::enabled(cache::colocated_path(&path));
+    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
+        .await
+        .unwrap()
+        .index;
+    let mut blocks = 0;
+    for block in index.blocks() {
+        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
+        blocks += 1;
+    }
+    assert_eq!(blocks, 1);
+
+    let against_zero = |column: &str, op| QueryOptions {
+        filter: Expr::all([Predicate { column: column.into(), op, value: Some("0".into()) }]),
+        projection: Some(vec!["id".into()]),
+        ..Default::default()
+    };
+    for (column, above, below, zero) in [
+        ("v2_5", "1", "2", "4"),
+        ("v1_40", "1", "4", "2"),
+        ("v1_200", "1", "4", "2"),
+        ("v2_m129", "1", "4", "2"),
+    ] {
+        for (op, id) in
+            [(PredicateOp::Gt, above), (PredicateOp::Lt, below), (PredicateOp::Eq, zero)]
+        {
+            let (kept, _) = try_rows_in(&path, "public.t", against_zero(column, op)).await.unwrap();
+            assert_eq!(kept, [vec![Some(id.to_string())]], "{column} {op:?} 0");
+        }
+    }
+}
+
 /// Columns at four negative scales (PostgreSQL 15 and later; no fixture
 /// holds one), written as `numeric_out` writes them (I51): zero as `0`
 /// whatever the scale, every other value ending in the scale's zeros. `v40`

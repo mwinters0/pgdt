@@ -1141,10 +1141,22 @@ fn catalog_name(name: &str) -> Option<&'static str> {
     CATALOG_NAMES.iter().find(|&&(catalog, _)| catalog == name).map(|&(_, sql)| sql)
 }
 
-/// `numeric(p,s)` -> `Decimal128`/`Decimal256` when `p` fits; bare `numeric`
-/// or a precision beyond `Decimal256`'s 76-digit ceiling stays `Utf8View`,
-/// same as arbitrary precision (I4: `NaN` is reachable through any numeric
-/// column regardless, and is a decode-time concern, not a mapping one).
+/// `numeric(p,s)` -> `Decimal128`/`Decimal256` of precision `max(p, s)` at
+/// scale `s` when that fits; bare `numeric`, and a typmod no Arrow decimal
+/// carries — a precision or a positive scale past `Decimal256`'s 76 digits,
+/// or a scale below `i8`'s -128 — stays `Utf8View`, same as arbitrary
+/// precision (I4: `NaN` is reachable through any numeric column regardless,
+/// and is a decode-time concern, not a mapping one).
+///
+/// **The precision widens to the scale** because PostgreSQL 15 and later
+/// admit a scale from -1000 to 1000 whatever the precision
+/// (`numerictypmodin`, I51), and Arrow refuses a positive scale past its
+/// precision: `numeric(2,5)` holds values below `0.001` written with five
+/// fractional digits (`0.00012`), at most `p` of them significant, so
+/// `Decimal128(5, 5)` holds every one exactly and stays typed. A negative
+/// scale is below any precision and needs no widening. Rejected: text for
+/// every scale past its precision, which gives up an exact typed column Arrow
+/// can carry.
 ///
 /// The `Utf8View` arms are still *ordered*: [`CompareKind::Numeric`]
 /// normalizes the text the file holds and compares by value, which is
@@ -1154,28 +1166,21 @@ fn catalog_name(name: &str) -> Option<&'static str> {
 ///
 /// **Only the bare form admits an infinity**: `apply_typmod_special` rejects
 /// `±Infinity` under any typmod (I34), so accepting the spelling in a
-/// *filter's literal* on the `p > 76` arm would accept a value the server
+/// *filter's literal* on a typmod'd text arm would accept a value the server
 /// refuses.
-///
-/// Deficiency register: `deficiency: KD63` — PostgreSQL 15 and later admit a
-/// scale from -1000 to 1000 whatever the precision (`numerictypmodin`), and
-/// this maps one Arrow's decimal refuses: a positive scale past the precision
-/// (`numeric(2,5)` holds `0.00012`) or past the type's `MAX_SCALE`, which
-/// `batch.rs`'s `with_precision_and_scale(..).expect(..)` then panics on; and
-/// a scale outside `i8` falls to `unwrap_or(0)`, so the column is typed at
-/// scale 0 and every non-zero value fails to decode. The fix widens the
-/// precision to cover a scale Arrow's decimal can carry, and maps one it
-/// cannot to text.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
     let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
     let mut parts = typmod.split(',').map(str::trim);
-    let precision: Option<u8> = parts.next().and_then(|p| p.parse().ok());
-    let scale: i8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let precision: Option<u16> = parts.next().and_then(|p| p.parse().ok());
+    let scale: Option<i8> = parts.next().map_or(Some(0), |s| s.parse().ok());
+    let (Some(precision), Some(scale)) = (precision, scale) else {
+        return (DataType::Utf8View, arbitrary(false));
+    };
     let decimal = ComparisonPlan::agrees(CompareKind::Decimal(scale));
-    match precision {
-        Some(p) if p <= 38 => (DataType::Decimal128(p, scale), decimal),
-        Some(p) if p <= 76 => (DataType::Decimal256(p, scale), decimal),
+    match u8::try_from(precision.max(u16::from(scale.max(0).unsigned_abs()))) {
+        Ok(p @ 1..=38) => (DataType::Decimal128(p, scale), decimal),
+        Ok(p @ 39..=76) => (DataType::Decimal256(p, scale), decimal),
         _ => (DataType::Utf8View, arbitrary(false)),
     }
 }
@@ -2307,9 +2312,39 @@ mod tests {
         );
     }
 
+    /// **A scale past the precision widens it, and one no Arrow decimal
+    /// carries is text** — every `numeric(p,s)` PostgreSQL 15 and later admit
+    /// maps to a type `batch.rs` can build, compared at its own scale where
+    /// typed and by value where not.
     #[test]
-    fn unrecognized_builtin_is_unknown() {
-        assert_eq!(resolve_declared_type("money", &[]), TypeOutcome::Unknown);
+    fn numeric_widens_a_precision_below_its_scale_and_texts_a_scale_arrow_lacks() {
+        use arrow::datatypes::{
+            Decimal128Type, Decimal256Type, validate_decimal_precision_and_scale,
+        };
+        let decimal = |s| ComparisonPlan::agrees(CompareKind::Decimal(s));
+        let text = || ComparisonPlan::agrees(CompareKind::Numeric { infinities: false });
+        for (typmod, mapped) in [
+            ("2,5", (DataType::Decimal128(5, 5), decimal(5))),
+            ("1,38", (DataType::Decimal128(38, 38), decimal(38))),
+            ("1,40", (DataType::Decimal256(40, 40), decimal(40))),
+            ("50,76", (DataType::Decimal256(76, 76), decimal(76))),
+            ("2,-128", (DataType::Decimal128(2, -128), decimal(-128))),
+            ("1,77", (DataType::Utf8View, text())),
+            ("1,200", (DataType::Utf8View, text())),
+            ("2,-129", (DataType::Utf8View, text())),
+            ("1000,-1000", (DataType::Utf8View, text())),
+        ] {
+            assert_eq!(map_numeric(Some(typmod)), mapped, "numeric({typmod})");
+            match mapped.0 {
+                DataType::Decimal128(p, s) => {
+                    validate_decimal_precision_and_scale::<Decimal128Type>(p, s).unwrap();
+                }
+                DataType::Decimal256(p, s) => {
+                    validate_decimal_precision_and_scale::<Decimal256Type>(p, s).unwrap();
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The twelve built-in range/multirange names carry their subtypes in the

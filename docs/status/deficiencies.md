@@ -344,12 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD63** — a `numeric(p,s)` whose scale PostgreSQL 15 and later admit but
-  Arrow's decimal does not — past its precision, as `numeric(2,5)`, or past
-  the type's maximum scale — panics a typed query of its table, and one past
-  `i8` is typed at scale 0, so its non-zero values read as NULL. **(b) owned
-  by `M201`**. Detail: `pgdump_query/src/pgtype.rs`.
-
 - **KD64** — an inheritance child's inherited columns are absent from its
   `CREATE TABLE` (`shouldPrintColumn`: `attislocal || ispartition`) and present
   in its `COPY` header, and the `INHERITS (…)` clause is not read, so every

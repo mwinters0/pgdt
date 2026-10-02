@@ -3701,7 +3701,7 @@ The first prints two lines, the second `3`, the third one and the fourth two.
 
 ---
 
-## I51 — A typmod'd `numeric` is written with exactly `max(s, 0)` fractional digits, and at a negative scale zero is `0`
+## I51 — A typmod'd `numeric` is written with exactly `max(s, 0)` fractional digits, holds at most `p` digits unscaled, and at a negative scale zero is `0`
 
 **Claim.** A value of a `numeric(p,s)` column is written by `numeric_out`
 with exactly `s` digits after a decimal point where `s > 0`, and with none
@@ -3709,7 +3709,9 @@ where `s <= 0`. At a negative scale (PostgreSQL 15 and later) every value is
 a multiple of `10^-s`, so every value but zero ends in at least `-s` zeros,
 and zero is written `0`, never with the scale's zeros, and never `-0`. A
 decoder that divides the scale's zeros out of a digit string must therefore
-take a short all-zero one as zero.
+take a short all-zero one as zero. Every value, unscaled at `s`, has at
+most `p` digits, so a scale past the precision (PostgreSQL 15 and later)
+holds only values below `10^(p-s)`, written with leading fractional zeros.
 
 **Proof.** `apply_typmod()` in `src/backend/utils/adt/numeric.c` calls
 `round_var(var, scale)`, which sets `var->dscale` to the scale and rounds the
@@ -3717,32 +3719,41 @@ value to it, then clamps a negative `dscale` to 0 (v15 onward; v13 and v14's
 `numerictypmodin` refuses a scale outside `0..precision`). `numeric_out`
 prints a finite value with `get_str_from_var`, which writes the integer
 digits — `0` alone where there are none — and then exactly `dscale`
-fractional digits; `round_var` makes a zero result positive.
+fractional digits; `round_var` makes a zero result positive. After rounding,
+`apply_typmod` raises *numeric field overflow* for a value whose integer
+digits exceed `maxdigits = precision - scale`, so a value's magnitude is
+below `10^(p-s)`.
 
 **Observed.** On the koji replica, v16.15:
 `copy (select 0::numeric(3,-2), (-0.0)::numeric(3,-2), 1234::numeric(5,-2), 0::numeric(40,-5)) to stdout`
-writes `0	0	1200	0`. No fixture holds a negative-scale column;
+writes `0	0	1200	0`; `0.00012::numeric(2,5)` writes `0.00012`,
+`0::numeric(2,5)` writes `0.00000`, and `5e-200::numeric(1,200)` writes 199
+zeros after the point, then `5`. No fixture holds a negative-scale column;
 `pgdump_query/tests/decode.rs`,
-`a_negative_scale_zero_reads_as_zero_in_every_mode`, reads a hand-built one.
+`a_negative_scale_zero_reads_as_zero_in_every_mode`, reads a hand-built one,
+and `a_scale_past_the_precision_or_arrows_reach_reads_every_value` one past
+the precision.
 
 **Scope limit.** `NaN` bypasses the typmod and is spelled `NaN` (I34).
 
 **Verified against:** v15.19, v16.15, v17.11, v18.6 for the negative-scale clamp;
-v13.23 and v14.24 refuse a negative scale at `numerictypmodin`.
+v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
+`maxdigits` check at all six.
 
 **Relied on by:** `decode::decimal_unscaled_digits` and
 `decode::render_decimal`, which take a typed `numeric` column's text to and
-from an unscaled integer at the column's scale.
+from an unscaled integer at the column's scale; `pgtype::map_numeric`, which
+widens the precision to a scale past it.
 
 **Re-verify.**
 
 ```sh
 cd /mnt/wd12t/upstream/postgres/release-v<N>
-awk '/^apply_typmod\(/,/^}/' src/backend/utils/adt/numeric.c | grep -n 'round_var(var, scale)\|dscale < 0\|dscale = 0'
+awk '/^apply_typmod\(/,/^}/' src/backend/utils/adt/numeric.c | grep -n 'round_var(var, scale)\|dscale < 0\|dscale = 0\|maxdigits = precision - scale'
 grep -n 'scale %d must be between' src/backend/utils/adt/numeric.c
 ```
 
-The first prints three lines from v15 on; the second names `%d and %d`
+The first prints four lines from v15 on; the second names `%d and %d`
 (-1000 and 1000) from v15 on, and `0 and precision %d` before.
 
 ---

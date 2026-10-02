@@ -142,6 +142,11 @@ comes back as a string. If you need it as a number, cast it downstream where you
 can choose what to do with the values that do not fit.
 
 Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
+From PostgreSQL 15 a scale may exceed the precision or be negative:
+`numeric(2,5)` holds values below `0.001`, such as `0.00012`, and maps to
+`Decimal128(5,5)`, the precision widened to the scale so every value fits
+exactly. A scale past 76, or below −128, has no Arrow decimal and comes back
+as a string too.
 
 **The filter operators are not fooled by that.** They compare such a column as
 a decimal, exactly as PostgreSQL does, over the digits the dump holds — so
@@ -985,8 +990,8 @@ Where each column comes from:
 | `oid` → `UInt32` | 0 … 4294967295 | same | same | unbounded `int` | `uint32`; `float64` if the column holds a NULL |
 | `real` → `Float32` | ±3.4028235e+38 | same | same | widened exactly to `float` | `float32` |
 | `double precision` → `Float64` | ±1.7976931348623157e+308 | same | same | same | `float64` |
-| `numeric(p≤38, s)` → `Decimal128(p, s)` | ±(10³⁸ − 1) at `(38,0)` | ±(10³⁸ − 1) at precision 38 | same | `Decimal`, exact | `Decimal` objects, exact |
-| `numeric(39–76, s)` → `Decimal256(p, s)` | ±(10⁷⁶ − 1) at `(76,0)` | ±(10⁷⁶ − 1) at precision 76 | same | `Decimal`, exact | `Decimal` objects, exact |
+| `numeric(p, s)`, `max(p, s)` ≤ 38 → `Decimal128(max(p, s), s)` | ±(10³⁸ − 1) at `(38,0)` | ±(10³⁸ − 1) at precision 38 | same | `Decimal`, exact | `Decimal` objects, exact |
+| `numeric(p, s)`, `max(p, s)` 39–76 → `Decimal256(max(p, s), s)` | ±(10⁷⁶ − 1) at `(76,0)` | ±(10⁷⁶ − 1) at precision 76 | same | `Decimal`, exact | `Decimal` objects, exact |
 
 `uuid` (`FixedSizeBinary(16)`), `bytea` (`Binary`), `boolean` and
 `int2vector` (`List<Int16>`) have no range to compare; every consumer above
