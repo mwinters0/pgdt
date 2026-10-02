@@ -9,13 +9,15 @@ entry, fold it into the spec or discard it as stale, and delete this file. See
 
 ## P31 discards table constraints; P32 is where they are held
 
-**Fact.** P31 makes `parse_create_table` classify a `CONSTRAINT`, `CHECK`,
-`UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE` or `LIKE` fragment as
-not-a-column and drop it (`KD69`), because no reader reads one today. The
-maintainer's aim, stated at that grilling, is to capture every object and
+**Fact.** `preamble.rs`'s `parse_table_element` classifies a `CONSTRAINT`,
+`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, 18's table-level
+`NOT NULL <column>` or `LIKE` fragment as not-a-column and drops it (I53),
+because no reader reads one today; a `LIKE`'s columns are not followed
+either, so a hand-written `CREATE TABLE t (LIKE s)` declares none. The
+maintainer's aim, stated at P31's grilling, is to capture every object and
 property, so the drop is P31's scope and not the design.
 
-**Why P32 cares.** The grammar P31 lands already tells a constraint from a
+**Why P32 cares.** The grammar already tells a constraint from a
 column, so holding one is additive: the decision is the model's shape, not
 the parse. A `NOT NULL` is the nearest reader — it could tell DataFusion a
 field is non-nullable — and a `PRIMARY KEY` or `UNIQUE` could answer a
@@ -23,7 +25,7 @@ distinct count without statistics.
 
 **Origin.** P31 grilling, 2026-10-02
 (`roadmap-P31-correctness-evidence.md`, "Columns declared elsewhere, and what
-the preamble holds"). *Contingent on* P31's `KD69` slice landing that grammar.
+the preamble holds"); landed at 31.5.
 
 ---
 

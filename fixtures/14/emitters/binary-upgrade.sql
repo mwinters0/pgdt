@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict sFVMIJpdIhKRqs5a2vQ8jasuYQcFimJ04s82EohdP17zy0fiXqB5xEXfQVHGEd2
+\restrict t1eB2fhsa2nxDbM4wdcBhLtEWoscPhJqcgUMrKuaMs2itcoS3bXand4nS7vmRWU
 
 -- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
 -- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
@@ -468,15 +468,15 @@ ALTER TYPE emitters.pair OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16538'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16546'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16537'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16545'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16536'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16544'::pg_catalog.oid);
 
 CREATE TYPE emitters.person AS (
 	name text,
@@ -891,15 +891,15 @@ ALTER TABLE emitters.domain_values OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16551'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16559'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16558'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16549'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16557'::pg_catalog.oid);
 
 CREATE FOREIGN TABLE emitters.external (
     id integer,
@@ -987,17 +987,17 @@ ALTER TABLE emitters.grown OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16541'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16549'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16540'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16548'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16539'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16542'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16543'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16547'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16551'::pg_catalog.oid);
 
 CREATE TABLE emitters.people (
     name text NOT NULL,
@@ -1010,13 +1010,13 @@ ALTER TABLE ONLY emitters.people OF emitters.person;
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '810', relminmxid = '1'
+SET relfrozenxid = '812', relminmxid = '1'
 WHERE oid = 'emitters.people'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '810', relminmxid = '1'
-WHERE oid = '16542';
+SET relfrozenxid = '812', relminmxid = '1'
+WHERE oid = '16550';
 
 
 ALTER TABLE emitters.people OWNER TO postgres;
@@ -1158,6 +1158,43 @@ WHERE oid = 'emitters.scratch'::pg_catalog.regclass;
 
 
 ALTER TABLE emitters.scratch OWNER TO postgres;
+
+--
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16538'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16537'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16536'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16540'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16541'::pg_catalog.oid);
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '809', relminmxid = '1'
+WHERE oid = 'emitters.stamped'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '809', relminmxid = '1'
+WHERE oid = '16540';
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
 
 --
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
@@ -1349,6 +1386,16 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -1426,6 +1473,18 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16542'::pg_catalog.oid);
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -1466,5 +1525,5 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict sFVMIJpdIhKRqs5a2vQ8jasuYQcFimJ04s82EohdP17zy0fiXqB5xEXfQVHGEd2
+\unrestrict t1eB2fhsa2nxDbM4wdcBhLtEWoscPhJqcgUMrKuaMs2itcoS3bXand4nS7vmRWU
 

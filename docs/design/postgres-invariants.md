@@ -3783,3 +3783,46 @@ awk '/^dumpTableSchema\(/,/^}/' src/bin/pg_dump/pg_dump.c | grep -n "conkey IN (
 
 The first prints one line; the second prints the branch test and, below it,
 the `conkey IN (` append.
+
+## I53 — A `CREATE TABLE` element opening with a reserved keyword is no column, and only `EXCLUDE` among a constraint's opening words is unreserved
+
+**Claim.** In a `CREATE TABLE` list, a column definition opens with its name,
+a `ColId`, which is an identifier, an unreserved keyword or a column-name
+keyword; a table constraint opens with `CONSTRAINT`, `CHECK`, `UNIQUE`,
+`PRIMARY`, `FOREIGN`, `EXCLUDE` or, from 18, `NOT` (`NOT NULL <column>`), and a
+`LIKE` clause with `LIKE`. All of these but `EXCLUDE` are reserved (`LIKE` a
+type-or-function-name keyword), so none can be a column's name written bare,
+and `pg_dump` quotes a column so named. `EXCLUDE` is unreserved, so `exclude`
+is a column `pg_dump` writes bare; as a constraint it is followed by `USING`,
+which is reserved, or by `(`, which opens no type.
+
+**Proof.** `src/backend/parser/gram.y`: `TableElement` is `columnDef |
+TableLikeClause | TableConstraint`, `columnDef` opens with `ColId`, and `ColId`
+is `IDENT | unreserved_keyword | col_name_keyword`; `ConstraintElem`'s arms
+open `CHECK`, `UNIQUE`, `PRIMARY KEY`, `EXCLUDE access_method_clause '('`,
+`FOREIGN KEY` and, at 18, `NOT NULL_P ColId`. `src/include/parser/kwlist.h`
+gives each word's category. `fmtIdEnc` in `src/fe_utils/string_utils.c` quotes
+any keyword whose category is not `UNRESERVED_KEYWORD`. `dumpTableSchema` at
+18 writes `NOT NULL %s` and `CONSTRAINT %s NOT NULL %s` as list elements for
+an inherited column carrying a local not-null constraint.
+
+**Scope limit.** The `CREATE TABLE` list only; a composite's attribute list
+holds no constraint.
+
+**Verified against:** v13.23 and v18.6 (categories and `ColId` identical);
+`fixtures/18/emitters/default.sql`'s `emitters.child` holds `NOT NULL label`.
+
+**Relied on by:** `preamble.rs`'s `parse_table_element`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -E '^PG_KEYWORD\("(constraint|check|unique|primary|foreign|exclude|like|not|using)"' src/include/parser/kwlist.h
+grep -n "^ColId:" -A3 src/backend/parser/gram.y
+awk '/^ConstraintElem:/,/^\t\t;/' src/backend/parser/gram.y | grep -E "^\t\t\t(\| )?[A-Z]" | cut -c1-40
+```
+
+The first prints `exclude` alone as `UNRESERVED_KEYWORD`; the third prints
+`ConstraintElem`'s arms, the first being `CHECK`, and none opening with a word
+the claim does not name.

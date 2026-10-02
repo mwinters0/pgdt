@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict TNwElV45KlYjpfwQyuHdJurAbXgsM0ffjxnbnXDad241d4FGU5G17WeQKdElJ71
+\restrict 7mcrhSHT6zvZcT6gujErGz8FCKjcgu5bbZCtbCUCwB1YbcKP8SYrb6hcjBWk2l9
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -621,6 +621,19 @@ CREATE UNLOGGED TABLE emitters.scratch (
 ALTER TABLE emitters.scratch OWNER TO postgres;
 
 --
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
+
+--
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -740,6 +753,16 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -801,6 +824,14 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -833,5 +864,5 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict TNwElV45KlYjpfwQyuHdJurAbXgsM0ffjxnbnXDad241d4FGU5G17WeQKdElJ71
+\unrestrict 7mcrhSHT6zvZcT6gujErGz8FCKjcgu5bbZCtbCUCwB1YbcKP8SYrb6hcjBWk2l9
 

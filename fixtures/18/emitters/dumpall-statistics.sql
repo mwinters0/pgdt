@@ -2,14 +2,14 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict ev2NPTn3WbCMbWeoLBDhhtFJfmQ3W5Dtd4usXxbSBwtLRy5MnYtRaqQTsbPZuCt
+\restrict 6cwNnlyjKGnzeGu9zrmatJmrzZwRjN2gNiCNz1sbalpDrZTM0f5qgMj5aXHdebK
 
 SET default_transaction_read_only = off;
 
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 
-\unrestrict ev2NPTn3WbCMbWeoLBDhhtFJfmQ3W5Dtd4usXxbSBwtLRy5MnYtRaqQTsbPZuCt
+\unrestrict 6cwNnlyjKGnzeGu9zrmatJmrzZwRjN2gNiCNz1sbalpDrZTM0f5qgMj5aXHdebK
 
 --
 -- Databases
@@ -25,7 +25,7 @@ SET standard_conforming_strings = on;
 -- PostgreSQL database dump
 --
 
-\restrict hdDbg9NpWyNKGgxQWhQZHuNLBV0CKXPoXSZVQObrXzb63OrfsgdXYysmraQ4nCi
+\restrict FqFd1stg8tmgsjOyW1z6PBRSd099j2dVLshXA1EbUG9ZdfBspiHhOk8fMRnSBOz
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -46,7 +46,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hdDbg9NpWyNKGgxQWhQZHuNLBV0CKXPoXSZVQObrXzb63OrfsgdXYysmraQ4nCi
+\unrestrict FqFd1stg8tmgsjOyW1z6PBRSd099j2dVLshXA1EbUG9ZdfBspiHhOk8fMRnSBOz
 
 --
 -- Database "pgdt-emitters" dump
@@ -56,7 +56,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict OsTduOXifARVdchZj1boLtfvg7TlzbcjjafWG2cL7KZiyAKj2qKEr5QiIqdmUh6
+\restrict hY6lypp2g3stqPSk5mVIqIVoAfzt376HmfoNNCRAa6PwBzeCMV0FhGIWE9m8nj4
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -82,10 +82,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict OsTduOXifARVdchZj1boLtfvg7TlzbcjjafWG2cL7KZiyAKj2qKEr5QiIqdmUh6
+\unrestrict hY6lypp2g3stqPSk5mVIqIVoAfzt376HmfoNNCRAa6PwBzeCMV0FhGIWE9m8nj4
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict OsTduOXifARVdchZj1boLtfvg7TlzbcjjafWG2cL7KZiyAKj2qKEr5QiIqdmUh6
+\restrict hY6lypp2g3stqPSk5mVIqIVoAfzt376HmfoNNCRAa6PwBzeCMV0FhGIWE9m8nj4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -143,7 +143,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump complete
 --
 
-\unrestrict OsTduOXifARVdchZj1boLtfvg7TlzbcjjafWG2cL7KZiyAKj2qKEr5QiIqdmUh6
+\unrestrict hY6lypp2g3stqPSk5mVIqIVoAfzt376HmfoNNCRAa6PwBzeCMV0FhGIWE9m8nj4
 
 --
 -- Database "pgdt_fixture" dump
@@ -153,7 +153,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump
 --
 
-\restrict vjfanuctvEN7kQiWiHnhTGYCiJaLYwbslKLqFuIin8gTq9SHqAGGI2aPhC7iToO
+\restrict tyrhAPMY3PtWddKVoJMJpVp8uVlJfscUeKDhwEiMNOxlaYgD84O3TiNnAQncuyT
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -179,9 +179,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict vjfanuctvEN7kQiWiHnhTGYCiJaLYwbslKLqFuIin8gTq9SHqAGGI2aPhC7iToO
+\unrestrict tyrhAPMY3PtWddKVoJMJpVp8uVlJfscUeKDhwEiMNOxlaYgD84O3TiNnAQncuyT
 \connect pgdt_fixture
-\restrict vjfanuctvEN7kQiWiHnhTGYCiJaLYwbslKLqFuIin8gTq9SHqAGGI2aPhC7iToO
+\restrict tyrhAPMY3PtWddKVoJMJpVp8uVlJfscUeKDhwEiMNOxlaYgD84O3TiNnAQncuyT
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -273,6 +273,16 @@ COPY emitters.range_values (id, v_canon, v_diff, v_pattern) FROM stdin;
 COPY emitters.scratch (id, at, ok) FROM stdin;
 1	2024-03-01	t
 2	\N	f
+\.
+
+
+--
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
 \.
 
 
@@ -441,6 +451,21 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 
 
 --
+-- Statistics for Name: stamped; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'stamped',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Statistics for Name: trios; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -546,6 +571,21 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 
 
 --
+-- Statistics for Name: stamped_pkey; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'stamped_pkey',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Statistics for Name: trios_pkey; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -594,7 +634,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump complete
 --
 
-\unrestrict vjfanuctvEN7kQiWiHnhTGYCiJaLYwbslKLqFuIin8gTq9SHqAGGI2aPhC7iToO
+\unrestrict tyrhAPMY3PtWddKVoJMJpVp8uVlJfscUeKDhwEiMNOxlaYgD84O3TiNnAQncuyT
 
 --
 -- Database "postgres" dump
@@ -606,7 +646,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump
 --
 
-\restrict audfzrCrz3pkGFdsAGymS1FPrHo0PxAamx2vVE46NvNVg03o8M7bH44RJoOpTAL
+\restrict p0MHin76eMHgTzNoeZd0cJ12CJmLAyrIgeaDtk7VRKShpOqBuFtSQVenHVCccUY
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -627,7 +667,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict audfzrCrz3pkGFdsAGymS1FPrHo0PxAamx2vVE46NvNVg03o8M7bH44RJoOpTAL
+\unrestrict p0MHin76eMHgTzNoeZd0cJ12CJmLAyrIgeaDtk7VRKShpOqBuFtSQVenHVCccUY
 
 --
 -- PostgreSQL database cluster dump complete

@@ -461,9 +461,9 @@ fn matching_paren(bytes: &[u8], open_idx: usize) -> Option<usize> {
     None
 }
 
-/// Split `s` on top-level commas — not ones nested inside parens, a
-/// single-quoted string or a double-quoted identifier — trimming and dropping
-/// empty fragments.
+/// Split `s` on top-level commas — not ones nested inside parens, an
+/// `ARRAY[…]` constructor's or a subscript's brackets, a single-quoted string
+/// or a double-quoted identifier — trimming and dropping empty fragments.
 fn split_top_level_commas(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut parts = Vec::new();
@@ -480,8 +480,8 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
                 i = skip_double_quoted(bytes, i);
                 continue;
             }
-            b'(' => depth += 1,
-            b')' => depth -= 1,
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
             b',' if depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;
@@ -604,16 +604,6 @@ fn extract_type_words(rest: &str) -> String {
 
 /// Parse one `<name> <type> [constraints...]` fragment from a column or
 /// composite-field list.
-///
-/// Deficiency register: `deficiency: KD69` — any fragment whose first token
-/// is an identifier is a column, so a table-level `CONSTRAINT c CHECK (…)`
-/// becomes a column named `constraint`, and [`split_top_level_commas`] does
-/// not track `[`/`]`, so `DEFAULT ARRAY[a, b]` yields a second fragment, a
-/// column `b` of type `]`. Resolution joins by the `COPY` header's names and
-/// a table's real columns come first, so a later real column named like a
-/// word inside an earlier default's brackets finds the bogus definition. The
-/// fix is a `CREATE TABLE` grammar returning columns and table constraints
-/// as different things. **(b) owned by `P31`**.
 fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
     let frag = frag.trim();
     if frag.is_empty() {
@@ -656,9 +646,47 @@ fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
     }
     let close = matching_paren(after.as_bytes(), 0)?;
     let inner = &after[1..close];
-    let columns =
-        split_top_level_commas(inner).into_iter().filter_map(parse_column_fragment).collect();
+    let columns = split_top_level_commas(inner)
+        .into_iter()
+        .filter_map(|fragment| match parse_table_element(fragment)? {
+            TableElement::Column(column) => Some(column),
+            TableElement::Constraint | TableElement::Like => None,
+        })
+        .collect();
     Some((name, columns))
+}
+
+/// One top-level fragment of a `CREATE TABLE` list: gram.y's `TableElement`,
+/// a `columnDef`, a `TableConstraint` or a `TableLikeClause`.
+///
+/// Only a column is held, the others being told apart and dropped: no reader
+/// reads a table constraint, and a `LIKE`'s columns are not followed.
+enum TableElement {
+    Column(ColumnDef),
+    Constraint,
+    Like,
+}
+
+/// Which [`TableElement`] `frag` is, told by its first word: a constraint or
+/// a `LIKE` opens with a keyword no column's name can be written as bare, but
+/// for `EXCLUDE`, which opens one only where `USING` or `(` follows (I53).
+/// `NOT` is 18's table-level `NOT NULL <column>`.
+fn parse_table_element(frag: &str) -> Option<TableElement> {
+    const CONSTRAINT_WORDS: &[&str] =
+        &["CONSTRAINT", "CHECK", "UNIQUE", "PRIMARY", "FOREIGN", "NOT"];
+    let frag = frag.trim_start();
+    if CONSTRAINT_WORDS.iter().any(|kw| strip_kw(frag, kw).is_some()) {
+        return Some(TableElement::Constraint);
+    }
+    if strip_kw(frag, "LIKE").is_some() {
+        return Some(TableElement::Like);
+    }
+    if let Some(after) = strip_kw(frag, "EXCLUDE")
+        && (after.starts_with('(') || strip_kw(after, "USING").is_some())
+    {
+        return Some(TableElement::Constraint);
+    }
+    parse_column_fragment(frag).map(TableElement::Column)
 }
 
 /// `CREATE DOMAIN <name> AS <basetype> [COLLATE ...] [constraints...];`
@@ -1354,6 +1382,64 @@ mod tests {
             ");",
         ]);
         assert_eq!(cols[2], ColumnDef::new("........pg.dropped.3........", "INTEGER"));
+    }
+
+    /// Every `TableConstraint` and `TableLikeClause` gram.y admits in a column
+    /// list is told from a column and dropped, the forms `pg_dump` writes
+    /// (an inline `CHECK`, 18's table-level `NOT NULL`) and the ones only a
+    /// hand-written file holds; a column whose name is one of those words
+    /// stays a column wherever it can be one — quoted, or `exclude` bare,
+    /// that word being unreserved.
+    #[test]
+    fn a_table_constraint_or_like_is_no_column() {
+        let (_, cols) = parse_table(&[
+            "CREATE TABLE public.t (",
+            "    LIKE public.src INCLUDING ALL,",
+            "    id integer NOT NULL,",
+            "    exclude integer,",
+            "    \"constraint\" text,",
+            "    \"not\" boolean,",
+            "    NOT NULL inherited NO INHERIT,",
+            "    CONSTRAINT named_nn NOT NULL inherited,",
+            "    CONSTRAINT t_id_positive CHECK ((id > 0)),",
+            "    CHECK (id < 10) NO INHERIT,",
+            "    UNIQUE (id),",
+            "    PRIMARY KEY (id),",
+            "    FOREIGN KEY (id) REFERENCES public.other(id),",
+            "    EXCLUDE USING gist (id WITH =),",
+            "    exclude (id WITH =)",
+            ");",
+        ]);
+        assert_eq!(
+            cols,
+            vec![
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("exclude", "integer"),
+                ColumnDef::new("constraint", "text"),
+                ColumnDef::new("not", "boolean"),
+            ]
+        );
+    }
+
+    /// A comma inside an `ARRAY[…]` default splits nothing, so a later column
+    /// named like a word inside the brackets keeps its own type.
+    #[test]
+    fn a_comma_inside_brackets_splits_no_column() {
+        let (_, cols) = parse_table(&[
+            "CREATE TABLE public.t (",
+            "    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],",
+            "    counts integer[] DEFAULT ARRAY[1, 2],",
+            "    now integer",
+            ");",
+        ]);
+        assert_eq!(
+            cols,
+            vec![
+                ColumnDef::new("stamps", "timestamp with time zone[]"),
+                ColumnDef::new("counts", "integer[]"),
+                ColumnDef::new("now", "integer"),
+            ]
+        );
     }
 
     /// The `COLLATE` clause, in the shape `pg_dump` actually writes it (I37):

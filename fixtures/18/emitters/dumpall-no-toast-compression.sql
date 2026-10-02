@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict GMZLNCikLZJiaj5dF8vy8sWzfdsqtcIsSqiUn24utowi4mvDGIYpYrRJqZ0VJ0f
+\restrict Gk2fQ6HPc12GJoauq4N0BVEQYlqhZgLskIY4y13OIE7JESUETm5cVhiDASEvWop
 
 SET default_transaction_read_only = off;
 
@@ -34,7 +34,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict GMZLNCikLZJiaj5dF8vy8sWzfdsqtcIsSqiUn24utowi4mvDGIYpYrRJqZ0VJ0f
+\unrestrict Gk2fQ6HPc12GJoauq4N0BVEQYlqhZgLskIY4y13OIE7JESUETm5cVhiDASEvWop
 
 --
 -- Databases
@@ -50,7 +50,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- PostgreSQL database dump
 --
 
-\restrict pQnjQlFuls5bnIXDn1yshlaMKY5oodgaoAwEmOFOgC03Garvoa39K47SncwzVMe
+\restrict cU4NPf5VERmEXt33s1hLFGMC9AtsTn31pO5FbYebtoxySaTk4CYrcfZfd3bBKPM
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -71,7 +71,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict pQnjQlFuls5bnIXDn1yshlaMKY5oodgaoAwEmOFOgC03Garvoa39K47SncwzVMe
+\unrestrict cU4NPf5VERmEXt33s1hLFGMC9AtsTn31pO5FbYebtoxySaTk4CYrcfZfd3bBKPM
 
 --
 -- Database "pgdt-emitters" dump
@@ -81,7 +81,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict 11UPadlloe5zANod04HwU2gaimJA2oUZDnfRUhnk4153f5dYxfRdDC3ctUb2iWH
+\restrict RqJ9HhddFU1W5ksrZWxfKylfP28UVb4FswDiL60ZrDMkWi3sfOGh3P9sMTAxeb0
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -107,10 +107,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict 11UPadlloe5zANod04HwU2gaimJA2oUZDnfRUhnk4153f5dYxfRdDC3ctUb2iWH
+\unrestrict RqJ9HhddFU1W5ksrZWxfKylfP28UVb4FswDiL60ZrDMkWi3sfOGh3P9sMTAxeb0
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict 11UPadlloe5zANod04HwU2gaimJA2oUZDnfRUhnk4153f5dYxfRdDC3ctUb2iWH
+\restrict RqJ9HhddFU1W5ksrZWxfKylfP28UVb4FswDiL60ZrDMkWi3sfOGh3P9sMTAxeb0
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -153,7 +153,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 11UPadlloe5zANod04HwU2gaimJA2oUZDnfRUhnk4153f5dYxfRdDC3ctUb2iWH
+\unrestrict RqJ9HhddFU1W5ksrZWxfKylfP28UVb4FswDiL60ZrDMkWi3sfOGh3P9sMTAxeb0
 
 --
 -- Database "pgdt_fixture" dump
@@ -163,7 +163,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump
 --
 
-\restrict 80q1cmLZfmavOIoclUeSXuP1aXRzM5Yn0Ca7UXjU5rsiaYQeSiPeplW4k9W6GMP
+\restrict XK5byzdQqfJEWJPlQFnn9Vkf7RiWGuQjerVTzQWKeZhdRNKf52lwTePFHUGSB2F
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -189,9 +189,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict 80q1cmLZfmavOIoclUeSXuP1aXRzM5Yn0Ca7UXjU5rsiaYQeSiPeplW4k9W6GMP
+\unrestrict XK5byzdQqfJEWJPlQFnn9Vkf7RiWGuQjerVTzQWKeZhdRNKf52lwTePFHUGSB2F
 \connect pgdt_fixture
-\restrict 80q1cmLZfmavOIoclUeSXuP1aXRzM5Yn0Ca7UXjU5rsiaYQeSiPeplW4k9W6GMP
+\restrict XK5byzdQqfJEWJPlQFnn9Vkf7RiWGuQjerVTzQWKeZhdRNKf52lwTePFHUGSB2F
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -807,6 +807,19 @@ CREATE UNLOGGED TABLE emitters.scratch (
 ALTER TABLE emitters.scratch OWNER TO postgres;
 
 --
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
+
+--
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -877,6 +890,14 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -902,7 +923,7 @@ ALTER TABLE emitters.tuned ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 80q1cmLZfmavOIoclUeSXuP1aXRzM5Yn0Ca7UXjU5rsiaYQeSiPeplW4k9W6GMP
+\unrestrict XK5byzdQqfJEWJPlQFnn9Vkf7RiWGuQjerVTzQWKeZhdRNKf52lwTePFHUGSB2F
 
 --
 -- Database "postgres" dump
@@ -914,7 +935,7 @@ ALTER TABLE emitters.tuned ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump
 --
 
-\restrict kAL68KTI7qpHr5Zd3845SMm1Dy1d3UflrykXb2Uy4AlsfeDnYH2cWq2vECw2sp8
+\restrict PS1zyTllMeDe7JH74NoEWCGucLnlrilFGuIpgAYH469cQRniNOIkr0NXWTP1GJH
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -935,7 +956,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict kAL68KTI7qpHr5Zd3845SMm1Dy1d3UflrykXb2Uy4AlsfeDnYH2cWq2vECw2sp8
+\unrestrict PS1zyTllMeDe7JH74NoEWCGucLnlrilFGuIpgAYH469cQRniNOIkr0NXWTP1GJH
 
 --
 -- PostgreSQL database cluster dump complete

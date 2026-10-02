@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict f601ioKcOgaDO0IaLISRmmueUbMtY6pMxq6kslPK8C6RfVxGHkOYfd4EbnZLurB
+\restrict S2EvbE4oW0EYTzuTsVeyhj7dePdzvdlEqjLALci0hcoPMb8TRI6siK5MICNRVkS
 
 -- Dumped from database version 15.19 (Debian 15.19-1.pgdg13+2)
 -- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg13+2)
@@ -134,6 +134,20 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 ALTER TABLE emitters.scratch ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.stamped DISABLE TRIGGER ALL;
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+ALTER TABLE emitters.stamped ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -178,5 +192,5 @@ ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict f601ioKcOgaDO0IaLISRmmueUbMtY6pMxq6kslPK8C6RfVxGHkOYfd4EbnZLurB
+\unrestrict S2EvbE4oW0EYTzuTsVeyhj7dePdzvdlEqjLALci0hcoPMb8TRI6siK5MICNRVkS
 

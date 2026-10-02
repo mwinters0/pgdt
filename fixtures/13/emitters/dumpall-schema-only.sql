@@ -682,6 +682,17 @@ CREATE UNLOGGED TABLE "emitters"."scratch" (
 
 
 --
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."stamped" (
+    "id" integer NOT NULL,
+    "stamps" timestamp with time zone[] DEFAULT ARRAY["now"(), "now"()],
+    "now" integer
+);
+
+
+--
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: -
 --
 
@@ -743,6 +754,14 @@ ALTER TABLE ONLY "emitters"."grown"
 
 ALTER TABLE ONLY "emitters"."range_values"
     ADD CONSTRAINT "range_values_pkey" PRIMARY KEY ("id");
+
+
+--
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."stamped"
+    ADD CONSTRAINT "stamped_pkey" PRIMARY KEY ("id");
 
 
 --

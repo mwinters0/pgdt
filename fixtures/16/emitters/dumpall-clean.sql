@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict h8wZH7yCK1Bgmhkv3NPcgVwzbn8syI6VduxH0llg6fPu3jLrZa1Jf5NJMxwp7ne
+\restrict fRvs7MDSEnE8GTFPnHuRg43V9uau57ehP2fhMfzQ2JZQm9ITKdacDH1iENSk4El
 
 SET default_transaction_read_only = off;
 
@@ -56,7 +56,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict h8wZH7yCK1Bgmhkv3NPcgVwzbn8syI6VduxH0llg6fPu3jLrZa1Jf5NJMxwp7ne
+\unrestrict fRvs7MDSEnE8GTFPnHuRg43V9uau57ehP2fhMfzQ2JZQm9ITKdacDH1iENSk4El
 
 --
 -- Databases
@@ -70,7 +70,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- PostgreSQL database dump
 --
 
-\restrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\restrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -97,9 +97,9 @@ CREATE DATABASE template1 WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_PRO
 
 ALTER DATABASE template1 OWNER TO postgres;
 
-\unrestrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\unrestrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 \connect template1
-\restrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\restrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -126,9 +126,9 @@ COMMENT ON DATABASE template1 IS 'default template for new databases';
 ALTER DATABASE template1 IS_TEMPLATE = true;
 
 
-\unrestrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\unrestrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 \connect template1
-\restrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\restrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -153,7 +153,7 @@ GRANT CONNECT ON DATABASE template1 TO PUBLIC;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 43ap6dxa3OPP5HiHzickl3KnPdbGDznfc245p4OSmJw1UlnOuJo5TUmV9qvzXGZ
+\unrestrict rbleQIcVA9w8xartWlsVwCJCnK3Yrpidq5FuufIY3B28tKkcPUQ2WWLnfk00LwO
 
 --
 -- Database "pgdt-emitters" dump
@@ -163,7 +163,7 @@ GRANT CONNECT ON DATABASE template1 TO PUBLIC;
 -- PostgreSQL database dump
 --
 
-\restrict 15icNh31gEsEy0SBLgAKsrXZ7McpsM5ghASPh5a2vvMAnIdwGkewkwRpgzJJvnv
+\restrict f041dhjWHscLyFVFgdki4Sj1QbefQiKeiEP3zBktvy5hmquzD7Bq63lhs1nbQTH
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -188,10 +188,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict 15icNh31gEsEy0SBLgAKsrXZ7McpsM5ghASPh5a2vvMAnIdwGkewkwRpgzJJvnv
+\unrestrict f041dhjWHscLyFVFgdki4Sj1QbefQiKeiEP3zBktvy5hmquzD7Bq63lhs1nbQTH
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict 15icNh31gEsEy0SBLgAKsrXZ7McpsM5ghASPh5a2vvMAnIdwGkewkwRpgzJJvnv
+\restrict f041dhjWHscLyFVFgdki4Sj1QbefQiKeiEP3zBktvy5hmquzD7Bq63lhs1nbQTH
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -243,7 +243,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 15icNh31gEsEy0SBLgAKsrXZ7McpsM5ghASPh5a2vvMAnIdwGkewkwRpgzJJvnv
+\unrestrict f041dhjWHscLyFVFgdki4Sj1QbefQiKeiEP3zBktvy5hmquzD7Bq63lhs1nbQTH
 
 --
 -- Database "pgdt_fixture" dump
@@ -253,7 +253,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump
 --
 
-\restrict y1gxajyLfzfldEo2qZQV8KtQBSBEpCebH1JCn1UQoi8TbUXE3nM3tuaKK8SyRRC
+\restrict 0q7yZJ1R3con5qd731028k8Ku0net1MWMGBreGvhnCAjWBDDcYl4zp2ETFjiqqH
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -278,9 +278,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict y1gxajyLfzfldEo2qZQV8KtQBSBEpCebH1JCn1UQoi8TbUXE3nM3tuaKK8SyRRC
+\unrestrict 0q7yZJ1R3con5qd731028k8Ku0net1MWMGBreGvhnCAjWBDDcYl4zp2ETFjiqqH
 \connect pgdt_fixture
-\restrict y1gxajyLfzfldEo2qZQV8KtQBSBEpCebH1JCn1UQoi8TbUXE3nM3tuaKK8SyRRC
+\restrict 0q7yZJ1R3con5qd731028k8Ku0net1MWMGBreGvhnCAjWBDDcYl4zp2ETFjiqqH
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -896,6 +896,19 @@ CREATE UNLOGGED TABLE emitters.scratch (
 ALTER TABLE emitters.scratch OWNER TO postgres;
 
 --
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
+
+--
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -1015,6 +1028,16 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -1076,6 +1099,14 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -1108,7 +1139,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict y1gxajyLfzfldEo2qZQV8KtQBSBEpCebH1JCn1UQoi8TbUXE3nM3tuaKK8SyRRC
+\unrestrict 0q7yZJ1R3con5qd731028k8Ku0net1MWMGBreGvhnCAjWBDDcYl4zp2ETFjiqqH
 
 --
 -- PostgreSQL database cluster dump complete

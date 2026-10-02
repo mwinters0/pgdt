@@ -88,7 +88,7 @@ approval, in the spec's opening note.
 - [x] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are — [notes](../design/roadmap-P31.2-generator-capabilities-notes.md)
 - [x] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line — [notes](../design/roadmap-P31.3-value-oracle-notes.md)
 - [x] **31.4** Schema content reaching every remaining uncovered literal, value form and option, findings filed as `KD`s and appended here; the register a gate in `mise run check` — [notes](../design/roadmap-P31.4-register-gate-notes.md)
-- [ ] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69`
+- [x] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69` — [notes](../design/roadmap-P31.5-table-elements-notes.md)
 - [ ] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70`
 - [ ] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68`
 - [ ] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67`
@@ -125,3 +125,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A preamble fix leaves `CACHE_FORMAT_VERSION` alone.** 31.5 changes which
+  columns a `CREATE TABLE` declares, and `M199` and `M200` changed which
+  statements declare a table and which versions a database keeps, all of it
+  persisted in the cache's `DumpIndex`; none bumped, so a cache saved before
+  any of them is still loaded and answers as the old parse did — `now`
+  resolving through `()]` — until `parse` replaces it, which nothing prompts.
+  Made that way to follow the two precedents and D22's "persisted reshape"
+  wording, which none of them is. Against it, `CACHE_FORMAT_VERSION`'s own
+  rustdoc bumps for "a new way of *choosing* what an unchanged field holds",
+  and D22 calls a bump free pre-1.0. Reconsidering means one bump now and a
+  rule for 31.6–31.11, each of which changes parsed metadata too.

@@ -2,14 +2,14 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict WUz6FPM0vNehXbaeyXJCUjH85Pl54GsSjVdYS434vg8rxslc3apEG0IAmOwbMmK
+\restrict xmqWA9jNGbPGIoJGw7HdOIgtgWs4d87IMCrUBcnkfbZFsWSo2JmPlAF3nIaOYJ8
 
 SET default_transaction_read_only = off;
 
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 
-\unrestrict WUz6FPM0vNehXbaeyXJCUjH85Pl54GsSjVdYS434vg8rxslc3apEG0IAmOwbMmK
+\unrestrict xmqWA9jNGbPGIoJGw7HdOIgtgWs4d87IMCrUBcnkfbZFsWSo2JmPlAF3nIaOYJ8
 
 --
 -- Databases
@@ -25,7 +25,7 @@ SET standard_conforming_strings = on;
 -- PostgreSQL database dump
 --
 
-\restrict mr4tC44h3afgBxnxFfQKKENwaj334bQnAHn9R8cF5bQU7EMmDOghgRpb3gPxxPl
+\restrict gDU6PCZuVTdhqyhYc9qyQEgpEjkRAyOvctnbJWPH6ZJd9gwhqsLE3ulSSVWAGhw
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -46,7 +46,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict mr4tC44h3afgBxnxFfQKKENwaj334bQnAHn9R8cF5bQU7EMmDOghgRpb3gPxxPl
+\unrestrict gDU6PCZuVTdhqyhYc9qyQEgpEjkRAyOvctnbJWPH6ZJd9gwhqsLE3ulSSVWAGhw
 
 --
 -- Database "pgdt-emitters" dump
@@ -56,7 +56,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict Y6uhnrVUdwedRKeierLJpYKeg81ULlI39tRxSjorhGoAI66Uk1ZGbrvDJrEObfw
+\restrict m3YJCwuPkM9cRJ2L3HTwf3XG6ydNFAhOWSWXN2OJsjW0qh48FbmAQTL8SQYJaUN
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -82,10 +82,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict Y6uhnrVUdwedRKeierLJpYKeg81ULlI39tRxSjorhGoAI66Uk1ZGbrvDJrEObfw
+\unrestrict m3YJCwuPkM9cRJ2L3HTwf3XG6ydNFAhOWSWXN2OJsjW0qh48FbmAQTL8SQYJaUN
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict Y6uhnrVUdwedRKeierLJpYKeg81ULlI39tRxSjorhGoAI66Uk1ZGbrvDJrEObfw
+\restrict m3YJCwuPkM9cRJ2L3HTwf3XG6ydNFAhOWSWXN2OJsjW0qh48FbmAQTL8SQYJaUN
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -118,7 +118,7 @@ ALTER TABLE public.named ENABLE TRIGGER ALL;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Y6uhnrVUdwedRKeierLJpYKeg81ULlI39tRxSjorhGoAI66Uk1ZGbrvDJrEObfw
+\unrestrict m3YJCwuPkM9cRJ2L3HTwf3XG6ydNFAhOWSWXN2OJsjW0qh48FbmAQTL8SQYJaUN
 
 --
 -- Database "pgdt_fixture" dump
@@ -128,7 +128,7 @@ ALTER TABLE public.named ENABLE TRIGGER ALL;
 -- PostgreSQL database dump
 --
 
-\restrict 1ArwwJF79ExhfiVyFjcY53WtJssGeJS0A0whXAeJZzp4HhreHVf7tYSjlpZUTox
+\restrict ObCQBkb5k4PqcLlD86iPDe1eFaBJTMjE2zHyJ7pYaX9qErZ3uMeU7C6i1CnhcEd
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -154,9 +154,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict 1ArwwJF79ExhfiVyFjcY53WtJssGeJS0A0whXAeJZzp4HhreHVf7tYSjlpZUTox
+\unrestrict ObCQBkb5k4PqcLlD86iPDe1eFaBJTMjE2zHyJ7pYaX9qErZ3uMeU7C6i1CnhcEd
 \connect pgdt_fixture
-\restrict 1ArwwJF79ExhfiVyFjcY53WtJssGeJS0A0whXAeJZzp4HhreHVf7tYSjlpZUTox
+\restrict ObCQBkb5k4PqcLlD86iPDe1eFaBJTMjE2zHyJ7pYaX9qErZ3uMeU7C6i1CnhcEd
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -280,6 +280,19 @@ INSERT INTO emitters.scratch (id, at, ok) VALUES
 ALTER TABLE emitters.scratch ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.stamped DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.stamped (id, stamps, now) VALUES
+	(1, '{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}', 7),
+	(2, NULL, NULL) ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.stamped ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -321,7 +334,7 @@ ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 1ArwwJF79ExhfiVyFjcY53WtJssGeJS0A0whXAeJZzp4HhreHVf7tYSjlpZUTox
+\unrestrict ObCQBkb5k4PqcLlD86iPDe1eFaBJTMjE2zHyJ7pYaX9qErZ3uMeU7C6i1CnhcEd
 
 --
 -- Database "postgres" dump
@@ -333,7 +346,7 @@ ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 -- PostgreSQL database dump
 --
 
-\restrict QsVOR0ddnRXdGZJrUFx2Ki7PeGnIxfANIN7TFly8N83TDZR8VvyCOeI7iBYQdRO
+\restrict ipqQMouQA2D107l8cASgIIf5bxoHAm5IuhI6AdlAITBjRjH6bve1jheyC30fiAD
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -354,7 +367,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict QsVOR0ddnRXdGZJrUFx2Ki7PeGnIxfANIN7TFly8N83TDZR8VvyCOeI7iBYQdRO
+\unrestrict ipqQMouQA2D107l8cASgIIf5bxoHAm5IuhI6AdlAITBjRjH6bve1jheyC30fiAD
 
 --
 -- PostgreSQL database cluster dump complete

@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict ZMZjWR3MLOVV5UuCdekV2fkxb03fmZ7ThTpcziRy6COX70kgAAtO9J9M9W4QgMs
+\restrict RtHLvlp7J1j7Es8Tx679TKovVPWQMdmkIwqETtfxCnudsVaHwVrIiPt252VZo1s
 
 SET default_transaction_read_only = off;
 
@@ -40,7 +40,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict ZMZjWR3MLOVV5UuCdekV2fkxb03fmZ7ThTpcziRy6COX70kgAAtO9J9M9W4QgMs
+\unrestrict RtHLvlp7J1j7Es8Tx679TKovVPWQMdmkIwqETtfxCnudsVaHwVrIiPt252VZo1s
 
 --
 -- Databases
@@ -56,7 +56,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- PostgreSQL database dump
 --
 
-\restrict D4SxgofQaDuNYYSolfh5VlpWLM6MsMe6240uP3zGM1cTLo4NtNIykYeaRP2Z1vV
+\restrict qMFJwuHxcNOEcKSHRvvr7roEnPocW4mfKN7XYvdqKesx7NDTXYi342OlpvescUu
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -76,7 +76,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict D4SxgofQaDuNYYSolfh5VlpWLM6MsMe6240uP3zGM1cTLo4NtNIykYeaRP2Z1vV
+\unrestrict qMFJwuHxcNOEcKSHRvvr7roEnPocW4mfKN7XYvdqKesx7NDTXYi342OlpvescUu
 
 --
 -- Database "pgdt-emitters" dump
@@ -86,7 +86,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\restrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -111,10 +111,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 OID = 16386 ENCODING =
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\unrestrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\restrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -138,10 +138,10 @@ SET datfrozenxid = '723', datminmxid = '1'
 WHERE datname = 'pgdt-emitters';
 
 
-\unrestrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\unrestrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\restrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -244,7 +244,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump complete
 --
 
-\unrestrict kbd2GJkUQgbGZYdbk3ic3RLGKnygQZbmdU6bfcnevdeiraofPNpkFhsi7yrR6iV
+\unrestrict QwUAc5exKI74JmyW80pvCp58i96vRTxTH0lJsowjkbHFLUQd5fwjxQPNRCfY6bF
 
 --
 -- Database "pgdt_fixture" dump
@@ -254,7 +254,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump
 --
 
-\restrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\restrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -279,9 +279,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 OID = 16384 ENCODING = 'U
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\unrestrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 \connect pgdt_fixture
-\restrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\restrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -305,9 +305,9 @@ SET datfrozenxid = '723', datminmxid = '1'
 WHERE datname = 'pgdt_fixture';
 
 
-\unrestrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\unrestrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 \connect pgdt_fixture
-\restrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\restrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -789,15 +789,15 @@ ALTER TYPE emitters.pair OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16538'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16546'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16537'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16545'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids and relfilenodes
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16536'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16544'::pg_catalog.oid);
 
 CREATE TYPE emitters.person AS (
 	name text,
@@ -1224,15 +1224,15 @@ ALTER TABLE emitters.domain_values OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16551'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16559'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16558'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids and relfilenodes
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16549'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16557'::pg_catalog.oid);
 
 CREATE FOREIGN TABLE emitters.external (
     id integer,
@@ -1323,20 +1323,20 @@ ALTER TABLE emitters.grown OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16541'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16549'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16540'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16548'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids and relfilenodes
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16539'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16539'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16542'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16542'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16543'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16543'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16547'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16547'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16551'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16551'::pg_catalog.oid);
 
 CREATE TABLE emitters.people (
     name text NOT NULL,
@@ -1349,13 +1349,13 @@ ALTER TABLE ONLY emitters.people OF emitters.person;
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '807', relminmxid = '1'
+SET relfrozenxid = '809', relminmxid = '1'
 WHERE oid = 'emitters.people'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '807', relminmxid = '1'
-WHERE oid = '16542';
+SET relfrozenxid = '809', relminmxid = '1'
+WHERE oid = '16550';
 
 
 ALTER TABLE emitters.people OWNER TO postgres;
@@ -1504,6 +1504,46 @@ WHERE oid = 'emitters.scratch'::pg_catalog.regclass;
 
 
 ALTER TABLE emitters.scratch OWNER TO postgres;
+
+--
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16538'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16537'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16536'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('16536'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16540'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_relfilenode('16540'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16541'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16541'::pg_catalog.oid);
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '806', relminmxid = '1'
+WHERE oid = 'emitters.stamped'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '806', relminmxid = '1'
+WHERE oid = '16540';
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
 
 --
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
@@ -1702,6 +1742,16 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -1783,6 +1833,19 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids and relfilenodes
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16542'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('16542'::pg_catalog.oid);
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -1825,7 +1888,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict sWLeYcf7G6o3PUFSPD3aX8hb1nI2ZOOBXee8pI2szCPOLPzDO34bRA3uYoJyf3L
+\unrestrict oq1s2nnMjGRbWmKjGSouDIZBfub4nTMARekePgRRV20DRrhYf48lUZy1v2MyRgV
 
 --
 -- Database "postgres" dump
@@ -1837,7 +1900,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump
 --
 
-\restrict WTMO3qiPhJpjO7fs8aY5QtxTeXNN2Eg6mJUlqs89pmK5oVpyc1KsfI5NoEyAx4H
+\restrict 8qW3CgrM7xTSNwWjnul2h9UMQMLh5Z4ZPxL1BC4lNcGLk7SueI3eg8JvSHtnSid
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -1857,7 +1920,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WTMO3qiPhJpjO7fs8aY5QtxTeXNN2Eg6mJUlqs89pmK5oVpyc1KsfI5NoEyAx4H
+\unrestrict 8qW3CgrM7xTSNwWjnul2h9UMQMLh5Z4ZPxL1BC4lNcGLk7SueI3eg8JvSHtnSid
 
 --
 -- PostgreSQL database cluster dump complete

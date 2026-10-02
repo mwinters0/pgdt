@@ -222,6 +222,20 @@ ALTER TABLE emitters.child ALTER COLUMN label SET NOT NULL;
 INSERT INTO emitters.parent VALUES (1, 'p', '2024-01-01');
 INSERT INTO emitters.child VALUES (2, 'c', '2024-01-02', 1.25), (3, 'd', NULL, NULL);
 
+-- A default holding a comma inside `ARRAY[...]`, then a real column named like
+-- the word after that comma: the shape `KD69` split into a column `now` of type
+-- `()]` that the real one resolved through. With the parent's inline `CHECK`
+-- and, at 18, the child's table-level `NOT NULL label`, the fragments a
+-- column list holds that are no column.
+CREATE TABLE emitters.stamped (
+    id integer PRIMARY KEY,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+INSERT INTO emitters.stamped VALUES
+    (1, '{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}', 7),
+    (2, NULL, NULL);
+
 -- A typed table, `KD70`: `OF`, with a column written without its type
 -- because it carries `NOT NULL`, and under `--binary-upgrade` the typed-table
 -- fix-up.

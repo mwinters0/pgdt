@@ -381,12 +381,6 @@ than reading as a phase nobody has sliced.
   it, `info` never lists it and `--database` cannot name it. **(b) owned by
   `P31`**, slice 31.7 closing it. Detail: `pgdump_query/src/preamble.rs`.
 
-- **KD69** — `parse_create_table` reads a table-level `CONSTRAINT` and the
-  far side of a comma inside a default's `ARRAY[…]` as columns, so a real
-  column named like a word in an earlier default's brackets resolves through
-  the bogus definition. **(b) owned by `P31`**, slice 31.5 closing it.
-  Detail: `pgdump_query/src/preamble.rs`.
-
 - **KD70** — a typed table, `CREATE TABLE x OF t`, gets no columns from its
   composite, so every column resolves `NotDeclared` and reads as text.
   **(b) owned by `P31`**, slice 31.6 closing it. Detail: `pgdump_query/src/preamble.rs`.

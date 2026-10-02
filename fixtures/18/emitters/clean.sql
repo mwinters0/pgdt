@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict z6G8H7caGXTU8ESxHElIFllxDD71Jo5eH2BpKlCdCsDC3VsAMhHiJ6dJRgNao1E
+\restrict Z6n9Nyfmpz1wNxBJMcHzIcC79k0uk7GCoClTr6junZovsOJttdLwdk2ow0tbSCf
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -21,6 +21,7 @@ SET row_security = off;
 
 ALTER TABLE IF EXISTS ONLY emitters.tuned DROP CONSTRAINT IF EXISTS tuned_pkey;
 ALTER TABLE IF EXISTS ONLY emitters.trios DROP CONSTRAINT IF EXISTS trios_pkey;
+ALTER TABLE IF EXISTS ONLY emitters.stamped DROP CONSTRAINT IF EXISTS stamped_pkey;
 ALTER TABLE IF EXISTS ONLY emitters.range_values DROP CONSTRAINT IF EXISTS range_values_pkey;
 ALTER TABLE IF EXISTS ONLY emitters.grown DROP CONSTRAINT IF EXISTS grown_pkey;
 ALTER TABLE IF EXISTS ONLY emitters.domain_values DROP CONSTRAINT IF EXISTS domain_values_pkey;
@@ -28,6 +29,7 @@ ALTER TABLE IF EXISTS ONLY emitters.base_values DROP CONSTRAINT IF EXISTS base_v
 DROP TABLE IF EXISTS emitters.unidentified;
 DROP MATERIALIZED VIEW IF EXISTS emitters.tuned_totals;
 DROP TABLE IF EXISTS emitters.trios;
+DROP TABLE IF EXISTS emitters.stamped;
 DROP TABLE IF EXISTS emitters.scratch;
 DROP TABLE IF EXISTS emitters.range_values;
 DROP VIEW IF EXISTS emitters.positive_tuned;
@@ -674,6 +676,19 @@ CREATE UNLOGGED TABLE emitters.scratch (
 ALTER TABLE emitters.scratch OWNER TO postgres;
 
 --
+-- Name: stamped; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.stamped (
+    id integer NOT NULL,
+    stamps timestamp with time zone[] DEFAULT ARRAY[now(), now()],
+    now integer
+);
+
+
+ALTER TABLE emitters.stamped OWNER TO postgres;
+
+--
 -- Name: trios; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -793,6 +808,16 @@ COPY emitters.scratch (id, at, ok) FROM stdin;
 
 
 --
+-- Data for Name: stamped; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.stamped (id, stamps, now) FROM stdin;
+1	{"2024-01-01 00:00:00+00","2024-01-02 12:30:00+00"}	7
+2	\N	\N
+\.
+
+
+--
 -- Data for Name: trios; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -854,6 +879,14 @@ ALTER TABLE ONLY emitters.range_values
 
 
 --
+-- Name: stamped stamped_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.stamped
+    ADD CONSTRAINT stamped_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trios trios_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -886,5 +919,5 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict z6G8H7caGXTU8ESxHElIFllxDD71Jo5eH2BpKlCdCsDC3VsAMhHiJ6dJRgNao1E
+\unrestrict Z6n9Nyfmpz1wNxBJMcHzIcC79k0uk7GCoClTr6junZovsOJttdLwdk2ow0tbSCf
 

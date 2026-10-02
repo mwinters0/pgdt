@@ -14,7 +14,7 @@ use pgdump_query::{
 };
 
 mod common;
-use common::{VERSIONS, edge_cases_fixture, multidb_fixture, sandboxed, types_fixture};
+use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
@@ -559,6 +559,43 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         // type is still exactly what a by-name lookup should find.
         let generated = db.tables.get("public.generated_column").unwrap();
         assert_eq!(generated.last().unwrap(), &ColumnDef::new("total", "integer"));
+    }
+}
+
+/// A `CREATE TABLE` list holds fragments that are no column, and a comma that
+/// is no separator: the parent's inline `CHECK`, at 18 the child's table-level
+/// `NOT NULL label` (`dumpTableSchema` writes one for an inherited column with
+/// a local not-null constraint), and a default's `ARRAY[now(), now()]`, whose
+/// far side once read as a column `now` that the real one resolved through.
+/// Each table declares exactly the columns `pg_dump` wrote, at every major.
+#[tokio::test]
+async fn emitters_tables_declare_their_columns_and_nothing_else() {
+    for version in VERSIONS {
+        let db = single_database(&fixture(version, "emitters", "default")).await;
+        let declared = |table: &str| db.tables.get(table).unwrap().clone();
+        assert_eq!(
+            declared("emitters.parent"),
+            vec![
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("label", "text"),
+                ColumnDef::new("born", "date"),
+            ],
+            "pg_dump {version}"
+        );
+        assert_eq!(
+            declared("emitters.child"),
+            vec![ColumnDef::new("extra", "numeric(6,2)")],
+            "pg_dump {version}"
+        );
+        assert_eq!(
+            declared("emitters.stamped"),
+            vec![
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("stamps", "timestamp with time zone[]"),
+                ColumnDef::new("now", "integer"),
+            ],
+            "pg_dump {version}"
+        );
     }
 }
 
