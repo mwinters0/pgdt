@@ -344,12 +344,6 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD62** — in a `pg_dumpall` dump, a database whose segment follows one with
-  no `COPY` block (`template1`, an empty database) loses its server and
-  `pg_dump` versions, the earlier segment taking them instead. **(b) owned
-  by `M200`**. Detail:
-  `pgdump_query/src/preamble.rs`.
-
 - **KD63** — a `numeric(p,s)` whose scale PostgreSQL 15 and later admit but
   Arrow's decimal does not — past its precision, as `numeric(2,5)`, or past
   the type's maximum scale — panics a typed query of its table, and one past

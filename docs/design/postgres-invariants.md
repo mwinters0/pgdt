@@ -425,17 +425,18 @@ first.
 them. `dumpDatabases()` passes `--create` to its `pg_dump` child for ordinary
 databases — those segments print their version headers *ahead of* their own
 `\connect`, which puts the lines in `dump_metadata_from_spans`'s
-`VersionHeader` arm while `current` is still the previous database's finished
-(`preamble_complete`) segment, so they are staged in `pending_headers` and consumed
-on that segment's own `\connect` — unless the previous segment saw no `COPY`
-block (`KD62`). For `postgres` and `template1` it passes
+`VersionHeader` arm while `current` is still the previous database's segment,
+already holding its own pair, so they are staged in `pending_headers` and
+consumed on that segment's own `\connect`, whether or not the previous
+segment held a `COPY` block. For `postgres` and `template1` it passes
 **no** `--create` and writes `\connect <db>` itself, under the comment "Since
 pg_dump won't emit a `\connect` command, we must"; those segments print
 `\connect` *first*, so their headers arrive into a segment that is already
-`current` and not yet `preamble_complete` — that arm's ordinary path, not
-the staging one. Both databases are always dumped, so every real `pg_dumpall`
-file contains both shapes; a hand-built concatenation of `--create` outputs
-produces only the first.
+`current` and holds no pair yet — that arm's ordinary path, not the staging
+one. `pg_dumpall`'s own globals section writes no pair, so nothing is carried
+onto `template1` ahead of its own. Both databases are always dumped, so every
+real `pg_dumpall` file contains both shapes; a hand-built concatenation of
+`--create` outputs produces only the first.
 
 Both segment shapes hold against a real `pg_dumpall` run:
 `fixtures/{13,18}/edge_cases/dumpall.sql`
@@ -449,7 +450,9 @@ pair *then* its own `\connect`.
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
 (`pgdump_query/tests/common/mod.rs`'s `multidb_fixture`, versions 13/16/18);
-`fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run.
+`fixtures/{13..18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run at
+every major (`tests/preamble.rs`,
+`every_dumpall_database_keeps_its_own_version_headers`).
 **Relied on by:** `decisions.md` ("D36", "D69").
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
@@ -457,7 +460,8 @@ src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 '"--create"' src/bin/pg_dump/pg_dumpall.c` — confirm pg_dumpall still shells
 out to a fresh `pg_dump --create` per database rather than driving one dump
 across all of them, and that the `postgres`/`template1` branch still writes
-its own `\connect` instead.
+its own `\connect` instead; `grep -n 'Dumped' src/bin/pg_dump/pg_dumpall.c` —
+confirm `pg_dumpall` still writes no version line of its own.
 
 ---
 

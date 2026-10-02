@@ -1199,41 +1199,38 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             // `\connect` to the database it already names. **(b) owned by
             // `P31`**.
             SpanBody::Connect { database } => {
-                if seen_connect {
-                    let mut next = DatabaseMetadata::empty(Some(database.clone()));
+                let mut next = DatabaseMetadata::empty(Some(database.clone()));
+                if pending_headers.0.is_some() || pending_headers.1.is_some() {
                     next.server_version = pending_headers.0.take();
                     next.pg_dump_version = pending_headers.1.take();
-                    let finished = std::mem::replace(&mut current, next);
-                    databases.push(finalize(finished));
-                } else {
-                    let mut next = DatabaseMetadata::empty(Some(database.clone()));
+                } else if !seen_connect {
                     next.server_version = current.server_version.take();
                     next.pg_dump_version = current.pg_dump_version.take();
-                    current = next;
+                }
+                let finished = std::mem::replace(&mut current, next);
+                if seen_connect {
+                    databases.push(finalize(finished));
                 }
                 seen_connect = true;
             }
-            // Deficiency register: `deficiency: KD62` — a `pg_dumpall`
-            // segment's headers precede its own `\connect` (I9) and are staged
-            // only where the previous segment saw a `Data` span; after one
-            // that saw none (`template1`) they overwrite that segment's
-            // versions and the next database gets none. The fix is staging on a following `\connect` rather than on
-            // `preamble_complete`.
+            // I9: one `pg_dump` invocation writes one header pair, ahead of
+            // its own `\connect` under `--create`, and after the one
+            // `pg_dumpall` writes for `template1` and `postgres`. So a pair
+            // arriving into a segment that already holds one opens the next
+            // invocation's output, and waits for the `\connect` naming its
+            // database.
             SpanBody::VersionHeader { server_version, pg_dump_version } => {
-                if current.preamble_complete {
-                    if server_version.is_some() {
-                        pending_headers.0 = server_version.clone();
-                    }
-                    if pg_dump_version.is_some() {
-                        pending_headers.1 = pg_dump_version.clone();
-                    }
+                let held = current.server_version.is_some() || current.pg_dump_version.is_some();
+                let (server, pg_dump) = if held {
+                    (&mut pending_headers.0, &mut pending_headers.1)
                 } else {
-                    if server_version.is_some() {
-                        current.server_version = server_version.clone();
-                    }
-                    if pg_dump_version.is_some() {
-                        current.pg_dump_version = pg_dump_version.clone();
-                    }
+                    (&mut current.server_version, &mut current.pg_dump_version)
+                };
+                if server_version.is_some() {
+                    *server = server_version.clone();
+                }
+                if pg_dump_version.is_some() {
+                    *pg_dump = pg_dump_version.clone();
                 }
             }
             SpanBody::Data(_) => {
@@ -1753,6 +1750,48 @@ mod tests {
         assert_eq!(meta.databases[0].pg_dump_version.as_deref(), Some("16.14"));
         assert_eq!(meta.databases[1].server_version.as_deref(), Some("16.15"));
         assert_eq!(meta.databases[1].pg_dump_version.as_deref(), Some("16.15"));
+    }
+
+    /// I9: `pg_dumpall` writes `\connect template1` itself, its `pg_dump`
+    /// child's pair following, and `template1` holds no `COPY` block; the
+    /// next database's pair, ahead of its own `\connect`, is that
+    /// database's and leaves `template1`'s alone.
+    #[test]
+    fn a_segment_with_no_data_keeps_its_headers_and_the_next_gets_its_own() {
+        let header = |v: &str| {
+            span(SpanBody::VersionHeader {
+                server_version: Some(format!("{v}-server")),
+                pg_dump_version: Some(format!("{v}-pg_dump")),
+            })
+        };
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::Connect { database: "template1".to_string() }),
+            header("t1"),
+            span(SpanBody::Unparsed),
+            header("app"),
+            span(SpanBody::Unparsed),
+            span(SpanBody::Connect { database: "app".to_string() }),
+            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            dummy_data_span(),
+            span(SpanBody::Connect { database: "postgres".to_string() }),
+            header("pg"),
+        ]);
+
+        let got: Vec<_> = meta
+            .databases
+            .iter()
+            .map(|db| {
+                (db.name.as_deref(), db.server_version.as_deref(), db.pg_dump_version.as_deref())
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some("template1"), Some("t1-server"), Some("t1-pg_dump")),
+                (Some("app"), Some("app-server"), Some("app-pg_dump")),
+                (Some("postgres"), Some("pg-server"), Some("pg-pg_dump")),
+            ]
+        );
     }
 
     #[test]

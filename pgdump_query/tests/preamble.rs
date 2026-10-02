@@ -6,11 +6,15 @@
 
 use std::path::Path;
 
+use pgdump_query::cache::CacheMode;
 use pgdump_query::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
-use pgdump_query::{DatabaseMetadata, LocalFileSource, ScanOptions, build_index};
+use pgdump_query::{
+    DatabaseMetadata, DumpMetadata, LocalFileSource, ScanOptions, StatisticsRequest, build_index,
+    cache, map_file,
+};
 
 mod common;
-use common::{VERSIONS, edge_cases_fixture, multidb_fixture, types_fixture};
+use common::{VERSIONS, edge_cases_fixture, multidb_fixture, sandboxed, types_fixture};
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
@@ -612,5 +616,71 @@ async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed()
         // identical.
         assert_eq!(metadata.databases[0].tables, metadata.databases[1].tables, "pg_dump {version}");
         assert!(metadata.databases[0].tables.contains_key("public.widgets"), "pg_dump {version}");
+    }
+}
+
+/// Each database of a real `pg_dumpall` keeps the version pair its own
+/// `pg_dump` wrote (I9), read from the raw file: the segment's `\connect` and
+/// the `-- Dumped from`/`-- Dumped by` lines nearest it, before it under
+/// `--create` and after it for `template1` and `postgres`. `template1` holds no
+/// `COPY` block, so the database after it is the case a segment's data once
+/// decided. Asserted over the eager index and over `map_file`, the scan `pgdt
+/// parse` saves and `pgdt info` reads.
+#[tokio::test]
+async fn every_dumpall_database_keeps_its_own_version_headers() {
+    fn expected(text: &str) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        let (mut server, mut by) = (None::<String>, None::<String>);
+        let mut awaiting: Option<String> = None;
+        for line in text.lines() {
+            if let Some(v) = line.strip_prefix("-- Dumped from database version ") {
+                server = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("-- Dumped by pg_dump version ") {
+                by = Some(v.to_string());
+                if let Some(db) = awaiting.take() {
+                    out.push((db, server.take().unwrap(), by.take().unwrap()));
+                }
+            } else if let Some(db) = line.strip_prefix("\\connect ") {
+                let db = db.split_whitespace().next().unwrap().to_string();
+                match (server.take(), by.take()) {
+                    (Some(s), Some(b)) => out.push((db, s, b)),
+                    _ => awaiting = Some(db),
+                }
+            }
+        }
+        out
+    }
+    fn versions(metadata: &DumpMetadata) -> Vec<(String, String, String)> {
+        metadata
+            .databases
+            .iter()
+            .map(|db| {
+                (
+                    db.name.clone().unwrap(),
+                    db.server_version.clone().unwrap_or_default(),
+                    db.pg_dump_version.clone().unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    for version in VERSIONS {
+        let fixture = edge_cases_fixture(version, "dumpall");
+        let want = expected(&std::fs::read_to_string(&fixture).unwrap());
+        assert_eq!(want.len(), 4, "pg_dump {version}: four databases, each with its pair");
+        assert_eq!(want[0].0, "template1", "pg_dump {version}");
+
+        let source = LocalFileSource::open(&fixture).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        assert_eq!(versions(index.metadata.as_ref().unwrap()), want, "pg_dump {version}: eager");
+
+        let (_dir, dump) = sandboxed(&fixture, "dumpall.sql");
+        let source = LocalFileSource::open(&dump).unwrap();
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
+        let mapped = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
+            .await
+            .unwrap()
+            .index;
+        assert_eq!(versions(mapped.metadata.as_ref().unwrap()), want, "pg_dump {version}: mapped");
     }
 }
