@@ -19,9 +19,12 @@ version = "0.1.0"
 edition = "2024"
 
 # The test build optimizes; debug assertions and overflow checks stay on
-# (`docs/design/decisions.md`, "D92").
+# (`docs/design/decisions.md`, "D92"). Line tables only: a backtrace and a
+# debugger still name the file and line, and the 66 test binaries every
+# library change relinks stop carrying full debuginfo.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2

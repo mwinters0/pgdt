@@ -15,6 +15,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import check
@@ -515,10 +516,34 @@ class CodeOf(unittest.TestCase):
         self.assertFalse(self.same("f(a)", "g(a)"))
 
 
+class HasDoctest(unittest.TestCase):
+    """Which doc comments hold a block `cargo test --doc` compiles."""
+
+    def test_a_rust_fence_is_a_doctest(self):
+        for info in ("", "rust", "ignore", "no_run,should_panic", "compile_fail", "edition2021", "{.rust}"):
+            self.assertTrue(check.has_doctest(f"/// ```{info}\n/// f();\n/// ```\nfn f() {{}}\n"), info)
+        self.assertTrue(check.has_doctest("//! ~~~\n//! f();\n//! ~~~\n"))
+
+    def test_another_language_is_not(self):
+        for info in ("text", "sql", "sh", "rust-not", "ignore,sql"):
+            self.assertFalse(check.has_doctest(f"/// ```{info}\n/// SELECT 1;\n/// ```\nfn f() {{}}\n"), info)
+
+    def test_an_indented_block_is_one_and_an_ordinary_comment_never(self):
+        self.assertTrue(check.has_doctest("/// Prose.\n///\n///     f();\nfn f() {}\n"))
+        self.assertFalse(check.has_doctest("/// - item\n///   continued\nfn f() {}\n"))
+        self.assertFalse(check.has_doctest("// ```\n// f();\n// ```\n//// ```\nfn f() {}\n"))
+
+    def test_doc_text_it_does_not_read_counts(self):
+        self.assertTrue(check.has_doctest("/** Docs. */\nfn f() {}\n"))
+        self.assertTrue(check.has_doctest('#![doc = include_str!("../README.md")]\n'))
+        self.assertFalse(check.has_doctest('fn f() { g("/**/"); }\n#[doc(hidden)]\nfn g() {}\n'))
+
+
 WORKSPACE = {
     "Cargo.toml": '[workspace]\nresolver = "2"\nmembers = ["base", "app"]\n',
     "base/Cargo.toml": '[package]\nname = "base"\nversion = "0.1.0"\nedition = "2021"\n',
-    "base/src/lib.rs": "pub fn f() {}\n",
+    "base/src/lib.rs": "/// ```\n/// base::f();\n/// ```\npub fn f() {}\n",
+    "base/src/plain.rs": "pub fn g() {}\n",
     "base/tests/t.rs": "mod common;\n#[test]\nfn t() { common::p(); }\n",
     "base/tests/common/mod.rs": 'pub fn p() -> &\'static str { "../fixtures" }\n',
     "base/tests/data/x.sql": "",
@@ -587,6 +612,18 @@ class Affected(unittest.TestCase):
         # `app` has no library, so no doctests.
         self.assertEqual(argv["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"])
 
+    def test_a_library_holding_no_doctest_runs_none(self):
+        plain = [
+            replace(p, targets=tuple(
+                replace(t, sources=("base/src/plain.rs",)) if t.kind == "lib" else t
+                for t in p.targets
+            ))
+            for p in self.packages
+        ]
+        plan = check.plan_changes(self.repo, ["base/src/lib.rs"], lambda _: plain)
+        self.assertNotIn("doctest", argv_of(plan))
+        self.assertNotIn("doctest", [c.name for c in check.every_check(self.repo, lambda _: plain)])
+
     def test_a_comment_only_change_lints_its_package_and_runs_no_test(self):
         plan = check.plan_changes(
             self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
@@ -647,7 +684,10 @@ class Affected(unittest.TestCase):
     def test_a_path_in_no_crate_and_read_by_nothing_runs_everything(self):
         for path in ("Cargo.toml", "vendor/x/src/lib.rs"):
             plan = self.plan("base/src/lib.rs", path)
-            self.assertEqual(plan.checks, check.CHECKS)
+            self.assertEqual(plan.checks, check.every_check(self.repo, lambda _: self.packages))
+            self.assertEqual(
+                argv_of(plan)["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"]
+            )
             self.assertIn(path, plan.note)
 
     def test_the_change_is_the_stamped_tree_against_head(self):
@@ -661,7 +701,10 @@ class Affected(unittest.TestCase):
             self.assertEqual(
                 check.changed_paths(repo, check.head_tree(repo)[1], tree), ["a.txt", "docs/new.md"]
             )
-            self.assertEqual(check.plan_affected(repo, tree, None).checks, check.CHECKS)
+            self.assertEqual(
+                check.plan_affected(repo, tree, None, lambda _: []).checks,
+                tuple(c for c in check.CHECKS if c.name != "doctest"),
+            )
 
 
 class RealWorkspace(unittest.TestCase):

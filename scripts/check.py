@@ -37,6 +37,11 @@ last blind read and a repoint is due, which is a round of its own
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
 
+**The doctests run only for a library holding one** (`has_doctest`, by
+rustdoc's own reading of a code block), because `cargo test --doc` compiles
+every library it is given once more just to find nothing to run; with none,
+the check is left out. The reading errs only toward running.
+
 **`--affected` runs the cargo checks the change can reach**, the change being
 every path whose content differs between `HEAD`'s tree and the stamped one.
 The scripts' `unittest` and `repoint.py` always run, being cheap and the ones
@@ -260,6 +265,8 @@ def summarize_repoint(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
+#: The round's six commands. `every_check` is what a run without
+#: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
     Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt),
     Check("clippy", ("cargo", "clippy", "--workspace", "--all-targets"), ".", summarize_clippy),
@@ -604,6 +611,82 @@ def comment_only_paths(repo: Path, head_tree: str, tree: str, changed: Sequence[
     return out
 
 
+#: rustdoc's own code-block attributes. An info string made only of these,
+#: or naming `rust`, or empty, marks a block `cargo test --doc` compiles; any
+#: other word makes it another language's.
+RUSTDOC_ATTRS = frozenset(
+    {"rust", "ignore", "should_panic", "no_run", "compile_fail", "test_harness", "standalone_crate"}
+)
+_DOC_LINE_RE = re.compile(r"^\s*(?:///(?!/)|//!)(.*)$")
+_DOC_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+#: Doc text this file does not read: a block doc comment, and a `doc`
+#: attribute, `include_str!` of a README included. Either counts as a doctest.
+_UNREAD_DOC_RE = re.compile(r"/\*[*!](?![*/])|#!?\[\s*doc\s*=")
+
+
+def _rust_info(info: str) -> bool:
+    words = [w.removeprefix(".") for w in re.split(r"[\s,{}]+", info) if w]
+    return "rust" in words or all(
+        w in RUSTDOC_ATTRS or w.startswith(("edition", "ignore-")) for w in words
+    )
+
+
+def has_doctest(src: str) -> bool:
+    """Whether rustdoc may compile a code block in `src`'s doc comments: a
+    fence whose info string `_rust_info` accepts, or a block indented four
+    spaces after a blank line or at a comment's start. Doc text it does not
+    read counts as one, so it errs only toward yes, which costs a run."""
+    if _UNREAD_DOC_RE.search(src):
+        return True
+    fence, blank = None, True
+    for line in src.splitlines():
+        m = _DOC_LINE_RE.match(line)
+        if not m:
+            fence, blank = None, True
+            continue
+        body = m.group(1).removeprefix(" ")
+        if fence:
+            if body.lstrip().startswith(fence):
+                fence = None
+        elif f := _DOC_FENCE_RE.match(body):
+            if _rust_info(f.group(2)):
+                return True
+            fence = f.group(1)[0] * 3
+        elif blank and body.startswith("    ") and body.strip():
+            return True
+        blank = not body.strip()
+    return False
+
+
+def doctest_packages(repo: Path, packages: Sequence[Package]) -> set[str]:
+    """The packages whose library sources hold a doctest (`has_doctest`)."""
+    return {
+        p.name
+        for p in packages
+        for t in p.targets
+        if t.kind == "lib"
+        and any(
+            has_doctest((repo / s).read_text(encoding="utf-8", errors="replace"))
+            for s in t.sources
+        )
+    }
+
+
+def doctest_check(pkgs: Collection[str]) -> Check:
+    argv = ("cargo", "test", "--doc", "--no-fail-fast", *(a for n in sorted(pkgs) for a in ("-p", n)))
+    return Check("doctest", argv, ".", summarize_doctest)
+
+
+def every_check(repo: Path, load: Callable[[Path], list[Package]] = workspace) -> tuple[Check, ...]:
+    """`CHECKS`, the doctests run for the libraries holding one, or not at all."""
+    docs = doctest_packages(repo, load(repo))
+    return tuple(
+        doctest_check(docs) if c.name == "doctest" else c
+        for c in CHECKS
+        if c.name != "doctest" or docs
+    )
+
+
 def plan_affected(
     repo: Path,
     tree: str,
@@ -611,7 +694,10 @@ def plan_affected(
     load: Callable[[Path], list[Package]] = workspace,
 ) -> Plan:
     if head_tree is None:
-        return Plan(CHECKS, "affected: no commit to compare with, so every check runs")
+        return Plan(
+            every_check(repo, load),
+            "affected: no commit to compare with, so every check runs",
+        )
     changed = changed_paths(repo, head_tree, tree)
     return plan_changes(repo, changed, load, comment_only_paths(repo, head_tree, tree, changed))
 
@@ -660,7 +746,8 @@ def plan_changes(
             whole = path
     if whole is not None:
         return Plan(
-            CHECKS, f"affected: {whole} is in no crate and read by no test, so every check runs"
+            every_check(repo, load),
+            f"affected: {whole} is in no crate and read by no test, so every check runs",
         )
     closure = set(roots)
     grew = True
@@ -670,10 +757,10 @@ def plan_changes(
         grew = bool(more)
     whole_pkgs = sorted(closure | local)
     binaries = sorted((pkg, bid) for pkg, bid in reader_ids if pkg not in whole_pkgs)
-    doc_pkgs = sorted(
-        {n for n in whole_pkgs if by_name[n].has_lib}
-        | {pkg for pkg, bid in binaries if bid == pkg}
-    )
+    doc_libs = {n for n in whole_pkgs if by_name[n].has_lib} | {
+        pkg for pkg, bid in binaries if bid == pkg
+    }
+    doc_pkgs = sorted(doc_libs & doctest_packages(repo, [by_name[n] for n in doc_libs]))
     lint_only = sorted(linted - set(whole_pkgs))
     checks: list[Check] = []
     p_args = tuple(a for n in sorted({*whole_pkgs, *lint_only}) for a in ("-p", n))
@@ -691,8 +778,7 @@ def plan_changes(
             argv += ["-E", " | ".join(terms)]
         checks.append(Check("nextest", tuple(argv), ".", summarize_nextest))
     if doc_pkgs:
-        argv = ("cargo", "test", "--doc", "--no-fail-fast", *(a for n in doc_pkgs for a in ("-p", n)))
-        checks.append(Check("doctest", argv, ".", summarize_doctest))
+        checks.append(doctest_check(doc_pkgs))
     parts = [f"{_paths(len(changed))} changed since HEAD"]
     if whole_pkgs:
         parts.append(f"packages {', '.join(whole_pkgs)}")
@@ -886,12 +972,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run only the cargo checks the change since HEAD can reach",
     )
     args = parser.parse_args(argv)
+    every = every_check(REPO)
     if not args.affected:
-        return (verify if args.verify else run)(REPO)
+        return (verify if args.verify else run)(REPO, every)
     tree = tree_stamp(REPO)
     plan = plan_affected(REPO, tree, head_tree(REPO)[1])
     if args.verify:
-        return verify(REPO, plan.checks, note=plan.note, tree=tree, also=(CHECKS,))
+        return verify(REPO, plan.checks, note=plan.note, tree=tree, also=(every,))
     return run(REPO, plan.checks, note=plan.note, tree=tree)
 
 
