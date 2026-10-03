@@ -427,8 +427,8 @@ pgdt query --source big.sql --table public.documents --max-line-bytes 1073741824
 
 The limit is what one row may cost in memory, so raise it to what the file
 needs rather than as far as it goes. It is checked as each read completes, so a
-line can run past the limit by up to one read chunk (`--chunk-size`) before it
-is refused.
+line up to one read chunk (`--chunk-size`) past the limit is held, and read or
+refused by where the reads fall rather than by its length.
 
 ### `--statistics-level`: what `parse` records for later queries
 

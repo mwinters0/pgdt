@@ -653,6 +653,10 @@ pub struct ScanOptions {
     /// has the whole line, so this is the only thing standing between a
     /// malformed input and unbounded memory growth. Defaults to
     /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
+    // deficiency: KD93 — a line is measured only where a read ends inside
+    // it, so one up to a chunk past the limit is read or refused by where the
+    // reads fall — `chunk_size_bytes`, the leader's split, a resume point —
+    // not by its length.
     pub max_line_bytes: usize,
     /// Cooperative cancellation: call [`Cancellation::cancel`] from another
     /// task and the mapping loop stops at the next chunk boundary, persists

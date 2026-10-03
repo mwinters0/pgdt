@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD92 -->
+rather than being deleted. <!-- deficiency-watermark: KD93 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -391,16 +391,22 @@ than reading as a phase nobody has sliced.
 - **KD90** — a strict parse refuses a field only at a marked check, so text
   a reader cannot read at all passes it — `abc` in an `integer`, a malformed
   `jsonb`, a year or an interval count past `i64` — though the server may
-  refuse it. **(c) unowned**; promoted by a strict parse wanted to be a full
-  check of a type pgdt reads. Detail: `pgdump_query/src/decode.rs`.
+  refuse it. **(b) owned by P31**, 31.22. Detail:
+  `pgdump_query/src/decode.rs`.
 
 - **KD91** — a role quoted `"PUBLIC"` or a tablespace quoted `"PG_DEFAULT"`,
   each a name a server can hold, is dropped from the inventory as the
-  pseudo-role or the default tablespace is. **(c) unowned**; promoted by a
-  dump holding one. Detail: `pgdump_query/src/preamble.rs`.
+  pseudo-role or the default tablespace is. **(b) owned by P31**, 31.23.
+  Detail: `pgdump_query/src/preamble.rs`.
 
 - **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
   want of a complete cache, names a `pgdt parse` without
   `--postgres-invalid-values ignore`, which fails at the first such field it
   keys. **(c) unowned**; promoted by a user meeting it. Detail:
   `datafusion-pgdump/src/dump.rs`.
+
+- **KD93** — a line is measured against `max_line_bytes` only where a read
+  ends inside it, so one up to a read chunk past the limit is read or refused
+  by where the reads fall — the chunk size, `--jobs`, a resume point — not by
+  its length. **(c) unowned**; promoted by admitting its fix. Detail:
+  `pgdump_query/src/scan.rs`.

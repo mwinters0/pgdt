@@ -171,8 +171,8 @@ Code: `cache::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
-`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes` on a line carried
-across chunks, and passing it errors, never truncates. A chunk is scanned in two passes, carried line then chunk in place
+`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes`,
+and exceeding it errors, never truncates (`KD93`). A chunk is scanned in two passes, carried line then chunk in place
 (`ChunkCarry`); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar,
 or a bare `BEGIN;` (below), is structural, an off-grammar one being ordinary SQL; inside a block only an exact `\.` line is looked at (I7). Outside
 one every line is lexed as psql lexes it (`lex.rs`, I50), a line beginning inside a region is never structure, and a
@@ -390,7 +390,7 @@ reasoning), with the row evaluation it runs under (D93). Planning stays at `scan
 static filter and the state then keep, a join's filter being complete by then, so D51's balance holds over what is read, at the plan's count; the
 planned cut stands where nothing is ruled out or an order would be lost (`KD53`). A group is asked once per state, the cut's verdicts seeding a replay.
 Rejected: the cut held by `TablePartitions`, outliving the filter a reset discards; keyed by the filter's `Arc`; the count re-planned (read at planning);
-re-pruning a whole block per generation; the filter handed through the plan node, whose clones share it; seeking the scanner in place at a skip.
+re-pruning a whole block per generation; a partition reading its filter from state shared with the plan node, which its clones share, so a reset node hands out the filter its producer discarded; seeking the scanner in place at a skip.
 Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `pgdump_query/tests/dynamic_filter.rs`, `datafusion-pgdump/tests/dynamic_filters.rs`.
 
 ### D98 The typed mode nulls what its front end cannot hold, tested before decode where the block's count says it holds one
@@ -435,14 +435,14 @@ No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column;
 `IS [NOT] UNREPRESENTABLE` is what the null mode forces, its NULL otherwise the dump's to every operator (D101).
 Rejected: an `IN` `PredicateOp`, every operator carrying a list; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
-### D54 One tree, no planner, short-circuit defined against the root
+### D54 One tree, no planner yet, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only the root's `True`
 matters; a decode failure surfaces only where evaluation reaches it: never in a group statistics rule out, nor serially past a sorted block's stop, but split a
 later piece evaluates one row past it, so outside the contract `--jobs` decides. Resolution refusals come from the plan before any row, for the first refusing
 block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not
 skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one; the stop asked first, every valid dump paying
-for invalid text. No planner defers complexity until one buys something and refuses no evident simplification: a resolution-time rewrite removing redundant
-work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`.
+for invalid text. A planner is deferred, not refused: one is built when it buys more than its complexity costs, and meanwhile a resolution-time rewrite
+removing redundant work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`.
 
 ### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
 `*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in` spelling is read where free,
@@ -630,8 +630,8 @@ in two lines, before and after the open, because a fresh `.xz` walks footers fir
 meant to be read once (`KD29`). Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
-### D66 Output is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
-Every value renders back to the text `pg_dump` wrote, but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.
+### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
+Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never writes rendering as `*_out` would — but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.
 One contradicting its type is `FieldDecode` naming `--schema-mode strings`, never a null. Rejected: Arrow's display; a `bytea`'s form kept per database or flagged, read by no comparison.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment

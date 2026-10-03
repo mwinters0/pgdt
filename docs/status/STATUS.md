@@ -110,6 +110,8 @@ approval, in the spec's opening note.
 - [ ] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it
 - [ ] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so
 - [ ] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same
+- [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
+- [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
 
 ## Not started
 
