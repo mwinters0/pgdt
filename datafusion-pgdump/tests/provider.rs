@@ -501,3 +501,61 @@ async fn map_ungathered(source: &LocalFileSource, path: &Path, request: &Statist
     }
     cache::save(path, source, &index).await.unwrap();
 }
+
+/// **A dump opened ignoring them reads a float PostgreSQL refuses as the
+/// largest finite value of its sign**, a pushed filter finding it as the batch
+/// holds it, over the complete data-level cache a parse ignoring them leaves;
+/// opened told nothing, the same scan refuses the field
+/// (`docs/design/decisions.md`, "D103").
+#[tokio::test]
+async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
+    use arrow::array::{Array, Int32Array};
+    use pgdump_query::PostgresInvalidValues;
+
+    let fixture = fixtures_root().join("16/types/extra-float-digits-0.sql");
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("dump.sql");
+    std::fs::copy(&fixture, &copy).unwrap();
+    let source = LocalFileSource::open(&copy).unwrap();
+    let scan = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..ScanOptions::default()
+    };
+    let cached = CacheMode::enabled(cache::colocated_path(&copy));
+    map_file(&source, &scan, &cached, &StatisticsRequest::DATA).await.unwrap();
+    for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Ignore] {
+        let options =
+            PgDumpOptions { postgres_invalid_values: invalid, ..PgDumpOptions::default() };
+        let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
+        let ctx = session(4, 8192);
+        let catalogs = register(&ctx, &dump);
+        let table = TableName {
+            database: catalogs[0].0.clone(),
+            schema: Some("public".to_string()),
+            table: "t_extremes".to_string(),
+        };
+        let sql = format!(
+            "{} WHERE v_double = 1.7976931348623157e308 OR v_double = -1.7976931348623157e308 \
+             ORDER BY id",
+            select(&catalogs[0].1, &table, "id")
+        );
+        let answer = ctx.sql(&sql).await.unwrap().collect().await;
+        match invalid {
+            PostgresInvalidValues::Default => {
+                let refused = answer.expect_err("the field is refused").to_string();
+                assert!(refused.contains("1.79769313486232e+308"), "{refused}");
+            }
+            PostgresInvalidValues::Ignore => {
+                let batches = answer.unwrap();
+                let ids: Vec<i32> = batches
+                    .iter()
+                    .flat_map(|b| {
+                        let ids = b.column(0).as_any().downcast_ref::<Int32Array>().unwrap();
+                        (0..ids.len()).map(|i| ids.value(i)).collect::<Vec<_>>()
+                    })
+                    .collect();
+                assert_eq!(ids, [1, 2]);
+            }
+        }
+    }
+}

@@ -212,9 +212,12 @@ Error: COPY public.t_extremes, line 1, column v_double: `-1.79769313486232e+308`
 ```
 
 The dump is what is wrong, not its reading, and dumping again without the flag
-is the cure. Short of that, `--statistics-level data,public.t_extremes.v_double=metadata`
-parses past it, that column then keeping no statistics, and `--schema-mode
-strings` reads the column as the dump's text.
+is the cure. Short of that, `--postgres-invalid-values ignore` reads it as the
+value `pg_dump` meant: given to `parse`, it parses past it, and given to
+`query`, it reads it as the largest value of its sign, `1.7976931348623157e+308`,
+which a filter then finds by that value — not by the dump's spelling, which a
+filter refuses as PostgreSQL does. `--schema-mode strings` reads the column as
+the dump's text.
 
 ### A value its column cannot hold reads as NULL
 
@@ -1007,6 +1010,16 @@ RENAME VALUE`, an `ADD VALUE IF NOT EXISTS`, a label written `E'…'` — when i
 cannot tell such a label from one it missed, and goes on past it. `pgdt info
 --detail` says which types those are, listing their labels with `(labels not
 read exactly)` after them.
+
+**`--postgres-invalid-values ignore` reads past them**, given to `parse` and to
+`query` alike, with no promise about what it reads: `parse` goes on past each,
+keeping no statistics of the stretch of its column it sits in, and `query`
+reads a `real` or `double precision` past its range as the largest value of its
+sign and one below its smallest as zero, and refuses every other as before.
+The DataFusion provider takes it as `PgDumpOptions::postgres_invalid_values`,
+the shell as `:postgres-invalid-values=` and `pgdump.postgres_invalid_values`
+([`datafusion-cli-pgdump.md`](datafusion-cli-pgdump.md)). A filter's own value
+PostgreSQL refuses has no such option: write the value you mean.
 
 ## Columns we cannot type at all
 

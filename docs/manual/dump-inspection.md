@@ -54,6 +54,7 @@ straight-through one produce the same index, byte for byte.
 the dump: `parse` fails naming the table, the column, the line — by the
 number the restore's own error gives it and by its byte offset — and the value,
 and the cache holds the scan as far as it last banked.
+`--postgres-invalid-values ignore` goes on past each instead.
 Which values it checks, and what to do about one, is
 [`type-handling.md`](type-handling.md), "When a value does not match its type".
 

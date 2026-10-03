@@ -18,8 +18,8 @@ use datafusion_pgdump::{
 use namespace_init::InitShutdown;
 use pgdump_query::cache::StrictIdentity;
 use pgdump_query::{
-    ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, SchemaMode, Severity,
-    UnrepresentableMode,
+    ComparisonDivergence, ComparisonNote, DiagnosticSink, Finding, PostgresInvalidValues,
+    SchemaMode, Severity, UnrepresentableMode,
 };
 
 /// The environment variable naming the file the introspection build writes
@@ -69,8 +69,10 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     refused for one of several. :strings reads every column as its text, \
     :unrepresentable=refuse refuses at planning a query needing the values of a column holding \
     one its type cannot hold, where the default, `null`, reads such a value as NULL and `text` \
-    reads such a column as its text, and :strict-identity=TERMS states this dump's strictness where \
-    --strict-identity would. Repeatable";
+    reads such a column as its text, :postgres-invalid-values=ignore reads a float its column \
+    holds past its type's range, which PostgreSQL refuses and the default, `default`, refuses \
+    too, as the largest value of its sign, and :strict-identity=TERMS states this dump's \
+    strictness where --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
     does, for every --dump and STORED AS PGDUMP that states none of its own: `time` refuses a \
@@ -80,14 +82,15 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict
     is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory` is the default, which a dump under a stricter \
     session states to keep that check";
 
-/// One `--dump [NAME=]SOURCE[:strings][:unrepresentable=MODE][:strict-identity=TERMS]`.
+/// One `--dump [NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]`.
 ///
 /// **`NAME=` is recognised only where what precedes the first `=` could not
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
 /// `./a=b.sql`. **The suffixes are stripped from the right, in any order**,
 /// each at most once: TERMS hold `,` and never `:`, and MODE is `null`,
-/// `text` or `refuse`.
+/// `text` or `refuse` for `:unrepresentable=`, `default` or `ignore` for
+/// `:postgres-invalid-values=`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
@@ -95,6 +98,8 @@ pub struct DumpArg {
     pub schema_mode: SchemaMode,
     /// How this dump reads a value its column's type cannot hold.
     pub unrepresentable: UnrepresentableMode,
+    /// How this dump reads a value PostgreSQL refuses for its column's type.
+    pub postgres_invalid_values: PostgresInvalidValues,
     /// This dump's strictness, where `--strict-identity` gives the default.
     pub strict_identity: Option<StrictIdentity>,
 }
@@ -103,10 +108,12 @@ impl DumpArg {
     pub fn parse(arg: &str) -> Result<Self, String> {
         const STRICT: &str = ":strict-identity=";
         const UNREPRESENTABLE: &str = ":unrepresentable=";
+        const INVALID: &str = ":postgres-invalid-values=";
         let mut arg = arg;
         let mut strings = false;
         let mut strict_identity = None;
         let mut unrepresentable = None;
+        let mut invalid = None;
         loop {
             if let Some(rest) = arg.strip_suffix(":strings") {
                 if std::mem::replace(&mut strings, true) {
@@ -128,6 +135,22 @@ impl DumpArg {
                 };
                 if unrepresentable.replace(mode).is_some() {
                     return Err(format!("--dump states {UNREPRESENTABLE} twice"));
+                }
+                arg = rest;
+            } else if let Some((rest, mode)) =
+                arg.rsplit_once(INVALID).filter(|(_, mode)| !mode.contains(':'))
+            {
+                let mode = match mode {
+                    "default" => PostgresInvalidValues::Default,
+                    "ignore" => PostgresInvalidValues::Ignore,
+                    _ => {
+                        return Err(format!(
+                            "--dump {INVALID}{mode}: the mode is `default` or `ignore`"
+                        ));
+                    }
+                };
+                if invalid.replace(mode).is_some() {
+                    return Err(format!("--dump states {INVALID} twice"));
                 }
                 arg = rest;
             } else if let Some((rest, terms)) =
@@ -153,8 +176,14 @@ impl DumpArg {
         if source.is_empty() {
             return Err("--dump names no source".to_string());
         }
-        let unrepresentable = unrepresentable.unwrap_or_default();
-        Ok(Self { name, source: source.to_string(), schema_mode, unrepresentable, strict_identity })
+        Ok(Self {
+            name,
+            source: source.to_string(),
+            schema_mode,
+            unrepresentable: unrepresentable.unwrap_or_default(),
+            postgres_invalid_values: invalid.unwrap_or_default(),
+            strict_identity,
+        })
     }
 }
 
@@ -290,6 +319,7 @@ pub async fn register(
         let options = PgDumpOptions {
             schema_mode: dump.schema_mode,
             unrepresentable: dump.unrepresentable,
+            postgres_invalid_values: dump.postgres_invalid_values,
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
             ..PgDumpOptions::default()
         };
@@ -316,6 +346,7 @@ mod tests {
             source: source.to_string(),
             schema_mode,
             unrepresentable: UnrepresentableMode::Null,
+            postgres_invalid_values: PostgresInvalidValues::Default,
             strict_identity: None,
         }
     }
@@ -422,6 +453,48 @@ mod tests {
             "koji.dump:unrepresentable=typed",
             "koji.dump:unrepresentable=",
             "koji.dump:unrepresentable=null:unrepresentable=refuse",
+        ] {
+            assert!(DumpArg::parse(refused).is_err(), "{refused}");
+        }
+    }
+
+    /// **`:postgres-invalid-values=MODE` is how this dump reads a value
+    /// PostgreSQL refuses**, `default` unstated, beside the other suffixes in
+    /// any order and at most once.
+    #[test]
+    fn a_dump_states_how_it_reads_a_value_postgresql_refuses() {
+        let mode = |arg: &str| DumpArg::parse(arg).unwrap().postgres_invalid_values;
+        assert_eq!(mode("koji.dump"), PostgresInvalidValues::Default);
+        assert_eq!(
+            mode("koji.dump:postgres-invalid-values=default"),
+            PostgresInvalidValues::Default
+        );
+        for arg in [
+            "koji.dump:postgres-invalid-values=ignore:unrepresentable=text:strings",
+            "koji.dump:strings:postgres-invalid-values=ignore:unrepresentable=text",
+            "koji.dump:unrepresentable=text:strings:postgres-invalid-values=ignore",
+        ] {
+            let parsed = parsed(arg);
+            assert_eq!(
+                (
+                    parsed.source.as_str(),
+                    parsed.schema_mode,
+                    parsed.unrepresentable,
+                    parsed.postgres_invalid_values
+                ),
+                (
+                    "koji.dump",
+                    SchemaMode::Strings,
+                    UnrepresentableMode::Text,
+                    PostgresInvalidValues::Ignore
+                ),
+                "{arg}"
+            );
+        }
+        for refused in [
+            "koji.dump:postgres-invalid-values=strict",
+            "koji.dump:postgres-invalid-values=",
+            "koji.dump:postgres-invalid-values=ignore:postgres-invalid-values=default",
         ] {
             assert!(DumpArg::parse(refused).is_err(), "{refused}");
         }

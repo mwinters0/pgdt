@@ -68,6 +68,7 @@ use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
+use crate::scan::PostgresInvalidValues;
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
@@ -88,21 +89,24 @@ pub(crate) fn observer_for(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     account: &Arc<StatisticsAccount>,
+    invalid: PostgresInvalidValues,
 ) -> Option<Box<dyn BlockObserver>> {
     let gathering = request.gathering(request.tracked_columns(header)?);
-    Some(observer_tracking(&gathering, header, metadata, database, account))
+    Some(observer_tracking(&gathering, header, metadata, database, account, invalid))
 }
 
 /// The observer for one block gathering `plan`'s columns — positional to
 /// `header` — at its group size, merged pairwise past its cap and short of its
 /// minimum: what [`observer_for`] builds from a request, and what a back-fill
-/// builds from [`StatisticsRequest::backfill`]'s answer.
+/// builds from [`StatisticsRequest::backfill`]'s answer. `invalid` says
+/// whether a field its type's `*_in` refuses stops the block.
 pub(crate) fn observer_tracking(
     plan: &StatisticsBackfill,
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     account: &Arc<StatisticsAccount>,
+    invalid: PostgresInvalidValues,
 ) -> Box<dyn BlockObserver> {
     let _attributed = StatisticsScope::enter();
     // Opened before anything the observer allocates, and charged once the
@@ -126,6 +130,7 @@ pub(crate) fn observer_tracking(
                     &resolved.plans[i],
                     resolved.schema.field(i).data_type(),
                     tiers[i].clone(),
+                    invalid,
                 )
             })
         })
@@ -935,6 +940,9 @@ struct ColumnGatherer {
     group: GroupState,
     /// The column over a piece's held first group ([`Gatherer::head`]).
     head: Option<GroupState>,
+    /// Whether a field its type's `*_in` refuses stops the block, or is kept
+    /// out of the group's statistics ([`Self::observe`]).
+    invalid: PostgresInvalidValues,
 }
 
 impl ColumnGatherer {
@@ -946,6 +954,7 @@ impl ColumnGatherer {
     /// group of the values past `tier`, where the type cannot hold every one;
     /// and, as for every tracked column, its NULLs and text bytes per group
     /// ([`ColumnStatistics`]).
+    #[allow(clippy::too_many_arguments)]
     fn new(
         declared_type: Option<String>,
         collation: Option<String>,
@@ -954,6 +963,7 @@ impl ColumnGatherer {
         plan: &NestedPlan,
         data_type: &DataType,
         tier: Option<ColumnTier>,
+        invalid: PostgresInvalidValues,
     ) -> Self {
         let postgres = ComparisonSemantics::Postgres;
         let dictionary = match comparison {
@@ -964,7 +974,7 @@ impl ColumnGatherer {
         };
         let bounds = bounds.map(|kind| kind.map(BoundsGatherer::new));
         let summand = Summand::of(data_type, plan);
-        Self::with(declared_type, collation, bounds, dictionary, summand, tier)
+        Self::with(declared_type, collation, bounds, dictionary, summand, tier, invalid)
     }
 
     fn with(
@@ -974,6 +984,7 @@ impl ColumnGatherer {
         dictionary: Option<DictionaryGatherer>,
         summand: Option<Summand>,
         tier: Option<ColumnTier>,
+        invalid: PostgresInvalidValues,
     ) -> Self {
         let group = GroupState::fresh(&bounds);
         Self {
@@ -989,6 +1000,7 @@ impl ColumnGatherer {
             dictionary,
             group,
             head: None,
+            invalid,
         }
     }
 
@@ -1035,6 +1047,7 @@ impl ColumnGatherer {
             self.dictionary.as_ref().map(DictionaryGatherer::fresh),
             self.summand,
             self.tier.clone(),
+            self.invalid,
         )
     }
 
@@ -1049,7 +1062,8 @@ impl ColumnGatherer {
     }
 
     /// Observe one field, answering what the column's heap grew by, or
-    /// [`Refused`] where keying it found a value its type's `*_in` refuses.
+    /// [`Refused`] where keying it found a value its type's `*_in` refuses
+    /// and [`Self::invalid`] refuses it.
     fn observe(&mut self, field: &[u8]) -> Result<i64, Refused> {
         let before = self.open_heap();
         match decode_field(field) {
@@ -1073,12 +1087,25 @@ impl ColumnGatherer {
                         .zip(summand.value(&text))
                         .map(|(sum, value)| sum.wrapping_add(value));
                 }
+                let mut refused = false;
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
-                        bounds.observe(group, &text, tier)?;
+                        refused |= bounds.observe(group, &text, tier).is_err();
                     }
                 }
-                if let Some(dictionary) = &self.dictionary {
+                if refused {
+                    if self.invalid == PostgresInvalidValues::Default {
+                        return Err(Refused);
+                    }
+                    // Ignored: no statistic a read could contradict (D103).
+                    self.group.sum = None;
+                    for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+                        if let (Some(bounds), Some(group)) = (bounds, group) {
+                            bounds.lose_value(group, tier);
+                        }
+                    }
+                    self.group.lose_texts();
+                } else if let Some(dictionary) = &self.dictionary {
                     dictionary.observe(&mut self.group, &text);
                 }
             }
@@ -2939,6 +2966,7 @@ mod tests {
                     &NestedPlan::Scalar,
                     &data_type,
                     crate::unrepresentable::scalar_tier(&data_type),
+                    PostgresInvalidValues::Default,
                 ))
             })
             .chain([None])

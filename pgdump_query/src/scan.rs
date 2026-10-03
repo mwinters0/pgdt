@@ -608,6 +608,24 @@ impl Cancellation {
     }
 }
 
+/// What a read does with a field its type's `*_in` refuses
+/// ([`crate::decode::Unread::Refused`]), stated for a parse on [`ScanOptions`]
+/// and for a query on [`crate::QueryOptions`] (`docs/design/decisions.md`,
+/// "D103").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PostgresInvalidValues {
+    /// Refused as a restore refuses it: a parse fails at the first such field
+    /// it decodes, and a query decoding one fails there.
+    #[default]
+    Default,
+    /// Read as the decoders read it, with no contract: a parse goes on past
+    /// one, its row group then keeping no statistic of its column a read could
+    /// contradict, and a query reads a float past its type's range as
+    /// `decode::float_field` reads it and fails on every other such field. A
+    /// filter literal is never opted out.
+    Ignore,
+}
+
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -667,6 +685,12 @@ pub struct ScanOptions {
     /// **Read by [`crate::stream::map_file`] alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
     pub statistics_allowance_bytes: Option<u64>,
+    /// What gathering does with a field its type's `*_in` refuses: fails the
+    /// pass at the first, by default, or goes on past it
+    /// ([`PostgresInvalidValues`]). Read by [`crate::stream::map_file`] and
+    /// [`crate::stream::gather_block_statistics`] alone, as gathering is; a
+    /// query's reads are [`crate::QueryOptions::postgres_invalid_values`]'.
+    pub postgres_invalid_values: PostgresInvalidValues,
 }
 
 impl Default for ScanOptions {
@@ -677,6 +701,7 @@ impl Default for ScanOptions {
             cancel: None,
             parallelism: Parallelism::default(),
             statistics_allowance_bytes: None,
+            postgres_invalid_values: PostgresInvalidValues::default(),
         }
     }
 }

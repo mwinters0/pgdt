@@ -95,13 +95,14 @@ impl PgDumpTable {
 }
 
 /// What every query of `dump` asks, before a scan adds its projection,
-/// parallelism and batch size: the dump's schema mode and how it reads a value
-/// its column's type cannot hold, and DataFusion's comparison semantics
-/// (`docs/design/decisions.md`, "D40", "D98").
+/// parallelism and batch size: the dump's schema mode, how it reads a value
+/// its column's type cannot hold and one PostgreSQL refuses, and DataFusion's
+/// comparison semantics (`docs/design/decisions.md`, "D40", "D98", "D103").
 fn query_options(dump: &PgDump) -> QueryOptions {
     QueryOptions {
         schema_mode: dump.schema_mode(),
         unrepresentable: dump.unrepresentable(),
+        postgres_invalid_values: dump.postgres_invalid_values(),
         semantics: ComparisonSemantics::DataFusion,
         ..QueryOptions::default()
     }

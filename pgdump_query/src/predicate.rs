@@ -18,6 +18,7 @@ use crate::pgtype::{
     NestedCompare, UnanswerableReason, datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
+use crate::scan::PostgresInvalidValues;
 use crate::unrepresentable::UnrepresentableRead;
 use crate::{Error, Result};
 
@@ -1353,6 +1354,31 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     field_key(kind, text).ok()
 }
 
+/// A field's key as a query reads the field: [`order_key`]'s, but for a float
+/// its type's `*_in` refuses, keyed under [`PostgresInvalidValues::Ignore`] as
+/// the typed read emits it ([`decode::float_field`]), so a filter and the
+/// batch agree on it.
+fn read_key(kind: &CompareKind, text: &str, invalid: PostgresInvalidValues) -> Option<OrderKey> {
+    match (field_key(kind, text), kind) {
+        (Ok(key), _) => Some(key),
+        (Err(Unread::Refused), CompareKind::Float32) => {
+            Some(OrderKey::Float(f64::from(decode::float_field::<f32>(text, invalid)?)))
+        }
+        (Err(Unread::Refused), CompareKind::Float64) => {
+            Some(OrderKey::Float(decode::float_field::<f64>(text, invalid)?))
+        }
+        (Err(_), _) => None,
+    }
+}
+
+/// Which side of a comparison [`nested_key`] reads: a filter's literal, or a
+/// field, read as the query reads one its type's `*_in` refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Literal,
+    Field(PostgresInvalidValues),
+}
+
 /// `NAMEDATALEN`: `enum_in` refuses a text of this many bytes or more before
 /// looking it up, no label being so long (I70).
 const ENUM_LABEL_LIMIT: usize = 64;
@@ -1714,7 +1740,7 @@ impl RangeKey {
 
 /// Read one side of a nested comparison out of `text`.
 ///
-/// `input` is which grammar to read it in, and it is the whole of what
+/// `side` is which grammar to read it in, and it is the whole of what
 /// separates the two sides: a *field* is read with [`crate::nested`]'s strict
 /// `decode_*`, a *literal* with the `array_in`/`record_in` supersets
 /// (`parse_*`), which take `{a, b}` and `{ 1 , 2 }` (I44).
@@ -1727,14 +1753,15 @@ impl RangeKey {
 /// `None` is "not a value of this type", which is
 /// `Error::PredicateValueDecode` for a literal and `Error::FieldDecode` for a
 /// field.
-fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey> {
+fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<NestedKey> {
+    let input = side == Side::Literal;
     Some(match plan {
         // A nested comparison is PostgreSQL's alone, DataFusion's semantics
         // refusing one.
-        NestedCompare::Leaf { kind, .. } if input => {
-            NestedKey::Leaf(literal_key(kind, text, ComparisonSemantics::Postgres)?)
-        }
-        NestedCompare::Leaf { kind, .. } => NestedKey::Leaf(order_key(kind, text)?),
+        NestedCompare::Leaf { kind, .. } => NestedKey::Leaf(match side {
+            Side::Literal => literal_key(kind, text, ComparisonSemantics::Postgres)?,
+            Side::Field(invalid) => read_key(kind, text, invalid)?,
+        }),
         // Refused before any value is read: `resolve_term` never builds a
         // comparison over a tree holding one.
         NestedCompare::Uncomparable { .. } => return None,
@@ -1744,7 +1771,7 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             let mut elements = Vec::with_capacity(literal.elements.len());
             for value in &literal.elements {
                 elements.push(match value {
-                    Some(value) => Some(nested_key(element, value, input)?),
+                    Some(value) => Some(nested_key(element, value, side)?),
                     None => None,
                 });
             }
@@ -1795,7 +1822,7 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             let mut out = Vec::with_capacity(plans.len());
             for ((_, plan), value) in plans.iter().zip(fields.drain(..)) {
                 out.push(match value {
-                    Some(value) => Some(nested_key(plan, &value, input)?),
+                    Some(value) => Some(nested_key(plan, &value, side)?),
                     None => None,
                 });
             }
@@ -1804,7 +1831,7 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
         NestedCompare::Range { bound, discrete } => {
             let literal =
                 if input { nested::parse_range(text) } else { nested::decode_range(text) }?;
-            NestedKey::Range(Box::new(range_key(bound, &literal, *discrete, input)?))
+            NestedKey::Range(Box::new(range_key(bound, &literal, *discrete, side)?))
         }
         NestedCompare::Multirange { bound, discrete } => {
             let literals = if input {
@@ -1814,7 +1841,7 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             }?;
             let mut members = Vec::with_capacity(literals.len());
             for literal in &literals {
-                members.push(range_key(bound, literal, *discrete, input)?);
+                members.push(range_key(bound, literal, *discrete, side)?);
             }
             NestedKey::Multirange(canonical_multirange(members, *discrete)?)
         }
@@ -1832,12 +1859,12 @@ fn range_key(
     bound: &NestedCompare,
     literal: &nested::RangeLiteral,
     discrete: Option<Discrete>,
-    input: bool,
+    reading: Side,
 ) -> Option<RangeKey> {
     let side = |text: &Option<String>, inclusive: bool, lower: bool| {
         Some(RangeBoundKey {
             value: match text {
-                Some(text) => Some(nested_key(bound, text, input)?),
+                Some(text) => Some(nested_key(bound, text, reading)?),
                 None => None,
             },
             inclusive,
@@ -2636,6 +2663,9 @@ pub(crate) struct ResolvedTerm {
     /// test over a column holding none, which is `False` on every row
     /// (`crate::unrepresentable::unrepresentable_tests`).
     tested: Option<UnrepresentableRead>,
+    /// How the query reads a field its type's `*_in` refuses
+    /// ([`ResolvedExpr::invalid_values`]).
+    invalid: PostgresInvalidValues,
 }
 
 impl ResolvedTerm {
@@ -2741,6 +2771,7 @@ pub(crate) fn resolve_term(
             compared: None,
             unrepresentable: None,
             tested: None,
+            invalid: PostgresInvalidValues::Default,
         });
     }
     let ordering = predicate.op.is_ordering();
@@ -2857,12 +2888,14 @@ pub(crate) fn resolve_term(
         Some(ComparisonPlan::Nested(tree)) => (
             Comparison::Nested(Box::new(NestedComparison {
                 plan: tree.clone(),
-                bound: nested_key(tree, text, true).ok_or_else(|| Error::PredicateValueDecode {
-                    column: predicate.column.clone(),
-                    op: predicate.op.symbol(),
-                    value: text.to_string(),
-                    declared_type: declared_type.clone(),
-                    accepted: nested_accepted_form(tree),
+                bound: nested_key(tree, text, Side::Literal).ok_or_else(|| {
+                    Error::PredicateValueDecode {
+                        column: predicate.column.clone(),
+                        op: predicate.op.symbol(),
+                        value: text.to_string(),
+                        declared_type: declared_type.clone(),
+                        accepted: nested_accepted_form(tree),
+                    }
                 })?,
             })),
             tree.divergences()
@@ -2948,6 +2981,7 @@ pub(crate) fn resolve_term(
         index,
         unrepresentable: None,
         tested: None,
+        invalid: PostgresInvalidValues::Default,
         compared: Some(ComparedTerm {
             column: predicate.column.clone(),
             comparison,
@@ -3069,7 +3103,7 @@ impl ResolvedTerm {
         Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
                 let ord = {
-                    let key = timed!(Part::Key, order_key(kind, text))?;
+                    let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
                     timed!(Part::Compare, compare_keys(&key, bound))
                 };
                 match self.op {
@@ -3087,7 +3121,7 @@ impl ResolvedTerm {
                     == self.wants_equal()
             }
             Comparison::Decoded { kind, bound } => {
-                let key = timed!(Part::Key, order_key(kind, text))?;
+                let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
                 timed!(Part::Compare, compare_keys(&key, bound)).is_eq() == self.wants_equal()
             }
             // Two-valued throughout: a NULL *inside* the container is a value
@@ -3095,7 +3129,10 @@ impl ResolvedTerm {
             // was decided above, before any of this runs.
             Comparison::Nested(nested) => {
                 let ord = {
-                    let key = timed!(Part::Key, nested_key(&nested.plan, text, false))?;
+                    let key = timed!(
+                        Part::Key,
+                        nested_key(&nested.plan, text, Side::Field(self.invalid))
+                    )?;
                     timed!(Part::Compare, compare_nested(&key, &nested.bound))
                 };
                 match self.op {
@@ -3165,6 +3202,8 @@ pub(crate) struct ResolvedMembership {
     lookup: Lookup,
     /// As [`ResolvedTerm`]'s.
     unrepresentable: Option<UnrepresentableRead>,
+    /// As [`ResolvedTerm`]'s.
+    invalid: PostgresInvalidValues,
 }
 
 /// Every non-NULL value of one membership, held the way its `=` terms
@@ -3254,18 +3293,23 @@ impl Lookup {
     /// Whether `text` equals one of the values, `None` where it is not a
     /// value of the column's type — which the first `=` term would have
     /// raised on.
-    fn contains(&self, text: &str, terms: &[ResolvedTerm]) -> Option<bool> {
+    fn contains(
+        &self,
+        text: &str,
+        terms: &[ResolvedTerm],
+        invalid: PostgresInvalidValues,
+    ) -> Option<bool> {
         Some(match self {
             Self::Canonical(values) => timed!(Part::Lookup, values.contains(text)),
             Self::Trimmed(values) => {
                 timed!(Part::Lookup, values.contains(text.trim_end_matches(' ')))
             }
             Self::Decoded { kind, keys } => {
-                let key = timed!(Part::Key, order_key(kind, text))?;
+                let key = timed!(Part::Key, read_key(kind, text, invalid))?;
                 timed!(Part::Lookup, keys.binary_search_by(|k| compare_keys(k, &key)).is_ok())
             }
             Self::Nested { plan, keys } => {
-                let key = timed!(Part::Key, nested_key(plan, text, false))?;
+                let key = timed!(Part::Key, nested_key(plan, text, Side::Field(invalid)))?;
                 timed!(Part::Lookup, keys.binary_search_by(|k| compare_nested(k, &key)).is_ok())
             }
             Self::Each => {
@@ -3310,6 +3354,7 @@ pub(crate) fn resolve_membership(
         lookup: Lookup::of(&terms),
         terms,
         unrepresentable: None,
+        invalid: PostgresInvalidValues::Default,
     })
 }
 
@@ -3347,7 +3392,11 @@ impl ResolvedMembership {
             None => value,
         };
         let Some(text) = value else { return Some(Truth::Unknown) };
-        Some(if self.lookup.contains(text, &self.terms)? { Truth::True } else { self.unmatched() })
+        Some(if self.lookup.contains(text, &self.terms, self.invalid)? {
+            Truth::True
+        } else {
+            self.unmatched()
+        })
     }
 
     /// [`Self::eval_value`] over `raw_row`'s field, raising what the first
@@ -3570,6 +3619,32 @@ impl ResolvedExpr {
             self.set_tests(tests);
         }
         self
+    }
+
+    /// **This tree with each leaf reading a field its type's `*_in` refuses
+    /// as the query does** ([`crate::QueryOptions::postgres_invalid_values`]);
+    /// its literals were read when it was resolved, and stay so.
+    pub(crate) fn invalid_values(mut self, invalid: PostgresInvalidValues) -> ResolvedExpr {
+        if invalid != PostgresInvalidValues::Default {
+            self.set_invalid(invalid);
+        }
+        self
+    }
+
+    fn set_invalid(&mut self, invalid: PostgresInvalidValues) {
+        match self {
+            Self::Term(term) => term.invalid = invalid,
+            Self::In(membership) => {
+                membership.invalid = invalid;
+                for term in &mut membership.terms {
+                    term.invalid = invalid;
+                }
+            }
+            Self::And(children) | Self::Or(children) => {
+                children.iter_mut().for_each(|child| child.set_invalid(invalid));
+            }
+            Self::Not(inner) => inner.set_invalid(invalid),
+        }
     }
 
     fn set_tests(&mut self, tests: &[Option<UnrepresentableRead>]) {
@@ -4059,7 +4134,14 @@ mod tests {
             statistics: BelievedStatistics::NONE,
         });
         let compared = if p.op.is_ordering() { None } else { compared };
-        ResolvedTerm { op: p.op, index, compared, unrepresentable: None, tested: None }
+        ResolvedTerm {
+            op: p.op,
+            index,
+            compared,
+            unrepresentable: None,
+            tested: None,
+            invalid: PostgresInvalidValues::Default,
+        }
     }
 
     /// The one note a term announces, or `None` — a scalar column has at most

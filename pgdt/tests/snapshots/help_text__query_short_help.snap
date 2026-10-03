@@ -8,103 +8,120 @@ over single-column predicates
 Usage: pgdt query [OPTIONS] --source <SOURCE> --table <TABLE>
 
 Options:
-      --source <SOURCE>            The dump to scan — a path or a URL, as `parse` takes it. `query`
-                                   can never answer from a cache alone — row data is never cached —
-                                   so this is always required
-      --table <TABLE>              Table name, qualified (`schema.table`) or bare. Taken exactly as
-                                   given, like `--column` and unlike a `--filter` term
-      --dtcache <DTCACHE>          Cache file path, or `none` to ignore any existing cache and
-                                   perform a fresh scan without persisting it
-      --filter <FILTER>            Single-column filter: `column=value`, `column!=value`,
-                                   `column<value`, `column<=value`, `column>value`, `column>=value`,
-                                   `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM
-                                   value`, `column IN (value, …)`, `column IS [NOT] NULL`, or
-                                   `column IS [NOT] UNREPRESENTABLE`. Repeatable — every term must
-                                   match, so the terms are ANDed. `OR`, negation and grouping are
-                                   `--where`, which takes an expression over these same terms;
-                                   giving both flags ANDs them (`docs/design/decisions.md`,
-                                   "Predicates")
-      --where <EXPR>               Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT`
-                                   and parens, with `NOT` binding tighter than `AND` and `AND`
-                                   tighter than `OR`. The keywords are case-insensitive and are
-                                   recognised only as whole words outside quotes, so `--where
-                                   'tag=and'` is still an equality against `and`
-      --column <NAME>              Materialize only this column, repeatable — the output carries the
-                                   columns in the order the flags give them, which need not be the
-                                   file's. A name the table does not carry is an error, and so is a
-                                   repeated one. Omit it entirely for every column
-                                   (`docs/design/decisions.md`, "D28")
-      --no-columns                 Materialize no columns at all — the `COUNT(*)` shape. Each row
-                                   prints as an empty line and no header line is printed, so
-                                   `--no-columns | wc -l` is a row count. Incompatible with
-                                   `--column`
-      --database <DATABASE>        Select which database to query when `table` is ambiguous across a
-                                   multi-`\connect` dump (`docs/design/decisions.md`, "D49")
-      --schema-mode <SCHEMA_MODE>  `typed` (default) resolves column types against the dump's DDL;
-                                   `strings` skips that lookup entirely, matching the untyped
-                                   byte-for-byte output — the way out of `Error::MetadataNotScanned`
-                                   for a database an incremental scan hasn't read the DDL for yet
-                                   [default: typed] [possible values: typed, strings]
-      --unrepresentable <MODE>     What to do with a value PostgreSQL accepts for a column's
-                                   declared type and the column's type cannot hold — `infinity` in a
-                                   `date`, `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`:
-                                   `null`, the default, reads each as NULL, for filtering too, and
-                                   says on stderr how many each column printed holds, the filter
-                                   term `column IS UNREPRESENTABLE` telling them from the NULLs the
-                                   dump holds; `text` reads each column holding one as its text,
-                                   every other column keeping its type, and filters it in its
-                                   declared type's order; `refuse` refuses, before a row is read, a
-                                   query printing a column that holds one, whatever its filter
-                                   keeps, and compares one a filter reads in PostgreSQL's order.
-                                   `--schema-mode strings` reads every value as its text [default:
-                                   null] [possible values: null, text, refuse]
-      --chunk-size <BYTES>         Bytes requested per read from the dump — the same knob `parse`
-                                   carries, and with the same measured answer behind its default
-      --max-line-bytes <BYTES>     The longest line the scan accepts, in bytes — the same limit
-                                   `parse` carries, applied to both of a query's passes over the
-                                   file
-      --statistics <USE>           Whether to use the statistics `parse` recorded: `all`, the
-                                   default, skips each stretch of the table's data whose statistics
-                                   prove no row in it satisfies the filter, and says on stderr how
-                                   much was skipped, and stops reading data sorted on a column the
-                                   filter bounds at its first row past the bound, saying once the
-                                   rows are printed how much that left unread; `none` reads every
-                                   row. The rows printed are the same either way [default: all]
-                                   [possible values: all, none]
-      --strict-identity[=<TERMS>]  Which weak signs of a source's identity must hold, as a
-                                   comma-separated selection of `time` and `location`, or `advisory`
-                                   or `none` alone; the flag alone is `time,location`. Left
-                                   unstated, or stated `advisory`, they are advisory: a dump that
-                                   was moved, copied or touched since it was parsed is read with a
-                                   warning, because data moves and none of these signals proves the
-                                   bytes changed. `time` binds the modification signal — an mtime,
-                                   or a server's `Last-Modified` and `ETag` — so a cache written
-                                   against another one, or a source that offers none at all, stops
-                                   the run instead. `location` binds the origin a remote cache
-                                   records, which a local file was not fetched from, so it binds
-                                   nothing there
-      --overwrite-unusable-cache   Start cold over a cache that cannot be used and replace it,
-                                   rather than refusing: one written for a file of another size or
-                                   compression, by another pgdt build, or cut short. Left unstated,
-                                   each of those stops the run before the dump is read past its
-                                   first bytes, since it is almost always the wrong path or a file
-                                   that changed — this is for a source whose file is replaced under
-                                   the same name. A file that is not a pgdt cache is never
-                                   overwritten. It governs only the cache found at the start: a dump
-                                   that changes while it is being read still stops the run
-                                   (`--strict-identity`)
-      --jobs <N>                   How many workers pgdt may ask for. Left unstated, the file
-                                   decides: a plain dump reads serially, and an `.xz` one takes the
-                                   CPUs this process was given, or its own block count where that is
-                                   smaller — lowered again to the number of readers the memory
-                                   allowance can pay for, where that is fewer, whether that
-                                   allowance was discovered or stated with `--memory`. A count
-                                   stated here is never lowered that way
-      --memory <BYTES>             How much memory pgdt may hold resident in total, in bytes — the
-                                   number you would give the container. Left unstated, pgdt reads
-                                   the memory limit it is running under — the smallest cgroup limit
-                                   that binds — and uses that; where no limit is set it stays inside
-                                   half the memory the machine reports available. A number typed
-                                   here replaces whatever was discovered and is carved up exactly
-                                   the same way
-  -h, --help                       Print help (see more with '--help')
+      --source <SOURCE>                 The dump to scan — a path or a URL, as `parse` takes it.
+                                        `query` can never answer from a cache alone — row data is
+                                        never cached — so this is always required
+      --table <TABLE>                   Table name, qualified (`schema.table`) or bare. Taken
+                                        exactly as given, like `--column` and unlike a `--filter`
+                                        term
+      --dtcache <DTCACHE>               Cache file path, or `none` to ignore any existing cache and
+                                        perform a fresh scan without persisting it
+      --filter <FILTER>                 Single-column filter: `column=value`, `column!=value`,
+                                        `column<value`, `column<=value`, `column>value`,
+                                        `column>=value`, `column IS DISTINCT FROM value`, `column IS
+                                        NOT DISTINCT FROM value`, `column IN (value, …)`, `column IS
+                                        [NOT] NULL`, or `column IS [NOT] UNREPRESENTABLE`.
+                                        Repeatable — every term must match, so the terms are ANDed.
+                                        `OR`, negation and grouping are `--where`, which takes an
+                                        expression over these same terms; giving both flags ANDs
+                                        them (`docs/design/decisions.md`, "Predicates")
+      --where <EXPR>                    Boolean expression over `--filter`'s terms: `AND`, `OR`,
+                                        `NOT` and parens, with `NOT` binding tighter than `AND` and
+                                        `AND` tighter than `OR`. The keywords are case-insensitive
+                                        and are recognised only as whole words outside quotes, so
+                                        `--where 'tag=and'` is still an equality against `and`
+      --column <NAME>                   Materialize only this column, repeatable — the output
+                                        carries the columns in the order the flags give them, which
+                                        need not be the file's. A name the table does not carry is
+                                        an error, and so is a repeated one. Omit it entirely for
+                                        every column (`docs/design/decisions.md`, "D28")
+      --no-columns                      Materialize no columns at all — the `COUNT(*)` shape. Each
+                                        row prints as an empty line and no header line is printed,
+                                        so `--no-columns | wc -l` is a row count. Incompatible with
+                                        `--column`
+      --database <DATABASE>             Select which database to query when `table` is ambiguous
+                                        across a multi-`\connect` dump (`docs/design/decisions.md`,
+                                        "D49")
+      --schema-mode <SCHEMA_MODE>       `typed` (default) resolves column types against the dump's
+                                        DDL; `strings` skips that lookup entirely, matching the
+                                        untyped byte-for-byte output — the way out of
+                                        `Error::MetadataNotScanned` for a database an incremental
+                                        scan hasn't read the DDL for yet [default: typed] [possible
+                                        values: typed, strings]
+      --unrepresentable <MODE>          What to do with a value PostgreSQL accepts for a column's
+                                        declared type and the column's type cannot hold — `infinity`
+                                        in a `date`, `NaN` in a `numeric(p,s)`, `24:00:00` in a
+                                        `time`: `null`, the default, reads each as NULL, for
+                                        filtering too, and says on stderr how many each column
+                                        printed holds, the filter term `column IS UNREPRESENTABLE`
+                                        telling them from the NULLs the dump holds; `text` reads
+                                        each column holding one as its text, every other column
+                                        keeping its type, and filters it in its declared type's
+                                        order; `refuse` refuses, before a row is read, a query
+                                        printing a column that holds one, whatever its filter keeps,
+                                        and compares one a filter reads in PostgreSQL's order.
+                                        `--schema-mode strings` reads every value as its text
+                                        [default: null] [possible values: null, text, refuse]
+      --postgres-invalid-values <MODE>  What to do with a value PostgreSQL refuses for its column's
+                                        type — `70000` in a `smallint`, a `double precision` written
+                                        past its range: `default` refuses a query reading one, as a
+                                        restore refuses the dump there; `ignore` reads a `real` or
+                                        `double precision` written past its range as the largest
+                                        value of its sign, and one written below its smallest as
+                                        zero, for printing and filtering alike, and still refuses
+                                        every other. A filter's own value PostgreSQL refuses is
+                                        refused either way [default: default] [possible values:
+                                        default, ignore]
+      --chunk-size <BYTES>              Bytes requested per read from the dump — the same knob
+                                        `parse` carries, and with the same measured answer behind
+                                        its default
+      --max-line-bytes <BYTES>          The longest line the scan accepts, in bytes — the same limit
+                                        `parse` carries, applied to both of a query's passes over
+                                        the file
+      --statistics <USE>                Whether to use the statistics `parse` recorded: `all`, the
+                                        default, skips each stretch of the table's data whose
+                                        statistics prove no row in it satisfies the filter, and says
+                                        on stderr how much was skipped, and stops reading data
+                                        sorted on a column the filter bounds at its first row past
+                                        the bound, saying once the rows are printed how much that
+                                        left unread; `none` reads every row. The rows printed are
+                                        the same either way [default: all] [possible values: all,
+                                        none]
+      --strict-identity[=<TERMS>]       Which weak signs of a source's identity must hold, as a
+                                        comma-separated selection of `time` and `location`, or
+                                        `advisory` or `none` alone; the flag alone is
+                                        `time,location`. Left unstated, or stated `advisory`, they
+                                        are advisory: a dump that was moved, copied or touched since
+                                        it was parsed is read with a warning, because data moves and
+                                        none of these signals proves the bytes changed. `time` binds
+                                        the modification signal — an mtime, or a server's
+                                        `Last-Modified` and `ETag` — so a cache written against
+                                        another one, or a source that offers none at all, stops the
+                                        run instead. `location` binds the origin a remote cache
+                                        records, which a local file was not fetched from, so it
+                                        binds nothing there
+      --overwrite-unusable-cache        Start cold over a cache that cannot be used and replace it,
+                                        rather than refusing: one written for a file of another size
+                                        or compression, by another pgdt build, or cut short. Left
+                                        unstated, each of those stops the run before the dump is
+                                        read past its first bytes, since it is almost always the
+                                        wrong path or a file that changed — this is for a source
+                                        whose file is replaced under the same name. A file that is
+                                        not a pgdt cache is never overwritten. It governs only the
+                                        cache found at the start: a dump that changes while it is
+                                        being read still stops the run (`--strict-identity`)
+      --jobs <N>                        How many workers pgdt may ask for. Left unstated, the file
+                                        decides: a plain dump reads serially, and an `.xz` one takes
+                                        the CPUs this process was given, or its own block count
+                                        where that is smaller — lowered again to the number of
+                                        readers the memory allowance can pay for, where that is
+                                        fewer, whether that allowance was discovered or stated with
+                                        `--memory`. A count stated here is never lowered that way
+      --memory <BYTES>                  How much memory pgdt may hold resident in total, in bytes —
+                                        the number you would give the container. Left unstated, pgdt
+                                        reads the memory limit it is running under — the smallest
+                                        cgroup limit that binds — and uses that; where no limit is
+                                        set it stays inside half the memory the machine reports
+                                        available. A number typed here replaces whatever was
+                                        discovered and is carved up exactly the same way
+  -h, --help                            Print help (see more with '--help')

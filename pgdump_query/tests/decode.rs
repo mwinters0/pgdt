@@ -23,9 +23,10 @@ use futures::StreamExt;
 use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    Error, Expr, LocalFileSource, Membership, NestedPlan, Predicate, PredicateOp, QueryOptions,
-    ScanOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    UnrepresentableMode, map_file, read_table, render_field, table_stream,
+    Error, Expr, LocalFileSource, Membership, NestedPlan, PostgresInvalidValues, Predicate,
+    PredicateOp, QueryOptions, ScanOptions, StatisticsLevel, StatisticsRequest,
+    StatisticsSelection, StatisticsTarget, UnrepresentableMode, map_file, read_table, render_field,
+    table_stream,
 };
 
 mod common;
@@ -839,6 +840,96 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
         run.unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     }
     assert_eq!(copies, common::REFUSED_FIELDS.len() * common::VERSIONS.len());
+}
+
+/// **Told to ignore them, a parse goes on past a float PostgreSQL refuses,
+/// and a query reads it as `float8out` meant it** (I57), at every major: the
+/// largest finite value of its sign, printed and filtered alike, a cache's
+/// statistics ruling out no group holding it; told nothing, the query
+/// refuses it, and a literal spelled as the field is refused either way
+/// (`docs/design/decisions.md`, "D103").
+#[tokio::test]
+async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_it() {
+    let ignore = PostgresInvalidValues::Ignore;
+    let options = |filter: Expr, invalid| QueryOptions {
+        projection: Some(vec!["id".into(), "v_double".into()]),
+        filter,
+        postgres_invalid_values: invalid,
+        ..Default::default()
+    };
+    let term = |op, value: &str| {
+        Expr::Term(Predicate { column: "v_double".into(), op, value: Some(value.into()) })
+    };
+    let row = |id: &str, v: &str| vec![Some(id.to_string()), Some(v.to_string())];
+    let (largest, lowest) =
+        (row("2", "1.7976931348623157e+308"), row("1", "-1.7976931348623157e+308"));
+    let filters = [
+        (term(PredicateOp::Eq, "1.7976931348623157e+308"), vec![largest.clone()]),
+        (term(PredicateOp::Lt, "-1e308"), vec![lowest.clone(), row("3", "-Infinity")]),
+        (
+            Expr::In(Membership {
+                column: "v_double".into(),
+                values: vec![Some("-1.7976931348623157e+308".into()), Some("0".into())],
+            }),
+            vec![lowest.clone()],
+        ),
+    ];
+    for version in common::VERSIONS {
+        let fixture = types_fixture(version, "extra-float-digits-0");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dump.sql");
+        std::fs::copy(&fixture, &path).unwrap();
+        let source = LocalFileSource::open(&path).unwrap();
+        let scan = ScanOptions { postgres_invalid_values: ignore, ..ScanOptions::default() };
+        let cached = CacheMode::enabled(cache::colocated_path(&path));
+        map_file(&source, &scan, &cached, &StatisticsRequest::DATA)
+            .await
+            .unwrap_or_else(|e| panic!("{version}: an ignoring parse refused: {e}"));
+
+        let all = Expr::And(Vec::new());
+        match try_rows_in(&path, "public.t_extremes", options(all.clone(), Default::default()))
+            .await
+        {
+            Err(Error::FieldDecode { column, value, .. }) => {
+                assert_eq!(column, "v_double", "{version}");
+                assert!(value.ends_with("1.79769313486232e+308"), "{version}: {value}");
+            }
+            other => panic!("{version}: expected the read to refuse, got {other:?}"),
+        }
+        let (read, _) =
+            try_rows_in(&path, "public.t_extremes", options(all, ignore)).await.unwrap();
+        assert!(read.contains(&largest) && read.contains(&lowest), "{version}: {read:?}");
+        for (filter, want) in &filters {
+            for mode in [CacheMode::DISABLED, cached.clone()] {
+                let mut stream = table_stream(
+                    &source,
+                    "public.t_extremes",
+                    ScanOptions::default(),
+                    options(filter.clone(), ignore),
+                    None,
+                    mode,
+                );
+                let mut kept = Vec::new();
+                while let Some(batch) = stream.next().await.transpose().unwrap() {
+                    for r in 0..batch.num_rows() {
+                        kept.push(
+                            batch
+                                .columns()
+                                .iter()
+                                .map(|c| render_field(c.as_ref(), r, &NestedPlan::Scalar).unwrap())
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                }
+                assert_eq!(&kept, want, "{version}: {filter:?}");
+            }
+        }
+        let spelled = options(term(PredicateOp::Eq, "1.79769313486232e+308"), ignore);
+        match try_rows_in(&path, "public.t_extremes", spelled).await {
+            Err(Error::PredicateValueDecode { .. }) => {}
+            other => panic!("{version}: expected the literal refused, got {other:?}"),
+        }
+    }
 }
 
 /// **A `bytea_output = escape` dump reads as its `hex` twin does** (I4,

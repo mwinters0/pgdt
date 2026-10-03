@@ -331,12 +331,10 @@ cannot tighten; each transcribes the newest major and under-accepts (I35, I44). 
 
 ## Batches, streams and the leader (`batch.rs`, `stream.rs`, `leader.rs`)
 ### D46 Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds pinned bytes
-Every other arm copies. A retained chunk is released only past its *last* byte
-(the carried row arrives inside the next chunk) and `invalidate_block_cache`
-runs on every flush keeping its batcher; any new flush trigger must honour it.
-`max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
-The span term is dropped only where the advice is non-empty and uniformly by-partition (`KD23`).
-Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
+Every other arm copies. A retained chunk is released only past its *last* byte (the carried row arrives inside the next chunk) and
+`invalidate_block_cache` runs on every flush keeping its batcher; any new flush trigger must honour it. `max_rows` and `max_bytes` count selected
+rows, which a filter makes sparse. The span term is dropped only where the advice is non-empty and uniformly by-partition (`KD23`). Rejected:
+compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored at the caller's
@@ -421,13 +419,14 @@ blocks of one table typed apart; the declared plan in both, each reader of `comp
 Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mode's cases,
 `the_untyped_mode_compares_its_text_column_in_each_semantics_order`.
 
-### D103 The unrepresentable mode is one option for every column, fixed where a dump is opened, apart from the schema mode
-`QueryOptions::unrepresentable` is stated by `pgdt query --unrepresentable`, `PgDumpOptions`, the `pgdump.unrepresentable` table option and the
-shell's `:unrepresentable=` suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches
-it. `--schema-mode` is about ignoring the DDL, and the mode, which reads it, is moot under `strings`. The library's refusal names the modes in its
-own words, never a front end's flag, and the provider passes it through. Rejected: a `pgdump.*` session setting, changing a schema a statement
-cannot rebuild; a third `SchemaMode`, folding a choice about values into one about the DDL. `Null` is the default, such values being rare in
-real dumps and the floor's type kept (D38). Code: `UnrepresentableMode`, `PgDumpTableOptions`.
+### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
+`QueryOptions::unrepresentable` and `::postgres_invalid_values` are each stated by a `pgdt query` flag, `PgDumpOptions`, a `pgdump.*` table option
+and a shell suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches it. `--schema-mode`
+is about ignoring the DDL, which both modes read. The library's refusal names a mode in its own words, never a front end's flag. The invalid-values
+mode is a parse's too (`ScanOptions`), and no cache records it: an ignoring parse keeps no statistic of a refused field's group, so a query in either
+mode reads such a cache as it reads the rows. Rejected: a `pgdump.*` session setting, changing a schema a statement cannot rebuild; a third
+`SchemaMode`, a choice about values folded into one about the DDL; recording the parse's mode, the read being the query's choice. Defaults: `Null`,
+such values being rare and the floor's type kept (D38); `Default`, a restore refusing them. Code: `UnrepresentableMode`, `PostgresInvalidValues`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test

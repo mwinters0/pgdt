@@ -20,10 +20,10 @@ use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolv
 use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
     DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
-    Parallelism, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS, Recognized,
-    ScanOptions, Severity, Span, SpanBody, StatisticsLevel, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, TableReference, TypeKind, UnrepresentableMode, open, preamble_only,
-    render_field_into,
+    Parallelism, PostgresInvalidValues, Predicate, PredicateOp, QueryOptions,
+    ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ScanOptions, Severity, Span, SpanBody, StatisticsLevel,
+    StatisticsRequest, StatisticsSelection, StatisticsTarget, TableReference, TypeKind,
+    UnrepresentableMode, open, preamble_only, render_field_into,
 };
 use tracing::Instrument;
 
@@ -76,6 +76,24 @@ impl From<CliUnrepresentable> for UnrepresentableMode {
             CliUnrepresentable::Null => UnrepresentableMode::Null,
             CliUnrepresentable::Text => UnrepresentableMode::Text,
             CliUnrepresentable::Refuse => UnrepresentableMode::Refuse,
+        }
+    }
+}
+
+/// CLI spelling of [`PostgresInvalidValues`] (`docs/design/decisions.md`,
+/// "D103").
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+enum CliInvalidValues {
+    #[default]
+    Default,
+    Ignore,
+}
+
+impl From<CliInvalidValues> for PostgresInvalidValues {
+    fn from(mode: CliInvalidValues) -> Self {
+        match mode {
+            CliInvalidValues::Default => PostgresInvalidValues::Default,
+            CliInvalidValues::Ignore => PostgresInvalidValues::Ignore,
         }
     }
 }
@@ -820,6 +838,20 @@ enum Command {
             conflicts_with_all = ["preamble_only", "row_group_size"]
         )]
         row_group_max_rows: Option<u64>,
+        /// What to do with a value PostgreSQL refuses for its column's type —
+        /// `70000` in a `smallint`, a `double precision` written past its
+        /// range: `default` stops the scan at the first one it reads, as a
+        /// restore of the dump stops there; `ignore` goes on past each, keeping
+        /// no statistics of the stretch of its column it sits in, and a
+        /// `query` then reads it as its own `--postgres-invalid-values` says.
+        #[arg(
+            long,
+            value_name = "MODE",
+            value_enum,
+            default_value_t,
+            conflicts_with = "preamble_only"
+        )]
+        postgres_invalid_values: CliInvalidValues,
         #[command(flatten)]
         identity: IdentityArgs,
         #[command(flatten)]
@@ -1006,6 +1038,16 @@ enum Command {
         /// order. `--schema-mode strings` reads every value as its text.
         #[arg(long, value_name = "MODE", value_enum, default_value_t)]
         unrepresentable: CliUnrepresentable,
+        /// What to do with a value PostgreSQL refuses for its column's type —
+        /// `70000` in a `smallint`, a `double precision` written past its
+        /// range: `default` refuses a query reading one, as a restore refuses
+        /// the dump there; `ignore` reads a `real` or `double precision`
+        /// written past its range as the largest value of its sign, and one
+        /// written below its smallest as zero, for printing and filtering
+        /// alike, and still refuses every other. A filter's own value
+        /// PostgreSQL refuses is refused either way.
+        #[arg(long, value_name = "MODE", value_enum, default_value_t)]
+        postgres_invalid_values: CliInvalidValues,
         /// Bytes requested per read from the dump — the same knob `parse`
         /// carries, and with the same measured answer behind its default.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
@@ -2056,6 +2098,7 @@ async fn main() -> Result<()> {
             row_group_size,
             row_group_min_rows,
             row_group_max_rows,
+            postgres_invalid_values,
             identity,
             overwrite,
             parallel,
@@ -2102,8 +2145,11 @@ async fn main() -> Result<()> {
             let size = source.size().await?;
             let cancel = Arc::new(Cancellation::new());
             let guard = install_interrupt_guard(Arc::clone(&cancel), &mut init)?;
-            let scan_options =
-                ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
+            let scan_options = ScanOptions {
+                cancel: Some(cancel),
+                postgres_invalid_values: postgres_invalid_values.into(),
+                ..scan_options(read, &parallel)
+            };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
                 .await
                 .map_err(|e| naming_the_source(e, &origin))?;
@@ -2255,6 +2301,7 @@ async fn main() -> Result<()> {
             database,
             schema_mode,
             unrepresentable,
+            postgres_invalid_values,
             chunk_size,
             max_line_bytes,
             statistics,
@@ -2316,6 +2363,7 @@ async fn main() -> Result<()> {
                 database,
                 schema_mode: schema_mode.into(),
                 unrepresentable: unrepresentable.into(),
+                postgres_invalid_values: postgres_invalid_values.into(),
                 filter,
                 projection: projection(column, no_columns),
                 parallelism: replay.parallelism(),

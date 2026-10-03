@@ -87,6 +87,7 @@ use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::resolve::{
     ResolvedSchema, SchemaMode, database_for_name, read_as_text, resolve_columns,
 };
+use crate::scan::PostgresInvalidValues;
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
     scan as scan_events,
@@ -814,6 +815,7 @@ async fn map_forward(
                                     index.metadata.as_ref(),
                                     db.as_deref(),
                                     account,
+                                    scan_options.postgres_invalid_values,
                                 )
                             });
                         if let Some(observer) = observer {
@@ -1820,6 +1822,7 @@ async fn reread_block(
         metadata,
         block.database.as_deref(),
         account,
+        scan_options.postgres_invalid_values,
     );
     let read = reread_rows(
         source,
@@ -2695,7 +2698,8 @@ fn resolve_for_query(
     let filter =
         resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?
             .reading(&unrepresentable)
-            .testing(&tests);
+            .testing(&tests)
+            .invalid_values(query_options.postgres_invalid_values);
     let notes = filter.comparison_notes();
     let projection = query_options.projection.as_deref().unwrap_or(&table.order);
     let (resolved, field_targets) = project(&full, Some(projection), header_offset)?;
@@ -4645,6 +4649,9 @@ struct DynamicBlock {
     /// How the query reads each column's values its type cannot hold, which
     /// each state's leaves read them by, as the static filter's do.
     unrepresentable: Vec<Option<UnrepresentableRead>>,
+    /// How the query reads a field its type's `*_in` refuses, as the static
+    /// filter's leaves do.
+    invalid: PostgresInvalidValues,
     /// The generation of the state last read, `None` before the first.
     generation: Option<u64>,
     /// The state last read, resolved against this block: what its groups
@@ -4693,6 +4700,7 @@ impl DynamicBlock {
             header_offset: block.header_offset,
             full,
             unrepresentable,
+            invalid: plan.query_options.postgres_invalid_values,
             generation: None,
             state: Arc::new(ResolvedExpr::And(Vec::new())),
             rows: None,
@@ -4712,7 +4720,8 @@ impl DynamicBlock {
         evaluation: RowEvaluation,
     ) {
         let resolved = resolve_loosened(state, &self.full, self.header_offset, semantics, false)
-            .reading(&self.unrepresentable);
+            .reading(&self.unrepresentable)
+            .invalid_values(self.invalid);
         self.rows = (evaluation == RowEvaluation::On).then(|| resolved.for_rows());
         self.state = Arc::new(resolved);
         self.generation = Some(generation);

@@ -8,8 +8,8 @@ use pgdump_query::cache::{
     self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity, Unusable,
 };
 use pgdump_query::{
-    ByteRangeSource, Diagnostic, DumpIndex, Origin, Recognized, SchemaMode, TableName,
-    UnrepresentableMode,
+    ByteRangeSource, Diagnostic, DumpIndex, Origin, PostgresInvalidValues, Recognized, SchemaMode,
+    TableName, UnrepresentableMode,
 };
 
 use crate::Error;
@@ -31,6 +31,11 @@ pub struct PgDumpOptions {
     /// its column read as its text, or refused (`docs/design/decisions.md`,
     /// "D98", "D99"). Moot under [`SchemaMode::Strings`].
     pub unrepresentable: UnrepresentableMode,
+    /// How a scan reads a field its type's `*_in` refuses, which the `pgdt
+    /// parse` that built the cache went past: refused, by default, or read as
+    /// the library's decoders read it, which only a float's past its type's
+    /// range is (`docs/design/decisions.md`, "D103").
+    pub postgres_invalid_values: PostgresInvalidValues,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:
     /// between runs, what the cache is checked against at open; during one,
     /// whether a file changing under a scan fails it, and so whether a source
@@ -71,6 +76,7 @@ pub struct PgDump {
     tables: Vec<TableName>,
     schema_mode: SchemaMode,
     unrepresentable: UnrepresentableMode,
+    postgres_invalid_values: PostgresInvalidValues,
     /// The `pgdt parse` that builds this dump's cache, which a refusal names.
     parse: String,
     statistics_bytes: u64,
@@ -155,6 +161,7 @@ impl PgDump {
             tables,
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
+            postgres_invalid_values: options.postgres_invalid_values,
             parse: parse_command(location, options.cache_path.as_deref()),
             statistics_bytes,
             holds: Mutex::default(),
@@ -233,6 +240,10 @@ impl PgDump {
 
     pub(crate) fn unrepresentable(&self) -> UnrepresentableMode {
         self.unrepresentable
+    }
+
+    pub(crate) fn postgres_invalid_values(&self) -> PostgresInvalidValues {
+        self.postgres_invalid_values
     }
 
     /// The `pgdt parse` that puts `table` at the data level, keeping every

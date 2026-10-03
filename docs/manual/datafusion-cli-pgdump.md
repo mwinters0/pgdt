@@ -55,6 +55,11 @@ which is left out and named on stderr with why
   value its type cannot hold**, before it reads a row, where the default,
   `:unrepresentable=null`, reads such a value as NULL, and
   `:unrepresentable=text` reads such a column as its text (below).
+- **`:postgres-invalid-values=ignore` reads a value PostgreSQL refuses as
+  `pgdt query --postgres-invalid-values ignore` does**, where the default,
+  `:postgres-invalid-values=default`, refuses a query reading one
+  ([`type-handling.md`](type-handling.md), "When a value does not match its
+  type"). The cache it reads is the one a `pgdt parse` told the same leaves.
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
   in place of the session's. The suffixes may come in any order.
@@ -76,6 +81,7 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 | `pgdump.database` | Its database, where the file holds several. |
 | `pgdump.schema_mode` | `typed` (the default), or `strings` for every column as its text. |
 | `pgdump.unrepresentable` | `null` (the default), reading a value a typed column cannot hold as NULL, `text`, reading a column holding one as its text, or `refuse`. |
+| `pgdump.postgres_invalid_values` | `default`, refusing a value PostgreSQL refuses for its column's type, or `ignore`, reading it as `:postgres-invalid-values=ignore` does. |
 | `pgdump.strict_identity` | This dump's `--strict-identity` terms, in place of the session's (below). |
 
 A name that matches more than one table is refused, naming them. The table's

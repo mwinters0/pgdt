@@ -46,6 +46,7 @@ use crate::index::UnrepresentableTier;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::{ComparisonSemantics, NestedPlan};
+use crate::scan::PostgresInvalidValues;
 // L4, imported by L3: `QueryOptions::filter` is the query's filter tree. One
 // of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
@@ -134,6 +135,12 @@ pub struct QueryOptions {
     /// (`docs/design/decisions.md`, "D98"). Moot under
     /// [`SchemaMode::Strings`], which reads every value as its text.
     pub unrepresentable: UnrepresentableMode,
+    /// What a read does with a field its type's `*_in` refuses: fails on it,
+    /// by default, or decodes it as the decoders read it, which only a
+    /// float's past its type's range does ([`PostgresInvalidValues`]). The
+    /// typed read and every filter reading the field take it alike; a
+    /// filter's literal is read as before.
+    pub postgres_invalid_values: PostgresInvalidValues,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
     /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a
@@ -176,6 +183,7 @@ impl Default for QueryOptions {
             max_source_span: Some(64 << 20),
             schema_mode: SchemaMode::default(),
             unrepresentable: UnrepresentableMode::default(),
+            postgres_invalid_values: PostgresInvalidValues::default(),
             database: None,
             scan_extent: ScanExtent::default(),
             parallelism: Parallelism::default(),
@@ -611,7 +619,11 @@ fn append_null(builder: &mut ColumnBuilder) {
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so [`append_typed`] attributes a failure deep
 /// inside a nested literal to the whole literal.
-fn append_nested(builder: &mut ColumnBuilder, value: Option<&str>) -> std::result::Result<(), ()> {
+fn append_nested(
+    builder: &mut ColumnBuilder,
+    value: Option<&str>,
+    invalid: PostgresInvalidValues,
+) -> std::result::Result<(), ()> {
     match value {
         None => {
             append_null(builder);
@@ -622,7 +634,7 @@ fn append_nested(builder: &mut ColumnBuilder, value: Option<&str>) -> std::resul
                 b.append_value(text);
                 Ok(())
             }
-            _ => append_typed(builder, text).map_err(|_| ()),
+            _ => append_typed(builder, text, invalid).map_err(|_| ()),
         },
     }
 }
@@ -634,17 +646,18 @@ fn append_array_level(
     parts: &mut ListParts,
     dims: &[usize],
     elements: &mut std::slice::Iter<'_, Option<std::borrow::Cow<'_, str>>>,
+    invalid: PostgresInvalidValues,
 ) -> std::result::Result<(), ()> {
     if dims.len() == 1 {
         for _ in 0..dims[0] {
-            append_nested(&mut parts.child, elements.next().ok_or(())?.as_deref())?;
+            append_nested(&mut parts.child, elements.next().ok_or(())?.as_deref(), invalid)?;
         }
     } else {
         for _ in 0..dims[0] {
             let ColumnBuilder::Array(inner) = &mut *parts.child else {
                 return Err(());
             };
-            append_array_level(inner, &dims[1..], elements)?;
+            append_array_level(inner, &dims[1..], elements, invalid)?;
         }
     }
     parts.offsets.push(builder_len(&parts.child) as i32);
@@ -652,12 +665,16 @@ fn append_array_level(
     Ok(())
 }
 
-fn append_range(parts: &mut StructParts, range: &RangeLiteral) -> std::result::Result<(), ()> {
+fn append_range(
+    parts: &mut StructParts,
+    range: &RangeLiteral,
+    invalid: PostgresInvalidValues,
+) -> std::result::Result<(), ()> {
     let [lower, upper, lower_inclusive, upper_inclusive, empty] = &mut parts.children[..] else {
         unreachable!("a range struct always has exactly five children")
     };
-    append_nested(lower, range.lower.as_deref())?;
-    append_nested(upper, range.upper.as_deref())?;
+    append_nested(lower, range.lower.as_deref(), invalid)?;
+    append_nested(upper, range.upper.as_deref(), invalid)?;
     for (flag, value) in [
         (lower_inclusive, range.lower_inclusive),
         (upper_inclusive, range.upper_inclusive),
@@ -678,8 +695,13 @@ fn append_range(parts: &mut StructParts, range: &RangeLiteral) -> std::result::R
 /// `Error::FieldDecode` with the table/column/row context. Never called for a
 /// *top-level* `ColumnBuilder::Utf8View`, which `push_field` handles itself
 /// (its zero-copy path needs the raw field's byte offset); a nested one
-/// reaches [`append_nested`] instead and copies.
-fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<(), String> {
+/// reaches [`append_nested`] instead and copies. `invalid` is how a field its
+/// type's `*_in` refuses is read, at any depth.
+fn append_typed(
+    builder: &mut ColumnBuilder,
+    text: &str,
+    invalid: PostgresInvalidValues,
+) -> std::result::Result<(), String> {
     let fail = || text.to_string();
     match builder {
         ColumnBuilder::Utf8View(_) => unreachable!("caller handles Utf8View directly"),
@@ -702,7 +724,7 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
             if literal.ndim() != array_depth(parts) {
                 return Err(fail());
             }
-            append_array_level(parts, &literal.dims, &mut literal.elements.iter())
+            append_array_level(parts, &literal.dims, &mut literal.elements.iter(), invalid)
                 .map_err(|()| fail())?;
         }
         ColumnBuilder::Multirange(parts) => {
@@ -711,7 +733,7 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
                 let ColumnBuilder::Range(range) = &mut *parts.child else {
                     unreachable!("a multirange's child is always the range struct")
                 };
-                append_range(range, member).map_err(|()| fail())?;
+                append_range(range, member, invalid).map_err(|()| fail())?;
             }
             parts.offsets.push(builder_len(&parts.child) as i32);
             parts.validity.push(true);
@@ -749,13 +771,13 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
                 return Err(fail());
             }
             for (child, field) in parts.children.iter_mut().zip(&literal.fields) {
-                append_nested(child, field.as_deref()).map_err(|()| fail())?;
+                append_nested(child, field.as_deref(), invalid).map_err(|()| fail())?;
             }
             parts.validity.push(true);
         }
         ColumnBuilder::Range(parts) => {
             let literal = nested::decode_range(text).ok_or_else(fail)?;
-            append_range(parts, &literal).map_err(|()| fail())?;
+            append_range(parts, &literal, invalid).map_err(|()| fail())?;
         }
         ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or_else(fail)?),
         ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(|_| fail())?),
@@ -764,8 +786,12 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         // `u32`: `oidout` writes `%u`, so a field carrying a sign is the file
         // contradicting its own DDL, same as any other undecodable field.
         ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(|_| fail())?),
-        ColumnBuilder::Float32(b) => b.append_value(decode::decode_f32(text).ok_or_else(fail)?),
-        ColumnBuilder::Float64(b) => b.append_value(decode::decode_f64(text).ok_or_else(fail)?),
+        ColumnBuilder::Float32(b) => {
+            b.append_value(decode::float_field(text, invalid).ok_or_else(fail)?);
+        }
+        ColumnBuilder::Float64(b) => {
+            b.append_value(decode::float_field(text, invalid).ok_or_else(fail)?);
+        }
         ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or_else(fail)?),
         ColumnBuilder::TimestampMicro { builder, has_tz } => {
             builder.append_value(decode::decode_timestamp_micros(text, *has_tz).ok_or_else(fail)?);
@@ -870,7 +896,7 @@ pub(crate) fn column_of(
     for text in values {
         match &mut builder {
             ColumnBuilder::Utf8View(b) => b.append_value(text),
-            typed => append_typed(typed, text)?,
+            typed => append_typed(typed, text, PostgresInvalidValues::Default)?,
         }
     }
     Ok(finish_column(&mut builder))
@@ -1089,7 +1115,7 @@ impl RowBatcher {
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table`/`declared_types` are only ever read, on the
         // (rare) error path.
-        let Self { schema, table, declared_types, columns, unrepresentable, .. } = self;
+        let Self { schema, table, declared_types, columns, unrepresentable, options, .. } = self;
         let builder = &mut columns[col];
         let Some(text) = decoded else {
             append_null(builder);
@@ -1105,7 +1131,7 @@ impl RowBatcher {
                 push_utf8view_field(b, col, field_offset, field_len, text, chunks)
             }
             _ => {
-                if let Err(value) = append_typed(builder, &text) {
+                if let Err(value) = append_typed(builder, &text, options.postgres_invalid_values) {
                     let (table, column) = (table.clone(), schema.field(col).name().clone());
                     let declared_type = declared_types[col].clone().unwrap_or_default();
                     return Err(Error::FieldDecode {
@@ -1229,7 +1255,7 @@ pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Opti
         // `append_typed` leaves this one to its caller, the scan's path being
         // the borrowing one.
         ColumnBuilder::Utf8View(b) => b.append_value(text),
-        _ => append_typed(&mut builder, text).ok()?,
+        _ => append_typed(&mut builder, text, PostgresInvalidValues::Default).ok()?,
     }
     Some(finish_column(&mut builder))
 }
@@ -1582,7 +1608,7 @@ mod tests {
         for value in values {
             match value {
                 None => append_null(&mut builder),
-                Some(text) => append_typed(&mut builder, text)?,
+                Some(text) => append_typed(&mut builder, text, PostgresInvalidValues::Default)?,
             }
         }
         Ok(finish_column(&mut builder))

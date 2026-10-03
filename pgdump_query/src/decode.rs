@@ -16,6 +16,8 @@
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `tests/scan.rs`.
 
+use crate::scan::PostgresInvalidValues;
+
 /// Why a text is read as no value of its type, where a caller must tell the
 /// two apart: a parse fails on the first field PostgreSQL refuses, and on no
 /// other (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never
@@ -34,6 +36,21 @@ pub enum Unread {
 
 /// A reader's answer where [`Unread`] matters.
 pub type Read<T> = Result<T, Unread>;
+
+/// A float field, as [`float_in`] reads it — or, under
+/// [`PostgresInvalidValues::Ignore`], a spelling it refuses as out of range
+/// read as the parse rounds it: past the largest finite value, that value of
+/// its sign, as `*_out` meant it (I57), and below the smallest, zero.
+pub(crate) fn float_field<F: Float>(text: &str, invalid: PostgresInvalidValues) -> Option<F> {
+    match (float_in::<F>(text), invalid) {
+        (Ok(value), _) => Some(value),
+        (Err(Unread::Refused), PostgresInvalidValues::Ignore) => {
+            let value = text.parse::<F>().ok()?;
+            Some(if value.is_infinite() { value.largest_of_sign() } else { value })
+        }
+        (Err(_), _) => None,
+    }
+}
 
 /// `t`/`f`, COPY TEXT's boolean spelling.
 pub fn decode_bool(s: &str) -> Option<bool> {
@@ -173,6 +190,8 @@ pub(crate) fn float_in<F: Float>(text: &str) -> Read<F> {
 pub(crate) trait Float: std::str::FromStr + Copy {
     fn is_infinite(self) -> bool;
     fn is_zero(self) -> bool;
+    /// The type's largest finite value, of this value's sign.
+    fn largest_of_sign(self) -> Self;
 }
 
 impl Float for f32 {
@@ -182,6 +201,9 @@ impl Float for f32 {
     fn is_zero(self) -> bool {
         self == 0.0
     }
+    fn largest_of_sign(self) -> Self {
+        f32::MAX.copysign(self)
+    }
 }
 
 impl Float for f64 {
@@ -190,6 +212,9 @@ impl Float for f64 {
     }
     fn is_zero(self) -> bool {
         self == 0.0
+    }
+    fn largest_of_sign(self) -> Self {
+        f64::MAX.copysign(self)
     }
 }
 
@@ -2053,6 +2078,33 @@ mod tests {
         assert_eq!(decode_f64("-Infinity"), Some(f64::NEG_INFINITY));
         assert_eq!(decode_f64("1e-310"), Some(1e-310));
         assert_eq!(decode_f64("0e-999"), Some(0.0));
+    }
+
+    /// **Told to ignore the refusal, a float field past its type's range is
+    /// read as the parse rounds it**: the largest finite value of its sign past
+    /// it, zero of its sign below it; a spelling this build does not read stays
+    /// unread, and told nothing, every one of them is.
+    #[test]
+    fn a_float_field_past_its_range_is_read_only_when_ignored() {
+        use PostgresInvalidValues::{Default, Ignore};
+        for (text, read) in [
+            ("1.79769313486232e+308", f64::MAX),
+            ("-1.79769313486232e+308", -f64::MAX),
+            ("1e+309", f64::MAX),
+            ("1e-400", 0.0),
+        ] {
+            assert_eq!(float_field::<f64>(text, Default), None, "{text}");
+            assert_eq!(float_field::<f64>(text, Ignore), Some(read), "{text}");
+        }
+        assert!(float_field::<f64>("-1e-400", Ignore).unwrap().is_sign_negative());
+        assert_eq!(float_field::<f32>("3.403e+38", Ignore), Some(f32::MAX));
+        assert_eq!(float_field::<f32>("-3.403e+38", Ignore), Some(-f32::MAX));
+        for text in ["1.5", "Infinity", "NaN"] {
+            let (default, ignored) = (float_field::<f64>(text, Default), float_field(text, Ignore));
+            assert_eq!(default.map(f64::to_bits), ignored.map(f64::to_bits), "{text}");
+            assert!(default.is_some(), "{text}");
+        }
+        assert_eq!(float_field::<f64>("0x1p3", Ignore), None);
     }
 
     /// Ground truth from a live server under `extra_float_digits = 3` —

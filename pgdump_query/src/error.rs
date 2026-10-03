@@ -249,7 +249,8 @@ pub enum Error {
     },
     /// A field its declared type's `*_in` refuses, met by a pass decoding it
     /// — a parse gathering statistics, or a back-fill re-reading a block for
-    /// them — which fails at the first, as a restore under `ON_ERROR_STOP`
+    /// them — under [`crate::PostgresInvalidValues::Default`], which fails at
+    /// the first, as a restore under `ON_ERROR_STOP`
     /// fails the table's `COPY` (`docs/design/roadmap.md`, "A literal is
     /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The line
     /// is named as the restore's own error names it — `line` is `COPY`'s

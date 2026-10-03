@@ -22,9 +22,10 @@ use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, CopyBlock, DEFAULT_MEMORY_BUDGET,
     DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
-    MapRun, Parallelism, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions,
-    Sortedness, StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, bounded_columns, gather_block_statistics, map_file,
+    MapRun, Parallelism, PostgresInvalidValues, ROW_GROUP_DEFAULT_MIN_ROWS,
+    ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions, Sortedness, StatisticsBackfill, StatisticsLevel,
+    StatisticsRequest, StatisticsSelection, StatisticsTarget, bounded_columns,
+    gather_block_statistics, map_file,
 };
 
 mod common;
@@ -1302,6 +1303,73 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     for at in [0, 2] {
         let column = t.columns[at].as_ref().unwrap();
         assert!(column.bounds.as_ref().unwrap().groups.iter().any(Option::is_none), "{at}");
+    }
+}
+
+/// **Told to ignore them, a parse goes on past every field PostgreSQL
+/// refuses**, serially, at every worker count and on a back-fill, and the
+/// group each sits in keeps no bounds or dictionary of its column, nor the
+/// column a sum, so no statistic says what a read of it would not: every other
+/// group keeps its own (`docs/design/decisions.md`, "D103").
+#[tokio::test]
+async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("ignored.sql");
+    let mut text =
+        String::from("CREATE TABLE public.t (\n    a smallint,\n    f double precision\n);\n\n");
+    text.push_str("COPY public.t (a, f) FROM stdin;\n");
+    let data = text.len() as u64;
+    let mut refused_groups = Vec::new();
+    for i in 0..2000 {
+        let (a, f) = match i {
+            700 => ("70000".to_string(), "1.5".to_string()),
+            1500 => (i.to_string(), "1.79769313486232e+308".to_string()),
+            _ => (i.to_string(), format!("{i}.5")),
+        };
+        if i == 700 || i == 1500 {
+            refused_groups.push(((text.len() as u64 - data) / 256) as usize);
+        }
+        text.push_str(&format!("{a}\t{f}\n"));
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    let wanted = request(StatisticsSelection::DATA, 256);
+    let serial = ScanOptions {
+        chunk_size_bytes: 64,
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..ScanOptions::default()
+    };
+    let check = |index: &DumpIndex, at: &str| {
+        let t = statistics(block(index, "public.t"));
+        for (column, refused) in [(0, refused_groups[0]), (1, refused_groups[1])] {
+            let gathered = t.columns[column].as_ref().unwrap();
+            let bounds = &gathered.bounds.as_ref().unwrap().groups;
+            let unbounded: Vec<usize> =
+                (0..bounds.len()).filter(|&g| bounds[g].is_none()).collect();
+            assert_eq!(unbounded, [refused], "{at}: column {column}'s groups without bounds");
+            if let Some(dictionary) = &gathered.dictionary {
+                let lost: Vec<usize> = (0..dictionary.groups.len())
+                    .filter(|&g| dictionary.groups[g].is_none())
+                    .collect();
+                assert_eq!(lost, [refused], "{at}: column {column}'s groups without a dictionary");
+            }
+        }
+        assert_eq!(t.columns[0].as_ref().unwrap().sums, None, "{at}: `a`'s sums");
+    };
+    check(&gathered_with(&dump, &serial, &wanted).await, "serial");
+    let source = LocalFileSource::open(&dump).unwrap();
+    for jobs in [2, 4, 8] {
+        let parallel = ScanOptions {
+            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            ..serial.clone()
+        };
+        let at = format!("{jobs} jobs");
+        check(&gathered_with(&dump, &parallel, &wanted).await, &at);
+        let _ = std::fs::remove_file(cache::colocated_path(&dump));
+        mapped_into_cache(&dump, &serial, &StatisticsRequest::METADATA).await;
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
+        let run = map_file(&source, &parallel, &mode, &wanted).await.unwrap();
+        check(&run.index, &format!("{at}, back-fill"));
     }
 }
 

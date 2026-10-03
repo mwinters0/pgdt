@@ -16,7 +16,7 @@ use datafusion::common::{DataFusionError, Result, plan_err};
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
 use pgdump_query::cache::StrictIdentity;
-use pgdump_query::{DiagnosticSink, SchemaMode, UnrepresentableMode};
+use pgdump_query::{DiagnosticSink, PostgresInvalidValues, SchemaMode, UnrepresentableMode};
 
 use crate::budget::ScanBudget;
 use crate::dump::{PgDump, PgDumpOptions};
@@ -50,6 +50,10 @@ pub struct PgDumpTableOptions {
     /// column's type cannot hold as NULL, `text`, reading a column holding
     /// one as its text, or `refuse` ([`PgDumpOptions::unrepresentable`]).
     pub unrepresentable: UnrepresentableMode,
+    /// `pgdump.postgres_invalid_values`: `default`, refusing a value
+    /// PostgreSQL refuses for its column's type, or `ignore`
+    /// ([`PgDumpOptions::postgres_invalid_values`]).
+    pub postgres_invalid_values: PostgresInvalidValues,
     /// `pgdump.strict_identity`: which identity signals bind for this dump,
     /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
     pub strict_identity: Option<StrictIdentity>,
@@ -103,6 +107,17 @@ impl ExtensionOptions for PgDumpTableOptions {
                     }
                 }
             }
+            "postgres_invalid_values" => {
+                self.postgres_invalid_values = match value.to_ascii_lowercase().as_str() {
+                    "default" => PostgresInvalidValues::Default,
+                    "ignore" => PostgresInvalidValues::Ignore,
+                    _ => {
+                        return plan_err!(
+                            "pgdump.postgres_invalid_values is `default` or `ignore`, not `{value}`"
+                        );
+                    }
+                }
+            }
             "strict_identity" => match value.parse() {
                 Ok(strict) => self.strict_identity = Some(strict),
                 Err(why) => return plan_err!("pgdump.strict_identity `{value}`: {why}"),
@@ -111,7 +126,8 @@ impl ExtensionOptions for PgDumpTableOptions {
                 return plan_err!(
                     "`{key}` is not a PGDUMP option — the options are pgdump.table, \
                      pgdump.schema, pgdump.database, pgdump.schema_mode, \
-                     pgdump.unrepresentable and pgdump.strict_identity"
+                     pgdump.unrepresentable, pgdump.postgres_invalid_values and \
+                     pgdump.strict_identity"
                 );
             }
         }
@@ -133,6 +149,10 @@ impl ExtensionOptions for PgDumpTableOptions {
             UnrepresentableMode::Text => "text",
             UnrepresentableMode::Refuse => "refuse",
         };
+        let invalid = match self.postgres_invalid_values {
+            PostgresInvalidValues::Default => "default",
+            PostgresInvalidValues::Ignore => "ignore",
+        };
         vec![
             entry("table", self.table.clone(), "The table to register; required."),
             entry("schema", self.schema.clone(), "The table's PostgreSQL schema."),
@@ -146,6 +166,11 @@ impl ExtensionOptions for PgDumpTableOptions {
                 "unrepresentable",
                 Some(unrepresentable.to_string()),
                 "`null`, a value its column's type cannot hold read as NULL, `text`, a column holding one read as its text, or `refuse`.",
+            ),
+            entry(
+                "postgres_invalid_values",
+                Some(invalid.to_string()),
+                "`default`, a value PostgreSQL refuses for its column's type refused, or `ignore`, a float past its type's range read as the largest of its sign.",
             ),
             entry(
                 "strict_identity",
@@ -224,6 +249,7 @@ impl TableProviderFactory for PgDumpTableFactory {
         let open = PgDumpOptions {
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
+            postgres_invalid_values: options.postgres_invalid_values,
             strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
             ..PgDumpOptions::default()
         };
@@ -269,18 +295,25 @@ fn external(err: crate::Error) -> DataFusionError {
 mod tests {
     use super::*;
 
-    /// **`pgdump.unrepresentable`'s help names every value `set` accepts**,
-    /// each one set and read back before its name is looked for, so the help
-    /// cannot drop a mode the option takes.
+    /// **`pgdump.unrepresentable`'s and `pgdump.postgres_invalid_values`'
+    /// help names every value `set` accepts**, each one set and read back
+    /// before its name is looked for, so the help cannot drop a mode the
+    /// option takes; another value is refused.
     #[test]
-    fn the_unrepresentable_help_names_every_mode_the_option_takes() {
-        for mode in ["null", "text", "refuse"] {
-            let mut options = PgDumpTableOptions::default();
-            options.set("pgdump.unrepresentable", mode).unwrap();
-            let entries = options.entries();
-            let entry = entries.iter().find(|e| e.key == "pgdump.unrepresentable").unwrap();
-            assert_eq!(entry.value.as_deref(), Some(mode));
-            assert!(entry.description.contains(&format!("`{mode}`")), "{}", entry.description);
+    fn a_mode_option_s_help_names_every_mode_it_takes() {
+        for (key, modes) in [
+            ("pgdump.unrepresentable", &["null", "text", "refuse"][..]),
+            ("pgdump.postgres_invalid_values", &["default", "ignore"][..]),
+        ] {
+            for mode in modes {
+                let mut options = PgDumpTableOptions::default();
+                options.set(key, mode).unwrap();
+                let entries = options.entries();
+                let entry = entries.iter().find(|e| e.key == key).unwrap();
+                assert_eq!(entry.value.as_deref(), Some(*mode));
+                assert!(entry.description.contains(&format!("`{mode}`")), "{}", entry.description);
+            }
+            assert!(PgDumpTableOptions::default().set(key, "strict").is_err(), "{key}");
         }
     }
 }

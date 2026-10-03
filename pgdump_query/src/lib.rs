@@ -65,6 +65,7 @@ pub use predicate::{
     ComparisonNote, Expr, Membership, Predicate, PredicateOp, Truth, column_divergences,
 };
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
+pub use scan::PostgresInvalidValues;
 pub use scan::{
     Cancellation, ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd,
     LargeObjectStart, Line, Row, SCAN_CHUNK_DEFAULT_SIZE_BYTES, SCAN_LINE_DEFAULT_MAX_BYTES,

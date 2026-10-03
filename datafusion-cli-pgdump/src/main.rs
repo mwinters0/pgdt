@@ -172,7 +172,7 @@ struct Args {
     // pgdump: `--dump`.
     #[clap(
         long = "dump",
-        value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:strict-identity=TERMS]",
+        value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]",
         help = pgdump::DUMP_HELP,
         value_parser(pgdump::DumpArg::parse)
     )]

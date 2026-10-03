@@ -100,6 +100,16 @@ Options:
           below `--row-group-min-rows`, which defaults to 1,024, and beside a stated
           `--row-group-size`, which is kept exactly
 
+      --postgres-invalid-values <MODE>
+          What to do with a value PostgreSQL refuses for its column's type — `70000` in a
+          `smallint`, a `double precision` written past its range: `default` stops the scan at the
+          first one it reads, as a restore of the dump stops there; `ignore` goes on past each,
+          keeping no statistics of the stretch of its column it sits in, and a `query` then reads it
+          as its own `--postgres-invalid-values` says
+          
+          [default: default]
+          [possible values: default, ignore]
+
       --strict-identity[=<TERMS>]
           Which weak signs of a source's identity must hold, as a comma-separated selection of
           `time` and `location`, or `advisory` or `none` alone; the flag alone is `time,location`.

@@ -16,7 +16,7 @@ use std::path::Path;
 use serde_json::Value;
 
 mod common;
-use common::{run, run_ok, sandboxed, stderr_of};
+use common::{run, run_ok, sandboxed, stderr_of, stdout_of};
 
 const DUMP: &str = "16/statistics/default.sql";
 
@@ -712,4 +712,48 @@ fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
     assert_eq!(got, expected);
     assert!(said.contains("table mapped at the metadata level"), "{said}");
     assert_eq!(std::fs::read(&cache).unwrap(), written, "the query wrote nothing");
+}
+
+/// **`--postgres-invalid-values` reaches both commands.** `parse` stops at the
+/// float `--extra-float-digits=0` rounds past `DBL_MAX` unless told `ignore`,
+/// which leaves a cache; `query` over it refuses the field unless told
+/// `ignore`, which prints it as the largest finite value and finds it by that
+/// value, and a filter spelled as the field is refused either way.
+#[test]
+fn parse_and_query_each_take_postgres_invalid_values() {
+    let (_dir, dump) = sandboxed("16/types/extra-float-digits-0.sql", "floats.sql");
+    let source = dump.to_str().unwrap();
+    let refused = run(&["parse", "--source", source]);
+    assert!(!refused.status.success());
+    assert!(stderr_of(&refused).contains("1.79769313486232e+308"), "{}", stderr_of(&refused));
+    run_ok(&["parse", "--source", source, "--postgres-invalid-values", "ignore"]);
+
+    let query = |extra: &[&str]| {
+        let mut args = vec![
+            "query",
+            "--source",
+            source,
+            "--table",
+            "public.t_extremes",
+            "--column",
+            "id",
+            "--column",
+            "v_double",
+        ];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    let refused = query(&[]);
+    assert!(!refused.status.success());
+    assert!(stderr_of(&refused).contains("1.79769313486232e+308"), "{}", stderr_of(&refused));
+    let ignoring = ["--postgres-invalid-values", "ignore"];
+    let found = query(&[&ignoring[..], &["--filter", "v_double=1.7976931348623157e+308"]].concat());
+    assert!(found.status.success(), "{}", stderr_of(&found));
+    assert!(
+        stdout_of(&found).lines().any(|l| l == "2\t1.7976931348623157e+308"),
+        "{}",
+        stdout_of(&found)
+    );
+    let spelled = query(&[&ignoring[..], &["--filter", "v_double=1.79769313486232e+308"]].concat());
+    assert!(!spelled.status.success(), "a literal PostgreSQL refuses has no opt-out");
 }
