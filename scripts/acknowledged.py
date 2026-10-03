@@ -683,4 +683,16 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 74eea90d -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="100e377a",
+        figures=(
+            "nested-decode-micro",
+            "reserve",
+        ),
+        why="31.15: reserve's set changed only CACHE_FORMAT_VERSION's u32 value; "
+        "nested-decode-micro runs the decoders bench filtered to its nested group, and the "
+        "bench changed only inside float_family's numeric case",
+        verified="git show 100e377a -- pgdump_query/src/cache.rs pgdump_query/benches/decoders.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
