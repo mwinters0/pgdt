@@ -312,6 +312,11 @@ struct Gatherer {
     /// does, and a block answers [`BlockGathered::Refused`]. A piece carries
     /// it into the block it folds into.
     refused: Option<FieldRefusal>,
+    /// The rows this observer has been handed, and, in a block, those of
+    /// every piece it has folded in, **counted whether or not it has
+    /// stopped**: a piece made before a decline can still refuse, and its
+    /// line is numbered past every row before it ([`FieldRefusal::line`]).
+    rows: u64,
     /// What this observer holds, in the pass's account. **Last**, so it is
     /// released after everything above is freed ([`Charge`]).
     charge: Charge,
@@ -337,6 +342,7 @@ impl Gatherer {
             carried: (0, 0),
             declined: None,
             refused: None,
+            rows: 0,
             charge,
         }
     }
@@ -670,6 +676,7 @@ impl Drop for Gatherer {
 
 impl BlockObserver for Gatherer {
     fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+        self.rows += 1;
         if self.stopped() {
             return;
         }
@@ -696,7 +703,14 @@ impl BlockObserver for Gatherer {
                 Err(Refused) => {
                     let declared_type = column.declared_type.clone().unwrap_or_default();
                     let value = decode_field(field).ok().flatten().unwrap_or_default().into_owned();
-                    return self.refuse(FieldRefusal { offset, column: at, declared_type, value });
+                    let line = self.rows;
+                    return self.refuse(FieldRefusal {
+                        offset,
+                        line,
+                        column: at,
+                        declared_type,
+                        value,
+                    });
                 }
             }
         }
@@ -770,7 +784,9 @@ impl BlockObserver for Gatherer {
     ///
     /// **A refusal outranks a decline, and the earlier row's outranks a later
     /// one's**: a block that refused drops every piece, its rows all
-    /// following the one it refused, and one that has not takes a piece's.
+    /// following the one it refused, and one that has not takes a piece's,
+    /// its line numbered past this block's rows. Every other piece's rows are
+    /// counted, folded or dropped.
     fn absorb(&mut self, later: Box<dyn BlockObserver>) {
         let _attributed = StatisticsScope::enter();
         let mut later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
@@ -778,10 +794,12 @@ impl BlockObserver for Gatherer {
             drop(later);
             return;
         }
-        if let Some(refusal) = later.refused.take() {
+        if let Some(mut refusal) = later.refused.take() {
             drop(later);
+            refusal.line += self.rows;
             return self.refuse(refusal);
         }
+        self.rows += later.rows;
         match (self.declined, later.declined) {
             (Some(_), _) => drop(later),
             (None, Some(allowance)) => {
@@ -3581,6 +3599,113 @@ mod tests {
         assert_eq!(account.held().now, before, "a piece of a declined block holds nothing");
 
         assert_eq!(observer.finish(block.end), BlockGathered::Declined { allowance });
+        assert_eq!(account.held().now, StatisticsTerms::default());
+    }
+
+    /// A block of `rows` rows, `refused` holding a `date` its month lacks,
+    /// which `date_in` refuses (I61), and every other row a day it holds: the
+    /// lines, and where each starts.
+    fn refusing_block(rows: usize, refused: &[usize]) -> (Vec<Vec<u8>>, Vec<u64>) {
+        let lines: Vec<Vec<u8>> = (0..rows)
+            .map(|r| {
+                let day = if refused.contains(&r) { "2020-02-30" } else { "2020-02-28" };
+                format!("\\N\t\\N\t\\N\t{r}\t{day}\t\\N\tuntracked").into_bytes()
+            })
+            .collect();
+        let mut offsets = Vec::with_capacity(rows);
+        let mut end = 0u64;
+        for line in &lines {
+            offsets.push(end);
+            end += line.len() as u64 + 1;
+        }
+        (lines, offsets)
+    }
+
+    /// The refusal `gathered` answers, as its line, offset, column and value.
+    fn refusal(gathered: BlockGathered) -> (u64, u64, usize, String) {
+        match gathered {
+            BlockGathered::Refused(FieldRefusal { line, offset, column, value, .. }) => {
+                (line, offset, column, value)
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    /// **A refused field's line is `COPY`'s number for its row however the
+    /// block was cut**: the block observes a prefix of its rows itself and
+    /// pieces cut at random the rest, folded a window at a time, and the
+    /// first of two refused rows is named by its place among all the block's
+    /// rows, `1` being the first.
+    #[test]
+    fn a_refusal_is_numbered_by_its_row_in_the_block_however_it_was_cut() {
+        let mut rng = Rng(0x0031_0122);
+        for round in 0..300 {
+            let rows = 1 + rng.below(150) as usize;
+            let first = rng.below(rows as u64) as usize;
+            let second = first + rng.below((rows - first) as u64) as usize;
+            let (lines, offsets) = refusing_block(rows, &[first, second]);
+            let account = Arc::new(StatisticsAccount::default());
+            let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+            let mut observer: Box<dyn BlockObserver> =
+                Box::new(Gatherer::block(sized(64, None, None), join_columns(), charge));
+            let prefix = rng.below(rows as u64 + 1) as usize;
+            for (line, &offset) in lines.iter().zip(&offsets).take(prefix) {
+                observer.observe_row(offset, line);
+            }
+            let cut_odds = 1 + rng.below(20);
+            let window_pieces = 1 + rng.below(4) as usize;
+            let mut window = vec![observer.piece()];
+            for (line, &offset) in lines.iter().zip(&offsets).skip(prefix) {
+                if rng.below(cut_odds) == 0 {
+                    if window.len() == window_pieces {
+                        for piece in window.drain(..) {
+                            observer.absorb(piece);
+                        }
+                    }
+                    window.push(observer.piece());
+                }
+                window.last_mut().expect("a window holds a piece").observe_row(offset, line);
+            }
+            for piece in window {
+                observer.absorb(piece);
+            }
+            let end = offsets[rows - 1] + lines[rows - 1].len() as u64 + 1;
+            let expected = (first as u64 + 1, offsets[first], 4, "2020-02-30".to_string());
+            assert_eq!(refusal(observer.finish(end)), expected, "round {round}");
+        }
+    }
+
+    /// **A piece made before its block declined refuses, numbered past every
+    /// row before it**, the rows of the pieces that declined among them: a
+    /// declined observer reads no field, and counts its rows all the same.
+    #[test]
+    fn a_refusal_past_a_decline_counts_the_declined_rows() {
+        let (lines, offsets) = refusing_block(10, &[8]);
+        let account = Arc::new(StatisticsAccount::bounded_by(Some(0)));
+        let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+        let mut observer: Box<dyn BlockObserver> =
+            Box::new(Gatherer::block(sized(64, None, None), join_columns(), charge));
+        // Three pieces made before any is handed a row, as the leader makes a
+        // window's: three rows, five, then the refused row and one after it.
+        let mut window: Vec<Box<dyn BlockObserver>> = (0..3).map(|_| observer.piece()).collect();
+        for (r, (line, &offset)) in lines.iter().zip(&offsets).enumerate() {
+            let piece = match r {
+                0..3 => 0,
+                3..8 => 1,
+                _ => 2,
+            };
+            window[piece].observe_row(offset, line);
+        }
+        let mut pieces = window.into_iter();
+        observer.absorb(pieces.next().expect("three pieces"));
+        let mut late = observer.piece();
+        late.observe_row(offsets[8], &lines[8]);
+        drop(late);
+        for piece in pieces {
+            observer.absorb(piece);
+        }
+        let end = offsets[9] + lines[9].len() as u64 + 1;
+        assert_eq!(refusal(observer.finish(end)), (9, offsets[8], 4, "2020-02-30".to_string()));
         assert_eq!(account.held().now, StatisticsTerms::default());
     }
 

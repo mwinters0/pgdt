@@ -1105,7 +1105,7 @@ impl RowBatcher {
                     return Err(Error::FieldDecode {
                         table,
                         column,
-                        row_offset,
+                        line_offset: row_offset,
                         declared_type,
                         value,
                     });

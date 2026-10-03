@@ -481,6 +481,11 @@ impl BlockGathered {
 pub struct FieldRefusal {
     /// Where the field's row starts, relative to the block's first data byte.
     pub offset: u64,
+    /// The row's line as `COPY` numbers it, `1` being the block's first data
+    /// line: the rows the observer meeting it was handed before it, plus
+    /// one, and the rows before that observer's first once the block folds
+    /// it in ([`BlockObserver::absorb`]).
+    pub line: u64,
     /// The field's column, by its position in the block's header.
     pub column: usize,
     /// The column's declared type.
@@ -491,13 +496,14 @@ pub struct FieldRefusal {
 
 impl FieldRefusal {
     /// The error a pass fails with, naming the table and the column off
-    /// `header` and the row's line by its offset in the file, the block's data
-    /// starting at `data_offset`.
+    /// `header` and the row's line by its number and by its offset in the
+    /// file, the block's data starting at `data_offset`.
     pub(crate) fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error {
         Error::FieldRefused {
             table: header.qualified_name(),
             column: header.columns.get(self.column).cloned().unwrap_or_default(),
             declared_type: self.declared_type,
+            line: self.line,
             line_offset: data_offset + self.offset,
             value: self.value,
         }

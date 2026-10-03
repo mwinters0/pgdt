@@ -1216,10 +1216,10 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
 }
 
 /// **A parse fails on the first field PostgreSQL refuses, whatever the worker
-/// count and on a back-fill too**, naming the line it is on by its offset
-/// (`docs/design/roadmap.md`, "A literal is guaranteed in `*_out`'s form and
-/// never read past `*_in`'s"): a `smallint` past its width, then a day its
-/// month lacks, the block the one
+/// count and on a back-fill too**, naming the line it is on as `COPY` numbers
+/// it and by its offset (`docs/design/roadmap.md`, "A literal is guaranteed
+/// in `*_out`'s form and never read past `*_in`'s"): a `smallint` past its
+/// width, then a day its month lacks, the block the one
 /// [`a_gathering_scan_is_the_serial_scan_whatever_the_worker_count`] splits.
 /// A spelling this build does not read, which the server does — a blank
 /// before a number, a run-together zone — fails nothing: its group loses its
@@ -1252,6 +1252,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
             table,
             column,
             declared_type,
+            line,
             line_offset,
             value,
         }) => {
@@ -1260,7 +1261,9 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
                 ("public.t", "a", "smallint"),
                 "{at}"
             );
-            assert_eq!((line_offset, value.as_str()), (first, "70000"), "{at}");
+            // The 701st data line, the block's rows counting from 1 as a
+            // restore counts them.
+            assert_eq!((line, line_offset, value.as_str()), (701, first, "70000"), "{at}");
         }
         other => panic!("{at}: expected the parse to refuse `70000`, got {other:?}"),
     };
@@ -1286,8 +1289,8 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     std::fs::write(&dump, &fixed).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
     match map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await {
-        Err(pgdump_query::Error::FieldRefused { column, value, .. }) => {
-            assert_eq!((column.as_str(), value.as_str()), ("d", "2020-02-30"));
+        Err(pgdump_query::Error::FieldRefused { column, value, line, .. }) => {
+            assert_eq!((column.as_str(), value.as_str(), line), ("d", "2020-02-30", 1501));
         }
         other => panic!("expected the parse to refuse `2020-02-30`, got {other:?}"),
     }
@@ -1356,12 +1359,16 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
         let source = LocalFileSource::open(&dump).unwrap();
         match map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await {
             Err(pgdump_query::Error::FieldRefused {
-                column: c, declared_type: d, value, ..
+                column: c,
+                declared_type: d,
+                value,
+                line,
+                ..
             }) => {
                 let unescaped = refused.replace("\\\\", "\\");
                 assert_eq!(
-                    (c.as_str(), d.as_str(), value.as_str()),
-                    (*column, *declared_type, &*unescaped)
+                    (c.as_str(), d.as_str(), value.as_str(), line),
+                    (*column, *declared_type, &*unescaped, 31)
                 );
             }
             other => panic!("{column}: expected the parse to refuse `{refused}`, got {other:?}"),

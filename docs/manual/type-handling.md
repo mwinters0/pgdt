@@ -200,14 +200,15 @@ fifteen digits or fewer, and at fifteen the largest `double precision`,
 value the type holds. PostgreSQL's input refuses it as out of range, so a
 restore of that dump fails the table's `COPY`. pgdt refuses it too, rather than
 guess which value was meant: a `parse` gathering statistics for the column fails
-there, as the restore would, naming the table, the column, the line by its byte
-offset and the value, and a query reading the column refuses it. `real`'s
+there, as the restore would, naming the table, the column, the line — numbered
+as the restore's own error numbers it, from 1 at the block's first row, and by
+its byte offset — and the value, and a query reading the column refuses it. `real`'s
 largest value rounds past itself the same way at `--extra-float-digits=-2` or
 below.
 
 ```
 $ pgdt parse --source dump.sql
-Error: public.t_extremes.v_double: the line at offset 17347 holds `-1.79769313486232e+308`, which PostgreSQL refuses as a `double precision` value — restoring this dump fails this table's COPY there, and so does this read
+Error: COPY public.t_extremes, line 1, column v_double: `-1.79769313486232e+308` is refused by PostgreSQL as a `double precision` value — restoring this dump fails this table's COPY there, and so does this read; the line is at offset 17347
 ```
 
 The dump is what is wrong, not its reading, and dumping again without the flag
@@ -874,9 +875,9 @@ can act on them before it hands back its first batch. An array that is a
 record, so we assume one dimension and find out at the value:
 
 ```
-public.t_shipments.v at row offset 9311: value `(a,"{{1,2},{3,4}}")`
-does not parse as its mapped type `public.boxed` — use --schema-mode strings
-to read this column verbatim
+public.t_shipments.v: the line at offset 9311 holds `(a,"{{1,2},{3,4}}")`,
+which does not parse as its mapped type `public.boxed` — use --schema-mode
+strings to read this column verbatim
 ```
 
 Reading more of the file will not change this one, and there are **two** ways
@@ -986,9 +987,9 @@ contradicts its declared type means either the file is damaged or our mapping is
 wrong — and both are things you want to hear about, with the byte offset,
 rather than discover later as missing data.
 
-The error names the table, column, row offset, declared type, and the offending
-value. If you would rather not have your read fail on it, `SchemaMode::Strings`
-gives you every column unparsed.
+The error names the table, the column, the line by its byte offset, the
+declared type and the offending value. If you would rather not have your read
+fail on it, `SchemaMode::Strings` gives you every column unparsed.
 
 **A value PostgreSQL itself refuses fails `parse` too**, at the first one, as a
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a

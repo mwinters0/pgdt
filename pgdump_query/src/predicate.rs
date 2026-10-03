@@ -2995,7 +2995,7 @@ impl ResolvedTerm {
         Error::FieldDecode {
             table: table.to_string(),
             column: compared.column.clone(),
-            row_offset,
+            line_offset: row_offset,
             declared_type: compared.declared_type.clone(),
             value: value.unwrap_or_default().to_string(),
         }

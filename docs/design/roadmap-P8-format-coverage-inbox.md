@@ -176,8 +176,10 @@ data-level parse keying it (31.12): the statistics observer answers
 **Why P8 cares.** Track A reads `INSERT` rows, and a restore of an
 `--inserts` dump fails per statement, not per table: without `ON_ERROR_STOP`
 it loses the one row and goes on. Whether the parse fails at a refused
-`INSERT` value as at a `COPY` field, and where the raise sits when a run has
-no `on_copy_end`, is that track's to decide.
+`INSERT` value as at a `COPY` field, where the raise sits when a run has
+no `on_copy_end`, and what it names the statement by — `FieldRefused`'s
+`line` is `COPY`'s count of a block's rows (31.12.2), which a run of
+statements has no counterpart of — is that track's to decide.
 
 **Origin.** 31.12, 2026-10-03:
 [`roadmap-P31.12-field-refusal-notes.md`](roadmap-P31.12-field-refusal-notes.md).

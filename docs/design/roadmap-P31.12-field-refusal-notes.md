@@ -73,18 +73,12 @@ lands split"): the kinds with no marked refusal are 31.12.1's, the enum's 31.12.
   bare `numeric`'s field is bounded only once the exponent-free grammar has
   read it. Every other marked check sits behind a grammar no wider than the
   server's at the parts it bounds.
-- **The line is named by its byte offset** alone, as `LineTooLong` and
-  `UnterminatedCopyBlock` name theirs; nothing counts lines. 31.12.2 adds the
-  restore's own numbering ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md),
-  "A refused field is located as a restore locates it").
 
 ## What the slices after this inherit
 
 - **31.12.1** gave the other kinds their `*_in` grammar's refusals, each
   marked against an invariant, through `field_key`'s `Unparsed` arms; the
   enum's is 31.12.3's.
-- **31.12.2** names the line as `COPY`'s error context numbers it, beside the
-  offset, from a row count `Gatherer::absorb` folds.
 - **31.13's `ignore`**: the 2026-10-02 entry has a field spelled as I57's
   float read as `DBL_MAX` under it, where `float_in` now refuses it in every
   reader. Reading it so takes the clamp back under that mode alone

@@ -757,12 +757,13 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     let line_offset = std::fs::read_to_string(&path).unwrap().find("\n0.001\n").unwrap() + 1;
     let disabled = CacheMode::DISABLED;
     match map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await {
-        Err(Error::FieldRefused { table, column, declared_type, line_offset: at, value }) => {
+        Err(Error::FieldRefused { table, column, declared_type, line, line_offset: at, value }) => {
             assert_eq!((table.as_str(), column.as_str()), ("public.t_past", "v2_5"));
             assert_eq!(
                 (declared_type.as_str(), at, value.as_str()),
                 ("numeric(2,5)", line_offset as u64, "0.001")
             );
+            assert_eq!(line, copy_line(&std::fs::read(&path).unwrap(), at));
         }
         other => panic!("expected the parse to refuse public.t_past.v2_5, got {other:?}"),
     }
@@ -799,10 +800,20 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     }
 }
 
+/// The line `COPY` numbers the row at `line_offset` in `text`, a restore
+/// counting from 1 at its block's first data line (`copyfrom.c`'s
+/// `CopyFromErrorCallback`): read off the file, not off the parse.
+fn copy_line(text: &[u8], line_offset: u64) -> u64 {
+    let before = &text[..line_offset as usize];
+    let header = b" FROM stdin;\n";
+    let data = before.windows(header.len()).rposition(|w| w == header).unwrap() + header.len();
+    before[data..].iter().filter(|&&b| b == b'\n').count() as u64 + 1
+}
+
 /// **Every fixture holding a field PostgreSQL refuses fails a data-level
 /// parse there, at every major** (`common::REFUSED_FIELDS`), naming the table,
-/// the column and the line the field is on, as a restore of it fails that
-/// table's `COPY`; mapped with that column at the metadata level, as the
+/// the column and the line the field is on, by `COPY`'s number and by its
+/// offset, as a restore of it fails that table's `COPY`; mapped with that column at the metadata level, as the
 /// sweeps map it (`common::sweep_request`), it parses.
 #[tokio::test]
 async fn every_refused_field_fails_a_data_level_parse_reading_it() {
@@ -813,9 +824,10 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
         let source = LocalFileSource::open(&path).unwrap();
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
         match map_file(&source, &options, &mode, &StatisticsRequest::DATA).await {
-            Err(Error::FieldRefused { table, column, line_offset, value, .. }) => {
+            Err(Error::FieldRefused { table, column, line, line_offset, value, .. }) => {
                 assert_eq!((table.as_str(), column.as_str()), (refused.table, refused.column));
                 let text = std::fs::read(&path).unwrap();
+                assert_eq!(line, copy_line(&text, line_offset), "{}", path.display());
                 let line = &text[line_offset as usize..];
                 let line = &line[..line.iter().position(|&b| b == b'\n').unwrap()];
                 let line = String::from_utf8_lossy(line);

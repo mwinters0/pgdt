@@ -233,13 +233,17 @@ pub enum Error {
         database.as_deref().unwrap_or("(unnamed)")
     )]
     MetadataNotScanned { database: Option<String> },
+    /// A field a query decodes that does not parse as its column's mapped
+    /// type. The line is named by its byte offset in the file alone: a query
+    /// reading from a kept row group or a parallel partition starts mid-block,
+    /// with no count of the rows before it to number the line by.
     #[error(
-        "{table}.{column} at row offset {row_offset}: value `{value}` does not parse as its mapped type `{declared_type}` — use --schema-mode strings to read this column verbatim"
+        "{table}.{column}: the line at offset {line_offset} holds `{value}`, which does not parse as its mapped type `{declared_type}` — use --schema-mode strings to read this column verbatim"
     )]
     FieldDecode {
         table: String,
         column: String,
-        row_offset: u64,
+        line_offset: u64,
         declared_type: String,
         value: String,
     },
@@ -247,16 +251,20 @@ pub enum Error {
     /// — a parse gathering statistics, or a back-fill re-reading a block for
     /// them — which fails at the first, as a restore under `ON_ERROR_STOP`
     /// fails the table's `COPY` (`docs/design/roadmap.md`, "A literal is
-    /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The line is
-    /// named by its byte offset in the file, as every other error naming a
-    /// place in the dump names it.
+    /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The line
+    /// is named as the restore's own error names it — `line` is `COPY`'s
+    /// count from the block's first data line (`copyfrom.c`'s
+    /// `CopyFromErrorCallback`), a text row being one line — and by its byte
+    /// offset in the file beside it, which is what a dump this size is
+    /// seeked by.
     #[error(
-        "{table}.{column}: the line at offset {line_offset} holds `{value}`, which PostgreSQL refuses as a `{declared_type}` value — restoring this dump fails this table's COPY there, and so does this read"
+        "COPY {table}, line {line}, column {column}: `{value}` is refused by PostgreSQL as a `{declared_type}` value — restoring this dump fails this table's COPY there, and so does this read; the line is at offset {line_offset}"
     )]
     FieldRefused {
         table: String,
         column: String,
         declared_type: String,
+        line: u64,
         line_offset: u64,
         value: String,
     },

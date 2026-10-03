@@ -297,7 +297,8 @@ a defect. **The ceiling outranks the floor, and binds a field too**: a spelling
 here — I57's float rounded past its largest finite value is the known case,
 and the manual says so, since it reads as a fault and is not one. **A field is
 refused loudly, at parse**: the parse reading one fails at the first, naming
-its table, column, line and value, and aborts, as a restore under
+its table, column, line — numbered as the restore's `COPY` error context
+numbers it, its byte offset beside — and value, and aborts, as a restore under
 `ON_ERROR_STOP` fails; a query mapping the block itself fails the same way.
 A parse refuses what it decodes, and decodes no field for the check alone, so a
 nested leaf, a declined block's rows and a metadata-level column are caught when
