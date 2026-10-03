@@ -4337,3 +4337,43 @@ The first prints the mask `0x3FFF`, `PG_INT16_MAX`, the overflow check and the
 exponent's bound, `PG_INT32_MAX / 2` from v16 and `INT_MAX / 2` before; the
 second `apply_typmod` ahead of `make_result`, `make_result_opt_error` from
 v16.
+
+---
+
+## I64 — `uuid_in` takes a hyphen only after a group of four digits, and the whole in braces
+
+**Claim.** `uuid_in` reads 32 hex digits in either case, each group of four
+but the last optionally followed by one hyphen, the whole optionally enclosed
+in `{`…`}`, and refuses, `22P02`, anything else: a hyphen leading, trailing,
+doubled or inside a group of four, an unmatched brace, and any whitespace.
+
+**Proof.** `src/backend/utils/adt/uuid.c`, `string_to_uuid`: an opening `{`
+sets `braces`; each of the 16 bytes is two `isxdigit` characters, after which
+a `-` is skipped only when the byte's index is odd and below `UUID_LEN - 1`;
+then a closing `}` is required where `braces` is set, and the end of the
+string. The function differs between v13 and v18.6 only in returning its error
+through `escontext` from v16.
+
+**Observed.** The koji replica (PG16) reads
+`a0eebc999c0b4ef8bb6d6bb9bd380a11`,
+`a0ee-bc99-9c0b-4ef8-bb6d-6bb9-bd38-0a11`, the canonical form in braces with
+and without hyphens, and the canonical form in upper case; it refuses the
+canonical form with a hyphen leading, trailing, doubled, after seven digits or
+before the last digit, with a hyphen inside its braces at either end, with one
+brace, two of each, or a space at either end.
+
+**Scope limit.** The grammar of a `uuid`'s text, field and literal alike.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::decode_uuid`, which reads a field and a filter
+literal by this grammar.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^string_to_uuid\(/,/^}/' src/backend/utils/adt/uuid.c | grep -n "'{'\|'-' && (i % 2) == 1\|'}'"
+```
+
+It prints the opening brace's test, the hyphen's and the closing brace's.

@@ -2274,7 +2274,8 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// describes what [`literal_key`] and [`equality_comparison`] accept, which is
 /// each type's `*_out` form, widened by an integer's sign and leading zeros,
 /// a float's sign, bare point, exponent case and `inf` or `nan` in any case,
-/// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement,
+/// a `uuid` or `macaddr` hex digit's case, a `uuid`'s omitted hyphens,
+/// hyphens after any group of four and enclosing braces,
 /// either `numeric` kind's leading or trailing point and leading zeros, a
 /// network value's full-width or zero-padded netmask, an IPv6 address's
 /// uncompressed, zero-padded or upper-case groups, a `cidr` written with no
@@ -2368,7 +2369,11 @@ fn accepted_form(kind: &CompareKind) -> String {
         }
         K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs".into(),
         K::MacAddr { .. } => "as six colon-separated hex pairs".into(),
-        K::Uuid => "as 32 hex digits, grouped `8-4-4-4-12`".into(),
+        K::Uuid => {
+            "as 32 hex digits, grouped `8-4-4-4-12`, a hyphen allowed only after a group of four \
+             but the last, the whole optionally in braces"
+                .into()
+        }
         K::Bytea => {
             "as `\\x` followed by hex pairs, or as `bytea_output = escape` writes it".into()
         }
@@ -5393,6 +5398,44 @@ mod tests {
         assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
     }
 
+    /// **A `uuid` whose hyphen `uuid_in` refuses is refused as a literal and
+    /// as a field** (I64): under `=` and an ordering operator, and inside an
+    /// array; one in braces is read. Each was cast on PostgreSQL 16, and each
+    /// refused here once read, a hyphen having been dropped wherever it fell.
+    #[test]
+    fn a_uuid_postgresql_refuses_is_refused_as_literal_and_field() {
+        let uuid = || DataType::FixedSizeBinary(16);
+        let canonical = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+        for refused in [
+            "-a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc99--9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc9-99c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-",
+        ] {
+            for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                let p = order_predicate(op, refused);
+                let err = resolve_term(&p, 0, &one_column("uuid", uuid()), 0).unwrap_err();
+                assert!(
+                    matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
+                    "{op:?} {refused}: {err:?}"
+                );
+            }
+            let got = ordered("uuid", uuid(), PredicateOp::Ge, canonical, refused);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{refused}: {got:?}");
+        }
+        let braced = "{a0eebc999c0b4ef8bb6d6bb9bd380a11}";
+        assert!(ordered("uuid", uuid(), PredicateOp::Eq, braced, canonical).unwrap());
+        assert!(ordered("uuid", uuid(), PredicateOp::Ge, canonical, braced).unwrap());
+        let verdict = nested_verdict(
+            "uuid[]",
+            &test_types(),
+            PredicateOp::Eq,
+            &format!("{{{canonical}}}"),
+            "{a0eebc99--9c0b-4ef8-bb6d-6bb9bd380a11}",
+        );
+        assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
+    }
+
     /// **A number past `numeric_in`'s storage bounds is refused as a literal
     /// on every `numeric` kind, and as a field where the server reads it with
     /// no typmod** (I63): a display scale past 16383 or more than 131072
@@ -7618,6 +7661,14 @@ mod tests {
             literals_are_read_as_the_server_reads_them(&["numeric", "jsonb"]);
         }
 
+        /// **A `uuid` literal the server refuses is refused, and one it reads
+        /// this build reads to the same value**: every `uuid` row of
+        /// `literals.tsv` at every major, a value in braces among them (I64).
+        #[test]
+        fn a_uuid_literal_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&["uuid"]);
+        }
+
         /// Each row of `literals.tsv` declaring one of `declared`, at every
         /// major, put to `=` against a field holding the server's output for
         /// it: one the server refuses is refused, and one it reads is either
@@ -7902,7 +7953,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (44, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (45, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

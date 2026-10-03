@@ -921,28 +921,35 @@ const HEX_NIBBLE: [u8; 256] = {
 /// pair carries "either was bad" in its high nibble.
 const BAD_NIBBLE: u8 = 0xFF;
 
-/// Canonical `8-4-4-4-12` hex form, case-insensitive on input (PostgreSQL
-/// always dumps lowercase, but nothing forces that on a hand-edited fixture).
+/// `uuid_in`'s grammar, field and literal alike: 32 hex digits in either case
+/// (PostgreSQL always dumps the canonical lowercase `8-4-4-4-12`, but nothing
+/// forces that on a hand-written dump), each group of four but the last
+/// optionally followed by one hyphen, the whole optionally in braces.
 ///
-/// Hyphens are dropped wherever they fall and exactly 32 hex digits must
-/// remain. The filter runs over bytes rather than chars: `-` is ASCII, so
-/// the two leave the same sequence, and a non-ASCII byte is not a hex digit
-/// either way.
-///
-/// Deficiency register: `deficiency: KD80` — `uuid_in` takes a hyphen only
-/// after a group of four digits, so a literal with one leading, trailing,
-/// doubled or mid-group reads here where the server refuses it.
+/// It runs over bytes rather than chars: `-` and the braces are ASCII, and a
+/// non-ASCII byte is not a hex digit either way.
+// pg-refuses: I64 — every refusal here is `string_to_uuid`'s.
 pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
-    let mut nibbles = s.bytes().filter(|b| *b != b'-');
+    let b = match s.as_bytes() {
+        [b'{', inner @ .., b'}'] => inner,
+        b => b,
+    };
     let mut bytes = [0u8; 16];
     let mut bad = 0u8;
-    for byte in &mut bytes {
-        let hi = HEX_NIBBLE[nibbles.next()? as usize];
-        let lo = HEX_NIBBLE[nibbles.next()? as usize];
+    let mut at = 0;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        let hi = HEX_NIBBLE[*b.get(at)? as usize];
+        let lo = HEX_NIBBLE[*b.get(at + 1)? as usize];
         bad |= hi | lo;
         *byte = hi << 4 | lo;
+        at += 2;
+        // One hyphen after a group of four but the last; a hyphen anywhere
+        // else is a byte no hex digit matches.
+        if i % 2 == 1 && i < 15 && b.get(at) == Some(&b'-') {
+            at += 1;
+        }
     }
-    if bad & 0xF0 != 0 || nibbles.next().is_some() {
+    if bad & 0xF0 != 0 || at != b.len() {
         return None;
     }
     Some(bytes)
@@ -2115,22 +2122,57 @@ mod differential {
         assert_eq!(parse_time_of_day("00:00:00.0000005"), None);
     }
 
+    /// Whether a hyphen in `s` falls where `uuid_in` refuses one: anywhere
+    /// but after a group of four hex digits, the last group excepted, or
+    /// twice in a row.
+    fn hyphen_misplaced(s: &str) -> bool {
+        let mut digits = 0;
+        let mut after_hyphen = false;
+        for b in s.bytes() {
+            if b == b'-' {
+                if digits == 0 || digits % 4 != 0 || digits >= 32 || after_hyphen {
+                    return true;
+                }
+                after_hyphen = true;
+            } else {
+                digits += 1;
+                after_hyphen = false;
+            }
+        }
+        false
+    }
+
+    /// **The rewrite reads what the prior shape read, with the hyphens
+    /// `uuid_in` places**: where the prior shape dropped a hyphen wherever it
+    /// fell this refuses one the server refuses, and it reads a value in
+    /// braces as the prior shape read the value inside them.
     #[test]
     fn uuid_agrees_with_the_shape_it_replaced() {
-        let check = |s: &str| assert_eq!(decode_uuid(s), prior_shape::decode_uuid(s), "{s:?}");
+        let check = |s: &str| match (decode_uuid(s), prior_shape::decode_uuid(s)) {
+            (None, Some(_)) => assert!(hyphen_misplaced(s), "{s:?}"),
+            (Some(got), None) => {
+                let inner = s.strip_prefix('{').and_then(|s| s.strip_suffix('}')).expect(s);
+                assert_eq!(Some(got), prior_shape::decode_uuid(inner), "{s:?}");
+            }
+            (got, prior) => assert_eq!(got, prior, "{s:?}"),
+        };
         fuzz(2, 40, check);
         shaped(
             22,
             |rng| {
-                // 31, 32 or 33 hex digits, with hyphens scattered through
-                // them rather than only at the canonical four positions.
+                // 31, 32 or 33 hex digits, a hyphen after a group of four
+                // often and anywhere else seldom, and braces now and then.
                 let count = 31 + rng.below(3);
                 let mut s = String::new();
-                for _ in 0..count {
-                    if rng.below(6) == 0 {
+                for at in 0..count {
+                    let odds = if at > 0 && at % 4 == 0 { 2 } else { 12 };
+                    if rng.below(odds) == 0 {
                         s.push('-');
                     }
                     s.push(rng.pick(b"0123456789abcdefABCDEF"));
+                }
+                if rng.below(4) == 0 {
+                    s = format!("{{{s}}}");
                 }
                 s
             },
@@ -2141,9 +2183,43 @@ mod differential {
         assert!(decode_uuid(canonical).is_some());
         assert_eq!(decode_uuid(&canonical[..35]), None);
         assert_eq!(decode_uuid(&format!("{canonical}0")), None);
-        // Hyphens are dropped wherever they fall, which is what the byte
-        // filter has to keep doing.
-        assert_eq!(decode_uuid("-a0eebc999c0b4ef8bb6d6bb9bd380a11-"), decode_uuid(canonical));
+    }
+
+    /// **`uuid_in`'s grammar, read and refused as the server reads and refuses
+    /// it** (I64): each spelling below was cast on PostgreSQL 16. The first
+    /// six refused once read, a hyphen having been dropped wherever it fell,
+    /// and each read in braces was refused.
+    #[test]
+    fn a_uuid_takes_a_hyphen_only_after_a_group_of_four() {
+        let canonical = decode_uuid("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11").unwrap();
+        for read in [
+            "a0eebc999c0b4ef8bb6d6bb9bd380a11",
+            "a0ee-bc99-9c0b-4ef8-bb6d-6bb9-bd38-0a11",
+            "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+            "{a0eebc999c0b4ef8bb6d6bb9bd380a11}",
+            "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11",
+        ] {
+            assert_eq!(decode_uuid(read), Some(canonical), "{read:?}");
+        }
+        for refused in [
+            "-a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-",
+            "a0eebc99--9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc9-99c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eeb-c999c0b4ef8bb6d6bb9bd380a11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1-1",
+            "{-a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+            "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-}",
+            "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+            "{{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}}",
+            " a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 ",
+            "{}",
+            "{",
+        ] {
+            assert_eq!(decode_uuid(refused), None, "{refused:?}");
+        }
     }
 
     #[test]

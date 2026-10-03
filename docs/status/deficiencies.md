@@ -350,10 +350,6 @@ than reading as a phase nobody has sliced.
   no parse refuses a field on PostgreSQL's terms.
   **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD80** — a `uuid` literal or field takes a hyphen anywhere, where `uuid_in` takes
-  one only after a group of four digits. **(b) owned by `M209`**. Detail:
-  `pgdump_query/src/decode.rs`.
-
 - **KD81** — a `numeric(p,s)` field is not rounded to its scale or refused past
   its precision as `COPY`'s `apply_typmod` does, so `1.005` in a
   `numeric(10,2)` is refused where the server stores `1.01`.

@@ -436,9 +436,10 @@ and `1E5` as well as `1.5` and `100000` — and which those are may grow.
 **A value PostgreSQL itself refuses is refused here too**, rather than given a
 meaning the server would not give it: `1e400` and `1e-400` are out of range
 for a `double precision`, `70000` for a `smallint`, a number written with
-more than 16383 digits after the point for a `numeric`, and `2020-02-30`,
-`12:60:00` and `00:90:00` are no `date`, `time` or `interval`, so `--filter
-'v>1e400'` is an error, not a filter matching nothing.
+more than 16383 digits after the point for a `numeric`, `2020-02-30`,
+`12:60:00` and `00:90:00` are no `date`, `time` or `interval`, and a `uuid`
+takes a hyphen only after a group of four digits, so `--filter 'v>1e400'` is
+an error, not a filter matching nothing.
 
 **One thing `=` does not do is search.** It is exact equality against one
 column; there is no `LIKE`, no pattern and no case folding.
