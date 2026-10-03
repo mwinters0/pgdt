@@ -295,8 +295,8 @@ impl RowSplit {
     }
 }
 
-/// The largest prefix of `span` that ends on a row terminator **and** is
-/// valid UTF-8 — the empty string when no whole row of it validates.
+/// The prefix of `span` through its last row terminator where all of it is
+/// valid UTF-8, and the empty string otherwise.
 ///
 /// This is the bulk half of the codec: one SIMD validation per chunk in place
 /// of one `std::str::from_utf8` per field, sound because a COPY TEXT row's

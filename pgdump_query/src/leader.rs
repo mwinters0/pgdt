@@ -307,8 +307,8 @@ impl BoundBy {
 ///
 /// **It reports the rules that answer for the arrangement, and not the one
 /// that answers for a block.** Both are read off the source's advice over *the
-/// rest of the file* and the caller's budget, so one line stands for the whole
-/// scan. [`scan_region`]'s floor, and a region the source advises one
+/// rest of the file* — the source's over the whole file too — and the caller's
+/// budget, so one line stands for the whole scan. [`scan_region`]'s floor, and a region the source advises one
 /// partition of where the file advises more, are the other ways to be left
 /// serial and are deliberately not reported: each is an end-of-file
 /// condition and would fire on the last block of every file.

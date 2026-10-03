@@ -153,8 +153,8 @@ impl Unrepresentable {
 
 /// **The last day of the calendar `arrow-cast` formats a `date` or timestamp
 /// through**, as a `Date32` day count from 1970 — `chrono`'s, whose end is the
-/// engine tier's bound (RT21). A cache records the bound it counted under and
-/// is refused by a build whose bound is another
+/// engine tier's bound (RT21). A cache records the bound it counted under and,
+/// holding a count, is refused by a build whose bound is another
 /// (`crate::cache::Unusable::CalendarChanged`), so a `chrono` upgrade moving
 /// it reaches no count taken before it.
 // upstream: UF2

@@ -25,8 +25,8 @@
 //! Two fallbacks complete a statement no TOC header closes, on any input:
 //! [`crate::scan::Event::DollarQuoteEnd`], which
 //! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
-//! is in flight, and [`crate::preamble::statement_complete`] for any
-//! statement that is not its own TOC entry. The lines themselves stay
+//! is in flight, and [`crate::preamble::statement_complete`] at a
+//! statement's terminating `;`, whether or not it is its own TOC entry. The lines themselves stay
 //! unsurfaced either way.
 //!
 //! **Consequence: no "grouping".** A definition and its ungrouped trailing
@@ -111,7 +111,8 @@ use crate::statistics::{BlockGathered, BlockObserver};
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
-/// together sums to the scanned portion of the file — see [`check_tiling`].
+/// together tiles the file, a partial scan's unread rest one `Unscanned`
+/// span — see [`check_tiling`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start: u64,
@@ -134,7 +135,8 @@ pub struct Span {
     /// governing entry at all: the header-less-input fallback, or a span of
     /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
     /// `VersionHeader`) carrying no TOC comment of its own, or a `COPY` block's or large-object region's, with
-    /// no TOC comment of its own. Not a substitute for
+    /// no TOC comment of its own, or one whose own TOC-shaped comment did not
+    /// parse. Not a substitute for
     /// [`SpanBody`]'s own per-kind
     /// fields: the two are separately-sourced observations of one object
     /// (`docs/design/decisions.md`, "D30").
@@ -179,8 +181,9 @@ pub struct TocHeader {
 }
 
 /// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any
-/// comment line that doesn't match, which leaves [`Span::toc`] `None` exactly
-/// as if there were no TOC comment at all. `trimmed` is expected to have
+/// comment line that doesn't match, which leaves [`Span::toc`] `None` — a
+/// comment block shaped like an entry still owning its span, so inheriting
+/// nothing ([`Span::toc_owned`]). `trimmed` is expected to have
 /// leading/trailing whitespace already removed.
 ///
 /// All three of `_printTocEntry()`'s prefixes go through one code path:
@@ -231,7 +234,8 @@ pub struct SpanText {
 }
 
 /// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
-/// schema's DDL being small, it only bites on one enormous statement.
+/// schema's DDL being small, it bites only on one enormous statement and the
+/// spans after it in its run (`KD31`).
 pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 
 /// Whether a span of this kind stores its text at all. `Data` spans never do
@@ -564,8 +568,8 @@ pub(crate) struct Builder {
     pending_data: Option<(u64, CopyStart, Option<String>, Option<TocHeader>)>,
     /// The `-- load via partition root <name>` marker (I2) seen since the
     /// last TOC entry began, waiting for the `COPY` header it belongs to.
-    /// Cleared by the header that consumes it and by the next TOC `Name:`
-    /// line, so an entry that was not table data leaves nothing behind.
+    /// Cleared by the header that consumes it and by the next non-data TOC
+    /// entry's `Name:` line, so an entry that was not table data leaves nothing behind.
     pending_partition_root: Option<String>,
     /// The in-progress merged large-object `Data` span, if a `BEGIN;` has
     /// been seen with no flush since — see [`on_large_object_start`](Self::on_large_object_start).
@@ -595,8 +599,8 @@ pub(crate) struct Builder {
     /// The census and count accumulating for the open `COPY` block
     /// ([`BlockCensus`]), and `None` for a block at the metadata level, whose
     /// rows are not split (`docs/design/decisions.md`, "D35"). Sized at
-    /// `CopyStart` from the header's column list, and its census grown by any
-    /// row that turns out to have more fields, the mapping pass never refusing
+    /// `CopyStart` from the header's column list, and its shapes grown by any
+    /// row holding a `{` or `[` that turns out to have more fields, the mapping pass never refusing
     /// a row's width (`docs/design/decisions.md`, "D28"); a query refuses that
     /// row, so nothing reads the extra entries.
     pending_census: Option<BlockCensus>,
@@ -813,11 +817,9 @@ impl Builder {
     /// close that one out. The partway-through case is the module docs'.
     ///
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
-    /// the header text `toc` came from — `false` for a follow-on statement
-    /// inheriting [`governing_toc`](Self::governing_toc), which every call
-    /// site but the inherited paths of
-    /// [`push_statement_span`](Self::push_statement_span) and
-    /// [`push_insert_run`](Self::push_insert_run) passes as `toc.is_some()`. This is also where
+    /// a TOC header — `false` for a follow-on statement inheriting
+    /// [`governing_toc`](Self::governing_toc), and `true` with `toc` `None`
+    /// where that header did not parse. This is also where
     /// [`governing_toc`](Self::governing_toc) updates, every span this module
     /// produces passing through here.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>, toc_owned: bool) {
@@ -1151,7 +1153,8 @@ impl Builder {
                 }
                 false
             }
-            // Only the lines [`insert_run_line`](Self::insert_run_line)
+            // Only a run's first line, handed back by the switch into this
+            // mode, and the lines [`insert_run_line`](Self::insert_run_line)
             // declines reach this arm — a boundary signal, a blank line, a
             // line opening on `-` or a non-ASCII byte, or a fresh statement
             // that may not continue the run. It feeds the
@@ -2147,8 +2150,8 @@ mod tests {
 
     /// The case the module docs' "Span boundaries" section exists for: a
     /// dollar-quoted function body swallows its own closing `;` entirely
-    /// (never reaches `Event::Line`), so only the next TOC comment's boundary
-    /// can close the span. `feed_line` here is given only the lines a real
+    /// (never reaches `Event::Line`), so with no `DollarQuoteEnd` fed, only
+    /// the next TOC comment's boundary can close the span. `feed_line` here is given only the lines a real
     /// scan would still emit.
     #[test]
     fn a_dollar_quoted_function_with_no_trailing_statement_closes_at_the_next_toc_comment() {
@@ -2313,8 +2316,8 @@ mod tests {
 
     /// The case [`Builder::snapshot`] exists for: `stream.rs`'s live segment
     /// needs a tiling span list *before* the scan reaches its true end, right
-    /// after each `CopyEnd` — the one point `on_copy_end` guarantees `mode`
-    /// is back to `Idle`. `check_tiling` is checked at every such boundary
+    /// after each `CopyEnd`, `mode` being `Idle` from the `CopyStart` before
+    /// it. `check_tiling` is checked at every such boundary
     /// rather than only at the very end.
     #[test]
     fn snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end() {

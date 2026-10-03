@@ -34,7 +34,8 @@ pub struct PgDumpOptions {
     /// How a scan reads a field its type's `*_in` refuses, which the `pgdt
     /// parse` that built the cache went past: refused, by default, or read as
     /// the library's decoders read it, which only a float's past its type's
-    /// range is (`docs/design/decisions.md`, "D103").
+    /// range is (`docs/design/decisions.md`, "D103"); `Strict`, a parse's
+    /// mode, reads as the default does.
     pub postgres_invalid_values: PostgresInvalidValues,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:
     /// between runs, what the cache is checked against at open; during one,
@@ -254,6 +255,9 @@ impl PgDump {
 }
 
 /// The `pgdt parse` that builds the cache this open looked for.
+// deficiency: KD92 — it carries no `--postgres-invalid-values`, so one
+// opened to ignore what PostgreSQL refuses names a parse that fails at the
+// first such field it keys, where `ignore` would build the cache.
 fn parse_command(location: &str, cache_path: Option<&Path>) -> String {
     match cache_path {
         Some(path) => format!("pgdt parse --source {location} --dtcache {}", path.display()),

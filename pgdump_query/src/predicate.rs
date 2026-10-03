@@ -1746,9 +1746,8 @@ impl RangeKey {
 /// (`parse_*`), which take `{a, b}` and `{ 1 , 2 }` (I44).
 ///
 /// The leaf grammar does not widen with it (`docs/design/decisions.md`,
-/// "D58"): a leaf is read by [`order_key`], which implements that type's
-/// `*_out` form and no more, so `--filter 'p=( 1 , a )'` is refused — a
-/// literal's by [`literal_key`], which only narrows it.
+/// "D58"): a leaf is read by its type's own reader, which takes no space its
+/// `*_out` form does not write, so `--filter 'p=( 1 , a )'` is refused.
 ///
 /// `None` is "not a value of this type", which is
 /// `Error::PredicateValueDecode` for a literal and `Error::FieldDecode` for a
@@ -1879,8 +1878,9 @@ fn range_key(
     )
 }
 
-/// **Whether PostgreSQL's input function refuses `text` as a field of a
-/// column compared by `plan`**: what a strict parse checks every field by
+/// **Whether a marked check finds PostgreSQL's input function refuses `text`
+/// as a field of a column compared by `plan`** — text no reader here reads at
+/// all being refused by none (`KD90`): what a strict parse checks every field by
 /// ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
@@ -1901,7 +1901,7 @@ pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 
 /// A nested field's key, built as [`nested_key`] builds a literal's — each
 /// container read by its input grammar, the one `COPY` reads a field by — with
-/// every element read as a field: `Err` where an input function on the way
+/// every element read as a field: `Err` where a marked check on the way
 /// refuses it, and `Ok(None)` where it is read but some part of it has no key
 /// here, a position this build does not order or a spelling it does not read.
 /// **Every element is read whatever an earlier one answered**, so a refusal
@@ -2345,8 +2345,7 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///
 /// `None` when the literal is not a value of the column's type at all, which
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
-/// makes, on the same output-form-only grammar (`docs/design/decisions.md`,
-/// "D55").
+/// makes, on the same grammar (`docs/design/decisions.md`, "D55").
 fn equality_comparison(
     kind: &CompareKind,
     text: &str,
@@ -2788,7 +2787,8 @@ pub(crate) struct ResolvedTerm {
     /// What an unrepresentable test tests its column's text by, where the
     /// block's count says the column holds such a value in the tiers the
     /// query's front end reads; `None` for every other operator, and for a
-    /// test over a column holding none, which is `False` on every row
+    /// test over a column holding none, where `IS UNREPRESENTABLE` is `False`
+    /// on every row and `IS NOT UNREPRESENTABLE` `True`
     /// (`crate::unrepresentable::unrepresentable_tests`).
     tested: Option<UnrepresentableRead>,
     /// How the query reads a field its type's `*_in` refuses
@@ -3739,9 +3739,9 @@ impl ResolvedExpr {
 
     /// **This tree with each unrepresentable test testing its column's text**
     /// ([`PredicateOp::IsUnrepresentable`]): `tests` is per column of the
-    /// block's unprojected schema, as [`Self::reading`]'s `reads` is, and a
-    /// test over a column it holds `None` for is `False` on every row
-    /// (`docs/design/decisions.md`, "D101").
+    /// block's unprojected schema, as [`Self::reading`]'s `reads` is, and over
+    /// a column it holds `None` for `IS UNREPRESENTABLE` is `False` on every row
+    /// and `IS NOT UNREPRESENTABLE` `True` (`docs/design/decisions.md`, "D101").
     pub(crate) fn testing(mut self, tests: &[Option<UnrepresentableRead>]) -> ResolvedExpr {
         if tests.iter().any(Option::is_some) {
             self.set_tests(tests);

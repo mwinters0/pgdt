@@ -1935,8 +1935,9 @@ fn resume_notice(
 /// Catch `SIGINT` and `SIGTERM` for the duration of a scan, so an interrupted
 /// `pgdt parse` saves what it has instead of throwing it away
 /// (`docs/design/decisions.md`, "D63"). The guard is **cooperative**: the
-/// signal sets a flag the mapping loop reads once per chunk, and the loop
-/// persists the index it owns before returning.
+/// signal cancels the scan through a `tokio` task, the mapping loop reads
+/// that cancellation, and the loop persists the index it owns before
+/// returning.
 ///
 /// Three actions run **in the handler itself**, in this order, for each
 /// signal: its number is stored in the returned [`InterruptGuard::signalled`];

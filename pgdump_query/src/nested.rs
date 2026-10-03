@@ -197,8 +197,8 @@ pub(crate) fn push_array_null(out: &mut String) {
 /// element costs one [`needs_quote`] walk and no move. One that does need
 /// quoting is taken aside into `scratch` and re-emitted through
 /// [`push_token`]; `scratch` is cleared per element and reused across the
-/// whole value, so a value allocates at most once and only if some element
-/// was quotable. The scratch is unavoidable: the quoting decision is made
+/// whole value, so a value allocates only if some element was quotable, and
+/// again only for a longer one. The scratch is unavoidable: the quoting decision is made
 /// from the *finished* element text and escaping expands it, so there is no
 /// room in `out` to write the escaped form over the raw one.
 pub(crate) fn quote_array_element(out: &mut String, mark: usize, scratch: &mut String) {
@@ -1027,7 +1027,8 @@ fn skip_space(s: &[u8], mut i: usize) -> usize {
 }
 
 /// Parse an `array_in` literal — everything the server accepts for an array
-/// column, which is a strict superset of what [`decode_array`] reads.
+/// column, which over what `array_out` writes is a strict superset of what
+/// [`decode_array`] reads.
 ///
 /// The elements come back in the spelling the literal used, so
 /// `render_array(parse_array(x))` is `array_out`'s answer only where the

@@ -44,7 +44,8 @@ resumed a previous scan at byte 612000104448 of 784019857152
 Resuming is the default, and there is no flag for the opposite: **delete the
 cache file** if you want a scan from byte 0. Running `parse` against a file
 that is already fully cached costs nothing and says so — unless it asks for
-statistics the cache does not hold, which re-reads only the tables lacking them
+statistics the cache does not hold, or is `--postgres-invalid-values strict`
+over tables no `strict` parse checked, when it re-reads only those tables
 (see "`--statistics-level`" below).
 
 The finished result is identical either way — a resumed scan and a
@@ -59,8 +60,8 @@ in the cache, so a later `parse` without it fails on the first just the same
 where it records statistics of that value's column.
 `--postgres-invalid-values strict` checks every value rather than those it
 reads for statistics, re-reading the tables the cache holds that no `strict`
-parse checked — a resumed scan before it reads on — and saying so on the line
-above the listing.
+parse checked — a resumed scan before it reads on — and, where the cache
+already covered the whole file, saying so on the line above the listing.
 Which values it checks, and what to do about one, is
 [`type-handling.md`](type-handling.md), "When a value does not match its type".
 
@@ -493,7 +494,8 @@ and cache space that grow with the dump; the workers `--jobs` asks for gather
 as they read, and record exactly what one worker would — bar a block several
 of them read at once, whose statistics they can together run out of the
 allowance for where one would not, so that it declines (below). The metadata
-level reads no value at all, and scans as fast as the file allows:
+level reads no value at all — but under `--postgres-invalid-values strict`,
+which reads every one — and scans as fast as the file allows:
 
 ```sh
 pgdt parse --source big.sql --statistics-level metadata                  # nothing drawn from the rows
@@ -600,7 +602,7 @@ add up to `peak_bytes=`:
 A `parse` with no statistics to hold — at the metadata level over a cache
 holding none — prints no such line, and `query` never prints one.
 
-**A table whose statistics will not fit the memory you allowed is skipped, not
+**A block whose statistics will not fit the memory you allowed is skipped, not
 gathered badly, and pgdt says which.** What the statistics of one run may hold
 is what the allowance leaves once the workers and the fifth left free are paid
 for ("`--jobs` and `--memory`" below), and the line naming it is on the
@@ -690,7 +692,7 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   reach: the rows it then reads hold none of them, so that part is sized as if
   the cache held no statistics at all.
 - **What is left under that fifth is what a gathering `parse`'s statistics may
-  hold**, the cache's own included, and a table whose statistics will not fit
+  hold**, the cache's own included, and a block whose statistics will not fit
   it is skipped rather than gathered — see "`--statistics-level`: what `parse`
   records for later queries" above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
@@ -1205,13 +1207,13 @@ types themselves, one line each, in the order the dump declares them:
 
 ```
 user-defined types: 7
-    public.mood            enum: 'sad', 'ok', 'happy', 'has space', 'it''s fine'
-    public.empty_enum      enum: (no labels)
-    public.text_c          domain over text COLLATE pg_catalog."C"
-    public.point2d         composite: x double precision, y double precision
-    public.myrange         range over integer
-    public.mybase          base type
-    public.shellonly       shell type
+    public.mood        enum: 'sad', 'ok', 'happy', 'has space', 'it''s fine'
+    public.empty_enum  enum: (no labels)
+    public.text_c      domain over text COLLATE pg_catalog."C"
+    public.point2d     composite: x double precision, y double precision
+    public.myrange     range over integer
+    public.mybase      base type
+    public.shellonly   shell type
 ```
 
 That is every type, not only the enums, and each line carries whatever its
@@ -1488,7 +1490,7 @@ end the cache's `calendar_end` states, as days from 1970 — and their
 **`statistics`**, exactly as the cache holds them — `null` for a block `parse`
 gathered nothing for. Each has its `group_size`, a `groups` array giving every
 group's `rows` and `bytes`, and one entry per column of the block's header,
-`null` for a column `--statistics-level` left at the metadata level: the column's `declared_type` and `collation`, its
+`null` for a column no `parse` that gathered the block kept at the data level: the column's `declared_type` and `collation`, its
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
 `min`, `max`, `min_exact` and `max_exact`, or `null` — an `_exact` flag is
 `false` where a value too long to store was cut to a prefix below it or a
@@ -1497,7 +1499,7 @@ beside them `every`, the same over every value in PostgreSQL's order, where
 some group holds one the type cannot, and `displayable`, over the values
 within the calendar end as well, where some group holds one past it, each
 `null` otherwise and, where present, `null` for every group holding no such
-value, whose bounds are `bounds`' own), `datafusion_bounds` (the same, in a
+value, whose bounds are `bounds`' own, and for one holding no value it takes), `datafusion_bounds` (the same, in a
 DataFusion query's order, for a column whose PostgreSQL order is another, and
 `null` for every other column), `unrepresentable` (per group, the block's
 `{format, engine}` count above, for a column some group of which holds such

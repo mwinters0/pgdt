@@ -5,6 +5,7 @@
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
 //! under, counts, and bounds as unescaped field text — what `pg_dump` wrote, a
+//! `bytea`'s in its hex form whichever form it was written in, a
 //! `character`'s without its trailing blanks, where the value fits
 //! [`DICTIONARY_ENTRY_MAX_BYTES`]; where it does not, a bytewise-ordered
 //! column's bound is a prefix or a successor of it ([`Bounds::min_exact`],
@@ -345,8 +346,8 @@ pub struct StatisticsBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StatisticsLevel {
     /// A block's location and row count, and nothing drawn from its rows: no
-    /// census, no statistics, no field split. A query of such a table maps
-    /// its blocks again for itself ([`crate::stream::table_stream`]), and a
+    /// census, no statistics, and no field split but a strict parse's. A query
+    /// of such a table maps its blocks again for itself ([`crate::stream::table_stream`]), and a
     /// replay over a caller's map refuses one.
     Metadata,
     /// The census, for a table any of whose columns is at this level, and
@@ -549,7 +550,8 @@ impl FieldRefusal {
 ///
 /// **Only the fields gathering keyed**, as a parse under
 /// [`crate::PostgresInvalidValues::Default`] checks only those: a gathered
-/// column's scalar values, up to the block's decline where it declined. A
+/// column's scalar values, up to each observer's own stop where the block
+/// declined — for a block read in pieces, possibly past the decline. A
 /// strict parse, which checks every field, does not read it: it re-reads the
 /// block, which no strict parse can have checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -655,8 +657,8 @@ pub struct BlockStatistics {
     pub sizing: GroupSizing,
     /// Every group from the first to the one the last row starts in, in order.
     pub groups: Vec<RowGroup>,
-    /// One entry per column of the block's header, `None` for a column the
-    /// request did not track.
+    /// One entry per column of the block's header, `None` for a column no
+    /// request that gathered the block tracked.
     pub columns: Vec<Option<ColumnStatistics>>,
 }
 
@@ -791,14 +793,15 @@ pub struct BoundsView {
     /// The order of the non-NULL values the view takes, over the whole block.
     pub sortedness: Sortedness,
     /// Per group, `None` for one holding no value the view reads otherwise
-    /// than [`ColumnBounds::groups`] does, which it is read from, and for one
-    /// whose bounds could not cover a value it takes.
+    /// than [`ColumnBounds::groups`] does, which it is read from, for one
+    /// holding no value it takes, and for one whose bounds could not cover a
+    /// value it takes.
     pub groups: Vec<Option<Bounds>>,
 }
 
 /// A lower and an upper bound on one group's non-NULL values, as unescaped
-/// field text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] — a `character` value's
-/// without the trailing blanks its comparison ignores.
+/// field text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] — a `bytea`'s in hex,
+/// a `character` value's without the trailing blanks its comparison ignores.
 ///
 /// **A float's bounds tell its zeros apart**: where `-0` and `0` tie at an
 /// extreme, `min` is `-0` and `max` is `0` if the group holds that zero, as
@@ -838,7 +841,8 @@ pub struct ColumnDictionary {
     pub entries: Vec<String>,
     /// Per group, indices into `entries`; `None` where the group held more than
     /// [`DICTIONARY_MAX_ENTRIES`] distinct texts, a text longer than
-    /// [`DICTIONARY_ENTRY_MAX_BYTES`], or a field that is not text.
+    /// [`DICTIONARY_ENTRY_MAX_BYTES`], a field that is not text, or one an
+    /// ignoring parse went past.
     pub groups: Vec<Option<Vec<u32>>>,
 }
 
@@ -1084,7 +1088,9 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 /// decode scratch while a column observes it, a merge's scratch for the pair
 /// of groups it is merging, a finished block's rows per group while its size is
 /// chosen, what `finish` builds beside what it replaces — the block's column
-/// list, and a clipped group's bounds — and the observer's own allocation.
+/// list, and a clipped group's bounds — the observer's own allocation, its
+/// record of the fields an ignoring parse went past, and a strict parse's
+/// table of checks.
 ///
 /// **It is also the bound a decline reads** (`docs/design/decisions.md`,
 /// "D85"): where [`Self::allowance`] is stated and the terms pass it, the

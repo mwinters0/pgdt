@@ -597,8 +597,8 @@ where the work in front of you would not require them.
   file carries a format-version field and a container-kind tag beside the
   serialized `DumpIndex`, so
   archive-derived indexes and entry-relative offsets are a later variant rather
-  than a breaking change. A cache whose version or kind is not recognised is
-  refused as another build's until `--overwrite-unusable-cache` or a deletion
+  than a breaking change. A cache whose version is not recognised is refused
+  as another build's, and one whose kind is not as damaged, until `--overwrite-unusable-cache` or a deletion
   replaces it (`decisions.md`, "D20" and "D22").
 - **`ResumeToken` exposes no fields, ever.** Its contents today include a
   file offset, and a raw file offset is meaningless inside a compressed

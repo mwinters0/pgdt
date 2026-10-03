@@ -1870,8 +1870,8 @@ fn resolve_walk(declared: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
 /// The comparison for an array column, from the same walk [`resolve_array`]
 /// makes and with the same two refusals: an element type that is opaque by
 /// construction (I22), and one that is itself an array (I26). Both resolve the
-/// *column* to `Utf8View`, so a column of either compares as text and never
-/// reaches this plan — but the register is asked directly too, and must not
+/// *column* to `Utf8View` with its plan refused (`crate::resolve`), so a
+/// column of either never reaches this plan — but the register is asked directly too, and must not
 /// answer "ordered" for a column the resolver declines.
 ///
 /// The column's own `COLLATE` clause is passed **down to the element**: an
@@ -1896,8 +1896,8 @@ fn array_comparison(
     let child = if opaque || array_element(terminal).is_some() {
         // No divergence: a position only this build declines makes no claim
         // about the server's `=` (I22, I26). A column of either shape resolves
-        // to text, so `crate::predicate::resolve_term` takes its plan away
-        // first; a composite's field of either shape reaches this node.
+        // to text with its plan refused, so never reaches this node; a
+        // composite's field of either shape does.
         NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
     } else {
         match nested_position(element, collation, types, collations, visits) {

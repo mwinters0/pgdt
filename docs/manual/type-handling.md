@@ -34,7 +34,8 @@ public.t_composite (3 rows)
     v_points: List(Struct("x": Int32, "y": Utf8View))
 ```
 
-`pgdt query`'s text output is identical whether typing is on or off: every
+`pgdt query`'s text output for a dump `pg_dump` wrote is identical whether
+typing is on or off: every
 value is rendered back to the same PostgreSQL text `pg_dump` itself would
 have written, so switching `--schema-mode` never changes what shows up on
 your terminal or in a pipeline downstream — only whether `pgdt info` (and a
@@ -203,8 +204,8 @@ guess which value was meant: a `parse` gathering statistics for the column fails
 there, as the restore would, naming the table, the column, the line — numbered
 as the restore's own error numbers it, from 1 at the block's first row, and by
 its byte offset — and the value, and a query reading the column refuses it. `real`'s
-largest value rounds past itself the same way at `--extra-float-digits=-2` or
-below.
+largest value rounds past itself the same way at `--extra-float-digits=-2`,
+and at no other setting.
 
 ```
 $ pgdt parse --source dump.sql
@@ -797,9 +798,7 @@ refuses the literal rather than matching nothing:
 
 ```
 $ pgdt query --source dump.sql --table public.t --filter "span='[10,1)'"
-Error: `=` on column `span`: `[10,1)` is not a value of type `int4range` — it
-is read as a range literal — `[a,b)`, `empty`, a bound left empty for
-unbounded — whose lower bound is not above its upper …
+Error: filter value `[10,1)` for `span = ...` does not parse as the column's declared type `int4range`, which is written as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose lower bound is not above its upper …
 ```
 
 **A range type of your own with a `canonical` parameter is refused, not
@@ -874,7 +873,7 @@ whether a dump has one before you write a filter.
 
 The shapes above are read per **column**, which is the level at which a query
 can act on them before it hands back its first batch. An array that is a
-*field* of a composite — or the element type of another array — has no such
+*field* of a composite has no such
 record, so we assume one dimension and find out at the value:
 
 ```
@@ -977,7 +976,7 @@ table says what is done about it.
 | bare `numeric` holds `Infinity` and `-Infinity` | 14 | Reads and filters them on a dump of any major — see "`numeric` with no precision is a string, but it still filters as a number" above |
 | the multirange types exist | 14 | Reads them — see "Arrays, composites, ranges, and multiranges" above; a 13 dump holds none |
 | a `numeric` scale may exceed its precision, or be negative | 15 | Maps the column as "`numeric` with no precision is a string, but it still filters as a number" above says |
-| an `interval`'s time part reaches `±2562047788:00:54.775807`, past `±2147483647:59:59.999999` | 15 | Reads to the newer bound — see "`interval` → `Interval(MonthDayNano)`" below |
+| an `interval`'s time part reaches `±2562047788:00:54.775807`, past `±2147483647:59:59.999999` | 15 | Reads to the newer bound, a time part past `2562047:47:16.854775807` being a value its column cannot hold — see "`interval` → `Interval(MonthDayNano)`" below |
 | an `oid` is read in hex after `0x` and in octal after a leading `0`, so `010` is 8 and `08` is refused | 16 | Reads `010` as 10 and `08` as 8, as 13–15 do, on a dump of any major, refuses only what every major refuses, and does not read a `0x` or `0b` spelling. Write an OID in decimal, as `pg_dump` does |
 | an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter; write the decimal digits |
 | `interval` holds `infinity` and `-infinity` | 17 | Has no Arrow value for them — see "`interval` keeps its three fields, and two kinds of value do not fit" above |
@@ -996,7 +995,8 @@ fail on it, `SchemaMode::Strings` gives you every column unparsed.
 
 **A value PostgreSQL itself refuses fails `parse` too**, at the first one, as a
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
-`date`, a `numeric(10,2)` value with more than ten digits, a `double precision`
+`date`, a `numeric(10,2)` value with more than ten digits once rounded to two
+places, a `double precision`
 past its range, `maybe` in a `boolean`, `::1/08` in an `inet`. `parse` checks
 only the values it reads anyway to gather statistics, which leaves to a query
 a column at the metadata level, an array's or a composite's elements, a
@@ -1009,7 +1009,9 @@ refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 included, so a `parse` that finishes means no value in the dump is one
 PostgreSQL's input function for its type refuses. It does not check a value of
 a type pgdt keeps as its text (`json`, `xml`, `money`, `bit`, `bit varying`,
-the geometric types, a type it has no reader for), a value of a range type
+the geometric types, a type it has no reader for), a value spelled in a way
+pgdt cannot read for its type at all, which PostgreSQL may refuse or not (`abc`
+in an `integer`, a malformed `jsonb`), a value of a range type
 declaring its own `canonical` function, a `character varying(n)`,
 `character(n)`, `bit(n)` or `bit varying(n)` value longer than its column
 allows, or a null in a `NOT NULL` column; nor anything a constraint checks — a
@@ -1031,7 +1033,7 @@ read exactly)` after them.
 
 **`--postgres-invalid-values ignore` reads past them**, given to `parse` and to
 `query` alike, with no promise about what it reads: `parse` goes on past each,
-keeping no statistics of the stretch of its column it sits in, and `query`
+keeping no bounds, sum or dictionary of the stretch of its column it sits in, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
 sign and one below its smallest as zero, and refuses every other as before.
 **The cache remembers what `parse` went past**: in each `COPY` block, each

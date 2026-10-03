@@ -1022,7 +1022,7 @@ async fn map_forward(
 /// a region left serial by the budget or by the source still prints. Only
 /// `scan_region`'s refusals about its own block are unreported, deliberately:
 /// its floor, and a region the source advises one partition of where the
-/// rest of the file advises more. `flag` keeps one scan-wide fact from printing
+/// whole file advises more. `flag` keeps one scan-wide fact from printing
 /// once per block, which is also why [`crate::leader::Shortfall`] reports no
 /// reason a later block could answer differently.
 fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
@@ -1207,8 +1207,8 @@ pub struct MapRun {
     /// **How many blocks the map already held that no strict parse had
     /// checked were re-read to check them**, under
     /// [`PostgresInvalidValues::Strict`] ([`CopyBlock::checked_in_full`]) —
-    /// zero under every other mode, and for a run interrupted before the
-    /// check reached them.
+    /// zero under every other mode, and for an interrupted run, whatever it
+    /// checked and banked before the interrupt.
     pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one
@@ -1499,8 +1499,9 @@ async fn map_file_watched(
 
 /// What [`map_file`] returns for a run that stopped before EOF: the map as far
 /// as it is consistent, and **none of the three counts a back-fill states** —
-/// an interrupt reached during the mapping pass never ran one, so the caller
-/// is told the map is short rather than that nothing was re-read.
+/// a strict parse's check of a map short of EOF may have re-read and banked
+/// blocks before the interrupt, and the caller is told the map is short
+/// rather than what was re-read.
 ///
 /// The caller banks first where there is anything to bank — the prepass's
 /// interrupt has nothing — whether that is the pass's own save at a check
@@ -1626,7 +1627,8 @@ enum Backfill {
 /// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`] already
 /// carries for the pass's own leader reads, here as well. **(c) unowned**;
 /// promoted by a parallel remote `parse` seen to error on Ctrl-C after its map
-/// reached EOF, which is the only arrangement that reaches it.
+/// reached EOF, or in a strict one's check of a map short of it, which
+/// [`map_file`] runs through here before mapping on.
 ///
 /// **A block lacking statistics was loaded, or broke a stated maximum**: a
 /// block this pass mapped holds what its own request asked, except for a

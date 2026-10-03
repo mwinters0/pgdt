@@ -62,7 +62,7 @@ the flagless default. Rejected: deriving width from the charge. Reopens: an expl
 
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on release: a chunk read and
-`attach_text`'s one coalesced read are indistinguishable by length. `POOL_DEPTH` is the replay
+`attach_text`'s coalesced reads are indistinguishable by length. `POOL_DEPTH` is the replay
 retention depth, which only a block pool raises to `--jobs`, short of what one batch retains (`KD54`). `PLAIN_PARTITION_CHUNKS` caps tail-read
 waste and is not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
 
@@ -171,10 +171,10 @@ Code: `cache::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
-`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes`,
-and exceeding it errors, never truncates. A chunk is scanned in two passes, carried line then chunk in place
-(`ChunkCarry`); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar
-is structural, an off-grammar one being ordinary SQL; inside a block only an exact `\.` line is looked at (I7). Outside
+`CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes` on a line carried
+across chunks, and passing it errors, never truncates. A chunk is scanned in two passes, carried line then chunk in place
+(`ChunkCarry`); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar,
+or a bare `BEGIN;` (below), is structural, an off-grammar one being ordinary SQL; inside a block only an exact `\.` line is looked at (I7). Outside
 one every line is lexed as psql lexes it (`lex.rs`, I50), a line beginning inside a region is never structure, and a
 dollar-quoted one emits no lines, only a closing offset (I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object
 region, skipped unread (I12). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid every block).
@@ -242,7 +242,7 @@ stay untaken until the `INSERT` row reader exists (`KD9`).
 streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
 byte range, no piece knowing a global row index. A back-fill keeps a block's columns, and its size
-unless a stated bound it did not record moves it, a maximum it breaks re-reading it at the size its
+unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its
 groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries, keyed alike but
 past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
@@ -250,13 +250,13 @@ past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
 max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at
 the data level is censused, and so is every block a query's pass maps: gating on a full scan left
-early blocks uncensused. The metadata level records `None` and splits no field; a typed query re-reads
+early blocks uncensused. The metadata level records `None` and, but under a strict parse, splits no field; a typed query re-reads
 such a table for itself, writing nothing, and a plan over a held map refuses it. Rejected: degrading
 to the DDL's `List`; a census-only level a user can reach. Evidence: `statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 Every census-taking read counts per block and column what the declared type's typed pair (no census) cannot hold, a leaf
-by its own type, lexically, the boundary years alone by arithmetic; a nested value once, in its worst leaf's tier:
+by its own type, lexically, the boundary years and an interval's long hour part alone by arithmetic; a nested value once, in its worst leaf's tier:
 `format` past Arrow's spec, `engine` past `calendar_end` (RT21). It persists as counts (D74); a type holding more or
 less bumps `CACHE_FORMAT_VERSION`, as D78's order does, and a cache counted under another calendar is refused (D20).
 Rejected: a decode per field; a type-blind test (`text` reading `infinity`); counting as a query reads (timing decides);
@@ -266,7 +266,7 @@ one tier; a value the server refuses, a decode error, this being our front end's
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on name (I11); a composite's field
 list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect` segment is not a database (I9). L1
-stores text, never a conclusion: a declared type is its words, comments and spacing dropped, a collation clause verbatim, `None`
+stores text, never a conclusion: a declared type is its words, block comments and spacing dropped, a collation clause verbatim, `None`
 collation is "no clause" (I37), and `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
 both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, and a column is found through them as it
 is looked up. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
@@ -422,7 +422,7 @@ Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mod
 ### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
 `QueryOptions::unrepresentable` and `::postgres_invalid_values` are each stated by a `pgdt query` flag, `PgDumpOptions`, a `pgdump.*` table option and
 a shell suffix; the text mode changes a table's schema, fixed at `PgDumpTable::build`, so no `SET` reaches it; a library refusal names a mode in its own
-words, never a flag. The invalid-values mode is a parse's too (`ScanOptions`): an ignoring parse keeps no statistic of a refused field's group and its
+words, never a flag. The invalid-values mode is a parse's too (`ScanOptions`): an ignoring parse keeps no statistic of a refused field's group a read could contradict and its
 block records per column the fields it went past, so a `Default` parse tracking such a column fails over the cache unread; `Strict`, a parse's alone,
 checks every field, marks each block it checks whole and re-reads each held block unmarked — first, when resuming — never the record, which holds only
 what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;
@@ -493,7 +493,7 @@ Code: `unrepresentable_tests`, `datafusion-pgdump`'s `unrepresentable::with_guar
 
 ### D94 A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`
 Every producer re-checks its rows, so the scan answers `No` and only ever skips. The state is translated as a static filter is (D88), a part with no
-term standing as whatever keeps every row beneath its `NOT`s, so no state refuses; a `CASE` is the `Or` of its branches. A float compared with a zero
+term standing as whatever keeps every row beneath its `NOT`s, so no state refuses; a `CASE` is the `Or` of its branches, their `And` under an odd count of `NOT`s. A float compared with a zero
 has no term: a TopK and `MIN`/`MAX` order the zeros apart where evaluation equates them, and this holds whichever order a producer keeps. Held filters
 are dropped at `reset_state`. Rejected: `PruningPredicate` (bounds decoded to scalars, pruned in DataFusion's semantics, nothing on a `CASE`, a long
 `IN` or a sorted block); a narrower zero rule, sound only as far as each producer's shape is followed; keeping filters across a reset as Parquet does,

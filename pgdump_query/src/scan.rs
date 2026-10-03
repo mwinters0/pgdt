@@ -4,7 +4,7 @@
 //! copies the bytes it scans: the caller owns a buffer, hands it out as a
 //! slice, and the scanner reports how much of it was consumed. That keeps the
 //! events zero-copy and lets the same state machine serve both the async
-//! driver here ([`scan`]) and any future pull-mode stream.
+//! driver here ([`scan`]) and the pull-mode stream (`crate::stream`).
 //!
 //! Robustness rules this implements (see `docs/design/decisions.md`,
 //! "D23"):
@@ -318,7 +318,8 @@ impl CopyScanner {
                     // past spaces and tabs, and matches the full header
                     // grammar is structural.
                     // Everything else — SQL, comments, psql meta-commands —
-                    // is skipped.
+                    // is surfaced as a line and never as structure, a bare
+                    // `BEGIN;` aside (below).
                     if let Some(header) = parse_copy_header(line) {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
                         return Ok(Some(Event::CopyStart(CopyStart {
@@ -645,10 +646,12 @@ pub struct ScanOptions {
     /// Bytes requested per read from the source. Defaults to
     /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
     pub chunk_size_bytes: usize,
-    /// Hard cap on a single line's length. A dump whose lines exceed this is
-    /// rejected rather than buffered without bound — the scanner cannot emit
-    /// a row until it has the whole line, so this is the only thing standing
-    /// between a malformed input and unbounded memory growth. Defaults to
+    /// Hard cap on a line carried across a chunk boundary. One still
+    /// incomplete at a chunk's end and longer than this is rejected rather
+    /// than buffered without bound; a line whole inside one chunk, or ended
+    /// by the last, is not measured. The scanner cannot emit a row until it
+    /// has the whole line, so this is the only thing standing between a
+    /// malformed input and unbounded memory growth. Defaults to
     /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
     pub max_line_bytes: usize,
     /// Cooperative cancellation: call [`Cancellation::cancel`] from another

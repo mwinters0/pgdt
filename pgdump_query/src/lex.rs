@@ -141,7 +141,8 @@ impl Lexer {
 
     /// Lex one line, its newline stripped. `code` is handed every run of
     /// bytes outside a quoted region but the stops the lexer steps over — a
-    /// lone `-` or `/`, a `$` token, a `\;` — which is what a caller counting
+    /// lone `-` or `/`, a `$` token or an identifier's `$`, a `\;` or `\:`,
+    /// and a meta-command from its backslash on — which is what a caller counting
     /// parentheses wants, a paren never being one, though not necessarily as
     /// one maximal run.
     pub(crate) fn line(&mut self, line: &[u8], mut code: impl FnMut(&[u8])) -> LineLex {

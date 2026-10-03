@@ -8,7 +8,8 @@
 //! (L3), which is also where these are wired to their [`arrow::datatypes::DataType`].
 //!
 //! Every `render_*` function is the exact inverse of its `decode_*`
-//! counterpart and produces the same *decoded* text `crate::copy::decode_field`
+//! counterpart — but [`render_bytea`], which writes the hex form whichever
+//! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `crate::copy::decode_field`
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
 //! `crate::copy::encode_field`'s job (`docs/design/decisions.md`, "D68").
@@ -31,6 +32,10 @@ pub enum Unread {
     /// A spelling this build reads no value from — a shortfall the server
     /// reads (`docs/design/decisions.md`, "D55"), or a refusal of the
     /// server's no marked check makes, which nothing here tells apart.
+    // deficiency: KD90 — a strict parse checks a field only at a marked
+    // check, so text a reader here cannot read at all passes it, whether or
+    // not the server refuses it: `abc` in an `integer`, a malformed `jsonb`,
+    // a date's year or an interval's count past `i64`.
     Unparsed,
 }
 
@@ -276,7 +281,8 @@ pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
 /// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every zero-padded field a
-/// `date`, a `time` or a `timestamp` is written from is two digits wide, so a
+/// `date`, a `time` or a `timestamp` is written from is two digits wide, or a
+/// four-digit year's two of them, so a
 /// field becomes an indexed slice and a two-byte copy rather than a trip
 /// through `core::fmt` (`docs/design/decisions.md`, "D44").
 const DEC_PAIRS_BYTES: [u8; 200] = {
@@ -300,7 +306,7 @@ static DEC_PAIRS: &str = match str::from_utf8(&DEC_PAIRS_BYTES) {
 };
 
 /// The ten decimal digits, so a leading odd digit is appended as a `&str`
-/// slice like every other piece and the whole function stays free of
+/// slice like every other digit and the whole function stays free of
 /// byte-to-`str` conversion.
 static DEC_DIGITS: &str = "0123456789";
 
@@ -314,8 +320,9 @@ static DEC_DIGITS: &str = "0123456789";
 ///
 /// - **The digits come out two at a time**, off [`DEC_PAIRS`], the algorithm
 ///   the standard library's own integer `Display` uses.
-/// - **Every piece is a slice of a `&'static str`**, so nothing here converts
-///   bytes to text and no UTF-8 validation is paid per field.
+/// - **Every digit is a slice of a `&'static str`**, the sign and padding
+///   pushed as ASCII `char`s, so nothing here converts bytes to text and no
+///   UTF-8 validation is paid per field.
 /// - **The whole length is reserved once**, so no `push_str` grows the
 ///   buffer.
 #[inline]
@@ -435,8 +442,8 @@ fn split_era(s: &str) -> (&str, bool) {
 /// server starts a zone (`12:-5:00` is 12:00 at zone `-5`, `+2020-01-01`
 /// refused), so a part carrying one is refused here rather than read as a
 /// signed number — a shortfall where the server reads it
-/// (`docs/design/decisions.md`, "D55"). Past `i64` is refused as `strtoint`'s
-/// `ERANGE` is.
+/// (`docs/design/decisions.md`, "D55"). Past `i64` is `None` too, where the
+/// server's `strtoint` refuses it on `ERANGE` (`KD90`).
 fn unsigned_part(s: &str) -> Option<i64> {
     if s.is_empty() {
         return None;
@@ -881,7 +888,7 @@ fn interval_time_micros(text: &str) -> Read<i64> {
 /// taken in any order, either number of their unit, a `+` on any of them,
 /// and the hours at any width — but no other unit: `1 hour`, `1.5 hours`,
 /// `P1Y2M` and `1 month` are all spellings `interval_in` takes and
-/// `interval_out` never writes, and are refused. `infinity`/`-infinity`
+/// `interval_out` never writes, and are unparsed. `infinity`/`-infinity`
 /// (v17's, I34) are not in the grammar either, so they fail here and each
 /// consumer says what it does about them.
 pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
@@ -906,7 +913,8 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
                 break;
             }
         };
-        // pg-refuses: I62 — a unit given twice, and a count past `int32`.
+        // pg-refuses: I62 — a unit given twice, and a count past `int32`
+        // but not past `i64`, which is unparsed (`KD90`).
         if counts[unit].is_some() {
             return Err(Unread::Refused);
         }
@@ -2060,7 +2068,17 @@ mod tests {
     /// which `strtod` does, is unparsed rather than refused.
     #[test]
     fn a_float_past_its_range_is_refused_and_one_in_it_read() {
-        for text in ["1.79769313486232e+308", "1.8e+308", "2e+308", "1e+309", "1e-400"] {
+        for text in [
+            "1.79769313486232e+308",
+            "1.7976931349e+308",
+            "1.797693135e+308",
+            "1.7977e+308",
+            "1.798e+308",
+            "1.8e+308",
+            "2e+308",
+            "1e+309",
+            "1e-400",
+        ] {
             assert_eq!(float_in::<f64>(text), Err(Unread::Refused), "{text}");
             assert_eq!(float_in::<f64>(&format!("-{text}")), Err(Unread::Refused), "-{text}");
         }

@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD89 -->
+rather than being deleted. <!-- deficiency-watermark: KD92 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -143,7 +143,7 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
   Detail: `pgdump_query/src/io.rs`.
 
-- **KD22** — the leader cuts a window of `workers × partition_bytes` from a
+- **KD22** — the leader cuts a window of `workers` partitions or more from a
   `COPY` block's start and drains every piece before merging, so a dump of
   blocks much smaller than that window is read and parsed two orders of
   magnitude over, worse at every worker added and reached with no flag typed.
@@ -241,7 +241,7 @@ than reading as a phase nobody has sliced.
   the throttle's last save,
   where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
   unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
-  its map reached EOF, the fix being the arm the mapping pass already carries.
+  its map reached EOF, or in a strict one's check of a map short of it, the fix being the arm the mapping pass already carries.
   Detail: `pgdump_query/src/stream.rs`.
 
 - **KD38** — a pgdump scan planned while others hold the session budget gets
@@ -262,8 +262,8 @@ than reading as a phase nobody has sliced.
   `pgdump_query/src/summary.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
-  collation (I32), and nothing reads it: every text column with no `COLLATE`
-  clause still warns that the dump does not record its collation, so a `C`
+  collation (I32), and nothing reads it: every column of a type taking the
+  database's collation with no `COLLATE` clause still warns that the dump does not record its collation, so a `C`
   database's columns warn where they agree with the server, and another
   collation's are announced as a possibility rather than a fact. **(c)
   unowned**; promoted by the roadmap's "Collation-aware comparison", whose
@@ -387,3 +387,20 @@ than reading as a phase nobody has sliced.
   filter and the bounds it prunes by order that label last where the server
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD90** — a strict parse refuses a field only at a marked check, so text
+  a reader cannot read at all passes it — `abc` in an `integer`, a malformed
+  `jsonb`, a year or an interval count past `i64` — though the server may
+  refuse it. **(c) unowned**; promoted by a strict parse wanted to be a full
+  check of a type pgdt reads. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD91** — a role quoted `"PUBLIC"` or a tablespace quoted `"PG_DEFAULT"`,
+  each a name a server can hold, is dropped from the inventory as the
+  pseudo-role or the default tablespace is. **(c) unowned**; promoted by a
+  dump holding one. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
+  want of a complete cache, names a `pgdt parse` without
+  `--postgres-invalid-values ignore`, which fails at the first such field it
+  keys. **(c) unowned**; promoted by a user meeting it. Detail:
+  `datafusion-pgdump/src/dump.rs`.

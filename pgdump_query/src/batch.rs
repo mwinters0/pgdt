@@ -1065,8 +1065,8 @@ impl RowBatcher {
                 header_offset,
                 row_offset,
                 expected,
-                // Saturated one past the width rather than counting the
-                // rest of the row's fields.
+                // Saturated one past the width, though the split counted
+                // every field of the row.
                 found: if found > expected { expected + 1 } else { found },
             });
         }
@@ -1907,7 +1907,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
     }
 
-    /// A [`RowBatcher`] over one nullable `Utf8View` column, fed by the field
+    /// A [`RowBatcher`] over one nullable `data_type` column, fed by the field
     /// `field_targets` says — for driving `push_row` at chosen file offsets,
     /// the flush triggers being arithmetic over offsets and row lengths.
     fn one_column_batcher_fed_by(
@@ -1942,7 +1942,7 @@ mod tests {
     }
 
     /// A field no projection asked for is walked and skipped: never decoded
-    /// — the middle field here would be a hard `Int32` decode failure if it
+    /// — the first field here would be a hard `Int32` decode failure if it
     /// were — and not counted towards `max_bytes`.
     #[test]
     fn an_unprojected_field_is_walked_but_never_decoded() {
@@ -2123,8 +2123,8 @@ mod tests {
         assert!(batcher.should_flush(), "span 103 has reached the cap");
 
         // Flushing reopens the span at the next row rather than at the
-        // flushed batch's end: a batch that started at offset 100 and has
-        // covered four bytes has not covered 100.
+        // flushed batch's start: the row at 104 opens a span of three bytes,
+        // not one from 100.
         assert_eq!(batcher.flush().unwrap().num_rows(), 26);
         assert!(!batcher.should_flush());
         batcher

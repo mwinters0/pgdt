@@ -1086,7 +1086,7 @@ PostgreSQL's 4713 BC. Other Arrow consumers are not claimed.
 **Relied on by:** [`decisions.md`](decisions.md), "D98" — the provider's
 tier of unrepresentable values; and [`decisions.md`](decisions.md), "D96" — the count's engine tier, read off
 `chrono::NaiveDate::MAX` by `pgdump_query::calendar_end`, which a cache
-records and a build whose calendar ends elsewhere refuses.
+records and a build whose calendar ends elsewhere refuses where it holds a count.
 
 **Re-verify:**
 

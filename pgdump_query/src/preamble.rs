@@ -58,8 +58,8 @@ pub struct DatabaseMetadata {
     /// any scan that persists a cache (the preamble prepass,
     /// `docs/design/decisions.md`, "D30") and every later `\connect`ed
     /// database's once the mapping pass reaches its first `COPY` block, so a
-    /// caller walking `DumpIndex::metadata` checks this per database rather
-    /// than assuming the whole list is complete.
+    /// database the scan has not reached is absent from
+    /// `DumpIndex::metadata` rather than present with this `false`.
     pub preamble_complete: bool,
     pub server_version: Option<String>,
     pub pg_dump_version: Option<String>,
@@ -130,7 +130,9 @@ impl DatabaseMetadata {
     /// parent's, in `INHERITS` order, then the `OF` type's fields, then the
     /// table's own — a column two of them declare appearing once, at its
     /// first place, as the declaration [`declared_column`](Self::declared_column)
-    /// returns. Empty where the table is not declared here.
+    /// returns — bar a table both typed and inheriting, which no server holds,
+    /// whose parents that lookup never asks. Empty where the table is not
+    /// declared here.
     pub fn declared_columns(&self, table: &str) -> Vec<&ColumnDef> {
         let mut columns = Vec::new();
         self.declared_columns_from(table, &mut BTreeSet::new(), &mut columns);
@@ -656,8 +658,8 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
 }
 
 /// Parse a single SQL string literal (`'...'`, `''` as an escaped quote)
-/// starting at `s`'s first byte. `s` must have nothing but leading/trailing
-/// whitespace around the literal.
+/// starting at `s`'s first non-whitespace byte, ending at its closing quote;
+/// whatever follows that is not read.
 fn parse_string_literal(s: &str) -> Option<String> {
     let mut chars = s.trim().chars().peekable();
     if chars.next() != Some('\'') {
@@ -831,8 +833,8 @@ fn whole_table_name(s: &str) -> Option<String> {
     s[consumed..].trim().is_empty().then_some(name)
 }
 
-/// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `ALTER TABLE
-/// [ONLY] <name> OF <type>;` — the two references `--binary-upgrade` writes
+/// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `… OF
+/// <type>;` — the two references `--binary-upgrade` writes
 /// after a table's full column list (`dumpTableSchema`) — as the table they
 /// alter and the reference they add. `None` for every other `ALTER TABLE`,
 /// one listing several subcommands included, which the dump never writes for
@@ -1037,7 +1039,8 @@ pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, Str
 
 /// Whether the body of an `ALTER TYPE`, after `ALTER TYPE` has been stripped,
 /// is one that could change an enum's labels — `ADD VALUE`, `RENAME VALUE`,
-/// in any form, the word `VALUE` being in no other subcommand — answered
+/// in any form, the keyword `VALUE` being in no other subcommand, so the
+/// word anywhere after the name counts, an identifier's included — answered
 /// where [`parse_alter_type_add_value_body`] does not read it, as the type it
 /// names, `None` where it names none this grammar reads. Such a statement
 /// leaves the labels inexact ([`fold_enum_labels_unread`]). `pub(crate)` for
@@ -1100,7 +1103,7 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 
 /// Fold an already-parsed `ALTER TYPE <type_name> ADD VALUE '<label>'` (see
 /// [`parse_alter_type_add_value_body`]) into the matching `TypeDef` in
-/// `types`, if any — a no-op if the name isn't found or isn't an `Enum`.
+/// `types`, if any — a no-op if the type it names isn't an `Enum`.
 /// Used by [`dump_metadata_from_spans`], which encounters the label as its
 /// own [`crate::map::SpanBody::AlterTypeAddValue`] span, separate from the
 /// [`crate::map::SpanBody::TypeDef`] span it targets.
@@ -1162,12 +1165,13 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
 
 /// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
 /// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty:
-/// `PUBLIC` is never reported as a role. Case-insensitive because
-/// [`ident_after`]'s [`Cursor::parse_ident`] lowercases every *unquoted*
-/// identifier, so the keyword arrives here as `public` — the same fold an
-/// unquoted role genuinely named `public` goes through, which is an
-/// irreducible ambiguity in the dump text: `GRANT ... TO public;` unquoted
-/// means the pseudo-role to PostgreSQL's own parser too.
+/// `PUBLIC` is never reported as a role. [`ident_after`]'s
+/// [`Cursor::parse_ident`] lowercases every *unquoted* identifier, so the
+/// keyword arrives here as `public`, a name no role can take, quoted or not
+/// (gram.y's `RoleSpec`).
+// deficiency: KD91 — compared case-insensitively, so a role quoted
+// `"PUBLIC"`, which a server can hold, is dropped too, and a tablespace
+// quoted `"PG_DEFAULT"` by `insert_tablespace`.
 pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
     if !role.eq_ignore_ascii_case("PUBLIC") {
         roles.insert(role);
@@ -1176,8 +1180,8 @@ pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
 
 /// Filters out `pg_default`, the reserved, uncreatable name for a database's
 /// implicit default tablespace — never reported as one, the same way
-/// `PUBLIC` is filtered from roles. Case-insensitive for the same
-/// reason [`insert_role`]'s `PUBLIC` check is.
+/// `PUBLIC` is filtered from roles, and compared as [`insert_role`] compares
+/// it (`KD91`).
 pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: String) {
     if !tablespace.eq_ignore_ascii_case("pg_default") {
         tablespaces.insert(tablespace);
@@ -2519,7 +2523,7 @@ mod tests {
         }
     }
 
-    /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump
+    /// I9: every `--create` segment in a real `pg_dumpall`/concatenated dump
     /// carries its own version-header pair ahead of its own `\connect`, not
     /// just the first one. Guards against a second database's headers being
     /// dropped because they land while `current` is still the first

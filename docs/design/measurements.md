@@ -3024,9 +3024,9 @@ side by side and never subtracted.
 - **The `.xz` provider column passes half its count at every row from two to
   sixteen.** The `.xz` `parse` column does so at no row: `KD20`'s doubled
   decode comes from a fused worker's tail read landing in its successor's
-  block. A replay sub-stream reads only the row groups the cache maps to it
-  (`pgdump_query/src/stream.rs`, `sub_stream`), but no reading here counts its
-  decodes. Nothing explains why it stops gaining past sixteen.
+  block. A replay sub-stream's last chunk reads past its limit into its
+  successor's bytes the same way (`pgdump_query/src/stream.rs`, `replay`), but
+  no reading here counts its decodes. Nothing explains why it stops gaining past sixteen.
 - **Plain provider rep 1 is slow from eight up**: 0.22–0.32 s above its cell's
   median at each count from eight, where reps 2–5 sit within 0.035 s of each
   other, and within 0.14 s of the median at every lower count. The medians

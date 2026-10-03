@@ -426,8 +426,8 @@ whole `pg_dump` invocation, not the database whose segment happens to
 contain them positionally. A `--create` dump's pre-`\connect` segment is
 otherwise pure `CREATE DATABASE` noise (see `dump_metadata_from_spans`) and is
 discarded, so the headers are carried forward onto the database the first
-`\connect` switches into. Every `\connect` gets that carry-over, not just the
-first.
+`\connect` switches into. A later `\connect` whose headers precede it is
+carried them too, by the staging below.
 
 `pg_dumpall` emits two segment shapes, and the header order differs between
 them. `dumpDatabases()` passes `--create` to its `pg_dump` child for ordinary
@@ -1440,11 +1440,10 @@ column is a one-dimensional `array_out` literal whose elements are themselves
 array literals, force-quoted and backslash-escaped one layer — `{"{1,2}","{3}"}`
 — **not** a two-dimensional literal.
 
-So its *leading brace run is 1* while the type it resolves to is two `List`
-levels deep. Literal depth and resolved Arrow depth are independent here, which
-is what makes this the one DDL shape that reaches a nested
-`NestedPlan::Array(Array(…))` in a dump `pg_dump` actually wrote. (`integer[][]`
-does not: PostgreSQL collapses it to `integer[]` in the catalog and `pg_dump`
+So its *leading brace run is 1* while the type it declares is two array levels
+deep. Literal depth and type depth are independent here, and this is the one
+DDL shape giving an array an array-typed element in a dump `pg_dump` actually
+wrote. (`integer[][]` does not: PostgreSQL collapses it to `integer[]` in the catalog and `pg_dump`
 writes `integer[]`, per I21.)
 
 **Proof.** Observed live on PostgreSQL 16 (`pg_dump` 16.x), end to end:
@@ -2577,10 +2576,10 @@ and `MacAddr` arms and `predicate.rs`'s parsers for them —
 where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
 column as text — `ComparisonPlan::bounds_kinds` and
-[`decisions.md`](decisions.md), "D79". The hour field's ceiling is also what keeps
-`interval` a `Utf8View` — Arrow's `Interval(MonthDayNano)` holds nanoseconds in
-the same `int64`, a thousandth of the span — [`decisions.md`](decisions.md),
-"D37".
+[`decisions.md`](decisions.md), "D79". The hour field's ceiling is also why a
+time part can be past what an `interval` column's `Interval(MonthDayNano)` holds
+— nanoseconds in the same `int64`, a thousandth of the span — and so a value
+the type cannot hold, [`decisions.md`](decisions.md), "D96".
 
 **Re-verify.**
 
@@ -3768,9 +3767,9 @@ v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 
 **Relied on by:** `decode::typmod_unscaled_digits`, which puts a field
 through its typmod, rounding half away from zero and refusing past the
-precision; `decode::decimal_unscaled_digits` and `decode::render_decimal`,
-which take a typed `numeric` column's text to and from an unscaled integer at
-the column's scale; `pgtype::map_numeric`, which widens the precision to a
+precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
+unscaled integer at the column's scale exactly, and `decode::render_decimal`,
+which takes one back to text; `pgtype::map_numeric`, which widens the precision to a
 scale past it, and `pgtype::NestedPlan::Decimal`, which carries the precision
 that widening loses.
 
