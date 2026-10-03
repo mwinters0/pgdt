@@ -626,4 +626,21 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show d9019a1a -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="79462282",
+        figures=(
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+        ),
+        why="M207: in these figures' sets only cache.rs, predicate.rs and "
+        "unrepresentable.rs changed: CACHE_FORMAT_VERSION's u32 value, an interval key's "
+        "narrower integers with fewer checked operations, the interval tier test as one "
+        "checked_mul, accepted_form's error wording, and tests",
+        verified="git show 79462282 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
+        "pgdump_query/src/unrepresentable.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
