@@ -61,11 +61,12 @@ the record beside its mark 31.13.2's
 
 ## Negative results and limits
 
-- **A type held as its text is checked for nothing** — `json`, `xml`,
-  `money`, `bit`, the geometric types, a user base type — nor is a range
-  declaring its own `canonical` function; no reader here decodes them. The
-  manual says so. The built-in ones are 31.16–31.18; what stays outside is
-  the roadmap's boundary, and 31.21 names it per dump.
+- **A type held as its text is checked for nothing** but `json`, which
+  31.16 reads by `json_in`'s grammar — `xml`, `money`, `bit`, the geometric
+  types, a user base type — nor is a range declaring its own `canonical`
+  function; no reader here decodes them. The manual says so. The remaining
+  built-in ones are 31.17–31.18; what stays outside is the roadmap's
+  boundary, and 31.21 names it per dump.
 - **No length past a `varchar(n)`, `char(n)` or `bit(n)` typmod, nor a null in
   a `NOT NULL` column, is refused**, under any mode: 31.17, 31.19 and 31.20.
 - **What a strict observer holds to check — a comparison plan per column —

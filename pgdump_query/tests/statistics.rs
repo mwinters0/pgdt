@@ -1593,12 +1593,17 @@ fn reading(invalid: PostgresInvalidValues, jobs: usize) -> ScanOptions {
 fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> std::path::PathBuf {
     let dump = dir.join("strict.sql");
     let mut text = String::from(
-        "CREATE TABLE public.t (\n    a smallint,\n    v smallint[],\n    n numeric(10,2),\n    r int4range\n);\n\n",
+        "CREATE TABLE public.t (\n    a smallint,\n    v smallint[],\n    n numeric(10,2),\n    r int4range,\n    j json\n);\n\n",
     );
-    text.push_str("COPY public.t (a, v, n, r) FROM stdin;\n");
+    text.push_str("COPY public.t (a, v, n, r, j) FROM stdin;\n");
     for i in 0..rows {
-        let mut fields =
-            [i.to_string(), format!("{{{i},1}}"), format!("{i}.50"), format!("[{i},{})", i + 1)];
+        let mut fields = [
+            i.to_string(),
+            format!("{{{i},1}}"),
+            format!("{i}.50"),
+            format!("[{i},{})", i + 1),
+            format!("{{\"i\": [{i}]}}"),
+        ];
         if let Some((row, column, field)) = bad
             && row == i
         {
@@ -1615,8 +1620,8 @@ fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> st
 /// **A strict parse fails at a field PostgreSQL refuses wherever it sits**,
 /// where a default one leaves it to a query and passes: in a column the
 /// request leaves at the metadata level, an array's element, a value too long
-/// to key, a range's bound order, and the rows of a block whose statistics
-/// declined — serially and at four workers, naming the field as a read of the
+/// to key, a range's bound order, a `json` held as its text, and the rows of a
+/// block whose statistics declined — serially and at four workers, naming the field as a read of the
 /// dump does. A clean strict parse gathers what a default one gathers and
 /// records every block checked in full, the metadata-level table staying at
 /// its level (`PostgresInvalidValues::Strict`).
@@ -1633,14 +1638,15 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
     };
     // What is bad, where, and the request and allowance a default parse
     // passes it under.
-    let cases: [(&str, usize, &str, &StatisticsRequest, Option<u64>); 5] = [
+    let cases: [(&str, usize, &str, &StatisticsRequest, Option<u64>); 6] = [
         ("a column at the metadata level", 0, "70000", &only_v, None),
         ("an array's element", 1, "{1,70000}", &StatisticsRequest::DATA, None),
         ("a value too long to key", 2, &long, &StatisticsRequest::DATA, None),
         ("a range's bound order", 3, "[5,1]", &StatisticsRequest::DATA, None),
         ("a declined block's row", 0, "70000", &StatisticsRequest::DATA, Some(1)),
+        ("a json held as its text", 4, "{\"i\": [1,]}", &StatisticsRequest::DATA, None),
     ];
-    let names = ["a", "v", "n", "r"];
+    let names = ["a", "v", "n", "r", "j"];
     for (what, column, field, wanted, allowance) in cases {
         let dump = strict_dump(dir.path(), 400, Some((300, column, field)));
         let source = LocalFileSource::open(&dump).unwrap();

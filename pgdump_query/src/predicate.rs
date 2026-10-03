@@ -1884,11 +1884,17 @@ fn range_key(
 /// ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
-/// range's bounds in order ([`checked_key`]). A plan naming no type this build
-/// reads by — one held as its text, or a range declaring its own canonical
-/// function — refuses nothing, no reader here decoding its fields.
+/// range's bounds in order ([`checked_key`]). `json`, held as its text, is
+/// read by `json_in`'s grammar ([`decode::json_in`]); any other plan naming no
+/// type this build reads by — another held as its text, or a range declaring
+/// its own canonical function — refuses nothing, no reader here decoding its
+/// fields.
 pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
     match plan {
+        // `AS_TEXT`'s one member is `json`.
+        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
+            !decode::json_in(text)
+        }
         // Every text is a value of these, and keying one copies it.
         ComparisonPlan::Compared { kind: CompareKind::Text | CompareKind::PaddedText, .. } => false,
         ComparisonPlan::Compared { kind, .. } => {
@@ -1914,6 +1920,12 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
             Err(Unread::Refused) => return Err(refused),
             Err(Unread::Unparsed) => None,
         },
+        // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
+        NestedCompare::Uncomparable { divergence: Some(ComparisonDivergence::AsText), .. }
+            if !decode::json_in(text) =>
+        {
+            return Err(refused);
+        }
         NestedCompare::Uncomparable { .. } => None,
         NestedCompare::Array(element) => {
             let literal = nested::parse_array(text).ok_or(refused)?;
@@ -5489,7 +5501,9 @@ mod tests {
     /// type — under a position this build does not order too — and at a
     /// range's bound order or a discrete bound's successor (I44, I46, I47). A
     /// spelling the input grammar reads and the output grammar never writes is
-    /// no refusal, nor is any text of a type read as its text.
+    /// no refusal, nor is any text of a type read as its text but `json`, at
+    /// the top level or beneath a container, which `json_in`'s grammar reads
+    /// (I72).
     #[test]
     fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
         let types = vec![
@@ -5506,11 +5520,20 @@ mod tests {
                 name: "public.mood".into(),
                 kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()], exact: true },
             },
+            TypeDef {
+                name: "public.jsonpair".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("ok", "integer"),
+                        ColumnDef::new("doc", "json"),
+                    ]),
+                },
+            },
         ];
         let refused = |declared: &str, text: &str| {
             field_refused(&comparison_for(declared, None, &types, &[]), text)
         };
-        let cases: [(&str, &str, bool); 26] = [
+        let cases: [(&str, &str, bool); 36] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
@@ -5537,6 +5560,16 @@ mod tests {
             ("int4multirange", "{[1,2), [5,1]}", true),
             ("int4multirange", "{[1,2), [5,6)}", false),
             ("int2vector", "1 70000", true),
+            ("json", "{bad", true),
+            ("json", "[1,]", true),
+            ("json", r#""\u0000""#, false),
+            ("json", r#" [1, {"a": null}] "#, false),
+            ("json[]", r#"{1,"[1, 2]"}"#, false),
+            ("json[]", "{1,x}", true),
+            ("json[]", "{1,NULL}", false),
+            ("public.jsonpair", r#"(1,"[1, 2]")"#, false),
+            ("public.jsonpair", "(1,{bad)", true),
+            ("public.jsonpair[]", r#"{"(1,{})","(2,[)"}"#, true),
         ];
         for (declared, text, expected) in cases {
             assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
@@ -8153,6 +8186,26 @@ mod tests {
             literals_are_read_as_the_server_reads_them(&["numeric", "jsonb"]);
         }
 
+        /// **A `json` field the server refuses a strict parse refuses, and one
+        /// it reads it does not**: every `json` row of `literals.tsv` at every
+        /// major, read as a field (I72).
+        #[test]
+        fn a_json_field_is_refused_as_the_server_refuses_it() {
+            let plan = comparison_for("json", None, &[], &[]);
+            let mut asserted = 0usize;
+            for major in MAJORS {
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    let (Some("json"), Some(text)) = (row[0].as_deref(), row[1].as_deref()) else {
+                        continue;
+                    };
+                    let reads = row[2].as_deref() == Some("ok");
+                    assert_eq!(field_refused(&plan, text), !reads, "{major} {text:?}");
+                    asserted += 1;
+                }
+            }
+            assert!(asserted >= MAJORS.len() * 4, "{asserted} rows");
+        }
+
         /// **A `uuid` literal the server refuses is refused, and one it reads
         /// this build reads to the same value**: every `uuid` row of
         /// `literals.tsv` at every major, a value in braces among them (I64).
@@ -8456,7 +8509,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (52, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (53, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

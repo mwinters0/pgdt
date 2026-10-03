@@ -4695,3 +4695,56 @@ grep -n 'fe_msgbuf = makeStringInfo\|initStringInfo(&cstate->line_buf)\|line_buf
 It prints the growth check, the 1 GiB − 1 constant, the per-row buffer
 `COPY TO` builds, and `COPY FROM`'s line buffer and its terminator stripped
 after the fact.
+
+---
+
+## I72 — `json_in` reads RFC 8259's grammar and checks nothing a `\u` escape names
+
+**Claim.** `json_in` reads one JSON value with `' '`, `\t`, `\n` or `\r`
+around any token, and stores the text as written. It refuses, `22P02`, every
+other text: a number outside `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`,
+a word but `true`, `false` and `null`, a string holding a byte below `0x20`
+or an escape but `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` and `\u` with
+four hex digits, and any misplaced or missing token. **What a `\u` escape
+names is not checked**, so `\u0000` and a lone surrogate half, which
+`jsonb_in` refuses (I41), are read, and a number is not bounded.
+
+**Proof.** `src/backend/utils/adt/json.c`, `json_in`: `makeJsonLexContext`
+with `need_escapes` false, then `pg_parse_json` with `nullSemAction`.
+`src/common/jsonapi.c`: `json_lex`, `json_lex_number` and `json_lex_string`,
+whose surrogate pairing and `\u0000` refusal sit under `if (lex->strval !=
+NULL)` (`lex->need_escapes` at v18), so they never run here; `parse_object`
+and `parse_array` recurse under `check_stack_depth()`.
+
+**Observed.** The koji replica (PG16), by `pg_input_is_valid(…, 'json')`,
+reads `"\u0000"`, `"\ud800"`, `"\udc00"`, `1e100000000`, `-0`,
+`{"a":1,"a":2}` and ten thousand nested arrays, and refuses `[1,]`, `01`,
+`-01`, the empty text, `"\x41"`, a leading `\v`, `truex`, `tru`, `1x`, `1é`,
+`-`, `1.`, `.5`, `+1`, `NaN`, `1e+`, `1_0`, a raw tab in a string, `1 2`,
+`{a:1}`, `"\U0041"`, `"\u004"`, `[1]]` and `[1}`;
+`fixtures/<major>/oracle/literals.tsv` refuses `{a:1}` at all six majors.
+
+**Scope limit.** The depth the parser recurses to is bounded by the restoring
+server's `max_stack_depth`, a setting, not by the grammar: twenty thousand
+nested arrays fail the replica's 2 MB with "stack depth limit exceeded", and
+no depth is refused here.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+v17's incremental parser and its `JSON_TD_MAX_STACK` are not entered by
+`json_in`.
+
+**Relied on by:** `decode::json_in`, which a strict parse checks a `json`
+field by.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^json_in\(/,/^}/' src/backend/utils/adt/json.c | grep -n 'makeJsonLexContext\|pg_parse_json'
+grep -n -B4 'Combine surrogate pairs' src/common/jsonapi.c | grep 'if (lex'
+grep -n 'strchr("\\"\\\\/bfnrt", \*s) == NULL' src/common/jsonapi.c
+```
+
+The first prints the lexer made without escapes and the parse with no
+semantic actions; the second the guard the surrogate and `\u0000` checks sit
+under; the third the escape letters taken when not de-escaping.

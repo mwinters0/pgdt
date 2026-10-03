@@ -1008,8 +1008,9 @@ refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 **`--postgres-invalid-values strict` checks every value instead**, those
 included, so a `parse` that finishes means no value in the dump is one
 PostgreSQL's input function for its type refuses. It does not check a value of
-a type pgdt keeps as its text (`json`, `xml`, `money`, `bit`, `bit varying`,
-the geometric types, a type it has no reader for), a value spelled in a way
+a type pgdt keeps as its text but `json` (`xml`, `money`, `bit`, `bit varying`,
+the geometric types, a type it has no reader for), a `json` nested deeper than
+the restoring server's `max_stack_depth` lets it read, a value spelled in a way
 pgdt cannot read for its type at all, which PostgreSQL may refuse or not (`abc`
 in an `integer`, a malformed `jsonb`), a value of a range type
 declaring its own `canonical` function, a `character varying(n)`,
