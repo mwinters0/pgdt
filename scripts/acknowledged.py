@@ -643,4 +643,30 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 79462282 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "pgdump_query/src/unrepresentable.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="6fef2f8c",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "projection-widths",
+            "reserve",
+            "rss-attribution",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="M208: the per-row bound runs only on a bare numeric field or a jsonb number, "
+        "and every generated input declares numeric(20,6) or numeric(12,2), read by the "
+        "unchanged Decimal arm, and no jsonb; a literal's bound runs once per term; the rest "
+        "is CACHE_FORMAT_VERSION's u32 value, accepted_form's error wording and tests",
+        verified="git show 6fef2f8c -- pgdump_query/src/decode.rs pgdump_query/src/predicate.rs "
+        "pgdump_query/src/cache.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'; "
+        "grep -n 'numeric\\|jsonb' scripts/generate_*.py",
+    ),
 )
