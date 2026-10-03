@@ -614,4 +614,16 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show cb7ef7a0 -- pgdump_query/src/predicate.rs pgdump_query/src/pgtype.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="d9019a1a",
+        figures=(
+            "predicate-terms",
+            "reserve",
+        ),
+        why="M206: in these figures' sets only cache.rs and predicate.rs changed, "
+        "CACHE_FORMAT_VERSION's u32 value, accepted_form's wording reached only on an "
+        "error, and tests",
+        verified="git show d9019a1a -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
