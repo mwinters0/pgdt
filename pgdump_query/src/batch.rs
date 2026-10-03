@@ -798,6 +798,12 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         ColumnBuilder::Binary(b) => {
             b.append_value(decode::decode_bytea(text).ok_or_else(fail)?);
         }
+        // deficiency: KD88 — the text is appended whatever it is, so a label
+        // the column's enum does not declare, which `enum_in` refuses (I70),
+        // reaches the batch: a field no parse keyed — its column at the
+        // metadata level, its block declined — is refused by no query but one
+        // whose ordering term keys it. Refusing it here needs the labels and their exactness,
+        // which this builder does not carry.
         ColumnBuilder::Dictionary(b) => b.append_value(text),
     }
     Ok(())

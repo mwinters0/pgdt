@@ -327,7 +327,15 @@ pub enum TypeKind {
     /// `--binary-upgrade` dump emits these via a separate `ALTER TYPE ADD
     /// VALUE` per label (I6); [`fold_alter_type_add_value`] folds them back
     /// in here so both forms produce the same shape.
-    Enum { labels: Vec<String> },
+    ///
+    /// `exact` says the labels are every label the type holds when its
+    /// database's preamble ends, which is what makes a field naming another
+    /// one a refusal (I70). It is cleared by a label this build cannot lex
+    /// and by an `ALTER TYPE` that could change the labels and is not read —
+    /// `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, and any naming a type no
+    /// definition here carries, which clears every enum's
+    /// ([`fold_enum_labels_unread`]). Nothing `pg_dump` writes clears it.
+    Enum { labels: Vec<String>, exact: bool },
     /// Reduces to a base type, resolved transitively by [`crate::pgtype`] (a
     /// domain over a domain is legal). `NOT NULL` is discarded — every Arrow
     /// field is nullable regardless.
@@ -380,6 +388,13 @@ impl TypeKind {
     /// and the one a test or an embedder building a type list by hand wants.
     pub fn domain(base_type: impl Into<String>) -> Self {
         Self::Domain { base_type: base_type.into(), collation: None }
+    }
+
+    /// An enum whose labels are exactly these, in declaration order — what
+    /// `CREATE TYPE … AS ENUM (…)` declares, and the shape a test or an
+    /// embedder building a type list by hand wants.
+    pub fn exact_enum<S: Into<String>>(labels: impl IntoIterator<Item = S>) -> Self {
+        Self::Enum { labels: labels.into_iter().map(Into::into).collect(), exact: true }
     }
 }
 
@@ -947,11 +962,13 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
     if let Some(body) = strip_kw(after, "AS ENUM") {
         let open = body.find('(')?;
         let close = matching_paren(body.as_bytes(), open)?;
-        let labels = split_top_level_commas(&body[open + 1..close])
-            .into_iter()
-            .filter_map(parse_string_literal)
-            .collect();
-        return Some(TypeDef { name, kind: TypeKind::Enum { labels } });
+        // A fragment that is no plain string literal — an `E''` one, say — is
+        // a label this build cannot read, so the set it leaves is short.
+        let fragments = split_top_level_commas(&body[open + 1..close]);
+        let labels: Vec<String> =
+            fragments.iter().copied().filter_map(parse_string_literal).collect();
+        let exact = labels.len() == fragments.len();
+        return Some(TypeDef { name, kind: TypeKind::Enum { labels, exact } });
     }
     if let Some(body) = strip_kw(after, "AS RANGE") {
         let open = body.find('(')?;
@@ -1007,12 +1024,46 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
 /// statement as its own [`crate::map::SpanBody::AlterTypeAddValue`] span,
 /// since that module has no already-open `TypeDef` to fold into the way
 /// [`fold_alter_type_add_value`] does for [`dump_metadata_from_spans`].
+// deficiency: KD89 — a hand-written `ADD VALUE … BEFORE` or `AFTER` placing
+// the label anywhere but last is folded as appended, so the label orders after
+// every other: an ordering term, a group's bounds and the pruning they drive
+// place it where the server does not, and a query can lose its rows.
 pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
     let (name, consumed) = parse_type_name(rest)?;
-    let after = &rest[consumed..];
-    let idx = find_ci(after, "ADD VALUE")?;
-    let label = parse_string_literal(after[idx + "ADD VALUE".len()..].trim_start())?;
+    let after = strip_kw(strip_kw(rest[consumed..].trim_start(), "ADD")?, "VALUE")?;
+    let label = parse_string_literal(after)?;
     Some((name, label))
+}
+
+/// Whether the body of an `ALTER TYPE`, after `ALTER TYPE` has been stripped,
+/// is one that could change an enum's labels — `ADD VALUE`, `RENAME VALUE`,
+/// in any form, the word `VALUE` being in no other subcommand — answered
+/// where [`parse_alter_type_add_value_body`] does not read it, as the type it
+/// names, `None` where it names none this grammar reads. Such a statement
+/// leaves the labels inexact ([`fold_enum_labels_unread`]). `pub(crate)` for
+/// [`crate::map::classify`], as [`parse_alter_type_add_value_body`] is.
+pub(crate) fn alter_type_labels_unread(rest: &str) -> Option<Option<String>> {
+    let (name, after) = match parse_type_name(rest) {
+        Some((name, consumed)) => (Some(name), &rest[consumed..]),
+        None => (None, rest),
+    };
+    holds_word(after, "VALUE").then_some(name)
+}
+
+/// Whether `haystack` holds `word`, in any case, bounded on both sides by a
+/// byte no identifier continues with.
+fn holds_word(haystack: &str, word: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(at) = find_ci(&haystack[from..], word).map(|i| from + i) {
+        let end = at + word.len();
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        if !before.is_some_and(ident_cont) && !bytes.get(end).copied().is_some_and(ident_cont) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
 }
 
 /// Parse the body of `ALTER TYPE <name> DROP ATTRIBUTE <attr>;`, after `ALTER
@@ -1053,11 +1104,36 @@ fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
 /// Used by [`dump_metadata_from_spans`], which encounters the label as its
 /// own [`crate::map::SpanBody::AlterTypeAddValue`] span, separate from the
 /// [`crate::map::SpanBody::TypeDef`] span it targets.
+///
+/// A name no definition here carries leaves every enum inexact, as
+/// [`fold_enum_labels_unread`] does: the server may resolve it to one of
+/// them (an unqualified name under a `search_path`) where this does not.
 fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
-    if let Some(TypeDef { kind: TypeKind::Enum { labels }, .. }) =
-        types.iter_mut().find(|t| t.name == type_name)
-    {
-        labels.push(label.to_string());
+    match types.iter_mut().find(|t| t.name == type_name) {
+        Some(TypeDef { kind: TypeKind::Enum { labels, .. }, .. }) => labels.push(label.to_string()),
+        Some(_) => {}
+        None => fold_enum_labels_unread(types, None),
+    }
+}
+
+/// Fold an `ALTER TYPE` that could change an enum's labels and is not read
+/// (see [`alter_type_labels_unread`]) into `types`: the enum it names keeps
+/// its labels, which are no longer known to be all of them. Where it names
+/// no definition here — or none this grammar reads — the type it changes
+/// could be any enum declared so far, so every one is left inexact.
+// deficiency: KD87 — only an `ALTER TYPE` is read for a change to the labels.
+// Code that changes them otherwise — a `DO` block or a function a statement
+// calls running one, a write to `pg_enum`, a psql `\i` — leaves them marked
+// exact, so a field naming a label it added is refused at parse where a
+// restore reads it. No `pg_dump` writes such code; a hand-written dump can.
+fn fold_enum_labels_unread(types: &mut [TypeDef], type_name: Option<&str>) {
+    let named = type_name.and_then(|name| types.iter().position(|t| t.name == name));
+    for (i, def) in types.iter_mut().enumerate() {
+        if let TypeKind::Enum { exact, .. } = &mut def.kind
+            && named.is_none_or(|n| n == i)
+        {
+            *exact = false;
+        }
     }
 }
 
@@ -1418,8 +1494,9 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 /// calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
-/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`],
-/// dropped-attribute folding on [`crate::map::SpanBody::AlterTypeDropAttribute`]
+/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] and
+/// [`crate::map::SpanBody::EnumLabelsUnread`], dropped-attribute folding on
+/// [`crate::map::SpanBody::AlterTypeDropAttribute`]
 /// and table-reference folding on [`crate::map::SpanBody::AlterTableReference`].
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
@@ -1486,7 +1563,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::Data(_) => {
                 current.preamble_complete = true;
             }
-            // I1 guarantees none of these seven can genuinely follow a `Data`
+            // I1 guarantees none of these eight can genuinely follow a `Data`
             // span for the current database before its next `Connect` — the
             // guard is defensive, matching what a line-triggered scan would
             // have done, rather than assuming the invariant holds.
@@ -1512,6 +1589,9 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             {
                 fold_alter_type_drop_attribute(&mut current.types, type_name, attribute);
             }
+            SpanBody::EnumLabelsUnread { type_name } if !current.preamble_complete => {
+                fold_enum_labels_unread(&mut current.types, type_name.as_deref());
+            }
             SpanBody::Collation { collation } if !current.preamble_complete => {
                 current.collations.push(collation.clone());
             }
@@ -1520,6 +1600,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             | SpanBody::Extension { .. }
             | SpanBody::AlterTypeAddValue { .. }
             | SpanBody::AlterTypeDropAttribute { .. }
+            | SpanBody::EnumLabelsUnread { .. }
             | SpanBody::AlterTableReference { .. }
             | SpanBody::Collation { .. }
             | SpanBody::Framing
@@ -1964,14 +2045,12 @@ mod tests {
         assert_eq!(def.name, "public.mood");
         assert_eq!(
             def.kind,
-            TypeKind::Enum {
-                labels: vec![
-                    "sad".to_string(),
-                    "has space".to_string(),
-                    "has,comma".to_string(),
-                    "has'quote".to_string(),
-                ]
-            }
+            TypeKind::exact_enum([
+                "sad".to_string(),
+                "has space".to_string(),
+                "has,comma".to_string(),
+                "has'quote".to_string(),
+            ])
         );
     }
 
@@ -1985,7 +2064,7 @@ mod tests {
         let spans = vec![
             span(SpanBody::TypeDef {
                 name: "public.mood".to_string(),
-                kind: TypeKind::Enum { labels: Vec::new() },
+                kind: TypeKind::Enum { labels: Vec::new(), exact: true },
             }),
             span(SpanBody::Unparsed),
             span(SpanBody::AlterTypeAddValue {
@@ -2001,7 +2080,10 @@ mod tests {
         let meta = dump_metadata_from_spans(&spans);
         assert_eq!(
             meta.databases[0].types[0].kind,
-            TypeKind::Enum { labels: vec!["sad".to_string(), "has'quote".to_string()] }
+            TypeKind::Enum {
+                labels: vec!["sad".to_string(), "has'quote".to_string()],
+                exact: true
+            }
         );
     }
 

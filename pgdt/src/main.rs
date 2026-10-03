@@ -2717,7 +2717,7 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
 /// `empty enum` sentence the line above prints.
 fn enum_labels(plan: &ComparisonPlan) -> Option<&[String]> {
     match plan {
-        ComparisonPlan::Compared { kind: CompareKind::Enum(labels), .. } => Some(labels),
+        ComparisonPlan::Compared { kind: CompareKind::Enum { labels, .. }, .. } => Some(labels),
         _ => None,
     }
 }
@@ -2830,8 +2830,16 @@ fn print_metadata(metadata: &DumpMetadata, detail: bool) {
 /// one-word name for the same vocabulary.
 fn type_kind_summary(kind: &TypeKind) -> String {
     match kind {
-        TypeKind::Enum { labels } if labels.is_empty() => "enum: (no labels)".to_string(),
-        TypeKind::Enum { labels } => format!("enum: {}", label_list(labels)),
+        TypeKind::Enum { labels, exact: true } if labels.is_empty() => {
+            "enum: (no labels)".to_string()
+        }
+        TypeKind::Enum { labels, exact: false } if labels.is_empty() => {
+            "enum: (labels not read)".to_string()
+        }
+        TypeKind::Enum { labels, exact: true } => format!("enum: {}", label_list(labels)),
+        TypeKind::Enum { labels, exact: false } => {
+            format!("enum: {} (labels not read exactly)", label_list(labels))
+        }
         TypeKind::Domain { base_type, collation: None } => format!("domain over {base_type}"),
         TypeKind::Domain { base_type, collation: Some(c) } => {
             format!("domain over {base_type} COLLATE {c}")
@@ -3342,6 +3350,12 @@ fn span_summary(span: &Span) -> String {
         }
         SpanBody::AlterTypeDropAttribute { type_name, attribute } => {
             format!("ALTER TYPE {type_name} DROP ATTRIBUTE {attribute:?}")
+        }
+        SpanBody::EnumLabelsUnread { type_name: Some(type_name) } => {
+            format!("ALTER TYPE {type_name} (enum labels not read)")
+        }
+        SpanBody::EnumLabelsUnread { type_name: None } => {
+            "ALTER TYPE (enum labels not read)".to_string()
         }
         SpanBody::AlterTableReference { table, reference } => match reference {
             TableReference::Parent(parent) => format!("ALTER TABLE {table} INHERIT {parent}"),
@@ -4681,10 +4695,16 @@ mod tests {
     fn every_type_kind_renders_with_its_own_payload() {
         use pgdump_query::ColumnDef;
 
-        let labels =
-            |ls: &[&str]| TypeKind::Enum { labels: ls.iter().map(|l| l.to_string()).collect() };
+        let labels = |ls: &[&str]| TypeKind::Enum {
+            labels: ls.iter().map(|l| l.to_string()).collect(),
+            exact: true,
+        };
         assert_eq!(type_kind_summary(&labels(&["sad", "has'quote"])), "enum: 'sad', 'has''quote'");
         assert_eq!(type_kind_summary(&labels(&[])), "enum: (no labels)");
+        let inexact = TypeKind::Enum { labels: vec!["sad".to_string()], exact: false };
+        assert_eq!(type_kind_summary(&inexact), "enum: 'sad' (labels not read exactly)");
+        let unread = TypeKind::Enum { labels: Vec::new(), exact: false };
+        assert_eq!(type_kind_summary(&unread), "enum: (labels not read)");
         assert_eq!(type_kind_summary(&TypeKind::domain("integer")), "domain over integer");
         assert_eq!(
             type_kind_summary(&TypeKind::Domain {

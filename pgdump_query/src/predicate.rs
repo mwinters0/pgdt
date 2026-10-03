@@ -1353,6 +1353,10 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     field_key(kind, text).ok()
 }
 
+/// `NAMEDATALEN`: `enum_in` refuses a text of this many bytes or more before
+/// looking it up, no label being so long (I70).
+const ENUM_LABEL_LIMIT: usize = 64;
+
 /// [`order_key`], saying why a text has no key: refused by the type's `*_in`,
 /// which fails the parse reading it as a field, or not read here.
 fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
@@ -1406,11 +1410,16 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
             }
             OrderKey::Numeric(key)
         }
-        // A label the type does not declare is not a value of the column, so
-        // it is the same fault an unparseable number is. The linear scan is
-        // over a label list, a handful of entries in practice.
-        CompareKind::Enum(labels) => {
-            OrderKey::Int(labels.iter().position(|l| l == text).ok_or(unparsed)? as i64)
+        // A label the type does not declare is no value of the column, which
+        // `enum_in` refuses: where the declared labels are all the type
+        // holds, or the text is longer than any label can be, and otherwise
+        // it may be one this build did not read. The linear scan is over a
+        // label list, a handful of entries in practice.
+        // pg-refuses: I70
+        CompareKind::Enum { labels, exact } => {
+            let position = labels.iter().position(|l| l == text);
+            let refused = *exact || text.len() >= ENUM_LABEL_LIMIT;
+            OrderKey::Int(position.ok_or(if refused { Unread::Refused } else { unparsed })? as i64)
         }
         CompareKind::Date => OrderKey::Int(decode::date_days(text)?.into()),
         CompareKind::Time => OrderKey::Int(decode::time_of_day_micros(text)?),
@@ -2227,7 +2236,13 @@ fn equality_comparison(
         // A label is its own canonical form; what the lookup buys is the
         // refusal, a string the type does not declare being no value of the
         // column.
-        K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
+        // deficiency: KD86 — the refusal is made whether or not the labels
+        // were read exactly (`TypeKind::Enum`'s `exact`), so a literal naming
+        // a label an unread `RENAME VALUE` or `ADD VALUE IF NOT EXISTS` gave
+        // the type is refused, where the server reads it; an ordering term
+        // raises `FieldDecode` on a field naming one, having no position for
+        // it. Comparing by text would answer `=` but no ordering.
+        K::Enum { labels, .. } => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
         K::Time => decode::render_time64_micros(decode::time_of_day_micros(text).ok()?),
         K::Timestamp { with_tz } => decode::render_timestamp_postgres_micros(
@@ -2374,8 +2389,8 @@ fn accepted_form(kind: &CompareKind) -> String {
         K::Numeric { infinities: true, .. } => {
             format!("{NUMERIC_DIGITS}, or `NaN`, `Infinity` or `-Infinity`")
         }
-        K::Enum(labels) if !labels.is_empty() => enum_accepted_form(labels),
-        K::Enum(_) => "as one of the type's own declared labels".into(),
+        K::Enum { labels, .. } if !labels.is_empty() => enum_accepted_form(labels),
+        K::Enum { .. } => "as one of the type's own declared labels".into(),
         // The range is half the sentence, as for an integer: a day the
         // calendar lacks, or one past it, is the refusal a well-formed
         // literal meets (I61).
@@ -4082,7 +4097,7 @@ mod tests {
         vec![
             TypeDef {
                 name: "public.mood".into(),
-                kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] },
+                kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()], exact: true },
             },
             // A range whose DDL stated no `subtype` — the one shape the
             // resolver calls nested and the register refuses outright, there
@@ -5262,8 +5277,8 @@ mod tests {
     /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
     /// `Refused`, which fails the parse keying the field, and a spelling the
     /// server reads where this build does not answers `Unparsed`, which does
-    /// not — nor does an enum's undeclared label (`KD83`), nor a `macaddr`
-    /// octet opening with a sign (`KD85`).
+    /// not — nor does a label an enum whose labels are not read exactly
+    /// lacks, nor a `macaddr` octet opening with a sign (`KD85`).
     #[test]
     fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
         use CompareKind as K;
@@ -5271,6 +5286,9 @@ mod tests {
         let past_dscale = format!("1.{}", "0".repeat(decode::NUMERIC_DSCALE_MAX + 1));
         // `numeric_in` reads it at a scale within its bounds.
         let past_dscale_by_exponent = format!("{past_dscale}e5");
+        // `NAMEDATALEN` less one is the longest label a type can hold (I70).
+        let longest_label = "x".repeat(ENUM_LABEL_LIMIT - 1);
+        let long_label = "x".repeat(ENUM_LABEL_LIMIT);
         let refused: Vec<(CompareKind, &str)> = vec![
             (K::Int { bytes: 2 }, "70000"),
             (K::Int { bytes: 4 }, "-2147483649"),
@@ -5314,6 +5332,10 @@ mod tests {
             (K::MacAddr { octets: 8 }, "08:00:2b:01:02:03:04"),
             (K::Bytea, "\\x0"),
             (K::Bytea, "\\400"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, "b"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, " a"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, "A"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, &long_label),
         ];
         for (kind, text) in &refused {
             assert_eq!(field_key(kind, text).err(), Some(Unread::Refused), "{kind:?} {text:?}");
@@ -5338,7 +5360,8 @@ mod tests {
             (K::MacAddr { octets: 8 }, "08002b0102030405"),
             (K::Bytea, "\\x ab"),
             (K::Bytea, "\\101"),
-            (K::Enum(Arc::from(["a".to_string()])), "b"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, "b"),
+            (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, &longest_label),
         ];
         for (kind, text) in &unparsed {
             assert_eq!(field_key(kind, text).err(), Some(Unread::Unparsed), "{kind:?} {text:?}");
@@ -6954,8 +6977,9 @@ mod tests {
     /// rest.
     #[test]
     fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
-        let kind = |labels: &[&str]| {
-            CompareKind::Enum(labels.iter().map(|l| (*l).to_string()).collect::<Arc<[String]>>())
+        let kind = |labels: &[&str]| CompareKind::Enum {
+            labels: labels.iter().map(|l| (*l).to_string()).collect::<Arc<[String]>>(),
+            exact: true,
         };
         assert_eq!(
             accepted_form(&kind(&["sad", "has space", "has'quote"])),
@@ -6963,7 +6987,10 @@ mod tests {
         );
 
         let many: Vec<String> = (0..ENUM_LABELS_SHOWN + 3).map(|i| format!("l{i}")).collect();
-        let clause = accepted_form(&CompareKind::Enum(many.iter().cloned().collect()));
+        let clause = accepted_form(&CompareKind::Enum {
+            labels: many.iter().cloned().collect(),
+            exact: true,
+        });
         assert!(clause.contains("'l0'"), "{clause}");
         assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
         assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");
@@ -8159,7 +8186,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (48, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (49, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -8318,7 +8345,7 @@ mod tests {
                 CompareKind::Text => "Text",
                 CompareKind::PaddedText => "PaddedText",
                 CompareKind::Numeric { .. } => "Numeric",
-                CompareKind::Enum(_) => "Enum",
+                CompareKind::Enum { .. } => "Enum",
                 CompareKind::Interval => "Interval",
                 CompareKind::TimeTz => "TimeTz",
                 CompareKind::Network { .. } => "Network",

@@ -84,7 +84,7 @@
 //! `DumpMetadata` is [`crate::preamble::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
 //! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`],
-//! [`SpanBody::AlterTypeDropAttribute`] and
+//! [`SpanBody::AlterTypeDropAttribute`], [`SpanBody::EnumLabelsUnread`] and
 //! [`SpanBody::AlterTableReference`] exist for rather than generic
 //! [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
@@ -101,10 +101,10 @@ use crate::io::ByteRangeSource;
 use crate::lex::standard_conforming_strings;
 use crate::preamble::{
     CollationDef, Extension, StatementScan, StatementShape, TableDef, TableReference, TypeDef,
-    TypeKind, classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
-    insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body,
-    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, push_stmt_line,
-    statement_complete, strip_kw,
+    TypeKind, alter_type_labels_unread, classify_statement, extract_statement_cross_refs,
+    in_open_quote, insert_role, insert_tablespace, parse_alter_table_reference,
+    parse_alter_type_add_value_body, parse_alter_type_drop_attribute_body, parse_connect,
+    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart};
 use crate::statistics::{BlockGathered, BlockObserver};
@@ -398,6 +398,15 @@ pub enum SpanBody {
     AlterTypeDropAttribute {
         type_name: String,
         attribute: String,
+    },
+    /// An `ALTER TYPE` that could change an enum's labels and that
+    /// [`crate::preamble`] does not read — `RENAME VALUE`, `ADD VALUE IF NOT
+    /// EXISTS`, a label it cannot lex — naming the type it alters, or `None`
+    /// where it names none this grammar reads. No `pg_dump` writes one; it is
+    /// recognized so [`crate::preamble::dump_metadata_from_spans`] can mark
+    /// the labels it may have changed inexact.
+    EnumLabelsUnread {
+        type_name: Option<String>,
     },
     /// A `--binary-upgrade` dump's `ALTER TABLE ONLY <name> INHERIT
     /// <parent>;` or `… OF <type>;` — recognized so
@@ -1555,6 +1564,9 @@ fn classify(stmt: &str) -> SpanBody {
         if let Some((type_name, attribute)) = parse_alter_type_drop_attribute_body(rest) {
             return SpanBody::AlterTypeDropAttribute { type_name, attribute };
         }
+        if let Some(type_name) = alter_type_labels_unread(rest) {
+            return SpanBody::EnumLabelsUnread { type_name };
+        }
     }
     if let Some((table, reference)) = parse_alter_table_reference(stmt) {
         return SpanBody::AlterTableReference { table, reference };
@@ -2214,6 +2226,83 @@ mod tests {
                 type_name: "public.trio".to_string(),
                 attribute: "........pg.dropped.2........".to_string(),
             }
+        );
+    }
+
+    /// An `ALTER TYPE` that could change an enum's labels and is not read is
+    /// a span of its own naming the type, and leaves that enum's labels
+    /// inexact — while one changing nothing a label is, and an `ADD VALUE`
+    /// that is read, leave them exact. One naming no type declared here
+    /// leaves every enum declared so far inexact, and a definition after it
+    /// is exact again.
+    #[test]
+    fn an_alter_type_changing_labels_unread_leaves_them_inexact() {
+        let exactness = |lines: &[&str]| -> Vec<(String, bool)> {
+            let metadata = crate::preamble::dump_metadata_from_spans(&spans_of(lines));
+            metadata.databases[0]
+                .types
+                .iter()
+                .map(|t| match &t.kind {
+                    TypeKind::Enum { exact, .. } => (t.name.clone(), *exact),
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        let declared = [
+            "CREATE TYPE public.mood AS ENUM ('sad', 'ok');",
+            "CREATE TYPE public.size AS ENUM ('s');",
+        ];
+        let with = |extra: &[&'static str]| {
+            let mut lines = declared.to_vec();
+            lines.extend_from_slice(extra);
+            exactness(&lines)
+        };
+        let both = |mood: bool, size: bool| {
+            vec![("public.mood".to_string(), mood), ("public.size".to_string(), size)]
+        };
+        assert_eq!(with(&[]), both(true, true));
+        for exact in [
+            "ALTER TYPE public.mood OWNER TO postgres;",
+            "ALTER TYPE public.mood ADD VALUE 'happy' AFTER 'ok';",
+            "ALTER TYPE public.mood  add   Value 'happy';",
+            "ALTER TYPE public.mood RENAME TO feeling;",
+        ] {
+            assert_eq!(with(&[exact]), both(true, true), "{exact}");
+        }
+        for unread in [
+            "ALTER TYPE public.mood RENAME VALUE 'ok' TO 'fine';",
+            "ALTER TYPE public.mood ADD VALUE IF NOT EXISTS 'happy';",
+            "ALTER TYPE public.mood ADD VALUE E'happy';",
+            "ALTER TYPE public.mood /* why */ ADD VALUE 'happy';",
+        ] {
+            let spans = spans_of(&[unread]);
+            assert_eq!(
+                spans[0].body,
+                SpanBody::EnumLabelsUnread { type_name: Some("public.mood".to_string()) },
+                "{unread}"
+            );
+            assert_eq!(with(&[unread]), both(false, true), "{unread}");
+        }
+        for unmatched in
+            ["ALTER TYPE mood RENAME VALUE 'ok' TO 'fine';", "ALTER TYPE mood ADD VALUE 'happy';"]
+        {
+            assert_eq!(with(&[unmatched]), both(false, false), "{unmatched}");
+        }
+        assert_eq!(
+            exactness(&[declared[0], "ALTER TYPE mood ADD VALUE 'happy';", declared[1],]),
+            both(false, true)
+        );
+        assert_eq!(
+            exactness(&[
+                declared[0],
+                "ALTER TYPE public.mood RENAME VALUE 'ok' TO 'fine';",
+                "CREATE TYPE public.mood AS ENUM ('ok');",
+            ]),
+            vec![("public.mood".to_string(), true)]
+        );
+        assert_eq!(
+            exactness(&["CREATE TYPE public.mood AS ENUM ('sad', E'ok');"]),
+            vec![("public.mood".to_string(), false)]
         );
     }
 

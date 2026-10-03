@@ -84,16 +84,14 @@ async fn default_dump_declares_every_mapped_column_type() {
         // shape.
         assert_eq!(
             find_type(&db, "public.mood").kind,
-            TypeKind::Enum {
-                labels: vec![
-                    "sad".to_string(),
-                    "ok".to_string(),
-                    "happy".to_string(),
-                    "has space".to_string(),
-                    "has,comma".to_string(),
-                    "has'quote".to_string(),
-                ]
-            },
+            TypeKind::exact_enum([
+                "sad".to_string(),
+                "ok".to_string(),
+                "happy".to_string(),
+                "has space".to_string(),
+                "has,comma".to_string(),
+                "has'quote".to_string(),
+            ]),
             "pg_dump {version}"
         );
 
@@ -267,16 +265,14 @@ async fn binary_upgrade_dump_yields_the_same_enum_labels_via_alter_type() {
         let db = single_database(&types_fixture(version, "binary-upgrade")).await;
         assert_eq!(
             find_type(&db, "public.mood").kind,
-            TypeKind::Enum {
-                labels: vec![
-                    "sad".to_string(),
-                    "ok".to_string(),
-                    "happy".to_string(),
-                    "has space".to_string(),
-                    "has,comma".to_string(),
-                    "has'quote".to_string(),
-                ]
-            },
+            TypeKind::exact_enum([
+                "sad".to_string(),
+                "ok".to_string(),
+                "happy".to_string(),
+                "has space".to_string(),
+                "has,comma".to_string(),
+                "has'quote".to_string(),
+            ]),
             "pg_dump {version}: binary-upgrade's split CREATE TYPE/ALTER TYPE \
              ADD VALUE shape (I6) must fold back to the same labels, same order, \
              as the plain form"

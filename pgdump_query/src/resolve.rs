@@ -673,7 +673,10 @@ mod tests {
     fn unknown_opaque_and_empty_enum_outcomes() {
         let types = vec![
             TypeDef { name: "public.gtype".to_string(), kind: TypeKind::Base },
-            TypeDef { name: "public.mood".to_string(), kind: TypeKind::Enum { labels: vec![] } },
+            TypeDef {
+                name: "public.mood".to_string(),
+                kind: TypeKind::Enum { labels: vec![], exact: true },
+            },
         ];
         let meta = one_db(
             &[(
@@ -900,7 +903,7 @@ mod tests {
 
         let types = vec![TypeDef {
             name: "public.mood".to_string(),
-            kind: TypeKind::Enum { labels: vec!["sad".to_string()] },
+            kind: TypeKind::Enum { labels: vec!["sad".to_string()], exact: true },
         }];
         let meta = one_db(
             &[(
@@ -928,7 +931,10 @@ mod tests {
                     crate::pgtype::ComparisonDivergence::UnknownCollation,
                 ),
                 ComparisonPlan::Compared {
-                    kind: CompareKind::Enum(["sad".to_string()].into_iter().collect()),
+                    kind: CompareKind::Enum {
+                        labels: ["sad".to_string()].into_iter().collect(),
+                        exact: true
+                    },
                     divergence: None,
                 },
                 // Nested: compared structurally, one node per level.

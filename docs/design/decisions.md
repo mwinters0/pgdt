@@ -450,7 +450,7 @@ work — a field decoded once a row for every leaf reading it, bounds an `IN` im
 simpler or faster, none is refused at runtime cost, and the rest are `PredicateValueDecode`, a shortfall, never a rule. What a kind reads past its floor (one value's
 other spellings, field and literal alike; `jsonb`, its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH`
 is fixed: a Rust stack overflow aborts. A field fails a parse only where a `pg-refuses` check refuses it (`decode::Unread`). Rejected: failing on every field read as
-no value, which aborts on a shortfall a restore reads (`KD83` is the converse, a refusal let through to the query).
+no value, which aborts on a shortfall a restore reads. An enum's undeclared label is refused only where the preamble read its labels exactly (I70).
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).

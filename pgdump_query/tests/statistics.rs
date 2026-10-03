@@ -1385,6 +1385,65 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
     }
 }
 
+/// **An enum field naming no label of its type fails the parse where the
+/// preamble holds the labels exactly** (I70), whether `CREATE TYPE` declares
+/// them or a `--binary-upgrade` run of `ADD VALUE` does, **and goes on past
+/// it, its group unbounded, where a statement that could change them was not
+/// read** — each of which, here, makes the field one a restore reads.
+#[tokio::test]
+async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("enum.sql");
+    let declared = "CREATE TYPE public.mood AS ENUM (\n    'sad',\n    'ok'\n);";
+    let dump_with = |preamble: &[&str]| {
+        let mut text = preamble.join("\n\n");
+        text.push_str("\n\nCREATE TABLE public.t (\n    m public.mood\n);\n\n");
+        text.push_str("COPY public.t (m) FROM stdin;\n");
+        for i in 0..40 {
+            text.push_str(if i == 30 { "furious\n" } else { "sad\n" });
+        }
+        text.push_str("\\.\n\nSELECT 1;\n");
+        std::fs::write(&dump, text).unwrap();
+    };
+    let wanted = request(StatisticsSelection::DATA, 64);
+    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let exact: [&[&str]; 2] = [
+        &[declared],
+        &[
+            "CREATE TYPE public.mood AS ENUM (\n);",
+            "ALTER TYPE public.mood ADD VALUE 'sad';",
+            "ALTER TYPE public.mood ADD VALUE 'ok';",
+        ],
+    ];
+    for preamble in exact {
+        dump_with(preamble);
+        let source = LocalFileSource::open(&dump).unwrap();
+        match map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await {
+            Err(pgdump_query::Error::FieldRefused {
+                column, declared_type, value, line, ..
+            }) => assert_eq!(
+                (column.as_str(), declared_type.as_str(), value.as_str(), line),
+                ("m", "public.mood", "furious", 31)
+            ),
+            other => panic!("{preamble:?}: expected the parse to refuse `furious`, got {other:?}"),
+        }
+    }
+    let inexact: [&[&str]; 4] = [
+        &[declared, "ALTER TYPE public.mood RENAME VALUE 'ok' TO 'furious';"],
+        &[declared, "ALTER TYPE public.mood ADD VALUE IF NOT EXISTS 'furious';"],
+        &["CREATE TYPE public.mood AS ENUM ('sad', E'furious');"],
+        &[declared, "ALTER TYPE mood ADD VALUE 'furious';"],
+    ];
+    for preamble in inexact {
+        dump_with(preamble);
+        let index = gathered_with(&dump, &serial, &wanted).await;
+        let t = statistics(block(&index, "public.t"));
+        let bounds = t.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        assert!(bounds.groups.iter().any(Option::is_none), "{preamble:?}");
+        assert!(bounds.groups.iter().any(Option::is_some), "{preamble:?}");
+    }
+}
+
 /// **A block past its cap gathers, split by the leader, what the serial pass
 /// gathers, and that is what gathering exactly at the size it reaches
 /// gathers** — every block of every fixture, re-read at a group size of a few

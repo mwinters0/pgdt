@@ -29,13 +29,6 @@ pub enum Unread {
     /// A spelling this build reads no value from — a shortfall the server
     /// reads (`docs/design/decisions.md`, "D55"), or a refusal of the
     /// server's no marked check makes, which nothing here tells apart.
-    // deficiency: KD83 — an enum field naming a label its type does not
-    // declare is `Unparsed`, so the parse goes on past one `enum_in` refuses,
-    // the column only losing its group's bounds. A miss is a refusal only
-    // where the preamble holds the type's labels exactly, and it does not
-    // know when it does: an `ALTER TYPE … RENAME VALUE`, an `ADD VALUE IF NOT
-    // EXISTS` or a label it cannot lex, which a hand-written dump can hold,
-    // leaves the set short without a mark.
     Unparsed,
 }
 

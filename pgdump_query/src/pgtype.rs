@@ -214,7 +214,13 @@ pub enum CompareKind {
     /// `TypeKind::Enum`'s, verbatim and in that order, which is what
     /// `CREATE TYPE … AS ENUM (…)` writes and what a `--binary-upgrade`
     /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6).
-    Enum(Arc<[String]>),
+    ///
+    /// `exact` is `TypeKind::Enum`'s: the labels are all the type holds, so
+    /// a field naming another is one `enum_in` refuses (I70).
+    Enum {
+        labels: Arc<[String]>,
+        exact: bool,
+    },
     /// `interval`, compared by `interval_cmp_value`'s span: months collapse
     /// to 30 days and days to 86400 seconds, so `1 mon`, `30 days` and
     /// `720:00:00` are one value written three ways (I40). The span needs 128
@@ -298,7 +304,7 @@ impl CompareKind {
     pub fn datafusion_order(&self) -> CompareKind {
         match self {
             Self::Interval => Self::IntervalFields,
-            Self::Enum(_)
+            Self::Enum { .. }
             | Self::Numeric { .. }
             | Self::TimeTz
             | Self::Network { .. }
@@ -314,7 +320,7 @@ impl CompareKind {
     /// column differs besides ([`NestedCompare::datafusion_divergences`]).
     pub fn datafusion_divergence(&self) -> Option<ComparisonDivergence> {
         match self {
-            Self::Enum(_) => Some(ComparisonDivergence::LabelText),
+            Self::Enum { .. } => Some(ComparisonDivergence::LabelText),
             Self::Numeric { .. }
             | Self::TimeTz
             | Self::Network { .. }
@@ -1630,7 +1636,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef], visits: Visits) -> TypeOutco
         };
     };
     match &def.kind {
-        TypeKind::Enum { labels } if labels.is_empty() => TypeOutcome::EmptyEnum,
+        TypeKind::Enum { labels, .. } if labels.is_empty() => TypeOutcome::EmptyEnum,
         TypeKind::Enum { .. } => TypeOutcome::Mapped(
             DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
             NestedPlan::Scalar,
@@ -2095,13 +2101,14 @@ fn comparison_user_type(
     match &def.kind {
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
-        TypeKind::Enum { labels } if labels.is_empty() => ComparisonPlan::Refused,
+        TypeKind::Enum { labels, .. } if labels.is_empty() => ComparisonPlan::Refused,
         // PostgreSQL orders an enum by `pg_enum.enumsortorder`, assigned from
         // *declaration* order (I33) — so a label's position in this list is
         // the order and its text is not.
-        TypeKind::Enum { labels } => {
-            ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect()))
-        }
+        TypeKind::Enum { labels, exact } => ComparisonPlan::agrees(CompareKind::Enum {
+            labels: labels.iter().cloned().collect(),
+            exact: *exact,
+        }),
         // A domain compares as what it bottoms out at, through any chain —
         // the same recursion `resolve_declared_type` makes, bounded the same
         // way. The collation walks down with it and the *column's* clause
@@ -2475,7 +2482,7 @@ mod tests {
                 NestedPlan::Array(Box::new(NestedPlan::Scalar))
             )
         );
-        let types = [ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()] })];
+        let types = [ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()], exact: true })];
         assert_eq!(
             resolve_declared_type("public.mood[]", &types),
             TypeOutcome::Mapped(
@@ -2893,7 +2900,7 @@ mod tests {
     #[test]
     fn nothing_else_carries_a_name() {
         let types = [
-            ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()] }),
+            ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()], exact: true }),
             ty("public.d_int", TypeKind::Domain { base_type: "integer".into(), collation: None }),
         ];
         for declared in ["uuid[]", "json[]", "text", "integer", "public.mood", "public.d_int"] {
@@ -3001,10 +3008,13 @@ mod tests {
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
         let labels = ["sad".to_string(), "ok".to_string()];
-        let types = [ty("public.mood", TypeKind::Enum { labels: labels.to_vec() })];
+        let types = [ty("public.mood", TypeKind::Enum { labels: labels.to_vec(), exact: true })];
         assert_eq!(
             comparison_for("public.mood", None, &types, &[]),
-            ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect())),
+            ComparisonPlan::agrees(CompareKind::Enum {
+                labels: labels.iter().cloned().collect(),
+                exact: true
+            }),
         );
         assert_eq!(
             comparison_for("numeric", None, &[], &[]),
@@ -3032,7 +3042,7 @@ mod tests {
         );
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
-        let empty = [ty("public.empty", TypeKind::Enum { labels: vec![] })];
+        let empty = [ty("public.empty", TypeKind::Enum { labels: vec![], exact: true })];
         assert_eq!(comparison_for("public.empty", None, &empty, &[]), ComparisonPlan::Refused);
     }
 
@@ -3073,7 +3083,7 @@ mod tests {
         let labels: Arc<[String]> = Arc::from(vec!["b".to_string(), "a".to_string()]);
         for kind in [
             CompareKind::PaddedText,
-            CompareKind::Enum(labels),
+            CompareKind::Enum { labels, exact: true },
             CompareKind::Numeric { infinities: true, typmod: None },
             CompareKind::TimeTz,
             CompareKind::Network { cidr: false },
@@ -3115,7 +3125,11 @@ mod tests {
         let labels: Arc<[String]> = Arc::from(vec!["b".to_string()]);
         for (declared, stored, want) in [
             ("text", [Some(text.clone()), None], Some(P)),
-            ("an enum", [Some(CompareKind::Enum(labels)), Some(text.clone())], Some(F)),
+            (
+                "an enum",
+                [Some(CompareKind::Enum { labels, exact: true }), Some(text.clone())],
+                Some(F),
+            ),
             ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
             ("integer", [Some(CompareKind::Int { bytes: 4 }), None], None),
             ("interval", [Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], None),
@@ -3459,13 +3473,14 @@ mod tests {
     fn a_domain_over_an_enum_compares_by_that_enum_s_declaration_order() {
         let labels = ["sad".to_string(), "ok".to_string(), "happy".to_string()];
         let types = [
-            ty("public.mood", TypeKind::Enum { labels: labels.to_vec() }),
-            ty("public.empty_enum", TypeKind::Enum { labels: Vec::new() }),
+            ty("public.mood", TypeKind::Enum { labels: labels.to_vec(), exact: true }),
+            ty("public.empty_enum", TypeKind::Enum { labels: Vec::new(), exact: true }),
             ty("public.moodish", TypeKind::domain("public.mood")),
             ty("public.moodisher", TypeKind::domain("public.moodish")),
             ty("public.nothingish", TypeKind::domain("public.empty_enum")),
         ];
-        let by_declaration = agrees(CompareKind::Enum(labels.iter().cloned().collect()));
+        let by_declaration =
+            agrees(CompareKind::Enum { labels: labels.iter().cloned().collect(), exact: true });
         assert_eq!(comparison_for("public.moodish", None, &types, &[]), by_declaration);
         assert_eq!(comparison_for("public.moodisher", None, &types, &[]), by_declaration);
         assert_eq!(comparison_for("public.nothingish", None, &types, &[]), ComparisonPlan::Refused);
@@ -3818,7 +3833,10 @@ mod tests {
         let types = [
             ty(r#"s."d[3]""#, TypeKind::domain("integer")),
             ty(r#"s."my type""#, TypeKind::domain("integer")),
-            ty(r#"s."weird[]""#, TypeKind::Enum { labels: vec!["a".into(), "b".into()] }),
+            ty(
+                r#"s."weird[]""#,
+                TypeKind::Enum { labels: vec!["a".into(), "b".into()], exact: true },
+            ),
             ty(r#"s."x ARRAY""#, TypeKind::domain("integer")),
             ty(r#"s."Mood""#, TypeKind::domain("uuid")),
             ty("s.mood", TypeKind::domain("text")),

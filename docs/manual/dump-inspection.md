@@ -1207,7 +1207,10 @@ clause, a composite's fields, a range's subtype. The two `pg_dump` never
 writes but pgdt can still meet are spelled out rather than left blank —
 `composite: (fields not parsed)` for a body pgdt could not read (that is the
 one case that changes how a column of the type resolves), and `range (subtype
-not parsed)`. A C-level type says `base type` or `shell type` because that is
+not parsed)`. An enum whose labels the dump changes in a way pgdt does not
+read lists those it did with `(labels not read exactly)` after them, or says
+`enum: (labels not read)`; see [type handling](type-handling.md#when-a-value-does-not-match-its-type)
+for what that changes. A C-level type says `base type` or `shell type` because that is
 genuinely all the dump records about it: the *server* knows how to parse its
 values, and the dump does not say.
 

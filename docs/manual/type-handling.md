@@ -997,9 +997,16 @@ restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
 past its range, `maybe` in a `boolean`, `::1/08` in an `inet`. `parse` checks
 only the values it reads anyway to gather statistics, so a column at the
 metadata level, an array's elements and a value longer than 256 bytes, but a
-`bytea`, are not checked there — a query reading one still refuses it — and
-nor yet is an enum label its type does not declare, which pgdt does not tell
-from a label its reading of the schema missed.
+`bytea`, are not checked there — a query reading one still refuses it, but for
+an enum label, which a query refuses only where `<`, `<=`, `>` or `>=` reads
+the column.
+
+An enum label its type does not declare fails `parse` too, unless the dump
+changes the type's labels in a way pgdt does not read — an `ALTER TYPE …
+RENAME VALUE`, an `ADD VALUE IF NOT EXISTS`, a label written `E'…'` — when it
+cannot tell such a label from one it missed, and goes on past it. `pgdt info
+--detail` says which types those are, listing their labels with `(labels not
+read exactly)` after them.
 
 ## Columns we cannot type at all
 

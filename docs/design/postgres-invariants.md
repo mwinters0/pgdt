@@ -4604,3 +4604,43 @@ grep -n "\*s == ' ' || \*s == '\\\\n'" src/backend/utils/adt/encode.c
 
 The first prints the hex test and the two escapes; the second the blanks
 skipped between pairs.
+
+---
+
+## I70 — `enum_in` reads a label of its type byte for byte, and refuses any other text
+
+**Claim.** `enum_in` reads a text only where it is, byte for byte, a label
+the type holds in `pg_enum` when the value is read — no blank trimmed, no case
+folded — and refuses, `22P02`, every other text, the empty one and one of
+`NAMEDATALEN` bytes or more among them. The labels are those `CREATE TYPE …
+AS ENUM` declared, as `ALTER TYPE … ADD VALUE` and `RENAME VALUE` have
+changed them since.
+
+**Proof.** `src/backend/utils/adt/enum.c`, `enum_in`: a length check against
+`NAMEDATALEN`, then `SearchSysCache2(ENUMTYPOIDNAME, …)` on the type's oid
+and the text, either failing with `ERRCODE_INVALID_TEXT_REPRESENTATION`.
+
+**Observed.** The koji replica (PG16), in a rolled-back transaction over a
+type of `'sad'` and `'ok'`, reads `ok` and refuses ` ok`, `OK` and the empty
+text; after `RENAME VALUE 'ok' TO 'fine'` it reads `fine` and refuses `ok`;
+`COPY` refuses `furious` as `COPY t, line 3, column a: "furious"`.
+
+**Scope limit.** A label `ADD VALUE` added in the transaction reading it is
+refused besides (`check_safe_enum_use`), which a restore in one transaction
+meets; no field is refused here for it.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `predicate.rs`'s `field_key`, which refuses a field naming
+no label of a type whose labels the preamble holds exactly
+(`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
+it holds.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^enum_in\(/,/^}/' src/backend/utils/adt/enum.c | grep -n 'NAMEDATALEN\|ENUMTYPOIDNAME\|ERRCODE'
+```
+
+It prints the length check, the cache lookup and the two error codes.
