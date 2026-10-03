@@ -3172,8 +3172,8 @@ fn print_index(
         headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         println!("    level: {}", level_label(block));
-        if let Some(ignored) = &block.ignored_refusals {
-            println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, ignored));
+        for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
+            println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }
         if block.header.columns.is_empty() {
             println!("    columns: none (every column dropped or generated, or none declared)");
@@ -3265,19 +3265,19 @@ fn unrepresentable_line(count: &pgdump_query::Unrepresentable) -> String {
     parts.join("; ")
 }
 
-/// What a block records of the fields PostgreSQL refuses that a parse under
-/// `--postgres-invalid-values ignore` went past: how many, and the first as
-/// the refusal names it — what a parse under `default` over this cache fails
-/// with.
+/// What a block records of the fields PostgreSQL refuses in one column that a
+/// parse under `--postgres-invalid-values ignore` went past: how many, and the
+/// first as the refusal names it — what a parse under `default` tracking the
+/// column fails with over this cache.
 fn ignored_refusals_line(
     block: &pgdump_query::CopyBlock,
-    ignored: &pgdump_query::IgnoredRefusals,
+    ignored: &pgdump_query::ColumnRefusals,
 ) -> String {
     let first = &ignored.first;
     let column = block.header.columns.get(first.column).map_or("?", String::as_str);
     format!(
-        "{} field(s) a parse under --postgres-invalid-values ignore went past, the first at COPY \
-         line {}, column {column}: `{}` as `{}`, at offset {}",
+        "column {column}, {} field(s) a parse under --postgres-invalid-values ignore went past, \
+         the first at COPY line {}: `{}` as `{}`, at offset {}",
         ignored.count,
         first.line,
         first.value,

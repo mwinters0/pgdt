@@ -10,11 +10,10 @@ the mode 31.13's
 
 ## What exists
 
-- **`CopyBlock::ignored_refusals`**, a boxed `IgnoredRefusals`: the first
-  `FieldRefusal` in the block's row order, then its columns', and a count of
-  every field keyed and gone past, a row holding two counting two.
-  `FieldRefusal` is now persisted as it stands. `CACHE_FORMAT_VERSION` is 50;
-  `PERSISTED_INDEX`'s digest moved, every block carrying the field's tag.
+- **`CopyBlock::ignored_refusals`**, a boxed `IgnoredRefusals`, per column
+  since 31.13.2
+  ([`roadmap-P31.13.2-per-column-refusals-notes.md`](roadmap-P31.13.2-per-column-refusals-notes.md)).
+  `FieldRefusal` is persisted as it stands.
 - **The observer records it**: `ColumnGatherer::observe` answers `Observed`,
   its `ignored` set where `Ignore` kept a refused field out of the group;
   `Gatherer` adds it to its own record, a piece's folded in by `absorb` with
@@ -22,19 +21,17 @@ the mode 31.13's
   `BlockObserver::take_ignored` hands it over before `finish`, so the
   `BlockGathered` variants did not change.
 - **Who writes it**: `Builder::on_copy_end` for a mapped block;
-  `backfill_statistics` from `BlockReread::ignored`, replacing the record on a
-  re-read that gathers (every column the block held is gathered again, so its
-  record covers the earlier one's) and keeping it on one that declines, unless
-  the block held none.
+  `backfill_statistics` from `BlockReread::ignored`, merged per column
+  (31.13.2).
 - **Who reads it**: `stream::refuse_recorded`, after `map_file` loads its
   cache and before anything is read, under `Default` alone — the first block
-  in file order holding a record that the request tracks at all
-  (`tracked_columns`), failing with `Error::FieldRefusedRecorded`: the
+  in file order holding a record in a column the request tracks (31.13.2),
+  failing with `Error::FieldRefusedRecorded`: the
   `FieldRefused` a read of the dump raises, boxed, and the cache's path, its
   message that one's with one sentence added. Boxed, as the block's record is,
   to keep `Error` and `DataBlock` under clippy's size lints.
   A query, the provider and `gather_block_statistics` do not read it.
-- **`pgdt info`** prints a `refused by PostgreSQL:` line under such a block, and
+- **`pgdt info`** prints `refused by PostgreSQL:` lines under such a block, and
   `--json` carries the field with the rest of the block.
 - **Evidence**: `tests/statistics.rs`'s
   `a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded` (no
@@ -55,11 +52,6 @@ the mode 31.13's
   rows before it. This is the same reach a refusing parse has, which never
   checks a declined block's rows either; 31.14's `strict` re-read is what
   covers them.
-- **The check is per block, not per column**: one record per block cannot say
-  whether a refusal sits in a column a later request still tracks, so a
-  `Default` parse tracking the table at all fails on it; 31.13.2 makes the
-  record per column ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md),
-  "A recorded refusal is per column").
 
 ## What the slices after this inherit
 

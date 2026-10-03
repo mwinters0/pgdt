@@ -165,10 +165,12 @@ impl StatisticsRequest {
         }
     }
 
-    /// Gathering `columns` from a block's first row as this request sizes it.
-    pub(crate) fn gathering(&self, columns: Vec<bool>) -> StatisticsBackfill {
+    /// Gathering `columns`, of which it tracks `requested`, from a block's
+    /// first row as this request sizes it.
+    pub(crate) fn gathering(&self, columns: Vec<bool>, requested: Vec<bool>) -> StatisticsBackfill {
         StatisticsBackfill {
             columns,
+            requested,
             group_size: self.group_size(),
             group_cap: self.group_cap(),
             min_rows: self.min_rows(),
@@ -251,7 +253,7 @@ impl StatisticsRequest {
             return None;
         }
         let Some(held) = block.statistics.as_deref() else {
-            return Some(self.gathering(requested));
+            return Some(self.gathering(requested.clone(), requested));
         };
         let stated_bound = self.min_rows.is_some() || self.max_rows.is_some();
         let resized = match self.group_size {
@@ -276,17 +278,18 @@ impl StatisticsRequest {
             .map(|(i, &wanted)| wanted || held.columns.get(i).is_some_and(Option::is_some))
             .collect();
         if resized {
-            return Some(self.gathering(columns));
+            return Some(self.gathering(columns, requested));
         }
         if unmet_max {
             let max_rows = self.max_rows().expect("`unmet_max` read it");
             return Some(StatisticsBackfill {
                 group_size: held.predicted_group_size(max_rows),
-                ..self.gathering(columns)
+                ..self.gathering(columns, requested)
             });
         }
         Some(StatisticsBackfill {
             columns,
+            requested,
             group_size: held.group_size,
             group_cap: None,
             min_rows: None,
@@ -304,6 +307,13 @@ impl StatisticsRequest {
 pub struct StatisticsBackfill {
     /// The columns gathered, positionally to the block's header.
     pub columns: Vec<bool>,
+    /// Those of `columns` the request tracks. A field its type's `*_in`
+    /// refuses is met as the pass's [`crate::PostgresInvalidValues`] says in
+    /// these alone; in a column gathered only because the block held it, it
+    /// is gone past and recorded as an ignoring pass records it
+    /// ([`IgnoredRefusals`]), so a refusing parse fails on exactly the columns
+    /// it tracks, whichever runs gathered the block.
+    pub requested: Vec<bool>,
     /// The group size gathered at: for a block re-read from its first row,
     /// the request's stated size, else [`ROW_GROUP_DEFAULT_SIZE_BYTES`]; for
     /// a block whose groups break a stated maximum, the finer size
@@ -483,7 +493,7 @@ impl BlockGathered {
 }
 
 /// A field PostgreSQL refuses, where a statistics observer met it
-/// ([`BlockGathered::Refused`], [`IgnoredRefusals::first`]).
+/// ([`BlockGathered::Refused`], [`ColumnRefusals::first`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldRefusal {
     /// Where the field's row starts, relative to the block's first data byte.
@@ -518,57 +528,106 @@ impl FieldRefusal {
 }
 
 /// **The fields its type's `*_in` refuses that a parse told to ignore them
-/// went past in one block** ([`crate::index::CopyBlock::ignored_refusals`]):
-/// the first in the block's row order, in full, and how many. A fact about
-/// the dump, not the mode that met it, so a parse under
-/// [`crate::PostgresInvalidValues::Default`] over a cache holding one fails
-/// with it, re-reading nothing
-/// ([`crate::Error::FieldRefusedRecorded`]).
+/// went past in one block** ([`crate::index::CopyBlock::ignored_refusals`]),
+/// **per column**: each column holding one keeps its first in the block's row
+/// order, in full, and how many. A fact about the dump, not the mode that met
+/// it, so a parse under [`crate::PostgresInvalidValues::Default`] over a cache
+/// holding one fails with it exactly where it tracks the column, re-reading
+/// nothing ([`crate::Error::FieldRefusedRecorded`]).
 ///
 /// **Only the fields gathering keyed**, as a refusing parse checks only those:
-/// a tracked column's scalar values, up to the block's decline where it
+/// a gathered column's scalar values, up to the block's decline where it
 /// declined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IgnoredRefusals {
-    /// The first, in the block's row order and then its columns'.
+    /// One per column holding such a field, in the header's column order,
+    /// never empty.
+    pub columns: Vec<ColumnRefusals>,
+}
+
+/// One column's part of [`IgnoredRefusals`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnRefusals {
+    /// The column's first, in the block's row order; its
+    /// [`FieldRefusal::column`] is the column's.
     pub first: FieldRefusal,
-    /// Every one keyed, `first` included — a row holding two counting two.
+    /// Every one the column's gathering keyed, `first` included.
     pub count: u64,
 }
 
 impl IgnoredRefusals {
-    /// Count `refusal`, which follows every one already counted, keeping it
-    /// as the first where nothing was.
+    /// `held`'s columns, made where there were none, and where `column`'s
+    /// entry is or would be inserted.
+    fn slot(
+        held: &mut Option<Self>,
+        column: usize,
+    ) -> (&mut Vec<ColumnRefusals>, Result<usize, usize>) {
+        let columns = &mut held.get_or_insert_with(|| Self { columns: Vec::new() }).columns;
+        let at = columns.binary_search_by_key(&column, |c| c.first.column);
+        (columns, at)
+    }
+
+    /// Count `refusal`, which follows every one already counted in its
+    /// column, keeping it as the column's first where nothing was.
     pub(crate) fn add(held: &mut Option<Self>, refusal: FieldRefusal) {
-        match held {
-            Some(held) => held.count += 1,
-            None => *held = Some(Self { first: refusal, count: 1 }),
+        match Self::slot(held, refusal.column) {
+            (columns, Ok(at)) => columns[at].count += 1,
+            (columns, Err(at)) => columns.insert(at, ColumnRefusals { first: refusal, count: 1 }),
         }
     }
 
     /// Fold `later`'s, whose rows all follow those `held` counted.
     pub(crate) fn fold(held: &mut Option<Self>, later: Option<Self>) {
-        match (held.as_mut(), later) {
-            (Some(held), Some(later)) => held.count += later.count,
-            (None, later) => *held = later,
-            (Some(_), None) => {}
+        for later in later.into_iter().flat_map(|later| later.columns) {
+            match Self::slot(held, later.first.column) {
+                (columns, Ok(at)) => columns[at].count += later.count,
+                (columns, Err(at)) => columns.insert(at, later),
+            }
         }
     }
 
-    /// The error a parse under [`crate::PostgresInvalidValues::Default`] fails
-    /// with over a cache, at `cache`, holding this block's record: the first
-    /// worded as [`FieldRefusal::into_error`] words it, saying where it was
-    /// read from.
-    pub(crate) fn into_error(
-        self,
+    /// Merge `other`'s, read over the same block from its first row as
+    /// `held`'s was, either perhaps stopping at a decline: a column's first is
+    /// the dump's whichever read met it, and its count the larger, the read
+    /// covering more rows having met at least as many; a column only one
+    /// read gathered keeps that read's.
+    pub fn merge(held: &mut Option<Self>, other: Option<Self>) {
+        for other in other.into_iter().flat_map(|other| other.columns) {
+            match Self::slot(held, other.first.column) {
+                (columns, Ok(at)) => columns[at].count = columns[at].count.max(other.count),
+                (columns, Err(at)) => columns.insert(at, other),
+            }
+        }
+    }
+
+    /// The first, in row and then column order, among the columns `tracked`
+    /// marks, positionally to the block's header: the field a parse keying
+    /// those columns meets first.
+    pub fn first_among(&self, tracked: &[bool]) -> Option<&FieldRefusal> {
+        self.columns
+            .iter()
+            .map(|c| &c.first)
+            .filter(|first| tracked.get(first.column).copied().unwrap_or(false))
+            .min_by_key(|first| (first.line, first.column))
+    }
+
+    /// The error a parse under [`crate::PostgresInvalidValues::Default`]
+    /// keying `tracked` fails with over a cache, at `cache`, holding this
+    /// block's record — `None` where no tracked column holds one: the first
+    /// among them ([`Self::first_among`]) worded as
+    /// [`FieldRefusal::into_error`] words it, saying where it was read from.
+    pub(crate) fn error_for(
+        &self,
+        tracked: &[bool],
         header: &CopyHeader,
         data_offset: u64,
         cache: &std::path::Path,
-    ) -> Error {
-        Error::FieldRefusedRecorded {
-            refused: Box::new(self.first.into_error(header, data_offset)),
+    ) -> Option<Error> {
+        let first = self.first_among(tracked)?.clone();
+        Some(Error::FieldRefusedRecorded {
+            refused: Box::new(first.into_error(header, data_offset)),
             cache: cache.into(),
-        }
+        })
     }
 }
 
@@ -1285,4 +1344,61 @@ pub struct StatisticsHeld {
     pub term_peaks: StatisticsTerms,
     /// The largest the sum of the terms reached, read at an update.
     pub peak: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(line: u64, column: usize) -> FieldRefusal {
+        FieldRefusal {
+            offset: line * 10,
+            line,
+            column,
+            declared_type: "smallint".to_string(),
+            value: format!("7000{line}"),
+        }
+    }
+
+    fn counts(record: &Option<IgnoredRefusals>) -> Vec<(usize, u64, u64)> {
+        let columns = record.iter().flat_map(|r| &r.columns);
+        columns.map(|c| (c.first.column, c.first.line, c.count)).collect()
+    }
+
+    /// **A record is per column**: each column keeps its first and its count,
+    /// in column order whatever order they were met in; a later piece's
+    /// count adds to its column's and its first stands only where the column
+    /// had none; and a merge of two reads from the block's first row keeps
+    /// each column's first and the larger count, a column only one read
+    /// gathered keeping that read's.
+    #[test]
+    fn a_record_keeps_each_columns_first_and_count() {
+        let mut held = None;
+        for (line, column) in [(3, 2), (5, 0), (6, 2), (9, 0), (9, 2)] {
+            IgnoredRefusals::add(&mut held, refusal(line, column));
+        }
+        assert_eq!(counts(&held), [(0, 5, 2), (2, 3, 3)]);
+
+        let mut later = None;
+        IgnoredRefusals::add(&mut later, refusal(12, 1));
+        IgnoredRefusals::add(&mut later, refusal(14, 2));
+        IgnoredRefusals::fold(&mut held, later);
+        assert_eq!(counts(&held), [(0, 5, 2), (1, 12, 1), (2, 3, 4)]);
+
+        let mut declined = None;
+        IgnoredRefusals::add(&mut declined, refusal(3, 2));
+        IgnoredRefusals::add(&mut declined, refusal(4, 3));
+        let mut merged = held.clone();
+        IgnoredRefusals::merge(&mut merged, declined.clone());
+        assert_eq!(counts(&merged), [(0, 5, 2), (1, 12, 1), (2, 3, 4), (3, 4, 1)]);
+        IgnoredRefusals::merge(&mut declined, held);
+        assert_eq!(counts(&declined), counts(&merged), "a merge is symmetric");
+
+        let record = merged.expect("held some");
+        let first = |tracked: &[bool]| record.first_among(tracked).map(|f| (f.line, f.column));
+        assert_eq!(first(&[true, true, true, true]), Some((3, 2)));
+        assert_eq!(first(&[true, true, false, false]), Some((5, 0)));
+        assert_eq!(first(&[false, true]), Some((12, 1)));
+        assert_eq!(first(&[false, false, false]), None);
+    }
 }

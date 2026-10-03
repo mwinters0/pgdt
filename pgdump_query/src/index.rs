@@ -281,10 +281,11 @@ pub struct CopyBlock {
     #[serde(default)]
     pub statistics_declined: Option<u64>,
     /// **The fields its type's `*_in` refuses that a parse told to ignore them
-    /// went past in this block** — the first in full and a count — and `None`
-    /// where no pass gathering it met one so. Recorded by the mapping pass
-    /// and replaced by a back-fill's re-read that gathers, kept by one that
-    /// declines; a parse refusing such fields over this map fails with it
+    /// went past in this block** — per column, its first in full and a count
+    /// — and `None` where no pass gathering it met one so. Recorded by the
+    /// mapping pass and merged with a back-fill's re-read
+    /// ([`IgnoredRefusals::merge`]); a parse refusing such fields over this
+    /// map fails with it where it tracks such a column
     /// ([`crate::Error::FieldRefusedRecorded`]).
     #[serde(default)]
     pub ignored_refusals: Option<Box<IgnoredRefusals>>,

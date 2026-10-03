@@ -1016,12 +1016,14 @@ read exactly)` after them.
 keeping no statistics of the stretch of its column it sits in, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
 sign and one below its smallest as zero, and refuses every other as before.
-**The cache remembers what `parse` went past**: each `COPY` block's first such
-value and how many, which `pgdt info` lists under the block's table as
-`refused by PostgreSQL:`, so
-a later `parse` without the flag fails with that first value, saying an
-earlier parse recorded it and naming the cache, without reading the dump again
-— a clean `parse` means the same whichever run built the cache. A query is not
+**The cache remembers what `parse` went past**: in each `COPY` block, each
+column's first such value and how many, which `pgdt info` lists under the
+block's table as one `refused by PostgreSQL:` line per column, so a later
+`parse` without the flag that records statistics of such a column
+([`dump-inspection.md`](dump-inspection.md), "`--statistics-level`: what
+`parse` records for later queries") fails with the first value among those
+columns, saying an earlier parse recorded it and naming the cache, without
+reading the dump again — a clean `parse` means the same whichever run built the cache. A query is not
 affected: it reads each value under its own `--postgres-invalid-values`.
 The DataFusion provider takes it as `PgDumpOptions::postgres_invalid_values`,
 the shell as `:postgres-invalid-values=` and `pgdump.postgres_invalid_values`

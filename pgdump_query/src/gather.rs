@@ -91,7 +91,8 @@ pub(crate) fn observer_for(
     account: &Arc<StatisticsAccount>,
     invalid: PostgresInvalidValues,
 ) -> Option<Box<dyn BlockObserver>> {
-    let gathering = request.gathering(request.tracked_columns(header)?);
+    let tracked = request.tracked_columns(header)?;
+    let gathering = request.gathering(tracked.clone(), tracked);
     Some(observer_tracking(&gathering, header, metadata, database, account, invalid))
 }
 
@@ -99,7 +100,9 @@ pub(crate) fn observer_for(
 /// `header` — at its group size, merged pairwise past its cap and short of its
 /// minimum: what [`observer_for`] builds from a request, and what a back-fill
 /// builds from [`StatisticsRequest::backfill`]'s answer. `invalid` says
-/// whether a field its type's `*_in` refuses stops the block.
+/// whether a field its type's `*_in` refuses stops the block, in the columns
+/// the plan's request tracks; in the rest it is gone past and recorded
+/// ([`StatisticsBackfill::requested`]).
 pub(crate) fn observer_tracking(
     plan: &StatisticsBackfill,
     header: &CopyHeader,
@@ -130,7 +133,11 @@ pub(crate) fn observer_tracking(
                     &resolved.plans[i],
                     resolved.schema.field(i).data_type(),
                     tiers[i].clone(),
-                    invalid,
+                    if plan.requested.get(i).copied().unwrap_or(false) {
+                        invalid
+                    } else {
+                        PostgresInvalidValues::Ignore
+                    },
                 )
             })
         })
@@ -823,8 +830,8 @@ impl BlockObserver for Gatherer {
             return self.refuse(refusal);
         }
         let mut ignored = later.ignored.take();
-        if let Some(ignored) = &mut ignored {
-            ignored.first.line += self.rows;
+        for column in ignored.iter_mut().flat_map(|ignored| &mut ignored.columns) {
+            column.first.line += self.rows;
         }
         IgnoredRefusals::fold(&mut self.ignored, ignored);
         self.rows += later.rows;
@@ -3748,9 +3755,12 @@ mod tests {
                 continue;
             }
             let ignored = observer.take_ignored().expect("the block went past one");
-            let FieldRefusal { line, offset, column, value, .. } = ignored.first;
+            let [recorded] = &ignored.columns[..] else {
+                panic!("round {round}: one column refuses, recorded {ignored:?}");
+            };
+            let FieldRefusal { line, offset, column, value, .. } = recorded.first.clone();
             assert_eq!((line, offset, column, value), expected, "round {round}");
-            assert_eq!(ignored.count, 1 + u64::from(second != first), "round {round}");
+            assert_eq!(recorded.count, 1 + u64::from(second != first), "round {round}");
             assert!(observer.finish(end).gathered().is_some(), "round {round}");
         }
     }

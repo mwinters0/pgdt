@@ -20,12 +20,12 @@ use std::time::SystemTime;
 use bytes::Bytes;
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, CopyBlock, DEFAULT_MEMORY_BUDGET,
-    DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, FieldRefusal, GroupSizing,
-    IgnoredRefusals, LocalFileSource, MapRun, Parallelism, PostgresInvalidValues,
-    ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions, Sortedness,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    bounded_columns, gather_block_statistics, map_file,
+    BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, ColumnRefusals, CopyBlock,
+    DEFAULT_MEMORY_BUDGET, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex,
+    FieldRefusal, GroupSizing, IgnoredRefusals, LocalFileSource, MapRun, Parallelism,
+    PostgresInvalidValues, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions,
+    Sortedness, StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -1311,8 +1311,8 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
 /// group each sits in keeps no bounds or dictionary of its column, nor the
 /// column a sum, so no statistic says what a read of it would not: every other
 /// group keeps its own (`docs/design/decisions.md`, "D103"). **The block
-/// records what it went past**, the first in full and a count, alike in every
-/// arrangement.
+/// records what it went past per column**, each column's first in full and a
+/// count, alike in every arrangement.
 #[tokio::test]
 async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -1322,17 +1322,15 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     text.push_str("COPY public.t (a, f) FROM stdin;\n");
     let data = text.len() as u64;
     let mut refused_groups = Vec::new();
-    let mut first = 0;
+    let mut refused_offsets = Vec::new();
     for i in 0..2000 {
         let (a, f) = match i {
             700 => ("70000".to_string(), "1.5".to_string()),
             1500 => (i.to_string(), "1.79769313486232e+308".to_string()),
             _ => (i.to_string(), format!("{i}.5")),
         };
-        if i == 700 {
-            first = text.len() as u64 - data;
-        }
         if i == 700 || i == 1500 {
+            refused_offsets.push(text.len() as u64 - data);
             refused_groups.push(((text.len() as u64 - data) / 256) as usize);
         }
         text.push_str(&format!("{a}\t{f}\n"));
@@ -1361,15 +1359,22 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
             }
         }
         assert_eq!(t.columns[0].as_ref().unwrap().sums, None, "{at}: `a`'s sums");
-        let first = FieldRefusal {
-            offset: first,
-            line: 701,
-            column: 0,
-            declared_type: "smallint".to_string(),
-            value: "70000".to_string(),
+        let first = |column: usize, line: u64, declared_type: &str, value: &str| ColumnRefusals {
+            first: FieldRefusal {
+                offset: refused_offsets[column],
+                line,
+                column,
+                declared_type: declared_type.to_string(),
+                value: value.to_string(),
+            },
+            count: 1,
         };
+        let columns = vec![
+            first(0, 701, "smallint", "70000"),
+            first(1, 1501, "double precision", "1.79769313486232e+308"),
+        ];
         let recorded = block(index, "public.t").ignored_refusals.clone();
-        assert_eq!(recorded.as_deref(), Some(&IgnoredRefusals { first, count: 2 }), "{at}");
+        assert_eq!(recorded.as_deref(), Some(&IgnoredRefusals { columns }), "{at}");
     };
     check(&gathered_with(&dump, &serial, &wanted).await, "serial");
     let source = LocalFileSource::open(&dump).unwrap();
@@ -1417,7 +1422,7 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     };
     let mapped = mapped_into_cache(&dump, &ignoring, &StatisticsRequest::DATA).await;
     let recorded = block(&mapped.index, "public.t").clone();
-    assert_eq!(recorded.ignored_refusals.as_ref().map(|r| r.count), Some(1));
+    assert_eq!(recorded.ignored_refusals.as_ref().map(|r| r.columns[0].count), Some(1));
     let path = cache::colocated_path(&dump);
     let saved = std::fs::read(&path).unwrap();
 
@@ -1453,6 +1458,117 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     assert_eq!(block(&refusing.index, "public.t"), &recorded);
     let again = mapped_into_cache(&dump, &ignoring, &StatisticsRequest::DATA).await;
     assert_eq!(block(&again.index, "public.t"), &recorded);
+}
+
+/// **A recorded refusal fails exactly the refusing parses tracking its
+/// column**, quoting the first among the columns tracked, in row and then
+/// column order — the field a read keying those columns meets first — and a
+/// request tracking none of them passes, keeping the record. So does one
+/// whose back-fill re-reads the block, gathering the refused columns again
+/// only because the block held them: it goes past their fields and records
+/// them as before, whichever runs gathered the cache.
+#[tokio::test]
+async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("per-column.sql");
+    let mut text = String::from("CREATE TABLE public.t (\n");
+    text.push_str("    a smallint,\n    b smallint,\n    c smallint,\n    d smallint\n);\n\n");
+    text.push_str("COPY public.t (a, b, c, d) FROM stdin;\n");
+    let mut offsets = Vec::new();
+    for i in 0..200 {
+        offsets.push(text.len() as u64);
+        let row = match i {
+            30 | 150 => format!("{i}\t{i}\t70000\t{i}"),
+            60 => format!("70000\t-70000\t{i}\t{i}"),
+            _ => format!("{i}\t{i}\t{i}\t{i}"),
+        };
+        text.push_str(&row);
+        text.push('\n');
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    let ignoring = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..ScanOptions::default()
+    };
+    let mapped = mapped_into_cache(&dump, &ignoring, &StatisticsRequest::DATA).await;
+    let recorded = block(&mapped.index, "public.t").clone();
+    let counts: Vec<(usize, u64)> = recorded
+        .ignored_refusals
+        .iter()
+        .flat_map(|r| &r.columns)
+        .map(|c| (c.first.column, c.count))
+        .collect();
+    assert_eq!(counts, [(0, 1), (1, 1), (2, 2)], "each refused column, in column order");
+    let path = cache::colocated_path(&dump);
+    let mode = CacheMode::enabled(path.clone());
+    let source = LocalFileSource::open(&dump).unwrap();
+    let tracking = |columns: &[&str]| StatisticsRequest {
+        selection: only(
+            columns
+                .iter()
+                .map(|c| StatisticsTarget::Column {
+                    table: "public.t".to_string(),
+                    column: (*c).to_string(),
+                })
+                .collect(),
+        ),
+        ..StatisticsRequest::DATA
+    };
+    // The columns tracked, and the column, line and value the refusal quotes.
+    type Case = (&'static [&'static str], Option<(&'static str, u64, &'static str)>);
+    let cases: [Case; 6] = [
+        (&["a", "b", "c", "d"], Some(("c", 31, "70000"))),
+        (&["a", "b"], Some(("a", 61, "70000"))),
+        (&["b", "d"], Some(("b", 61, "-70000"))),
+        (&["c"], Some(("c", 31, "70000"))),
+        (&["d"], None),
+        (&[], None),
+    ];
+    for (columns, expected) in cases {
+        let run = map_file(&source, &ScanOptions::default(), &mode, &tracking(columns)).await;
+        let Some((column, line, value)) = expected else {
+            let run = run.unwrap_or_else(|e| panic!("{columns:?}: tracks no refused column: {e}"));
+            assert_eq!(
+                block(&run.index, "public.t").ignored_refusals,
+                recorded.ignored_refusals,
+                "{columns:?}: the record is kept"
+            );
+            continue;
+        };
+        let Err(pgdump_query::Error::FieldRefusedRecorded { refused, .. }) = run else {
+            panic!("{columns:?}: expected the recorded refusal, got {run:?}");
+        };
+        let pgdump_query::Error::FieldRefused {
+            column: named,
+            line: at,
+            line_offset,
+            value: v,
+            ..
+        } = *refused
+        else {
+            panic!("{columns:?}: expected the refusal as a read raises it, got {refused:?}");
+        };
+        let quoted = (named.as_str(), at, v.as_str(), line_offset);
+        assert_eq!(quoted, (column, line, value, offsets[line as usize - 1]), "{columns:?}");
+    }
+
+    // A back-fill: another group size re-reads the block, gathering `a`, `b`
+    // and `c` because the block held them, and fails on none of them.
+    let recording = RecordingSource::open(&dump);
+    let resized =
+        StatisticsRequest { group_size: Some(NonZeroU64::new(128).unwrap()), ..tracking(&["d"]) };
+    let run = map_file(&recording, &ScanOptions::default(), &mode, &resized).await.unwrap();
+    let reread = block(&run.index, "public.t");
+    assert!(recording.reads_of(reread) > 0, "the block was re-read");
+    assert_eq!(statistics(reread).group_size, 128);
+    assert!(statistics(reread).columns.iter().all(Option::is_some), "every held column kept");
+    assert_eq!(reread.ignored_refusals, recorded.ignored_refusals, "the record is renewed alike");
+    let refusing = map_file(&source, &ScanOptions::default(), &mode, &tracking(&["c"])).await;
+    assert!(
+        matches!(refusing, Err(pgdump_query::Error::FieldRefusedRecorded { .. })),
+        "{refusing:?}"
+    );
 }
 
 /// **A field of a kind this build reads narrower than its input function

@@ -1503,11 +1503,12 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
 
 /// **Fail a parse refusing the fields PostgreSQL refuses at the first such
 /// field `index` records an earlier parse went past**
-/// ([`CopyBlock::ignored_refusals`]), in file order, in a block `statistics`
+/// ([`CopyBlock::ignored_refusals`]), in file order, in a column `statistics`
 /// tracks — before anything is read, the cache being as much the dump's
 /// account as a re-read of the block would be, so the verdict does not depend
-/// on which run gathered it. A block the request leaves at the metadata level
-/// is one a refusing parse would not key, and is passed over.
+/// on which run gathered it. A column the request leaves at the metadata
+/// level is one a refusing parse would not key, and is passed over; among the
+/// rest, the field quoted is the one a read would have met first.
 fn refuse_recorded(
     scan_options: &ScanOptions,
     cache: &CacheMode,
@@ -1519,16 +1520,22 @@ fn refuse_recorded(
     }
     // Only a cache read from a file can hold a record.
     let CacheMode::Enabled { path, .. } = cache else { return Ok(()) };
-    let recorded = index.blocks().find(|block| {
-        block.ignored_refusals.is_some() && statistics.tracked_columns(&block.header).is_some()
+    let refused = index.blocks().find_map(|block| {
+        let recorded = block.ignored_refusals.as_deref()?;
+        let tracked = statistics.tracked_columns(&block.header)?;
+        recorded.error_for(&tracked, &block.header, block.data_offset, path)
     });
-    match recorded {
-        Some(block) => {
-            let ignored = block.ignored_refusals.clone().expect("found holding one");
-            Err(ignored.into_error(&block.header, block.data_offset, path))
-        }
-        None => Ok(()),
-    }
+    refused.map_or(Ok(()), Err)
+}
+
+/// Merge what a re-read of a block went past into the block's record
+/// ([`IgnoredRefusals::merge`]): a column the re-read gathered whole holds
+/// its full count either way, and one it did not, or gathered only up to a
+/// decline, keeps what the fuller read met.
+fn merge_ignored(record: &mut Option<Box<IgnoredRefusals>>, reread: Option<IgnoredRefusals>) {
+    let mut merged = record.take().map(|record| *record);
+    IgnoredRefusals::merge(&mut merged, reread);
+    *record = merged.map(Box::new);
 }
 
 /// What [`backfill_statistics`] did.
@@ -1650,9 +1657,7 @@ async fn backfill_statistics(
                     // (`docs/design/decisions.md`, "D85").
                     BlockGathered::Declined { allowance } => {
                         block.statistics_declined = Some(allowance);
-                        if block.ignored_refusals.is_none() {
-                            block.ignored_refusals = ignored.map(Box::new);
-                        }
+                        merge_ignored(&mut block.ignored_refusals, ignored);
                     }
                     BlockGathered::Refused(_) => unreachable!("a re-read fails on a refusal"),
                     BlockGathered::Gathered(gathered) => {
@@ -1673,9 +1678,7 @@ async fn backfill_statistics(
                         // A block that holds what was asked declines nothing,
                         // so a record from an earlier, tighter allowance goes.
                         block.statistics_declined = None;
-                        // Every column it held was gathered again, so what
-                        // the re-read went past is all an earlier pass did.
-                        block.ignored_refusals = ignored.map(Box::new);
+                        merge_ignored(&mut block.ignored_refusals, ignored);
                         account.apply(&[(term, -(replaced as i64))]);
                     }
                 }
@@ -1788,11 +1791,10 @@ pub struct BlockReread {
     /// every row — a declined one included.
     pub census: BlockCensus,
     /// The fields its type's `*_in` refuses that the re-read keyed and went
-    /// past, under [`crate::PostgresInvalidValues::Ignore`]: what
-    /// [`CopyBlock::ignored_refusals`] holds after a re-read that gathered,
-    /// every column the block held being gathered again
-    /// ([`StatisticsBackfill`]), and after one that declined only where the
-    /// block held none.
+    /// past, per column — under [`crate::PostgresInvalidValues::Ignore`], or
+    /// in a column gathered only because the block held it
+    /// ([`StatisticsBackfill::requested`]) — which a caller merges into
+    /// [`CopyBlock::ignored_refusals`] ([`IgnoredRefusals::merge`]).
     pub ignored: Option<IgnoredRefusals>,
 }
 
@@ -1807,7 +1809,8 @@ pub struct BlockReread {
 /// allowance in [`CopyBlock::statistics_declined`]
 /// (`docs/design/decisions.md`, "D85"), and its `census` through
 /// [`CopyBlock::set_census`], which puts a block mapped at the metadata
-/// level at the data level.
+/// level at the data level, and merges its `ignored` into
+/// [`CopyBlock::ignored_refusals`] ([`IgnoredRefusals::merge`]).
 ///
 /// **The block is scanned as a mapping pass scans it**: offered to the leader
 /// under `scan_options`' parallelism, and read serially where it declines, so
@@ -1818,8 +1821,10 @@ pub struct BlockReread {
 /// [`Error::CachedBlockChanged`], rather than given statistics describing other
 /// bytes than its map does. It names no cache, this entry point being handed
 /// none; [`map_file`]'s back-fill names the one it loaded. **A field its
-/// type's `*_in` refuses fails the re-read**, [`Error::FieldRefused`], as it
-/// fails a mapping pass, so the result never holds [`BlockGathered::Refused`].
+/// type's `*_in` refuses fails the re-read** in a column `backfill`'s request
+/// tracks, [`Error::FieldRefused`], as it fails a mapping pass, so the result
+/// never holds [`BlockGathered::Refused`]; in any other it is recorded
+/// ([`BlockReread::ignored`]).
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,

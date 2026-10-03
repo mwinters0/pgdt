@@ -727,11 +727,11 @@ fn parse_and_query_each_take_postgres_invalid_values() {
     assert!(!refused.status.success());
     assert!(stderr_of(&refused).contains("1.79769313486232e+308"), "{}", stderr_of(&refused));
     run_ok(&["parse", "--source", source, "--postgres-invalid-values", "ignore"]);
-    // The cache records what it went past, `info` says so, and a refusing
-    // parse over it fails with it, saying where it was read.
+    // The cache records what it went past, `info` says so by column, and a
+    // refusing parse over it fails with it, saying where it was read.
     let info = run_ok(&["info", "--source", source]);
     assert!(
-        info.lines().any(|l| l.starts_with("    refused by PostgreSQL: ")
+        info.lines().any(|l| l.starts_with("    refused by PostgreSQL: column v_double, ")
             && l.contains("`-1.79769313486232e+308` as `double precision`")),
         "{info}"
     );
