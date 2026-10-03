@@ -102,6 +102,7 @@ approval, in the spec's opening note.
 - [x] **31.12.3** An enum field naming a label its type does not declare refused where the preamble holds the type's labels exactly, a statement that could change them and that it cannot read — `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, a label it cannot lex — leaving them inexact, closing `KD83` — [notes](../design/roadmap-P31.12.3-enum-label-refusal-notes.md)
 - [x] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal — [notes](../design/roadmap-P31.13-postgres-invalid-values-notes.md)
 - [x] **31.13.1** A block records the refused fields an ignoring parse went past — the first in full, and a count — so a `default` parse over the cache fails with the recorded refusal, saying an ignoring parse recorded it and nothing was re-read, and `info` reports them; `CACHE_FORMAT_VERSION` bumped — [notes](../design/roadmap-P31.13.1-ignored-refusals-notes.md)
+- [ ] **31.13.2** A block's record of the refused fields an ignoring parse went past is per column — each column holding one keeps its first in full and its count — so a `default` parse fails exactly when it tracks such a column, quoting the first among the columns it tracks, and `info` reports them by column; `CACHE_FORMAT_VERSION` bumped
 - [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query
 
 ## Not started
@@ -133,16 +134,4 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A recorded refusal fails a refusing parse tracking its block at all, not
-  only one tracking its column** (31.13.1). A block records one first refused
-  field and a count, so `stream::refuse_recorded` cannot tell whether a later
-  request still keys the column holding one, and fails a `default` parse
-  whose request leaves the table at the data level in any column — even one
-  that leaves the refused column at the metadata level, which a fresh parse
-  under that request would not key, and so would pass. Taken because the
-  per-block record is what the 2026-10-03 entry specified, and a check by the
-  first's column alone would miss a later refusal in a column still tracked.
-  Reconsidering means a record per column (a first and a count each), which
-  makes the check exact at the cost of a wider persisted block.
 

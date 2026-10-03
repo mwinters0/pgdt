@@ -57,8 +57,9 @@ the mode 31.13's
   covers them.
 - **The check is per block, not per column**: one record per block cannot say
   whether a refusal sits in a column a later request still tracks, so a
-  `Default` parse tracking the table at all fails on it (STATUS, "Decisions
-  worth another look").
+  `Default` parse tracking the table at all fails on it; 31.13.2 makes the
+  record per column ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md),
+  "A recorded refusal is per column").
 
 ## What the slices after this inherit
 
