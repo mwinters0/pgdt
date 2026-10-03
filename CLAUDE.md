@@ -80,7 +80,8 @@ Never edit a `runs/` orchestration script while it is running.
   before any performance claim.** `scripts/measure.py` takes the figures and
   emits the tables; **a table is never hand-edited** and a re-take is
   `--figure <id>`, never a one-off script. **Run `measure.py --stale` before
-  claiming a figure holds**, and acknowledge or explain every red.
+  reasoning from a figure**, and re-take a red one first. Red is otherwise
+  the resting state: no commit owes an acknowledgement, no wrap a sweep.
 - The `evidence` skill governs what a reading may be concluded to mean.
   **Invoke it before concluding anything from a benchmark, profile or RSS
   reading, or fitting a model.** Which instrument to reach for is

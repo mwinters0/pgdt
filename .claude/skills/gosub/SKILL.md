@@ -9,10 +9,10 @@ this session orchestrates and never implements. `/gosub [max-rounds]`, cap **5**
 
 Every round is a new `Agent` call, `subagent_type: "general-purpose"`, no `model`
 override — **never** a fork, **never** `SendMessage` to a previous round's agent.
-**The orchestrator does not do the work**: dispatch, verification, commit — the
-acknowledgements a commit owes included — and the stop decision only. Do not read
-source files, fix the subagent's test failures, or finish a slice it left
-half-done — a round that comes back wrong is a stop condition, not a repair job.
+**The orchestrator does not do the work**: dispatch, verification, commit and
+the stop decision only. Do not read source files, fix the subagent's test
+failures, or finish a slice it left half-done — a round that comes back wrong
+is a stop condition, not a repair job.
 
 ## One round
 
@@ -35,9 +35,8 @@ Date is empty is what it picks up (`go`, "Pick the work").
 > Then report: the slice number and title, or the `M<k>` if you took an
 > out-of-band row; whether you ticked its box and what remains if not; any
 > entries you added to STATUS's "Decisions worth another look", quoted in full;
-> any split and the `<N>.<M>.<K>` it earned; each figure `measure.py --stale`
-> lists red for your change that you judge no reading of can move, and why;
-> `mise run check`'s summary, verbatim; and the path of any detached job.
+> any split and the `<N>.<M>.<K>` it earned; `mise run check`'s summary,
+> verbatim; and the path of any detached job.
 
 **3. Verify independently.** The report is a claim, not evidence: run `mise run
 check --verify --affected` and re-read the checklist and "Decisions worth
@@ -60,12 +59,8 @@ notes doc names the command, and subject it `<N>.<M> <slice title>: the
 instrument`; the next round, on the same slice, takes them.
 Commit even when a stop condition fired for some *other* reason; the one
 exception is that you **never commit a round that failed verification or left its
-box unticked**. **Then acknowledge what the commit could not name itself**, an
-entry needing its sha: for each figure `measure.py --stale` says it holds red,
-where the report says no reading can move and the diff bears that out, add an
-entry to `scripts/acknowledged.py` shaped like its neighbours, check `--stale`
-drops the figure, and commit `Acknowledge <sha> against <figure>`. This loop's
-own commits owe the same; a figure left red is named in the final report.
+box unticked**. A figure the commit leaves red owes nothing
+(`docs/design/measurements.md`, "A stale figure does not oblige a sweep").
 **Then empty the scratchpad**, which the round's subagent shares with you: it was
 told to empty it (`CLAUDE.md`, "The session scratchpad is not a home"), so what
 is left is named by nothing. Delete it, reporting what went and any round that

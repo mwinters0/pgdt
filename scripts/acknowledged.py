@@ -26,15 +26,14 @@ class Acknowledged:
     and coarseness costs something in *both* directions. The cost designed for
     is the false negative: a change outside the declared paths moves a figure
     and nothing says so, which is why the doc also carries a session stamp.
-    This is the other one, and it is the one that decays the mechanism. A
-    change *inside* a declared path that provably moves nothing leaves
-    `--stale` red until a sweep re-stamps the doc — and a sweep is about two
-    hours on a machine that has to be quiet, so the realistic outcome is that no sweep
-    runs and `--stale` becomes a light that is always on. A signal that is
-    always on is the same thing as no signal, which is the decay the register
-    was built against, arriving from the other side.
+    This is the other one: a change *inside* a declared path that provably
+    moves nothing leaves `--stale` red until a sweep re-stamps the doc, and a
+    sweep is about two hours on a machine that has to be quiet.
 
-    So a commit can be excused, per figure, with its evidence attached.
+    So a commit can be excused, per figure, with its evidence attached -- by a
+    reader about to reason from that figure, as the alternative to re-taking
+    it. No commit owes an entry when it lands; red is the resting state
+    (`measurements.md`, "A stale figure does not oblige a sweep").
 
     **A command shape names an entry point, not the code that runs.** A
     figure's shape says which command was timed; whether the changed code
@@ -54,12 +53,9 @@ class Acknowledged:
     commit that touched it is excused.** So one unexamined commit on a path
     makes every earlier entry on that path *inert* — the excuse is still
     correct and still does nothing, and the figure reads red for the new
-    commit. Two consequences, and both have already cost a session. Writing an
-    entry does not mean the figure goes green: check `--stale`, which names an
-    inert entry under the figure it failed to clear. And a slice landing on an
-    already-red declared path still owes an entry or a stated reason not to
-    write one: "the path was red before I touched it" is not one, because the
-    figure's colour is not what the register is tracking.
+    commit. So writing an entry does not mean the figure goes green: check
+    `--stale`, which names an inert entry under the figure it failed to clear,
+    and excuse every commit it names or re-take the figure.
 
     **An acknowledgement lives inside one stamp's range.** Once the doc is
     re-stamped past it, the commit is no longer in any `--stale` range and the

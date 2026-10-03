@@ -61,8 +61,7 @@ trimmed or struck (`docs/process.md`, "Where does this fact go?").
 
 Trim whatever `repoint.py` names to its cap — striking, never raising the
 cap. Run `uv run repoint.py`, `uv run citations.py`, `uv run deficiencies.py`,
-and `uv run measure.py --check` if a figure's consumer moved; a comment-only
-source change owes a `--stale` acknowledgement like any other. Move the stamp
+and `uv run measure.py --check` if a figure's consumer moved. Move the stamp
 to `HEAD`'s short sha — the commit you are about to make counts from it. One
 commit, subject `repoint: <n> claims corrected, <m> entries struck`, body
 naming each correction by file and what was true.

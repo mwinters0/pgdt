@@ -66,8 +66,8 @@ sitting of its own. `session-drift` is the `da05a72` pair's, and `reserve`'s
 stated axis is a reading `KD34` names.
 What only something other than a sweep clears: `session-drift`, which only a
 second sweep on a first's commit re-takes, and the koji section, outside the
-register and red, which only a run on the HDD clears. Red with the reason
-written down is the standing requirement, not red cleared
+register and red, which only a run on the HDD clears. Red is the resting
+state, and a red figure is re-taken before anything reasons from it
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 

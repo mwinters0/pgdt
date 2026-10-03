@@ -744,9 +744,13 @@ the change is in.
 
 **A commit can be acknowledged, and then it stops marking a figure stale.** A
 change *inside* a declared path that provably moves nothing leaves `--stale`
-red until a sweep re-stamps the doc — and a sweep is about two hours on a
-machine that has to be quiet, so the realistic outcome is that no sweep runs
-and `--stale` becomes a light that is always on, which is as good as no signal.
+red until a sweep re-stamps the doc. An acknowledgement is the alternative to
+that re-take, **written by a reader about to reason from the red figure**, and
+only where an oracle below settles the commit; no commit owes one when it
+lands. Writing them per commit kept almost no figure green, because one
+unexamined commit on a path holds it red, and spent a round's commit on each
+([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "Red is
+the resting state").
 
 So `measure.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
 figure declares, so that adding an entry does not mark stale the figure it
@@ -857,18 +861,19 @@ claim a byte-identity check exists to test; that is said where it binds, in the
 koji section itself.
 
 **A stale figure does not oblige a sweep, and neither does a phase boundary.**
-Red is the honest state for a figure whose evidence nobody has taken, and the
-requirement is that the reason is *written down* — in `STATUS.md`, naming the
-figure and what would settle it — not that the red is cleared. A full sweep is
-about two hours of a machine that has to be quiet, and taking one at each wrap
-spends it on a stamp the next phase invalidates. Sweeps belong to the phase
-that is *about* performance, which is also the phase that will re-take every
-table under its own apparatus. What protects a reader
-in the meantime is not freshness but the standing rules below: quote a
-magnitude rather than three significant figures, and read a move against the
-resolution floor for its regime. Reasoning:
-[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "A sweep
-at every wrap buys a stamp the next phase invalidates".
+Red is the resting state for a figure whose evidence nobody has taken, and
+nothing records why it is red. **What is required is that nothing reasons from
+a red figure**: a session about to quote, compare, difference or derive a
+constant from one runs `--stale` first and re-takes it — `--figure <id>`, or a
+sweep where the figure is one only a sweep takes — or, where an oracle above
+settles every commit holding it red, acknowledges those commits instead. A full
+sweep is about two hours of a machine that has to be quiet, and taking one at
+each wrap spends it on a stamp the next phase invalidates
+([`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "A sweep
+at every wrap buys a stamp the next phase invalidates"). A fresh figure is still
+read by the standing rules below: quote a magnitude rather than three
+significant figures, and read a move against the resolution floor for its
+regime.
 
 **Every reading carries a witness to how quiet the machine was.** Two procfile
 reads bracket each timed run — PSI's monotonic `total=` stall counters and
