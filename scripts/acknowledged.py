@@ -669,4 +669,18 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         "pgdump_query/src/cache.rs | grep '^[-+]' | grep -v '^[-+][[:space:]]*//'; "
         "grep -n 'numeric\\|jsonb' scripts/generate_*.py",
     ),
+    Acknowledged(
+        commit="74eea90d",
+        figures=(
+            "peak-rss",
+            "preamble-prepass",
+            "predicate-terms",
+            "reserve",
+            "rss-attribution",
+        ),
+        why="M209: in these figures' sets only cache.rs and predicate.rs changed, "
+        "CACHE_FORMAT_VERSION's u32 value, accepted_form's error wording and tests",
+        verified="git show 74eea90d -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
