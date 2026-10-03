@@ -695,4 +695,28 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 100e377a -- pgdump_query/src/cache.rs pgdump_query/benches/decoders.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="e318c3e5",
+        figures=(
+            "chunk-size",
+            "map-only",
+            "parallel-peak-rss",
+            "peak-rss",
+            "per-block-quadratic",
+            "preamble-prepass",
+            "reserve",
+            "rss-attribution",
+            "scan-throughput-cold",
+            "scan-throughput-nvme",
+            "scan-throughput-warm",
+        ),
+        why="31.12: these are metadata-level scans, which gather no statistics; in their "
+        "sets on_copy_end returns a Result whose Refused arm only a gathering observer "
+        "reaches, eager_pass and close_copy_block propagate it, the back-fill and re-read "
+        "paths a metadata scan never takes, pgdt's error match gains one arm, "
+        "CACHE_FORMAT_VERSION's u32 value, and leader.rs's change is test-only",
+        verified="git show e318c3e5 -- pgdump_query/src/map.rs pgdump_query/src/stream.rs "
+        "pgdump_query/src/cache.rs pgdump_query/src/leader.rs pgdt/src/main.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
