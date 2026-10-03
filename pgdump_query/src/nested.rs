@@ -55,9 +55,11 @@
 //! any element whose text *is* `null` in any casing, so agreeing with
 //! PostgreSQL here can never misread real output.
 //!
-//! The separator is hardcoded to `,`. An array whose element type sets a
-//! different `typdelim` (`box`, or any C-level base type) is not decoded as an
-//! array at all — see `docs/design/decisions.md`, "D41".
+//! The decoders' separator is hardcoded to `,`. An array whose element type
+//! sets a different `typdelim` (`box`, or any C-level base type) is not decoded
+//! as an array at all — see `docs/design/decisions.md`, "D41" — though a strict
+//! parse reads a `box` array's elements to check them
+//! ([`parse_array_delimited`]).
 
 use std::borrow::Cow;
 
@@ -824,17 +826,18 @@ enum ArrayToken {
     ElemNull,
 }
 
-/// Read one `array_in` token, skipping the whitespace ahead of it. `None` is
-/// a malformed literal, here and in every helper below.
-fn read_array_token(s: &[u8], mut i: usize) -> Option<(ArrayToken, usize)> {
+/// Read one `array_in` token, skipping the whitespace ahead of it, `delim`
+/// being the element type's `typdelim`. `None` is a malformed literal, here
+/// and in every helper below.
+fn read_array_token(s: &[u8], mut i: usize, delim: u8) -> Option<(ArrayToken, usize)> {
     loop {
         match *s.get(i)? {
             b'{' => return Some((ArrayToken::LevelStart, i + 1)),
             b'}' => return Some((ArrayToken::LevelEnd, i + 1)),
-            b'"' => return read_quoted_array_element(s, i + 1),
-            b',' => return Some((ArrayToken::Delim, i + 1)),
+            b'"' => return read_quoted_array_element(s, i + 1, delim),
+            c if c == delim => return Some((ArrayToken::Delim, i + 1)),
             c if is_space(c) => i += 1,
-            _ => return read_unquoted_array_element(s, i),
+            _ => return read_unquoted_array_element(s, i, delim),
         }
     }
 }
@@ -843,7 +846,7 @@ fn read_array_token(s: &[u8], mut i: usize) -> Option<(ArrayToken, usize)> {
 /// but whitespace may follow the closing quote before a separator or a brace:
 /// `{"a"b}` is "incorrectly quoted", not a two-part element. A quoted element
 /// is never the `NULL` marker, whatever it spells.
-fn read_quoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, usize)> {
+fn read_quoted_array_element(s: &[u8], mut i: usize, delim: u8) -> Option<(ArrayToken, usize)> {
     let mut out = Vec::new();
     loop {
         match *s.get(i)? {
@@ -855,7 +858,10 @@ fn read_quoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, usiz
                 i += 1;
                 loop {
                     match *s.get(i)? {
-                        b',' | b'}' | b'{' => {
+                        b'}' | b'{' => {
+                            return Some((ArrayToken::Elem(String::from_utf8(out).ok()?), i));
+                        }
+                        c if c == delim => {
                             return Some((ArrayToken::Elem(String::from_utf8(out).ok()?), i));
                         }
                         c if is_space(c) => i += 1,
@@ -875,7 +881,7 @@ fn read_quoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, usiz
 /// whitespace kept, which `keep` tracks; a `\` escape counts as
 /// non-whitespace and also disqualifies the `NULL` marker, so `{N\ULL}` is
 /// the *string* `NULL` and `{null}` is SQL NULL.
-fn read_unquoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, usize)> {
+fn read_unquoted_array_element(s: &[u8], mut i: usize, delim: u8) -> Option<(ArrayToken, usize)> {
     let mut out = Vec::new();
     let mut keep = 0usize;
     let mut escaped = false;
@@ -890,7 +896,7 @@ fn read_unquoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, us
                 keep = out.len();
                 escaped = true;
             }
-            b',' | b'}' => {
+            c if c == delim || c == b'}' => {
                 out.truncate(keep);
                 let text = String::from_utf8(out).ok()?;
                 if !escaped && text.eq_ignore_ascii_case("NULL") {
@@ -923,6 +929,7 @@ fn read_array_body<'a>(
     mut i: usize,
     mut ndim: usize,
     dim: &mut [Option<usize>; MAXDIM],
+    delim: u8,
 ) -> Option<(usize, Elements<'a>, usize)> {
     // Once a dimensionality is declared, or an element has been seen, the
     // nesting may not get deeper.
@@ -932,7 +939,7 @@ fn read_array_body<'a>(
     let mut nelems = [0usize; MAXDIM];
     let mut elements = Vec::new();
     loop {
-        let (token, next) = read_array_token(s, i)?;
+        let (token, next) = read_array_token(s, i, delim)?;
         i = next;
         match token {
             ArrayToken::LevelStart => {
@@ -1038,8 +1045,14 @@ fn skip_space(s: &[u8], mut i: usize) -> usize {
 /// **A literal with no elements is the zero-dimensional empty array**, however
 /// it was written: `{}`, `{ }` and (on v17+) `{{},{}}` are all the value
 /// `array_out` writes as `{}`.
-// pg-refuses: I44 — every refusal here is `array_in`'s.
 pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
+    parse_array_delimited(s, b',')
+}
+
+/// [`parse_array`] for an element type whose `typdelim` is `delim` — `;` for
+/// `box`, the one built-in's that is not `,` (I22).
+// pg-refuses: I44 — every refusal here is `array_in`'s.
+pub fn parse_array_delimited(s: &str, delim: u8) -> Option<ArrayLiteral<'_>> {
     let b = s.as_bytes();
     let mut i = 0;
     let mut dim = [None; MAXDIM];
@@ -1090,7 +1103,7 @@ pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
         return None;
     }
 
-    let (ndim, elements, next) = read_array_body(b, i, declared, &mut dim)?;
+    let (ndim, elements, next) = read_array_body(b, i, declared, &mut dim, delim)?;
     if skip_space(b, next) != b.len() {
         return None;
     }

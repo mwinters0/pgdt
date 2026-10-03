@@ -967,9 +967,9 @@ beyond `NOT NULL` are not enforced — we are reading a dump, not validating it.
 
 A dump is read the same way whichever major wrote it. Where a newer
 PostgreSQL accepts a value an older one refused, the newer reading applies to
-every dump, since an older server could not have written the value. `oid` is
-the one type whose input changed meaning rather than only widening, and the
-table says what is done about it.
+every dump, since an older server could not have written the value. `oid`
+and `line` are the types whose input changed otherwise than by widening, and
+the table says what is done about each.
 
 | What changed | From | What pgdt does |
 |---|---|---|
@@ -978,6 +978,7 @@ table says what is done about it.
 | a `numeric` scale may exceed its precision, or be negative | 15 | Maps the column as "`numeric` with no precision is a string, but it still filters as a number" above says |
 | an `interval`'s time part reaches `±2562047788:00:54.775807`, past `±2147483647:59:59.999999` | 15 | Reads to the newer bound, a time part past `2562047:47:16.854775807` being a value its column cannot hold — see "`interval` → `Interval(MonthDayNano)`" below |
 | an `oid` is read in hex after `0x` and in octal after a leading `0`, so `010` is 8 and `08` is refused | 16 | Reads `010` as 10 and `08` as 8, as 13–15 do, on a dump of any major, refuses only what every major refuses, and does not read a `0x` or `0b` spelling. Write an OID in decimal, as `pg_dump` does |
+| a `line` given by two points is built by other arithmetic, so `[(2,0),(3,1.7976931348623157e308)]` is refused and `[(Infinity,1),(0,2)]` read | 14 | Under `--postgres-invalid-values strict`, refuses such a `line` only where every major refuses it, so reads both |
 | an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter; write the decimal digits |
 | `interval` holds `infinity` and `-infinity` | 17 | Has no Arrow value for them — see "`interval` keeps its three fields, and two kinds of value do not fit" above |
 
@@ -1008,8 +1009,8 @@ refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 **`--postgres-invalid-values strict` checks every value instead**, those
 included, so a `parse` that finishes means no value in the dump is one
 PostgreSQL's input function for its type refuses. It does not check a value of
-a type pgdt keeps as its text but `json`, `bit` and `bit varying` (`xml`,
-`money`, the geometric types, a type it has no reader for), a `json` nested
+a type pgdt keeps as its text but `json`, `bit`, `bit varying` and the
+geometric types (`xml`, `money`, a type it has no reader for), a `json` nested
 deeper than the restoring server's `max_stack_depth` lets it read, a value
 spelled in a way pgdt cannot read for its type at all, which PostgreSQL may
 refuse or not (`abc` in an `integer`, a malformed `jsonb`), a value of a range

@@ -48,9 +48,8 @@ shape it follows is 31.16's
 
 ## What the slices after this inherit
 
-- **31.18**'s geometric types are `ComparisonPlan::Refused` too, so each can
-  be a `TextGrammar` variant read wherever `bit` is — but in an array of
-  `box`, whose `;` delimiter keeps `array_comparison`'s opaque arm carrying no
-  grammar (I22).
+- **31.18** reads the geometric types as `TextGrammar` variants, an array of
+  `box` included
+  ([`roadmap-P31.18-geometric-in-notes.md`](roadmap-P31.18-geometric-in-notes.md)).
 - **31.21** names what a `strict` parse left unchecked; a column with a
   `TextGrammar` is checked, so it is not among them.

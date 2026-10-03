@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD93 -->
+rather than being deleted. <!-- deficiency-watermark: KD94 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -410,3 +410,8 @@ than reading as a phase nobody has sliced.
   to a read chunk past the limit is read or refused by where the reads fall —
   the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
   `P33`**. Detail: `pgdump_query/src/scan.rs`.
+
+- **KD94** — an array of a user base type declaring a `DELIMITER` other than
+  `,`, held in a composite, is split at `,` by a strict parse's check, which
+  refuses a field PostgreSQL reads. **(b) owned by P31**, 31.24. Detail:
+  `pgdump_query/src/predicate.rs`.

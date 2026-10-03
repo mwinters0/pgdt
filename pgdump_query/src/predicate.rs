@@ -14,7 +14,7 @@ use crate::instrument::timed_span;
 use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
+    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, Geometric,
     NestedCompare, TextGrammar, UnanswerableReason, datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
@@ -1911,8 +1911,41 @@ pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 /// Whether PostgreSQL's input function refuses `text` as a field read by
 /// `grammar`, of a type this build holds as its text and orders by nothing.
 pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
-    match grammar {
-        TextGrammar::Bit { varying, length } => !decode::bit_in(text, varying, length),
+    let reads = match grammar {
+        TextGrammar::Bit { varying, length } => decode::bit_in(text, varying, length),
+        TextGrammar::Geometric(Geometric::Point) => decode::point_in(text),
+        TextGrammar::Geometric(Geometric::Line) => decode::line_in(text),
+        TextGrammar::Geometric(Geometric::Lseg) => decode::lseg_in(text),
+        TextGrammar::Geometric(Geometric::Box) => decode::box_in(text),
+        TextGrammar::Geometric(Geometric::Path) => decode::path_in(text),
+        TextGrammar::Geometric(Geometric::Polygon) => decode::poly_in(text),
+        TextGrammar::Geometric(Geometric::Circle) => decode::circle_in(text),
+        TextGrammar::BoxArray => {
+            let element = NestedCompare::Uncomparable {
+                declared: "box".into(),
+                divergence: None,
+                grammar: Some(TextGrammar::Geometric(Geometric::Box)),
+            };
+            checked_key(&NestedCompare::Array(Box::new(element)), text).is_ok()
+        }
+    };
+    !reads
+}
+
+/// The `typdelim` an array of `element` is split at: `box`'s `;` (I22), and
+/// otherwise `,`.
+// deficiency: KD94 — a user base type's `DELIMITER`, which `dumpBaseType`
+// writes where it is not `,`, is not read by the preamble, so its array
+// beneath a container is split at `,` here, and a strict parse refuses a field
+// whose quoted element is followed by the declared delimiter, which
+// PostgreSQL reads.
+fn array_delimiter(element: &NestedCompare) -> u8 {
+    match element {
+        NestedCompare::Uncomparable {
+            grammar: Some(TextGrammar::Geometric(Geometric::Box)),
+            ..
+        } => b';',
+        _ => b',',
     }
 }
 
@@ -1944,7 +1977,8 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
         }
         NestedCompare::Uncomparable { .. } => None,
         NestedCompare::Array(element) => {
-            let literal = nested::parse_array(text).ok_or(refused)?;
+            let literal =
+                nested::parse_array_delimited(text, array_delimiter(element)).ok_or(refused)?;
             let mut elements = Vec::with_capacity(literal.elements.len());
             let mut keyed = true;
             for value in &literal.elements {
@@ -5520,7 +5554,8 @@ mod tests {
     /// no refusal, nor is any text of a type read as its text but `json`, at
     /// the top level or beneath a container, which `json_in`'s grammar reads
     /// (I72), and `bit` and `bit varying`, whose grammar is read in place of
-    /// the order they lack, their typmod with it, through a domain too (I73).
+    /// the order they lack, their typmod with it, through a domain too (I73),
+    /// as are the geometric types', a `box` array's split at `;` (I74, I22).
     #[test]
     fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
         let types = vec![
@@ -5557,6 +5592,13 @@ mod tests {
                     ]),
                 },
             },
+            TypeDef { name: "public.ring".into(), kind: TypeKind::domain("circle") },
+            TypeDef {
+                name: "public.shapes".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![ColumnDef::new("b", "box[]"), ColumnDef::new("p", "point")]),
+                },
+            },
         ];
         // As `gather::field_checks` reads a column: a plan ordering nothing
         // by its declared type's grammar, where it has one.
@@ -5567,7 +5609,7 @@ mod tests {
                 _ => field_refused(&plan, text),
             }
         };
-        let cases: [(&str, &str, bool); 53] = [
+        let cases: [(&str, &str, bool); 71] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
@@ -5621,9 +5663,40 @@ mod tests {
             ("public.flags", "(11,101,11)", true),
             ("public.flags", "(1,10,11)", true),
             ("public.flags", "(1,101,111)", true),
+            ("point", "(1,2)", false),
+            ("point", "(1,2", true),
+            ("line", "{0,0,1}", true),
+            ("line", "[(2,0),(3,1.7976931348623157e308)]", false),
+            ("lseg", "[(1,2),(3,4))", false),
+            ("box", "[(1,2),(3,4)]", true),
+            ("path", "(1,2),(3,4),", true),
+            ("polygon", "(1,2)", false),
+            ("circle", "<(1,2),-1>", true),
+            ("public.ring", "<(1,2),1e400>", true),
+            ("point[]", r#"{"(1,2)","(3,x)"}"#, true),
+            ("box[]", "{(1,1),(0,0);(2,2),(1,1)}", false),
+            ("box[]", r#"{"(1,1),(0,0)";(2,2),(1,1)}"#, false),
+            ("box[]", "{(1,1),(0,0);(2,2)}", true),
+            ("public.shapes", r#"("{(1,1),(0,0);(2,2),(1,1)}","(1,2)")"#, false),
+            ("public.shapes", r#"("{""(1,1),(0,0)"";(2,2),(1,1)}","(1,2)")"#, false),
+            ("public.shapes", r#"("{(1,1),(0,0);(2,2)}","(1,2)")"#, true),
+            ("public.shapes", r#"("{(1,1),(0,0)}",(1))"#, true),
         ];
         for (declared, text, expected) in cases {
             assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
+        }
+        // A `box[]` column resolves to text with its plan refused (I22), and is
+        // read by its own grammar.
+        for (text, expected) in [
+            ("{(1,1),(0,0);(2,2),(1,1)}", false),
+            (r#"{"(1,1),(0,0)";(2,2),(1,1)}"#, false),
+            ("{{(1,1),(0,0)};{(2,2),(1,1)}}", false),
+            ("{NULL;(1,1),(0,0)}", false),
+            ("{(1,1),(0,0);(2,2)}", true),
+            ("{(1,1),(0,0),(2,2),(1,1)}", true),
+            ("{(1,1),(0,0)", true),
+        ] {
+            assert_eq!(grammar_refuses(TextGrammar::BoxArray, text), expected, "{text:?}");
         }
     }
 
@@ -8560,7 +8633,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (54, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (55, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

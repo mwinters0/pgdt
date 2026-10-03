@@ -1858,23 +1858,58 @@ pub enum TextGrammar {
     /// `bit varying(n)` field may not pass, and `None` for `"bit"` and a bare
     /// `bit varying`, which bound no length.
     Bit { varying: bool, length: Option<u32> },
+    /// One of the seven geometric types' input functions (I74).
+    Geometric(Geometric),
+    /// An array of `box`, which `array_in` splits at `box`'s `;` (I22) and
+    /// whose elements `box_in` reads: the one array a column holds that no
+    /// nested plan reads, its element type being opaque here.
+    BoxArray,
+}
+
+/// A geometric type, naming the input function a field of it is read by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Geometric {
+    Point,
+    Line,
+    Lseg,
+    Box,
+    Path,
+    Polygon,
+    Circle,
 }
 
 /// The [`TextGrammar`] a field of a column declared `declared` is read by,
 /// through any chain of domains, a domain handing its own typmod to its base
 /// type's input function — `None` for a type with none here, an array among
-/// them, whose elements a nested plan reads.
+/// them, whose elements a nested plan reads, but an array of `box`.
 ///
 /// **`bit` alone is `bit(1)`**, the SQL word's length, and `"bit"` the catalog
 /// type with no typmod, which is how `format_type` writes a `bit` column of
-/// either (I8).
+/// either (I8). A geometric type takes no typmod, so one written with one is
+/// DDL no server holds, read as no grammar.
 pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGrammar> {
     let terminal = domain_terminal(declared, types);
     let (base, _) = split_typmod(terminal);
-    if base.contains('.') || array_element(terminal).is_some() {
+    if let Some(element) = array_element(terminal) {
+        return is_box(domain_terminal(element, types)).then_some(TextGrammar::BoxArray);
+    }
+    if base.contains('.') {
         return None;
     }
     let (name, typmod) = builtin_name(terminal);
+    let geometric = match &*name {
+        "point" => Some(Geometric::Point),
+        "line" => Some(Geometric::Line),
+        "lseg" => Some(Geometric::Lseg),
+        "box" => Some(Geometric::Box),
+        "path" => Some(Geometric::Path),
+        "polygon" => Some(Geometric::Polygon),
+        "circle" => Some(Geometric::Circle),
+        _ => None,
+    };
+    if let Some(geometric) = geometric {
+        return typmod.is_none().then_some(TextGrammar::Geometric(geometric));
+    }
     let varying = match &*name {
         "bit" => false,
         "bit varying" => true,
@@ -1948,11 +1983,12 @@ fn array_comparison(
         // No divergence: a position only this build declines makes no claim
         // about the server's `=` (I22, I26). A column of either shape resolves
         // to text with its plan refused, so never reaches this node; a
-        // composite's field of either shape does.
+        // composite's field of either shape does. A `box` element carries
+        // `box_in`'s grammar, which is what splits its array at `;`.
         NestedCompare::Uncomparable {
             declared: element.to_string(),
             divergence: None,
-            grammar: None,
+            grammar: text_grammar(element, types).filter(|_| is_box(terminal)),
         }
     } else {
         match nested_position(element, collation, types, collations, visits) {
@@ -2443,6 +2479,76 @@ mod tests {
         assert!(
             matches!(&fields[0].1, NestedCompare::Uncomparable { grammar, .. } if *grammar == bit(Some(1)))
         );
+    }
+
+    /// **A geometric type's grammar is read off every spelling of it** (I74),
+    /// through a domain, and none off one written with a typmod, which no
+    /// geometric type takes. An array of `box` has a grammar of its own, its
+    /// elements split at `;` (I22); an array of any other geometric type is
+    /// read through its nested plan, whose element carries the grammar, as
+    /// does a `box` element a container holds.
+    #[test]
+    fn a_geometric_type_s_grammar_is_read_off_every_spelling() {
+        let types = [
+            ty("public.boxes", TypeKind::domain("box")),
+            ty("public.boxlist", TypeKind::domain("box[]")),
+            ty(
+                "public.shapes",
+                TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("b", "box[]"),
+                        ColumnDef::new("c", "\"circle\""),
+                    ]),
+                },
+            ),
+        ];
+        let geometric = |g| Some(TextGrammar::Geometric(g));
+        for (declared, expected) in [
+            ("point", geometric(Geometric::Point)),
+            ("LINE", geometric(Geometric::Line)),
+            ("lseg", geometric(Geometric::Lseg)),
+            ("\"box\"", geometric(Geometric::Box)),
+            ("path", geometric(Geometric::Path)),
+            ("polygon", geometric(Geometric::Polygon)),
+            ("circle", geometric(Geometric::Circle)),
+            ("public.boxes", geometric(Geometric::Box)),
+            ("box[]", Some(TextGrammar::BoxArray)),
+            ("\"box\"[][]", Some(TextGrammar::BoxArray)),
+            ("public.boxes[]", Some(TextGrammar::BoxArray)),
+            ("public.boxlist", Some(TextGrammar::BoxArray)),
+            ("point(2)", None),
+            ("\"Point\"", None),
+            ("pg_catalog.point", None),
+            ("point[]", None),
+            ("public.shapes", None),
+        ] {
+            assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
+        }
+        let element_grammar = |declared| match comparison_for(declared, None, &types, &[]) {
+            ComparisonPlan::Nested(NestedCompare::Array(element)) => match *element {
+                NestedCompare::Uncomparable { grammar, .. } => grammar,
+                other => panic!("`{declared}`'s element is {other:?}"),
+            },
+            other => panic!("`{declared}` is {other:?}"),
+        };
+        assert_eq!(element_grammar("point[]"), geometric(Geometric::Point));
+        assert_eq!(element_grammar("box[]"), geometric(Geometric::Box));
+        assert_eq!(element_grammar("public.boxes[]"), geometric(Geometric::Box));
+        let ComparisonPlan::Nested(NestedCompare::Record(fields)) =
+            comparison_for("public.shapes", None, &types, &[])
+        else {
+            panic!("a composite is nested");
+        };
+        assert!(matches!(
+            &fields[0].1,
+            NestedCompare::Array(element) if matches!(**element, NestedCompare::Uncomparable {
+                grammar: Some(TextGrammar::Geometric(Geometric::Box)), ..
+            })
+        ));
+        assert!(matches!(
+            &fields[1].1,
+            NestedCompare::Uncomparable { grammar, .. } if *grammar == geometric(Geometric::Circle)
+        ));
     }
 
     /// `interval` is the one type whose Arrow mapping is a *struct* of

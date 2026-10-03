@@ -1236,7 +1236,9 @@ exposure.
 **Relied on by:** `decisions.md`, "Type resolution and decoders" (both array refusals)
 and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
-the array separator can stay hardcoded to `,` once it does.
+the array separator can stay hardcoded to `,` once it does; and
+`predicate::array_delimiter`, which splits a strict parse's `box` array at
+`;`.
 
 **Re-verify:**
 
@@ -3076,7 +3078,7 @@ spelling can still differ from what `*_out` would write for the same value.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed on 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D45" — `parse_array`/`parse_record`/`parse_range`/`parse_multirange`, which
+**Relied on by:** [`decisions.md`](decisions.md), "D45" — `parse_array`/`parse_array_delimited`/`parse_record`/`parse_range`/`parse_multirange`, which
 implement the **newest** grammar unconditionally, per the union rule.
 
 **Re-verify.** Read the functions:
@@ -4802,3 +4804,76 @@ grep -n 'define VARBITMAXLEN' src/include/utils/varbit.h
 
 It prints, for each function, the two prefix tests, the hex length check, the
 no-typmod test and the length comparison; then the maximum length.
+
+---
+
+## I74 — The geometric types' input functions read points of `float8in` numbers, and v13 builds a `line` by other arithmetic
+
+**Claim.** `point_in`, `lseg_in`, `box_in`, `path_in`, `poly_in`,
+`circle_in` and `line_in` read each number by `float8in_internal` asked for its
+stopping point — the blanks around it skipped, the number whatever the
+server's `strtod` reads in the C locale (on glibc a hexadecimal one too, and
+`nan(…)`), refused where nothing is read or `strtod` sets `ERANGE` with an
+infinite or zero result — and read the points around them by `pair_decode` and
+`path_decode`: a point `x,y` optionally in `(…)`; two or more in `[…]` (where
+the type allows an open path), in a `(…)` that is the first of two or the last
+`(` in the text, or bare; a path's and a polygon's count fixed beforehand by
+`pair_count`, half their commas rounded up and refused where the count is
+even, and refused where the value would pass `MaxAllocSize`. `box` and
+`polygon` refuse `[`. `circle_in` reads a center and a radius in `<…>`, `(…)`
+or bare, refusing a negative radius and reading a NaN. `line_in` reads
+`{A,B,C}`, refusing `A` and `B` both within `EPSILON` of zero, or two points,
+refusing two within `EPSILON` of each other and any overflow or underflow
+building the line. **That construction differs at v13**: `point_sl` returns
+`DBL_MAX` for a vertical line, `line_construct` tests `m == DBL_MAX` and has
+no horizontal case, and `float8_div` raises an underflow dividing by an
+infinity — so v13 reads a line whose computed slope is exactly `DBL_MAX` that
+v14 on refuse, and refuses one whose run is infinite that v14 on read. Every
+other refusal is the same at every supported major.
+
+**Proof.** `src/backend/utils/adt/geo_ops.c`: `single_decode`, `pair_decode`,
+`path_decode`, `pair_count`, the seven `*_in` functions, `line_decode`,
+`point_sl`, `point_eq_point` and `line_construct`;
+`src/backend/utils/adt/float.c`, `float8in_internal`;
+`src/include/utils/float.h`, `float8_mi`, `float8_mul`, `float8_div`;
+`src/include/utils/geo_decls.h`, `EPSILON`, `PATH` and `POLYGON`;
+`src/include/utils/memutils.h`, `MaxAllocSize`. Compared function by function
+across the six releases: v13–v15 raise with `ereport` where v16 on use
+`ereturn`, and v13's `point_sl`, `line_construct` and `float8_div` are the
+differences named above; v14–v18 are otherwise identical.
+
+**Observed.** 152 cases cast on PostgreSQL 13.23 and 18.6 (the pinned
+`-trixie` images) and on the koji replica (16.15), each through a `plpgsql`
+cast trapping the error, which also catches `line_in`'s hard overflow: every
+case agrees across the three but `line '[(2,0),(3,1.7976931348623157e308)]'`,
+read by 13 alone, and `line '[(Infinity,1),(0,2)]'`, refused by 13 alone. The
+cases are `decode.rs`'s
+`a_geometric_field_is_refused_only_where_every_major_refuses_it`; `box[]`'s
+and `point[]`'s are `predicate.rs`'s. Hexadecimal reading was checked against
+glibc's `strtod` over 595,823 generated spellings, with no difference.
+
+**Scope limit.** A server whose `strtod` reads no hexadecimal number refuses
+one read here. A path or polygon past `MaxAllocSize` is a field of hundreds
+of megabytes; only arithmetic reaches it.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+13.23, 16.15 and 18.6 (observed).
+
+**Relied on by:** `decode::point_in`, `decode::line_in`, `decode::lseg_in`,
+`decode::box_in`, `decode::path_in`, `decode::poly_in` and
+`decode::circle_in`, which a strict parse checks a geometric field by, through
+`pgtype::text_grammar`; `line_in` refusing only where every supported major
+refuses.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^(point_sl|line_construct|point_eq_point)\(/,/^}/' src/backend/utils/adt/geo_ops.c
+grep -n -A14 '^float8_div' src/include/utils/float.h
+for f in single_decode pair_decode path_decode pair_count box_in line_decode line_in path_in point_in lseg_in poly_in circle_in; do awk -v f="$f" '$0 ~ "^"f"\\(" {p=1} p {print} p && /^}/ {p=0}' src/backend/utils/adt/geo_ops.c; done
+```
+
+The first two print the line construction and the division whose v13 forms
+differ; the third prints the grammar, to be diffed against the previous
+major's with `ereport`/`ereturn` aside.

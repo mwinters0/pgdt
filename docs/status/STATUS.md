@@ -106,12 +106,13 @@ approval, in the spec's opening note.
 - [x] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query — [notes](../design/roadmap-P31.14-strict-notes.md)
 - [x] **31.16** `json_in`'s grammar: a `strict` parse refuses a `json` field PostgreSQL's JSON lexer refuses — [notes](../design/roadmap-P31.16-json-in-notes.md)
 - [x] **31.17** `bit_in`'s and `varbit_in`'s grammar, their typmod lengths with it: a `strict` parse refuses a `bit`, `bit(n)`, `varbit` or `varbit(n)` field PostgreSQL refuses — [notes](../design/roadmap-P31.17-bit-in-notes.md)
-- [ ] **31.18** The seven geometric types' input grammars: a `strict` parse refuses a `point`, `line`, `lseg`, `box`, `path`, `polygon` or `circle` field PostgreSQL refuses
+- [x] **31.18** The seven geometric types' input grammars: a `strict` parse refuses a `point`, `line`, `lseg`, `box`, `path`, `polygon` or `circle` field PostgreSQL refuses — [notes](../design/roadmap-P31.18-geometric-in-notes.md)
 - [ ] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it
 - [ ] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so
 - [ ] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same
 - [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
 - [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
+- [ ] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94`
 
 ## Not started
 
@@ -143,3 +144,14 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **`line_in` read as `oidin` is, refusing only where every supported major
+  refuses** (31.18). v14 rebuilt the two-point form's arithmetic, so v13 reads
+  `[(2,0),(3,1.7976931348623157e308)]`, which v14 on refuse, and refuses
+  `[(Infinity,1),(0,2)]`, which they read (I74); the strict check reads both.
+  Why: the roadmap's rule takes the newest major's `*_in` because each major
+  only widened, and its one exception, `oidin`, already sets the
+  every-major reading for a narrowing; the roadmap's "A literal is guaranteed
+  in `*_out`'s form and never read past `*_in`'s" now names `line_in` beside
+  it, and the manual's majors table gains its row. Reconsidering — refusing
+  the first line as v14 on do, v13 being the oldest supported — changes one
+  `||` in `decode::line_in`, the row and the roadmap sentence.
