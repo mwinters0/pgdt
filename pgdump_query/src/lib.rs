@@ -54,7 +54,7 @@ pub use map::{
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
-    NestedCompare, NestedPlan, TypeOutcome, UnanswerableReason, bounds_set_keyed_by,
+    NestedCompare, NestedPlan, NumericTypmod, TypeOutcome, UnanswerableReason, bounds_set_keyed_by,
     comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{

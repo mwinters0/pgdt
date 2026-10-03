@@ -164,6 +164,15 @@ rounded to fit: `--filter 'price>1.005'` on a `numeric(10,2)` is told the
 column is written as a number with at most 2 decimal places. Rounding it would
 mean guessing which way you meant it to go; writing `1.00` or `1.01` says so.
 
+**A value in the dump is read as a restore would store it.** `pg_dump` writes
+every `numeric(p,s)` value at its column's scale; a hand-written dump need not,
+and a value finer than the scale is rounded to it, half away from zero, as
+PostgreSQL rounds it on the way in — `1.005` in a `numeric(10,2)` reads as
+`1.01`. One with more digits than the precision allows once rounded,
+`123456789012` there, is refused, naming its column, as PostgreSQL refuses it. A
+column that comes back as a string keeps the dump's text and filters as the
+rounded value.
+
 ### `oid` is unsigned
 
 PostgreSQL's `oid` is a 32-bit *unsigned* integer, and it comes back as

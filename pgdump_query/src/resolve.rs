@@ -251,11 +251,7 @@ impl ResolvedSchema {
     /// is, is read off these kinds recomputed for the block
     /// ([`crate::pgtype::bounds_set_keyed_by`]).
     pub fn bounds_kinds(&self, i: usize) -> [Option<CompareKind>; 2] {
-        if self.plans[i] == NestedPlan::Scalar {
-            self.comparisons[i].bounds_kinds()
-        } else {
-            [None, None]
-        }
+        if self.plans[i].is_scalar() { self.comparisons[i].bounds_kinds() } else { [None, None] }
     }
 }
 

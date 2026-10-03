@@ -51,8 +51,8 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable, register_dump};
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    Finding, LocalFileSource, NestedPlan, ScanOptions, SchemaMode, StatisticsRequest,
-    StatisticsSelection, TableName, UnrepresentableMode, map_file,
+    Finding, LocalFileSource, ScanOptions, SchemaMode, StatisticsRequest, StatisticsSelection,
+    TableName, UnrepresentableMode, map_file,
 };
 
 /// A sink for a registration whose findings this target is not about.
@@ -1130,7 +1130,7 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
                     let field = schema.field(at);
                     terms.push(column(field.name()).is_null());
                     terms.push(column(field.name()).is_not_null());
-                    if resolved.plans[index] != NestedPlan::Scalar {
+                    if !resolved.plans[index].is_scalar() {
                         continue;
                     }
                     let values =
@@ -1386,7 +1386,7 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                 let from = from(&catalog, name);
                 let resolved = table.resolved_schema();
                 for (at, &index) in projection.iter().enumerate() {
-                    if resolved.plans[index] != NestedPlan::Scalar {
+                    if !resolved.plans[index].is_scalar() {
                         continue;
                     }
                     let field = schema.field(at);

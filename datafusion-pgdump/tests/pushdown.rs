@@ -34,8 +34,8 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ColumnDef, ComparisonDivergence, ComparisonSemantics, DatabaseMetadata, DumpMetadata,
-    LocalFileSource, NestedPlan, ResolvedSchema, ScanOptions, SchemaMode, StatisticsRequest,
-    TableDef, column_divergences, map_file, resolve_columns,
+    LocalFileSource, ResolvedSchema, ScanOptions, SchemaMode, StatisticsRequest, TableDef,
+    column_divergences, map_file, resolve_columns,
 };
 
 fn fixtures_root() -> PathBuf {
@@ -221,7 +221,7 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
                     let Ok(all) = try_run(&ctx, unfiltered).await else { continue };
                     let all = concat_batches(&schema, &all).unwrap();
                     let df_schema = DFSchema::try_from(Arc::clone(&schema)).unwrap();
-                    let scalar = resolved.plans[index] == NestedPlan::Scalar;
+                    let scalar = resolved.plans[index].is_scalar();
                     let key = (field.data_type().to_string(), scalar);
                     let mut filters = vec![
                         Expr::IsNull(Box::new(column(field.name()))),

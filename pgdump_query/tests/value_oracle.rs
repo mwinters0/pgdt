@@ -215,7 +215,7 @@ fn nodes(
                 nodes(child, index, plan, row, format!("{path}.{}", field.name()), out);
             }
         }
-        NestedPlan::Scalar => {
+        NestedPlan::Scalar | NestedPlan::Decimal { .. } => {
             out.values.insert((row, path), (data_type.clone(), Some(scalar(array, index))));
         }
     }

@@ -686,6 +686,94 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     assert_eq!(kept, [vec![Some("1".to_string())]], "v2 = 0");
 }
 
+/// A hand-written dump whose `numeric(p,s)` fields are finer than their
+/// scales, as `numeric_out` never writes them: typed at `(10,2)`, past the
+/// precision at `(2,5)`, negative at `(3,-2)`, and held as text at `(100,2)`.
+/// `t_past` and `t_past_array` each hold one field past its precision once
+/// rounded, `0.001` at `(2,5)`: inside `Decimal128(5, 5)`'s own precision,
+/// outside the column's.
+fn typmod_dump(dir: &Path) -> PathBuf {
+    let dump = dir.join("typmod.sql");
+    let text = "CREATE TABLE public.t (\n    id integer,\n    v10_2 numeric(10,2),\n    \
+                v2_5 numeric(2,5),\n    v3_m2 numeric(3,-2),\n    v100_2 numeric(100,2)\n);\n\n\
+                CREATE TABLE public.t_past (\n    v2_5 numeric(2,5)\n);\n\n\
+                CREATE TABLE public.t_past_array (\n    v2_5 numeric(2,5)[]\n);\n\n\
+                COPY public.t (id, v10_2, v2_5, v3_m2, v100_2) FROM stdin;\n\
+                1\t1.005\t0.000125\t1250\t1.005\n\
+                2\t-0.004\t0.0000049\t-1249\t123.4449\n\
+                3\t1.0\t.00001\t0\t-0.005\n\
+                \\.\n\n\
+                COPY public.t_past (v2_5) FROM stdin;\n0.001\n\\.\n\n\
+                COPY public.t_past_array (v2_5) FROM stdin;\n{0.00012,0.001}\n\\.\n\n\
+                SELECT 1;\n";
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A `numeric(p,s)` field reads as `COPY` stores it** (I51): a typed read
+/// renders each typed column's values rounded to the scale, as the koji
+/// replica (PG16) stores the same `COPY`, the text-held column keeps the
+/// file's text and compares as the rounded value, a data-level `parse` sums
+/// the rounded values, and a field past its precision is refused naming it —
+/// where the Arrow decimal's own precision would hold it, inside an array too.
+#[tokio::test]
+async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = typmod_dump(dir.path());
+
+    let (typed, _) = try_rows_in(&path, "public.t", QueryOptions::default()).await.unwrap();
+    let stored = [
+        ["1", "1.01", "0.00013", "1300", "1.005"],
+        ["2", "0.00", "0.00000", "-1200", "123.4449"],
+        ["3", "1.00", "0.00001", "0", "-0.005"],
+    ];
+    let stored: Vec<Vec<Option<String>>> =
+        stored.iter().map(|row| row.iter().map(|v| Some(v.to_string())).collect()).collect();
+    assert_eq!(typed, stored);
+
+    let kept = |column: &str, op, value: &str| QueryOptions {
+        filter: Expr::all([Predicate { column: column.into(), op, value: Some(value.into()) }]),
+        projection: Some(vec!["id".into()]),
+        ..Default::default()
+    };
+    for (column, op, value, ids) in [
+        ("v100_2", PredicateOp::Eq, "1.01", &["1"][..]),
+        ("v100_2", PredicateOp::Lt, "0", &["3"]),
+        ("v100_2", PredicateOp::Eq, "123.44", &["2"]),
+        ("v100_2", PredicateOp::Gt, "1.005", &["1", "2"]),
+        ("v10_2", PredicateOp::Ge, "1.01", &["1"]),
+        ("v2_5", PredicateOp::Gt, "0.00012", &["1"]),
+        ("v3_m2", PredicateOp::Lt, "-1000", &["2"]),
+    ] {
+        let (rows, _) = try_rows_in(&path, "public.t", kept(column, op, value)).await.unwrap();
+        let ids: Vec<Vec<Option<String>>> =
+            ids.iter().map(|id| vec![Some(id.to_string())]).collect();
+        assert_eq!(rows, ids, "{column} {op:?} {value}");
+    }
+
+    let source = LocalFileSource::open(&path).unwrap();
+    let mode = CacheMode::enabled(cache::colocated_path(&path));
+    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
+        .await
+        .unwrap()
+        .index;
+    let block = index.blocks().find(|b| b.header.table == "t").unwrap();
+    let statistics = block.statistics.as_deref().unwrap();
+    let sums = |at: usize| statistics.columns[at].as_ref().unwrap().sums.clone();
+    assert_eq!(sums(1), Some(vec![201]), "v10_2 sums 1.01, 0.00 and 1.00");
+    assert_eq!(sums(2), Some(vec![14]), "v2_5 sums 0.00013, 0 and 0.00001");
+
+    for table in ["public.t_past", "public.t_past_array"] {
+        match try_rows_in(&path, table, QueryOptions::default()).await.unwrap_err() {
+            Error::FieldDecode { column, declared_type, .. } => {
+                assert_eq!(column, "v2_5");
+                assert!(declared_type.starts_with("numeric(2,5)"), "{declared_type}");
+            }
+            other => panic!("{table}: expected FieldDecode, got {other:?}"),
+        }
+    }
+}
+
 /// **A `bytea_output = escape` dump reads as its `hex` twin does** (I4,
 /// I56): a typed read of `t_bytea` renders the rows `default`'s does, and
 /// every filter over `v_bytea` — each value's `=`, `!=`, `<` and `>=`, and an

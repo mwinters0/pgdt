@@ -14,7 +14,7 @@ use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
-    NestedCompare, NestedPlan, UnanswerableReason, datafusion_position_divergences,
+    NestedCompare, UnanswerableReason, datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::unrepresentable::UnrepresentableRead;
@@ -470,7 +470,7 @@ fn postgres_divergences(
                 .map(|(path, declared, d)| (Some(path), declared, d))
                 .collect()
         }
-        _ if resolved.plans[index] != NestedPlan::Scalar => Vec::new(),
+        _ if !resolved.plans[index].is_scalar() => Vec::new(),
         ComparisonPlan::Compared { divergence, .. } => divergence.map(column).unwrap_or_default(),
         ComparisonPlan::Refused => Vec::new(),
     }
@@ -491,7 +491,7 @@ fn datafusion_divergences(
     if resolved.columns[index] != ColumnResolution::Mapped {
         return Vec::new();
     }
-    if resolved.plans[index] != NestedPlan::Scalar {
+    if !resolved.plans[index].is_scalar() {
         // The container's order, then each position's own divergence; a
         // plan with no tree has no position to name.
         let positions = match &resolved.comparisons[index] {
@@ -550,9 +550,10 @@ impl NumericKey {
     /// `[-]digits[.digits]`: no exponent, no sign but `-`, at least one digit
     /// somewhere, and a point at either end or leading zeros allowed, which
     /// `numeric_out` never writes ([`accepted_form`] lists them). It is the same
-    /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
-    /// typmod'd column. The two differ only on the typmod, which a bare
-    /// `numeric` has none of. The storage format's bounds are the caller's
+    /// *lexical* grammar [`decode::typmod_unscaled_digits`] accepts for a
+    /// typmod'd column's field, which is read through it and
+    /// [`Self::from_unscaled`] instead; this reads a bare column's field and
+    /// every literal. The storage format's bounds are the caller's
     /// ([`decode::numeric_in_stores`]), a typmod'd column's field never
     /// reaching them.
     fn parse(text: &str) -> Option<Self> {
@@ -568,6 +569,30 @@ impl NumericKey {
             return None;
         }
         Some(Self::from_parts(negative, int, frac))
+    }
+
+    /// An unscaled digit string at `scale` places, as
+    /// [`decode::typmod_unscaled_digits`] writes it, split at its point.
+    fn from_unscaled(unscaled: &str, scale: i16) -> Self {
+        let (negative, digits) = match unscaled.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, unscaled),
+        };
+        match usize::try_from(scale) {
+            Ok(places) if places >= digits.len() => Self::from_parts(
+                negative,
+                "",
+                &format!("{}{digits}", "0".repeat(places - digits.len())),
+            ),
+            Ok(places) => {
+                let (int, frac) = digits.split_at(digits.len() - places);
+                Self::from_parts(negative, int, frac)
+            }
+            Err(_) => {
+                let zeros = "0".repeat(usize::from(scale.unsigned_abs()));
+                Self::from_parts(negative, &format!("{digits}{zeros}"), "")
+            }
+        }
     }
 
     /// Drop the insignificant digits from an already-split sign/integer part/
@@ -1219,8 +1244,8 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
             "-infinity" => Some(OrderKey::NegativeInfinity),
             _ => None,
         },
-        CompareKind::Decimal(_) => (text == "NaN").then_some(OrderKey::NotANumber),
-        CompareKind::Numeric { infinities } => match text {
+        CompareKind::Decimal { .. } => (text == "NaN").then_some(OrderKey::NotANumber),
+        CompareKind::Numeric { infinities, .. } => match text {
             "NaN" => Some(OrderKey::NotANumber),
             "Infinity" if *infinities => Some(OrderKey::PositiveInfinity),
             "-Infinity" if *infinities => Some(OrderKey::NegativeInfinity),
@@ -1356,13 +1381,22 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         // [`float_literal`] instead, through [`literal_key`].
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
-        CompareKind::Decimal(scale) => {
-            OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, *scale)?)?)
+        // A field is put through its typmod, rounded to the scale and refused
+        // past the precision as `COPY` refuses it (I51). A literal is read
+        // exactly, by [`literal_key`].
+        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(i256::from_string(
+            &decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))?,
+        )?),
+        CompareKind::Numeric { typmod: Some(typmod), .. } => {
+            OrderKey::Numeric(NumericKey::from_unscaled(
+                &decode::typmod_unscaled_digits(text, typmod.precision, typmod.scale)?,
+                typmod.scale,
+            ))
         }
         // A bare column's field is bounded by `numeric_in` (I63); a typmod'd
-        // one, the kind admitting no infinity, never reaches the bounds. A
-        // literal in PostgreSQL's semantics is bounded by [`literal_key`].
-        CompareKind::Numeric { infinities: bare } => {
+        // one never reaches the bounds, the typmod rounding first. A literal
+        // in PostgreSQL's semantics is bounded by [`literal_key`].
+        CompareKind::Numeric { infinities: bare, typmod: None } => {
             if *bare && !decode::numeric_in_stores(text) {
                 return None;
             }
@@ -1403,8 +1437,9 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 /// integer is read by [`int_literal`] at the column's width, a float by
 /// [`float_literal`] into the column's own type, where a field is read by the
 /// decoder, which takes I57's rounded largest finite value as that value, and
-/// a `numeric(p,s)`'s within `numeric_in`'s bounds, the server coercing it
-/// with no typmod where it rounds a field to the typmod first (I63). In
+/// a `numeric(p,s)`'s within `numeric_in`'s bounds and exactly, neither
+/// rounded to the scale nor refused past the precision, the server coercing
+/// it with no typmod where it puts a field through the typmod (I63). In
 /// DataFusion's semantics a literal is DataFusion's value, not the server's
 /// (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never read
 /// past `*_in`'s").
@@ -1419,11 +1454,16 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
         (ComparisonSemantics::Postgres, CompareKind::Float64) => {
             Some(OrderKey::Float(float_literal(text, f64::is_infinite)?))
         }
-        (ComparisonSemantics::Postgres, CompareKind::Decimal(_) | CompareKind::Numeric { .. })
-            if !decode::numeric_in_stores(text) =>
-        {
-            None
-        }
+        (
+            ComparisonSemantics::Postgres,
+            CompareKind::Decimal { .. } | CompareKind::Numeric { .. },
+        ) if !decode::numeric_in_stores(text) => None,
+        (_, CompareKind::Decimal { scale, .. }) => special_order_key(kind, text).or_else(|| {
+            let unscaled = decode::decimal_unscaled_digits(text, *scale)?;
+            Some(OrderKey::Decimal(i256::from_string(&unscaled)?))
+        }),
+        (_, CompareKind::Numeric { typmod: Some(_), .. }) => special_order_key(kind, text)
+            .or_else(|| Some(OrderKey::Numeric(NumericKey::parse(text)?))),
         _ => order_key(kind, text),
     }
 }
@@ -2128,6 +2168,16 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///   and `inet`/`cidr` decode for a reason about this build instead, and
 ///   `macaddr` renders (`docs/design/decisions.md`, "D56").
 ///
+/// Deficiency register: `deficiency: KD82` — `Canonical` takes the field's
+/// spelling for the value's only one, which holds of what `*_out` wrote. A
+/// hand-written field the decoder reads in another spelling — `1.005` or
+/// `1.0` in a `numeric(10,2)`, which a typed read rounds and pads to `1.01`
+/// and `1.00`, or a braced `uuid` (I64) — is missed by `=`, `!=`, `IN` and a
+/// group's dictionary, where an ordering operator and a typed read take its
+/// value. Closing it means decoding a field whose bytes miss the literal's,
+/// a cost every non-matching row of a dump `pg_dump` wrote would pay.
+/// **(c) unowned**; promoted by a user meeting it.
+///
 /// `None` when the literal is not a value of the column's type at all, which
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
 /// makes, on the same output-form-only grammar (`docs/design/decisions.md`,
@@ -2165,12 +2215,12 @@ fn equality_comparison(
         }
         .to_string(),
         K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
-        K::Decimal(_)
+        K::Decimal { .. }
             if semantics == ComparisonSemantics::Postgres && !decode::numeric_in_stores(text) =>
         {
             return None;
         }
-        K::Decimal(scale) => {
+        K::Decimal { scale, .. } => {
             decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
         }
         // A label is its own canonical form; what the lookup buys is the
@@ -2318,9 +2368,9 @@ fn accepted_form(kind: &CompareKind) -> String {
         // normalizes rather than rescaling.
         // The digit bounds are `numeric_in`'s storage format's (I63), which
         // a typed arm's scale and `i256` already fall inside.
-        K::Decimal(scale) => decimal_accepted_form(*scale),
-        K::Numeric { infinities: false } => format!("{NUMERIC_DIGITS}, or `NaN`"),
-        K::Numeric { infinities: true } => {
+        K::Decimal { scale, .. } => decimal_accepted_form(*scale),
+        K::Numeric { infinities: false, .. } => format!("{NUMERIC_DIGITS}, or `NaN`"),
+        K::Numeric { infinities: true, .. } => {
             format!("{NUMERIC_DIGITS}, or `NaN`, `Infinity` or `-Infinity`")
         }
         K::Enum(labels) if !labels.is_empty() => enum_accepted_form(labels),
@@ -2428,12 +2478,12 @@ const NUMERIC_DIGITS: &str =
 /// trailing digit only when it is zero, so `--filter 'price>1.005'` on a
 /// `numeric(10,2)` is refused.
 ///
-/// Precision says nothing here and is not carried by
-/// [`CompareKind::Decimal`]: a literal wider than the column can hold still
-/// compares against every value in it. A negative scale is legal from
+/// Precision says nothing here, binding a field alone: a literal wider than
+/// the column can hold still compares against every value in it, as the
+/// server coerces it with no typmod (I63). A negative scale is legal from
 /// PostgreSQL 15 and means the column stores multiples of a power of ten,
-/// which the decoder enforces by refusing to drop a non-zero digit off the
-/// integer part.
+/// which the literal's reader enforces by refusing to drop a non-zero digit
+/// off the integer part.
 fn decimal_accepted_form(scale: i8) -> String {
     match scale {
         0 => "as a whole number, or `NaN`".into(),
@@ -2741,7 +2791,7 @@ pub(crate) fn resolve_term(
             fell_back = Some(tree);
             plan = None;
         }
-    } else if resolved.plans[index] != NestedPlan::Scalar {
+    } else if !resolved.plans[index].is_scalar() {
         // A column the *resolver* calls nested and the register does not.
         // One shape reaches it — a range whose DDL stated no `subtype`, so
         // the resolver keeps the struct with `Utf8View` bounds and the
@@ -3954,6 +4004,7 @@ mod tests {
     use super::*;
     use crate::copy::encode_field;
     use crate::index::UnrepresentableTier;
+    use crate::pgtype::NestedPlan;
     use crate::pgtype::{bounds_set_keyed_by, comparison_for};
     use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
@@ -5489,6 +5540,48 @@ mod tests {
         assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
     }
 
+    /// **A `numeric(p,s)` field is put through its typmod and a literal is
+    /// not** (I51, I63). A field finer than the scale is rounded half away
+    /// from zero, `1.005` keying as `1.01`, and one past the precision once
+    /// rounded is refused, on the typed arm and on one held as text for a
+    /// precision past 76 alike, inside an array too. A literal is read
+    /// exactly: `1.005` is refused on the typed arm as finer than its scale
+    /// and keys as itself on the text arm, and one past the precision
+    /// compares. Each field was cast on PostgreSQL 16.
+    #[test]
+    fn a_numeric_field_is_rounded_and_bounded_by_its_typmod_and_a_literal_is_not() {
+        let typed = ("numeric(10,2)", DataType::Decimal128(10, 2));
+        let text = ("numeric(100,2)", DataType::Utf8View);
+        let past_text = format!("{}.995", "9".repeat(98));
+        for ((declared, data_type), past) in
+            [(&typed, "99999999.995"), (&typed, "123456789012"), (&text, &past_text)]
+        {
+            let read = |op, literal: &str, field: &str| {
+                ordered(declared, data_type.clone(), op, literal, field)
+            };
+            assert!(read(PredicateOp::Ge, "1.01", "1.005").unwrap(), "{declared}");
+            assert!(!read(PredicateOp::Lt, "1.01", "1.005").unwrap(), "{declared}");
+            assert!(read(PredicateOp::Le, "-1.01", "-1.005").unwrap(), "{declared}");
+            assert!(read(PredicateOp::Ge, "0", "-0.004").unwrap(), "{declared}");
+            assert!(read(PredicateOp::Lt, "123456789012", "1.00").unwrap(), "{declared}");
+            let got = read(PredicateOp::Ge, "1", past);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{declared} {past}: {got:?}");
+        }
+        let got = ordered(typed.0, typed.1.clone(), PredicateOp::Gt, "1.005", "1.01");
+        assert!(matches!(got, Err(Error::PredicateValueDecode { .. })), "{got:?}");
+        assert!(ordered(text.0, text.1.clone(), PredicateOp::Gt, "1.005", "1.005").unwrap());
+        assert!(ordered(text.0, text.1.clone(), PredicateOp::Eq, "1.01", "1.005").unwrap());
+        let wide = format!("1{}", "0".repeat(120));
+        assert!(ordered(text.0, text.1.clone(), PredicateOp::Lt, &wide, "1.00").unwrap());
+
+        let array = |op, field: &str, literal: &str| {
+            nested_verdict("numeric(10,2)[]", &test_types(), op, field, literal)
+        };
+        assert_eq!(array(PredicateOp::Eq, "{1.005,2}", "{1.01,2.00}").unwrap(), Truth::True);
+        let got = array(PredicateOp::Eq, "{99999999.995}", "{1}");
+        assert!(matches!(got, Err(Error::FieldDecode { .. })), "{got:?}");
+    }
+
     /// **A `jsonb` number is bounded as `numeric_in` bounds it** (I63), its
     /// exponent applied first: an exponent past `PG_INT32_MAX / 2`, a display
     /// scale past 16383 — the fraction's digits less the exponent — or more
@@ -6791,7 +6884,8 @@ mod tests {
             (0, "as a whole number, or `NaN`"),
             (-2, "as a whole number that is a multiple of 100, or `NaN`"),
         ] {
-            assert_eq!(accepted_form(&CompareKind::Decimal(scale)), expected, "scale {scale}");
+            let kind = CompareKind::Decimal { precision: 10, scale };
+            assert_eq!(accepted_form(&kind), expected, "scale {scale}");
         }
         // The scale-free arm keeps the scale-free clause: a `p > 76` column
         // is held as text and refuses a literal only past `numeric_in`'s
@@ -6799,7 +6893,10 @@ mod tests {
         assert!(NUMERIC_DIGITS.contains(&decode::NUMERIC_INTEGER_DIGITS_MAX.to_string()));
         assert!(NUMERIC_DIGITS.contains(&decode::NUMERIC_DSCALE_MAX.to_string()));
         assert_eq!(
-            accepted_form(&CompareKind::Numeric { infinities: false }),
+            accepted_form(&CompareKind::Numeric {
+                infinities: false,
+                typmod: Some(crate::pgtype::NumericTypmod { precision: 77, scale: 0 }),
+            }),
             "as a number of at most 131072 digits before the point and 16383 after it, or `NaN`"
         );
     }
@@ -7953,7 +8050,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (45, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (46, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -8103,7 +8200,7 @@ mod tests {
                 CompareKind::UnsignedInt => "UnsignedInt",
                 CompareKind::Float32 => "Float32",
                 CompareKind::Float64 => "Float64",
-                CompareKind::Decimal(_) => "Decimal",
+                CompareKind::Decimal { .. } => "Decimal",
                 CompareKind::Date => "Date",
                 CompareKind::Time => "Time",
                 CompareKind::Timestamp { .. } => "Timestamp",
@@ -8635,7 +8732,7 @@ mod tests {
                     // A nested column's every term is refused here, so its
                     // answer is DataFusion's own: `make_comparator` over the
                     // two values as a batch emits them.
-                    let nested = (schema.plans[0] != NestedPlan::Scalar
+                    let nested = (!schema.plans[0].is_scalar()
                         && schema.columns[0] == ColumnResolution::Mapped)
                         .then(|| {
                             let array = crate::batch::column_of(

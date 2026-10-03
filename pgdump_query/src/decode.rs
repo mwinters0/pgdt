@@ -1100,31 +1100,19 @@ pub fn render_bytea(bytes: &[u8]) -> String {
     out
 }
 
-/// Parse a `numeric` field's text into an unscaled integer digit string at
-/// `scale` decimal places — the form [`i128::from_str`]/[`i256::from_str`]
-/// accept directly, so `batch.rs` only needs to pick the right width, never
-/// do arithmetic of its own. `None` for `NaN`: PostgreSQL's numeric `NaN`
-/// bypasses the column's own precision/scale check and is reachable through
-/// *any* numeric column (confirmed: `fixtures/*/types/*.sql`,
-/// `public.t_numeric.v_small numeric(10,2)`) — `Decimal128`/`Decimal256` have
-/// no representation for it, so this is the decode-failure path by
-/// construction, same as date/timestamp infinities.
+/// A filter literal compared with a `numeric(p,s)` column, as an unscaled
+/// integer digit string at `scale` decimal places — the form
+/// [`i128::from_str`]/[`i256::from_str`] accept directly. **Exact**: the
+/// server coerces a literal with no typmod (I63), so a digit finer than the
+/// scale is no value this key can carry and is refused rather than rounded
+/// (`docs/design/decisions.md`, "D55"), and no precision applies. A field is
+/// read by [`typmod_unscaled_digits`] instead. `None` for `NaN`, which a
+/// decimal has no representation for.
 ///
-/// A typed `numeric(p,s)` column always renders with exactly `s` fractional
-/// digits (PostgreSQL applies the typmod before output), so the "shift
-/// digits toward `scale`" step below is exact rather than a rounding
-/// approximation — including PG15+'s negative-scale numerics, which print
-/// with no fractional digits at all and where this divides out the implied
-/// trailing zeros instead of appending them. The one value written with fewer
-/// digits than a negative scale divides out is zero, which `numeric_out`
-/// prints as `0` at any scale (I51), so an all-zero digit string answers `0`
-/// there.
-///
-/// Deficiency register: `deficiency: KD81` — a field is not put through
-/// `apply_typmod`, which rounds it to the scale and then refuses one past the
-/// precision (I51): `1.005` in a `numeric(10,2)`, which the server stores as
-/// `1.01`, is refused here and read unrounded by `NumericKey` on a text-held
-/// `p > 76` column, and `123456789012` is read where the server refuses it.
+/// Digits are shifted toward `scale` — at a negative scale (PostgreSQL 15
+/// and later) the implied trailing zeros are divided out rather than
+/// appended, and an all-zero digit string answers `0`, which is how
+/// `numeric_out` prints zero at any scale (I51).
 pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     if s == "NaN" {
         return None;
@@ -1185,6 +1173,85 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
         out.push('-');
     }
     out.extend((start..keep).map(|i| char::from(digit(i))));
+    out.extend(std::iter::repeat_n('0', pad));
+    Some(out)
+}
+
+/// A `numeric(p,s)` field as `COPY` stores it, as an unscaled integer digit
+/// string at `scale` decimal places: `apply_typmod` rounds it to the scale,
+/// half away from zero, and then refuses one holding more than `precision`
+/// digits (I51). `numeric_out` writes every stored value at its scale already,
+/// so this rounds nothing a `pg_dump` wrote; a hand-written field is rounded
+/// as a restore would store it, `1.005` in a `numeric(10,2)` reading as
+/// `1.01`.
+///
+/// The grammar is [`decimal_unscaled_digits`]'s, `[-]digits[.digits]`, and
+/// `None` is what it refuses, `NaN` — which bypasses the typmod and has no
+/// decimal representation — and a value past the precision. `scale` is
+/// `numerictypmodin`'s whole range, -1000 to 1000, so a column held as text
+/// for a scale no Arrow decimal carries is read by this too.
+// pg-refuses: I51 — a value past the precision once rounded to the scale.
+pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Option<String> {
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
+    };
+    let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+    if (int_part.is_empty() && frac_part.is_empty())
+        || !int_part.bytes().all(|b| b.is_ascii_digit())
+        || !frac_part.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    // As in `decimal_unscaled_digits`, `int_part ++ frac_part` is indexed and
+    // never materialized: the unscaled value is its first `keep` digits,
+    // incremented where the first digit past the scale is 5 or more, then
+    // `pad` zeros.
+    let total = int_part.len() + frac_part.len();
+    let digit = |i: usize| {
+        if i < int_part.len() {
+            int_part.as_bytes()[i]
+        } else {
+            frac_part.as_bytes()[i - int_part.len()]
+        }
+    };
+    let shift = i64::from(scale) - frac_part.len() as i64;
+    let (keep, pad, round_up) = match usize::try_from(-shift) {
+        // Every digit past the scale is cut. Past the last written one, the
+        // first cut digit is an implied leading zero, which rounds down.
+        Ok(cut) if cut > total => (0, 0, false),
+        Ok(cut) => (total - cut, 0, cut > 0 && digit(total - cut) >= b'5'),
+        Err(_) => (total, usize::try_from(shift).ok()?, false),
+    };
+    let start = (0..keep).find(|&i| digit(i) != b'0').unwrap_or(keep);
+    // Zero, rounded or written, carries no sign: `-0.004` at scale 2 is `0`.
+    if start == keep && !round_up {
+        return Some("0".to_string());
+    }
+    let sign = usize::from(neg);
+    let mut out = String::with_capacity(sign + keep - start + 1 + pad);
+    if neg {
+        out.push('-');
+    }
+    out.extend((start..keep).map(|i| char::from(digit(i))));
+    if round_up {
+        // The carry turns a run of trailing nines into zeros and raises the
+        // digit before them, or adds a leading `1` where every digit was a
+        // nine: rounding can raise the weight, which is why the precision is
+        // checked after it.
+        let nines = out[sign..].bytes().rev().take_while(|&b| b == b'9').count();
+        out.truncate(out.len() - nines);
+        if out.len() > sign {
+            let last = out.pop().expect("a digit is past the sign");
+            out.push(char::from(last as u8 + 1));
+        } else {
+            out.push('1');
+        }
+        out.extend(std::iter::repeat_n('0', nines));
+    }
+    if out.len() - sign + pad > usize::from(precision) {
+        return None;
+    }
     out.extend(std::iter::repeat_n('0', pad));
     Some(out)
 }
@@ -1792,6 +1859,80 @@ mod tests {
     #[test]
     fn nan_numeric_has_no_decimal_representation() {
         assert_eq!(decimal_unscaled_digits("NaN", 2), None);
+        assert_eq!(typmod_unscaled_digits("NaN", 10, 2), None);
+    }
+
+    /// **A field is rounded to its scale half away from zero and refused past
+    /// its precision once rounded**, as `apply_typmod` stores it (I51): every
+    /// numeric case is a cast's reading on the koji replica (PG16), each
+    /// refusal its "numeric field overflow" — the carry raising the weight
+    /// past the precision included. Of the rest, `NaN` has no decimal, the
+    /// server refuses `Infinity` under a typmod (I34), and it reads `1e5`,
+    /// which this grammar does not (`docs/design/decisions.md`, "D55").
+    #[test]
+    fn a_field_is_put_through_its_typmod_as_copy_puts_it() {
+        let zeros = |n| "0".repeat(n);
+        for (text, precision, scale, stored) in [
+            ("1.005", 10, 2, Some("101")),
+            ("-1.005", 10, 2, Some("-101")),
+            ("1.004", 10, 2, Some("100")),
+            ("-0.004", 10, 2, Some("0")),
+            ("-0.005", 10, 2, Some("-1")),
+            ("1.0", 10, 2, Some("100")),
+            ("12345678.995", 10, 2, Some("1234567900")),
+            ("99999999.995", 10, 2, None),
+            ("123456789012", 10, 2, None),
+            ("99999999.99", 10, 2, Some("9999999999")),
+            ("0.000125", 2, 5, Some("13")),
+            ("0.0000049", 2, 5, Some("0")),
+            (".00001", 2, 5, Some("1")),
+            ("0.000995", 2, 5, None),
+            ("0.001", 2, 5, None),
+            ("1250", 3, -2, Some("13")),
+            ("-1249", 3, -2, Some("-12")),
+            ("99950", 3, -2, None),
+            ("5", 1, -1, Some("1")),
+            ("5", 1, -2, Some("0")),
+            ("0.5", 1, 0, Some("1")),
+            ("9.5", 1, 0, None),
+            ("NaN", 10, 2, None),
+            ("Infinity", 10, 2, None),
+            ("1e5", 10, 2, None),
+            (".", 10, 2, None),
+            ("", 10, 2, None),
+        ] {
+            assert_eq!(
+                typmod_unscaled_digits(text, precision, scale).as_deref(),
+                stored,
+                "{text:?} as numeric({precision},{scale})"
+            );
+        }
+        // `numerictypmodin`'s extreme scales, past every Arrow decimal's.
+        let tiny = format!("0.{}5", zeros(999));
+        assert_eq!(typmod_unscaled_digits(&tiny, 1, 1000).as_deref(), Some("5"));
+        assert_eq!(typmod_unscaled_digits(&tiny, 1, 999).as_deref(), Some("1"));
+        let huge = format!("-1{}", zeros(1000));
+        assert_eq!(typmod_unscaled_digits(&huge, 1, -1000).as_deref(), Some("-1"));
+        assert_eq!(typmod_unscaled_digits(&huge, 1, -999), None);
+    }
+
+    /// **What `numeric_out` writes is stored unchanged**: a value at its
+    /// column's scale reads as the exact literal reader reads it, at every
+    /// scale either side of zero, so the typmod moves no value a `pg_dump`
+    /// wrote.
+    #[test]
+    fn a_field_numeric_out_wrote_reads_as_its_literal() {
+        for scale in [-3i8, -1, 0, 1, 2, 6] {
+            for unscaled in ["0", "7", "-7", "120", "-98765", "1234567"] {
+                let text = render_decimal(unscaled, scale);
+                assert_eq!(
+                    typmod_unscaled_digits(&text, 7, i16::from(scale)),
+                    decimal_unscaled_digits(&text, scale),
+                    "{text:?} at scale {scale}"
+                );
+                assert_eq!(decimal_unscaled_digits(&text, scale).as_deref(), Some(unscaled));
+            }
+        }
     }
 
     #[test]

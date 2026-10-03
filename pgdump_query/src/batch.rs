@@ -370,13 +370,17 @@ enum ColumnBuilder {
     /// `interval`: PostgreSQL's three independent fields, narrowed from its
     /// `int64` microseconds to Arrow's `int64` nanoseconds.
     IntervalMonthDayNano(IntervalMonthDayNanoBuilder),
+    /// A `numeric(p,s)`: `scale` is the Arrow type's and `precision` the
+    /// typmod's, which a field is put through ([`decode::typmod_unscaled_digits`]).
     Decimal128 {
         builder: Decimal128Builder,
         scale: i8,
+        precision: u16,
     },
     Decimal256 {
         builder: Decimal256Builder,
         scale: i8,
+        precision: u16,
     },
     FixedSizeBinary16(FixedSizeBinaryBuilder),
     Binary(BinaryBuilder),
@@ -484,7 +488,7 @@ fn new_struct_parts(data_type: &DataType, plans: &[NestedPlan]) -> StructParts {
 
 fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder {
     match plan {
-        NestedPlan::Scalar => {}
+        NestedPlan::Scalar | NestedPlan::Decimal { .. } => {}
         NestedPlan::Array(child) => {
             return ColumnBuilder::Array(new_list_parts(data_type, child));
         }
@@ -509,6 +513,13 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
             return ColumnBuilder::Range(new_struct_parts(data_type, &plans));
         }
     }
+    // A decimal's typmod precision, which the Arrow type carries only where
+    // the scale does not exceed it; a plan stating none, as a caller's own
+    // schema does, is bounded by the Arrow type's.
+    let precision = |arrow: u8| match plan {
+        NestedPlan::Decimal { precision } => *precision,
+        _ => u16::from(arrow),
+    };
     match data_type {
         DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::new()),
         DataType::Boolean => ColumnBuilder::Bool(BooleanBuilder::new()),
@@ -534,12 +545,14 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
                 "pgtype::map_numeric only ever produces a valid Decimal128 precision/scale",
             ),
             scale: *s,
+            precision: precision(*p),
         },
         DataType::Decimal256(p, s) => ColumnBuilder::Decimal256 {
             builder: Decimal256Builder::new().with_precision_and_scale(*p, *s).expect(
                 "pgtype::map_numeric only ever produces a valid Decimal256 precision/scale",
             ),
             scale: *s,
+            precision: precision(*p),
         },
         DataType::FixedSizeBinary(16) => {
             ColumnBuilder::FixedSizeBinary16(FixedSizeBinaryBuilder::new(16))
@@ -768,12 +781,14 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
             let (months, days, nanoseconds) = decode::decode_interval(text).ok_or_else(fail)?;
             b.append_value(IntervalMonthDayNano { months, days, nanoseconds });
         }
-        ColumnBuilder::Decimal128 { builder, scale } => {
-            let unscaled = decode::decimal_unscaled_digits(text, *scale).ok_or_else(fail)?;
+        ColumnBuilder::Decimal128 { builder, scale, precision } => {
+            let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
+                .ok_or_else(fail)?;
             builder.append_value(unscaled.parse::<i128>().map_err(|_| fail())?);
         }
-        ColumnBuilder::Decimal256 { builder, scale } => {
-            let unscaled = decode::decimal_unscaled_digits(text, *scale).ok_or_else(fail)?;
+        ColumnBuilder::Decimal256 { builder, scale, precision } => {
+            let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
+                .ok_or_else(fail)?;
             builder.append_value(arrow::datatypes::i256::from_string(&unscaled).ok_or_else(fail)?);
         }
         ColumnBuilder::FixedSizeBinary16(b) => {
@@ -1235,7 +1250,7 @@ pub fn render_field_into(
         return Ok(false);
     }
     match plan {
-        NestedPlan::Scalar => {}
+        NestedPlan::Scalar | NestedPlan::Decimal { .. } => {}
         NestedPlan::Array(child) => {
             // Both are empty and neither allocates until it is used: `scratch`
             // only where an element needs quoting, `dims` only where the value

@@ -49,10 +49,9 @@ use arrow::array::builder::StringViewBuilder;
 use arrow::buffer::Buffer;
 use criterion::{Criterion, criterion_group, criterion_main};
 use pgdump_query::decode::{
-    decimal_unscaled_digits, decode_bool, decode_bytea, decode_date32, decode_f64,
-    decode_time64_micros, decode_timestamp_micros, decode_uuid, render_bool, render_bytea,
-    render_date32, render_decimal, render_f64, render_time64_micros, render_timestamp_micros,
-    render_uuid,
+    decode_bool, decode_bytea, decode_date32, decode_f64, decode_time64_micros,
+    decode_timestamp_micros, decode_uuid, render_bool, render_bytea, render_date32, render_decimal,
+    render_f64, render_time64_micros, render_timestamp_micros, render_uuid, typmod_unscaled_digits,
 };
 use pgdump_query::nested::{decode_array, decode_record, render_array, render_record};
 
@@ -79,10 +78,10 @@ fn float_family(c: &mut Criterion) {
 
 fn numeric_family(c: &mut Criterion) {
     let text = "123456789012345678.123456";
-    let unscaled = decimal_unscaled_digits(text, 6).unwrap();
+    let unscaled = typmod_unscaled_digits(text, 24, 6).unwrap();
     let mut g = c.benchmark_group("numeric");
     g.bench_function("decode", |b| {
-        b.iter(|| decimal_unscaled_digits(black_box(text), black_box(6)))
+        b.iter(|| typmod_unscaled_digits(black_box(text), black_box(24), black_box(6)))
     });
     g.bench_function("render", |b| b.iter(|| render_decimal(black_box(&unscaled), black_box(6))));
     g.finish();

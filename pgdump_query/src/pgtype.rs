@@ -81,9 +81,10 @@ pub enum TypeOutcome {
 /// (`docs/design/decisions.md`, "D39"); it is a tree because the answer
 /// differs per nesting level.
 ///
-/// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
-/// included), which is where every branch bottoms out but at `Int2Vector`
-/// and a composite of no fields, childless terminals of their own. `Serialize` so
+/// A `Scalar` or `Decimal` leaf is anything [`crate::decode`] handles
+/// (`Utf8View` included), which is where every branch bottoms out but at
+/// `Int2Vector` and a composite of no fields, childless terminals of their
+/// own; [`Self::is_scalar`] asks for either. `Serialize` so
 /// `pgdt info --json` can export a resolved schema's plans structurally
 /// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
 /// persisted** — the cache holds what the dump said, never what we concluded
@@ -93,6 +94,12 @@ pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
     #[default]
     Scalar,
+    /// A `numeric(p,s)` in an Arrow decimal, filled as `Scalar` is and put
+    /// through `apply_typmod` as `COPY` puts it (I51), whose bound is
+    /// `precision` digits: `Decimal(max(p, s), s)` carries the scale and, where
+    /// the scale exceeds the precision, not the precision
+    /// ([`crate::decode::typmod_unscaled_digits`]).
+    Decimal { precision: u16 },
     /// `array_out` → `List<child>`. Nested `Array`s are the multi-dimensional
     /// case and **only** that: the plan's depth is the dimensionality the
     /// column was resolved at, and a value that disagrees is a decode
@@ -117,6 +124,22 @@ pub enum NestedPlan {
     Int2Vector,
 }
 
+impl NestedPlan {
+    /// Whether this position is a leaf a decoder fills, rather than a
+    /// container: [`Self::Scalar`] or [`Self::Decimal`].
+    pub fn is_scalar(&self) -> bool {
+        matches!(self, Self::Scalar | Self::Decimal { .. })
+    }
+}
+
+/// A `numeric(p,s)`'s typmod, in `numerictypmodin`'s ranges: a precision of 1
+/// to 1000 and, from PostgreSQL 15, a scale of -1000 to 1000 (I51).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NumericTypmod {
+    pub precision: u16,
+    pub scale: i16,
+}
+
 /// How one column's field text becomes a value two sides of a comparison can
 /// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
 /// thing `crate::predicate` needs in order to read a side.
@@ -125,8 +148,8 @@ pub enum NestedPlan {
 /// correspond to it (`docs/design/decisions.md`, "D40").
 ///
 /// **Not `Copy`**: several variants carry the column's own facts — an enum's
-/// labels, a typmodded `numeric`'s scale, whether one held as text admits the
-/// infinities — and the labels are not `Copy`.
+/// labels, a typmodded `numeric`'s precision and scale, whether one held as
+/// text admits the infinities — and the labels are not `Copy`.
 /// The kind is cloned into a term as the term's literal is resolved
 /// (`crate::predicate`'s `Comparison::Decoded`), once per term.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,7 +169,14 @@ pub enum CompareKind {
     UnsignedInt,
     Float32,
     Float64,
-    Decimal(i8),
+    /// A `numeric(p,s)` typed as an Arrow decimal at `scale`, compared as an
+    /// unscaled integer there: a field put through its typmod
+    /// ([`crate::decode::typmod_unscaled_digits`]), a literal read exactly
+    /// ([`crate::decode::decimal_unscaled_digits`]).
+    Decimal {
+        precision: u16,
+        scale: i8,
+    },
     Date,
     Time,
     Timestamp {
@@ -171,8 +201,13 @@ pub enum CompareKind {
     /// column. Any typmod rejects an infinity (I34), so only the bare form
     /// admits the spelling, and it is the bare form's field alone that
     /// `numeric_in`'s storage bounds reach, a typmod rounding first (I63).
+    ///
+    /// `typmod` is the declared one, which a field is put through
+    /// ([`crate::decode::typmod_unscaled_digits`]) before it is normalized;
+    /// `None` for the bare form, and for a typmod this build cannot read.
     Numeric {
         infinities: bool,
+        typmod: Option<NumericTypmod>,
     },
     /// An enum, compared by each label's position in the type's own
     /// declaration order (I33) rather than by its text. The labels are
@@ -1179,19 +1214,22 @@ fn catalog_name(name: &str) -> Option<&'static str> {
 /// *filter's literal* on a typmod'd text arm would accept a value the server
 /// refuses.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
-    let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
-    let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
+    let text =
+        |infinities, typmod| ComparisonPlan::agrees(CompareKind::Numeric { infinities, typmod });
+    let Some(typmod) = typmod else { return (DataType::Utf8View, text(true, None)) };
     let mut parts = typmod.split(',').map(str::trim);
     let precision: Option<u16> = parts.next().and_then(|p| p.parse().ok());
-    let scale: Option<i8> = parts.next().map_or(Some(0), |s| s.parse().ok());
+    let scale: Option<i16> = parts.next().map_or(Some(0), |s| s.parse().ok());
     let (Some(precision), Some(scale)) = (precision, scale) else {
-        return (DataType::Utf8View, arbitrary(false));
+        return (DataType::Utf8View, text(false, None));
     };
-    let decimal = ComparisonPlan::agrees(CompareKind::Decimal(scale));
+    let held_as_text = (DataType::Utf8View, text(false, Some(NumericTypmod { precision, scale })));
+    let Ok(scale) = i8::try_from(scale) else { return held_as_text };
+    let decimal = ComparisonPlan::agrees(CompareKind::Decimal { precision, scale });
     match u8::try_from(precision.max(u16::from(scale.max(0).unsigned_abs()))) {
         Ok(p @ 1..=38) => (DataType::Decimal128(p, scale), decimal),
         Ok(p @ 39..=76) => (DataType::Decimal256(p, scale), decimal),
-        _ => (DataType::Utf8View, arbitrary(false)),
+        _ => held_as_text,
     }
 }
 
@@ -1416,14 +1454,17 @@ fn map_builtin(
     visits: Visits,
 ) -> Option<TypeOutcome> {
     // No collation: an Arrow type never depends on one, and the comparison
-    // half of the pair is discarded here.
-    if let Some((mapped, _)) = builtin_scalar(base, typmod, None, &[]) {
+    // half of the pair is read here only for a decimal's precision.
+    if let Some((mapped, comparison)) = builtin_scalar(base, typmod, None, &[]) {
         // The literal form is this walk's to say: a `smallint[]` column and
         // an `int2vector` one are both `List<Int16>` and are written in
         // different grammars (`docs/design/decisions.md`, "D39"). Exactly one
         // built-in is a container.
-        let plan = match base {
-            "int2vector" => NestedPlan::Int2Vector,
+        let plan = match (base, comparison) {
+            ("int2vector", _) => NestedPlan::Int2Vector,
+            (_, ComparisonPlan::Compared { kind: CompareKind::Decimal { precision, .. }, .. }) => {
+                NestedPlan::Decimal { precision }
+            }
             _ => NestedPlan::Scalar,
         };
         // The pairing is checked rather than trusted: a built-in mapped to a
@@ -1431,7 +1472,7 @@ fn map_builtin(
         // scalar builder and decode every value as text.
         debug_assert_eq!(
             matches!(mapped, DataType::List(_) | DataType::Struct(_)),
-            plan != NestedPlan::Scalar,
+            !plan.is_scalar(),
             "`builtin_scalar`'s `{base}` arm and `map_builtin`'s plan table disagree about \
              whether it is a container",
         );
@@ -2299,11 +2340,19 @@ mod tests {
     fn numeric_picks_decimal_width_by_precision() {
         assert_eq!(
             resolve_declared_type("numeric(38,10)", &[]),
-            TypeOutcome::Mapped(DataType::Decimal128(38, 10), NestedPlan::Scalar)
+            TypeOutcome::Mapped(
+                DataType::Decimal128(38, 10),
+                NestedPlan::Decimal { precision: 38 }
+            )
         );
         assert_eq!(
             resolve_declared_type("numeric(39,0)", &[]),
-            TypeOutcome::Mapped(DataType::Decimal256(39, 0), NestedPlan::Scalar)
+            TypeOutcome::Mapped(DataType::Decimal256(39, 0), NestedPlan::Decimal { precision: 39 })
+        );
+        // The plan carries the precision the widened Arrow type does not.
+        assert_eq!(
+            resolve_declared_type("numeric(2,5)", &[]),
+            TypeOutcome::Mapped(DataType::Decimal128(5, 5), NestedPlan::Decimal { precision: 2 })
         );
         assert_eq!(
             resolve_declared_type("numeric", &[]),
@@ -2311,7 +2360,7 @@ mod tests {
         );
         assert_eq!(
             resolve_declared_type("numeric(2,-2)", &[]),
-            TypeOutcome::Mapped(DataType::Decimal128(2, -2), NestedPlan::Scalar)
+            TypeOutcome::Mapped(DataType::Decimal128(2, -2), NestedPlan::Decimal { precision: 2 })
         );
         assert_eq!(
             resolve_declared_type("numeric(77,0)", &[]),
@@ -2328,18 +2377,24 @@ mod tests {
         use arrow::datatypes::{
             Decimal128Type, Decimal256Type, validate_decimal_precision_and_scale,
         };
-        let decimal = |s| ComparisonPlan::agrees(CompareKind::Decimal(s));
-        let text = || ComparisonPlan::agrees(CompareKind::Numeric { infinities: false });
+        let decimal =
+            |precision, scale| ComparisonPlan::agrees(CompareKind::Decimal { precision, scale });
+        let text = |precision, scale| {
+            ComparisonPlan::agrees(CompareKind::Numeric {
+                infinities: false,
+                typmod: Some(NumericTypmod { precision, scale }),
+            })
+        };
         for (typmod, mapped) in [
-            ("2,5", (DataType::Decimal128(5, 5), decimal(5))),
-            ("1,38", (DataType::Decimal128(38, 38), decimal(38))),
-            ("1,40", (DataType::Decimal256(40, 40), decimal(40))),
-            ("50,76", (DataType::Decimal256(76, 76), decimal(76))),
-            ("2,-128", (DataType::Decimal128(2, -128), decimal(-128))),
-            ("1,77", (DataType::Utf8View, text())),
-            ("1,200", (DataType::Utf8View, text())),
-            ("2,-129", (DataType::Utf8View, text())),
-            ("1000,-1000", (DataType::Utf8View, text())),
+            ("2,5", (DataType::Decimal128(5, 5), decimal(2, 5))),
+            ("1,38", (DataType::Decimal128(38, 38), decimal(1, 38))),
+            ("1,40", (DataType::Decimal256(40, 40), decimal(1, 40))),
+            ("50,76", (DataType::Decimal256(76, 76), decimal(50, 76))),
+            ("2,-128", (DataType::Decimal128(2, -128), decimal(2, -128))),
+            ("1,77", (DataType::Utf8View, text(1, 77))),
+            ("1,200", (DataType::Utf8View, text(1, 200))),
+            ("2,-129", (DataType::Utf8View, text(2, -129))),
+            ("1000,-1000", (DataType::Utf8View, text(1000, -1000))),
         ] {
             assert_eq!(map_numeric(Some(typmod)), mapped, "numeric({typmod})");
             match mapped.0 {
@@ -2882,13 +2937,19 @@ mod tests {
             ("boolean", agrees(K::Bool)),
             ("real", agrees(K::Float32)),
             ("double precision", agrees(K::Float64)),
-            ("numeric(10,2)", agrees(K::Decimal(2))),
-            ("numeric(50,0)", agrees(K::Decimal(0))),
+            ("numeric(10,2)", agrees(K::Decimal { precision: 10, scale: 2 })),
+            ("numeric(50,0)", agrees(K::Decimal { precision: 50, scale: 0 })),
             // The two `numeric` shapes with no Arrow decimal behind them, and
             // the one place the register distinguishes them: a typmod rejects
             // an infinity, so only the bare form admits the spelling (I34).
-            ("numeric", agrees(K::Numeric { infinities: true })),
-            ("numeric(77,0)", agrees(K::Numeric { infinities: false })),
+            ("numeric", agrees(K::Numeric { infinities: true, typmod: None })),
+            (
+                "numeric(77,0)",
+                agrees(K::Numeric {
+                    infinities: false,
+                    typmod: Some(NumericTypmod { precision: 77, scale: 0 }),
+                }),
+            ),
             // The four collatable arms, each asked with no `COLLATE` clause.
             // `name`'s type default is `C`, so it agrees where the others
             // cannot; `character(n)` carries a comparison of its own (the
@@ -2947,7 +3008,7 @@ mod tests {
         );
         assert_eq!(
             comparison_for("numeric", None, &[], &[]),
-            ComparisonPlan::agrees(CompareKind::Numeric { infinities: true }),
+            ComparisonPlan::agrees(CompareKind::Numeric { infinities: true, typmod: None }),
         );
         assert_eq!(
             comparison_for("inet", None, &[], &[]),
@@ -3013,7 +3074,7 @@ mod tests {
         for kind in [
             CompareKind::PaddedText,
             CompareKind::Enum(labels),
-            CompareKind::Numeric { infinities: true },
+            CompareKind::Numeric { infinities: true, typmod: None },
             CompareKind::TimeTz,
             CompareKind::Network { cidr: false },
             CompareKind::Jsonb,

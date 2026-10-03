@@ -3726,10 +3726,14 @@ decoder that divides the scale's zeros out of a digit string must therefore
 take a short all-zero one as zero. Every value, unscaled at `s`, has at
 most `p` digits, so a scale past the precision (PostgreSQL 15 and later)
 holds only values below `10^(p-s)`, written with leading fractional zeros.
+A field `COPY` reads into one is rounded to `s` places, half away from zero,
+before that bound is checked, so the rounding can carry it past.
 
 **Proof.** `apply_typmod()` in `src/backend/utils/adt/numeric.c` calls
 `round_var(var, scale)`, which sets `var->dscale` to the scale and rounds the
-value to it, then clamps a negative `dscale` to 0 (v15 onward; v13 and v14's
+value to it — on the magnitude, rounding up where the first digit dropped
+is 5 or more ("first extra digit is >= 5") — then clamps a negative `dscale`
+to 0 (v15 onward; v13 and v14's
 `numerictypmodin` refuses a scale outside `0..precision`). `numeric_out`
 prints a finite value with `get_str_from_var`, which writes the integer
 digits — `0` alone where there are none — and then exactly `dscale`
@@ -3738,7 +3742,12 @@ fractional digits; `round_var` makes a zero result positive. After rounding,
 digits exceed `maxdigits = precision - scale`, so a value's magnitude is
 below `10^(p-s)`.
 
-**Observed.** On the koji replica, v16.15:
+**Observed.** On the koji replica, v16.15, `COPY … FROM stdin` into
+`numeric(10,2)`, `numeric(2,5)`, `numeric(3,-2)` and `numeric(100,2)` stores
+`1.005`, `0.000125`, `1250` and `1.005` as `1.01`, `0.00013`, `1300` and
+`1.01`, `-0.004` and `-0.005` at scale 2 as `0.00` and `-0.01`, and refuses
+`99999999.995` in `numeric(10,2)`, the rounding carrying it past the
+precision; and
 `copy (select 0::numeric(3,-2), (-0.0)::numeric(3,-2), 1234::numeric(5,-2), 0::numeric(40,-5)) to stdout`
 writes `0	0	1200	0`; `0.00012::numeric(2,5)` writes `0.00012`,
 `0::numeric(2,5)` writes `0.00000`, and `5e-200::numeric(1,200)` writes 199
@@ -3754,10 +3763,13 @@ the precision.
 v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 `maxdigits` check at all six.
 
-**Relied on by:** `decode::decimal_unscaled_digits` and
-`decode::render_decimal`, which take a typed `numeric` column's text to and
-from an unscaled integer at the column's scale; `pgtype::map_numeric`, which
-widens the precision to a scale past it.
+**Relied on by:** `decode::typmod_unscaled_digits`, which puts a field
+through its typmod, rounding half away from zero and refusing past the
+precision; `decode::decimal_unscaled_digits` and `decode::render_decimal`,
+which take a typed `numeric` column's text to and from an unscaled integer at
+the column's scale; `pgtype::map_numeric`, which widens the precision to a
+scale past it, and `pgtype::NestedPlan::Decimal`, which carries the precision
+that widening loses.
 
 **Re-verify.**
 

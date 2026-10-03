@@ -258,9 +258,7 @@ impl Generator<'_> {
 
     /// The columns a comparison may name: the scalar ones.
     fn scalars(&self) -> Vec<usize> {
-        (0..self.batch.num_columns())
-            .filter(|&i| self.resolved.plans[i] == pgdump_query::NestedPlan::Scalar)
-            .collect()
+        (0..self.batch.num_columns()).filter(|&i| self.resolved.plans[i].is_scalar()).collect()
     }
 
     /// A value of column `index`, a `NULL` among them where the column holds

@@ -75,9 +75,10 @@ impl Leaf {
             }
             (NestedPlan::Scalar, DataType::Time64(_)) => Leaf::Time,
             (NestedPlan::Scalar, DataType::Interval(_)) => Leaf::Interval,
-            (NestedPlan::Scalar, DataType::Decimal128(..) | DataType::Decimal256(..)) => {
-                Leaf::Decimal
-            }
+            (
+                NestedPlan::Scalar | NestedPlan::Decimal { .. },
+                DataType::Decimal128(..) | DataType::Decimal256(..),
+            ) => Leaf::Decimal,
             (NestedPlan::Array(child), DataType::List(item)) => {
                 Leaf::Array(Box::new(Leaf::of(item.data_type(), child)))
             }

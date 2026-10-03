@@ -138,7 +138,7 @@ pub(crate) fn compared(
         Operator::IsNotDistinctFrom => PredicateOp::IsNotDistinctFrom,
         _ => return None,
     };
-    if table.plans[index] != NestedPlan::Scalar {
+    if !table.plans[index].is_scalar() {
         return None;
     }
     let value = literal_text(literal, index, table)?;
@@ -203,7 +203,7 @@ pub(crate) fn boolean_term(
 fn column_index(expr: &Expr, table: &ResolvedSchema) -> Option<usize> {
     let Expr::Column(column) = expr else { return None };
     let index = table.schema.index_of(&column.name).ok()?;
-    (table.plans[index] == NestedPlan::Scalar).then_some(index)
+    table.plans[index].is_scalar().then_some(index)
 }
 
 /// Whether column `index` of `table` is a float, whose `IN` DataFusion

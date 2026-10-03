@@ -59,7 +59,7 @@ use std::sync::{Arc, OnceLock};
 use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
-use crate::decode::{decimal_unscaled_digits, decode_bytea, decode_bytea_escape, render_bytea};
+use crate::decode::{decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits};
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
@@ -188,7 +188,7 @@ pub(crate) fn stored_resolution(
 /// `character` column's, whose entries give up their trailing blanks.
 pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> bool {
     let comparison = &stored.comparisons[i];
-    stored.plans[i] == NestedPlan::Scalar
+    stored.plans[i].is_scalar()
         && comparison.dictionary_answers_in(ComparisonSemantics::Postgres)
         && !matches!(comparison, ComparisonPlan::Compared { kind: CompareKind::PaddedText, .. })
 }
@@ -197,7 +197,7 @@ pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> 
 /// `data_type` ([`crate::statistics::ColumnStatistics::sums`]) — and so
 /// whether a column a query emits so is the one they were summed as.
 pub(crate) fn keeps_sums(data_type: &DataType) -> bool {
-    Summand::of(data_type).is_some()
+    Summand::of(data_type, &NestedPlan::Scalar).is_some()
 }
 
 /// The declaration `metadata` holds for column `name` of the table
@@ -794,22 +794,30 @@ enum Summand {
     Int32,
     Int64,
     UInt32,
-    /// A `numeric(p,s)`'s value unscaled at `s` places.
+    /// A `numeric(p,s)`'s value put through its typmod, unscaled at `s`
+    /// places.
     Decimal128 {
+        precision: u16,
         scale: i8,
     },
 }
 
 impl Summand {
-    /// How a column the typed read emits as `data_type` is summed, or `None`
-    /// for a type that keeps no sum.
-    fn of(data_type: &DataType) -> Option<Self> {
+    /// How a column the typed read emits as `data_type`, filled as `plan`
+    /// says, is summed, or `None` for a type that keeps no sum.
+    fn of(data_type: &DataType, plan: &NestedPlan) -> Option<Self> {
         match data_type {
             DataType::Int16 => Some(Self::Int16),
             DataType::Int32 => Some(Self::Int32),
             DataType::Int64 => Some(Self::Int64),
             DataType::UInt32 => Some(Self::UInt32),
-            DataType::Decimal128(_, scale) => Some(Self::Decimal128 { scale: *scale }),
+            DataType::Decimal128(arrow, scale) => Some(Self::Decimal128 {
+                precision: match plan {
+                    NestedPlan::Decimal { precision } => *precision,
+                    _ => u16::from(*arrow),
+                },
+                scale: *scale,
+            }),
             _ => None,
         }
     }
@@ -822,7 +830,9 @@ impl Summand {
             Self::Int32 => text.parse::<i32>().ok().map(i128::from),
             Self::Int64 => text.parse::<i64>().ok().map(i128::from),
             Self::UInt32 => text.parse::<u32>().ok().map(i128::from),
-            Self::Decimal128 { scale } => decimal_unscaled_digits(text, scale)?.parse().ok(),
+            Self::Decimal128 { precision, scale } => {
+                typmod_unscaled_digits(text, precision, i16::from(scale))?.parse().ok()
+            }
         }
     }
 }
@@ -873,13 +883,13 @@ impl ColumnGatherer {
     ) -> Self {
         let postgres = ComparisonSemantics::Postgres;
         let dictionary = match comparison {
-            ComparisonPlan::Compared { kind, .. } if *plan == NestedPlan::Scalar => {
+            ComparisonPlan::Compared { kind, .. } if plan.is_scalar() => {
                 comparison.dictionary_answers_in(postgres).then(|| DictionaryGatherer::new(kind))
             }
             _ => None,
         };
         let bounds = bounds.map(|kind| kind.map(BoundsGatherer::new));
-        let summand = Summand::of(data_type);
+        let summand = Summand::of(data_type, plan);
         Self::with(declared_type, collation, bounds, dictionary, summand, tier)
     }
 
