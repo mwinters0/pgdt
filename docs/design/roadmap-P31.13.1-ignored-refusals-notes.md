@@ -56,5 +56,5 @@ the mode 31.13's
 ## What the slices after this inherit
 
 - **31.14** adds its checked-in-full mark beside this record on the block. A
-  `strict` parse refuses too, so it owes the record what `Default` gives it:
-  `refuse_recorded` returns early for every mode but `Default` today.
+  `strict` parse re-reads a block holding a record rather than failing from it
+  (D103), so `refuse_recorded` serves `Default` alone.

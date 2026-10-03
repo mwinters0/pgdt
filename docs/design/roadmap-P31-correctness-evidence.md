@@ -128,6 +128,14 @@ inbox, and a finding in `INSERT` or archive reading to P8's. **The phase ends
 when the register is green with no exemption naming a P31 `KD`**, which
 bounds it by its thesis rather than by a list fixed at grilling.
 
+**Nor does it end while `strict` breaks its promise**
+([`roadmap.md`](roadmap.md), "A literal is guaranteed in `*_out`'s form and
+never read past `*_in`'s"): a field the promise covers that a `strict` parse
+leaves unchecked is the phase's, and a `strict` parse names what lies outside
+it in the dump it read. Why:
+[`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "A
+clean `strict` parse promises what the field and its declaration decide".
+
 ## A known failure is asserted to fail
 
 **A fixture exposing a defect lands before the fix, in a strict known-failure

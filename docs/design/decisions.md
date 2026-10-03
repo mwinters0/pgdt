@@ -426,7 +426,7 @@ words, never a flag. The invalid-values mode is a parse's too (`ScanOptions`): a
 block records per column the fields it went past, so a `Default` parse tracking such a column fails over the cache unread; `Strict`, a parse's alone,
 checks every field, marks each block it checks whole and re-reads each held block unmarked — first, when resuming — never the record, which holds only
 what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;
-recording the mode; refusing such a cache (D20). Defaults: `Null` (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `checker`.
+recording the mode; refusing such a cache (D20); `Strict` failing from the record. Defaults: `Null` (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `checker`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test

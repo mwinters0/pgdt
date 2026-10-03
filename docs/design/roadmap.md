@@ -304,7 +304,13 @@ A parse refuses what it decodes, and decodes no field for the check alone, so a
 nested leaf, a declined block's rows and a metadata-level column are caught when
 a query decodes them. `--postgres-invalid-values`, on every surface the
 unrepresentable mode has (D103), is `default` for that; `strict` has the parse
-decode every field, so a clean parse means what a clean restore does; `ignore`
+check every field against what PostgreSQL refuses by the field and its column's
+declaration alone — its type's `*_in`, its typmod, a `NOT NULL` on the column,
+the table or a domain — for every type whose input is decided there, a built-in
+type held as its text having its grammar ported. Outside it, and named by the
+manual: a `CHECK` (an expression), an input the restoring server decides
+(`xml`, `money`, a user base type, a user range's `canonical`), and a post-data
+constraint. A clean restore is not the promise, being out of reach; `ignore`
 opts a dump's fields out with no contract, the decoders reading them as they
 read them. A literal has no opt-out, rewriting it being its remedy. A hand-written dump is in scope (the rule above), so any field `*_in`
 refuses counts, not only the spellings `pg_dump` writes. The mechanism is

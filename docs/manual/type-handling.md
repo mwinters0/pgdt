@@ -1007,9 +1007,14 @@ refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 
 **`--postgres-invalid-values strict` checks every value instead**, those
 included, so a `parse` that finishes means no value in the dump is one
-PostgreSQL refuses — but for a value of a type pgdt keeps as its text
-(`money`, `json`, `xml`, a type it has no reader for) and a value of a range
-type declaring its own `canonical` function, which pgdt does not read.
+PostgreSQL's input function for its type refuses. It does not check a value of
+a type pgdt keeps as its text (`json`, `xml`, `money`, `bit`, `bit varying`,
+the geometric types, a type it has no reader for), a value of a range type
+declaring its own `canonical` function, a `character varying(n)`,
+`character(n)`, `bit(n)` or `bit varying(n)` value longer than its column
+allows, or a null in a `NOT NULL` column; nor anything a constraint checks — a
+`CHECK`, or a unique, primary or foreign key, which a restore checks once the
+data has loaded.
 Each table it checks is recorded in the cache as checked, and a `strict` parse
 over a cache an earlier `parse` built re-reads the tables no `strict` parse
 checked, in the same pass that fills in any statistics they lack, so the
