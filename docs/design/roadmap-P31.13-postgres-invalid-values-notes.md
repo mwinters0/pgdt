@@ -48,8 +48,10 @@ where the mode is stated and why no cache records it is D103.
 
 ## What the slices after this inherit
 
-- **31.14's `strict`** is a third variant on the same two structs. A resumed
-  parse keeps the blocks a cache already holds, so a cache an ignoring parse
-  left is not re-checked by a later `default` one; a `strict` parse promising a
-  full check has to read those blocks again or refuse such a cache, and no
-  cache today says which mode gathered it (D103).
+- **31.13.1 and 31.14 inherit a cache that records facts, never the mode**
+  ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "A
+  cache records the refusals an ignoring parse went past"): a block keeps the
+  refusals an ignoring parse went past, and `strict` re-reads the held blocks
+  no strict parse checked, recording each as checked in full. Today no cache
+  records either, a resumed parse re-reading a block only for a column with no
+  bounds (`StatisticsRequest::backfill`).

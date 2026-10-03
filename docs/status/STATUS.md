@@ -101,7 +101,8 @@ approval, in the spec's opening note.
 - [x] **31.12.2** A refused field named as the restore names it — `COPY` line N of its block beside its offset — the rows before it counted through `absorb`; `FieldDecode` keeps its offset, worded as `FieldRefused`'s — [notes](../design/roadmap-P31.12.2-copy-line-notes.md)
 - [x] **31.12.3** An enum field naming a label its type does not declare refused where the preamble holds the type's labels exactly, a statement that could change them and that it cannot read — `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, a label it cannot lex — leaving them inexact, closing `KD83` — [notes](../design/roadmap-P31.12.3-enum-label-refusal-notes.md)
 - [x] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal — [notes](../design/roadmap-P31.13-postgres-invalid-values-notes.md)
-- [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check; the manual says what `default` leaves to a query
+- [ ] **31.13.1** A block records the refused fields an ignoring parse went past — the first in full, and a count — so a `default` parse over the cache fails with the recorded refusal, saying an ignoring parse recorded it and nothing was re-read, and `info` reports them; `CACHE_FORMAT_VERSION` bumped
+- [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query
 
 ## Not started
 
@@ -133,16 +134,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`--postgres-invalid-values` is stated per run, on `parse` as well as on
-  D103's four query surfaces, and no cache records which mode gathered it**
-  (31.13). The row named D103's surfaces, none of which parses, while the
-  refusal it opts out of is a parse's, so `pgdt parse` and `ScanOptions` took
-  the flag too. A cache an ignoring parse left is then read by a `default`
-  query, which refuses the field at its read, and by an ignoring one, which
-  reads a float as `±DBL_MAX`: an ignoring parse keeps no statistic of the
-  field's group, so neither answer is contradicted by one (D103). The
-  alternative is the mode as a property of the cache — recorded by the parse
-  and imposed on every reader, or a reader refusing a cache gathered under
-  another — which 31.14's `strict` will want to know about at least, a resumed
-  parse not re-checking blocks a cache already holds. Reconsidering moves
-  D103's last sentences and the cache format.
