@@ -55,6 +55,9 @@ use pgdump_query::{
     TableName, UnrepresentableMode, map_file,
 };
 
+#[path = "../../pgdump_query/tests/common/refused.rs"]
+mod refused;
+
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
 
@@ -123,13 +126,17 @@ async fn parsed_copy_in_small_groups(fixture: &Path, dir: &Path) -> PathBuf {
     parsed_copy_gathering(fixture, dir, &request).await
 }
 
+/// `fixture` copied into `dir` beside the cache `request` leaves, but for a
+/// column holding a field PostgreSQL refuses, which a data-level parse fails
+/// on (`refused::past_refused`).
 async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> PathBuf {
     let dir = tempfile::tempdir_in(dir).unwrap().keep();
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, request).await.unwrap();
+    let request = refused::past_refused(fixture, request);
+    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
     copy
 }
 

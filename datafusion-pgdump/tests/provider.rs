@@ -22,6 +22,9 @@ use pgdump_query::{
     ScanOptions, SchemaMode, SpanBody, StatisticsRequest, TableName, map_file, table_stream,
 };
 
+#[path = "../../pgdump_query/tests/common/refused.rs"]
+mod refused;
+
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
 
@@ -64,7 +67,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy)).await;
+    map_ungathered(&source, &cache::colocated_path(&copy), &refused::sweep_request(fixture)).await;
     copy
 }
 
@@ -479,13 +482,15 @@ async fn a_single_table_registers_on_its_own() {
     );
 }
 
-/// Map `source` whole into the cache at `path` at the data level and keep no
+/// Map `source` whole into the cache at `path` under `request` and keep no
 /// statistics: the census a typed plan needs and nothing gathered, as a
 /// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
-/// "D35").
-async fn map_ungathered(source: &LocalFileSource, path: &Path) {
+/// "D35"). `request` is the data level, but for a column holding a field
+/// PostgreSQL refuses, which a data-level parse fails on
+/// (`refused::sweep_request`).
+async fn map_ungathered(source: &LocalFileSource, path: &Path, request: &StatisticsRequest) {
     let cache = CacheMode::enabled(path.to_path_buf());
-    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    map_file(source, &ScanOptions::default(), &cache, request).await.unwrap();
     let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
         panic!("the parse left a complete cache")
     };

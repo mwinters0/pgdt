@@ -162,3 +162,23 @@ the lexer change of 2026-10-01
 ([`../status/history/2026-10-01.md`](../status/history/2026-10-01.md)),
 which put it on the scanner's lexer. The mechanism is
 [`decisions.md`](decisions.md), "D33".
+
+---
+
+## A refused field fails a parse at a `COPY` block's close
+
+**Fact.** A field its type's `*_in` refuses at a `pg-refuses` check fails a
+data-level parse keying it (31.12): the statistics observer answers
+`BlockGathered::Refused`, and `map::Builder::on_copy_end` raises
+`Error::FieldRefused`, as a restore under `ON_ERROR_STOP` fails the table's
+`COPY`. Nothing raises it for an `INSERT` run, whose rows nothing reads yet.
+
+**Why P8 cares.** Track A reads `INSERT` rows, and a restore of an
+`--inserts` dump fails per statement, not per table: without `ON_ERROR_STOP`
+it loses the one row and goes on. Whether the parse fails at a refused
+`INSERT` value as at a `COPY` field, and where the raise sits when a run has
+no `on_copy_end`, is that track's to decide.
+
+**Origin.** 31.12, 2026-10-03:
+[`roadmap-P31.12-field-refusal-notes.md`](roadmap-P31.12-field-refusal-notes.md).
+Contingent on the raise staying at the block's close.

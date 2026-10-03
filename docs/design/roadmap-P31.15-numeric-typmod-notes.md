@@ -53,8 +53,7 @@ What the slices after this one inherit. The spec is
 
 ## What the slices after this inherit
 
-- **31.12 turns the precision refusal into a parse abort** with the others.
-  On the text-held arm the typed read never decodes a field, so what refuses
-  one at parse is gathering keying it for its bounds; whether that counts as
-  the parse decoding it is 31.12's to settle against "a parse refuses what it
-  decodes".
+- **The precision refusal fails a parse** with the others, on the text-held
+  arm too, where the typed read never decodes a field and gathering keys it
+  for its bounds: keying is decoding
+  ([31.12's notes](roadmap-P31.12-field-refusal-notes.md)).

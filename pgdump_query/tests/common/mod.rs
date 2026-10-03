@@ -113,6 +113,12 @@ pub fn all_fixtures() -> Vec<PathBuf> {
     out
 }
 
+/// The fixtures holding a field PostgreSQL refuses, shared with the other
+/// crates' sweeps.
+pub mod refused;
+#[allow(unused_imports)]
+pub use refused::{REFUSED_FIELDS, RefusedField, refused_field, sweep_request};
+
 /// A private copy of `source` in a fresh tempdir, named `name`, so a test can
 /// freely read and write a colocated `.dtcache` beside it without touching
 /// the checked-in fixture. The `TempDir` is returned because dropping it

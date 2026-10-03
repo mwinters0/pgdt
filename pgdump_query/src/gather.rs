@@ -59,7 +59,9 @@ use std::sync::{Arc, OnceLock};
 use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
-use crate::decode::{decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits};
+use crate::decode::{
+    Unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits,
+};
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
@@ -69,9 +71,9 @@ use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    GroupSizing, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount,
-    StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap,
-    vec_heap,
+    FieldRefusal, GroupSizing, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness,
+    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group,
+    text_heap, vec_heap,
 };
 use crate::unrepresentable::{ColumnTier, column_tiers};
 
@@ -216,6 +218,11 @@ pub(crate) fn declared_column<'m>(
         .and_then(|db| db.declared_column(qualified, name))
 }
 
+/// A field its type's `*_in` refuses, met while keying it
+/// ([`BoundsGatherer::observe`]).
+#[derive(Debug)]
+struct Refused;
+
 /// The group a row is being added to.
 struct OpenGroup {
     index: u64,
@@ -300,6 +307,11 @@ struct Gatherer {
     /// (`docs/design/decisions.md`, "D85"). A piece carries it into the block
     /// it folds into, the block having lost that piece's rows.
     declined: Option<u64>,
+    /// The first field this observer met that its type's `*_in` refuses: it
+    /// frees what it holds and reads no further row, as a declined observer
+    /// does, and a block answers [`BlockGathered::Refused`]. A piece carries
+    /// it into the block it folds into.
+    refused: Option<FieldRefusal>,
     /// What this observer holds, in the pass's account. **Last**, so it is
     /// released after everything above is freed ([`Charge`]).
     charge: Charge,
@@ -324,8 +336,35 @@ impl Gatherer {
             over: false,
             carried: (0, 0),
             declined: None,
+            refused: None,
             charge,
         }
+    }
+
+    /// Whether this observer has stopped reading rows, having declined or
+    /// refused.
+    fn stopped(&self) -> bool {
+        self.declined.is_some() || self.refused.is_some()
+    }
+
+    /// Free everything this observer holds, its charge going to nothing in
+    /// the same update: what [`Self::decline`] and [`Self::refuse`] share.
+    fn free(&mut self) {
+        debug_assert_eq!(self.carried, (0, 0), "a fold is not a place to stop");
+        drop(mem::take(&mut self.columns));
+        drop(mem::take(&mut self.groups));
+        (self.head, self.open, self.splits) = (None, None, false);
+        self.uncharged = 0;
+        self.charge.set(0, 0);
+    }
+
+    /// **Stop at a field PostgreSQL refuses**: the pass fails on it, so what
+    /// was gathered is freed rather than finished, and no later row is read
+    /// for statistics (`roadmap.md`, "A literal is guaranteed in `*_out`'s
+    /// form and never read past `*_in`'s").
+    fn refuse(&mut self, refusal: FieldRefusal) {
+        self.refused = Some(refusal);
+        self.free();
     }
 
     /// **Drop everything this observer holds and gather no more**, the account
@@ -352,19 +391,14 @@ impl Gatherer {
     /// granularity derived from the dump's length, which is known up front and
     /// is the same on every machine.
     fn decline(&mut self, allowance: u64) {
-        debug_assert_eq!(self.carried, (0, 0), "a fold is not a place to decline");
         self.declined = Some(allowance);
-        drop(mem::take(&mut self.columns));
-        drop(mem::take(&mut self.groups));
-        (self.head, self.open, self.splits) = (None, None, false);
-        self.uncharged = 0;
-        self.charge.set(0, 0);
+        self.free();
     }
 
     /// Decline where the last charge update found the account over its
     /// allowance, which [`Self::charge_held`] records.
     fn decline_if_over(&mut self) {
-        if self.over && self.declined.is_none() {
+        if self.over && !self.stopped() {
             let allowance = self.charge.allowance().expect("only an allowance can be passed");
             self.decline(allowance);
         }
@@ -636,7 +670,7 @@ impl Drop for Gatherer {
 
 impl BlockObserver for Gatherer {
     fn observe_row(&mut self, offset: u64, raw: &[u8]) {
-        if self.declined.is_some() {
+        if self.stopped() {
             return;
         }
         let _attributed = StatisticsScope::enter();
@@ -655,9 +689,15 @@ impl BlockObserver for Gatherer {
             self.decline_if_over();
             return;
         }
-        for (field, column) in split_fields(raw).zip(self.columns.iter_mut()) {
-            if let Some(column) = column {
-                self.uncharged += column.observe(field);
+        for (at, (field, column)) in split_fields(raw).zip(self.columns.iter_mut()).enumerate() {
+            let Some(column) = column else { continue };
+            match column.observe(field) {
+                Ok(grew) => self.uncharged += grew,
+                Err(Refused) => {
+                    let declared_type = column.declared_type.clone().unwrap_or_default();
+                    let value = decode_field(field).ok().flatten().unwrap_or_default().into_owned();
+                    return self.refuse(FieldRefusal { offset, column: at, declared_type, value });
+                }
             }
         }
         if self.uncharged >= STATISTICS_ACCOUNT_CHARGE_STEP as i64 {
@@ -676,6 +716,9 @@ impl BlockObserver for Gatherer {
     fn finish(mut self: Box<Self>, end: u64) -> BlockGathered {
         let _attributed = StatisticsScope::enter();
         debug_assert!(!self.piece, "a piece is joined, never finished");
+        if let Some(refusal) = self.refused.take() {
+            return BlockGathered::Refused(refusal);
+        }
         if let Some(allowance) = self.declined {
             return BlockGathered::Declined { allowance };
         }
@@ -709,10 +752,11 @@ impl BlockObserver for Gatherer {
         };
         let mut piece = Gatherer::block(sizing, columns, charge);
         piece.piece = true;
-        // A piece of a block that has already declined gathers nothing: it
+        // A piece of a block that has already stopped gathers nothing: it
         // still reads its rows for the census and the block's extent, and
         // holds no statistic while it does.
         piece.declined = self.declined;
+        piece.refused = self.refused.clone();
         let pieces = self.pieces.get_or_init(Arc::default);
         piece.pieces = OnceLock::from(Arc::clone(pieces));
         piece.charge_held();
@@ -723,9 +767,21 @@ impl BlockObserver for Gatherer {
     /// piece's rows and being unable to state statistics over the rest
     /// (`docs/design/decisions.md`, "D85"); a block that declined while the
     /// window ran drops every piece it is handed instead of folding it.
+    ///
+    /// **A refusal outranks a decline, and the earlier row's outranks a later
+    /// one's**: a block that refused drops every piece, its rows all
+    /// following the one it refused, and one that has not takes a piece's.
     fn absorb(&mut self, later: Box<dyn BlockObserver>) {
         let _attributed = StatisticsScope::enter();
-        let later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
+        let mut later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
+        if self.refused.is_some() {
+            drop(later);
+            return;
+        }
+        if let Some(refusal) = later.refused.take() {
+            drop(later);
+            return self.refuse(refusal);
+        }
         match (self.declined, later.declined) {
             (Some(_), _) => drop(later),
             (None, Some(allowance)) => {
@@ -831,7 +887,7 @@ impl Summand {
             Self::Int64 => text.parse::<i64>().ok().map(i128::from),
             Self::UInt32 => text.parse::<u32>().ok().map(i128::from),
             Self::Decimal128 { precision, scale } => {
-                typmod_unscaled_digits(text, precision, i16::from(scale))?.parse().ok()
+                typmod_unscaled_digits(text, precision, i16::from(scale)).ok()?.parse().ok()
             }
         }
     }
@@ -974,13 +1030,14 @@ impl ColumnGatherer {
         self.head = Some(self.take_group());
     }
 
-    /// Observe one field, answering what the column's heap grew by.
-    fn observe(&mut self, field: &[u8]) -> i64 {
+    /// Observe one field, answering what the column's heap grew by, or
+    /// [`Refused`] where keying it found a value its type's `*_in` refuses.
+    fn observe(&mut self, field: &[u8]) -> Result<i64, Refused> {
         let before = self.open_heap();
         match decode_field(field) {
             Ok(None) => {
                 self.group.nulls += 1;
-                return 0;
+                return Ok(0);
             }
             Ok(Some(text)) => {
                 let tier = self.tier.as_ref().and_then(|tier| tier.of(&text));
@@ -1000,7 +1057,7 @@ impl ColumnGatherer {
                 }
                 for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                     if let (Some(bounds), Some(group)) = (bounds, group) {
-                        bounds.observe(group, &text, tier);
+                        bounds.observe(group, &text, tier)?;
                     }
                 }
                 if let Some(dictionary) = &self.dictionary {
@@ -1021,7 +1078,7 @@ impl ColumnGatherer {
                 self.group.lose_texts();
             }
         }
-        self.open_heap() as i64 - before as i64
+        Ok(self.open_heap() as i64 - before as i64)
     }
 
     /// Close the open group, and move what it changed onto `charge` before
@@ -1848,12 +1905,22 @@ impl BoundsGatherer {
     }
 
     /// Observe `text`, a value past `tier` where it is past one — which only a
-    /// keyed kind's column can hold.
-    fn observe(&mut self, group: &mut GroupBounds, text: &str, tier: Option<UnrepresentableTier>) {
+    /// keyed kind's column can hold. **A value its type's `*_in` refuses is
+    /// [`Refused`]**, where keying it finds that; no other value is, a key
+    /// this build cannot read losing the group's bounds alone.
+    fn observe(
+        &mut self,
+        group: &mut GroupBounds,
+        text: &str,
+        tier: Option<UnrepresentableTier>,
+    ) -> Result<(), Refused> {
         match &self.order {
             Order::Bytewise(canonical) => {
                 debug_assert!(tier.is_none(), "a bytewise kind's type holds every value");
-                let Some(text) = canonical.of(text) else { return self.lose_value(group, None) };
+                let Some(text) = canonical.of(text) else {
+                    self.lose_value(group, None);
+                    return Ok(());
+                };
                 let text = text.as_ref();
                 let GroupBounds::Bytewise { min, max, .. } = group else {
                     unreachable!("a bytewise order keeps bytewise bounds")
@@ -1881,10 +1948,15 @@ impl BoundsGatherer {
             }
             Order::Keyed(kind) => {
                 if text.len() > DICTIONARY_ENTRY_MAX_BYTES {
-                    return self.lose_value(group, tier);
+                    self.lose_value(group, tier);
+                    return Ok(());
                 }
-                let Some(key) = ValueKey::of(kind, text) else {
-                    return self.lose_value(group, tier);
+                let key = match ValueKey::of_field(kind, text) {
+                    Ok(key) => key,
+                    Err(unread) => {
+                        self.lose_value(group, tier);
+                        return if unread == Unread::Refused { Err(Refused) } else { Ok(()) };
+                    }
                 };
                 let GroupBounds::Keyed(group) = group else {
                     unreachable!("a keyed order keeps keyed bounds")
@@ -1893,6 +1965,7 @@ impl BoundsGatherer {
                 self.rows.place_keyed(key, tier);
             }
         }
+        Ok(())
     }
 
     fn close_group(&mut self, group: GroupBounds, charge: &mut Charge) {
@@ -2088,7 +2161,7 @@ pub(crate) fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bou
     let mut gatherer = BoundsGatherer::new(kind);
     let mut group = gatherer.fresh_group();
     for value in values {
-        gatherer.observe(&mut group, value, None);
+        gatherer.observe(&mut group, value, None).expect("a value the server wrote");
     }
     let mut charge = Charge::new(Arc::default(), Term::Gathering);
     gatherer.close_group(group, &mut charge);
@@ -2581,7 +2654,7 @@ mod tests {
                 });
                 let mut state = gatherer.fresh_group();
                 for v in &all {
-                    gatherer.observe(&mut state, v, None);
+                    gatherer.observe(&mut state, v, None).expect("no value here is refused");
                 }
                 gatherer.close_group(state, &mut charge);
                 let column = gatherer.finish();
@@ -2591,7 +2664,7 @@ mod tests {
             for group in &groups {
                 let mut state = gatherer.fresh_group();
                 for v in group {
-                    gatherer.observe(&mut state, v, None);
+                    gatherer.observe(&mut state, v, None).expect("no value here is refused");
                 }
                 gatherer.close_group(state, &mut charge);
             }
@@ -2710,7 +2783,7 @@ mod tests {
                     if let Some(past) = past {
                         count.add(past);
                     }
-                    gatherer.observe(&mut state, v, past);
+                    gatherer.observe(&mut state, v, past).expect("no value here is refused");
                 }
                 gatherer.close_group(state, &mut charge);
                 counts.push(count);
@@ -3671,7 +3744,9 @@ mod tests {
                 for group in &groups {
                     let mut state = gatherer.fresh_group();
                     for v in group {
-                        gatherer.observe(&mut state, &render(v), None);
+                        gatherer
+                            .observe(&mut state, &render(v), None)
+                            .expect("no value here is refused");
                     }
                     gatherer.close_group(state, &mut charge);
                 }

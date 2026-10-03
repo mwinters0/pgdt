@@ -243,6 +243,23 @@ pub enum Error {
         declared_type: String,
         value: String,
     },
+    /// A field its declared type's `*_in` refuses, met by a pass decoding it
+    /// — a parse gathering statistics, or a back-fill re-reading a block for
+    /// them — which fails at the first, as a restore under `ON_ERROR_STOP`
+    /// fails the table's `COPY` (`docs/design/roadmap.md`, "A literal is
+    /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The line is
+    /// named by its byte offset in the file, as every other error naming a
+    /// place in the dump names it.
+    #[error(
+        "{table}.{column}: the line at offset {line_offset} holds `{value}`, which PostgreSQL refuses as a `{declared_type}` value — restoring this dump fails this table's COPY there, and so does this read"
+    )]
+    FieldRefused {
+        table: String,
+        column: String,
+        declared_type: String,
+        line_offset: u64,
+        value: String,
+    },
     /// A column the query materializes holds values PostgreSQL accepts for
     /// its declared type and its Arrow type cannot hold, and the query is
     /// under [`crate::UnrepresentableMode::Refuse`]: refused at planning,

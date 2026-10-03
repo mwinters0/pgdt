@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::Error;
 use crate::copy::CopyHeader;
 use crate::index::{CopyBlock, Unrepresentable, UnrepresentableTier};
 use crate::instrument;
@@ -455,14 +456,50 @@ pub enum BlockGathered {
         /// back-fill retries it only under a larger one.
         allowance: u64,
     },
+    /// **A field the observer keyed is one its type's `*_in` refuses**, so
+    /// the pass reading the block fails there, as a restore under
+    /// `ON_ERROR_STOP` fails the table's `COPY` (`roadmap.md`, "A literal is
+    /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The first
+    /// in the block's row order: an observer stops at one, and a piece's is
+    /// kept only where no earlier row's was.
+    Refused(FieldRefusal),
 }
 
 impl BlockGathered {
-    /// What the block gathered, and `None` where it declined.
+    /// What the block gathered, and `None` where it declined or refused.
     pub fn gathered(self) -> Option<BlockStatistics> {
         match self {
             Self::Gathered(statistics) => Some(statistics),
-            Self::Declined { .. } => None,
+            Self::Declined { .. } | Self::Refused(_) => None,
+        }
+    }
+}
+
+/// A field PostgreSQL refuses, where a statistics observer met it
+/// ([`BlockGathered::Refused`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRefusal {
+    /// Where the field's row starts, relative to the block's first data byte.
+    pub offset: u64,
+    /// The field's column, by its position in the block's header.
+    pub column: usize,
+    /// The column's declared type.
+    pub declared_type: String,
+    /// The field, unescaped.
+    pub value: String,
+}
+
+impl FieldRefusal {
+    /// The error a pass fails with, naming the table and the column off
+    /// `header` and the row's line by its offset in the file, the block's data
+    /// starting at `data_offset`.
+    pub(crate) fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error {
+        Error::FieldRefused {
+            table: header.qualified_name(),
+            column: header.columns.get(self.column).cloned().unwrap_or_default(),
+            declared_type: self.declared_type,
+            line_offset: data_offset + self.offset,
+            value: self.value,
         }
     }
 }

@@ -16,6 +16,11 @@ use std::process::{Command, Output};
 /// another one.
 pub mod oracle;
 
+/// The fixtures holding a field PostgreSQL refuses, which a data-level parse
+/// fails on: `pgdump_query`'s list, included by path so no copy drifts.
+#[path = "../../../pgdump_query/tests/common/refused.rs"]
+pub mod refused;
+
 /// The built `pgdt` binary, ready to take arguments. Cargo hands us the exact
 /// path, so this never resolves through `PATH` and never runs a stale install.
 pub fn pgdt() -> Command {

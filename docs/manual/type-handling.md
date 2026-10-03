@@ -190,6 +190,28 @@ OID could ever equal. Write the value you mean.
 to round-trip without loss. `NaN`, `Infinity` and `-Infinity` are written in
 those exact spellings and are parsed as such.
 
+**Asked for fewer digits, `pg_dump` can write a value PostgreSQL will not read
+back.** `pg_dump --extra-float-digits=0`, or any setting below zero, writes
+fifteen digits or fewer, and at fifteen the largest `double precision`,
+`1.7976931348623157e+308`, rounds to `1.79769313486232e+308` — past the largest
+value the type holds. PostgreSQL's input refuses it as out of range, so a
+restore of that dump fails the table's `COPY`. pgdt refuses it too, rather than
+guess which value was meant: a `parse` gathering statistics for the column fails
+there, as the restore would, naming the table, the column, the line by its byte
+offset and the value, and a query reading the column refuses it. `real`'s
+largest value rounds past itself the same way at `--extra-float-digits=-2` or
+below.
+
+```
+$ pgdt parse --source dump.sql
+Error: public.t_extremes.v_double: the line at offset 17347 holds `-1.79769313486232e+308`, which PostgreSQL refuses as a `double precision` value — restoring this dump fails this table's COPY there, and so does this read
+```
+
+The dump is what is wrong, not its reading, and dumping again without the flag
+is the cure. Short of that, `--statistics-level data,public.t_extremes.v_double=metadata`
+parses past it, that column then keeping no statistics, and `--schema-mode
+strings` reads the column as the dump's text.
+
 ### A value its column cannot hold reads as NULL
 
 `date`, `timestamp` and `timestamptz` accept `infinity` and `-infinity`;
@@ -946,6 +968,16 @@ rather than discover later as missing data.
 The error names the table, column, row offset, declared type, and the offending
 value. If you would rather not have your read fail on it, `SchemaMode::Strings`
 gives you every column unparsed.
+
+**A value PostgreSQL itself refuses fails `parse` too**, at the first one, as a
+restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
+`date`, a `numeric(10,2)` value with more than ten digits, a `double precision`
+past its range. `parse` checks only the values it reads anyway to gather
+statistics, so a column at the metadata level, an array's elements and a value
+longer than 256 bytes are not checked there — a query reading one still refuses
+it — and nor yet is a `boolean`, an enum, an `oid`, an `inet`, a `macaddr` or a
+`bytea` value PostgreSQL refuses, which pgdt does not tell from a spelling it
+merely does not read.
 
 ## Columns we cannot type at all
 

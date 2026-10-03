@@ -783,12 +783,12 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         }
         ColumnBuilder::Decimal128 { builder, scale, precision } => {
             let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
-                .ok_or_else(fail)?;
+                .map_err(|_| fail())?;
             builder.append_value(unscaled.parse::<i128>().map_err(|_| fail())?);
         }
         ColumnBuilder::Decimal256 { builder, scale, precision } => {
             let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
-                .ok_or_else(fail)?;
+                .map_err(|_| fail())?;
             builder.append_value(arrow::datatypes::i256::from_string(&unscaled).ok_or_else(fail)?);
         }
         ColumnBuilder::FixedSizeBinary16(b) => {

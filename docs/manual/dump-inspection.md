@@ -50,6 +50,12 @@ statistics the cache does not hold, which re-reads only the tables lacking them
 The finished result is identical either way — a resumed scan and a
 straight-through one produce the same index, byte for byte.
 
+**A value PostgreSQL refuses stops it**, at the first, as it stops a restore of
+the dump: `parse` fails naming the table, the column, the line by its byte
+offset and the value, and the cache holds the scan as far as it last banked.
+Which values it checks, and what to do about one, is
+[`type-handling.md`](type-handling.md), "When a value does not match its type".
+
 **Ctrl-C stops it cleanly.** On `SIGINT` (Ctrl-C) or `SIGTERM` (`docker stop`,
 `kill`), `parse` stops at the next block or chunk boundary, writes everything
 it has scanned to the cache, says where it stopped, and then ends by that same

@@ -430,7 +430,7 @@ impl Counter {
         if !self.reaches_calendar_end(text) {
             return None;
         }
-        let micros = timestamp_micros_wide(text, with_tz)?;
+        let micros = timestamp_micros_wide(text, with_tz).ok()?;
         if i64::try_from(micros).is_err() {
             Some(Format)
         } else {
@@ -479,7 +479,7 @@ fn interval(text: &str) -> Option<UnrepresentableTier> {
     if digits < 7 || hours.as_bytes().get(digits) != Some(&b':') {
         return None;
     }
-    let (_, _, micros) = interval_parts(text)?;
+    let (_, _, micros) = interval_parts(text).ok()?;
     micros.checked_mul(1_000).is_none().then_some(Format)
 }
 

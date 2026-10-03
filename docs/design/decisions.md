@@ -321,8 +321,7 @@ refuses a stream and degrades a listing: same output as `NotDeclared`, opposite 
 ### D44 The control's decoders allocate only where their return type does; its renderers use tables
 The measured control's decoders take no intermediate `String`, and its renderers write into one reused buffer
 through `DEC_PAIRS`, `uuid`'s and `bytea`'s into one pre-sized `String` each through `HEX_PAIRS` (`tests/render_allocations.rs` pins the count); `interval`'s, a decimal's and a
-float's still go through `core::fmt`. Render-back's third outcome, `FieldRender`, is an Arrow value no text form
-spells (I40), never rounded.
+float's still go through `core::fmt`. Render-back's third outcome, `FieldRender`, is an Arrow value no text form spells (I40), never rounded.
 
 ### D45 One quoted-token scanner; strict decoders apart from permissive parsers
 Array, record and range literals share one scanner parameterized four ways (I20). `decode_*` reads
@@ -447,10 +446,11 @@ for invalid text. No planner defers complexity until one buys something and refu
 work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`.
 
 ### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
-`*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in`
-spelling is read where free, simpler or faster, none is refused at runtime cost, and the rest are `PredicateValueDecode`,
-a shortfall, never a rule. What a kind reads past its floor (one value's other spellings, field and literal alike; `jsonb`,
-its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH` is fixed: a Rust stack overflow aborts.
+`*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in` spelling is read where free,
+simpler or faster, none is refused at runtime cost, and the rest are `PredicateValueDecode`, a shortfall, never a rule. What a kind reads past its floor (one value's
+other spellings, field and literal alike; `jsonb`, its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH`
+is fixed: a Rust stack overflow aborts. A field fails a parse only where a `pg-refuses` check refuses it (`decode::Unread`). Rejected: failing on every field read as
+no value, which aborts on a shortfall a restore reads (`KD83` is the converse, a refusal let through to the query).
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).

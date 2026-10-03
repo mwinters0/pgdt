@@ -1677,6 +1677,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::TableColumnsDisagree { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
+        | Lib::FieldRefused { .. }
         | Lib::Unrepresentable { .. }
         | Lib::UnrepresentableTestUntyped { .. }
         | Lib::FieldRender { .. } => false,

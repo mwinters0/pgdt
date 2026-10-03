@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning; a field PostgreSQL refuses fails a data-level parse keying it, at the first, but for a kind no refusal is marked for (`KD83`), and a query decoding it | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
@@ -96,7 +96,8 @@ approval, in the spec's opening note.
 - [x] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72` — [notes](../design/roadmap-P31.10-float-past-dbl-max-notes.md)
 - [x] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73` — [notes](../design/roadmap-P31.11-reconnect-notes.md)
 - [x] **31.15** A `numeric(p,s)` field put through `apply_typmod` as `COPY` puts it — rounded to its scale and refused past its precision — on the typed and the text-held arms alike, closing `KD81` — [notes](../design/roadmap-P31.15-numeric-typmod-notes.md)
-- [ ] **31.12** A field `*_in` refuses fails the parse reading it at the first, naming table, column, line and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75`
+- [x] **31.12** A field its type's `*_in` refuses at a `pg-refuses` check fails the parse keying it at the first, naming table, column, line by its offset and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75` — [notes](../design/roadmap-P31.12-field-refusal-notes.md)
+- [ ] **31.12.1** A field of a kind with no `pg-refuses` check — `boolean`, an enum, `oid`, `inet`, `macaddr`, `bytea` — told refused from unread by its `*_in` grammar, each refusal marked against an invariant, so a parse keying it fails there too, closing `KD83`
 - [ ] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal
 - [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check; the manual says what `default` leaves to a query
 
@@ -130,4 +131,11 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **A refused field's line is named by its byte offset, not its number**
+  (31.12). The row asks for the line, and nothing in a scan counts lines: a
+  parallel piece starts mid-block knowing only its offset, and every other
+  error naming a place in the dump (`LineTooLong`, `UnterminatedCopyBlock`)
+  names an offset, so `Error::FieldRefused` says "the line at offset N".
+  Reconsidering means counting newlines — per block in the map, which the
+  cache would persist, or once, up to the refusal, re-reading the file's
+  prefix — for a number an editor can jump to.

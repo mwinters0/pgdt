@@ -1305,11 +1305,18 @@ impl Builder {
         }
     }
 
-    pub(crate) fn on_copy_end(&mut self, end: CopyEnd) {
+    /// Close the open `COPY` block, pushing its span with what its census,
+    /// count and observer answered.
+    ///
+    /// **A block whose observer met a field PostgreSQL refuses fails the
+    /// pass** with [`crate::Error::FieldRefused`], pushing no span for it, so
+    /// the map stands at the block before (`roadmap.md`, "A literal is
+    /// guaranteed in `*_out`'s form and never read past `*_in`'s").
+    pub(crate) fn on_copy_end(&mut self, end: CopyEnd) -> Result<()> {
         // `None` only after a scanner resumed inside a block
         // (`CopyScanner::resume`), whose `CopyEnd` has no `CopyStart`.
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
-            return;
+            return Ok(());
         };
         // Shared (`docs/design/decisions.md`, "D34"); a block that declined
         // records the allowance instead (`docs/design/decisions.md`, "D85").
@@ -1324,6 +1331,9 @@ impl Builder {
             match gathered {
                 Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
                 Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
+                Some(BlockGathered::Refused(refusal)) => {
+                    return Err(refusal.into_error(&copy_start.header, copy_start.data_offset));
+                }
                 None => (None, None),
             }
         };
@@ -1351,6 +1361,7 @@ impl Builder {
         }
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
+        Ok(())
     }
 
     /// A `BEGIN;` line opened a large-object data region (I12) — see
@@ -1728,7 +1739,7 @@ mod tests {
         builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
         let spans = builder.finish(end_offset);
 
         assert_eq!(spans[0].start, 0);
@@ -1925,7 +1936,7 @@ mod tests {
         builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
 
         let spans = builder.finish(end_offset);
         assert_eq!(spans.len(), 1);
@@ -2074,7 +2085,7 @@ mod tests {
         builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
         offset = end_offset;
         builder.feed_line(offset, b"CREATE EXTENSION pgcrypto;");
 
@@ -2243,7 +2254,7 @@ mod tests {
         builder.count_block(Arc::new(NoCount));
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
         offset = end_offset;
 
         let snapshot = builder.snapshot(end_offset);

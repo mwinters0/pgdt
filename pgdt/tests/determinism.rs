@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use pgdump_query::{ByteRangeSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 
 mod common;
-use common::{all_fixtures, run, stderr_of};
+use common::{all_fixtures, refused, run, stderr_of};
 
 /// `pgdt parse` under `extra`, writing its cache to `out`, and the bytes it
 /// wrote.
@@ -70,10 +70,20 @@ fn gathered_cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
 /// to cross.
 const TINY_GROUP: &str = "32";
 
+/// A data-level leg of a fixture holding a field PostgreSQL refuses keeps that
+/// column at the metadata level, a data-level parse failing on it
+/// (`refused::sweep_request`).
 fn parse_cache(dump: &Path, out: &Path, statistics: &[&str], extra: &[&str]) -> Vec<u8> {
     let mut args = vec!["parse", "--source", dump.to_str().unwrap(), "--dtcache"];
     args.push(out.to_str().unwrap());
     args.extend_from_slice(statistics);
+    let past_refused =
+        refused::refused_field(dump).map(|r| format!("data,{}", r.statistics_level()));
+    if let Some(level) =
+        past_refused.as_deref().filter(|_| !statistics.contains(&"--statistics-level"))
+    {
+        args.extend_from_slice(&["--statistics-level", level]);
+    }
     args.extend_from_slice(extra);
     let output = run(&args);
     assert!(

@@ -16,7 +16,8 @@
 //! A defect a flag set exposes is a strict exclusion naming its entry, as
 //! `pgdump_query/tests/known_failures.rs` keeps them: the column is asserted
 //! still to fail, so its fix fails this test until the fixing slice deletes
-//! the row.
+//! the row. A column holding a field PostgreSQL refuses
+//! (`common::REFUSED_FIELDS`) is asserted to refuse its read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -544,10 +545,25 @@ async fn every_typed_value_is_the_one_the_server_reads() {
                     exclusion.column
                 );
             }
+            let refused = common::refused_field(&path);
             for (table, columns) in &tables {
                 for column in columns {
                     let key = (table.clone(), column.clone());
                     let read = read_column(&path, table, column).await;
+                    if refused.is_some_and(|r| r.table == table && r.column == column) {
+                        match read {
+                            Err(why) if why.contains("does not parse") => {}
+                            Err(why) => failures.push(format!(
+                                "{version} {flag_set} {table}.{column}: refused, but not as a \
+                                 field PostgreSQL refuses: {why}"
+                            )),
+                            Ok(_) => failures.push(format!(
+                                "{version} {flag_set} {table}.{column} holds a field PostgreSQL \
+                                 refuses, and its read does not refuse it"
+                            )),
+                        }
+                        continue;
+                    }
                     let mut verdict = compare(read, oracle.get(&key), floats(flag_set));
                     if flag_set == "default" {
                         if let Ok(typed) = verdict {

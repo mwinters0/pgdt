@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD82 -->
+rather than being deleted. <!-- deficiency-watermark: KD83 -->
 **`KD1`–`KD82` are allocated, and nothing at or below `KD82` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -344,15 +344,15 @@ than reading as a phase nobody has sliced.
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
   a file and is not told. Detail: `pgdump_query/src/stream.rs`.
 
-- **KD75** — a float field spelled past the type's largest finite value, which
-  `pg_dump --extra-float-digits` at zero or below writes and `float8in`
-  refuses, reads as that largest value where a restore fails the table, and
-  no parse refuses a field on PostgreSQL's terms.
-  **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
-
 - **KD82** — `=`, `!=` and `IN` on a canonicalized kind compare a field's
   spelling, so a hand-written field its decoder reads in a spelling `*_out`
   never writes — `1.005` in a `numeric(10,2)`, a braced `uuid` — is missed
   where a typed read and an ordering operator take its value. **(c)
   unowned**; promoted by a user meeting it. Detail:
   `pgdump_query/src/predicate.rs`.
+
+- **KD83** — a field of a kind with no `pg-refuses` check — `boolean`, an
+  enum, `oid`, `inet`, `macaddr`, `bytea` — that its `*_in` refuses is read
+  as text this build does not read, so a parse keying it goes on past it, the
+  column losing its group's bounds where a restore fails the table.
+  **(b) owned by P31**, slice 31.12.1. Detail: `pgdump_query/src/decode.rs`.

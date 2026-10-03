@@ -1215,6 +1215,93 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
     }
 }
 
+/// **A parse fails on the first field PostgreSQL refuses, whatever the worker
+/// count and on a back-fill too**, naming the line it is on by its offset
+/// (`docs/design/roadmap.md`, "A literal is guaranteed in `*_out`'s form and
+/// never read past `*_in`'s"): a `smallint` past its width, then a day its
+/// month lacks, the block the one
+/// [`a_gathering_scan_is_the_serial_scan_whatever_the_worker_count`] splits.
+/// A spelling this build does not read, which the server does — a blank
+/// before a number, a run-together zone — fails nothing: its group loses its
+/// bounds. Hand-written, as no `pg_dump` output holds the first two.
+#[tokio::test]
+async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("refused.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    a smallint,\n    d date,\n    z timestamp with time zone\n);\n\n",
+    );
+    text.push_str("COPY public.t (a, d, z) FROM stdin;\n");
+    let mut first = None;
+    for i in 0..2000 {
+        let (a, d) = match i {
+            700 => ("70000".to_string(), "2020-01-01"),
+            1500 => (i.to_string(), "2020-02-30"),
+            _ => (format!("{}{i}", if i % 7 == 0 { " " } else { "" }), "2020-01-01"),
+        };
+        if i == 700 {
+            first = Some(text.len() as u64);
+        }
+        text.push_str(&format!("{a}\t{d}\t2020-01-01 00:00:00+0530\n"));
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    let first = first.unwrap();
+    let refused = |run: pgdump_query::Result<MapRun>, at: &str| match run {
+        Err(pgdump_query::Error::FieldRefused {
+            table,
+            column,
+            declared_type,
+            line_offset,
+            value,
+        }) => {
+            assert_eq!(
+                (table.as_str(), column.as_str(), declared_type.as_str()),
+                ("public.t", "a", "smallint"),
+                "{at}"
+            );
+            assert_eq!((line_offset, value.as_str()), (first, "70000"), "{at}");
+        }
+        other => panic!("{at}: expected the parse to refuse `70000`, got {other:?}"),
+    };
+    let wanted = request(StatisticsSelection::DATA, 256);
+    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let source = LocalFileSource::open(&dump).unwrap();
+    refused(map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await, "serial");
+    for jobs in [2, 4, 8] {
+        let parallel = ScanOptions {
+            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            ..serial.clone()
+        };
+        let at = format!("{jobs} jobs");
+        refused(map_file(&source, &parallel, &CacheMode::DISABLED, &wanted).await, &at);
+        let _ = std::fs::remove_file(cache::colocated_path(&dump));
+        mapped_into_cache(&dump, &serial, &StatisticsRequest::METADATA).await;
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
+        refused(map_file(&source, &parallel, &mode, &wanted).await, &format!("{at}, back-fill"));
+    }
+
+    // Past the first, the next: the day 2020-02-30.
+    let fixed = text.replacen("\n70000\t", "\n700\t", 1);
+    std::fs::write(&dump, &fixed).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    match map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await {
+        Err(pgdump_query::Error::FieldRefused { column, value, .. }) => {
+            assert_eq!((column.as_str(), value.as_str()), ("d", "2020-02-30"));
+        }
+        other => panic!("expected the parse to refuse `2020-02-30`, got {other:?}"),
+    }
+
+    // And with neither, the shortfalls fail nothing.
+    std::fs::write(&dump, fixed.replacen("\t2020-02-30\t", "\t2020-02-28\t", 1)).unwrap();
+    let index = gathered_with(&dump, &serial, &wanted).await;
+    let t = statistics(block(&index, "public.t"));
+    for at in [0, 2] {
+        let column = t.columns[at].as_ref().unwrap();
+        assert!(column.bounds.as_ref().unwrap().groups.iter().any(Option::is_none), "{at}");
+    }
+}
+
 /// **A block past its cap gathers, split by the leader, what the serial pass
 /// gathers, and that is what gathering exactly at the size it reaches
 /// gathers** — every block of every fixture, re-read at a group size of a few
@@ -1236,7 +1323,12 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         let metadata = StatisticsRequest::METADATA;
         let run = map_file(&source, &options, &mode, &metadata);
         let index = run.await.unwrap().index;
-        for block in index.blocks() {
+        let refused = common::refused_field(&fixture).map(|r| r.table);
+        // A block holding a field PostgreSQL refuses is refused by every
+        // re-read (`tests/decode.rs`'s
+        // `every_refused_field_fails_a_data_level_parse_reading_it`).
+        for block in index.blocks().filter(|b| refused != Some(b.header.qualified_name().as_str()))
+        {
             let backfill = unstated
                 .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
                 .expect("the block holds no statistics");
@@ -1326,7 +1418,12 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         let metadata = StatisticsRequest::METADATA;
         let run = map_file(&source, &options, &mode, &metadata);
         let index = run.await.unwrap().index;
-        for block in index.blocks() {
+        let refused = common::refused_field(&fixture).map(|r| r.table);
+        // A block holding a field PostgreSQL refuses is refused by every
+        // re-read (`tests/decode.rs`'s
+        // `every_refused_field_fails_a_data_level_parse_reading_it`).
+        for block in index.blocks().filter(|b| refused != Some(b.header.qualified_name().as_str()))
+        {
             let backfill = unstated
                 .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
                 .expect("the block holds no statistics");

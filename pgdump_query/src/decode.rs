@@ -16,6 +16,31 @@
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `tests/scan.rs`.
 
+/// Why a text is read as no value of its type, where a caller must tell the
+/// two apart: a parse fails on the first field PostgreSQL refuses, and on no
+/// other (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never
+/// read past `*_in`'s").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// The type's `*_in` refuses it: found at a check carrying a
+    /// `pg-refuses: I<n>` marker, so a release lifting the refusal is found
+    /// by walking that invariant.
+    Refused,
+    /// A spelling this build reads no value from — a shortfall the server
+    /// reads (`docs/design/decisions.md`, "D55"), or a refusal of the
+    /// server's no marked check makes, which nothing here tells apart.
+    // deficiency: KD83 — a field of a kind with no marked check — `boolean`,
+    // an enum, `oid`, `inet`, `macaddr`, `bytea` — is `Unparsed` whatever the
+    // server makes of it, so the parse goes on past one `*_in` refuses, the
+    // column only losing its group's bounds; a query reading it still fails.
+    // Telling them apart takes each `*_in`'s grammar, an invariant for it,
+    // and its refusals marked.
+    Unparsed,
+}
+
+/// A reader's answer where [`Unread`] matters.
+pub type Read<T> = Result<T, Unread>;
+
 /// `t`/`f`, COPY TEXT's boolean spelling.
 pub fn decode_bool(s: &str) -> Option<bool> {
     match s {
@@ -81,53 +106,66 @@ fn format_shortest(neg: bool, digits: &str, exp: i32, sig_digits: i32) -> String
     out
 }
 
-/// `real`'s text. A finite spelling reads as a finite value: one rounding past
-/// the type's largest finite one, as `float4out` can at `extra_float_digits`
-/// of `-2` or less, is that largest value of its sign (I57).
+/// `real`'s text, read by [`float_in`].
 pub fn decode_f32(s: &str) -> Option<f32> {
-    match s {
-        "NaN" => Some(f32::NAN),
-        "Infinity" => Some(f32::INFINITY),
-        "-Infinity" => Some(f32::NEG_INFINITY),
-        _ => s
-            .parse::<f32>()
-            .ok()
-            .map(|v| finite_spelling(s, v, f32::is_infinite, f32::MAX.copysign(v))),
-    }
+    float_in(s).ok()
 }
 
-/// `double precision`'s text, read as [`decode_f32`] reads `real`'s: a finite
-/// spelling past `DBL_MAX` — `float8out`'s `1.79769313486232e+308` under
-/// `--extra-float-digits=0` — is `±DBL_MAX` (I57).
+/// `double precision`'s text, read by [`float_in`].
 pub fn decode_f64(s: &str) -> Option<f64> {
-    match s {
-        "NaN" => Some(f64::NAN),
-        "Infinity" => Some(f64::INFINITY),
-        "-Infinity" => Some(f64::NEG_INFINITY),
-        _ => s
-            .parse::<f64>()
-            .ok()
-            .map(|v| finite_spelling(s, v, f64::is_infinite, f64::MAX.copysign(v))),
+    float_in(s).ok()
+}
+
+/// A `real` or `double precision`, field or literal, read as `float4in` and
+/// `float8in` read it (`docs/design/decisions.md`, "D55"). Rust's parse is the
+/// grammar: every spelling `*_out` writes, and of `*_in`'s the ones it reads
+/// for free — a sign, a point with no digit on one side, an exponent in either
+/// case, `inf`, `infinity` and `nan` in any case. A blank around the number
+/// and a hexadecimal one, which glibc's `strtod` reads, are unparsed.
+///
+/// **A value past the type's range is refused, as the server refuses it**: a
+/// spelling in digits read as an infinity, I57's rounded largest finite value
+/// among them, and a nonzero one read as zero. A subnormal is read. Both are
+/// told from the parse's result alone, the parse rounding correctly to the
+/// type as `strtod` and `strtof` do (I59).
+// pg-refuses: I59 — out of range for the type: overflowed, or underflowed to zero.
+pub(crate) fn float_in<F: Float>(text: &str) -> Read<F> {
+    let value = text.parse::<F>().map_err(|_| Unread::Unparsed)?;
+    let out_of_range = if value.is_infinite() {
+        text.bytes().any(|b| b.is_ascii_digit())
+    } else {
+        value.is_zero()
+            && text
+                .split(['e', 'E'])
+                .next()
+                .unwrap_or(text)
+                .bytes()
+                .any(|b| matches!(b, b'1'..=b'9'))
+    };
+    if out_of_range { Err(Unread::Refused) } else { Ok(value) }
+}
+
+/// What [`float_in`] needs of `f32` and `f64`.
+pub(crate) trait Float: std::str::FromStr + Copy {
+    fn is_infinite(self) -> bool;
+    fn is_zero(self) -> bool;
+}
+
+impl Float for f32 {
+    fn is_infinite(self) -> bool {
+        f32::is_infinite(self)
+    }
+    fn is_zero(self) -> bool {
+        self == 0.0
     }
 }
 
-/// `parsed` unless the parse overflowed a spelling written in digits, which
-/// `*_out` writes only for a finite value (I57): then `largest`, the finite
-/// value of `parsed`'s sign nearest the text. A spelling ending in a letter
-/// keeps the parse's reading: it is one of the infinity's spellings, which the
-/// parse accepts more of than `*_out` writes.
-// deficiency: KD75 — a field spelled past the largest finite value is read
-// as it, where `float8in` refuses the spelling and a restore fails the table's
-// `COPY` (I57). The ceiling binds a field (`roadmap.md`, "A literal is
-// guaranteed in `*_out`'s form and never read past `*_in`'s"), so it is to fail
-// the parse reading it, aborting it — not an unrepresentable value, that
-// category being our front end's limit (D96) — a known-failure row first.
-#[inline]
-fn finite_spelling<F: Copy>(s: &str, parsed: F, is_infinite: fn(F) -> bool, largest: F) -> F {
-    if is_infinite(parsed) && s.as_bytes().last().is_some_and(u8::is_ascii_digit) {
-        largest
-    } else {
-        parsed
+impl Float for f64 {
+    fn is_infinite(self) -> bool {
+        f64::is_infinite(self)
+    }
+    fn is_zero(self) -> bool {
+        self == 0.0
     }
 }
 
@@ -394,23 +432,25 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 /// is read by `DateOrder` (`20-01-01` is a month 20 under `MDY`, the year 2020
 /// under `YMD`), so it is refused as a shortfall, as is a month of three
 /// digits, which the server reads as a day of the year (D55).
-fn civil_days(s: &str, bc: bool) -> Option<i64> {
-    let (year, rest) = s.split_once('-')?;
-    let (month, day) = rest.split_once('-')?;
+fn civil_days(s: &str, bc: bool) -> Read<i64> {
+    let unparsed = Unread::Unparsed;
+    let (year, rest) = s.split_once('-').ok_or(unparsed)?;
+    let (month, day) = rest.split_once('-').ok_or(unparsed)?;
     if year.len() < 3 || month.len() > 2 {
-        return None;
+        return Err(unparsed);
     }
-    let (y, m, d) = (unsigned_part(year)?, unsigned_part(month)?, unsigned_part(day)?);
+    let part = |s| unsigned_part(s).ok_or(unparsed);
+    let (y, m, d) = (part(year)?, part(month)?, part(day)?);
     // pg-refuses: I61 — no year zero either side of the era, a month past
     // twelve, a day past its month's, a year past `IS_VALID_JULIAN`'s.
     if y == 0 || y > JULIAN_MAX_YEAR || !(1..=12).contains(&m) {
-        return None;
+        return Err(Unread::Refused);
     }
     let y = astronomical_year(y, bc);
     if !(1..=days_in_month(y, m)).contains(&d) {
-        return None;
+        return Err(Unread::Refused);
     }
-    Some(days_from_civil(y, m as u32, d as u32))
+    Ok(days_from_civil(y, m as u32, d as u32))
 }
 
 /// `1 - year` turns a `" BC"`-suffixed calendar year into PostgreSQL's (and
@@ -437,16 +477,23 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// text ("D100"), and the refuse mode refuses at planning a query
 /// materializing its column ("D99").
 pub fn decode_date32(s: &str) -> Option<i32> {
+    date_days(s).ok()
+}
+
+/// [`decode_date32`] telling a day PostgreSQL refuses from text that is no
+/// day here. The infinities are [`Unread::Unparsed`]: values of the type, but
+/// no day, which a caller ranks first if it can (`crate::predicate`).
+pub(crate) fn date_days(s: &str) -> Read<i32> {
     if s == "infinity" || s == "-infinity" {
-        return None;
+        return Err(Unread::Unparsed);
     }
     let (rest, bc) = split_era(s);
     let days = civil_days(rest, bc)?;
     // pg-refuses: I61 — `IS_VALID_DATE`'s range.
     if !(DATE_MIN_DAYS..DATE_END_DAYS).contains(&days) {
-        return None;
+        return Err(Unread::Refused);
     }
-    i32::try_from(days).ok()
+    Ok(i32::try_from(days).expect("a date's range is an i32 of days"))
 }
 
 pub fn render_date32(days: i32) -> String {
@@ -480,18 +527,18 @@ const POW10: [i64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 /// `None` past `time_overflows`' bounds, which `time`, `timetz` and both
 /// timestamps share: `24:00:00` is the last time of day, and `23:59:60` and
 /// `24:00:00` are both read, a timestamp's carrying into the next day.
-pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
+pub(crate) fn parse_time_of_day(s: &str) -> Read<(i64, i64)> {
+    let unparsed = Unread::Unparsed;
     let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
     let mut parts = hms.splitn(3, ':');
-    let h = unsigned_part(parts.next()?)?;
-    let mi = unsigned_part(parts.next()?)?;
-    let se = unsigned_part(parts.next()?)?;
+    let mut part = || parts.next().and_then(unsigned_part).ok_or(unparsed);
+    let (h, mi, se) = (part()?, part()?, part()?);
     if parts.next().is_some() || frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return Err(unparsed);
     }
     // pg-refuses: I61 — `time_overflows`, part by part.
     if h > 24 || mi > 59 || se > 60 {
-        return None;
+        return Err(Unread::Refused);
     }
     // `frac` is checked above to be at most six ASCII digits, so padding it
     // to six and parsing the result — two allocations per field — is exactly
@@ -502,7 +549,10 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
     }
     let (seconds, micros) = (h * 3600 + mi * 60 + se, micros * POW10[6 - frac.len()]);
     // pg-refuses: I61 — and past `24:00:00` as a whole.
-    (seconds * 1_000_000 + micros <= DAY_MICROS).then_some((seconds, micros))
+    if seconds * 1_000_000 + micros > DAY_MICROS {
+        return Err(Unread::Refused);
+    }
+    Ok((seconds, micros))
 }
 
 /// The exact inverse of [`parse_time_of_day`]'s micros-since-midnight value —
@@ -529,9 +579,9 @@ const DAY_MICROS: i64 = 86_400_000_000;
 /// A `time`'s microseconds since midnight as PostgreSQL holds it, its
 /// inclusive upper bound `24:00:00` included — what its comparison orders
 /// (`crate::predicate`), where [`decode_time64_micros`] is what Arrow holds.
-pub(crate) fn time_of_day_micros(s: &str) -> Option<i64> {
+pub(crate) fn time_of_day_micros(s: &str) -> Read<i64> {
     let (seconds, micros) = parse_time_of_day(s)?;
-    Some(seconds * 1_000_000 + micros)
+    Ok(seconds * 1_000_000 + micros)
 }
 
 /// `None` for anything unparseable, and for `24:00:00`: a real, valid
@@ -539,7 +589,7 @@ pub(crate) fn time_of_day_micros(s: &str) -> Option<i64> {
 /// Arrow's `Time64`, holding `[0, 86400 s)`, cannot, so it is refused as
 /// every other unrepresentable value is (the anchor on [`decode_date32`]).
 pub fn decode_time64_micros(s: &str) -> Option<i64> {
-    time_of_day_micros(s).filter(|&micros| micros < DAY_MICROS)
+    time_of_day_micros(s).ok().filter(|&micros| micros < DAY_MICROS)
 }
 
 pub fn render_time64_micros(v: i64) -> String {
@@ -566,23 +616,29 @@ pub fn render_time64_micros_into(v: i64, out: &mut String) {
 /// discarded, because two `timetz` values are equal only when the zone
 /// matches as well as the instant.
 ///
-/// `None` past `DecodeTimezone`'s `±15:59:59`, part by part. The run-together
-/// `+0530` the server reads as `+05:30` is refused as an hour past fifteen, a
-/// shortfall (`docs/design/decisions.md`, "D55").
-pub(crate) fn extract_offset(s: &str) -> Option<(&str, i64)> {
-    let idx = s.find(['+', '-'])?;
+/// Refused past `DecodeTimezone`'s `±15:59:59`, part by part. The
+/// run-together `+0530`, which the server reads as `+05:30`, is unparsed, an
+/// hour of more than two digits being a shortfall rather than an hour past
+/// fifteen (`docs/design/decisions.md`, "D55").
+pub(crate) fn extract_offset(s: &str) -> Read<(&str, i64)> {
+    let unparsed = Unread::Unparsed;
+    let idx = s.find(['+', '-']).ok_or(unparsed)?;
     let (time_only, off) = s.split_at(idx);
     let (sign, rest) = off.split_at(1);
     let sign_mult: i64 = if sign == "-" { -1 } else { 1 };
     let mut parts = rest.splitn(3, ':');
-    let hh = unsigned_part(parts.next()?)?;
-    let mm = parts.next().map(unsigned_part).unwrap_or(Some(0))?;
-    let ss = parts.next().map(unsigned_part).unwrap_or(Some(0))?;
+    let hours = parts.next().ok_or(unparsed)?;
+    if hours.len() > 2 {
+        return Err(unparsed);
+    }
+    let hh = unsigned_part(hours).ok_or(unparsed)?;
+    let mut part = || parts.next().map_or(Some(0), unsigned_part).ok_or(unparsed);
+    let (mm, ss) = (part()?, part()?);
     // pg-refuses: I61 — `MAX_TZDISP_HOUR`, and a minute or second past 59.
     if hh > 15 || mm > 59 || ss > 59 {
-        return None;
+        return Err(Unread::Refused);
     }
-    Some((time_only, sign_mult * (hh * 3600 + mm * 60 + ss)))
+    Ok((time_only, sign_mult * (hh * 3600 + mm * 60 + ss)))
 }
 
 /// Microseconds since the 1970-01-01 UTC epoch. `with_tz` selects
@@ -594,19 +650,19 @@ pub(crate) fn extract_offset(s: &str) -> Option<(&str, i64)> {
 /// PostgreSQL values, but `Timestamp` has no sentinel for them, same
 /// reasoning as [`decode_date32`].
 pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
-    i64::try_from(timestamp_micros_wide(s, with_tz)?).ok()
+    i64::try_from(timestamp_micros_wide(s, with_tz).ok()?).ok()
 }
 
 /// [`decode_timestamp_micros`] before it narrows to `i64`: microseconds from
 /// the 1970 UTC epoch for any finite value the grammar reads and PostgreSQL's
 /// range holds, so a value past what `Timestamp(Microsecond)` holds is told
 /// from one that does not parse (`crate::unrepresentable`).
-pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
+pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
     if s == "infinity" || s == "-infinity" {
-        return None;
+        return Err(Unread::Unparsed);
     }
     let (rest, bc) = split_era(s);
-    let (date_part, time_part) = rest.split_once(' ')?;
+    let (date_part, time_part) = rest.split_once(' ').ok_or(Unread::Unparsed)?;
     let days = civil_days(date_part, bc)?;
 
     let (time_only, offset_secs) =
@@ -619,7 +675,10 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
     // pg-refuses: I61 — `IS_VALID_TIMESTAMP`, of the instant: an offset can
     // carry a local time on either side of the range across its edge.
     let postgres = utc - POSTGRES_EPOCH_UNIX_MICROS;
-    (i128::from(MIN_TIMESTAMP) <= postgres && postgres < i128::from(END_TIMESTAMP)).then_some(utc)
+    if !(i128::from(MIN_TIMESTAMP)..i128::from(END_TIMESTAMP)).contains(&postgres) {
+        return Err(Unread::Refused);
+    }
+    Ok(utc)
 }
 
 /// `MIN_TIMESTAMP`, `4714-11-24 00:00:00 BC`, the first instant a timestamp
@@ -640,8 +699,9 @@ const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
 /// included. What its comparison orders (`crate::predicate`), where
 /// [`decode_timestamp_micros`] is what Arrow holds; `None` as that is for the
 /// infinities and for text that is not a timestamp.
-pub(crate) fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Option<i64> {
-    i64::try_from(timestamp_micros_wide(s, with_tz)? - POSTGRES_EPOCH_UNIX_MICROS).ok()
+pub(crate) fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Read<i64> {
+    let postgres = timestamp_micros_wide(s, with_tz)? - POSTGRES_EPOCH_UNIX_MICROS;
+    Ok(i64::try_from(postgres).expect("PostgreSQL's range is an i64 of microseconds"))
 }
 
 /// [`render_timestamp_micros`] of a [`timestamp_postgres_micros`] value, so a
@@ -704,55 +764,57 @@ fn interval_count(text: &str) -> Option<i64> {
 /// `time`. Every field is checked to be digits, which is what keeps
 /// `04:-5:06` — a string no `interval_out` writes and no `interval_in`
 /// accepts — from parsing as a negative minute count.
-fn interval_time_micros(text: &str) -> Option<i64> {
+fn interval_time_micros(text: &str) -> Read<i64> {
+    let unparsed = Unread::Unparsed;
     let (negative, rest) = match text.strip_prefix(['+', '-']) {
         Some(rest) => (text.starts_with('-'), rest),
         None => (false, text),
     };
     let (hms, frac) = rest.split_once('.').unwrap_or((rest, ""));
     let mut parts = hms.split(':');
-    let mut field = |max_len: Option<usize>| -> Option<i128> {
-        let digits = parts.next()?;
+    let mut field = |max_len: Option<usize>| -> Read<i128> {
+        let digits = parts.next().ok_or(unparsed)?;
         if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
+            return Err(unparsed);
         }
         if max_len.is_some_and(|n| digits.len() != n) {
-            return None;
+            return Err(unparsed);
         }
-        digits.parse::<i128>().ok()
+        digits.parse::<i128>().map_err(|_| unparsed)
     };
     let hours = field(None)?;
     let minutes = field(Some(2))?;
     let seconds = field(Some(2))?;
     if parts.next().is_some() {
-        return None;
+        return Err(unparsed);
     }
     // pg-refuses: I62 — `DecodeTimeCommon`'s minute past 59 and second past 60.
     if minutes > 59 || seconds > 60 {
-        return None;
+        return Err(Unread::Refused);
     }
     if frac.is_empty() && text.contains('.') {
-        return None;
+        return Err(unparsed);
     }
     if frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return Err(unparsed);
     }
     let micros: i128 = if frac.is_empty() {
         0
     } else {
         let mut padded = frac.to_string();
         padded.push_str(&"0".repeat(6 - padded.len()));
-        padded.parse().ok()?
+        padded.parse().map_err(|_| unparsed)?
     };
-    let total = hours
-        .checked_mul(3600)?
-        .checked_add(minutes * 60 + seconds)?
-        .checked_mul(1_000_000)?
-        .checked_add(micros)?;
     // pg-refuses: I62 — the `Interval` struct's `int64` microseconds, either
     // sign: the text carries the magnitude, so `i64::MIN` is no value of it.
-    let total = i64::try_from(total).ok()?;
-    Some(if negative { -total } else { total })
+    let total = hours
+        .checked_mul(3600)
+        .and_then(|t| t.checked_add(minutes * 60 + seconds))
+        .and_then(|t| t.checked_mul(1_000_000))
+        .and_then(|t| t.checked_add(micros))
+        .and_then(|t| i64::try_from(t).ok())
+        .ok_or(Unread::Refused)?;
+    Ok(if negative { -total } else { total })
 }
 
 /// The three parts of an `interval`'s text as PostgreSQL's `Interval` struct
@@ -773,7 +835,7 @@ fn interval_time_micros(text: &str) -> Option<i64> {
 /// `interval_out` never writes, and are refused. `infinity`/`-infinity`
 /// (v17's, I34) are not in the grammar either, so they fail here and each
 /// consumer says what it does about them.
-pub(crate) fn interval_parts(text: &str) -> Option<(i32, i32, i64)> {
+pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
     let tokens: Vec<&str> = text.split(' ').collect();
     // Years, months and days, each counted at most once.
     let mut counts: [Option<i32>; 3] = [None; 3];
@@ -788,7 +850,7 @@ pub(crate) fn interval_parts(text: &str) -> Option<(i32, i32, i64)> {
             // last, and of which there is at most one.
             _ => {
                 if at + 1 != tokens.len() {
-                    return None;
+                    return Err(Unread::Unparsed);
                 }
                 time = interval_time_micros(tokens[at])?;
                 at += 1;
@@ -797,18 +859,19 @@ pub(crate) fn interval_parts(text: &str) -> Option<(i32, i32, i64)> {
         };
         // pg-refuses: I62 — a unit given twice, and a count past `int32`.
         if counts[unit].is_some() {
-            return None;
+            return Err(Unread::Refused);
         }
-        counts[unit] = Some(i32::try_from(interval_count(tokens[at])?).ok()?);
+        let count = interval_count(tokens[at]).ok_or(Unread::Unparsed)?;
+        counts[unit] = Some(i32::try_from(count).map_err(|_| Unread::Refused)?);
         at += 2;
     }
     if at != tokens.len() {
-        return None;
+        return Err(Unread::Unparsed);
     }
     let [years, months, days] = counts.map(|count| i64::from(count.unwrap_or(0)));
     // pg-refuses: I62 — `itmin2interval`'s month total past `int32`.
-    let months = i32::try_from(years * 12 + months).ok()?;
-    Some((months, i32::try_from(days).ok()?, time))
+    let months = i32::try_from(years * 12 + months).map_err(|_| Unread::Refused)?;
+    Ok((months, i32::try_from(days).expect("a day count is an i32"), time))
 }
 
 /// `interval`, as Arrow's `Interval(MonthDayNano)` holds it: months, days and
@@ -823,7 +886,7 @@ pub(crate) fn interval_parts(text: &str) -> Option<(i32, i32, i64)> {
 ///   thousandth of the range, and nothing normalizes hours into days (I40);
 /// - a value `interval_in` refuses, which [`interval_parts`] refuses (I62).
 pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
-    let (months, days, micros) = interval_parts(s)?;
+    let (months, days, micros) = interval_parts(s).ok()?;
     Some((months, days, micros.checked_mul(1_000)?))
 }
 
@@ -1186,12 +1249,13 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
 /// `1.01`.
 ///
 /// The grammar is [`decimal_unscaled_digits`]'s, `[-]digits[.digits]`, and
-/// `None` is what it refuses, `NaN` — which bypasses the typmod and has no
-/// decimal representation — and a value past the precision. `scale` is
+/// what it does not read is [`Unread::Unparsed`], `NaN` among it — which
+/// bypasses the typmod and has no decimal representation; a value past the
+/// precision is [`Unread::Refused`]. `scale` is
 /// `numerictypmodin`'s whole range, -1000 to 1000, so a column held as text
 /// for a scale no Arrow decimal carries is read by this too.
 // pg-refuses: I51 — a value past the precision once rounded to the scale.
-pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Option<String> {
+pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Read<String> {
     let (neg, s) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s),
@@ -1201,7 +1265,7 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Option<Str
         || !int_part.bytes().all(|b| b.is_ascii_digit())
         || !frac_part.bytes().all(|b| b.is_ascii_digit())
     {
-        return None;
+        return Err(Unread::Unparsed);
     }
     // As in `decimal_unscaled_digits`, `int_part ++ frac_part` is indexed and
     // never materialized: the unscaled value is its first `keep` digits,
@@ -1221,12 +1285,12 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Option<Str
         // first cut digit is an implied leading zero, which rounds down.
         Ok(cut) if cut > total => (0, 0, false),
         Ok(cut) => (total - cut, 0, cut > 0 && digit(total - cut) >= b'5'),
-        Err(_) => (total, usize::try_from(shift).ok()?, false),
+        Err(_) => (total, usize::try_from(shift).expect("a positive shift"), false),
     };
     let start = (0..keep).find(|&i| digit(i) != b'0').unwrap_or(keep);
     // Zero, rounded or written, carries no sign: `-0.004` at scale 2 is `0`.
     if start == keep && !round_up {
-        return Some("0".to_string());
+        return Ok("0".to_string());
     }
     let sign = usize::from(neg);
     let mut out = String::with_capacity(sign + keep - start + 1 + pad);
@@ -1250,10 +1314,10 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Option<Str
         out.extend(std::iter::repeat_n('0', nines));
     }
     if out.len() - sign + pad > usize::from(precision) {
-        return None;
+        return Err(Unread::Refused);
     }
     out.extend(std::iter::repeat_n('0', pad));
-    Some(out)
+    Ok(out)
 }
 
 /// `NUMERIC_DSCALE_MAX`: the most digits `numeric_in` stores after the point,
@@ -1340,24 +1404,32 @@ mod tests {
         assert_eq!(render_f64(decode_f64("-0").unwrap()), "-0");
     }
 
-    /// `float8out` and `float4out` at a precision short enough to round the
-    /// largest finite value past it (I57): every `--extra-float-digits` that
-    /// does, down to `-15`'s one digit, reads as that value, and a spelling
-    /// nearer zero than the rounding keeps its own reading.
+    /// **A float past its type's range is refused, as `float8in` and
+    /// `float4in` refuse it** (I59): every spelling `float8out` and
+    /// `float4out` round the largest finite value past at an
+    /// `--extra-float-digits` short enough (I57), down to `-15`'s one digit,
+    /// and a nonzero one read as zero. A spelling this build does not read,
+    /// which `strtod` does, is unparsed rather than refused.
     #[test]
-    fn a_finite_spelling_past_the_largest_finite_value_reads_as_it() {
-        for text in ["1.79769313486232e+308", "1.8e+308", "2e+308", "1e+309"] {
-            assert_eq!(decode_f64(text), Some(f64::MAX), "{text}");
-            assert_eq!(decode_f64(&format!("-{text}")), Some(-f64::MAX), "-{text}");
+    fn a_float_past_its_range_is_refused_and_one_in_it_read() {
+        for text in ["1.79769313486232e+308", "1.8e+308", "2e+308", "1e+309", "1e-400"] {
+            assert_eq!(float_in::<f64>(text), Err(Unread::Refused), "{text}");
+            assert_eq!(float_in::<f64>(&format!("-{text}")), Err(Unread::Refused), "-{text}");
         }
-        for text in ["3.403e+38", "3.4e+39", "4e+38"] {
-            assert_eq!(decode_f32(text), Some(f32::MAX), "{text}");
-            assert_eq!(decode_f32(&format!("-{text}")), Some(-f32::MAX), "-{text}");
+        for text in ["3.403e+38", "3.4e+39", "4e+38", "1e-46"] {
+            assert_eq!(float_in::<f32>(text), Err(Unread::Refused), "{text}");
+            assert_eq!(float_in::<f32>(&format!("-{text}")), Err(Unread::Refused), "-{text}");
         }
+        for text in [" 1.5", "1.5 ", "0x1p3", "1_0", ""] {
+            assert_eq!(float_in::<f64>(text), Err(Unread::Unparsed), "{text:?}");
+        }
+        assert_eq!(decode_f64("1.79769313486232e+308"), None);
         assert_eq!(decode_f64("1.7976931348623157e+308"), Some(f64::MAX));
         assert_eq!(decode_f32("3.40282e+38"), Some(3.40282e38));
         assert_eq!(decode_f64("Infinity"), Some(f64::INFINITY));
         assert_eq!(decode_f64("-Infinity"), Some(f64::NEG_INFINITY));
+        assert_eq!(decode_f64("1e-310"), Some(1e-310));
+        assert_eq!(decode_f64("0e-999"), Some(0.0));
     }
 
     /// Ground truth from a live server under `extra_float_digits = 3` —
@@ -1476,7 +1548,7 @@ mod tests {
     }
 
     /// **A time of day is bounded as `time_overflows` bounds it**, and a
-    /// part carrying a sign is refused rather than read as a signed number:
+    /// part carrying a sign is unparsed rather than read as a signed number:
     /// the server reads `12:-5:00` as 12:00 at zone `-5`, where the prior
     /// reading made it 11:55 (I61).
     #[test]
@@ -1489,13 +1561,11 @@ mod tests {
             "24:00:01",
             "24:01:00",
             "23:59:60.5",
-            "12:-5:00",
-            "12:+5:00",
-            "12:05:+5",
-            "+12:00:00",
-            "-1:00:00",
         ] {
-            assert_eq!(time_of_day_micros(text), None, "{text}");
+            assert_eq!(time_of_day_micros(text), Err(Unread::Refused), "{text}");
+        }
+        for text in ["12:-5:00", "12:+5:00", "12:05:+5", "+12:00:00", "-1:00:00"] {
+            assert_eq!(time_of_day_micros(text), Err(Unread::Unparsed), "{text}");
         }
         for (text, micros) in [
             ("12:59:60", 46_800_000_000),
@@ -1503,24 +1573,20 @@ mod tests {
             ("24:00:00", DAY_MICROS),
             ("012:05:00", 43_500_000_000),
         ] {
-            assert_eq!(time_of_day_micros(text), Some(micros), "{text}");
+            assert_eq!(time_of_day_micros(text), Ok(micros), "{text}");
         }
     }
 
     /// **A numeric zone is bounded as `DecodeTimezone` bounds it**,
-    /// `±15:59:59`, part by part (I61).
+    /// `±15:59:59`, part by part (I61), and the run-together `+0530` the
+    /// server reads as `+05:30` is unparsed, not refused.
     #[test]
     fn an_offset_past_fifteen_hours_is_refused() {
-        for text in [
-            "12:00:00+16",
-            "12:00:00-16",
-            "12:00:00+05:60",
-            "12:00:00+05:30:60",
-            "12:00:00+0530",
-            "12:00:00+-5",
-            "12:00:00+05:+3",
-        ] {
-            assert_eq!(extract_offset(text), None, "{text}");
+        for text in ["12:00:00+16", "12:00:00-16", "12:00:00+05:60", "12:00:00+05:30:60"] {
+            assert_eq!(extract_offset(text), Err(Unread::Refused), "{text}");
+        }
+        for text in ["12:00:00+0530", "12:00:00+-5", "12:00:00+05:+3", "12:00:00"] {
+            assert_eq!(extract_offset(text), Err(Unread::Unparsed), "{text}");
         }
         for (text, seconds) in [
             ("12:00:00+15:59:59", 57_599),
@@ -1528,7 +1594,7 @@ mod tests {
             ("12:00:00-00:44:30", -2_670),
             ("12:00:00+05", 18_000),
         ] {
-            assert_eq!(extract_offset(text), Some(("12:00:00", seconds)), "{text}");
+            assert_eq!(extract_offset(text), Ok(("12:00:00", seconds)), "{text}");
         }
     }
 
@@ -1542,16 +1608,23 @@ mod tests {
             ("2020-02-30 00:00:00", false),
             ("2020-01-01 12:60:00", false),
             ("2020-01-01 24:00:01", false),
-            ("2020-01-01 12:-5:00", false),
             ("0000-01-01 00:00:00", false),
             ("4714-11-23 23:59:59.999999 BC", false),
             ("294277-01-01 00:00:00", false),
             ("2020-01-01 00:00:00+16", true),
-            ("2020-01-01 12:-5:00", true),
             ("4714-11-24 00:00:00+01 BC", true),
             ("294276-12-31 23:00:00-02", true),
         ] {
-            assert_eq!(timestamp_micros_wide(text, with_tz), None, "{text}");
+            assert_eq!(timestamp_micros_wide(text, with_tz), Err(Unread::Refused), "{text}");
+        }
+        for (text, with_tz) in [
+            ("2020-01-01 12:-5:00", false),
+            ("2020-01-01 12:-5:00", true),
+            ("2020-01-01 00:00:00+0530", true),
+            ("20-01-01 00:00:00", false),
+            ("2020-01-01T00:00:00", false),
+        ] {
+            assert_eq!(timestamp_micros_wide(text, with_tz), Err(Unread::Unparsed), "{text}");
         }
         let at = |text: &str, with_tz: bool| timestamp_postgres_micros(text, with_tz).expect(text);
         assert_eq!(at("4714-11-24 00:00:00 BC", false), MIN_TIMESTAMP);
@@ -1654,7 +1727,7 @@ mod tests {
             "1 mon 1 mons",
             "1 year 1 mon 1 day 1 year",
         ] {
-            assert_eq!(interval_parts(text), None, "{text}");
+            assert_eq!(interval_parts(text), Err(Unread::Refused), "{text}");
         }
         let micros_max = i64::MAX;
         for (text, parts) in [
@@ -1669,7 +1742,7 @@ mod tests {
             ("-2562047788:00:54.775807", (0, 0, -micros_max)),
             ("1 day 1 year", (12, 1, 0)),
         ] {
-            assert_eq!(interval_parts(text), Some(parts), "{text}");
+            assert_eq!(interval_parts(text), Ok(parts), "{text}");
         }
     }
 
@@ -1704,7 +1777,7 @@ mod tests {
         // PostgreSQL's inclusive bound, past Arrow's day: refused by the
         // decoder, ordered by the comparison, and rendered back all the same.
         assert_eq!(decode_time64_micros("24:00:00"), None);
-        assert_eq!(time_of_day_micros("24:00:00"), Some(86_400_000_000));
+        assert_eq!(time_of_day_micros("24:00:00"), Ok(86_400_000_000));
         assert_eq!(decode_time64_micros("23:59:59.999999"), Some(86_399_999_999));
         assert_eq!(render_time64_micros(86_400_000_000), "24:00:00");
         assert_eq!(decode_time64_micros("00:00:00.000001"), Some(1));
@@ -1859,7 +1932,7 @@ mod tests {
     #[test]
     fn nan_numeric_has_no_decimal_representation() {
         assert_eq!(decimal_unscaled_digits("NaN", 2), None);
-        assert_eq!(typmod_unscaled_digits("NaN", 10, 2), None);
+        assert_eq!(typmod_unscaled_digits("NaN", 10, 2), Err(Unread::Unparsed));
     }
 
     /// **A field is rounded to its scale half away from zero and refused past
@@ -1873,47 +1946,47 @@ mod tests {
     fn a_field_is_put_through_its_typmod_as_copy_puts_it() {
         let zeros = |n| "0".repeat(n);
         for (text, precision, scale, stored) in [
-            ("1.005", 10, 2, Some("101")),
-            ("-1.005", 10, 2, Some("-101")),
-            ("1.004", 10, 2, Some("100")),
-            ("-0.004", 10, 2, Some("0")),
-            ("-0.005", 10, 2, Some("-1")),
-            ("1.0", 10, 2, Some("100")),
-            ("12345678.995", 10, 2, Some("1234567900")),
-            ("99999999.995", 10, 2, None),
-            ("123456789012", 10, 2, None),
-            ("99999999.99", 10, 2, Some("9999999999")),
-            ("0.000125", 2, 5, Some("13")),
-            ("0.0000049", 2, 5, Some("0")),
-            (".00001", 2, 5, Some("1")),
-            ("0.000995", 2, 5, None),
-            ("0.001", 2, 5, None),
-            ("1250", 3, -2, Some("13")),
-            ("-1249", 3, -2, Some("-12")),
-            ("99950", 3, -2, None),
-            ("5", 1, -1, Some("1")),
-            ("5", 1, -2, Some("0")),
-            ("0.5", 1, 0, Some("1")),
-            ("9.5", 1, 0, None),
-            ("NaN", 10, 2, None),
-            ("Infinity", 10, 2, None),
-            ("1e5", 10, 2, None),
-            (".", 10, 2, None),
-            ("", 10, 2, None),
+            ("1.005", 10, 2, Ok("101")),
+            ("-1.005", 10, 2, Ok("-101")),
+            ("1.004", 10, 2, Ok("100")),
+            ("-0.004", 10, 2, Ok("0")),
+            ("-0.005", 10, 2, Ok("-1")),
+            ("1.0", 10, 2, Ok("100")),
+            ("12345678.995", 10, 2, Ok("1234567900")),
+            ("99999999.995", 10, 2, Err(Unread::Refused)),
+            ("123456789012", 10, 2, Err(Unread::Refused)),
+            ("99999999.99", 10, 2, Ok("9999999999")),
+            ("0.000125", 2, 5, Ok("13")),
+            ("0.0000049", 2, 5, Ok("0")),
+            (".00001", 2, 5, Ok("1")),
+            ("0.000995", 2, 5, Err(Unread::Refused)),
+            ("0.001", 2, 5, Err(Unread::Refused)),
+            ("1250", 3, -2, Ok("13")),
+            ("-1249", 3, -2, Ok("-12")),
+            ("99950", 3, -2, Err(Unread::Refused)),
+            ("5", 1, -1, Ok("1")),
+            ("5", 1, -2, Ok("0")),
+            ("0.5", 1, 0, Ok("1")),
+            ("9.5", 1, 0, Err(Unread::Refused)),
+            ("NaN", 10, 2, Err(Unread::Unparsed)),
+            ("Infinity", 10, 2, Err(Unread::Unparsed)),
+            ("1e5", 10, 2, Err(Unread::Unparsed)),
+            (".", 10, 2, Err(Unread::Unparsed)),
+            ("", 10, 2, Err(Unread::Unparsed)),
         ] {
             assert_eq!(
-                typmod_unscaled_digits(text, precision, scale).as_deref(),
-                stored,
+                typmod_unscaled_digits(text, precision, scale).as_deref().map_err(|e| *e),
+                stored.map_err(|e: Unread| e),
                 "{text:?} as numeric({precision},{scale})"
             );
         }
         // `numerictypmodin`'s extreme scales, past every Arrow decimal's.
         let tiny = format!("0.{}5", zeros(999));
-        assert_eq!(typmod_unscaled_digits(&tiny, 1, 1000).as_deref(), Some("5"));
-        assert_eq!(typmod_unscaled_digits(&tiny, 1, 999).as_deref(), Some("1"));
+        assert_eq!(typmod_unscaled_digits(&tiny, 1, 1000), Ok("5".to_string()));
+        assert_eq!(typmod_unscaled_digits(&tiny, 1, 999), Ok("1".to_string()));
         let huge = format!("-1{}", zeros(1000));
-        assert_eq!(typmod_unscaled_digits(&huge, 1, -1000).as_deref(), Some("-1"));
-        assert_eq!(typmod_unscaled_digits(&huge, 1, -999), None);
+        assert_eq!(typmod_unscaled_digits(&huge, 1, -1000), Ok("-1".to_string()));
+        assert_eq!(typmod_unscaled_digits(&huge, 1, -999), Err(Unread::Refused));
     }
 
     /// **What `numeric_out` writes is stored unchanged**: a value at its
@@ -1926,7 +1999,7 @@ mod tests {
             for unscaled in ["0", "7", "-7", "120", "-98765", "1234567"] {
                 let text = render_decimal(unscaled, scale);
                 assert_eq!(
-                    typmod_unscaled_digits(&text, 7, i16::from(scale)),
+                    typmod_unscaled_digits(&text, 7, i16::from(scale)).ok(),
                     decimal_unscaled_digits(&text, scale),
                     "{text:?} at scale {scale}"
                 );
@@ -2224,8 +2297,11 @@ mod differential {
     #[test]
     fn time_of_day_agrees_with_the_shape_it_replaced() {
         let check = |s: &str| match (parse_time_of_day(s), prior_shape::parse_time_of_day(s)) {
-            (None, Some(_)) => assert!(past_time_overflows(s), "{s:?}"),
-            (got, prior) => assert_eq!(got, prior, "{s:?}"),
+            (Err(Unread::Refused), Some(_)) => assert!(past_time_overflows(s), "{s:?}"),
+            (Err(Unread::Refused), None) => {}
+            // A signed part, which the server reads as a zone (I61).
+            (Err(Unread::Unparsed), Some(_)) => assert!(s.contains(['+', '-']), "{s:?}"),
+            (got, prior) => assert_eq!(got.ok(), prior, "{s:?}"),
         };
         fuzz(1, 20, check);
         shaped(
@@ -2258,9 +2334,9 @@ mod differential {
             ("00:00:00.000005", 5),
             ("00:00:00.000000", 0),
         ] {
-            assert_eq!(parse_time_of_day(text), Some((0, want)), "{text}");
+            assert_eq!(parse_time_of_day(text), Ok((0, want)), "{text}");
         }
-        assert_eq!(parse_time_of_day("00:00:00.0000005"), None);
+        assert_eq!(parse_time_of_day("00:00:00.0000005"), Err(Unread::Unparsed));
     }
 
     /// Whether a hyphen in `s` falls where `uuid_in` refuses one: anywhere

@@ -1113,7 +1113,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (46, 3_648_728_569_866_933_976);
+const PERSISTED_INDEX: (u32, u64) = (47, 9_189_197_878_997_574_859);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdump_query::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
@@ -1130,7 +1130,8 @@ const PERSISTED_INDEX: (u32, u64) = (46, 3_648_728_569_866_933_976);
 /// identity, its size and the calendar are the envelope's, and observed
 /// rather than parsed. So no list of persisted fields is kept to drift from
 /// the types. One fixed setting maps every file: the serial path, the default
-/// chunk and line limit, every table at the data level, no cache. It sees only
+/// chunk and line limit, every table and column at the data level but a column
+/// holding a field PostgreSQL refuses (`common::sweep_request`), no cache. It sees only
 /// what the fixtures exercise, as `golden_order_is_pinned_to_the_format_version`
 /// does; a digest of the preamble alone would see less, the statistics and
 /// the data spans being persisted beside it.
@@ -1159,14 +1160,10 @@ async fn persisted_index_is_pinned_to_the_format_version() {
     let mut digest = 0xcbf2_9ce4_8422_2325u64;
     for (name, path) in &files {
         let source = LocalFileSource::open(path).unwrap();
-        let run = map_file(
-            &source,
-            &ScanOptions::default(),
-            &CacheMode::DISABLED,
-            &StatisticsRequest::DATA,
-        )
-        .await
-        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let request = common::sweep_request(path);
+        let run = map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request)
+            .await
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(!run.interrupted, "{name}");
         let bytes = bincode::serde::encode_to_vec(&run.index, bincode::config::standard()).unwrap();
         fnv(&mut digest, name.as_bytes());

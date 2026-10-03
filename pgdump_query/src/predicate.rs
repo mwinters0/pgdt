@@ -6,6 +6,7 @@ use arrow::datatypes::i256;
 
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
+use crate::decode::{Read, Unread};
 use crate::diagnostic::{Finding, Severity};
 use crate::index::Unrepresentable;
 #[cfg(feature = "introspect")]
@@ -818,6 +819,9 @@ struct JsonCursor<'a> {
     bytes: &'a [u8],
     at: usize,
     depth: usize,
+    /// Whether the read failed at a refusal of the server's, a marked one,
+    /// rather than anywhere else ([`Unread`]).
+    refused: bool,
 }
 
 impl<'a> JsonCursor<'a> {
@@ -885,8 +889,11 @@ impl<'a> JsonCursor<'a> {
             }
             // Anything else is a number or nothing: a leading `+`, a bare
             // `.5` and `NaN` all fail inside, as the server's lexer fails
-            // them.
-            _ => Jsonb::Number(self.number()?),
+            // them, so every failure there is a refusal.
+            _ => match self.number() {
+                Some(number) => Jsonb::Number(number),
+                None => return self.refuse(),
+            },
         };
         self.depth -= 1;
         Some(value)
@@ -978,7 +985,7 @@ impl<'a> JsonCursor<'a> {
                         _ => return None,
                     }
                 }
-                0x00..=0x1f => return None,
+                0x00..=0x1f => return self.refuse(),
                 // Every other byte is copied verbatim, and each is ASCII or
                 // part of a multi-byte sequence copied whole — the input is a
                 // `&str`, so `from_utf8` above never fails.
@@ -994,20 +1001,29 @@ impl<'a> JsonCursor<'a> {
     fn unicode_escape(&mut self) -> Option<char> {
         let first = self.hex4()?;
         if first == 0 {
-            return None;
+            return self.refuse();
         }
         if (0xd800..0xdc00).contains(&first) {
             if !(self.eat(b'\\') && self.eat(b'u')) {
-                return None;
+                return self.refuse();
             }
             let second = self.hex4()?;
             if !(0xdc00..0xe000).contains(&second) {
-                return None;
+                return self.refuse();
             }
             return char::from_u32(0x10000 + ((first - 0xd800) << 10) + (second - 0xdc00));
         }
         // A low surrogate with no high half in front of it.
-        char::from_u32(first).filter(|_| !(0xdc00..0xe000).contains(&first))
+        if (0xdc00..0xe000).contains(&first) {
+            return self.refuse();
+        }
+        char::from_u32(first)
+    }
+
+    /// Fail the read as the server refuses it.
+    fn refuse<T>(&mut self) -> Option<T> {
+        self.refused = true;
+        None
     }
 
     fn hex4(&mut self) -> Option<u32> {
@@ -1117,19 +1133,24 @@ fn storage_order(mut pairs: Vec<(String, Jsonb)>) -> Vec<(String, Jsonb)> {
 /// refuse — which for a *field* is `Error::FieldDecode` and for a filter's
 /// literal `Error::PredicateValueDecode`, the same two faults every other
 /// comparison raises.
-fn parse_jsonb(text: &str) -> Option<Jsonb> {
-    let mut cursor = JsonCursor { bytes: text.as_bytes(), at: 0, depth: 0 };
+fn parse_jsonb(text: &str) -> Read<Jsonb> {
+    let mut cursor = JsonCursor { bytes: text.as_bytes(), at: 0, depth: 0, refused: false };
     cursor.skip_ws();
-    let value = cursor.value()?;
+    let Some(value) = cursor.value() else {
+        return Err(if cursor.refused { Unread::Refused } else { Unread::Unparsed });
+    };
     cursor.skip_ws();
-    (cursor.at == cursor.bytes.len()).then_some(value)
+    if cursor.at != cursor.bytes.len() {
+        return Err(Unread::Unparsed);
+    }
+    Ok(value)
 }
 
 /// A `jsonb` comparison key: the document, with a **top-level scalar wrapped
 /// in the one-element pseudo-array PostgreSQL stores it in** (I41). Modelling
 /// the wrapper is what gives `1 < [1]`, `1 < [1,2]` and `1 > []`.
-fn jsonb_key(text: &str) -> Option<OrderKey> {
-    Some(OrderKey::Jsonb(match parse_jsonb(text)? {
+fn jsonb_key(text: &str) -> Read<OrderKey> {
+    Ok(OrderKey::Jsonb(match parse_jsonb(text)? {
         container @ (Jsonb::Array { .. } | Jsonb::Object(_)) => container,
         scalar => Jsonb::Array { raw_scalar: true, items: vec![scalar] },
     }))
@@ -1265,10 +1286,10 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 /// refuses — and a time part past what Arrow's nanoseconds hold, besides. The
 /// fusing is this function's alone: a decoder that did it would lose the
 /// fields Arrow carries separately.
-fn interval_span(text: &str) -> Option<i128> {
+fn interval_span(text: &str) -> Read<i128> {
     let (months, days, time) = decode::interval_parts(text)?;
     let whole_days = i128::from(months) * 30 + i128::from(days);
-    Some(whole_days * 86_400_000_000 + i128::from(time))
+    Ok(whole_days * 86_400_000_000 + i128::from(time))
 }
 
 /// A `time with time zone`, split into the UTC-equivalent instant and the
@@ -1276,12 +1297,13 @@ fn interval_span(text: &str) -> Option<i128> {
 /// the value displays. `timetz_cmp_internal` sorts by the first and breaks
 /// ties with the second (I40), so `00:00:00+00` and `01:00:00+01` are the
 /// same instant and still not equal.
-fn timetz_key(text: &str) -> Option<OrderKey> {
+fn timetz_key(text: &str) -> Read<OrderKey> {
     let (time_only, displayed) = decode::extract_offset(text)?;
     let (seconds, micros) = decode::parse_time_of_day(time_only)?;
     let zone = -displayed;
-    let utc = seconds.checked_mul(1_000_000)?.checked_add(micros)?.checked_add(zone * 1_000_000)?;
-    Some(OrderKey::TimeTz { utc, zone })
+    // Both parts are bounded above, so neither sum can overflow.
+    let utc = seconds * 1_000_000 + micros + zone * 1_000_000;
+    Ok(OrderKey::TimeTz { utc, zone })
 }
 
 /// An `inet` or `cidr` value: `<address>[/<bits>]`, the form
@@ -1295,13 +1317,14 @@ fn timetz_key(text: &str) -> Option<OrderKey> {
 /// `cidr` additionally refuses a value with a bit set below its netmask,
 /// because `cidr_in` does: the *only* thing separating the two types, their
 /// comparison being identical.
-fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
+fn network_key(text: &str, cidr: bool) -> Read<OrderKey> {
+    let unparsed = Unread::Unparsed;
     let (address, netmask) = match text.split_once('/') {
         Some((address, netmask)) => (address, Some(netmask)),
         None => (text, None),
     };
     let mut addr = [0u8; 16];
-    let v6 = match address.parse::<std::net::IpAddr>().ok()? {
+    let v6 = match address.parse::<std::net::IpAddr>().map_err(|_| unparsed)? {
         std::net::IpAddr::V4(v4) => {
             addr[..4].copy_from_slice(&v4.octets());
             false
@@ -1316,19 +1339,19 @@ fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
         None => maxbits,
         Some(digits) => {
             if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
+                return Err(unparsed);
             }
-            digits.parse::<u8>().ok()?
+            digits.parse::<u8>().map_err(|_| unparsed)?
         }
     };
     if bits > maxbits {
-        return None;
+        return Err(unparsed);
     }
     // pg-refuses: I40 — a bit set below the netmask.
     if cidr && (bits..maxbits).any(|bit| addr[usize::from(bit / 8)] & (0x80 >> (bit % 8)) != 0) {
-        return None;
+        return Err(Unread::Refused);
     }
-    Some(OrderKey::Network(NetworkKey { v6, bits, addr }))
+    Ok(OrderKey::Network(NetworkKey { v6, bits, addr }))
 }
 
 /// A `macaddr`/`macaddr8` value: `octets` hex pairs of either case joined by
@@ -1363,50 +1386,67 @@ fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
 /// field and a filter's literal, a stored bound and a literal, two neighbours
 /// being gathered — are ordered by the one key the filter uses.
 fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
+    field_key(kind, text).ok()
+}
+
+/// [`order_key`], saying why a text has no key: refused by the type's `*_in`,
+/// which fails the parse reading it as a field, or not read here.
+fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
-        return Some(special);
+        return Ok(special);
     }
-    Some(match kind {
-        CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
-        // The field's reader, and a literal's in DataFusion's semantics. A
-        // literal in PostgreSQL's semantics is read at the column's width by
-        // [`int_literal`] instead, through [`literal_key`].
-        CompareKind::Int { .. } => OrderKey::Int(text.parse::<i64>().ok()?),
+    let unparsed = Unread::Unparsed;
+    Ok(match kind {
+        CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text).ok_or(unparsed)?),
+        // A literal in DataFusion's semantics is read as an `i64` instead, by
+        // [`literal_key`].
+        CompareKind::Int { bytes } => OrderKey::Int(int_in(text, *bytes)?),
         // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
         // 4294967295 and this build does not implement that wrap, so a
         // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
-        CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
-        // The field's reader. A literal in PostgreSQL's semantics is read by
-        // [`float_literal`] instead, through [`literal_key`].
-        CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
-        CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
+        CompareKind::UnsignedInt => {
+            OrderKey::Int(text.parse::<u32>().map_err(|_| unparsed)?.into())
+        }
+        CompareKind::Float32 => OrderKey::Float(f64::from(decode::float_in::<f32>(text)?)),
+        CompareKind::Float64 => OrderKey::Float(decode::float_in::<f64>(text)?),
         // A field is put through its typmod, rounded to the scale and refused
         // past the precision as `COPY` refuses it (I51). A literal is read
         // exactly, by [`literal_key`].
-        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(i256::from_string(
-            &decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))?,
-        )?),
+        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(
+            i256::from_string(&decode::typmod_unscaled_digits(
+                text,
+                *precision,
+                i16::from(*scale),
+            )?)
+            .ok_or(unparsed)?,
+        ),
         CompareKind::Numeric { typmod: Some(typmod), .. } => {
             OrderKey::Numeric(NumericKey::from_unscaled(
                 &decode::typmod_unscaled_digits(text, typmod.precision, typmod.scale)?,
                 typmod.scale,
             ))
         }
-        // A bare column's field is bounded by `numeric_in` (I63); a typmod'd
-        // one never reaches the bounds, the typmod rounding first. A literal
-        // in PostgreSQL's semantics is bounded by [`literal_key`].
+        // A bare column's field is bounded by `numeric_in` (I63) once read:
+        // the bounds count the digits a grammar with no exponent reads, and
+        // `numeric_in` stores a text whose exponent brings its scale back
+        // within them. A typmod'd one never reaches the bounds, the typmod
+        // rounding first. A literal in PostgreSQL's semantics is bounded by
+        // [`literal_key`].
         CompareKind::Numeric { infinities: bare, typmod: None } => {
+            let key = NumericKey::parse(text).ok_or(unparsed)?;
             if *bare && !decode::numeric_in_stores(text) {
-                return None;
+                return Err(Unread::Refused);
             }
-            OrderKey::Numeric(NumericKey::parse(text)?)
+            OrderKey::Numeric(key)
         }
         // A label the type does not declare is not a value of the column, so
         // it is the same fault an unparseable number is. The linear scan is
         // over a label list, a handful of entries in practice.
-        CompareKind::Enum(labels) => OrderKey::Int(labels.iter().position(|l| l == text)? as i64),
-        CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
+        CompareKind::Enum(labels) => {
+            OrderKey::Int(labels.iter().position(|l| l == text).ok_or(unparsed)? as i64)
+        }
+        CompareKind::Date => OrderKey::Int(decode::date_days(text)?.into()),
         CompareKind::Time => OrderKey::Int(decode::time_of_day_micros(text)?),
         // From PostgreSQL's epoch, not Arrow's: every value the server admits
         // keys, those past what `i64` counts from 1970 among them (I49).
@@ -1420,10 +1460,13 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         }
         CompareKind::TimeTz => timetz_key(text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
-        CompareKind::MacAddr { octets } => macaddr_key(text, *octets)?,
+        CompareKind::MacAddr { octets } => macaddr_key(text, *octets).ok_or(unparsed)?,
         CompareKind::Jsonb => jsonb_key(text)?,
-        CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
-        CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
+        // Every refusal of the reader is `uuid_in`'s (I64).
+        CompareKind::Uuid => {
+            OrderKey::Bytes(decode::decode_uuid(text).ok_or(Unread::Refused)?.to_vec())
+        }
+        CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text).ok_or(unparsed)?),
         CompareKind::Text => OrderKey::Text(text.to_string()),
         // `bcTruelen` on both sides, which is what makes this the server's
         // comparison rather than one over the padding (I38). The blank is
@@ -1432,27 +1475,25 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     })
 }
 
-/// A filter literal's key, which is [`order_key`]'s but for an integer, `real`,
-/// `double precision` or `numeric` literal in PostgreSQL's semantics: an
-/// integer is read by [`int_literal`] at the column's width, a float by
-/// [`float_literal`] into the column's own type, where a field is read by the
-/// decoder, which takes I57's rounded largest finite value as that value, and
-/// a `numeric(p,s)`'s within `numeric_in`'s bounds and exactly, neither
-/// rounded to the scale nor refused past the precision, the server coercing
-/// it with no typmod where it puts a field through the typmod (I63). In
-/// DataFusion's semantics a literal is DataFusion's value, not the server's
-/// (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never read
-/// past `*_in`'s").
+/// A filter literal's key, which is [`order_key`]'s — a field's — but for an
+/// integer in DataFusion's semantics, read as an `i64` whatever the column's
+/// width, a float in DataFusion's semantics, read as the parse rounds it, an
+/// infinity past the type's range, and a `numeric` in either: read within `numeric_in`'s bounds in
+/// PostgreSQL's, and exactly, neither rounded to the scale nor refused past
+/// the precision, the server coercing a literal with no typmod where it puts a
+/// field through the typmod (I63). In DataFusion's semantics a literal is
+/// DataFusion's value, not the server's (`roadmap.md`, "A literal is
+/// guaranteed in `*_out`'s form and never read past `*_in`'s").
 fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
     match (semantics, kind) {
-        (ComparisonSemantics::Postgres, CompareKind::Int { bytes }) => {
-            Some(OrderKey::Int(int_literal(text, *bytes)?))
+        (ComparisonSemantics::DataFusion, CompareKind::Int { .. }) => {
+            Some(OrderKey::Int(text.parse::<i64>().ok()?))
         }
-        (ComparisonSemantics::Postgres, CompareKind::Float32) => {
-            Some(OrderKey::Float(f64::from(float_literal(text, f32::is_infinite)?)))
+        (ComparisonSemantics::DataFusion, CompareKind::Float32) => {
+            Some(OrderKey::Float(f64::from(text.parse::<f32>().ok()?)))
         }
-        (ComparisonSemantics::Postgres, CompareKind::Float64) => {
-            Some(OrderKey::Float(float_literal(text, f64::is_infinite)?))
+        (ComparisonSemantics::DataFusion, CompareKind::Float64) => {
+            Some(OrderKey::Float(text.parse::<f64>().ok()?))
         }
         (
             ComparisonSemantics::Postgres,
@@ -1468,20 +1509,25 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
     }
 }
 
-/// A `smallint`, `integer` or `bigint` literal, of `bytes` bytes, read as
-/// `int2in`, `int4in` and `int8in` read it. Rust's parse is the grammar: the
-/// digits `*_out` writes, and of `*_in`'s a leading `+` and leading zeros. A
-/// blank around the number, an underscore between digits and a `0x`, `0o` or
-/// `0b` prefix, which the server reads, are refused as a shortfall
+/// A `smallint`, `integer` or `bigint`, of `bytes` bytes, field or literal,
+/// read as `int2in`, `int4in` and `int8in` read it. Rust's parse is the
+/// grammar: the digits `*_out` writes, and of `*_in`'s a leading `+` and
+/// leading zeros. A blank around the number, an underscore between digits and
+/// a `0x`, `0o` or `0b` prefix, which the server reads, are unparsed
 /// (`docs/design/decisions.md`, "D55").
 ///
 /// **A value past the column's width is refused, as the server refuses it**
-/// (I60): `70000` against a `smallint` is no value of the column, where a
-/// field and a literal in DataFusion's semantics are read as an `i64`.
-fn int_literal(text: &str, bytes: u8) -> Option<i64> {
-    let value = text.parse::<i64>().ok()?;
-    // pg-refuses: I60 — out of range for the column's width.
-    int_range(bytes).contains(&value).then_some(value)
+/// (I60): `70000` is no value of a `smallint` column, where a literal in
+/// DataFusion's semantics is read as an `i64` ([`literal_key`]).
+// pg-refuses: I60 — out of range for the column's width.
+fn int_in(text: &str, bytes: u8) -> Read<i64> {
+    let value = text.parse::<i64>().map_err(|e| match e.kind() {
+        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+            Unread::Refused
+        }
+        _ => Unread::Unparsed,
+    })?;
+    if int_range(bytes).contains(&value) { Ok(value) } else { Err(Unread::Refused) }
 }
 
 /// The values a signed integer of `bytes` bytes holds.
@@ -1491,31 +1537,6 @@ fn int_range(bytes: u8) -> std::ops::RangeInclusive<i64> {
         4 => i32::MIN.into()..=i32::MAX.into(),
         _ => i64::MIN..=i64::MAX,
     }
-}
-
-/// A `real` or `double precision` literal, read as `float4in` and `float8in`
-/// read it and compared by value (`docs/design/decisions.md`, "D55"). Rust's
-/// parse is the grammar: every spelling `*_out` writes, and of `*_in`'s the
-/// ones it reads for free — a sign, a point with no digit on one side, an
-/// exponent in either case, `inf`, `infinity` and `nan` in any case. A blank
-/// around the number and a hexadecimal one, which glibc's `strtod` reads, are
-/// refused as a shortfall.
-///
-/// **A value past the type's range is refused, as the server refuses it**: a
-/// spelling in digits read as an infinity, I57's rounded largest finite value
-/// among them, and a nonzero one read as zero. A subnormal is read. Both are
-/// told from the parse's result alone, the parse rounding correctly to the
-/// type as `strtod` and `strtof` do (I59).
-fn float_literal<F: std::str::FromStr + Default + PartialEq + Copy>(
-    text: &str,
-    is_infinite: fn(F) -> bool,
-) -> Option<F> {
-    let value = text.parse::<F>().ok()?;
-    let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
-    // pg-refuses: I59 — out of range for the type: overflowed, or underflowed to zero.
-    let out_of_range = (is_infinite(value) && text.bytes().any(|b| b.is_ascii_digit()))
-        || (value == F::default() && mantissa.bytes().any(|b| matches!(b, b'1'..=b'9')));
-    (!out_of_range).then_some(value)
 }
 
 /// PostgreSQL's float order, not Rust's: `NaN` is greater than every other
@@ -1581,6 +1602,12 @@ impl ValueKey {
     /// `kind` ([`order_key`]).
     pub(crate) fn of(kind: &CompareKind, text: &str) -> Option<Self> {
         order_key(kind, text).map(Self)
+    }
+
+    /// [`Self::of`] a field, saying why it has no key: the statistics
+    /// gatherer fails the parse on one the type's `*_in` refuses.
+    pub(crate) fn of_field(kind: &CompareKind, text: &str) -> Read<Self> {
+        field_key(kind, text).map(Self)
     }
 
     /// [`compare_keys`]: a total order over the keys of one kind, the one a
@@ -2210,7 +2237,7 @@ fn equality_comparison(
         _ if special_order_key(kind, text).is_some() => text.to_string(),
         K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
         K::Int { bytes } => match semantics {
-            ComparisonSemantics::Postgres => int_literal(text, *bytes)?,
+            ComparisonSemantics::Postgres => int_in(text, *bytes).ok()?,
             ComparisonSemantics::DataFusion => text.parse::<i64>().ok()?,
         }
         .to_string(),
@@ -2228,9 +2255,9 @@ fn equality_comparison(
         // column.
         K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
-        K::Time => decode::render_time64_micros(decode::time_of_day_micros(text)?),
+        K::Time => decode::render_time64_micros(decode::time_of_day_micros(text).ok()?),
         K::Timestamp { with_tz } => decode::render_timestamp_postgres_micros(
-            decode::timestamp_postgres_micros(text, *with_tz)?,
+            decode::timestamp_postgres_micros(text, *with_tz).ok()?,
             *with_tz,
         ),
         K::MacAddr { octets } => render_macaddr(text, *octets)?,
@@ -5236,9 +5263,16 @@ mod tests {
         };
         assert!(real("1e-45", "1e-45"));
         assert!(real("3.4028235e+38", "3.4028235e+38"));
-        // The field's reader is not the literal's: I57's spelling in a field
-        // is read as the largest finite value (`KD75`).
-        assert!(double("1.7976931348623157e+308", "1.79769313486232e+308"));
+        // The field's reader is the literal's: I57's spelling in a field is
+        // refused too, where it is read.
+        let field = ordered(
+            "double precision",
+            DataType::Float64,
+            PredicateOp::Eq,
+            "1.7976931348623157e+308",
+            "1.79769313486232e+308",
+        );
+        assert!(matches!(field, Err(Error::FieldDecode { .. })), "{field:?}");
 
         let nested = nested_verdict("double precision[]", &[], PredicateOp::Eq, "{1}", "{1,1e400}");
         assert!(matches!(nested, Err(Error::PredicateValueDecode { .. })), "{nested:?}");
@@ -5247,10 +5281,80 @@ mod tests {
         assert_eq!(nested.unwrap(), Truth::True);
     }
 
+    /// **A field PostgreSQL refuses is told from one this build does not
+    /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
+    /// `Refused`, which fails the parse keying the field, and a spelling the
+    /// server reads where this build does not answers `Unparsed`, which does
+    /// not — nor does one of a kind no check is marked for (`KD83`).
+    #[test]
+    fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
+        use CompareKind as K;
+        let bare = K::Numeric { infinities: true, typmod: None };
+        let past_dscale = format!("1.{}", "0".repeat(decode::NUMERIC_DSCALE_MAX + 1));
+        // `numeric_in` reads it at a scale within its bounds.
+        let past_dscale_by_exponent = format!("{past_dscale}e5");
+        let refused: Vec<(CompareKind, &str)> = vec![
+            (K::Int { bytes: 2 }, "70000"),
+            (K::Int { bytes: 4 }, "-2147483649"),
+            (K::Int { bytes: 8 }, "9223372036854775808"),
+            (K::Float64, "1.79769313486232e+308"),
+            (K::Float64, "1e-400"),
+            (K::Float32, "3.403e+38"),
+            (K::Decimal { precision: 2, scale: 5 }, "0.001"),
+            (
+                K::Numeric {
+                    infinities: false,
+                    typmod: Some(crate::pgtype::NumericTypmod { precision: 3, scale: 0 }),
+                },
+                "1000",
+            ),
+            (bare.clone(), &past_dscale),
+            (K::Date, "2020-02-30"),
+            (K::Date, "0000-01-01"),
+            (K::Time, "24:00:01"),
+            (K::Timestamp { with_tz: false }, "294277-01-01 00:00:00"),
+            (K::Timestamp { with_tz: true }, "2020-01-01 00:00:00+16"),
+            (K::Interval, "00:90:00"),
+            (K::IntervalFields, "1 day 1 day"),
+            (K::TimeTz, "12:00:00+16"),
+            (K::Network { cidr: true }, "10.0.0.1/8"),
+            (K::Jsonb, "\"a\u{1}\""),
+            (K::Jsonb, r#"["\u0000"]"#),
+            (K::Jsonb, r#""\udc00""#),
+            (K::Jsonb, "[01]"),
+            (K::Jsonb, "1."),
+            (K::Uuid, "-00000000-0000-0000-0000-000000000000"),
+            (K::Uuid, "{00000000-0000-0000-0000-000000000000"),
+        ];
+        for (kind, text) in &refused {
+            assert_eq!(field_key(kind, text).err(), Some(Unread::Refused), "{kind:?} {text:?}");
+        }
+        let unparsed: Vec<(CompareKind, &str)> = vec![
+            (K::Int { bytes: 2 }, " 5"),
+            (K::Int { bytes: 2 }, "0x10"),
+            (K::Float64, " 1.5"),
+            (K::Decimal { precision: 10, scale: 2 }, "1e5"),
+            (K::Date, "20-01-01"),
+            (K::Time, "12:-5:00"),
+            (K::Timestamp { with_tz: true }, "2020-01-01 00:00:00+0530"),
+            (K::Timestamp { with_tz: false }, "2020-01-01T00:00:00"),
+            (K::Interval, "1 hour"),
+            (K::TimeTz, "12:00:00+0530"),
+            (K::Network { cidr: false }, "10"),
+            (bare.clone(), &past_dscale_by_exponent),
+            (K::Bool, "yes"),
+            (K::Bool, "maybe"),
+            (K::Enum(Arc::from(["a".to_string()])), "b"),
+        ];
+        for (kind, text) in &unparsed {
+            assert_eq!(field_key(kind, text).err(), Some(Unread::Unparsed), "{kind:?} {text:?}");
+        }
+    }
+
     /// **In DataFusion's semantics a float literal is not read on
     /// PostgreSQL's terms** (`roadmap.md`, "A literal is guaranteed in
-    /// `*_out`'s form and never read past `*_in`'s"): the reading is the
-    /// field's, unchanged.
+    /// `*_out`'s form and never read past `*_in`'s"): one past the range is
+    /// the infinity the parse rounds it to.
     #[test]
     fn a_float_literal_past_its_range_is_not_refused_in_datafusion_semantics() {
         let p = order_predicate(PredicateOp::Ge, "1e400");
@@ -8050,7 +8154,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (46, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (47, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

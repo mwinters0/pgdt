@@ -24,8 +24,8 @@ use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
     Error, Expr, LocalFileSource, Membership, NestedPlan, Predicate, PredicateOp, QueryOptions,
-    ScanOptions, StatisticsRequest, UnrepresentableMode, map_file, read_table, render_field,
-    table_stream,
+    ScanOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    UnrepresentableMode, map_file, read_table, render_field, table_stream,
 };
 
 mod common;
@@ -715,7 +715,9 @@ fn typmod_dump(dir: &Path) -> PathBuf {
 /// replica (PG16) stores the same `COPY`, the text-held column keeps the
 /// file's text and compares as the rounded value, a data-level `parse` sums
 /// the rounded values, and a field past its precision is refused naming it —
-/// where the Arrow decimal's own precision would hold it, inside an array too.
+/// where the Arrow decimal's own precision would hold it, inside an array too
+/// — failing a data-level `parse` keying it, as a restore fails, and a query
+/// decoding it.
 #[tokio::test]
 async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision() {
     let dir = tempfile::tempdir().unwrap();
@@ -752,11 +754,34 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     }
 
     let source = LocalFileSource::open(&path).unwrap();
+    let line_offset = std::fs::read_to_string(&path).unwrap().find("\n0.001\n").unwrap() + 1;
+    let disabled = CacheMode::DISABLED;
+    match map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await {
+        Err(Error::FieldRefused { table, column, declared_type, line_offset: at, value }) => {
+            assert_eq!((table.as_str(), column.as_str()), ("public.t_past", "v2_5"));
+            assert_eq!(
+                (declared_type.as_str(), at, value.as_str()),
+                ("numeric(2,5)", line_offset as u64, "0.001")
+            );
+        }
+        other => panic!("expected the parse to refuse public.t_past.v2_5, got {other:?}"),
+    }
+    // Only `t_past` fails it: `t_past_array`'s leaf is never keyed, so the
+    // parse decodes it no further than its census does, and the query below
+    // is what refuses it.
+    let past_at_metadata = StatisticsRequest {
+        selection: StatisticsSelection {
+            overrides: vec![(
+                StatisticsTarget::Table("public.t_past".into()),
+                StatisticsLevel::Metadata,
+            )],
+            ..StatisticsSelection::DATA
+        },
+        ..StatisticsRequest::DATA
+    };
     let mode = CacheMode::enabled(cache::colocated_path(&path));
-    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
-        .await
-        .unwrap()
-        .index;
+    let index =
+        map_file(&source, &ScanOptions::default(), &mode, &past_at_metadata).await.unwrap().index;
     let block = index.blocks().find(|b| b.header.table == "t").unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let sums = |at: usize| statistics.columns[at].as_ref().unwrap().sums.clone();
@@ -772,6 +797,36 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
             other => panic!("{table}: expected FieldDecode, got {other:?}"),
         }
     }
+}
+
+/// **Every fixture holding a field PostgreSQL refuses fails a data-level
+/// parse there, at every major** (`common::REFUSED_FIELDS`), naming the table,
+/// the column and the line the field is on, as a restore of it fails that
+/// table's `COPY`; mapped with that column at the metadata level, as the
+/// sweeps map it (`common::sweep_request`), it parses.
+#[tokio::test]
+async fn every_refused_field_fails_a_data_level_parse_reading_it() {
+    let mut copies = 0;
+    for path in common::all_fixtures() {
+        let Some(refused) = common::refused_field(&path) else { continue };
+        copies += 1;
+        let source = LocalFileSource::open(&path).unwrap();
+        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
+        match map_file(&source, &options, &mode, &StatisticsRequest::DATA).await {
+            Err(Error::FieldRefused { table, column, line_offset, value, .. }) => {
+                assert_eq!((table.as_str(), column.as_str()), (refused.table, refused.column));
+                let text = std::fs::read(&path).unwrap();
+                let line = &text[line_offset as usize..];
+                let line = &line[..line.iter().position(|&b| b == b'\n').unwrap()];
+                let line = String::from_utf8_lossy(line);
+                assert!(line.split('\t').any(|field| field == value), "{line:?} holds {value:?}");
+            }
+            other => panic!("{}: expected the parse to refuse, got {other:?}", path.display()),
+        }
+        let run = map_file(&source, &options, &mode, &common::sweep_request(&path)).await;
+        run.unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    }
+    assert_eq!(copies, common::REFUSED_FIELDS.len() * common::VERSIONS.len());
 }
 
 /// **A `bytea_output = escape` dump reads as its `hex` twin does** (I4,

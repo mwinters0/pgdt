@@ -20,7 +20,7 @@ use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::{
     ComparisonSemantics, CopyBlock, DumpIndex, EarlyStop, Expr, LocalFileSource, Parallelism,
     PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, StatisticsRequest,
-    StatisticsSelection, UnrepresentableMode, map_file, table_stream, table_stream_partitions,
+    UnrepresentableMode, map_file, table_stream, table_stream_partitions,
 };
 
 mod common;
@@ -62,12 +62,14 @@ impl Rng {
 }
 
 /// `dump` mapped into a cache beside a private copy of it, gathering every
-/// statistic at `group_size` — what a query then reads its statistics from.
+/// statistic at `group_size` — what a query then reads its statistics from —
+/// but for a column holding a field PostgreSQL refuses, which a data-level
+/// parse fails on (`common::sweep_request`).
 async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, DumpIndex) {
     let (dir, copy) = sandboxed(dump, "dump.sql");
     let source = LocalFileSource::open(&copy).unwrap();
     let request = StatisticsRequest {
-        selection: StatisticsSelection::DATA,
+        selection: common::sweep_request(dump).selection,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
         ..StatisticsRequest::DATA
     };

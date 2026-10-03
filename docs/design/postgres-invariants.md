@@ -4017,14 +4017,14 @@ spelling as out of range — on a quoted literal and an unquoted constant alike,
 `numeric_float8` going through it — so the table's `COPY` fails and a restore
 loses all its rows. The value is reachable only by an explicit
 `--extra-float-digits` of zero or below, `pg_dump` otherwise setting `3`. pgdt
-is to refuse it as the server does (`roadmap.md`, "A literal is guaranteed in
-`*_out`'s form and never read past `*_in`'s"); today a field reads as the
-nearest value the type holds, and a filter literal is refused (I59).
+refuses it as the server does (I59), field and literal alike (`roadmap.md`, "A
+literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::decode_f32` and `decode::decode_f64`, and through
-them every typed read, ordering key and statistics bound of a float column.
+**Relied on by:** the `types` fixtures' `common::REFUSED_FIELDS` row, which
+holds that a data-level parse of a `pg_dump` output fails on the spelling
+`decode::float_in` refuses (I59) — no decoder reading it as a value.
 
 **Re-verify.**
 
@@ -4119,8 +4119,9 @@ platform whose `strtod` does not set `ERANGE` on underflow reads the zero.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `predicate::float_literal`, which refuses a filter literal
-of either type on the same two conditions.
+**Relied on by:** `decode::float_in`, which refuses a field or a filter
+literal of either type on the same two conditions, a parse keying the field
+failing on it.
 
 **Re-verify.**
 
@@ -4160,8 +4161,9 @@ prefix from v16 — is a spelling, not a range.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `predicate::int_literal`, which refuses a filter literal of
-any of the three types past its column's width.
+**Relied on by:** `predicate::int_in`, which refuses a field or a filter
+literal of any of the three types past its column's width, a parse keying the
+field failing on it.
 
 **Re-verify.**
 
@@ -4217,10 +4219,10 @@ named zone — are spellings, not bounds.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::civil_days`, `decode::decode_date32`,
+**Relied on by:** `decode::civil_days`, `decode::date_days`,
 `decode::parse_time_of_day`, `decode::extract_offset` and
 `decode::timestamp_micros_wide`, which refuse a field and a filter literal of
-any of the five types so spelled.
+any of the five types so spelled, a parse keying the field failing on it.
 
 **Re-verify.**
 

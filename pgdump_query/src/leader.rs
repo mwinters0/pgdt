@@ -754,7 +754,7 @@ mod tests {
                         builder.count_block(Arc::new(Infinities));
                     }
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
-                    Event::CopyEnd(end) => builder.on_copy_end(end),
+                    Event::CopyEnd(end) => builder.on_copy_end(end).expect("nothing gathers here"),
                     Event::Line(line) => builder.feed_line(line.offset, line.raw),
                     Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
                     Event::LargeObjectStart(start) => {

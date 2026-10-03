@@ -577,6 +577,9 @@ pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> R
 /// each block counted against the DDL above it, restated once per database.
 async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Builder> {
     let mut builder = Builder::new();
+    // What stopped the scan, a block's close failing it. None can: this pass
+    // gathers no statistics, so no block meets a refused field.
+    let mut failed: Option<Error> = None;
     // The database the metadata in hand was stated for, and that metadata.
     let mut stated: Option<(Option<String>, DumpMetadata)> = None;
     scan_events(source, options, |event| {
@@ -594,7 +597,12 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
                 builder.count_block(counter_for(&header, metadata, db.as_deref()));
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),
-            Event::CopyEnd(end) => builder.on_copy_end(end),
+            Event::CopyEnd(end) => {
+                if let Err(e) = builder.on_copy_end(end) {
+                    failed = Some(e);
+                    return std::ops::ControlFlow::Break(());
+                }
+            }
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
             Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
@@ -603,7 +611,10 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
         std::ops::ControlFlow::Continue(())
     })
     .await?;
-    Ok(builder)
+    match failed {
+        Some(e) => Err(e),
+        None => Ok(builder),
+    }
 }
 
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
@@ -1066,7 +1077,9 @@ async fn close_copy_block(
     // in its `Outside` state there — and `on_copy_end` leaves the builder
     // `Idle`, where `snapshot` is sound.
     let watermark = end.end_offset;
-    builder.on_copy_end(end);
+    // A refused field fails the pass here, before the splice and the save:
+    // the map stands at the last watermark it was spliced at.
+    builder.on_copy_end(end)?;
     // The second of the guard's two check points (`docs/design/decisions.md`,
     // "D63"): the two together bound the response by the shorter of a chunk
     // and a block.
@@ -1605,6 +1618,7 @@ async fn backfill_statistics(
                     BlockGathered::Declined { allowance } => {
                         block.statistics_declined = Some(allowance);
                     }
+                    BlockGathered::Refused(_) => unreachable!("a re-read fails on a refusal"),
                     BlockGathered::Gathered(gathered) => {
                         let replaced =
                             block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
@@ -1757,7 +1771,9 @@ pub struct BlockReread {
 /// **A block that no longer ends where the map says is refused**,
 /// [`Error::CachedBlockChanged`], rather than given statistics describing other
 /// bytes than its map does. It names no cache, this entry point being handed
-/// none; [`map_file`]'s back-fill names the one it loaded.
+/// none; [`map_file`]'s back-fill names the one it loaded. **A field its
+/// type's `*_in` refuses fails the re-read**, [`Error::FieldRefused`], as it
+/// fails a mapping pass, so the result never holds [`BlockGathered::Refused`].
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -1820,7 +1836,12 @@ async fn reread_block(
     // The observer's own allocation is freed as `finish` returns, attributed
     // as it was allocated (`crate::instrument`).
     let _attributed = StatisticsScope::enter();
-    let gathered = observer.finish(block.terminator_offset - block.data_offset);
+    let gathered = match observer.finish(block.terminator_offset - block.data_offset) {
+        BlockGathered::Refused(refusal) => {
+            return Err(refusal.into_error(&block.header, block.data_offset));
+        }
+        gathered => gathered,
+    };
     Ok(Some(BlockReread { gathered, census }))
 }
 
