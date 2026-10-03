@@ -926,7 +926,7 @@ mod tests {
         assert_eq!(
             resolved.comparisons,
             [
-                ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
+                ComparisonPlan::Compared { kind: CompareKind::Int { bytes: 4 }, divergence: None },
                 ComparisonPlan::diverging(
                     CompareKind::Text,
                     crate::pgtype::ComparisonDivergence::UnknownCollation,
@@ -939,7 +939,7 @@ mod tests {
                 ComparisonPlan::Nested(crate::pgtype::NestedCompare::Array(Box::new(
                     crate::pgtype::NestedCompare::Leaf {
                         declared: "integer".to_string(),
-                        kind: CompareKind::Int,
+                        kind: CompareKind::Int { bytes: 4 },
                         divergence: None,
                     },
                 ))),

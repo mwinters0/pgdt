@@ -2493,7 +2493,7 @@ mod tests {
         };
         let alphabet: &[char] = &['a', 'b', ' ', 'é', '\u{10FFFF}', '\u{1f}'];
         match kind {
-            CompareKind::Int => (rng.below(20) as i64 - 10).to_string(),
+            CompareKind::Int { .. } => (rng.below(20) as i64 - 10).to_string(),
             // Finite dates either side of the calendar's end, and the
             // infinities, which no format holds.
             CompareKind::Date => match rng.below(10) {
@@ -2534,8 +2534,12 @@ mod tests {
     #[test]
     fn stored_bounds_and_order_hold_every_value_under_its_key() {
         let mut rng = Rng(0x5eed);
-        let kinds =
-            [CompareKind::Text, CompareKind::PaddedText, CompareKind::Bytea, CompareKind::Int];
+        let kinds = [
+            CompareKind::Text,
+            CompareKind::PaddedText,
+            CompareKind::Bytea,
+            CompareKind::Int { bytes: 8 },
+        ];
         let (mut bounded, mut ordered) = (0usize, 0usize);
         let mut charge = Charge::new(Arc::default(), Term::Gathering);
         for round in 0..400 {
@@ -2549,7 +2553,7 @@ mod tests {
                             let v = value(&mut rng, kind);
                             // Half share a long prefix with one base value.
                             if rng.below(2) == 0
-                                && !matches!(kind, CompareKind::Int | CompareKind::Bytea)
+                                && !matches!(kind, CompareKind::Int { .. } | CompareKind::Bytea)
                             {
                                 format!("{base}{v}")
                             } else {
@@ -2586,7 +2590,7 @@ mod tests {
             for (group, stored) in groups.iter().zip(&column.groups) {
                 let Some(b) = stored else {
                     assert!(
-                        group.is_empty() || matches!(kind, CompareKind::Int),
+                        group.is_empty() || matches!(kind, CompareKind::Int { .. }),
                         "{kind:?}: a group of {} values lost its bounds",
                         group.len()
                     );
@@ -2790,7 +2794,7 @@ mod tests {
         CompareKind::Text,
         CompareKind::PaddedText,
         CompareKind::Bytea,
-        CompareKind::Int,
+        CompareKind::Int { bytes: 8 },
         CompareKind::Date,
         CompareKind::Timestamp { with_tz: false },
     ];
@@ -2798,7 +2802,7 @@ mod tests {
     /// The type the typed read emits a [`JOIN_KINDS`] column as.
     fn join_type(kind: &CompareKind) -> DataType {
         match kind {
-            CompareKind::Int => DataType::Int64,
+            CompareKind::Int { .. } => DataType::Int64,
             CompareKind::Bytea => DataType::Binary,
             CompareKind::Date => DataType::Date32,
             CompareKind::Timestamp { .. } => {
@@ -2902,7 +2906,9 @@ mod tests {
                     .map(|v| match rng.below(40) {
                         0..=4 => None,
                         5 if !sorted && !short => Some(vec![0xff, b'a']),
-                        6 if !sorted && matches!(kind, CompareKind::Int) => Some(b"x".to_vec()),
+                        6 if !sorted && matches!(kind, CompareKind::Int { .. }) => {
+                            Some(b"x".to_vec())
+                        }
                         6 if !sorted && matches!(kind, CompareKind::Bytea) => {
                             Some(escaped("\\xABC"))
                         }
@@ -3063,7 +3069,7 @@ mod tests {
                 }
                 match &column.sums {
                     Some(sums) if sums.iter().any(|&sum| sum != 0) => summed += 1,
-                    None if *kind == CompareKind::Int => unsummed += 1,
+                    None if matches!(kind, CompareKind::Int { .. }) => unsummed += 1,
                     _ => {}
                 }
                 measured += usize::from(column.value_bytes.iter().any(|&bytes| bytes > 0));

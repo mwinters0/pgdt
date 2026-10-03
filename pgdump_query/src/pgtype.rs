@@ -132,7 +132,13 @@ pub enum NestedPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,
-    Int,
+    /// A signed integer of `bytes` bytes — `smallint`, `integer` and `bigint`
+    /// at 2, 4 and 8. Every value orders as an `i64`; the width is what a
+    /// filter literal in PostgreSQL's semantics is refused past, as
+    /// `int2in`, `int4in` and `int8in` refuse it (I60).
+    Int {
+        bytes: u8,
+    },
     /// An unsigned 32-bit integer — `oid`. Held apart from [`Self::Int`]
     /// because the two differ on a *literal* carrying a minus sign, which
     /// `oidin` wraps and this refuses; the values themselves order
@@ -584,12 +590,11 @@ pub enum Discrete {
 impl Discrete {
     /// The subtype's largest value, in the key a bound of it is read into:
     /// a bound here has no successor, and the canonical function raises
-    /// `integer`, `bigint` or `date out of range` on it (I46). A leaf is read
-    /// as `i64` whatever the column's width, so the width is stated here
-    /// rather than found in the key — and a bound past the width itself,
-    /// `int4range '[1,3000000000)'`, is read as written where no successor is
-    /// taken, ordering as `order_key`'s widening does, where `int4in` refuses
-    /// it.
+    /// `integer`, `bigint` or `date out of range` on it (I46). A leaf's key is
+    /// an `i64` whatever the column's width, so the width is stated here
+    /// rather than found in the key. A literal's bound past the width itself,
+    /// `int4range '[1,3000000000)'`, is refused before any successor is taken,
+    /// as `int4in` refuses it (I60); a field's is read as written.
     ///
     /// A date's is `5874897-12-31` as days since 1970, the day before
     /// `IS_VALID_DATE`'s exclusive `DATE_END_JULIAN`.
@@ -1225,9 +1230,9 @@ fn builtin_scalar(
     let agrees = ComparisonPlan::agrees;
     let text = ComparisonPlan::AS_TEXT;
     Some(match base {
-        "smallint" => (Int16, agrees(K::Int)),
-        "integer" => (Int32, agrees(K::Int)),
-        "bigint" => (Int64, agrees(K::Int)),
+        "smallint" => (Int16, agrees(K::Int { bytes: 2 })),
+        "integer" => (Int32, agrees(K::Int { bytes: 4 })),
+        "bigint" => (Int64, agrees(K::Int { bytes: 8 })),
         // `oidout` is `snprintf("%u")`, so the file holds an unsigned 32-bit
         // integer and `UInt32` is what it says (I39). The ADBC driver maps
         // `oid` to `Int32`, which misreads every OID at or above 2^31
@@ -2869,9 +2874,9 @@ mod tests {
             )
         };
         for (declared, expected) in [
-            ("smallint", agrees(K::Int)),
-            ("integer", agrees(K::Int)),
-            ("bigint", agrees(K::Int)),
+            ("smallint", agrees(K::Int { bytes: 2 })),
+            ("integer", agrees(K::Int { bytes: 4 })),
+            ("bigint", agrees(K::Int { bytes: 8 })),
             ("oid", agrees(K::UnsignedInt)),
             ("boolean", agrees(K::Bool)),
             ("real", agrees(K::Float32)),
@@ -2922,7 +2927,7 @@ mod tests {
         // either — one walk of the same string answers both.
         assert_eq!(comparison_for("money", None, &[], &[]), ComparisonPlan::Refused);
         // A keyword is a keyword on both walks (I5).
-        assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int));
+        assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int { bytes: 4 }));
     }
 
     /// Six unrelated declared types reach the same text columns — five as
@@ -3019,7 +3024,9 @@ mod tests {
             read(&ComparisonPlan::agrees(CompareKind::Interval)),
             ([Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], Some(P), Some(F))
         );
-        for kind in [CompareKind::MacAddr { octets: 6 }, CompareKind::Int, CompareKind::Bytea] {
+        for kind in
+            [CompareKind::MacAddr { octets: 6 }, CompareKind::Int { bytes: 4 }, CompareKind::Bytea]
+        {
             let plan = ComparisonPlan::agrees(kind.clone());
             assert_eq!(read(&plan), ([Some(kind.clone()), None], Some(P), Some(P)), "{kind:?}");
         }
@@ -3048,14 +3055,14 @@ mod tests {
             ("text", [Some(text.clone()), None], Some(P)),
             ("an enum", [Some(CompareKind::Enum(labels)), Some(text.clone())], Some(F)),
             ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
-            ("integer", [Some(CompareKind::Int), None], None),
+            ("integer", [Some(CompareKind::Int { bytes: 4 }), None], None),
             ("interval", [Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], None),
             ("a nested column", [None, None], None),
         ] {
             assert_eq!(bounds_set_keyed_by(&stored, &text), want, "{declared}");
         }
-        let int = [Some(CompareKind::Int), None];
-        assert_eq!(bounds_set_keyed_by(&int, &CompareKind::Int), Some(P));
+        let int = [Some(CompareKind::Int { bytes: 4 }), None];
+        assert_eq!(bounds_set_keyed_by(&int, &CompareKind::Int { bytes: 4 }), Some(P));
         let mac = [Some(CompareKind::MacAddr { octets: 6 }), None];
         assert_eq!(bounds_set_keyed_by(&mac, &CompareKind::MacAddr { octets: 8 }), None);
     }
@@ -3114,7 +3121,11 @@ mod tests {
                 ),
             ),
             // A non-collatable type ignores a clause it cannot carry.
-            ("integer", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Int)),
+            (
+                "integer",
+                Some("pg_catalog.\"C\""),
+                ComparisonPlan::agrees(CompareKind::Int { bytes: 4 }),
+            ),
             ("interval", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Interval)),
             // Including one that is still held as text: `json` is not
             // collatable either, so a clause on it moves nothing.
@@ -3191,7 +3202,7 @@ mod tests {
         // A non-collatable type carries no clause and so never reaches it.
         assert_eq!(
             comparison_for("integer", Some("public.icu_ci"), &[], &declared),
-            ComparisonPlan::agrees(K::Int)
+            ComparisonPlan::agrees(K::Int { bytes: 4 })
         );
         // Quoting is not textual: the two spellings come from different
         // `pg_dump` paths and either may quote what the other leaves bare.
@@ -3297,8 +3308,14 @@ mod tests {
             ty("public.darr", TypeKind::domain("integer[]")),
             ty("public.dmoney", TypeKind::domain("money")),
         ];
-        assert_eq!(comparison_for("public.d1", None, &types, &[]), agrees(CompareKind::Int));
-        assert_eq!(comparison_for("public.d2", None, &types, &[]), agrees(CompareKind::Int));
+        assert_eq!(
+            comparison_for("public.d1", None, &types, &[]),
+            agrees(CompareKind::Int { bytes: 4 })
+        );
+        assert_eq!(
+            comparison_for("public.d2", None, &types, &[]),
+            agrees(CompareKind::Int { bytes: 4 })
+        );
         assert_eq!(
             comparison_for("public.dtext", None, &types, &[]),
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
@@ -3309,7 +3326,7 @@ mod tests {
             comparison_for("public.darr", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
                 declared: "integer".to_string(),
-                kind: CompareKind::Int,
+                kind: CompareKind::Int { bytes: 4 },
                 divergence: None,
             }))),
         );
@@ -3417,7 +3434,7 @@ mod tests {
         ];
         let int_leaf = || NestedCompare::Leaf {
             declared: "integer".to_string(),
-            kind: CompareKind::Int,
+            kind: CompareKind::Int { bytes: 4 },
             divergence: None,
         };
         let array_of_int = || ComparisonPlan::Nested(NestedCompare::Array(Box::new(int_leaf())));
@@ -3772,7 +3789,10 @@ mod tests {
         ] {
             assert_eq!(resolve_declared_type(declared, &types), outcome, "{declared}");
         }
-        assert_eq!(comparison_for(r#"s."x ARRAY""#, None, &types, &[]), agrees(CompareKind::Int));
+        assert_eq!(
+            comparison_for(r#"s."x ARRAY""#, None, &types, &[]),
+            agrees(CompareKind::Int { bytes: 4 })
+        );
         assert_eq!(extension_for(r#"s."Mood""#, &types), Some(CanonicalExtension::Uuid));
         assert_eq!(extension_for("s.mood", &types), None);
 

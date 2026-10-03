@@ -350,10 +350,6 @@ than reading as a phase nobody has sliced.
   no parse refuses a field on PostgreSQL's terms.
   **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD76** — an integer literal is read as `i64` whatever the column's width,
-  so `70000` against a `smallint` orders where `int2in` refuses it. **(b)
-  owned by `M205`**. Detail: `pgdump_query/src/predicate.rs`.
-
 - **KD77** — a date, time or timestamp literal's or field's parts are not bounded as
   `datetime.c` bounds them, so `2020-02-30` matches March 1, `12:60:00` 13:00
   and a `+16` offset shifts the instant, and `12:-5:00` means 11:55 where the

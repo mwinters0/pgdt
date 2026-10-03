@@ -4119,3 +4119,44 @@ grep -n 'val == 0.0 ||\|HUGE_VAL\|is out of range for type \(real\|double\)' src
 
 It prints the `0.0` and `HUGE_VAL` tests of both input functions beside their
 two messages.
+
+---
+
+## I60 — `int2in`, `int4in` and `int8in` refuse a value past the type's width
+
+**Claim.** A `smallint`, `integer` or `bigint` input whose value lies outside
+the type's two's-complement range — `32768` or `-32769` as `smallint`,
+`2147483648` as `integer`, `9223372036854775808` as `bigint` — is refused as
+out of range, `22003`. Every value inside it is read, a leading `+` and
+leading zeros included.
+
+**Proof.** `int2in`, `int4in` and `int8in` (`src/backend/utils/adt/int.c`,
+`int8.c`) call `pg_strtoint16`, `pg_strtoint32` and `pg_strtoint64`
+(`src/backend/utils/adt/numutils.c`; `scanint8` in `int8.c` for `bigint`
+before v15), each accumulating the digits and raising "value \"%s\" is out of
+range for type smallint", "integer" or "bigint" once they pass the width.
+
+**Observed.** `fixtures/<major>/oracle/literals.tsv` refuses `32768` as
+`smallint`, `2147483648` as `integer` and `9223372036854775808` as `bigint`,
+`E22003`, at all six majors; the koji replica (PG16) refuses `-32769`,
+`-2147483649`, `-9223372036854775809`, `'{1,70000}'::smallint[]` and
+`'[1,2147483648)'::int4range`, and reads `+0032767` as `32767`.
+
+**Scope limit.** The width only. What else each function reads — a blank
+around the number, an underscore between digits and a `0x`, `0o` or `0b`
+prefix from v16 — is a spelling, not a range.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `predicate::int_literal`, which refuses a filter literal of
+any of the three types past its column's width.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A1 'is out of range for type %s' src/backend/utils/adt/numutils.c src/backend/utils/adt/int8.c
+```
+
+It prints each out-of-range message beside the type it names: `smallint`,
+`integer` and `bigint` all appear.

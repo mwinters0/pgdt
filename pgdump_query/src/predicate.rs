@@ -1338,12 +1338,10 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     }
     Some(match kind {
         CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
-        // deficiency: KD76 — parsed as `i64` whatever the column's width, so a
-        // literal outside a `smallint`'s or `integer`'s range orders against the
-        // column where `int2in`/`int4in` refuse it (`roadmap.md`, "A literal is
-        // guaranteed in `*_out`'s form and never read past `*_in`'s"). The fix
-        // carries the width in `CompareKind::Int`.
-        CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
+        // The field's reader, and a literal's in DataFusion's semantics. A
+        // literal in PostgreSQL's semantics is read at the column's width by
+        // [`int_literal`] instead, through [`literal_key`].
+        CompareKind::Int { .. } => OrderKey::Int(text.parse::<i64>().ok()?),
         // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
         // 4294967295 and this build does not implement that wrap, so a
         // negative literal is `Error::PredicateValueDecode`. Every value the
@@ -1387,15 +1385,18 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     })
 }
 
-/// A filter literal's key, which is [`order_key`]'s but for a `real` or
-/// `double precision` literal in PostgreSQL's semantics: that one is read by
-/// [`float_literal`] into the column's own type, where a field is read by the
-/// decoder, which takes I57's rounded largest finite value as that value. In
-/// DataFusion's semantics a literal is DataFusion's value, not the server's
-/// (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never read
-/// past `*_in`'s").
+/// A filter literal's key, which is [`order_key`]'s but for an integer, `real`
+/// or `double precision` literal in PostgreSQL's semantics: an integer is read
+/// by [`int_literal`] at the column's width, and a float by [`float_literal`]
+/// into the column's own type, where a field is read by the decoder, which
+/// takes I57's rounded largest finite value as that value. In DataFusion's
+/// semantics a literal is DataFusion's value, not the server's (`roadmap.md`,
+/// "A literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
 fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
     match (semantics, kind) {
+        (ComparisonSemantics::Postgres, CompareKind::Int { bytes }) => {
+            Some(OrderKey::Int(int_literal(text, *bytes)?))
+        }
         (ComparisonSemantics::Postgres, CompareKind::Float32) => {
             Some(OrderKey::Float(f64::from(float_literal(text, f32::is_infinite)?)))
         }
@@ -1403,6 +1404,31 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
             Some(OrderKey::Float(float_literal(text, f64::is_infinite)?))
         }
         _ => order_key(kind, text),
+    }
+}
+
+/// A `smallint`, `integer` or `bigint` literal, of `bytes` bytes, read as
+/// `int2in`, `int4in` and `int8in` read it. Rust's parse is the grammar: the
+/// digits `*_out` writes, and of `*_in`'s a leading `+` and leading zeros. A
+/// blank around the number, an underscore between digits and a `0x`, `0o` or
+/// `0b` prefix, which the server reads, are refused as a shortfall
+/// (`docs/design/decisions.md`, "D55").
+///
+/// **A value past the column's width is refused, as the server refuses it**
+/// (I60): `70000` against a `smallint` is no value of the column, where a
+/// field and a literal in DataFusion's semantics are read as an `i64`.
+fn int_literal(text: &str, bytes: u8) -> Option<i64> {
+    let value = text.parse::<i64>().ok()?;
+    // pg-refuses: I60 — out of range for the column's width.
+    int_range(bytes).contains(&value).then_some(value)
+}
+
+/// The values a signed integer of `bytes` bytes holds.
+fn int_range(bytes: u8) -> std::ops::RangeInclusive<i64> {
+    match bytes {
+        2 => i16::MIN.into()..=i16::MAX.into(),
+        4 => i32::MIN.into()..=i32::MAX.into(),
+        _ => i64::MIN..=i64::MAX,
     }
 }
 
@@ -2112,7 +2138,11 @@ fn equality_comparison(
         // `numeric(p,s)` reach this arm and admit one.
         _ if special_order_key(kind, text).is_some() => text.to_string(),
         K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
-        K::Int => text.parse::<i64>().ok()?.to_string(),
+        K::Int { bytes } => match semantics {
+            ComparisonSemantics::Postgres => int_literal(text, *bytes)?,
+            ComparisonSemantics::DataFusion => text.parse::<i64>().ok()?,
+        }
+        .to_string(),
         K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
         K::Decimal(scale) => {
             decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
@@ -2238,7 +2268,12 @@ fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;
     match kind {
         K::Bool => "`t` or `f`".into(),
-        K::Int => "as an optionally signed whole number".into(),
+        // The width is half the sentence, as for `oid`: past it is the
+        // refusal a well-formed literal meets (I60).
+        K::Int { bytes } => {
+            let range = int_range(*bytes);
+            format!("as a whole number from {} to {}", range.start(), range.end())
+        }
         // The width *is* the refusal: `oidin` wraps a negative and this does
         // not, so the range is the useful half of the sentence.
         K::UnsignedInt => "as a whole number from 0 to 4294967295".into(),
@@ -4928,9 +4963,9 @@ mod tests {
     /// afresh.
     #[test]
     fn a_group_s_bounds_are_keyed_once_per_column_and_kind() {
-        let kind = CompareKind::Int;
+        let kind = CompareKind::Int { bytes: 8 };
         let mut keyed = KeyedBounds::default();
-        let key = |text: &str| order_key(&CompareKind::Int, text).unwrap();
+        let key = |text: &str| order_key(&kind, text).unwrap();
         let held = |keys: Option<(&OrderKey, &OrderKey)>| {
             keys.map(|(low, high)| (compare_keys(low, &key("1")), compare_keys(high, &key("9"))))
         };
@@ -5120,6 +5155,98 @@ mod tests {
         let p = order_predicate(PredicateOp::Ge, "1e400");
         let resolved = one_column("double precision", DataType::Float64);
         super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::DataFusion).unwrap();
+    }
+
+    /// **An integer literal past its column's width is refused, as `int2in`,
+    /// `int4in` and `int8in` refuse it** (I60) — at either end, under `=`, an
+    /// ordering operator, inside an array literal and as a range's bound —
+    /// while a value at the edge of the width, and the server's `+` and
+    /// leading zeros, are read by value. Each refusal was cast on PostgreSQL
+    /// 16.
+    #[test]
+    fn an_integer_literal_past_its_width_is_refused_and_one_inside_it_read() {
+        let refused = |declared: &str, data_type: DataType, literal: &str| {
+            for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                let p = order_predicate(op, literal);
+                let err =
+                    resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
+                assert!(
+                    matches!(&err, Error::PredicateValueDecode { value, .. } if value == literal),
+                    "{declared} {op:?} {literal}: {err:?}"
+                );
+            }
+        };
+        for literal in ["32768", "-32769", "70000"] {
+            refused("smallint", DataType::Int16, literal);
+        }
+        for literal in ["2147483648", "-2147483649", "3000000000"] {
+            refused("integer", DataType::Int32, literal);
+        }
+        for literal in ["9223372036854775808", "-9223372036854775809"] {
+            refused("bigint", DataType::Int64, literal);
+        }
+
+        let read = |declared: &str, data_type: DataType, literal: &str, field: &str| {
+            ordered(declared, data_type, PredicateOp::Eq, literal, field).unwrap()
+        };
+        assert!(read("smallint", DataType::Int16, "-32768", "-32768"));
+        assert!(read("smallint", DataType::Int16, "+0032767", "32767"));
+        assert!(read("integer", DataType::Int32, "-2147483648", "-2147483648"));
+        assert!(read("integer", DataType::Int32, "2147483647", "2147483647"));
+        assert!(read("bigint", DataType::Int64, "-9223372036854775808", "-9223372036854775808"));
+        assert!(read("bigint", DataType::Int64, "3000000000", "3000000000"));
+        let p = order_predicate(PredicateOp::Lt, "70000");
+        let message = resolve_term(&p, 0, &one_column("smallint", DataType::Int16), 0)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("from -32768 to 32767"), "{message}");
+
+        let types = test_types();
+        for (declared, field, literal) in [
+            ("smallint[]", "{1}", "{1,70000}"),
+            ("integer[]", "{1}", "{-2147483649}"),
+            ("int4range", "[1,10)", "[1,3000000000)"),
+            ("int4range", "[1,10)", "(-2147483649,1]"),
+        ] {
+            let verdict = nested_verdict(declared, &types, PredicateOp::Eq, field, literal);
+            assert!(
+                matches!(verdict, Err(Error::PredicateValueDecode { .. })),
+                "{declared} {literal}: {verdict:?}"
+            );
+        }
+        let verdict = nested_verdict("smallint[]", &types, PredicateOp::Eq, "{32767}", "{32767}");
+        assert_eq!(verdict.unwrap(), Truth::True);
+
+        let membership =
+            Membership { column: "v".into(), values: vec![Some("1".into()), Some("70000".into())] };
+        let err = resolve_membership(
+            &membership,
+            0,
+            &one_column("smallint", DataType::Int16),
+            0,
+            ComparisonSemantics::Postgres,
+        )
+        .unwrap_err();
+        assert!(matches!(&err, Error::PredicateValueDecode { op: "IN", .. }), "{err:?}");
+    }
+
+    /// **In DataFusion's semantics an integer literal is not read at the
+    /// column's width** (`roadmap.md`, "A literal is guaranteed in `*_out`'s
+    /// form and never read past `*_in`'s"): DataFusion widens the column to
+    /// the literal's type, so `70000` against a `smallint` matches nothing
+    /// rather than refusing.
+    #[test]
+    fn an_integer_literal_past_its_width_is_not_refused_in_datafusion_semantics() {
+        let resolved = one_column("smallint", DataType::Int16);
+        for op in [PredicateOp::Eq, PredicateOp::Ge] {
+            let p = order_predicate(op, "70000");
+            let term =
+                super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::DataFusion).unwrap();
+            let truth = term
+                .eval(RawRow::unchecked(b"32767"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap();
+            assert_eq!(truth, Truth::False, "{op:?}");
+        }
     }
 
     /// A NULL field is excluded by every ordering operator, as under
@@ -6807,9 +6934,10 @@ mod tests {
             Truth::True
         );
         // The successor can leave the subtype's range, which the server
-        // raises on — at the subtype's own width, though a leaf is read as
-        // `i64` whatever the column's (see `order_key`). Under every
-        // operator, and from either bound; one below it is a value.
+        // raises on — at the subtype's own width (`Discrete::largest`).
+        // Under every operator, and from either bound; one below it is a
+        // value. A bound past the width is refused before that
+        // (`an_integer_literal_past_its_width_is_refused_and_one_inside_it_read`).
         let refused = |declared: &str, op: PredicateOp, literal: &str| {
             let field =
                 if declared.starts_with("date") { "[2020-01-01,2020-01-02)" } else { "[1,10)" };
@@ -7211,40 +7339,53 @@ mod tests {
         /// **A float literal the server refuses is refused, and one it reads
         /// that this build reads means what it does to the server**: every
         /// `real` and `double precision` row of `literals.tsv` at every
-        /// major, the range's edges among them (I59), each put to `=` against
-        /// a field holding the server's output for it.
+        /// major, the range's edges among them (I59).
         #[test]
         fn a_float_literal_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&["real", "double precision"]);
+        }
+
+        /// **An integer literal the server refuses is refused, and one it
+        /// reads that this build reads means what it does to the server**:
+        /// every `smallint`, `integer` and `bigint` row of `literals.tsv` at
+        /// every major, a value one past each width among them (I60).
+        #[test]
+        fn an_integer_literal_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&["smallint", "integer", "bigint"]);
+        }
+
+        /// Each row of `literals.tsv` declaring one of `declared`, at every
+        /// major, put to `=` against a field holding the server's output for
+        /// it: one the server refuses is refused, and one it reads is either
+        /// read to the same value or refused as a shortfall (D55).
+        fn literals_are_read_as_the_server_reads_them(declared: &[&str]) {
             let mut asserted = 0usize;
             for major in MAJORS {
                 for row in rows(&fixture(major, "oracle/literals.tsv")) {
-                    let declared = row[0].as_deref().expect("a case names a type");
-                    if !matches!(declared, "real" | "double precision") {
+                    let ty = row[0].as_deref().expect("a case names a type");
+                    if !declared.contains(&ty) {
                         continue;
                     }
                     let Some(literal) = row[1].as_deref() else { continue };
                     let status = row[2].as_deref().expect("a row has a status");
                     let (got, _) =
-                        answer(declared, None, &[], PredicateOp::Eq, row[3].as_deref(), literal);
+                        answer(ty, None, &[], PredicateOp::Eq, row[3].as_deref(), literal);
                     if status == "ok" {
                         // A spelling this build does not read is a shortfall,
                         // not a disagreement (D55).
                         if let Err(e) = &got {
-                            assert!(
-                                e.contains("filter value"),
-                                "{major} {declared} {literal}: {e}"
-                            );
+                            assert!(e.contains("filter value"), "{major} {ty} {literal}: {e}");
                         } else {
-                            assert_eq!(got, Ok(Truth::True), "{major} {declared} {literal}");
+                            assert_eq!(got, Ok(Truth::True), "{major} {ty} {literal}");
                         }
                     } else {
-                        let e = got.expect_err(&format!("{major} {declared} {literal} is refused"));
-                        assert!(e.contains("filter value"), "{major} {declared} {literal}: {e}");
+                        let e = got.expect_err(&format!("{major} {ty} {literal} is refused"));
+                        assert!(e.contains("filter value"), "{major} {ty} {literal}: {e}");
                     }
                     asserted += 1;
                 }
             }
-            assert!(asserted > 0, "no float row was read");
+            assert!(asserted > 0, "no row of {declared:?} was read");
         }
 
         #[tokio::test]
@@ -7634,7 +7775,7 @@ mod tests {
         fn kind_name(kind: &CompareKind) -> &'static str {
             match kind {
                 CompareKind::Bool => "Bool",
-                CompareKind::Int => "Int",
+                CompareKind::Int { .. } => "Int",
                 CompareKind::UnsignedInt => "UnsignedInt",
                 CompareKind::Float32 => "Float32",
                 CompareKind::Float64 => "Float64",
