@@ -180,9 +180,9 @@ struct ParallelArgs {
     ///
     /// **What is left under that margin is what a gathering `parse`'s
     /// statistics may hold**, named as `statistics_bytes=` on the same line. A
-    /// table whose statistics will not fit it is skipped — the scan finishes,
-    /// stderr says which table and what it declined under, the cache records
-    /// it, and only a larger allowance re-reads it. Nothing is killed for want
+    /// block whose statistics will not fit it is skipped — the scan finishes,
+    /// stderr names the block's table and offset and what it declined under,
+    /// the cache records it, and only a larger allowance re-reads it. Nothing is killed for want
     /// of statistics, and raising this is what fits a wide table.
     ///
     /// It is a real bound rather than a target: a `.xz` file that does not

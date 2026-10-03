@@ -105,8 +105,8 @@ impl ColumnResolution {
             Self::UnknownType => "unknown type — no mapping for this build",
             Self::NotDeclared => "not declared — no DDL explained this column",
             Self::MetadataNotScanned => {
-                "metadata not scanned — the scan never reached this database's DDL; finish the \
-                 parse"
+                "metadata not scanned — the scan has not finished this database's DDL; finish \
+                 the parse"
             }
             Self::OpaqueElementType => {
                 "opaque element type — the array's element type is information-free in the dump"

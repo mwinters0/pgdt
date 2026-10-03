@@ -408,5 +408,4 @@ than reading as a phase nobody has sliced.
 - **KD93** — a line is measured against `max_line_bytes` only where a read
   ends inside it, so one up to a read chunk past the limit is read or refused
   by where the reads fall — the chunk size, `--jobs`, a resume point — not by
-  its length. **(c) unowned**; promoted by admitting its fix. Detail:
-  `pgdump_query/src/scan.rs`.
+  its length. **(b) owned by `M212`**. Detail: `pgdump_query/src/scan.rs`.
