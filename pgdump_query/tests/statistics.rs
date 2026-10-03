@@ -1302,6 +1302,82 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     }
 }
 
+/// **A field of a kind this build reads narrower than its input function
+/// fails the parse where the server refuses it, and nowhere else** (I65–I69):
+/// each column's refused spelling in turn, a `bytea` among them, whose bounds
+/// are placed bytewise rather than keyed. A spelling the server reads where
+/// this build does not fails nothing, and a network's is read outright.
+/// Hand-written, as no `pg_dump` output holds any of them.
+#[tokio::test]
+async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() {
+    // Column, type, the dump's spelling, one the server reads, one it refuses.
+    // A `bytea`'s backslash is doubled as COPY writes it.
+    let columns = [
+        ["b", "boolean", "t", "yes", "maybe"],
+        ["o", "oid", "1", "0x1F", "4294967296"],
+        ["i", "inet", "10.0.0.1", "10.1.2/24", "::1/08"],
+        ["c", "cidr", "10.0.0.0/8", "10", "10.0.0.1/8"],
+        ["m", "macaddr", "08:00:2b:01:02:03", "08-00-2b-01-02-03", "08:00:2b:01:02:100"],
+        ["m8", "macaddr8", "08:00:2b:01:02:03:04:05", "08002b0102030405", "08:00:2b:01:02:03:04"],
+        ["y", "bytea", "\\\\x00", "\\\\x 00", "\\\\x0"],
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("refused.sql");
+    let names: Vec<&str> = columns.iter().map(|c| c[0]).collect();
+    let declared: Vec<String> = columns.iter().map(|c| format!("    {} {}", c[0], c[1])).collect();
+    // Every column in the dump's spelling but `at`, in spelling `k`.
+    let row = |at: usize, k: usize| {
+        let fields: Vec<&str> =
+            columns.iter().enumerate().map(|(i, c)| c[if i == at { k } else { 2 }]).collect();
+        fields.join("\t")
+    };
+    let dump_with = |refused: Option<usize>| {
+        let mut text = format!(
+            "CREATE TABLE public.t (\n{}\n);\n\nCOPY public.t ({}) FROM stdin;\n",
+            declared.join(",\n"),
+            names.join(", ")
+        );
+        for i in 0..40 {
+            let line = match (i, refused) {
+                (10..17, _) => row(i - 10, 3),
+                (30, Some(at)) => row(at, 4),
+                _ => row(usize::MAX, 2),
+            };
+            text.push_str(&line);
+            text.push('\n');
+        }
+        text.push_str("\\.\n\nSELECT 1;\n");
+        std::fs::write(&dump, text).unwrap();
+    };
+    let wanted = request(StatisticsSelection::DATA, 256);
+    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    for (at, [column, declared_type, _, _, refused]) in columns.iter().enumerate() {
+        dump_with(Some(at));
+        let source = LocalFileSource::open(&dump).unwrap();
+        match map_file(&source, &serial, &CacheMode::DISABLED, &wanted).await {
+            Err(pgdump_query::Error::FieldRefused {
+                column: c, declared_type: d, value, ..
+            }) => {
+                let unescaped = refused.replace("\\\\", "\\");
+                assert_eq!(
+                    (c.as_str(), d.as_str(), value.as_str()),
+                    (*column, *declared_type, &*unescaped)
+                );
+            }
+            other => panic!("{column}: expected the parse to refuse `{refused}`, got {other:?}"),
+        }
+    }
+    dump_with(None);
+    let index = gathered_with(&dump, &serial, &wanted).await;
+    let t = statistics(block(&index, "public.t"));
+    for (at, [column, ..]) in columns.iter().enumerate() {
+        let bounds = t.columns[at].as_ref().unwrap().bounds.as_ref().unwrap();
+        // An unread spelling loses its group's bounds; a network is read whole.
+        let read = matches!(*column, "i" | "c");
+        assert_eq!(bounds.groups.iter().any(Option::is_none), !read, "{column}");
+    }
+}
+
 /// **A block past its cap gathers, split by the leader, what the serial pass
 /// gathers, and that is what gathering exactly at the size it reaches
 /// gathers** — every block of every fixture, re-read at a group size of a few

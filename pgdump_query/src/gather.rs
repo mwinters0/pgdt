@@ -60,7 +60,7 @@ use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{
-    Unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits,
+    Unread, bytea_unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits,
 };
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
@@ -1906,8 +1906,9 @@ impl BoundsGatherer {
 
     /// Observe `text`, a value past `tier` where it is past one — which only a
     /// keyed kind's column can hold. **A value its type's `*_in` refuses is
-    /// [`Refused`]**, where keying it finds that; no other value is, a key
-    /// this build cannot read losing the group's bounds alone.
+    /// [`Refused`]**, where keying it, or placing a `bytea`, finds that; no
+    /// other value is, one this build cannot read losing the group's bounds
+    /// alone.
     fn observe(
         &mut self,
         group: &mut GroupBounds,
@@ -1917,9 +1918,13 @@ impl BoundsGatherer {
         match &self.order {
             Order::Bytewise(canonical) => {
                 debug_assert!(tier.is_none(), "a bytewise kind's type holds every value");
+                let canonical = *canonical;
                 let Some(text) = canonical.of(text) else {
                     self.lose_value(group, None);
-                    return Ok(());
+                    return match canonical {
+                        Canonical::Bytea if bytea_unread(text) == Unread::Refused => Err(Refused),
+                        _ => Ok(()),
+                    };
                 };
                 let text = text.as_ref();
                 let GroupBounds::Bytewise { min, max, .. } = group else {
@@ -2992,8 +2997,9 @@ mod tests {
                         6 if !sorted && matches!(kind, CompareKind::Int { .. }) => {
                             Some(b"x".to_vec())
                         }
+                        // Read by `byteain`, and placed by no bound here.
                         6 if !sorted && matches!(kind, CompareKind::Bytea) => {
-                            Some(escaped("\\xABC"))
+                            Some(escaped("\\xAB"))
                         }
                         _ => Some(escaped(&v)),
                     })

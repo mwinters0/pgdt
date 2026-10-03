@@ -2552,9 +2552,9 @@ ok  08:00:2b:01:02:04`).
 
 **Scope limit.** The *output* forms only, but for `cidr_in`'s one refusal. Each type's `*_in` accepts a far
 wider grammar — `1.5 hours` and `P1Y2M` for an interval, an abbreviated
-`10` for an IPv4 address, four separator conventions for a MAC — and this
-entry says nothing about those beyond that they exist; `pgtype.rs`'s register
-reads the output form alone, and refuses the rest. Says nothing about
+`10` for an IPv4 network, four separator conventions for a MAC — and this
+entry says nothing about those beyond that they exist: the network types'
+grammar is I67's, the MAC types' refusals I68's. Says nothing about
 `interval`'s infinities, which are I34's.
 
 **Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11 and v18.6 —
@@ -2571,7 +2571,7 @@ type can hold.
 **Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
 and `MacAddr` arms and `predicate.rs`'s parsers for them —
 [`decisions.md`](decisions.md), "D55",
-where these are four *Agrees* rows; `cidr_in`'s refusal is `network_key`'s. The `macaddr` output form is also what
+where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
 column as text — `ComparisonPlan::bounds_kinds` and
 [`decisions.md`](decisions.md), "D79". The hour field's ceiling is also what keeps
@@ -4391,3 +4391,213 @@ awk '/^string_to_uuid\(/,/^}/' src/backend/utils/adt/uuid.c | grep -n "'{'\|'-' 
 ```
 
 It prints the opening brace's test, the hyphen's and the closing brace's.
+
+---
+
+## I65 — `boolin` reads a prefix of `true`, `false`, `yes`, `no`, `on` or `off`, or `1` or `0`, and nothing else
+
+**Claim.** `boolin` strips C `isspace` blanks from both ends and reads, in
+either case, any prefix of `true`, `false`, `yes` or `no`, a prefix of `on` or
+`off` at least two letters long, or `1` or `0` alone; it refuses everything
+else, `22P02`, an empty text and `o` among them.
+
+**Proof.** `src/backend/utils/adt/bool.c`: `boolin` trims with `isspace` and
+calls `parse_bool_with_len`, which switches on the first letter and compares
+by `pg_strncasecmp` over the trimmed length, at least two for `o`.
+
+**Observed.** The koji replica (PG16) reads `tr`, `YE`, `of`, `fals`,
+`  t  ` and `\vf\f`, and refuses `o`, `10`, `truex`, `tru e`, `yess`, `+1`
+and `t` followed by a no-break space; `fixtures/<major>/oracle/literals.tsv`
+reads `yes` and refuses `maybe` at all six majors.
+
+**Scope limit.** A byte past `0x7F` is no blank and folds to no letter, which
+holds in a UTF-8 locale under glibc.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::bool_unread`, which refuses a field and a filter
+literal so spelled.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^parse_bool_with_len\(/,/^}/' src/backend/utils/adt/bool.c | grep -n 'pg_strncasecmp\|len == 1'
+```
+
+It prints the six prefix comparisons, `on` and `off` at `len > 2 ? len : 2`,
+and the two single-digit tests.
+
+---
+
+## I66 — `oidin` reads `strtoul`'s base 10 before v16 and base 0 from it, a negative value as its wrap where it fits an `int`
+
+**Claim.** `oidin` reads blanks, a sign and digits, and blanks after them, and
+refuses, `22P02` or `22003`, anything else and a value outside `0` to
+`4294967295` that is not `-2147483648` to `-1` (read wrapped) or within
+`2^31` of `2^64` (read truncated). Before v16 the digits are decimal; from
+v16 a `0x` prefix reads hex and a leading `0` octal, so `08` is read before
+v16 and refused from it, `010` is 10 before and 8 from it, and a glibc
+with C23 `strtoul` (Debian trixie's) reads a `0b` prefix too.
+
+**Proof.** `oidin_subr` (`src/backend/utils/adt/oid.c`) calls `strtoul(s,
+&endptr, 10)` to v15; `uint32in_subr` (`src/backend/utils/adt/numutils.c`)
+calls `strtoul(s, &endptr, 0)` from v16. Both refuse no digits, `ERANGE` and
+a non-blank after the digits, then a `cvt` matching the result under neither
+unsigned nor signed extension.
+
+**Observed.** The koji replica (PG16) reads `010` as 8, `0x1F` as 31, `0b101`
+as 5, ` -1 ` as 4294967295, `18446744071562067968` as 2147483648 and
+`-0x80000000`, and refuses `08`, `0x`, `0b2`, `-2147483649`, `4294967296` and
+`18446744071562067967`; a `postgres:15.19-trixie` container reads `010` as
+10 and `08` as 8 and refuses `0x1F` and `0b101`.
+
+**Scope limit.** glibc's `strtoul`; the `0b` prefix depends on the glibc the
+server was built against.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::oid_in`, through which `decode::oid_unread`
+refuses a field and a filter literal every major refuses.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'cvt = strtoul' src/backend/utils/adt/oid.c src/backend/utils/adt/numutils.c
+```
+
+It prints base `10` in `oid.c` before v16 and base `0` in `numutils.c` from it.
+
+---
+
+## I67 — `network_in` reads `inet_net_pton.c`'s grammar, a `cidr` an abbreviated IPv4 network besides
+
+**Claim.** `inet_in` and `cidr_in` read IPv6 wherever the text holds a `:`,
+and refuse, `22P02`, whatever `pg_inet_net_pton` refuses, a netmask past the
+family's width and, for a `cidr`, a bit set below the netmask. An `inet`'s
+IPv4 address is dotted decimal, its octets `0` to `255` with leading zeros
+read, all four written unless a netmask's whole bytes leave some out, a
+trailing dot read. A `cidr`'s IPv4 network may be abbreviated or hex, a
+missing netmask its class's widened to the octets written. An IPv6 value
+takes at most four hex digits a group, one `::`, an IPv4 tail of at most four
+octets with no leading zero, and a netmask with none. No blank is read. The
+netmask is accumulated in an `int` that wraps, the server being built with
+`-fwrapv`.
+
+**Proof.** `src/backend/utils/adt/network.c`, `network_in`, and
+`src/backend/utils/adt/inet_net_pton.c`: `inet_net_pton_ipv4` for an `inet`,
+`inet_cidr_pton_ipv4` for a `cidr`, `inet_cidr_pton_ipv6` for both, with
+`getbits` and `getv4`; `addressOK` for the bit below the netmask.
+
+**Observed.** The koji replica (PG16) reads `10.1.2/24`, `010.1.2.3`,
+`1.2.3.4.`, `::1.2.3`, `::1..2.3` (`::1.0.2.3`), `1.2.3.4/4294967304` (a
+`/8`) and `10/8` as `inet`, and `10`, `224` (`/4`), `0xa` (`160.0.0.0/16`)
+and `010` as `cidr`; it refuses `10`, `::1/08`, `::01.2.3.4`, `1.2.3.4 `,
+`1.2.3.4/` and `1:2:3:4:5:6:7:1.2.3.4` as `inet` and `0x0a0b0c0d0e` and
+`10.0.0.1/8` as `cidr`.
+
+**Scope limit.** The grammar, field and literal alike. `pgdt` keys the value
+the port gives, by I40's order.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source;
+`inet_net_pton.c` differs only in an `#include`, `network_in` only in v16's
+soft errors).
+
+**Relied on by:** `decode::network_in`, which reads a field and a filter
+literal of either type by this grammar.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+diff ../release-v18.6/src/backend/utils/adt/inet_net_pton.c src/backend/utils/adt/inet_net_pton.c
+awk '/^network_in\(/,/^}/' src/backend/utils/adt/network.c | grep -n "strchr(src, ':')\|bits > ip_maxbits\|addressOK"
+```
+
+The first prints nothing but an `#include` line where the port, taken from
+v18.6, still holds; the second the family test and the two refusals after it.
+
+---
+
+## I68 — `macaddr_in` reads six octets in seven `sscanf` layouts, `macaddr8_in` six or eight hex pairs
+
+**Claim.** `macaddr_in` reads the first of seven `sscanf` layouts to take six
+`%x` fields with nothing after them but blanks — `:`- or `-`-separated
+unbounded runs, or two-digit runs grouped `xxxxxx:xxxxxx`, `xxxxxx-xxxxxx`,
+`xxxx.xxxx.xxxx`, `xxxx-xxxx-xxxx` or `xxxxxxxxxxxx` — and refuses, `22P02`
+or `22003`, a text none takes or whose octets that layout reads past `255`.
+`macaddr8_in` reads blanks, then six or eight hex pairs each followed by at
+most one of `:`, `-` or `.`, the same one throughout, then blanks, and
+refuses, `22P02`, anything else; a single character after the sixth or
+eighth pair is ignored.
+
+**Proof.** `src/backend/utils/adt/mac.c`, `macaddr_in`'s seven `sscanf`
+calls and its octet check; `src/backend/utils/adt/mac8.c`, `macaddr8_in` and
+`hex2_to_uchar`.
+
+**Observed.** The koji replica (PG16) reads `08002b01020` and `8:0:2b:1:2:3`
+as `macaddr`, `08:00:2b:01:02:100000000ff` as `…:ff` (truncated), and `+3`,
+`-0` and `0x3` as an octet, and refuses `08:00:2b:01:02:100`, `08 :00:…`,
+`08002b0102030`, `08:00-2b:…` and `08:00:2b:01:02:-1`; it reads
+`08002b0102031`, `08:00:2b:01:02:03:` and `08:00:2b:01:02:03\t` as
+`macaddr8`, and refuses `08:00:2b:01:02:03:04`, `08::00:…` and
+`08:00:2b:01:02 03`.
+
+**Scope limit.** glibc's `sscanf`; `decode::macaddr_unread` leaves a run
+opening with a sign or a `0x` to it, refusing no text holding one.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source;
+both differ only in v16's soft errors).
+
+**Relied on by:** `decode::macaddr_unread` and `decode::macaddr8_in`, which
+refuse a field and a filter literal so spelled.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'sscanf(str' src/backend/utils/adt/mac.c
+awk '/^macaddr8_in\(/,/^}/' src/backend/utils/adt/mac8.c | grep -n "spacer\|count == 6\|isspace"
+```
+
+The first prints the seven layouts; the second the separator rule and the
+trailing-blank rule.
+
+---
+
+## I69 — `byteain` reads hex pairs separated by blanks after `\x`, and otherwise any byte but a backslash not escaping one or three octal digits
+
+**Claim.** `byteain` reads a text opening `\x` as hex digits of either case in
+pairs, a space, newline, tab or carriage return allowed between pairs and not
+inside one, and refuses, `22023`, any other byte or an odd digit. Any other
+text is the `escape` form: each byte is itself but a backslash, which must
+open `\\` or `\` and three octal digits the first `0`–`3`; anything else is
+refused, `22P02`.
+
+**Proof.** `src/backend/utils/adt/varlena.c`, `byteain`;
+`src/backend/utils/adt/encode.c`, `hex_decode_safe` (`hex_decode` before v16)
+and `get_hex`.
+
+**Observed.** The koji replica (PG16) reads `\x ab \n\tcd\r`, `\xAB`, `\101`,
+`é` and a tab as themselves, and refuses `\x a b`, `\x0`, `\xab c`, `\X41`,
+`\400`, `\08`, `\1` and a trailing `\`; `fixtures/<major>/oracle/literals.tsv`
+refuses `\xgg` at all six majors.
+
+**Scope limit.** The grammar of a field and a filter literal alike.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::bytea_unread`, which refuses a field and a filter
+literal so spelled.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^byteain\(/,/^}/' src/backend/utils/adt/varlena.c | grep -n "'x'\|'0' && tp\[1\] <= '3'\|tp\[1\] == '\\\\\\\\'"
+grep -n "\*s == ' ' || \*s == '\\\\n'" src/backend/utils/adt/encode.c
+```
+
+The first prints the hex test and the two escapes; the second the blanks
+skipped between pairs.

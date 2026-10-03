@@ -972,12 +972,12 @@ gives you every column unparsed.
 **A value PostgreSQL itself refuses fails `parse` too**, at the first one, as a
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
 `date`, a `numeric(10,2)` value with more than ten digits, a `double precision`
-past its range. `parse` checks only the values it reads anyway to gather
-statistics, so a column at the metadata level, an array's elements and a value
-longer than 256 bytes are not checked there — a query reading one still refuses
-it — and nor yet is a `boolean`, an enum, an `oid`, an `inet`, a `macaddr` or a
-`bytea` value PostgreSQL refuses, which pgdt does not tell from a spelling it
-merely does not read.
+past its range, `maybe` in a `boolean`, `::1/08` in an `inet`. `parse` checks
+only the values it reads anyway to gather statistics, so a column at the
+metadata level, an array's elements and a value longer than 256 bytes, but a
+`bytea`, are not checked there — a query reading one still refuses it — and
+nor yet is an enum label its type does not declare, which pgdt does not tell
+from a label its reading of the schema missed.
 
 ## Columns we cannot type at all
 

@@ -1306,51 +1306,15 @@ fn timetz_key(text: &str) -> Read<OrderKey> {
     Ok(OrderKey::TimeTz { utc, zone })
 }
 
-/// An `inet` or `cidr` value: `<address>[/<bits>]`, the form
-/// `pg_inet_net_ntop` writes, with `cidr_out` always appending the netmask
-/// and `inet_out` omitting it when it is the family's full width (I40).
-///
-/// The address grammar is Rust's, which is narrower than `inet_in`'s: an
-/// abbreviated IPv4 address — `10`, meaning `10.0.0.0/8` — is refused
-/// (`docs/design/decisions.md`, "D55").
-///
-/// `cidr` additionally refuses a value with a bit set below its netmask,
-/// because `cidr_in` does: the *only* thing separating the two types, their
-/// comparison being identical.
+/// An `inet` or `cidr` value, as `network_in` reads it
+/// ([`decode::network_in`]): `pg_inet_net_ntop`'s `<address>[/<bits>]`, with
+/// `cidr_out` always appending the netmask and `inet_out` omitting it when it
+/// is the family's full width (I40), and every other spelling the server
+/// reads, a `cidr`'s abbreviated network among them. Every refusal is the
+/// server's (I67), a `cidr`'s bit set below its netmask included: the *only*
+/// thing separating the two types, their comparison being identical.
 fn network_key(text: &str, cidr: bool) -> Read<OrderKey> {
-    let unparsed = Unread::Unparsed;
-    let (address, netmask) = match text.split_once('/') {
-        Some((address, netmask)) => (address, Some(netmask)),
-        None => (text, None),
-    };
-    let mut addr = [0u8; 16];
-    let v6 = match address.parse::<std::net::IpAddr>().map_err(|_| unparsed)? {
-        std::net::IpAddr::V4(v4) => {
-            addr[..4].copy_from_slice(&v4.octets());
-            false
-        }
-        std::net::IpAddr::V6(v6) => {
-            addr.copy_from_slice(&v6.octets());
-            true
-        }
-    };
-    let maxbits: u8 = if v6 { 128 } else { 32 };
-    let bits = match netmask {
-        None => maxbits,
-        Some(digits) => {
-            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(unparsed);
-            }
-            digits.parse::<u8>().map_err(|_| unparsed)?
-        }
-    };
-    if bits > maxbits {
-        return Err(unparsed);
-    }
-    // pg-refuses: I40 — a bit set below the netmask.
-    if cidr && (bits..maxbits).any(|bit| addr[usize::from(bit / 8)] & (0x80 >> (bit % 8)) != 0) {
-        return Err(Unread::Refused);
-    }
+    let (v6, bits, addr) = decode::network_in(text, cidr).ok_or(Unread::Refused)?;
     Ok(OrderKey::Network(NetworkKey { v6, bits, addr }))
 }
 
@@ -1397,7 +1361,9 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
     }
     let unparsed = Unread::Unparsed;
     Ok(match kind {
-        CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text).ok_or(unparsed)?),
+        CompareKind::Bool => {
+            OrderKey::Bool(decode::decode_bool(text).ok_or_else(|| decode::bool_unread(text))?)
+        }
         // A literal in DataFusion's semantics is read as an `i64` instead, by
         // [`literal_key`].
         CompareKind::Int { bytes } => OrderKey::Int(int_in(text, *bytes)?),
@@ -1406,7 +1372,7 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => {
-            OrderKey::Int(text.parse::<u32>().map_err(|_| unparsed)?.into())
+            OrderKey::Int(text.parse::<u32>().map_err(|_| decode::oid_unread(text))?.into())
         }
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::float_in::<f32>(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::float_in::<f64>(text)?),
@@ -1460,13 +1426,21 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         }
         CompareKind::TimeTz => timetz_key(text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
-        CompareKind::MacAddr { octets } => macaddr_key(text, *octets).ok_or(unparsed)?,
+        CompareKind::MacAddr { octets } => {
+            macaddr_key(text, *octets).ok_or_else(|| match octets {
+                8 if decode::macaddr8_in(text).is_none() => Unread::Refused,
+                8 => unparsed,
+                _ => decode::macaddr_unread(text),
+            })?
+        }
         CompareKind::Jsonb => jsonb_key(text)?,
         // Every refusal of the reader is `uuid_in`'s (I64).
         CompareKind::Uuid => {
             OrderKey::Bytes(decode::decode_uuid(text).ok_or(Unread::Refused)?.to_vec())
         }
-        CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text).ok_or(unparsed)?),
+        CompareKind::Bytea => {
+            OrderKey::Bytes(decode::decode_bytea(text).ok_or_else(|| decode::bytea_unread(text))?)
+        }
         CompareKind::Text => OrderKey::Text(text.to_string()),
         // `bcTruelen` on both sides, which is what makes this the server's
         // comparison rather than one over the padding (I38). The blank is
@@ -2436,12 +2410,15 @@ fn accepted_form(kind: &CompareKind) -> String {
              `infinity`/`-infinity`"
                 .into()
         }
+        // `network_in`'s grammar (I67), which reads more than this says.
         K::Network { cidr: false } => {
-            "as a full IPv4 or IPv6 address, optionally followed by `/bits`".into()
+            "as an IPv4 or IPv6 address, optionally followed by `/bits`, an IPv4 one omitting no \
+             octet but those past the netmask's whole bytes"
+                .into()
         }
         K::Network { cidr: true } => {
-            "as a full IPv4 or IPv6 address, optionally followed by `/bits`, with no bit set below \
-             the netmask"
+            "as an IPv4 or IPv6 network, optionally followed by `/bits`, with no bit set below \
+             the netmask, an IPv4 one omitting any trailing octets, which are zero"
                 .into()
         }
         K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs".into(),
@@ -5285,7 +5262,8 @@ mod tests {
     /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
     /// `Refused`, which fails the parse keying the field, and a spelling the
     /// server reads where this build does not answers `Unparsed`, which does
-    /// not — nor does one of a kind no check is marked for (`KD83`).
+    /// not — nor does an enum's undeclared label (`KD83`), nor a `macaddr`
+    /// octet opening with a sign (`KD85`).
     #[test]
     fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
         use CompareKind as K;
@@ -5325,6 +5303,17 @@ mod tests {
             (K::Jsonb, "1."),
             (K::Uuid, "-00000000-0000-0000-0000-000000000000"),
             (K::Uuid, "{00000000-0000-0000-0000-000000000000"),
+            (K::Bool, "maybe"),
+            (K::UnsignedInt, "4294967296"),
+            (K::UnsignedInt, "08x"),
+            (K::Network { cidr: false }, "10"),
+            (K::Network { cidr: false }, "::1/08"),
+            (K::Network { cidr: true }, "1.2.3.4/33"),
+            (K::MacAddr { octets: 6 }, "08:00:2b:01:02:03x"),
+            (K::MacAddr { octets: 6 }, "08:00:2b:01:02:100"),
+            (K::MacAddr { octets: 8 }, "08:00:2b:01:02:03:04"),
+            (K::Bytea, "\\x0"),
+            (K::Bytea, "\\400"),
         ];
         for (kind, text) in &refused {
             assert_eq!(field_key(kind, text).err(), Some(Unread::Refused), "{kind:?} {text:?}");
@@ -5340,10 +5329,15 @@ mod tests {
             (K::Timestamp { with_tz: false }, "2020-01-01T00:00:00"),
             (K::Interval, "1 hour"),
             (K::TimeTz, "12:00:00+0530"),
-            (K::Network { cidr: false }, "10"),
             (bare.clone(), &past_dscale_by_exponent),
+            (K::UnsignedInt, " 5"),
+            (K::UnsignedInt, "0x1F"),
             (K::Bool, "yes"),
-            (K::Bool, "maybe"),
+            (K::MacAddr { octets: 6 }, "08-00-2b-01-02-03"),
+            (K::MacAddr { octets: 6 }, "08:00:2b:01:02:-1"),
+            (K::MacAddr { octets: 8 }, "08002b0102030405"),
+            (K::Bytea, "\\x ab"),
+            (K::Bytea, "\\101"),
             (K::Enum(Arc::from(["a".to_string()])), "b"),
         ];
         for (kind, text) in &unparsed {
@@ -6934,7 +6928,7 @@ mod tests {
                 "1 month",
                 "the way `interval` prints it",
             ),
-            ("inet", DataType::Utf8View, "10", "a full IPv4 or IPv6 address"),
+            ("inet", DataType::Utf8View, "10", "an IPv4 or IPv6 address"),
             ("macaddr", DataType::Utf8View, "08-00-2b-01-02-03", "six colon-separated hex pairs"),
             // The two arms where the kind's own payload is the answer: the
             // enum's declared labels, and the `numeric` scale.
@@ -7870,6 +7864,17 @@ mod tests {
             literals_are_read_as_the_server_reads_them(&["uuid"]);
         }
 
+        /// **A `boolean`, `oid`, `inet`, `cidr`, `macaddr`, `macaddr8` or
+        /// `bytea` literal the server refuses is refused, and one it reads
+        /// that this build reads means what it does to the server**: every row
+        /// of the seven in `literals.tsv` at every major (I65–I69).
+        #[test]
+        fn a_literal_of_a_kind_with_an_input_function_port_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&[
+                "boolean", "oid", "inet", "cidr", "macaddr", "macaddr8", "bytea",
+            ]);
+        }
+
         /// Each row of `literals.tsv` declaring one of `declared`, at every
         /// major, put to `=` against a field holding the server's output for
         /// it: one the server refuses is refused, and one it reads is either
@@ -8154,7 +8159,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (47, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (48, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

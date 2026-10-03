@@ -29,12 +29,13 @@ pub enum Unread {
     /// A spelling this build reads no value from — a shortfall the server
     /// reads (`docs/design/decisions.md`, "D55"), or a refusal of the
     /// server's no marked check makes, which nothing here tells apart.
-    // deficiency: KD83 — a field of a kind with no marked check — `boolean`,
-    // an enum, `oid`, `inet`, `macaddr`, `bytea` — is `Unparsed` whatever the
-    // server makes of it, so the parse goes on past one `*_in` refuses, the
-    // column only losing its group's bounds; a query reading it still fails.
-    // Telling them apart takes each `*_in`'s grammar, an invariant for it,
-    // and its refusals marked.
+    // deficiency: KD83 — an enum field naming a label its type does not
+    // declare is `Unparsed`, so the parse goes on past one `enum_in` refuses,
+    // the column only losing its group's bounds. A miss is a refusal only
+    // where the preamble holds the type's labels exactly, and it does not
+    // know when it does: an `ALTER TYPE … RENAME VALUE`, an `ADD VALUE IF NOT
+    // EXISTS` or a label it cannot lex, which a hand-written dump can hold,
+    // leaves the set short without a mark.
     Unparsed,
 }
 
@@ -48,6 +49,36 @@ pub fn decode_bool(s: &str) -> Option<bool> {
         "f" => Some(false),
         _ => None,
     }
+}
+
+/// Why [`decode_bool`] read no value from `s`: `boolin` refuses it, or reads
+/// a spelling `boolout` never writes — `true`, `yes`, `on`, `1` or a
+/// negation, given by any prefix naming the word alone, in either case, with
+/// blanks around it (`docs/design/decisions.md`, "D55").
+// pg-refuses: I65 — every refusal here is `boolin`'s.
+pub(crate) fn bool_unread(s: &str) -> Unread {
+    let word = s.trim_matches(|c: char| c.is_ascii() && is_c_space(c as u8));
+    // `parse_bool_with_len`: the word is a prefix of the one its first
+    // letter opens, and `o` alone opens both `on` and `off`.
+    let prefix_of =
+        |full: &str| word.len() <= full.len() && word.eq_ignore_ascii_case(&full[..word.len()]);
+    let reads = match word.as_bytes().first() {
+        Some(b't' | b'T') => prefix_of("true"),
+        Some(b'f' | b'F') => prefix_of("false"),
+        Some(b'y' | b'Y') => prefix_of("yes"),
+        Some(b'n' | b'N') => prefix_of("no"),
+        Some(b'o' | b'O') => word.len() >= 2 && (prefix_of("on") || prefix_of("off")),
+        Some(b'0' | b'1') => word.len() == 1,
+        _ => false,
+    };
+    if reads { Unread::Unparsed } else { Unread::Refused }
+}
+
+/// C's `isspace` in the server's locale over a byte below `0x80`, which is
+/// what the input functions below skip: a byte past it is a blank in no
+/// locale a server runs in.
+fn is_c_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
 pub fn render_bool(v: bool) -> &'static str {
@@ -1163,6 +1194,603 @@ pub fn render_bytea(bytes: &[u8]) -> String {
     out
 }
 
+/// Why [`decode_bytea`] read no value from `s`: `byteain` refuses it, or
+/// reads a spelling this build does not — a blank between hex pairs, any
+/// byte the `escape` form writes escaped written as itself, or the reverse
+/// (`docs/design/decisions.md`, "D55").
+// pg-refuses: I69 — every refusal here is `byteain`'s.
+pub(crate) fn bytea_unread(s: &str) -> Unread {
+    let b = s.as_bytes();
+    let reads = match b.strip_prefix(b"\\x") {
+        // `hex_decode_safe`: a blank between pairs, never inside one.
+        Some(hex) => {
+            let mut digits = hex.iter().filter(|&&c| !matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
+            let mut pairs = hex.split(|&c| matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
+            digits.all(u8::is_ascii_hexdigit) && pairs.all(|run| run.len() % 2 == 0)
+        }
+        None => {
+            let mut at = 0;
+            loop {
+                match b.get(at..) {
+                    Some([]) | None => break true,
+                    Some([b'\\', b'0'..=b'3', b'0'..=b'7', b'0'..=b'7', ..]) => at += 4,
+                    Some([b'\\', b'\\', ..]) => at += 2,
+                    Some([b'\\', ..]) => break false,
+                    Some(_) => at += 1,
+                }
+            }
+        }
+    };
+    if reads { Unread::Unparsed } else { Unread::Refused }
+}
+
+/// An `inet` or `cidr` value as `network_in` reads it: its family (`true`
+/// for IPv6), its netmask's bits, and its address left-aligned in sixteen
+/// bytes. `None` where the server refuses the text.
+///
+/// The family is IPv6 wherever the text holds a `:`. An IPv4 `inet` is
+/// dotted decimal, `0` to `255` an octet, leading zeros and a trailing dot
+/// read, and a netmask past the octets written only where they reach it
+/// (`10.1.2/24`); a `cidr` reads an abbreviated or hex network besides,
+/// with a classful netmask where none is written (`10` is `10.0.0.0/8`).
+/// An IPv6 value of either takes an IPv4 tail and a netmask written with no
+/// leading zero. A `cidr` refuses a bit set below its netmask.
+///
+/// A port of `inet_net_pton.c`, its quirks included: a netmask is
+/// accumulated in a wrapping `int`, as `-fwrapv` builds the server
+/// (`1.2.3.4/4294967304` is a `/8`), and an IPv4 tail may be short or hold
+/// an empty octet (`::1..2.3` is `::1.0.2.3`).
+// pg-refuses: I67 — every refusal here is `network_in`'s.
+pub(crate) fn network_in(text: &str, cidr: bool) -> Option<(bool, u8, [u8; 16])> {
+    let b = text.as_bytes();
+    let v6 = b.contains(&b':');
+    let mut addr = [0u8; 16];
+    let bits = if v6 {
+        inet_pton_ipv6(b, &mut addr)?
+    } else if cidr {
+        cidr_pton_ipv4(b, &mut addr)?
+    } else {
+        inet_pton_ipv4(b, &mut addr)?
+    };
+    let maxbits = if v6 { 128 } else { 32 };
+    let bits = u8::try_from(bits).ok().filter(|&bits| bits <= maxbits)?;
+    // `addressOK`: no bit set below the netmask.
+    if cidr && (bits..maxbits).any(|bit| addr[usize::from(bit / 8)] & (0x80 >> (bit % 8)) != 0) {
+        return None;
+    }
+    Some((v6, bits, addr))
+}
+
+/// The byte at `at`, `0` past the end, as a C string reads its terminator.
+fn c_byte(b: &[u8], at: usize) -> u8 {
+    b.get(at).copied().unwrap_or(0)
+}
+
+/// A netmask's digits from `*at`, the first already known to be one,
+/// accumulated as the server's `int` accumulates them, wrapping.
+fn wrapping_bits(b: &[u8], at: &mut usize) -> i32 {
+    let mut bits = 0i32;
+    while c_byte(b, *at).is_ascii_digit() {
+        bits = bits.wrapping_mul(10).wrapping_add(i32::from(b[*at] - b'0'));
+        *at += 1;
+    }
+    bits
+}
+
+/// `inet_net_pton_ipv4`: an `inet`'s IPv4 address, `None` on `ENOENT` or
+/// `EMSGSIZE`.
+fn inet_pton_ipv4(b: &[u8], dst: &mut [u8; 16]) -> Option<i32> {
+    let mut at = 0;
+    let mut len = 0;
+    let mut ch = c_byte(b, at);
+    while ch.is_ascii_digit() {
+        let mut octet = 0u32;
+        while ch.is_ascii_digit() {
+            octet = octet * 10 + u32::from(ch - b'0');
+            if octet > 255 {
+                return None;
+            }
+            at += 1;
+            ch = c_byte(b, at);
+        }
+        if len == 4 {
+            return None;
+        }
+        dst[len] = octet as u8;
+        len += 1;
+        if ch == 0 || ch == b'/' {
+            break;
+        }
+        if ch != b'.' {
+            return None;
+        }
+        at += 1;
+        ch = c_byte(b, at);
+    }
+    let mut bits = -1;
+    if ch == b'/' && c_byte(b, at + 1).is_ascii_digit() && len > 0 {
+        at += 1;
+        bits = wrapping_bits(b, &mut at);
+        ch = c_byte(b, at);
+        if ch != 0 || bits > 32 {
+            return None;
+        }
+    }
+    if ch != 0 || len == 0 {
+        return None;
+    }
+    if bits == -1 {
+        if len != 4 {
+            return None;
+        }
+        bits = 32;
+    }
+    // A netmask may not reach past the octets written; C's division
+    // truncates a wrapped negative one toward zero, so it passes here.
+    if bits / 8 > len as i32 {
+        return None;
+    }
+    Some(bits)
+}
+
+/// `inet_cidr_pton_ipv4` at four bytes: a `cidr`'s IPv4 network, `None` on
+/// `ENOENT` or `EMSGSIZE`.
+fn cidr_pton_ipv4(b: &[u8], dst: &mut [u8; 16]) -> Option<i32> {
+    let mut len = 0;
+    let mut at = 1;
+    let mut ch = c_byte(b, 0);
+    if ch == b'0' && matches!(c_byte(b, 1), b'x' | b'X') && c_byte(b, 2).is_ascii_hexdigit() {
+        // A string of nibbles, an odd last one the high half of its byte.
+        at = 2;
+        let mut nibbles = 0;
+        let mut byte = 0u8;
+        loop {
+            ch = c_byte(b, at);
+            at += 1;
+            if !ch.is_ascii_hexdigit() {
+                break;
+            }
+            let nibble = HEX_NIBBLE[usize::from(ch)];
+            byte = if nibbles == 0 { nibble } else { byte << 4 | nibble };
+            nibbles += 1;
+            if nibbles == 2 {
+                push_octet(dst, &mut len, byte)?;
+                nibbles = 0;
+            }
+        }
+        if nibbles == 1 {
+            push_octet(dst, &mut len, byte << 4)?;
+        }
+    } else if ch.is_ascii_digit() {
+        loop {
+            let mut octet = 0u32;
+            loop {
+                octet = octet * 10 + u32::from(ch - b'0');
+                if octet > 255 {
+                    return None;
+                }
+                ch = c_byte(b, at);
+                at += 1;
+                if !ch.is_ascii_digit() {
+                    break;
+                }
+            }
+            push_octet(dst, &mut len, octet as u8)?;
+            if ch == 0 || ch == b'/' {
+                break;
+            }
+            if ch != b'.' {
+                return None;
+            }
+            ch = c_byte(b, at);
+            at += 1;
+            if !ch.is_ascii_digit() {
+                return None;
+            }
+        }
+    } else {
+        return None;
+    }
+    // `at` is one past `ch`, as the C's `src` is.
+    let mut bits = -1;
+    if ch == b'/' && c_byte(b, at).is_ascii_digit() && len > 0 {
+        bits = wrapping_bits(b, &mut at);
+        if c_byte(b, at) != 0 {
+            return None;
+        }
+        if bits > 32 {
+            return None;
+        }
+        ch = 0;
+    }
+    if ch != 0 || len == 0 {
+        return None;
+    }
+    if bits == -1 {
+        // The class's netmask, widened to the octets written.
+        bits = match dst[0] {
+            240.. => 32,
+            224.. => 8,
+            192.. => 24,
+            128.. => 16,
+            _ => 8,
+        };
+        bits = bits.max(len as i32 * 8);
+        if bits == 8 && dst[0] == 224 {
+            bits = 4;
+        }
+    }
+    // The network extended with zero bytes to cover its netmask, which
+    // four bytes must hold.
+    while bits > len as i32 * 8 {
+        push_octet(dst, &mut len, 0)?;
+    }
+    Some(bits)
+}
+
+/// One more of an IPv4 network's four bytes, `None` past the fourth
+/// (`EMSGSIZE`).
+fn push_octet(dst: &mut [u8; 16], len: &mut usize, byte: u8) -> Option<()> {
+    if *len == 4 {
+        return None;
+    }
+    dst[*len] = byte;
+    *len += 1;
+    Some(())
+}
+
+/// `inet_cidr_pton_ipv6` at sixteen bytes, which `inet` and `cidr` share:
+/// `None` on `ENOENT`.
+fn inet_pton_ipv6(b: &[u8], dst: &mut [u8; 16]) -> Option<i32> {
+    let mut tmp = [0u8; 16];
+    let mut tp = 0;
+    let mut colonp = None;
+    let mut at = 0;
+    if c_byte(b, 0) == b':' {
+        if c_byte(b, 1) != b':' {
+            return None;
+        }
+        at = 1;
+    }
+    let mut curtok = at;
+    let mut saw_xdigit = false;
+    let mut val = 0u32;
+    let mut digits = 0;
+    let mut bits = -1;
+    loop {
+        let ch = c_byte(b, at);
+        at += 1;
+        if ch == 0 {
+            break;
+        }
+        if ch.is_ascii_hexdigit() {
+            val = val << 4 | u32::from(HEX_NIBBLE[usize::from(ch)]);
+            digits += 1;
+            if digits > 4 {
+                return None;
+            }
+            saw_xdigit = true;
+            continue;
+        }
+        if ch == b':' {
+            curtok = at;
+            if !saw_xdigit {
+                if colonp.is_some() {
+                    return None;
+                }
+                colonp = Some(tp);
+                continue;
+            }
+            if c_byte(b, at) == 0 || tp + 2 > 16 {
+                return None;
+            }
+            tmp[tp] = (val >> 8) as u8;
+            tmp[tp + 1] = val as u8;
+            tp += 2;
+            saw_xdigit = false;
+            digits = 0;
+            val = 0;
+            continue;
+        }
+        if ch == b'.' && tp + 4 <= 16 && getv4(&b[curtok..], &mut tmp[tp..tp + 4], &mut bits) {
+            tp += 4;
+            saw_xdigit = false;
+            break;
+        }
+        if ch == b'/' && getbits(&b[at..], &mut bits) {
+            break;
+        }
+        return None;
+    }
+    if saw_xdigit {
+        if tp + 2 > 16 {
+            return None;
+        }
+        tmp[tp] = (val >> 8) as u8;
+        tmp[tp + 1] = val as u8;
+        tp += 2;
+    }
+    if bits == -1 {
+        bits = 128;
+    }
+    if let Some(colon) = colonp {
+        // The groups after `::` moved to the end, zeros in their place.
+        if tp == 16 {
+            return None;
+        }
+        let n = tp - colon;
+        for i in 1..=n {
+            tmp[16 - i] = tmp[colon + n - i];
+            tmp[colon + n - i] = 0;
+        }
+        tp = 16;
+    }
+    if tp != 16 {
+        return None;
+    }
+    *dst = tmp;
+    Some(bits)
+}
+
+/// `getbits`: an IPv6 netmask, `0` to `128` with no leading zero.
+fn getbits(b: &[u8], bits: &mut i32) -> bool {
+    let mut val = 0;
+    let mut n = 0;
+    for &ch in b {
+        if !ch.is_ascii_digit() {
+            return false;
+        }
+        if n != 0 && val == 0 {
+            return false;
+        }
+        n += 1;
+        val = val * 10 + i32::from(ch - b'0');
+        if val > 128 {
+            return false;
+        }
+    }
+    if n == 0 {
+        return false;
+    }
+    *bits = val;
+    true
+}
+
+/// `getv4`: an IPv6 value's IPv4 tail into the four bytes `dst`, octets with
+/// no leading zero, at most four, and a netmask after it by [`getbits`].
+fn getv4(b: &[u8], dst: &mut [u8], bits: &mut i32) -> bool {
+    let mut val = 0u32;
+    let mut n = 0;
+    let mut len = 0;
+    for (i, &ch) in b.iter().enumerate() {
+        if ch.is_ascii_digit() {
+            if n != 0 && val == 0 {
+                return false;
+            }
+            n += 1;
+            val = val * 10 + u32::from(ch - b'0');
+            if val > 255 {
+                return false;
+            }
+            continue;
+        }
+        if ch == b'.' || ch == b'/' {
+            if len > 3 {
+                return false;
+            }
+            dst[len] = val as u8;
+            len += 1;
+            if ch == b'/' {
+                return getbits(&b[i + 1..], bits);
+            }
+            val = 0;
+            n = 0;
+            continue;
+        }
+        return false;
+    }
+    if n == 0 || len > 3 {
+        return false;
+    }
+    dst[len] = val as u8;
+    true
+}
+
+/// Why a `macaddr` this build does not read is no value: `macaddr_in`
+/// refuses it, or reads it — six octets in one of its seven `sscanf`
+/// layouts, separated by `:` or `-`, grouped by `.` or `-` in fours or `:`
+/// or `-` in sixes, or not at all, a digit run as short as one and blanks
+/// around them — where this build reads `macaddr_out`'s colon-separated
+/// pairs (`docs/design/decisions.md`, "D55").
+///
+/// `%x` is modelled for the hex digits it takes and the blanks it skips. An
+/// octet past eight significant digits, which glibc truncates, is left
+/// unvalued.
+// deficiency: KD85 — a run opening with a sign or a `0x` is read by glibc's
+// `%x`, which this does not model, so the text is counted read and never
+// refused, `08:00:2b:01:02:-1` and `0x0800.2b01.0203` among those the server
+// refuses (I68).
+pub(crate) fn macaddr_unread(s: &str) -> Unread {
+    // `x` is `%x`, `2` is `%2x`, anything else a byte the text must hold.
+    const LAYOUTS: [&[u8]; 7] = [
+        b"x:x:x:x:x:x",
+        b"x-x-x-x-x-x",
+        b"222:222",
+        b"222-222",
+        b"22.22.22",
+        b"22-22-22",
+        b"222222",
+    ];
+    for layout in LAYOUTS {
+        match macaddr_scan(s.as_bytes(), layout) {
+            MacScan::Unmodelled => return Unread::Unparsed,
+            // The first layout taking six octets decides.
+            // pg-refuses: I68 — an octet past 255.
+            MacScan::Six(octets) => {
+                return if octets.iter().all(|o| o.is_none_or(|o| o <= 255)) {
+                    Unread::Unparsed
+                } else {
+                    Unread::Refused
+                };
+            }
+            MacScan::Short => {}
+        }
+    }
+    // pg-refuses: I68 — no layout takes six octets.
+    Unread::Refused
+}
+
+/// What one `sscanf` layout of [`macaddr_unread`] makes of a text.
+enum MacScan {
+    /// Six octets and nothing after them but blanks, `None` for a run past
+    /// eight significant digits, which glibc truncates to an `unsigned int`.
+    Six([Option<u32>; 6]),
+    /// Fewer than six, or a seventh field after them.
+    Short,
+    /// A sign or a `0x`, which glibc reads by rules the model does not
+    /// follow.
+    Unmodelled,
+}
+
+fn macaddr_scan(b: &[u8], layout: &[u8]) -> MacScan {
+    let mut octets = [None; 6];
+    let mut count = 0;
+    let mut at = 0;
+    for &field in layout {
+        if !matches!(field, b'x' | b'2') {
+            if b.get(at) != Some(&field) {
+                return MacScan::Short;
+            }
+            at += 1;
+            continue;
+        }
+        at += b[at..].iter().take_while(|&&c| is_c_space(c)).count();
+        if let Some([b'+' | b'-', ..] | [b'0', b'x' | b'X', ..]) = b.get(at..) {
+            return MacScan::Unmodelled;
+        }
+        let width = if field == b'2' { 2 } else { usize::MAX };
+        let run = b[at..].iter().take(width).take_while(|c| c.is_ascii_hexdigit()).count();
+        if run == 0 {
+            return MacScan::Short;
+        }
+        let digits = &b[at..at + run];
+        at += run;
+        let significant = &digits[digits.iter().take_while(|&&c| c == b'0').count()..];
+        octets[count] = (significant.len() <= 8).then(|| {
+            significant
+                .iter()
+                .fold(0, |value, &c| value << 4 | u32::from(HEX_NIBBLE[usize::from(c)]))
+        });
+        count += 1;
+    }
+    // `%1s`: a seventh field wherever anything but blanks follows.
+    if b[at..].iter().all(|&c| is_c_space(c)) { MacScan::Six(octets) } else { MacScan::Short }
+}
+
+/// `macaddr8_in`: the eight bytes the server reads, a six-byte address
+/// widened by `FF:FE` in its middle, `None` where it refuses the text. Hex
+/// pairs, each separated from the next by `:`, `-` or `.` — one of them
+/// throughout — or by nothing, blanks around the whole, and its quirks: a
+/// separator after the last pair, and a single stray character after six or
+/// eight pairs, are read.
+// pg-refuses: I68 — every refusal here is `macaddr8_in`'s.
+pub(crate) fn macaddr8_in(s: &str) -> Option<[u8; 8]> {
+    let b = s.as_bytes();
+    let mut at = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let mut bytes = [0u8; 8];
+    let mut count = 0;
+    let mut spacer = None;
+    while at + 1 < b.len() {
+        if count == 8 {
+            return None;
+        }
+        let (hi, lo) = (HEX_NIBBLE[usize::from(b[at])], HEX_NIBBLE[usize::from(b[at + 1])]);
+        if (hi | lo) & 0xF0 != 0 {
+            return None;
+        }
+        bytes[count] = hi << 4 | lo;
+        count += 1;
+        at += 2;
+        if let Some(&c @ (b':' | b'-' | b'.')) = b.get(at) {
+            if *spacer.get_or_insert(c) != c {
+                return None;
+            }
+            at += 1;
+        }
+        if (count == 6 || count == 8) && b.get(at).is_some_and(|&c| is_c_space(c)) {
+            if !b[at..].iter().all(|&c| is_c_space(c)) {
+                return None;
+            }
+            at = b.len();
+        }
+    }
+    match count {
+        8 => Some(bytes),
+        6 => Some([bytes[0], bytes[1], bytes[2], 0xFF, 0xFE, bytes[3], bytes[4], bytes[5]]),
+        _ => None,
+    }
+}
+
+/// Why an `oid` this build does not read is no value: every supported
+/// major's `oidin` refuses it, or one reads it, where this build reads the
+/// decimal digits `oidout` writes, a leading `+` and zeros
+/// (`docs/design/decisions.md`, "D55").
+///
+/// The majors part at v16, whose `uint32in_subr` hands `strtoul` base 0
+/// where `oidin_subr` handed it base 10, so a `0x` or octal spelling reads
+/// from v16 and a decimal one with a leading zero changes its value there;
+/// a C23 glibc reads a `0b` prefix in base 0 too. A text one of them reads
+/// is not refused.
+// deficiency: KD84 — the readers of an `oid` (`str::parse`, in the typed read
+// and `predicate::field_key`) take `010` for 10, as v15 and earlier do, where
+// v16 and later read it as octal 8 and refuse `08` (I66). Which the dump's
+// server meant is its version's to say, and no reader is handed it.
+pub(crate) fn oid_unread(s: &str) -> Unread {
+    let b = s.as_bytes();
+    let read = [(false, false), (true, false), (true, true)]
+        .into_iter()
+        .any(|(base0, binary)| oid_in(b, base0, binary).is_some());
+    if read { Unread::Unparsed } else { Unread::Refused }
+}
+
+/// `uint32in_subr` over glibc's `strtoul`, in base 0 where `base0` holds and
+/// base 10 where not, a `0b` prefix read where `binary` does: the oid it
+/// reads, or `None` where it refuses the text. A negative value is read where
+/// it fits an `int`, wrapped.
+// pg-refuses: I66 — every refusal here is `oidin`'s.
+fn oid_in(b: &[u8], base0: bool, binary: bool) -> Option<u32> {
+    let mut at = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let negative = matches!(b.get(at), Some(b'-'));
+    if matches!(b.get(at), Some(b'+' | b'-')) {
+        at += 1;
+    }
+    let base = match (base0, b.get(at..)) {
+        (true, Some([b'0', b'x' | b'X', d, ..])) if d.is_ascii_hexdigit() => 16,
+        (true, Some([b'0', b'b' | b'B', b'0' | b'1', ..])) if binary => 2,
+        (true, Some([b'0', ..])) => 8,
+        _ => 10,
+    };
+    if matches!(base, 16 | 2) {
+        at += 2;
+    }
+    let digits = b[at..].iter().take_while(|&&c| char::from(c).is_digit(base)).count();
+    if digits == 0 {
+        return None;
+    }
+    let mut magnitude = 0u64;
+    for &c in &b[at..at + digits] {
+        // Past `ULONG_MAX`, `ERANGE`.
+        let digit = u64::from(char::from(c).to_digit(base)?);
+        magnitude = magnitude.checked_mul(u64::from(base))?.checked_add(digit)?;
+    }
+    if !b[at + digits..].iter().all(|&c| is_c_space(c)) {
+        return None;
+    }
+    let cvt = if negative { magnitude.wrapping_neg() } else { magnitude };
+    let oid = cvt as u32;
+    (cvt == u64::from(oid) || cvt == oid as i32 as i64 as u64).then_some(oid)
+}
+
 /// A filter literal compared with a `numeric(p,s)` column, as an unscaled
 /// integer digit string at `scale` decimal places — the form
 /// [`i128::from_str`]/[`i256::from_str`] accept directly. **Exact**: the
@@ -2042,6 +2670,388 @@ mod tests {
             assert_eq!(render_decimal("1", scale), one, "at scale {scale}");
             let short = format!("1{}", "0".repeat(zeros - 1));
             assert_eq!(decimal_unscaled_digits(&short, scale), None, "{short:?} at {scale}");
+        }
+    }
+
+    /// **`boolin` is refused where the server refuses it, and what this build
+    /// reads is what the server reads** (I65): each spelling below was cast
+    /// on PostgreSQL 16, beside what it answered.
+    #[test]
+    fn a_boolean_is_refused_only_where_boolin_refuses_it() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("t", Some("true")),
+            ("f", Some("false")),
+            ("true", Some("true")),
+            ("TRUE", Some("true")),
+            ("tr", Some("true")),
+            ("T", Some("true")),
+            ("yes", Some("true")),
+            ("y", Some("true")),
+            ("YE", Some("true")),
+            ("no", Some("false")),
+            ("N", Some("false")),
+            ("on", Some("true")),
+            ("ON", Some("true")),
+            ("of", Some("false")),
+            ("off", Some("false")),
+            ("OFF", Some("false")),
+            ("o", None),
+            ("O", None),
+            ("1", Some("true")),
+            ("0", Some("false")),
+            ("10", None),
+            ("01", None),
+            ("", None),
+            (" ", None),
+            ("  t  ", Some("true")),
+            ("\tyes\n", Some("true")),
+            ("\u{b}f\u{c}", Some("false")),
+            ("truex", None),
+            ("tru e", None),
+            ("yess", None),
+            ("onn", None),
+            ("offf", None),
+            ("maybe", None),
+            ("+1", None),
+            ("-0", None),
+            (" 1 ", Some("true")),
+            ("t\u{a0}", None),
+            ("falsE", Some("false")),
+            ("fals", Some("false")),
+            ("2", None),
+        ];
+        for (text, server) in cases {
+            match decode_bool(text) {
+                Some(read) => assert_eq!(Some(read), server.map(|v| v == "true"), "{text:?}"),
+                None => {
+                    let want = if server.is_some() { Unread::Unparsed } else { Unread::Refused };
+                    assert_eq!(bool_unread(text), want, "{text:?}");
+                }
+            }
+        }
+    }
+
+    /// **`oidin` is read as each major reads it** (I66): each spelling below
+    /// was cast on PostgreSQL 16, which reads it in `strtoul`'s base 0 under a
+    /// C23 glibc, and on 15, which reads it in base 10, beside what each
+    /// answered. Only a text both refuse is refused.
+    #[test]
+    fn an_oid_is_read_as_each_major_reads_it() {
+        let cases: &[(&str, Option<u32>, Option<u32>)] = &[
+            ("0", Some(0), Some(0)),
+            ("010", Some(8), Some(10)),
+            ("08", None, Some(8)),
+            ("0x1F", Some(31), None),
+            ("0X1f", Some(31), None),
+            ("0x", None, None),
+            ("0xg", None, None),
+            ("0b101", Some(5), None),
+            ("0b2", None, None),
+            ("-1", Some(4294967295), Some(4294967295)),
+            (" -1 ", Some(4294967295), Some(4294967295)),
+            ("+5", Some(5), Some(5)),
+            ("+", None, None),
+            ("-", None, None),
+            ("", None, None),
+            ("  ", None, None),
+            ("5 ", Some(5), Some(5)),
+            (" 5", Some(5), Some(5)),
+            ("5x", None, None),
+            ("1e3", None, None),
+            ("4294967295", Some(4294967295), Some(4294967295)),
+            ("4294967296", None, None),
+            ("18446744073709551615", Some(4294967295), Some(4294967295)),
+            ("18446744073709551616", None, None),
+            ("18446744073709551614", Some(4294967294), Some(4294967294)),
+            ("18446744071562067968", Some(2147483648), Some(2147483648)),
+            ("18446744071562067967", None, None),
+            ("-2147483648", Some(2147483648), Some(2147483648)),
+            ("-2147483649", None, None),
+            ("-4294967295", None, None),
+            ("-0", Some(0), Some(0)),
+            ("0777", Some(511), Some(777)),
+            ("0x100000000", None, None),
+            ("0xFFFFFFFF", Some(4294967295), None),
+            ("-0x80000000", Some(2147483648), None),
+            ("-0x80000001", None, None),
+            ("\t7\n", Some(7), Some(7)),
+            ("\u{b}7", Some(7), Some(7)),
+            ("5\u{c}", Some(5), Some(5)),
+            ("00", Some(0), Some(0)),
+            ("+0x10", Some(16), None),
+            ("0x 1", None, None),
+            ("\u{663}", None, None),
+        ];
+        for &(text, v16, v15) in cases {
+            assert_eq!(oid_in(text.as_bytes(), true, true), v16, "{text:?} from v16");
+            assert_eq!(oid_in(text.as_bytes(), false, false), v15, "{text:?} before v16");
+            let refused = v16.is_none() && v15.is_none();
+            assert_eq!(oid_unread(text) == Unread::Refused, refused, "{text:?}");
+        }
+        // Before C23, glibc reads no `0b`.
+        assert_eq!(oid_in(b"0b101", true, false), None);
+    }
+
+    /// **`network_in` is read as the server reads it** (I67): each spelling
+    /// below was cast on PostgreSQL 16, beside the value it answered, whose
+    /// address and netmask the port must give.
+    #[test]
+    fn an_inet_or_cidr_is_read_as_network_in_reads_it() {
+        let inet: &[(&str, Option<&str>)] = &[
+            ("10.0.0.1", Some("10.0.0.1/32")),
+            ("10", None),
+            ("10.1", None),
+            ("10.1.2", None),
+            ("10.1.2/24", Some("10.1.2.0/24")),
+            ("10.1.2.3/24", Some("10.1.2.3/24")),
+            ("010.1.2.3", Some("10.1.2.3/32")),
+            ("1.2.3.4.", Some("1.2.3.4/32")),
+            ("1.2.3.4.5", None),
+            ("1.2.3.4/", None),
+            ("1.2.3.4/33", None),
+            ("1.2.3.4/032", Some("1.2.3.4/32")),
+            ("1.2.3.4/4294967304", Some("1.2.3.4/8")),
+            ("1.2.3.4/4294967328", Some("1.2.3.4/32")),
+            ("1..2.3", None),
+            ("256.1.1.1", None),
+            ("1.2.3.4 ", None),
+            (" 1.2.3.4", None),
+            ("::1", Some("::1/128")),
+            ("::1/08", None),
+            ("::1/128", Some("::1/128")),
+            ("::1/129", None),
+            ("::1/0", Some("::1/0")),
+            ("::1/00", None),
+            ("::", Some("::/128")),
+            ("1::", Some("1::/128")),
+            ("1:2:3:4:5:6:7:8", Some("1:2:3:4:5:6:7:8/128")),
+            ("1:2:3:4:5:6:7::", Some("1:2:3:4:5:6:7:0/128")),
+            ("::1:2:3:4:5:6:7", Some("0:1:2:3:4:5:6:7/128")),
+            ("1:2:3:4:5:6:7:8:9", None),
+            ("12345::", None),
+            ("::ffff:1.2.3.4", Some("::ffff:1.2.3.4/128")),
+            ("::1.2.3", Some("::1.2.3.0/128")),
+            ("::1..2.3", Some("::1.0.2.3/128")),
+            ("::01.2.3.4", None),
+            ("::1.2.3.4/96", Some("::1.2.3.4/96")),
+            ("::1.2.3.4/096", None),
+            (":1::", None),
+            ("1:::2", None),
+            ("1::2::3", None),
+            ("1:", None),
+            ("fe80::1%eth0", None),
+            ("::g", None),
+            ("0x0a", None),
+            ("10/8", Some("10.0.0.0/8")),
+            ("10.0.0.0/8", Some("10.0.0.0/8")),
+            ("10.0.0.1/8", Some("10.0.0.1/8")),
+            ("1.2.3.4/-1", None),
+            ("::1.2.3.4.5", None),
+            ("1:2:3:4:5:6:1.2.3.4", Some("1:2:3:4:5:6:102:304/128")),
+            ("1:2:3:4:5:6:7:1.2.3.4", None),
+            ("1.2.3.4/8x", None),
+            ("", None),
+            ("::/0", Some("::/0")),
+            ("::1/1281", None),
+            ("::ABCD", Some("::abcd/128")),
+        ];
+        let cidr: &[(&str, Option<&str>)] = &[
+            ("10", Some("10.0.0.0/8")),
+            ("10.1", Some("10.1.0.0/16")),
+            ("10.1.2", Some("10.1.2.0/24")),
+            ("128", Some("128.0.0.0/16")),
+            ("192", Some("192.0.0.0/24")),
+            ("224", Some("224.0.0.0/4")),
+            ("224.1", Some("224.1.0.0/16")),
+            ("240", Some("240.0.0.0/32")),
+            ("0x0a", Some("10.0.0.0/8")),
+            ("0x0A0B", Some("10.11.0.0/16")),
+            ("0x0a0b0c0d0e", None),
+            ("0xa", Some("160.0.0.0/16")),
+            ("10.0.0.0/8", Some("10.0.0.0/8")),
+            ("10.0.0.1/8", None),
+            ("10.0.0.0/7", Some("10.0.0.0/7")),
+            ("10.1.2.0/24", Some("10.1.2.0/24")),
+            ("10/8", Some("10.0.0.0/8")),
+            ("1.2.3.4/32", Some("1.2.3.4/32")),
+            ("1.2.3.4/33", None),
+            ("::/0", Some("::/0")),
+            ("::1/127", None),
+            ("::/1", Some("::/1")),
+            ("8000::/1", Some("8000::/1")),
+            ("010", Some("10.0.0.0/8")),
+            ("10.", None),
+            ("1.2.3.4.5", None),
+            ("1.2.3.4/4294967304", None),
+            ("0x0a/8", Some("10.0.0.0/8")),
+            ("0x", None),
+            ("0xg", None),
+            ("0.0.0.0/0", Some("0.0.0.0/0")),
+            ("1.2.3.4/032", Some("1.2.3.4/32")),
+            ("::1/08", None),
+        ];
+        for (cases, is_cidr) in [(inet, false), (cidr, true)] {
+            for (text, server) in cases {
+                let server = server.map(|value| {
+                    let (address, bits) = value.split_once('/').unwrap();
+                    let mut addr = [0u8; 16];
+                    let v6 = match address.parse::<std::net::IpAddr>().unwrap() {
+                        std::net::IpAddr::V4(v4) => {
+                            addr[..4].copy_from_slice(&v4.octets());
+                            false
+                        }
+                        std::net::IpAddr::V6(v6) => {
+                            addr = v6.octets();
+                            true
+                        }
+                    };
+                    (v6, bits.parse::<u8>().unwrap(), addr)
+                });
+                assert_eq!(network_in(text, is_cidr), server, "{text:?} as cidr: {is_cidr}");
+            }
+        }
+    }
+
+    /// **`macaddr_in` is refused where its `sscanf` layouts all refuse, and
+    /// `macaddr8_in` read as the server reads it** (I68): each spelling below
+    /// was cast on PostgreSQL 16, beside what it answered. A `macaddr` the
+    /// server reads is never refused, the ones the model leaves to glibc
+    /// among them — a sign, a `0x`, a run past eight digits — and nor is one
+    /// it refuses there.
+    #[test]
+    fn a_macaddr_is_refused_only_where_macaddr_in_refuses_it() {
+        let macaddr: &[(&str, Option<&str>)] = &[
+            ("08:00:2b:01:02:03", Some("08:00:2b:01:02:03")),
+            ("08-00-2b-01-02-03", Some("08:00:2b:01:02:03")),
+            ("08002b:010203", Some("08:00:2b:01:02:03")),
+            ("08002b-010203", Some("08:00:2b:01:02:03")),
+            ("0800.2b01.0203", Some("08:00:2b:01:02:03")),
+            ("0800-2b01-0203", Some("08:00:2b:01:02:03")),
+            ("08002b010203", Some("08:00:2b:01:02:03")),
+            ("08:00:2b:01:02:3", Some("08:00:2b:01:02:03")),
+            ("8:0:2b:1:2:3", Some("08:00:2b:01:02:03")),
+            (" 08:00:2b:01:02:03 ", Some("08:00:2b:01:02:03")),
+            ("08:00:2b:01:02:03x", None),
+            ("08:00:2b:01:02", None),
+            ("08:00:2b:01:02:03:04", None),
+            ("08:00:2b:01:02:100", None),
+            ("08:00:2b:01:02:0100", None),
+            ("08:00:2b:01:02:ffffffff", None),
+            ("08:00:2b:01:02:100000000ff", Some("08:00:2b:01:02:ff")),
+            ("08:00:2b:01:02:-1", None),
+            ("08:00:2b:01:02:+3", Some("08:00:2b:01:02:03")),
+            ("08:00:2b:01:02:-0", Some("08:00:2b:01:02:00")),
+            ("08:00:2b:01:02:0x3", Some("08:00:2b:01:02:03")),
+            ("08:00:2b:01:02: 3", Some("08:00:2b:01:02:03")),
+            ("08 :00:2b:01:02:03", None),
+            ("zz:00:2b:01:02:03", None),
+            ("08:00:2B:01:02:03", Some("08:00:2b:01:02:03")),
+            ("08002b01020", Some("08:00:2b:01:02:00")),
+            ("08002b0102030", None),
+            ("08002b01020304", None),
+            ("0x0800.2b01.0203", None),
+            ("08:00:2b:01:02:03 x", None),
+            ("", None),
+            ("08:00-2b:01:02:03", None),
+            ("0800.2b01.020", Some("08:00:2b:01:02:00")),
+            ("08002b:01020", Some("08:00:2b:01:02:00")),
+        ];
+        // Refused by the server, through a conversion the model leaves to glibc.
+        let unmodelled = ["08:00:2b:01:02:-1", "0x0800.2b01.0203"];
+        for (text, server) in macaddr {
+            let want = if server.is_some() || unmodelled.contains(text) {
+                Unread::Unparsed
+            } else {
+                Unread::Refused
+            };
+            assert_eq!(macaddr_unread(text), want, "{text:?}");
+        }
+        let macaddr8: &[(&str, Option<&str>)] = &[
+            ("08:00:2b:01:02:03:04:05", Some("08:00:2b:01:02:03:04:05")),
+            ("08:00:2b:01:02:03", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08-00-2b-01-02-03-04-05", Some("08:00:2b:01:02:03:04:05")),
+            ("08002b0102030405", Some("08:00:2b:01:02:03:04:05")),
+            ("08002b010203", Some("08:00:2b:ff:fe:01:02:03")),
+            ("0800.2b01.0203.0405", Some("08:00:2b:01:02:03:04:05")),
+            ("08:00:2b:01:02:03:04", None),
+            ("08:00:2b:01:02:03:04:05:06", None),
+            ("08002b0102031", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08002b010203040", None),
+            ("08002b01020304051", Some("08:00:2b:01:02:03:04:05")),
+            (" 08:00:2b:01:02:03 ", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08:00:2b:01:02:03  ", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08:00:2b:01:02:03 x", None),
+            ("08:00:2b:01:02:03:", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08:00:2b:01:02:03:04:05:", Some("08:00:2b:01:02:03:04:05")),
+            ("08:00-2b:01:02:03", None),
+            ("08::00:2b:01:02:03", None),
+            ("8:00:2b:01:02:03", None),
+            ("08:00:2b:01:02:03:04:05 ", Some("08:00:2b:01:02:03:04:05")),
+            ("zz:00:2b:01:02:03", None),
+            ("", None),
+            ("08:00:2b:01:02:03\t", Some("08:00:2b:ff:fe:01:02:03")),
+            ("08:00:2b:01:02:03:04 05", None),
+            ("08:00:2b:01:02 03", None),
+        ];
+        for (text, server) in macaddr8 {
+            let server = server.map(|value| {
+                let mut bytes = [0u8; 8];
+                for (byte, pair) in bytes.iter_mut().zip(value.split(':')) {
+                    *byte = u8::from_str_radix(pair, 16).unwrap();
+                }
+                bytes
+            });
+            assert_eq!(macaddr8_in(text), server, "{text:?}");
+        }
+    }
+
+    /// **`byteain` is refused where the server refuses it, and what this
+    /// build reads is what the server reads** (I69): each spelling below was
+    /// cast on PostgreSQL 16, beside the value it answered.
+    #[test]
+    fn a_bytea_is_refused_only_where_byteain_refuses_it() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("\\x", Some("\\x")),
+            ("\\x00", Some("\\x00")),
+            ("\\xAB", Some("\\xab")),
+            ("\\x a b", None),
+            ("\\x0", None),
+            ("\\xab c", None),
+            ("\\x ab \n\tcd\r", Some("\\xabcd")),
+            ("\\xgg", None),
+            ("\\x\u{e9}", None),
+            ("\\X41", None),
+            ("abc", Some("\\x616263")),
+            ("a\\\\b", Some("\\x615c62")),
+            ("\\000", Some("\\x00")),
+            ("\\377", Some("\\xff")),
+            ("\\400", None),
+            ("\\08", None),
+            ("\\1", None),
+            ("\\x", Some("\\x")),
+            ("\\", None),
+            ("a\\", None),
+            ("\\101", Some("\\x41")),
+            ("\u{e9}", Some("\\xc3a9")),
+            ("tab\there", Some("\\x7461620968657265")),
+            ("\\\\x41", Some("\\x5c783431")),
+            ("\\xab\u{b}", None),
+            ("\\x ab\u{c}", None),
+        ];
+        for (text, server) in cases {
+            match server {
+                None => {
+                    assert_eq!(decode_bytea(text), None, "{text:?}");
+                    assert_eq!(bytea_unread(text), Unread::Refused, "{text:?}");
+                }
+                Some(value) => {
+                    let want = decode_bytea(value).unwrap();
+                    match decode_bytea(text) {
+                        Some(read) => assert_eq!(read, want, "{text:?}"),
+                        None => assert_eq!(bytea_unread(text), Unread::Unparsed, "{text:?}"),
+                    }
+                }
+            }
         }
     }
 }

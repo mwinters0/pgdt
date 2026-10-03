@@ -6,7 +6,7 @@ What the slices after this one inherit. The spec is
 [`roadmap.md`](roadmap.md), "A literal is guaranteed in `*_out`'s form and
 never read past `*_in`'s"; the entry it closes was `KD75`. The row was split
 ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "31.12
-lands split"): the kinds with no marked refusal are 31.12.1's, `KD83`.
+lands split"): the kinds with no marked refusal are 31.12.1's, the enum's 31.12.3's (`KD83`).
 
 ## What exists
 
@@ -32,8 +32,8 @@ lands split"): the kinds with no marked refusal are 31.12.1's, `KD83`.
   splice and the save; `reread_block` does the same, so a back-fill and
   `gather_block_statistics` fail alike.
 - **Not checked at parse**: a column at the metadata level, a nested leaf, a
-  value past `DICTIONARY_ENTRY_MAX_BYTES`, a declined block's rows, a bytewise
-  kind (`text`, `bytea`), and a kind with no marked check (`KD83`). A query
+  value past `DICTIONARY_ENTRY_MAX_BYTES`, a declined block's rows, and an
+  enum's undeclared label (`KD83`); a `bytea` is, since 31.12.1. A query
   decoding one fails with `FieldDecode`, as it did. A query mapping for itself
   gathers nothing (`Pass::Query`), so it fails at its typed read the same way.
 - **A text-held `numeric(p,s)` (past 76 digits) fails the parse past its
@@ -80,8 +80,9 @@ lands split"): the kinds with no marked refusal are 31.12.1's, `KD83`.
 
 ## What the slices after this inherit
 
-- **31.12.1** gives `KD83`'s kinds their `*_in` grammar's refusals, each
-  marked against an invariant, through `field_key`'s `Unparsed` arms.
+- **31.12.1** gave the other kinds their `*_in` grammar's refusals, each
+  marked against an invariant, through `field_key`'s `Unparsed` arms; the
+  enum's is 31.12.3's.
 - **31.12.2** names the line as `COPY`'s error context numbers it, beside the
   offset, from a row count `Gatherer::absorb` folds.
 - **31.13's `ignore`**: the 2026-10-02 entry has a field spelled as I57's

@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD83 -->
-**`KD1`–`KD82` are allocated, and nothing at or below `KD82` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD85 -->
+**`KD1`–`KD85` are allocated, and nothing at or below `KD85` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -351,8 +351,19 @@ than reading as a phase nobody has sliced.
   unowned**; promoted by a user meeting it. Detail:
   `pgdump_query/src/predicate.rs`.
 
-- **KD83** — a field of a kind with no `pg-refuses` check — `boolean`, an
-  enum, `oid`, `inet`, `macaddr`, `bytea` — that its `*_in` refuses is read
-  as text this build does not read, so a parse keying it goes on past it, the
-  column losing its group's bounds where a restore fails the table.
-  **(b) owned by P31**, slice 31.12.1. Detail: `pgdump_query/src/decode.rs`.
+- **KD83** — an enum field naming a label its type does not declare, which
+  `enum_in` refuses, is read as text this build does not read, so a parse
+  keying it goes on past it, the column losing its group's bounds where a
+  restore fails the table. **(b) owned by P31**, slice 31.12.3. Detail:
+  `pgdump_query/src/decode.rs`.
+
+- **KD84** — an `oid` written with a leading zero, which no `pg_dump` writes,
+  is read in decimal as v15 and earlier read it, where v16 and later read it
+  in octal, `010` as 8, and refuse `08`. **(c) unowned**; promoted by a
+  hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD85** — a `macaddr` field whose octet opens with a sign or `0x`, which
+  `macaddr_in`'s `sscanf` reads by glibc's rules, is never refused, though
+  the server refuses some (`08:00:2b:01:02:-1`), so a parse keying it goes on
+  past one. **(c) unowned**; promoted by a hand-written dump holding one.
+  Detail: `pgdump_query/src/decode.rs`.
