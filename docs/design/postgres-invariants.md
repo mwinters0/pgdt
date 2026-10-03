@@ -2493,7 +2493,7 @@ dump can hold, and the order PostgreSQL puts two such values in.
   seconds are exactly two. Unbounded above is literal: nothing normalizes
   hours into days, so the tail of `interval '100000000 hours'` is written
   `100000000:00:00`, and the field's true ceiling is the `Interval` struct's
-  own — `time` is `int64` *microseconds*, giving `2562047:47:16.854775807`. The order is `interval_cmp_value`: months collapse
+  own — `time` is `int64` *microseconds* (I62). The order is `interval_cmp_value`: months collapse
   to 30 days, days to 86400 seconds, and the result is a **128-bit**
   microsecond span. So `1 mon`, `30 days` and `720:00:00` are one value, and
   the collapse is what a text comparison cannot approximate.
@@ -4223,3 +4223,53 @@ The first prints the day check, the three zone checks and the two
 `time_overflows` calls; the second its hour, minute and second bounds; the
 third the four limits, `15`, `2147483494`, `-211813488000000000` and
 `9223371331200000000`.
+
+---
+
+## I62 — `interval_in` refuses a minute or second past its bound, a count past `int32`, a time past `int64` microseconds and a unit given twice
+
+**Claim.** `interval_in` refuses, `22007`, `22008` or `22015`: a time part whose
+minute passes 59 or second 60; a year, month or day count outside `int32`,
+and years times twelve plus months outside it; a time part whose magnitude
+passes `int64` microseconds, `2562047788:00:54.775807`; and a unit written
+twice, `1 day 1 day` or `1 mon 1 mons`. `00:59:60` is read as `01:00:00`.
+The units may come in any order.
+
+**Proof.** `src/backend/utils/adt/datetime.c`: `DecodeTime` (`DecodeTimeCommon`
+from v16) refuses the minute and second; `DecodeInterval` refuses a unit whose
+`tmask` its `fmask` already holds, and from v15 `AdjustYears`, `AdjustMonths`
+and `AdjustDays` refuse a count past `int32` and `DecodeTimeForInterval` a
+time past `int64` by `int64_multiply_add`. `itmin2interval`
+(`tm2interval` before v15, `src/backend/utils/adt/timestamp.c`) refuses the
+month total past `INT_MAX` or below `INT_MIN`. Before v15 each count and the
+hour are read by `strtoint`, so an hour past `INT_MAX` is refused too, which
+is under the `int64` bound: the newest bound is the union's (I35).
+
+**Observed.** The koji replica (PG16) refuses `00:90:00`, `00:59:61`,
+`2147483648 days`, `-2147483649 days`, `2147483648 mons`,
+`178956970 years 8 mons`, `-178956970 years -9 mons`,
+`2562047788:00:54.775808`, `-2562047788:00:54.775808`, `1 day 1 day`,
+`1 mon 1 mons` and `1 year 1 mon 1 day 1 year`; it reads `00:59:60`,
+`-2147483648 days`, `178956970 years 7 mons`, `178956971 years -12 mons`,
+`±2562047788:00:54.775807` and `1 day 1 year`.
+
+**Scope limit.** The bounds of `interval_out`'s form under `IntervalStyle =
+postgres` (I4, I40). The other spellings `interval_in` reads — a named unit, a
+fraction of a unit, ISO 8601, a time before a count — are spellings, not
+bounds.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::interval_parts` and `decode::interval_time_micros`,
+which refuse a field and a filter literal so spelled.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'tm_min > MINS_PER_HOUR - 1\|AdjustDays(val, 1\|int64_multiply_add(itm.tm_hour' src/backend/utils/adt/datetime.c
+grep -n 'total_months > INT_MAX' src/backend/utils/adt/timestamp.c
+```
+
+The first prints the minute check, and from v15 the day and time overflow
+checks; the second the month total's.

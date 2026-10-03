@@ -350,11 +350,6 @@ than reading as a phase nobody has sliced.
   no parse refuses a field on PostgreSQL's terms.
   **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD78** — an interval literal's months and days are not narrowed to `i32`,
-  nor a literal's or field's minute and second bounded, so `00:90:00` reads as
-  01:30:00.
-  **(b) owned by `M207`**. Detail: `pgdump_query/src/decode.rs`.
-
 - **KD79** — a `numeric`, `numeric(p,s)` or `jsonb` number, literal or field,
   is not capped at `numeric_in`'s display scale or weight, so `1.` and 16384
   zeros matches 1. **(b) owned by `M208`**. Detail:

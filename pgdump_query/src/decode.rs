@@ -699,12 +699,12 @@ fn interval_count(text: &str) -> Option<i64> {
 /// three fields are then printed as absolute values — so the sign is applied
 /// to the total rather than per field (I40).
 ///
-/// The hour field is unbounded, so this is not [`decode_time64_micros`]:
-/// `720:00:00` is an ordinary `interval` and not a `time`. Every field is
-/// checked to be digits, which is what keeps `04:-5:06` — a string no
-/// `interval_out` writes and no `interval_in` accepts — from parsing as a
-/// negative minute count.
-fn interval_time_micros(text: &str) -> Option<i128> {
+/// The hour field is bounded only by the total, so this is not
+/// [`decode_time64_micros`]: `720:00:00` is an ordinary `interval` and not a
+/// `time`. Every field is checked to be digits, which is what keeps
+/// `04:-5:06` — a string no `interval_out` writes and no `interval_in`
+/// accepts — from parsing as a negative minute count.
+fn interval_time_micros(text: &str) -> Option<i64> {
     let (negative, rest) = match text.strip_prefix(['+', '-']) {
         Some(rest) => (text.starts_with('-'), rest),
         None => (false, text),
@@ -727,6 +727,10 @@ fn interval_time_micros(text: &str) -> Option<i128> {
     if parts.next().is_some() {
         return None;
     }
+    // pg-refuses: I62 — `DecodeTimeCommon`'s minute past 59 and second past 60.
+    if minutes > 59 || seconds > 60 {
+        return None;
+    }
     if frac.is_empty() && text.contains('.') {
         return None;
     }
@@ -745,43 +749,41 @@ fn interval_time_micros(text: &str) -> Option<i128> {
         .checked_add(minutes * 60 + seconds)?
         .checked_mul(1_000_000)?
         .checked_add(micros)?;
+    // pg-refuses: I62 — the `Interval` struct's `int64` microseconds, either
+    // sign: the text carries the magnitude, so `i64::MIN` is no value of it.
+    let total = i64::try_from(total).ok()?;
     Some(if negative { -total } else { total })
 }
 
-/// The three parts of an `interval`'s text, in PostgreSQL's own units and
-/// before any narrowing: whole months (a `year` part folded in at twelve
-/// each), whole days, and the time tail in **microseconds**. The last is 128
-/// bits because the *comparison* built on this fuses all three into a 128-bit
-/// span (`interval_cmp_value`, I40), where the *decode* narrows to Arrow's
-/// three fields — one walk, two consumers, and the fusing belongs to neither.
+/// The three parts of an `interval`'s text as PostgreSQL's `Interval` struct
+/// holds them: whole months (a `year` part folded in at twelve each), whole
+/// days, and the time tail in **microseconds**. The *comparison* built on
+/// this fuses all three into a 128-bit span (`interval_cmp_value`, I40),
+/// where the *decode* widens the time to Arrow's nanoseconds — one walk, two
+/// consumers, and neither step belongs to it.
 ///
 /// **The grammar covers `interval_out`'s under `IntervalStyle = postgres`**,
 /// which `pg_dump` pins on its own connection (I4): an optional
 /// `<n> year[s]`, `<n> mon[s]` and `<n> day[s]`, then an optional signed time
 /// part, separated by single spaces, with a wholly-zero interval written
 /// `00:00:00`. It is a little wider than that grammar — the counted parts are
-/// taken in any order, repeated, either number of their unit, a `+` on any
-/// of them, and the hours at any width — but no other unit: `1 hour`,
-/// `1.5 hours`, `P1Y2M` and `1 month` are all spellings `interval_in` takes
-/// and `interval_out` never writes, and are refused. `infinity`/`-infinity` (v17's, I34) are not in the grammar
-/// either, so they fail here and each consumer says what it does about them.
-///
-/// Deficiency register: `deficiency: KD78` — months and days are `i64` here,
-/// narrowed to `i32` on the field path only, and the minute and second fields
-/// are checked for two digits but not bounded, so `00:90:00` reads as
-/// 01:30:00 where `interval_in` refuses it and `3000000000 days` orders where
-/// it overflows.
-pub(crate) fn interval_parts(text: &str) -> Option<(i64, i64, i128)> {
+/// taken in any order, either number of their unit, a `+` on any of them,
+/// and the hours at any width — but no other unit: `1 hour`, `1.5 hours`,
+/// `P1Y2M` and `1 month` are all spellings `interval_in` takes and
+/// `interval_out` never writes, and are refused. `infinity`/`-infinity`
+/// (v17's, I34) are not in the grammar either, so they fail here and each
+/// consumer says what it does about them.
+pub(crate) fn interval_parts(text: &str) -> Option<(i32, i32, i64)> {
     let tokens: Vec<&str> = text.split(' ').collect();
-    let (mut months, mut days) = (0i64, 0i64);
-    let mut time = 0i128;
+    // Years, months and days, each counted at most once.
+    let mut counts: [Option<i32>; 3] = [None; 3];
+    let mut time = 0i64;
     let mut at = 0;
     while at < tokens.len() {
-        let count = || interval_count(tokens[at]);
-        match tokens.get(at + 1).copied() {
-            Some("year" | "years") => months = months.checked_add(count()?.checked_mul(12)?)?,
-            Some("mon" | "mons") => months = months.checked_add(count()?)?,
-            Some("day" | "days") => days = days.checked_add(count()?)?,
+        let unit = match tokens.get(at + 1).copied() {
+            Some("year" | "years") => 0,
+            Some("mon" | "mons") => 1,
+            Some("day" | "days") => 2,
             // Not a counted part, so this token is the time tail — which is
             // last, and of which there is at most one.
             _ => {
@@ -792,13 +794,21 @@ pub(crate) fn interval_parts(text: &str) -> Option<(i64, i64, i128)> {
                 at += 1;
                 break;
             }
+        };
+        // pg-refuses: I62 — a unit given twice, and a count past `int32`.
+        if counts[unit].is_some() {
+            return None;
         }
+        counts[unit] = Some(i32::try_from(interval_count(tokens[at])?).ok()?);
         at += 2;
     }
     if at != tokens.len() {
         return None;
     }
-    Some((months, days, time))
+    let [years, months, days] = counts.map(|count| i64::from(count.unwrap_or(0)));
+    // pg-refuses: I62 — `itmin2interval`'s month total past `int32`.
+    let months = i32::try_from(years * 12 + months).ok()?;
+    Some((months, i32::try_from(days).ok()?, time))
 }
 
 /// `interval`, as Arrow's `Interval(MonthDayNano)` holds it: months, days and
@@ -811,12 +821,10 @@ pub(crate) fn interval_parts(text: &str) -> Option<(i64, i64, i128)> {
 /// - a time part past `2562047:47:16.854775807` — PostgreSQL's field is
 ///   `int64` *microseconds* against Arrow's `int64` nanoseconds, a
 ///   thousandth of the range, and nothing normalizes hours into days (I40);
-/// - a month or day count outside `i32`, which no `Interval` struct can hold
-///   and so no dump can contain.
+/// - a value `interval_in` refuses, which [`interval_parts`] refuses (I62).
 pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
     let (months, days, micros) = interval_parts(s)?;
-    let nanos = i64::try_from(micros.checked_mul(1_000)?).ok()?;
-    Some((i32::try_from(months).ok()?, i32::try_from(days).ok()?, nanos))
+    Some((months, days, micros.checked_mul(1_000)?))
 }
 
 /// `EncodeInterval` under `INTSTYLE_POSTGRES`, the exact inverse of
@@ -1516,6 +1524,46 @@ mod tests {
         assert_eq!(decode_interval("2147483648 days"), None);
         assert_eq!(decode_interval("2147483648 mons"), None);
         assert_eq!(decode_interval("2147483647 days"), Some((0, 2_147_483_647, 0)));
+    }
+
+    /// **What `interval_in` refuses is refused, and its edges read** (I62):
+    /// a minute past 59 or a second past 60, a count or month total past
+    /// `int32`, a time past `int64` microseconds, and a unit given twice.
+    /// Each was cast on PostgreSQL 16; `00:90:00` once read as `01:30:00`.
+    #[test]
+    fn an_interval_interval_in_refuses_is_refused() {
+        for text in [
+            "00:90:00",
+            "00:59:61",
+            "-00:60:00",
+            "2147483648 days",
+            "-2147483649 days",
+            "2147483648 mons",
+            "178956970 years 8 mons",
+            "-178956970 years -9 mons",
+            "2562047788:00:54.775808",
+            "-2562047788:00:54.775808",
+            "1 day 1 day",
+            "1 mon 1 mons",
+            "1 year 1 mon 1 day 1 year",
+        ] {
+            assert_eq!(interval_parts(text), None, "{text}");
+        }
+        let micros_max = i64::MAX;
+        for (text, parts) in [
+            ("00:59:60", (0, 0, 3_600_000_000)),
+            ("-00:59:60", (0, 0, -3_600_000_000)),
+            ("2147483647 days", (0, i32::MAX, 0)),
+            ("-2147483648 days", (0, i32::MIN, 0)),
+            ("178956970 years 7 mons", (i32::MAX, 0, 0)),
+            ("-178956970 years -8 mons", (i32::MIN, 0, 0)),
+            ("178956971 years -12 mons", (2_147_483_640, 0, 0)),
+            ("2562047788:00:54.775807", (0, 0, micros_max)),
+            ("-2562047788:00:54.775807", (0, 0, -micros_max)),
+            ("1 day 1 year", (12, 1, 0)),
+        ] {
+            assert_eq!(interval_parts(text), Some(parts), "{text}");
+        }
     }
 
     /// The literal grammar is `interval_out`'s and no wider — the same

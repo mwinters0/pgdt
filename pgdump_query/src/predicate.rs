@@ -1131,7 +1131,7 @@ enum OrderKey {
     /// An `interval`'s three fields as `Interval(MonthDayNano)` holds them —
     /// months, days, microseconds — compared one after another, as Arrow
     /// compares that type.
-    IntervalFields(i64, i64, i128),
+    IntervalFields(i32, i32, i64),
     /// A `time with time zone`: the UTC-equivalent instant, then the stored
     /// zone as PostgreSQL stores it — seconds *west* of GMT, the negation of
     /// the sign the value displays.
@@ -1231,14 +1231,13 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 ///
 /// The walk over the text is [`decode::interval_parts`], shared with the
 /// decoder, so a field the decoder refuses includes every literal this
-/// refuses — and a month or day count outside `i32`, or a time part past what
-/// Arrow's nanoseconds hold, besides. The fusing is this function's alone: a
-/// decoder that did it would
-/// lose the fields Arrow carries separately.
+/// refuses — and a time part past what Arrow's nanoseconds hold, besides. The
+/// fusing is this function's alone: a decoder that did it would lose the
+/// fields Arrow carries separately.
 fn interval_span(text: &str) -> Option<i128> {
     let (months, days, time) = decode::interval_parts(text)?;
-    let whole_days = i128::from(months.checked_mul(30)?.checked_add(days)?);
-    whole_days.checked_mul(86_400_000_000)?.checked_add(time)
+    let whole_days = i128::from(months) * 30 + i128::from(days);
+    Some(whole_days * 86_400_000_000 + i128::from(time))
 }
 
 /// A `time with time zone`, split into the UTC-equivalent instant and the
@@ -2323,10 +2322,11 @@ fn accepted_form(kind: &CompareKind) -> String {
                 .into()
         }
         // `interval_out` under `IntervalStyle = postgres` (I4), which is the
-        // only style a `pg_dump` connection writes.
+        // only style a `pg_dump` connection writes; the bounds are I62's.
         K::Interval | K::IntervalFields => {
             "the way `interval` prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for \
-             zero — or `infinity`/`-infinity`"
+             zero — each unit once, its minutes under `60` and seconds at most `60`, or \
+             `infinity`/`-infinity`"
                 .into()
         }
         K::Network { cidr: false } => {
@@ -5322,6 +5322,43 @@ mod tests {
         }
     }
 
+    /// **An interval literal or field `interval_in` refuses is refused**
+    /// (I62) — a minute past 59, a count past `int32`, a time past `int64`
+    /// microseconds, a unit given twice — under `=` and an ordering operator,
+    /// and inside an array, and a field so spelled raises `FieldDecode` where
+    /// it is read: `00:90:00` once read as `01:30:00`, and `3000000000 days`
+    /// was ordered. Each was cast on PostgreSQL 16.
+    #[test]
+    fn an_interval_postgresql_refuses_is_refused_as_literal_and_field() {
+        let interval = || DataType::Interval(IntervalUnit::MonthDayNano);
+        for (refused, field) in [
+            ("00:90:00", "01:30:00"),
+            ("3000000000 days", "1 day"),
+            ("178956970 years 8 mons", "1 mon"),
+            ("2562047788:00:54.775808", "01:00:00"),
+            ("1 day 1 day", "2 days"),
+        ] {
+            for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                let p = order_predicate(op, refused);
+                let err = resolve_term(&p, 0, &one_column("interval", interval()), 0).unwrap_err();
+                assert!(
+                    matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
+                    "{op:?} {refused}: {err:?}"
+                );
+            }
+            let got = ordered("interval", interval(), PredicateOp::Ge, field, refused);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{refused}: {got:?}");
+        }
+        let verdict = nested_verdict(
+            "interval[]",
+            &test_types(),
+            PredicateOp::Eq,
+            "{01:30:00}",
+            "{00:90:00}",
+        );
+        assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
+    }
+
     /// A NULL field is excluded by every ordering operator, as under
     /// `Eq`/`Ne`.
     #[test]
@@ -7721,7 +7758,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (42, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (43, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

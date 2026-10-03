@@ -479,8 +479,7 @@ fn interval(text: &str) -> Option<UnrepresentableTier> {
         return None;
     }
     let (_, _, micros) = interval_parts(text)?;
-    let nanos = micros.checked_mul(1_000)?;
-    i64::try_from(nanos).is_err().then_some(Format)
+    micros.checked_mul(1_000).is_none().then_some(Format)
 }
 
 impl FieldCount for Counter {
