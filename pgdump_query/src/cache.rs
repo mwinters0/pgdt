@@ -76,7 +76,7 @@ use crate::{Error, Result};
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 53;
+pub const CACHE_FORMAT_VERSION: u32 = 54;
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read

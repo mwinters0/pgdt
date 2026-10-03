@@ -2190,6 +2190,39 @@ fn json_number(b: &[u8], at: &mut usize) -> bool {
     true
 }
 
+/// `VARBITMAXLEN`, the most bits a `bit` or `bit varying` value holds, which
+/// bounds a hex spelling's digits at a quarter of it (I73).
+const VARBIT_MAX_BITS: usize = i32::MAX as usize - 7;
+
+/// Whether `bit_in`, or `varbit_in` where `varying`, reads `text` as a field
+/// of a column whose typmod is `length`: binary digits, or after a leading `x`
+/// or `X` hex digits of four bits each, a leading `b` or `B` optional before
+/// binary ones; then exactly `length` bits for `bit(n)` and at most `length`
+/// for `bit varying(n)`, any number for a column with no typmod. Nothing is
+/// trimmed (I73).
+// pg-refuses: I73 — every refusal here is `bit_in`'s or `varbit_in`'s.
+pub(crate) fn bit_in(text: &str, varying: bool, length: Option<u32>) -> bool {
+    let (hex, digits) = match text.as_bytes() {
+        [b'x' | b'X', rest @ ..] => (true, rest),
+        [b'b' | b'B', rest @ ..] => (false, rest),
+        all => (false, all),
+    };
+    if hex && digits.len() > VARBIT_MAX_BITS / 4 {
+        return false;
+    }
+    let bits = if hex { digits.len() * 4 } else { digits.len() };
+    let fits = match length.map(|n| n as usize) {
+        None => true,
+        Some(n) if varying => bits <= n,
+        Some(n) => bits == n,
+    };
+    fits && if hex {
+        digits.iter().all(u8::is_ascii_hexdigit)
+    } else {
+        digits.iter().all(|&d| matches!(d, b'0' | b'1'))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::i256;
@@ -3344,6 +3377,64 @@ mod tests {
         ];
         for (text, server) in cases {
             assert_eq!(json_in(text), *server, "{text:?}");
+        }
+    }
+
+    /// **A bit string is refused exactly where `bit_in` or `varbit_in`
+    /// refuses it** (I73): every case below was put to `pg_input_is_valid`
+    /// under the type beside it on a PostgreSQL 16 server, `bit` being
+    /// `bit(1)` and `"bit"` the type with no length.
+    #[test]
+    fn a_bit_string_is_refused_only_where_bit_in_refuses_it() {
+        // `(text, varying, length, the server reads it)`.
+        let cases: &[(&str, bool, Option<u32>, bool)] = &[
+            ("101", false, Some(3), true),
+            ("10", false, Some(3), false),
+            ("1010", false, Some(3), false),
+            ("B101", false, Some(3), true),
+            ("b101", false, Some(3), true),
+            ("x5", false, Some(3), false),
+            ("x5", false, Some(4), true),
+            ("XA", false, Some(4), true),
+            ("xg", false, Some(4), false),
+            ("102", false, Some(3), false),
+            (" 101", false, Some(3), false),
+            ("101 ", false, Some(3), false),
+            ("", false, Some(3), false),
+            ("1", false, Some(1), true),
+            ("11", false, Some(1), false),
+            ("11", false, None, true),
+            ("", false, None, true),
+            ("b", false, None, true),
+            ("B", false, None, true),
+            ("x", false, None, true),
+            ("xFfA0", false, None, true),
+            ("xFfA0g", false, None, false),
+            ("2", false, None, false),
+            ("bb1", false, None, false),
+            ("bx1", false, None, false),
+            ("xx1", false, None, false),
+            ("\u{e9}", false, None, false),
+            ("101", true, None, true),
+            ("", true, None, true),
+            ("x", true, None, true),
+            ("xab", true, None, true),
+            ("1_0", true, None, false),
+            ("+1", true, None, false),
+            ("0x1", true, None, false),
+            ("b 1", true, None, false),
+            ("101", true, Some(3), true),
+            ("10", true, Some(3), true),
+            ("", true, Some(3), true),
+            ("1010", true, Some(3), false),
+            ("xA", true, Some(4), true),
+            ("xAB", true, Some(4), false),
+            ("xA", true, Some(3), false),
+            ("b11", true, Some(2), true),
+            ("b111", true, Some(2), false),
+        ];
+        for &(text, varying, length, server) in cases {
+            assert_eq!(bit_in(text, varying, length), server, "{text:?} {varying} {length:?}");
         }
     }
 }

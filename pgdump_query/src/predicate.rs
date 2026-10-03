@@ -15,7 +15,7 @@ use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete,
-    NestedCompare, UnanswerableReason, datafusion_position_divergences,
+    NestedCompare, TextGrammar, UnanswerableReason, datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::scan::PostgresInvalidValues;
@@ -1885,10 +1885,13 @@ fn range_key(
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
 /// range's bounds in order ([`checked_key`]). `json`, held as its text, is
-/// read by `json_in`'s grammar ([`decode::json_in`]); any other plan naming no
-/// type this build reads by — another held as its text, or a range declaring
-/// its own canonical function — refuses nothing, no reader here decoding its
-/// fields.
+/// read by `json_in`'s grammar ([`decode::json_in`]), and a position holding
+/// a type ordered by nothing by its [`TextGrammar`] where it has one; any
+/// other plan naming no type this build reads by — another held as its text,
+/// or a range declaring its own canonical function — refuses nothing, no
+/// reader here decoding its fields. A column whose own type is ordered by
+/// nothing is [`ComparisonPlan::Refused`] and is read by [`grammar_refuses`]
+/// instead.
 pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
     match plan {
         // `AS_TEXT`'s one member is `json`.
@@ -1902,6 +1905,14 @@ pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
         }
         ComparisonPlan::Nested(nested) => checked_key(nested, text).is_err(),
         ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => false,
+    }
+}
+
+/// Whether PostgreSQL's input function refuses `text` as a field read by
+/// `grammar`, of a type this build holds as its text and orders by nothing.
+pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
+    match grammar {
+        TextGrammar::Bit { varying, length } => !decode::bit_in(text, varying, length),
     }
 }
 
@@ -1923,6 +1934,11 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
         // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
         NestedCompare::Uncomparable { divergence: Some(ComparisonDivergence::AsText), .. }
             if !decode::json_in(text) =>
+        {
+            return Err(refused);
+        }
+        NestedCompare::Uncomparable { grammar: Some(grammar), .. }
+            if grammar_refuses(*grammar, text) =>
         {
             return Err(refused);
         }
@@ -4239,7 +4255,7 @@ mod tests {
     use crate::copy::encode_field;
     use crate::index::UnrepresentableTier;
     use crate::pgtype::NestedPlan;
-    use crate::pgtype::{bounds_set_keyed_by, comparison_for};
+    use crate::pgtype::{bounds_set_keyed_by, comparison_for, text_grammar};
     use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
     use crate::statistics::BoundsSet;
@@ -5503,7 +5519,8 @@ mod tests {
     /// spelling the input grammar reads and the output grammar never writes is
     /// no refusal, nor is any text of a type read as its text but `json`, at
     /// the top level or beneath a container, which `json_in`'s grammar reads
-    /// (I72).
+    /// (I72), and `bit` and `bit varying`, whose grammar is read in place of
+    /// the order they lack, their typmod with it, through a domain too (I73).
     #[test]
     fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
         let types = vec![
@@ -5529,11 +5546,28 @@ mod tests {
                     ]),
                 },
             },
+            TypeDef { name: "public.bits3".into(), kind: TypeKind::domain("bit(3)") },
+            TypeDef {
+                name: "public.flags".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("a", "bit"),
+                        ColumnDef::new("b", "public.bits3"),
+                        ColumnDef::new("c", "bit varying(2)"),
+                    ]),
+                },
+            },
         ];
+        // As `gather::field_checks` reads a column: a plan ordering nothing
+        // by its declared type's grammar, where it has one.
         let refused = |declared: &str, text: &str| {
-            field_refused(&comparison_for(declared, None, &types, &[]), text)
+            let plan = comparison_for(declared, None, &types, &[]);
+            match (&plan, text_grammar(declared, &types)) {
+                (ComparisonPlan::Refused, Some(grammar)) => grammar_refuses(grammar, text),
+                _ => field_refused(&plan, text),
+            }
         };
-        let cases: [(&str, &str, bool); 36] = [
+        let cases: [(&str, &str, bool); 53] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
@@ -5570,6 +5604,23 @@ mod tests {
             ("public.jsonpair", r#"(1,"[1, 2]")"#, false),
             ("public.jsonpair", "(1,{bad)", true),
             ("public.jsonpair[]", r#"{"(1,{})","(2,[)"}"#, true),
+            ("bit", "1", false),
+            ("bit", "10", true),
+            ("\"bit\"", "10", false),
+            ("bit(3)", "x5", true),
+            ("bit(4)", "x5", false),
+            ("bit varying(2)", "111", true),
+            ("varbit", "1012", true),
+            ("public.bits3", "101", false),
+            ("public.bits3", "10", true),
+            ("bit(3)[]", "{101,10}", true),
+            ("bit(3)[]", "{101,NULL}", false),
+            ("varbit(2)[]", "{1,11}", false),
+            ("public.bits3[]", "{1}", true),
+            ("public.flags", "(1,101,11)", false),
+            ("public.flags", "(11,101,11)", true),
+            ("public.flags", "(1,10,11)", true),
+            ("public.flags", "(1,101,111)", true),
         ];
         for (declared, text, expected) in cases {
             assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
@@ -8509,7 +8560,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (53, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (54, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

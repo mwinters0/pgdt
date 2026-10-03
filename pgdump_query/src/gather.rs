@@ -65,10 +65,12 @@ use crate::decode::{
 };
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
-use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
+use crate::pgtype::{
+    CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, text_grammar,
+};
 use crate::preamble::{ColumnDef, DumpMetadata};
-use crate::predicate::{ValueKey, field_refused};
-use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
+use crate::predicate::{ValueKey, field_refused, grammar_refuses};
+use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::scan::PostgresInvalidValues;
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
@@ -140,7 +142,9 @@ pub(crate) fn checker(
 
 /// What a strict parse checks each of `header`'s columns by, positionally:
 /// its comparison under `resolved`, which is what names the type a field is
-/// read as ([`field_refused`]), and `None` for a column read as no type.
+/// read as ([`field_refused`]), or for a column ordered by nothing its
+/// declared type's input grammar ([`text_grammar`]), and `None` for a column
+/// read as no type.
 fn field_checks(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
@@ -148,18 +152,23 @@ fn field_checks(
     resolved: &ResolvedSchema,
 ) -> Arc<[Option<FieldCheck>]> {
     let qualified = header.qualified_name();
+    let types =
+        metadata.and_then(|m| database_for_name(m, database)).map_or(&[][..], |db| &db.types[..]);
     header
         .columns
         .iter()
         .zip(&resolved.comparisons)
         .map(|(name, plan)| {
-            let read = !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
-            read.then(|| FieldCheck {
-                plan: plan.clone(),
-                declared_type: declared_column(metadata, database, &qualified, name)
-                    .map(|def| def.declared_type.clone())
-                    .unwrap_or_default(),
-            })
+            let declared_type = declared_column(metadata, database, &qualified, name)
+                .map(|def| def.declared_type.clone())
+                .unwrap_or_default();
+            let grammar = match plan {
+                ComparisonPlan::Refused => text_grammar(&declared_type, types),
+                _ => None,
+            };
+            let read = grammar.is_some()
+                || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
+            read.then(|| FieldCheck { plan: plan.clone(), grammar, declared_type })
         })
         .collect()
 }
@@ -167,6 +176,8 @@ fn field_checks(
 /// One column's part of a strict parse's check ([`field_checks`]).
 struct FieldCheck {
     plan: ComparisonPlan,
+    /// Read in place of `plan`, which then orders nothing.
+    grammar: Option<TextGrammar>,
     declared_type: String,
 }
 
@@ -183,7 +194,11 @@ fn check_row(
         // A NULL is no value to refuse, and a field that is not text is no
         // value at all, which no `*_in` is handed.
         let Ok(Some(text)) = decode_field(field) else { continue };
-        if field_refused(&check.plan, &text) {
+        let refused = match check.grammar {
+            Some(grammar) => grammar_refuses(grammar, &text),
+            None => field_refused(&check.plan, &text),
+        };
+        if refused {
             return Some(FieldRefusal {
                 offset,
                 line,

@@ -578,7 +578,14 @@ pub enum NestedCompare {
     /// the server's `=`: a position only *this build* declines (I22, I26, an
     /// empty enum), or one whose type the register does not model, whose
     /// server equality may not be the text's (`KD10`).
-    Uncomparable { declared: String, divergence: Option<ComparisonDivergence> },
+    ///
+    /// `grammar` is the position's input grammar where this build reads one
+    /// for a type it orders by nothing ([`text_grammar`]).
+    Uncomparable {
+        declared: String,
+        divergence: Option<ComparisonDivergence>,
+        grammar: Option<TextGrammar>,
+    },
     /// `array_cmp`: elements first, up to the shorter array's length, then
     /// element count, dimension count, dimensions and lower bounds (I45).
     /// **One node whatever the dimensionality** — an `array_out` literal
@@ -1171,7 +1178,7 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
 /// Each catalog type name whose SQL spelling is another, beside that
 /// spelling. The right-hand names are the grammar's alone: `pg_catalog` holds
 /// no type called `integer`.
-const CATALOG_NAMES: [(&str, &str); 12] = [
+const CATALOG_NAMES: [(&str, &str); 13] = [
     ("int2", "smallint"),
     ("int4", "integer"),
     ("int8", "bigint"),
@@ -1184,6 +1191,7 @@ const CATALOG_NAMES: [(&str, &str); 12] = [
     ("timestamptz", "timestamp with time zone"),
     ("time", "time without time zone"),
     ("timetz", "time with time zone"),
+    ("varbit", "bit varying"),
 ];
 
 /// A catalog type name whose SQL spelling is another, as that spelling —
@@ -1839,6 +1847,49 @@ fn is_box(terminal: &str) -> bool {
     !split_typmod(terminal).0.contains('.') && builtin_name(terminal).0 == "box"
 }
 
+/// The input grammar of a built-in this build holds as its text and orders by
+/// nothing ([`ComparisonPlan::Refused`]), which a strict parse reads a field
+/// of it by all the same: a check needs the grammar alone, where an order
+/// would need a comparison register row of its own (D40).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextGrammar {
+    /// `bit_in`, or `varbit_in` where `varying`, handed the column's typmod
+    /// (I73): `length` is the length a `bit(n)` field must have exactly and a
+    /// `bit varying(n)` field may not pass, and `None` for `"bit"` and a bare
+    /// `bit varying`, which bound no length.
+    Bit { varying: bool, length: Option<u32> },
+}
+
+/// The [`TextGrammar`] a field of a column declared `declared` is read by,
+/// through any chain of domains, a domain handing its own typmod to its base
+/// type's input function — `None` for a type with none here, an array among
+/// them, whose elements a nested plan reads.
+///
+/// **`bit` alone is `bit(1)`**, the SQL word's length, and `"bit"` the catalog
+/// type with no typmod, which is how `format_type` writes a `bit` column of
+/// either (I8).
+pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGrammar> {
+    let terminal = domain_terminal(declared, types);
+    let (base, _) = split_typmod(terminal);
+    if base.contains('.') || array_element(terminal).is_some() {
+        return None;
+    }
+    let (name, typmod) = builtin_name(terminal);
+    let varying = match &*name {
+        "bit" => false,
+        "bit varying" => true,
+        _ => return None,
+    };
+    let length = match typmod {
+        // `anybit_typmodin` takes one length of at least 1; any other typmod
+        // is DDL no server holds, read as no grammar.
+        Some(typmod) => Some(typmod.trim().parse::<u32>().ok().filter(|&n| n > 0)?),
+        None if !varying && !base.starts_with('"') => Some(1),
+        None => None,
+    };
+    Some(TextGrammar::Bit { varying, length })
+}
+
 /// Map one declared type string — exactly as `pg_dump` wrote it, e.g. from
 /// [`crate::preamble::DatabaseMetadata::tables`] — against `types`, that
 /// same database's `CREATE TYPE`/`CREATE DOMAIN` list.
@@ -1898,7 +1949,11 @@ fn array_comparison(
         // about the server's `=` (I22, I26). A column of either shape resolves
         // to text with its plan refused, so never reaches this node; a
         // composite's field of either shape does.
-        NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
+        NestedCompare::Uncomparable {
+            declared: element.to_string(),
+            divergence: None,
+            grammar: None,
+        }
     } else {
         match nested_position(element, collation, types, collations, visits) {
             Ok(child) => child,
@@ -1987,11 +2042,14 @@ fn nested_position(
             NestedCompare::Uncomparable {
                 declared: declared.to_string(),
                 divergence: Some(ComparisonDivergence::AsText),
+                grammar: None,
             }
         }
-        ComparisonPlan::Refused => {
-            NestedCompare::Uncomparable { declared: declared.to_string(), divergence: None }
-        }
+        ComparisonPlan::Refused => NestedCompare::Uncomparable {
+            declared: declared.to_string(),
+            divergence: None,
+            grammar: text_grammar(declared, types),
+        },
         ComparisonPlan::Compared { kind, divergence } => {
             NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
         }
@@ -2327,6 +2385,64 @@ mod tests {
         for (declared, bare) in [("\"text\"", "text"), ("\"numeric\"(10,2)", "numeric(10,2)")] {
             assert_eq!(resolve_declared_type(declared, &[]), resolve_declared_type(bare, &[]));
         }
+    }
+
+    /// **A bit string's grammar is read off every spelling of its type**,
+    /// with the length its typmod hands `bit_in` or `varbit_in` (I73): `bit`
+    /// alone is `bit(1)` and `"bit"` has none (I8), `varbit` is `bit varying`,
+    /// and a domain hands down its base type's. An array's elements, and any
+    /// other type, have none here; a nested position carries its own.
+    #[test]
+    fn a_bit_string_s_grammar_is_read_off_every_spelling() {
+        let bit = |length| Some(TextGrammar::Bit { varying: false, length });
+        let varbit = |length| Some(TextGrammar::Bit { varying: true, length });
+        let types = [
+            ty("public.b3", TypeKind::domain("bit(3)")),
+            ty("public.b3b", TypeKind::domain("public.b3")),
+            ty(
+                "public.flags",
+                TypeKind::Composite { fields: Some(vec![ColumnDef::new("f", "bit")]) },
+            ),
+        ];
+        for (declared, expected) in [
+            ("bit", bit(Some(1))),
+            ("BIT", bit(Some(1))),
+            ("bit(3)", bit(Some(3))),
+            ("\"bit\"", bit(None)),
+            ("\"bit\"(5)", bit(Some(5))),
+            ("bit varying", varbit(None)),
+            ("BIT  VARYING(4)", varbit(Some(4))),
+            ("varbit", varbit(None)),
+            ("\"varbit\"(2)", varbit(Some(2))),
+            ("public.b3", bit(Some(3))),
+            ("public.b3b", bit(Some(3))),
+            ("\"bit varying\"", None),
+            ("\"BIT\"", None),
+            ("bit(0)", None),
+            ("bit(x)", None),
+            ("bit(3)[]", None),
+            ("public.b3[]", None),
+            ("public.flags", None),
+            ("text", None),
+        ] {
+            assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
+        }
+        let ComparisonPlan::Nested(NestedCompare::Array(element)) =
+            comparison_for("public.b3[]", None, &types, &[])
+        else {
+            panic!("an array of a domain over `bit(3)` is nested");
+        };
+        assert!(
+            matches!(*element, NestedCompare::Uncomparable { grammar, .. } if grammar == bit(Some(3)))
+        );
+        let ComparisonPlan::Nested(NestedCompare::Record(fields)) =
+            comparison_for("public.flags", None, &types, &[])
+        else {
+            panic!("a composite is nested");
+        };
+        assert!(
+            matches!(&fields[0].1, NestedCompare::Uncomparable { grammar, .. } if *grammar == bit(Some(1)))
+        );
     }
 
     /// `interval` is the one type whose Arrow mapping is a *struct* of

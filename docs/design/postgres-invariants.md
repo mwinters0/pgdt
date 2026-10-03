@@ -4748,3 +4748,57 @@ grep -n 'strchr("\\"\\\\/bfnrt", \*s) == NULL' src/common/jsonapi.c
 The first prints the lexer made without escapes and the parse with no
 semantic actions; the second the guard the surrogate and `\u0000` checks sit
 under; the third the escape letters taken when not de-escaping.
+
+---
+
+## I73 — `bit_in` and `varbit_in` read binary or hex digits, held to the column's typmod
+
+**Claim.** `bit_in` and `varbit_in` read a text as hex digits of four bits
+each after a leading `x` or `X`, and otherwise as binary digits, after a
+leading `b` or `B` if there is one; nothing is trimmed, and the empty text,
+`b` and `x` are a bit string of no bits. They refuse any other digit, `22P02`,
+and a hex spelling of more than `VARBITMAXLEN / 4` digits. **The column's
+typmod is handed to them by `COPY`**, through an array's elements, a
+composite's fields and a domain: `bit(n)` refuses a string not of exactly `n`
+bits, `22026`, and `bit varying(n)` one of more than `n`, `22001`; with no
+typmod any length is read. A column declared `bit` alone is `bit(1)`, and one
+of the type with no length is written `"bit"` (I8).
+
+**Proof.** `src/backend/utils/adt/varbit.c`, `bit_in` and `varbit_in`: the
+prefix test, the `VARBITMAXLEN / 4` check on hex input alone, the
+`atttypmod <= 0` test, then `bitlen != atttypmod` and `bitlen > atttypmod`
+respectively, and the digit loops. `src/include/utils/varbit.h`,
+`VARBITMAXLEN`. The two functions differ only in that comparison and its error
+code at every supported major; v13 to v15 raise with `ereport` where v16 on
+use `ereturn`.
+
+**Observed.** The koji replica (PG16), by `pg_input_is_valid`: `bit(3)` reads
+`101`, `B101` and `b101` and refuses `10`, `1010`, `x5`, `102`, ` 101`,
+`101 ` and the empty text; `bit(4)` reads `x5` and `XA` and refuses `xg`;
+`bit` reads `1` and refuses `11`; `"bit"` reads `11`, the empty text, `b`,
+`B`, `x` and `xFfA0` and refuses `xFfA0g`, `2`, `bb1`, `bx1`, `xx1` and `é`;
+`varbit(3)` reads `10` and the empty text and refuses `1010`; `varbit(4)`
+reads `xA` and refuses `xAB`; `varbit` refuses `1_0`, `+1`, `0x1` and `b 1`.
+`bit(3)[]` refuses `{101,10}`, a composite field of `bit(3)` and a domain over
+it each refuse `10`, and `COPY` refuses `10` into a `bit(3)` column and `101`
+into a `bit varying(2)` one. `format_type` names columns declared `bit`,
+`"bit"` and `bit varying` `bit(1)`, `"bit"` and `bit varying`.
+
+**Scope limit.** A hex spelling past `VARBITMAXLEN / 4` digits is a field of
+512 MiB; no fixture or test reaches it.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::bit_in`, which a strict parse checks a `bit` or
+`bit varying` field by, through `pgtype::text_grammar`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^(bit_in|varbit_in)\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/varbit.c | grep -n "== 'b'\|== 'x'\|VARBITMAXLEN / 4\|atttypmod <= 0\|bitlen [!>]= atttypmod\|bitlen > atttypmod"
+grep -n 'define VARBITMAXLEN' src/include/utils/varbit.h
+```
+
+It prints, for each function, the two prefix tests, the hex length check, the
+no-typmod test and the length comparison; then the maximum length.
