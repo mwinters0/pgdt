@@ -143,15 +143,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`line_in` read as `oidin` is, refusing only where every supported major
-  refuses** (31.18). v14 rebuilt the two-point form's arithmetic, so v13 reads
-  `[(2,0),(3,1.7976931348623157e308)]`, which v14 on refuse, and refuses
-  `[(Infinity,1),(0,2)]`, which they read (I74); the strict check reads both.
-  Why: the roadmap's rule takes the newest major's `*_in` because each major
-  only widened, and its one exception, `oidin`, already sets the
-  every-major reading for a narrowing; the roadmap's "A literal is guaranteed
-  in `*_out`'s form and never read past `*_in`'s" now names `line_in` beside
-  it, and the manual's majors table gains its row. Reconsidering — refusing
-  the first line as v14 on do, v13 being the oldest supported — changes one
-  `||` in `decode::line_in`, the row and the roadmap sentence.
