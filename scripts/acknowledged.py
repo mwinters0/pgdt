@@ -572,4 +572,25 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 4d946f8e -- pgdump_query/src/decode.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="0911d0fd",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "predicate-terms",
+            "projection-widths",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="M203: a float literal's reader runs once per literal as a term resolves; "
+        "on a row the only change is a bool guard on nested_key's leaf arm, and the field "
+        "reader, the stored keys and GOLDEN_ORDER's field order are unchanged; the rest "
+        "is accepted_form's wording and unit tests",
+        verified="git show 0911d0fd -- pgdump_query/src/predicate.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
