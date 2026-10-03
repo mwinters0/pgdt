@@ -1879,6 +1879,134 @@ fn range_key(
     )
 }
 
+/// **Whether PostgreSQL's input function refuses `text` as a field of a
+/// column compared by `plan`**: what a strict parse checks every field by
+/// ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
+/// a nested value is read as the server reads one on its way in, through each
+/// container's input grammar, every element as a field of its own type and a
+/// range's bounds in order ([`checked_key`]). A plan naming no type this build
+/// reads by — one held as its text, or a range declaring its own canonical
+/// function — refuses nothing, no reader here decoding its fields.
+pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
+    match plan {
+        // Every text is a value of these, and keying one copies it.
+        ComparisonPlan::Compared { kind: CompareKind::Text | CompareKind::PaddedText, .. } => false,
+        ComparisonPlan::Compared { kind, .. } => {
+            matches!(field_key(kind, text), Err(Unread::Refused))
+        }
+        ComparisonPlan::Nested(nested) => checked_key(nested, text).is_err(),
+        ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => false,
+    }
+}
+
+/// A nested field's key, built as [`nested_key`] builds a literal's — each
+/// container read by its input grammar, the one `COPY` reads a field by — with
+/// every element read as a field: `Err` where an input function on the way
+/// refuses it, and `Ok(None)` where it is read but some part of it has no key
+/// here, a position this build does not order or a spelling it does not read.
+/// **Every element is read whatever an earlier one answered**, so a refusal
+/// anywhere in the value is found.
+fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
+    let refused = Unread::Refused;
+    Ok(match plan {
+        NestedCompare::Leaf { kind, .. } => match field_key(kind, text) {
+            Ok(key) => Some(NestedKey::Leaf(key)),
+            Err(Unread::Refused) => return Err(refused),
+            Err(Unread::Unparsed) => None,
+        },
+        NestedCompare::Uncomparable { .. } => None,
+        NestedCompare::Array(element) => {
+            let literal = nested::parse_array(text).ok_or(refused)?;
+            let mut elements = Vec::with_capacity(literal.elements.len());
+            let mut keyed = true;
+            for value in &literal.elements {
+                match value {
+                    Some(value) => match checked_key(element, value)? {
+                        Some(key) => elements.push(Some(key)),
+                        None => keyed = false,
+                    },
+                    None => elements.push(None),
+                }
+            }
+            keyed.then_some(NestedKey::Array {
+                elements,
+                dims: literal.dims,
+                lower_bounds: literal.lower_bounds,
+            })
+        }
+        NestedCompare::Int2Vector => {
+            let values = nested::parse_int2vector(text).ok_or(refused)?;
+            Some(NestedKey::Array {
+                dims: vec![values.len()],
+                elements: values
+                    .into_iter()
+                    .map(|v| Some(NestedKey::Leaf(OrderKey::Int(i64::from(v)))))
+                    .collect(),
+                lower_bounds: vec![0],
+            })
+        }
+        NestedCompare::Record(plans) => {
+            let fields = nested::parse_record(text, plans.len()).ok_or(refused)?.fields;
+            let mut out = Vec::with_capacity(plans.len());
+            let mut keyed = true;
+            for ((_, plan), value) in plans.iter().zip(fields) {
+                match value {
+                    Some(value) => match checked_key(plan, &value)? {
+                        Some(key) => out.push(Some(key)),
+                        None => keyed = false,
+                    },
+                    None => out.push(None),
+                }
+            }
+            keyed.then_some(NestedKey::Record(out))
+        }
+        NestedCompare::Range { bound, discrete } => {
+            let literal = nested::parse_range(text).ok_or(refused)?;
+            checked_range(bound, &literal, *discrete)?
+                .map(|range| NestedKey::Range(Box::new(range)))
+        }
+        NestedCompare::Multirange { bound, discrete } => {
+            let literals = nested::parse_multirange(text).ok_or(refused)?;
+            let mut members = Vec::with_capacity(literals.len());
+            let mut keyed = true;
+            for literal in &literals {
+                match checked_range(bound, literal, *discrete)? {
+                    Some(member) => members.push(member),
+                    None => keyed = false,
+                }
+            }
+            // `multirange_in` refuses nothing past its members' `range_in`.
+            keyed
+                .then(|| canonical_multirange(members, *discrete))
+                .flatten()
+                .map(NestedKey::Multirange)
+        }
+    })
+}
+
+/// [`range_key`] for [`checked_key`]: both bounds read, then [`make_range`]'s
+/// refusals where both have a key.
+fn checked_range(
+    bound: &NestedCompare,
+    literal: &nested::RangeLiteral,
+    discrete: Option<Discrete>,
+) -> Read<Option<RangeKey>> {
+    let side = |text: &Option<String>, inclusive: bool, lower: bool| {
+        let value = match text {
+            Some(text) => match checked_key(bound, text)? {
+                Some(key) => Some(key),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        Ok(Some(RangeBoundKey { value, inclusive, lower }))
+    };
+    let lower = side(&literal.lower, literal.lower_inclusive, true)?;
+    let upper = side(&literal.upper, literal.upper_inclusive, false)?;
+    let (Some(lower), Some(upper)) = (lower, upper) else { return Ok(None) };
+    make_range(lower, upper, literal.empty, discrete).map(Some).ok_or(Unread::Refused)
+}
+
 /// `make_range`: `range_serialize`'s type-independent checks, then the range
 /// type's canonical function where it has one, then those checks again — the
 /// order the server applies them in, and the reason `int4range '(1,2)'` is
@@ -5355,6 +5483,66 @@ mod tests {
         assert_eq!(nested.unwrap(), Truth::True);
     }
 
+    /// **A strict parse finds a refusal anywhere in a field** ([`field_refused`]):
+    /// a scalar where [`field_key`] refuses it, and a nested value at its
+    /// container's input grammar, at any element read as a field of its own
+    /// type — under a position this build does not order too — and at a
+    /// range's bound order or a discrete bound's successor (I44, I46, I47). A
+    /// spelling the input grammar reads and the output grammar never writes is
+    /// no refusal, nor is any text of a type read as its text.
+    #[test]
+    fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
+        let types = vec![
+            TypeDef {
+                name: "public.pair".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("a", "integer"),
+                        ColumnDef::new("b", "smallint"),
+                    ]),
+                },
+            },
+            TypeDef {
+                name: "public.mood".into(),
+                kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()], exact: true },
+            },
+        ];
+        let refused = |declared: &str, text: &str| {
+            field_refused(&comparison_for(declared, None, &types, &[]), text)
+        };
+        let cases: [(&str, &str, bool); 26] = [
+            ("smallint", "70000", true),
+            ("smallint", "7", false),
+            ("smallint", " 7", false),
+            ("text", "anything", false),
+            ("money", "not money", false),
+            ("public.mood", "happy", true),
+            ("public.mood", "ok", false),
+            ("smallint[]", "{1,70000}", true),
+            ("smallint[]", "{{1},{70000}}", true),
+            ("smallint[]", "{1,2", true),
+            ("smallint[]", "{ 1 , 2 }", false),
+            ("smallint[]", "{1,NULL}", false),
+            ("public.mood[]", "{ok,happy}", true),
+            ("money[]", "{1", true),
+            ("money[]", "{$1.00}", false),
+            ("public.pair", "(1,70000)", true),
+            ("public.pair", "(1)", true),
+            ("public.pair", "(1,2)", false),
+            ("public.pair[]", "{\"(1,2)\",\"(1,70000)\"}", true),
+            ("int4range", "[5,1]", true),
+            ("int4range", "[1,5)", false),
+            ("int4range", "[1,2147483647]", true),
+            ("int4range", "[1,70000000000)", true),
+            ("int4multirange", "{[1,2), [5,1]}", true),
+            ("int4multirange", "{[1,2), [5,6)}", false),
+            ("int2vector", "1 70000", true),
+        ];
+        for (declared, text, expected) in cases {
+            assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
+        }
+    }
+
     /// **A field PostgreSQL refuses is told from one this build does not
     /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
     /// `Refused`, which fails the parse keying the field, and a spelling the
@@ -8268,7 +8456,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (51, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (52, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

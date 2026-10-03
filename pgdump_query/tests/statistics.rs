@@ -1571,6 +1571,269 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     );
 }
 
+/// `ScanOptions` reading under `invalid`, serially in 64-byte chunks or at
+/// `jobs` workers.
+fn reading(invalid: PostgresInvalidValues, jobs: usize) -> ScanOptions {
+    let parallelism = if jobs > 1 {
+        Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET)
+    } else {
+        ScanOptions::default().parallelism
+    };
+    ScanOptions {
+        chunk_size_bytes: 64,
+        parallelism,
+        postgres_invalid_values: invalid,
+        ..ScanOptions::default()
+    }
+}
+
+/// One table `public.t (a smallint, v smallint[], n numeric(10,2), r
+/// int4range)` of `rows` clean rows, row `bad` (from 0) given `field` in
+/// column `column` (by position) where it is `Some`.
+fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> std::path::PathBuf {
+    let dump = dir.join("strict.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    a smallint,\n    v smallint[],\n    n numeric(10,2),\n    r int4range\n);\n\n",
+    );
+    text.push_str("COPY public.t (a, v, n, r) FROM stdin;\n");
+    for i in 0..rows {
+        let mut fields =
+            [i.to_string(), format!("{{{i},1}}"), format!("{i}.50"), format!("[{i},{})", i + 1)];
+        if let Some((row, column, field)) = bad
+            && row == i
+        {
+            fields[column] = field.to_string();
+        }
+        text.push_str(&fields.join("\t"));
+        text.push('\n');
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    dump
+}
+
+/// **A strict parse fails at a field PostgreSQL refuses wherever it sits**,
+/// where a default one leaves it to a query and passes: in a column the
+/// request leaves at the metadata level, an array's element, a value too long
+/// to key, a range's bound order, and the rows of a block whose statistics
+/// declined — serially and at four workers, naming the field as a read of the
+/// dump does. A clean strict parse gathers what a default one gathers and
+/// records every block checked in full, the metadata-level table staying at
+/// its level (`PostgresInvalidValues::Strict`).
+#[tokio::test]
+async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = format!("1{}", "0".repeat(DICTIONARY_ENTRY_MAX_BYTES + 1));
+    let only_v = StatisticsRequest {
+        selection: only(vec![StatisticsTarget::Column {
+            table: "public.t".to_string(),
+            column: "v".to_string(),
+        }]),
+        ..StatisticsRequest::DATA
+    };
+    // What is bad, where, and the request and allowance a default parse
+    // passes it under.
+    let cases: [(&str, usize, &str, &StatisticsRequest, Option<u64>); 5] = [
+        ("a column at the metadata level", 0, "70000", &only_v, None),
+        ("an array's element", 1, "{1,70000}", &StatisticsRequest::DATA, None),
+        ("a value too long to key", 2, &long, &StatisticsRequest::DATA, None),
+        ("a range's bound order", 3, "[5,1]", &StatisticsRequest::DATA, None),
+        ("a declined block's row", 0, "70000", &StatisticsRequest::DATA, Some(1)),
+    ];
+    let names = ["a", "v", "n", "r"];
+    for (what, column, field, wanted, allowance) in cases {
+        let dump = strict_dump(dir.path(), 400, Some((300, column, field)));
+        let source = LocalFileSource::open(&dump).unwrap();
+        for jobs in [1, 4] {
+            let at = format!("{what}, {jobs} job(s)");
+            let default = ScanOptions {
+                statistics_allowance_bytes: allowance,
+                ..reading(PostgresInvalidValues::Default, jobs)
+            };
+            let passed = map_file(&source, &default, &CacheMode::DISABLED, wanted).await;
+            let passed = passed.unwrap_or_else(|e| panic!("{at}: a default parse passes: {e}"));
+            let held = block(&passed.index, "public.t");
+            assert!(!held.checked_in_full, "{at}");
+            assert_eq!(held.statistics_declined.is_some(), allowance.is_some(), "{at}");
+            let strict =
+                ScanOptions { postgres_invalid_values: PostgresInvalidValues::Strict, ..default };
+            match map_file(&source, &strict, &CacheMode::DISABLED, wanted).await {
+                Err(pgdump_query::Error::FieldRefused { column: named, line, value, .. }) => {
+                    assert_eq!((named.as_str(), line, value.as_str()), (names[column], 301, field));
+                }
+                other => panic!("{at}: expected the strict parse to refuse it, got {other:?}"),
+            }
+        }
+    }
+
+    let dump = strict_dump(dir.path(), 400, None);
+    let source = LocalFileSource::open(&dump).unwrap();
+    for jobs in [1, 4] {
+        let at = format!("{jobs} job(s)");
+        let default = reading(PostgresInvalidValues::Default, jobs);
+        let strict = reading(PostgresInvalidValues::Strict, jobs);
+        for wanted in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
+            let read = map_file(&source, &default, &CacheMode::DISABLED, &wanted).await.unwrap();
+            let checked = map_file(&source, &strict, &CacheMode::DISABLED, &wanted).await.unwrap();
+            let (read, checked) =
+                (block(&read.index, "public.t"), block(&checked.index, "public.t"));
+            assert!(checked.checked_in_full, "{at}");
+            let unmarked = CopyBlock { checked_in_full: false, ..checked.clone() };
+            assert_eq!(&unmarked, read, "{at}: a strict parse records what a default one does");
+        }
+    }
+}
+
+/// **A strict parse re-reads each block the cache holds that no strict parse
+/// checked, once**, checking every field and recording that it did, and
+/// gathering in the same read whatever statistics the block lacks; a strict
+/// parse after it re-reads nothing, and a default one keeps the record. Over
+/// an ignoring parse's cache it does not stop at the recorded refusal but
+/// re-reads the block, failing at the first field there, in a column the
+/// ignoring parse did not track.
+#[tokio::test]
+async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = strict_dump(dir.path(), 400, None);
+    let strict = reading(PostgresInvalidValues::Strict, 1);
+    let data = StatisticsRequest::DATA;
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
+    for (earlier, gathers) in [(&data, false), (&StatisticsRequest::METADATA, true)] {
+        let _ = std::fs::remove_file(cache::colocated_path(&dump));
+        let held = mapped_into_cache(&dump, &ScanOptions::default(), earlier).await;
+        assert!(!block(&held.index, "public.t").checked_in_full);
+        let source = RecordingSource::open(&dump);
+        let run = map_file(&source, &strict, &mode, &data).await.unwrap();
+        let checked = block(&run.index, "public.t");
+        assert!(checked.checked_in_full, "{gathers}");
+        assert_eq!(run.checked, 1, "{gathers}");
+        assert_eq!(run.backfilled, usize::from(gathers), "{gathers}");
+        assert_eq!(source.reads_of(checked), 1, "{gathers}: one read checks and gathers");
+        let fresh = gathered(&dump, &data).await;
+        assert_eq!(checked.statistics, block(&fresh, "public.t").statistics, "{gathers}");
+
+        let source = RecordingSource::open(&dump);
+        let again = map_file(&source, &strict, &mode, &data).await.unwrap();
+        assert_eq!((again.checked, source.reads_of(checked)), (0, 0), "{gathers}");
+        let default = mapped_into_cache(&dump, &ScanOptions::default(), &data).await;
+        assert!(block(&default.index, "public.t").checked_in_full, "{gathers}: kept");
+    }
+
+    // An ignoring parse tracking `v` records the element it went past in row
+    // 60, not the `smallint` in row 30 of `a`, which it did not track.
+    let dump = strict_dump(dir.path(), 400, Some((60, 1, "{70000}")));
+    let mut text = std::fs::read_to_string(&dump).unwrap();
+    text = text.replacen("\n30\t{30,1}", "\n70000\t{30,1}", 1);
+    std::fs::write(&dump, &text).unwrap();
+    let _ = std::fs::remove_file(cache::colocated_path(&dump));
+    let ignoring = reading(PostgresInvalidValues::Ignore, 1);
+    let only_v = StatisticsRequest {
+        selection: only(vec![StatisticsTarget::Column {
+            table: "public.t".to_string(),
+            column: "v".to_string(),
+        }]),
+        ..data
+    };
+    mapped_into_cache(&dump, &ignoring, &only_v).await;
+    let source = LocalFileSource::open(&dump).unwrap();
+    match map_file(&source, &strict, &mode, &data).await {
+        Err(pgdump_query::Error::FieldRefused { column, line, value, .. }) => {
+            assert_eq!((column.as_str(), line, value.as_str()), ("a", 31, "70000"));
+        }
+        other => panic!("expected the re-read's refusal, got {other:?}"),
+    }
+}
+
+/// A source that trips a cancellation once a read starts at or past `trip`,
+/// the read itself succeeding: an interrupt at a file offset.
+struct CancelsPast {
+    inner: LocalFileSource,
+    trip: u64,
+    cancel: Arc<pgdump_query::Cancellation>,
+}
+
+impl ByteRangeSource for CancelsPast {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = pgdump_query::Result<Bytes>> + Send + '_>> {
+        if offset >= self.trip {
+            self.cancel.cancel();
+        }
+        self.inner.read_range(offset, len)
+    }
+
+    fn size(&self) -> Pin<Box<dyn Future<Output = pgdump_query::Result<u64>> + Send + '_>> {
+        self.inner.size()
+    }
+
+    fn modified(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdump_query::Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+}
+
+/// **A strict parse resuming a map short of the end checks the blocks it
+/// holds before it maps on**, so it fails at the first field PostgreSQL
+/// refuses in file order, in a block an interrupted default parse mapped
+/// rather than one past where it stopped — and over a clean held block,
+/// checks it and maps the rest checked.
+#[tokio::test]
+async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("two.sql");
+    let ddl = "CREATE TABLE public.t1 (\n    a smallint\n);\n\n\
+               CREATE TABLE public.t2 (\n    a smallint\n);\n\n";
+    let table = |name: &str, bad: bool| {
+        let mut text = format!("COPY public.{name} (a) FROM stdin;\n");
+        for i in 0..200 {
+            let field = if bad && i == 100 { "70000".to_string() } else { i.to_string() };
+            text.push_str(&format!("{field}\n"));
+        }
+        text.push_str("\\.\n\n");
+        text
+    };
+    for first_bad in [true, false] {
+        let text = format!("{ddl}{}{}SELECT 1;\n", table("t1", first_bad), table("t2", true));
+        std::fs::write(&dump, &text).unwrap();
+        let _ = std::fs::remove_file(cache::colocated_path(&dump));
+        let cancel = Arc::new(pgdump_query::Cancellation::new());
+        let trip = text.find("COPY public.t2").unwrap() as u64;
+        let tripping = CancelsPast {
+            inner: LocalFileSource::open(&dump).unwrap(),
+            trip,
+            cancel: cancel.clone(),
+        };
+        let interrupted =
+            ScanOptions { cancel: Some(cancel), ..reading(PostgresInvalidValues::Default, 1) };
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
+        let run =
+            map_file(&tripping, &interrupted, &mode, &StatisticsRequest::METADATA).await.unwrap();
+        assert!(run.interrupted, "{first_bad}");
+        assert_eq!(run.index.blocks().count(), 1, "{first_bad}: the cache holds t1 alone");
+
+        let source = LocalFileSource::open(&dump).unwrap();
+        let strict = reading(PostgresInvalidValues::Strict, 1);
+        let resumed = map_file(&source, &strict, &mode, &StatisticsRequest::DATA).await;
+        match resumed {
+            Err(pgdump_query::Error::FieldRefused { table, line, .. }) => {
+                let expected = if first_bad { "public.t1" } else { "public.t2" };
+                assert_eq!((table.as_str(), line), (expected, 101), "{first_bad}");
+            }
+            other => panic!("{first_bad}: expected a refusal, got {other:?}"),
+        }
+        // The held block's check was banked before the tail was mapped.
+        if !first_bad {
+            let Ok(cache::CacheLoad::Index(held)) = mode.load(&source).await else {
+                panic!("the cache loads");
+            };
+            assert!(block(&held, "public.t1").checked_in_full);
+        }
+    }
+}
+
 /// **A field of a kind this build reads narrower than its input function
 /// fails the parse where the server refuses it, and nowhere else** (I65–I69):
 /// each column's refused spelling in turn, a `bytea` among them, whose bounds

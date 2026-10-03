@@ -998,11 +998,24 @@ fail on it, `SchemaMode::Strings` gives you every column unparsed.
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
 `date`, a `numeric(10,2)` value with more than ten digits, a `double precision`
 past its range, `maybe` in a `boolean`, `::1/08` in an `inet`. `parse` checks
-only the values it reads anyway to gather statistics, so a column at the
-metadata level, an array's elements and a value longer than 256 bytes, but a
-`bytea`, are not checked there — a query reading one still refuses it, but for
-an enum label, which a query refuses only where `<`, `<=`, `>` or `>=` reads
-the column.
+only the values it reads anyway to gather statistics, which leaves to a query
+a column at the metadata level, an array's or a composite's elements, a
+range's bounds, a value longer than 256 bytes but a `bytea`, and every value
+of a table whose statistics did not fit `--memory` — a query reading one still
+refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
+`>` or `>=` reads the column.
+
+**`--postgres-invalid-values strict` checks every value instead**, those
+included, so a `parse` that finishes means no value in the dump is one
+PostgreSQL refuses — but for a value of a type pgdt keeps as its text
+(`money`, `json`, `xml`, a type it has no reader for) and a value of a range
+type declaring its own `canonical` function, which pgdt does not read.
+Each table it checks is recorded in the cache as checked, and a `strict` parse
+over a cache an earlier `parse` built re-reads the tables no `strict` parse
+checked, in the same pass that fills in any statistics they lack, so the
+answer is the same whichever runs built the cache; a second `strict` parse
+reads nothing again. It costs reading every value, where `default` reads only
+those it gathers statistics of. `query` has no `strict`.
 
 An enum label its type does not declare fails `parse` too, unless the dump
 changes the type's labels in a way pgdt does not read — an `ALTER TYPE …

@@ -421,12 +421,12 @@ Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mod
 
 ### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
 `QueryOptions::unrepresentable` and `::postgres_invalid_values` are each stated by a `pgdt query` flag, `PgDumpOptions`, a `pgdump.*` table option and
-a shell suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches it. `--schema-mode` is
-about ignoring the DDL, which both modes read. A library refusal names a mode in its own words, never a flag. The invalid-values mode is a parse's
-too (`ScanOptions`): an ignoring parse keeps no statistic of a refused field's group, and its block records per column the fields it went past, so a
-`Default` parse tracking such a column fails over the cache, re-reading nothing: a verdict is the dump's, not the gathering run's. Rejected: a per-block
-record, over-strict; a `pgdump.*` setting; a third `SchemaMode`; recording the mode, the read being the query's choice; refusing such a cache (D20).
-Defaults: `Null`, such values rare and the floor's type kept (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `IgnoredRefusals`.
+a shell suffix; the text mode changes a table's schema, fixed at `PgDumpTable::build`, so no `SET` reaches it; a library refusal names a mode in its own
+words, never a flag. The invalid-values mode is a parse's too (`ScanOptions`): an ignoring parse keeps no statistic of a refused field's group and its
+block records per column the fields it went past, so a `Default` parse tracking such a column fails over the cache unread; `Strict`, a parse's alone,
+checks every field, marks each block it checks whole and re-reads each held block unmarked — first, when resuming — never the record, which holds only
+what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;
+recording the mode; refusing such a cache (D20). Defaults: `Null` (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `checker`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test

@@ -453,6 +453,12 @@ pub(crate) trait BlockObserver: Send {
     /// [`Self::finish`]: what the block records
     /// ([`crate::index::CopyBlock::ignored_refusals`]).
     fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
+
+    /// Whether this observer checks every field of every row it is handed as
+    /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so a
+    /// block it finishes unrefused is checked in full
+    /// ([`crate::index::CopyBlock::checked_in_full`]).
+    fn checks_every_field(&self) -> bool;
 }
 
 /// What one block's observer answers: its statistics, or the decline that
@@ -480,14 +486,20 @@ pub enum BlockGathered {
     /// in the block's row order: an observer stops at one, and a piece's is
     /// kept only where no earlier row's was.
     Refused(FieldRefusal),
+    /// **The observer gathered nothing, only checking the block's fields** as
+    /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), and
+    /// found none refused: what a block whose columns the request tracks none
+    /// of answers, and a re-read checking a block alone.
+    Checked,
 }
 
 impl BlockGathered {
-    /// What the block gathered, and `None` where it declined or refused.
+    /// What the block gathered, and `None` where it declined, refused or
+    /// gathered nothing.
     pub fn gathered(self) -> Option<BlockStatistics> {
         match self {
             Self::Gathered(statistics) => Some(statistics),
-            Self::Declined { .. } | Self::Refused(_) => None,
+            Self::Declined { .. } | Self::Refused(_) | Self::Checked => None,
         }
     }
 }
@@ -535,9 +547,11 @@ impl FieldRefusal {
 /// holding one fails with it exactly where it tracks the column, re-reading
 /// nothing ([`crate::Error::FieldRefusedRecorded`]).
 ///
-/// **Only the fields gathering keyed**, as a refusing parse checks only those:
-/// a gathered column's scalar values, up to the block's decline where it
-/// declined.
+/// **Only the fields gathering keyed**, as a parse under
+/// [`crate::PostgresInvalidValues::Default`] checks only those: a gathered
+/// column's scalar values, up to the block's decline where it declined. A
+/// strict parse, which checks every field, does not read it: it re-reads the
+/// block, which no strict parse can have checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IgnoredRefusals {
     /// One per column holding such a field, in the header's column order,

@@ -714,6 +714,42 @@ fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
     assert_eq!(std::fs::read(&cache).unwrap(), written, "the query wrote nothing");
 }
 
+/// **`parse --postgres-invalid-values strict` checks the blocks a cache holds
+/// that no strict parse checked**, saying it re-read them, and `info` lists
+/// each as checked; a second strict parse has nothing to do. `query` has no
+/// `strict`, a parse's mode alone.
+#[test]
+fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
+    let (_dir, dump) = sandboxed("16/types/default.sql", "strict.sql");
+    let source = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", source]);
+    let checked = |listing: &str| {
+        listing.lines().filter(|l| *l == "    checked: every value, by a strict parse").count()
+    };
+    let blocks = |listing: &str| listing.lines().filter(|l| l.starts_with("    level: ")).count();
+    let info = run_ok(&["info", "--source", source]);
+    assert_eq!(checked(&info), 0, "{info}");
+    let strict = ["parse", "--source", source, "--postgres-invalid-values", "strict"];
+    let said = run_ok(&strict);
+    assert!(said.contains("only blocks no strict parse had checked were re-read"), "{said}");
+    let info = run_ok(&["info", "--source", source]);
+    assert!(blocks(&info) > 0 && checked(&info) == blocks(&info), "{info}");
+    let again = run_ok(&strict);
+    assert!(again.contains("nothing to scan"), "{again}");
+    let query = run(&[
+        "query",
+        "--source",
+        source,
+        "--table",
+        "public.t_extremes",
+        "--postgres-invalid-values",
+        "strict",
+    ]);
+    assert!(!query.status.success(), "a query has no strict mode");
+    let said = stderr_of(&query);
+    assert!(said.contains("invalid value 'strict'"), "{said}");
+}
+
 /// **`--postgres-invalid-values` reaches both commands.** `parse` stops at the
 /// float `--extra-float-digits=0` rounds past `DBL_MAX` unless told `ignore`,
 /// which leaves a cache; `query` over it refuses the field unless told

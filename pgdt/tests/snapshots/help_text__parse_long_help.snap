@@ -106,10 +106,13 @@ Options:
           first one it reads, as a restore of the dump stops there, or at one an `ignore` parse
           recorded in the cache; `ignore` goes on past each, keeping no statistics of the stretch of
           its column it sits in and recording it, and a `query` then reads it as its own
-          `--postgres-invalid-values` says
+          `--postgres-invalid-values` says; `strict` stops as `default` does but reads every value
+          to find one, those `default` leaves to a query included, re-reading each table the cache
+          holds that no `strict` parse checked, so a clean run means every value of a type pgdt
+          reads was checked
           
           [default: default]
-          [possible values: default, ignore]
+          [possible values: default, ignore, strict]
 
       --strict-identity[=<TERMS>]
           Which weak signs of a source's identity must hold, as a comma-separated selection of

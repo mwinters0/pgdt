@@ -150,7 +150,8 @@ impl ExtensionOptions for PgDumpTableOptions {
             UnrepresentableMode::Refuse => "refuse",
         };
         let invalid = match self.postgres_invalid_values {
-            PostgresInvalidValues::Default => "default",
+            // A scan reads under `Strict`, a parse's mode, as under `Default`.
+            PostgresInvalidValues::Default | PostgresInvalidValues::Strict => "default",
             PostgresInvalidValues::Ignore => "ignore",
         };
         vec![

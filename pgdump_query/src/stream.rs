@@ -781,7 +781,7 @@ async fn map_forward(
                                 (request.tracked_columns(&start.header).is_some(), Some(request))
                             }
                         };
-                        let header = census.then(|| start.header.clone());
+                        let header = start.header.clone();
                         builder.on_copy_start(start, census);
                         // **Once per database, not once per block**:
                         // recomputing at every `CopyStart` would put a third
@@ -801,23 +801,24 @@ async fn map_forward(
                         // After the restatement, so the count and the
                         // observer resolve the block against its own
                         // database's DDL.
-                        let plan = header.as_ref().map(|header| {
+                        let plan = census.then(|| {
                             let counter =
-                                counter_for(header, index.metadata.as_ref(), db.as_deref());
+                                counter_for(&header, index.metadata.as_ref(), db.as_deref());
                             builder.count_block(Arc::clone(&counter));
                             CensusPlan { width: header.columns.len(), counter }
                         });
-                        let observer =
-                            header.as_ref().zip(request).and_then(|(header, request)| {
-                                gather::observer_for(
-                                    request,
-                                    header,
-                                    index.metadata.as_ref(),
-                                    db.as_deref(),
-                                    account,
-                                    scan_options.postgres_invalid_values,
-                                )
-                            });
+                        // A block no request tracks is observed too under
+                        // `PostgresInvalidValues::Strict`, to check its fields.
+                        let observer = request.and_then(|request| {
+                            gather::observer_for(
+                                request,
+                                &header,
+                                index.metadata.as_ref(),
+                                db.as_deref(),
+                                account,
+                                scan_options.postgres_invalid_values,
+                            )
+                        });
                         if let Some(observer) = observer {
                             builder.observe_block(observer);
                         }
@@ -1203,6 +1204,12 @@ pub struct MapRun {
     /// How many of those were re-read — including a re-read that declined,
     /// which leaves the block lacking still.
     pub backfilled: usize,
+    /// **How many blocks the map already held that no strict parse had
+    /// checked were re-read to check them**, under
+    /// [`PostgresInvalidValues::Strict`] ([`CopyBlock::checked_in_full`]) —
+    /// zero under every other mode, and for a run interrupted before the
+    /// check reached them.
+    pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one
     /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run the
@@ -1241,7 +1248,10 @@ pub struct MapRun {
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking
 /// being counted afresh. [`StatisticsRequest::default`] is the data level
-/// everywhere.
+/// everywhere. **Under [`PostgresInvalidValues::Strict`] it checks every field
+/// it maps, and re-reads every block it holds that no strict parse checked**
+/// ([`CopyBlock::checked_in_full`]) — in the back-fill, or before mapping on
+/// where it resumes short of EOF.
 ///
 /// **The three finishing steps are this function's.**
 ///
@@ -1376,6 +1386,36 @@ async fn map_file_watched(
         }
     }
 
+    // **A strict parse resuming a map short of EOF checks the blocks it holds
+    // first**, so the first field it refuses is the first in file order; over
+    // a map at EOF the back-fill below checks them, in the read gathering any
+    // statistics they lack.
+    let mut checked_before = 0;
+    if resumed_from < size {
+        let checked = backfill_statistics(
+            source,
+            scan_options,
+            cache,
+            watch,
+            &mut index,
+            statistics,
+            &account,
+            size,
+            HashSet::new(),
+            Backfill::Unchecked,
+        )
+        .await?;
+        if checked.interrupted {
+            watch.check(source).await?;
+            return Ok(interrupted_run(index, resumed_from, &account));
+        }
+        // Banked before mapping on, which may stop at a refusal.
+        if checked.checked > 0 {
+            cache.save(watch, source, &index).await?;
+        }
+        checked_before = checked.checked;
+    }
+
     let stopped = match map_forward(
         source,
         scan_options,
@@ -1428,8 +1468,10 @@ async fn map_file_watched(
         &account,
         size,
         loaded,
+        Backfill::Lacking,
     )
     .await?;
+    let checked = checked_before + backfill.checked;
     let mut declined_statistics = 0;
     if backfill.interrupted {
         watch.check(source).await?;
@@ -1449,6 +1491,7 @@ async fn map_file_watched(
         interrupted: backfill.interrupted,
         lacking_statistics: backfill.lacking,
         backfilled: backfill.reread,
+        checked,
         declined_statistics,
         statistics: announce_statistics_held(&account),
     })
@@ -1473,6 +1516,7 @@ fn interrupted_run(
         interrupted: true,
         lacking_statistics: 0,
         backfilled: 0,
+        checked: 0,
         declined_statistics: 0,
         statistics: announce_statistics_held(account),
     }
@@ -1509,6 +1553,11 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
 /// on which run gathered it. A column the request leaves at the metadata
 /// level is one a refusing parse would not key, and is passed over; among the
 /// rest, the field quoted is the one a read would have met first.
+///
+/// **A strict parse does not read the record**: it keys every column, where
+/// the record holds only what an ignoring parse's gathering keyed, so it
+/// re-reads the block instead, as it re-reads every block no strict parse
+/// checked, and fails at the first field there ([`backfill_statistics`]).
 fn refuse_recorded(
     scan_options: &ScanOptions,
     cache: &CacheMode,
@@ -1542,7 +1591,24 @@ fn merge_ignored(record: &mut Option<Box<IgnoredRefusals>>, reread: Option<Ignor
 struct BackfillRun {
     lacking: usize,
     reread: usize,
+    /// The blocks re-read only because no strict parse had checked them, or
+    /// also for that.
+    checked: usize,
     interrupted: bool,
+}
+
+/// Which blocks [`backfill_statistics`] re-reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Backfill {
+    /// Every block lacking what the request asks for, and under
+    /// [`PostgresInvalidValues::Strict`] every block no strict parse checked:
+    /// the pass once the map has reached EOF.
+    Lacking,
+    /// Only the blocks no strict parse checked, and only to check them: the
+    /// pass a strict parse resuming a map short of EOF runs over the blocks
+    /// it holds before mapping on, so the first field it refuses is the first
+    /// in file order.
+    Unchecked,
 }
 
 /// Re-read every block of a map that has reached EOF which lacks what
@@ -1567,6 +1633,13 @@ struct BackfillRun {
 /// maximum no single read can deliver. So what a re-read replaces leaves the
 /// term that carried it — `loaded`, the header offsets the cache supplied
 /// statistics for, telling the two apart.
+///
+/// **Under [`PostgresInvalidValues::Strict`] a block no strict parse checked
+/// is re-read too**, checking every field and recording that it did
+/// ([`CopyBlock::checked_in_full`]) — in the same read where it lacks
+/// statistics as well — so a clean strict run has checked every field
+/// whichever runs built the map. `which` says whether this is that pass alone
+/// ([`Backfill::Unchecked`]).
 #[allow(clippy::too_many_arguments)]
 async fn backfill_statistics(
     source: &dyn ByteRangeSource,
@@ -1578,33 +1651,43 @@ async fn backfill_statistics(
     account: &Arc<StatisticsAccount>,
     size: u64,
     mut loaded: HashSet<u64>,
+    which: Backfill,
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
     let metadata = index.metadata.as_ref();
-    let lacking: Vec<(usize, StatisticsBackfill)> = if statistics.gathers() {
-        index
-            .spans
-            .iter()
-            .enumerate()
-            .filter_map(|(at, span)| match &span.body {
-                SpanBody::Data(DataBlock::Copy(block)) => statistics
-                    .backfill(
+    let strict = scan_options.postgres_invalid_values == PostgresInvalidValues::Strict;
+    let gathers = statistics.gathers() && which == Backfill::Lacking;
+    let rereads: Vec<(usize, Option<StatisticsBackfill>, bool)> = index
+        .spans
+        .iter()
+        .enumerate()
+        .filter_map(|(at, span)| {
+            let SpanBody::Data(DataBlock::Copy(block)) = &span.body else { return None };
+            let backfill = gathers
+                .then(|| {
+                    statistics.backfill(
                         block,
                         &bounded_columns(block, metadata),
                         scan_options.statistics_allowance_bytes,
                     )
-                    .map(|backfill| (at, backfill)),
-                _ => None,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let mut run = BackfillRun { lacking: lacking.len(), reread: 0, interrupted: false };
-    if lacking.is_empty() {
+                })
+                .flatten();
+            let unchecked = strict && !block.checked_in_full;
+            (backfill.is_some() || unchecked).then_some((at, backfill, unchecked))
+        })
+        .collect();
+    let lacking = rereads.iter().filter(|(_, backfill, _)| backfill.is_some()).count();
+    let unchecked = rereads.iter().filter(|(.., unchecked)| *unchecked).count();
+    let mut run = BackfillRun { lacking, reread: 0, checked: 0, interrupted: false };
+    if rereads.is_empty() {
         return Ok(run);
     }
-    tracing::info!(blocks = run.lacking, "statistics back-fill started");
+    if lacking > 0 {
+        tracing::info!(blocks = lacking, "statistics back-fill started");
+    }
+    if unchecked > 0 {
+        tracing::info!(blocks = unchecked, "check of blocks no strict parse checked started");
+    }
     announce_read_loop(source, scan_options);
     // There is no cache file to name in a `CachedBlockChanged` refusal
     // unless one is enabled. A block can lack what was asked under any mode —
@@ -1616,11 +1699,14 @@ async fn backfill_statistics(
     };
     let mut throttle = SaveThrottle::new();
     let mut shortfall_reported = false;
-    for (at, backfill) in lacking {
+    let blocks = rereads.len();
+    for (done, (at, backfill, unchecked)) in rereads.into_iter().enumerate() {
         // **At most two reads of a block**, the second being the finer size a
         // stated maximum a block broke at the size it gathered from asks for
         // ([`StatisticsRequest::backfill`]); nothing asks for a third, and the
-        // bound here is what says so.
+        // bound here is what says so. `Some(None)` is a read checking the
+        // block alone.
+        let gathering = backfill.is_some();
         let mut plan = Some(backfill);
         for _ in 0..2 {
             let Some(backfill) = plan.take() else { break };
@@ -1633,21 +1719,26 @@ async fn backfill_statistics(
                 cache_path,
                 index.metadata.as_ref(),
                 block,
-                &backfill,
+                backfill.as_ref(),
                 account,
                 size,
                 &mut shortfall_reported,
             )
             .await?;
-            let Some(BlockReread { gathered, census, ignored }) = gathered else {
+            let Some(BlockReread { gathered, census, ignored, checked }) = gathered else {
                 cache.save(watch, source, index).await?;
                 run.interrupted = true;
                 return Ok(run);
             };
             if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
-                // Every row was read, so the block is at the data level
-                // whether its statistics fitted or not.
-                block.set_census(census);
+                // Every row was read, so a block gathering is at the data
+                // level whether its statistics fitted or not; a check alone
+                // records only that it checked, as a strict mapping pass
+                // records nothing more of a block it was not asked to.
+                if backfill.is_some() {
+                    block.set_census(census);
+                }
+                block.checked_in_full |= checked;
                 let _attributed = StatisticsScope::enter();
                 match gathered {
                     // **A re-read that declined keeps what the block already
@@ -1660,6 +1751,7 @@ async fn backfill_statistics(
                         merge_ignored(&mut block.ignored_refusals, ignored);
                     }
                     BlockGathered::Refused(_) => unreachable!("a re-read fails on a refusal"),
+                    BlockGathered::Checked => {}
                     BlockGathered::Gathered(gathered) => {
                         let replaced =
                             block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
@@ -1682,17 +1774,22 @@ async fn backfill_statistics(
                         account.apply(&[(term, -(replaced as i64))]);
                     }
                 }
-                plan = statistics.backfill(
-                    block,
-                    &bounded_columns(block, index.metadata.as_ref()),
-                    scan_options.statistics_allowance_bytes,
-                );
+                if backfill.is_some() {
+                    plan = statistics
+                        .backfill(
+                            block,
+                            &bounded_columns(block, index.metadata.as_ref()),
+                            scan_options.statistics_allowance_bytes,
+                        )
+                        .map(Some);
+                }
             }
         }
-        run.reread += 1;
+        run.reread += usize::from(gathering);
+        run.checked += usize::from(unchecked);
         // Both of `map_forward`'s check points, a block's close being the
         // second (`docs/design/decisions.md`, "D63").
-        if scan_options.cancelled() && run.reread < run.lacking {
+        if scan_options.cancelled() && done + 1 < blocks {
             cache.save(watch, source, index).await?;
             run.interrupted = true;
             return Ok(run);
@@ -1701,7 +1798,12 @@ async fn backfill_statistics(
             throttle.save(cache, watch, source, index).await?;
         }
     }
-    tracing::info!(blocks = run.reread, "statistics back-fill complete");
+    if lacking > 0 {
+        tracing::info!(blocks = run.reread, "statistics back-fill complete");
+    }
+    if unchecked > 0 {
+        tracing::info!(blocks = run.checked, "check of blocks no strict parse checked complete");
+    }
     Ok(run)
 }
 
@@ -1796,6 +1898,10 @@ pub struct BlockReread {
     /// ([`StatisticsBackfill::requested`]) — which a caller merges into
     /// [`CopyBlock::ignored_refusals`] ([`IgnoredRefusals::merge`]).
     pub ignored: Option<IgnoredRefusals>,
+    /// Whether the re-read checked every field of the block and found none
+    /// refused, as it does under [`crate::PostgresInvalidValues::Strict`] —
+    /// which a caller records as [`CopyBlock::checked_in_full`].
+    pub checked: bool,
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —
@@ -1822,8 +1928,10 @@ pub struct BlockReread {
 /// bytes than its map does. It names no cache, this entry point being handed
 /// none; [`map_file`]'s back-fill names the one it loaded. **A field its
 /// type's `*_in` refuses fails the re-read** in a column `backfill`'s request
-/// tracks, [`Error::FieldRefused`], as it fails a mapping pass, so the result
-/// never holds [`BlockGathered::Refused`]; in any other it is recorded
+/// tracks — in every column under [`crate::PostgresInvalidValues::Strict`],
+/// which checks every field ([`BlockReread::checked`]) — with
+/// [`Error::FieldRefused`], as it fails a mapping pass, so the result never
+/// holds [`BlockGathered::Refused`]; in any other column it is recorded
 /// ([`BlockReread::ignored`]).
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,
@@ -1841,7 +1949,7 @@ pub async fn gather_block_statistics(
         None,
         metadata,
         block,
-        backfill,
+        Some(backfill),
         &Arc::default(),
         size,
         &mut shortfall_reported,
@@ -1852,7 +1960,8 @@ pub async fn gather_block_statistics(
 /// [`gather_block_statistics`] once the source is announced, `size` known, and
 /// with the flag [`report_shortfall`] keeps once per pass. `cache_path` is the
 /// cache the map was loaded from, which a moved block's refusal names; the
-/// observer charges `account`.
+/// observer charges `account`. `None` for `backfill` gathers nothing and
+/// checks every field ([`gather::checker`]).
 #[allow(clippy::too_many_arguments)]
 async fn reread_block(
     source: &dyn ByteRangeSource,
@@ -1860,19 +1969,23 @@ async fn reread_block(
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
-    backfill: &StatisticsBackfill,
+    backfill: Option<&StatisticsBackfill>,
     account: &Arc<StatisticsAccount>,
     size: u64,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockReread>> {
-    let mut observer = gather::observer_tracking(
-        backfill,
-        &block.header,
-        metadata,
-        block.database.as_deref(),
-        account,
-        scan_options.postgres_invalid_values,
-    );
+    let database = block.database.as_deref();
+    let mut observer = match backfill {
+        Some(backfill) => gather::observer_tracking(
+            backfill,
+            &block.header,
+            metadata,
+            database,
+            account,
+            scan_options.postgres_invalid_values,
+        ),
+        None => gather::checker(&block.header, metadata, database, account),
+    };
     let read = reread_rows(
         source,
         scan_options,
@@ -1889,13 +2002,14 @@ async fn reread_block(
     // as it was allocated (`crate::instrument`).
     let _attributed = StatisticsScope::enter();
     let ignored = observer.take_ignored();
+    let checked = observer.checks_every_field();
     let gathered = match observer.finish(block.terminator_offset - block.data_offset) {
         BlockGathered::Refused(refusal) => {
             return Err(refusal.into_error(&block.header, block.data_offset));
         }
         gathered => gathered,
     };
-    Ok(Some(BlockReread { gathered, census, ignored }))
+    Ok(Some(BlockReread { gathered, census, ignored, checked }))
 }
 
 /// Read every row of `block` again, as a mapping pass reads them — offered
@@ -5835,6 +5949,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             ignored_refusals: None,
+            checked_in_full: false,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -5938,6 +6053,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             ignored_refusals: None,
+            checked_in_full: false,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -6231,6 +6347,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             ignored_refusals: None,
+            checked_in_full: false,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -6279,6 +6396,7 @@ mod tests {
             statistics: None,
             statistics_declined: None,
             ignored_refusals: None,
+            checked_in_full: false,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };

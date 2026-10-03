@@ -98,6 +98,26 @@ impl From<CliInvalidValues> for PostgresInvalidValues {
     }
 }
 
+/// `parse`'s spelling of [`PostgresInvalidValues`], which adds the mode only a
+/// parse has: `strict`, checking every field.
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+enum CliParseInvalidValues {
+    #[default]
+    Default,
+    Ignore,
+    Strict,
+}
+
+impl From<CliParseInvalidValues> for PostgresInvalidValues {
+    fn from(mode: CliParseInvalidValues) -> Self {
+        match mode {
+            CliParseInvalidValues::Default => PostgresInvalidValues::Default,
+            CliParseInvalidValues::Ignore => PostgresInvalidValues::Ignore,
+            CliParseInvalidValues::Strict => PostgresInvalidValues::Strict,
+        }
+    }
+}
+
 /// What `query` does with the statistics `parse` stored: the CLI spelling of
 /// [`QueryOptions::use_statistics`].
 #[derive(Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -845,7 +865,11 @@ enum Command {
         /// recorded in the cache; `ignore` goes on past each, keeping no
         /// statistics of the stretch of its column it sits in and recording
         /// it, and a `query` then reads it as its own
-        /// `--postgres-invalid-values` says.
+        /// `--postgres-invalid-values` says; `strict` stops as `default` does
+        /// but reads every value to find one, those `default` leaves to a
+        /// query included, re-reading each table the cache holds that no
+        /// `strict` parse checked, so a clean run means every value of a type
+        /// pgdt reads was checked.
         #[arg(
             long,
             value_name = "MODE",
@@ -853,7 +877,7 @@ enum Command {
             default_value_t,
             conflicts_with = "preamble_only"
         )]
-        postgres_invalid_values: CliInvalidValues,
+        postgres_invalid_values: CliParseInvalidValues,
         #[command(flatten)]
         identity: IdentityArgs,
         #[command(flatten)]
@@ -1881,14 +1905,25 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 /// A run that found the cache already complete scanned nothing at all and
 /// says so, rather than reporting a resume point equal to the file's size —
 /// two different facts to a user checking whether a scan finished — unless it
-/// re-read blocks for statistics they lacked (`backfilled`), which stderr
-/// counts.
-fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<String> {
+/// re-read blocks for statistics they lacked (`backfilled`), or to check them
+/// under `--postgres-invalid-values strict` (`checked`), which stderr counts.
+fn resume_notice(
+    resumed_from: u64,
+    size: u64,
+    backfilled: usize,
+    checked: usize,
+) -> Option<String> {
+    let reread = match (backfilled, checked) {
+        (0, 0) => None,
+        (_, 0) => Some("blocks lacking the requested statistics"),
+        (0, _) => Some("blocks no strict parse had checked"),
+        _ => Some("blocks lacking the requested statistics or that no strict parse had checked"),
+    };
     match resumed_from {
         0 => None,
-        n if n >= size && backfilled > 0 => Some(format!(
-            "the cache already covers all {size} byte(s); only blocks lacking the requested \
-             statistics were re-read"
+        n if n >= size && reread.is_some() => Some(format!(
+            "the cache already covers all {size} byte(s); only {} were re-read",
+            reread.expect("just tested")
         )),
         n if n >= size => {
             Some(format!("nothing to scan: the cache already covers all {size} byte(s)"))
@@ -2163,7 +2198,17 @@ async fn main() -> Result<()> {
                 // empty report rather than a truncated one.
                 // A stop inside the statistics back-fill leaves the map
                 // whole, and only the same statistics flags pick it up again.
-                if run.index.is_complete(size) {
+                if run.index.is_complete(size) && run.lacking_statistics == 0 {
+                    eprintln!(
+                        "interrupted after checking {} block(s) no strict parse had checked — the \
+                         cache at {} holds those checked so far",
+                        run.checked,
+                        path.display()
+                    );
+                    eprintln!(
+                        "re-run `pgdt parse --source {origin}` with the same flags to continue"
+                    );
+                } else if run.index.is_complete(size) {
                     eprintln!(
                         "interrupted after re-reading {} of the {} block(s) lacking the requested \
                          statistics — the cache at {} holds those re-read so far",
@@ -2203,7 +2248,8 @@ async fn main() -> Result<()> {
             // The listing describes the file's state after this run, not
             // this invocation's diff, so the one line that *is* about the
             // invocation goes above it.
-            if let Some(notice) = resume_notice(run.resumed_from, size, run.backfilled) {
+            if let Some(notice) = resume_notice(run.resumed_from, size, run.backfilled, run.checked)
+            {
                 println!("{notice}");
                 println!();
             }
@@ -3172,6 +3218,9 @@ fn print_index(
         headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         println!("    level: {}", level_label(block));
+        if block.checked_in_full {
+            println!("    checked: every value, by a strict parse");
+        }
         for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
             println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }

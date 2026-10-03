@@ -57,6 +57,10 @@ and the cache holds the scan as far as it last banked.
 `--postgres-invalid-values ignore` goes on past each instead, recording them
 in the cache, so a later `parse` without it fails on the first just the same
 where it records statistics of that value's column.
+`--postgres-invalid-values strict` checks every value rather than those it
+reads for statistics, re-reading the tables the cache holds that no `strict`
+parse checked — a resumed scan before it reads on — and saying so on the line
+above the listing.
 Which values it checks, and what to do about one, is
 [`type-handling.md`](type-handling.md), "When a value does not match its type".
 
@@ -1184,7 +1188,9 @@ public.events (98765 rows)
   --postgres-invalid-values ignore` went past says so on a `refused by
   PostgreSQL:` line per column holding one: the column, how many, and the
   first by its `COPY` line, value and offset ([type
-  handling](type-handling.md), "When a value does not match its type").
+  handling](type-handling.md), "When a value does not match its type"). One a
+  `parse --postgres-invalid-values strict` checked says so on a `checked:
+  every value, by a strict parse` line.
 
 Add `--detail` to also see each block's byte offsets and, per column that has
 something to say, what it became: the Arrow type it resolved to, or — for a
@@ -1518,7 +1524,8 @@ than. **`ignored_refusals`** is `null` too, or the values PostgreSQL refuses
 that an ignoring `parse` went past in the block, as `columns`, one per column
 holding one in header order: `first` (its row's `offset` from the block's
 data, its `COPY` `line`, its `column` by position in the header, its
-`declared_type` and `value`) and `count`.
+`declared_type` and `value`) and `count`. **`checked_in_full`** is `true` for a
+block a strict `parse` checked every value of.
 
 **This is a raw dump of pgdt's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field

@@ -505,8 +505,8 @@ async fn map_ungathered(source: &LocalFileSource, path: &Path, request: &Statist
 /// **A dump opened ignoring them reads a float PostgreSQL refuses as the
 /// largest finite value of its sign**, a pushed filter finding it as the batch
 /// holds it, over the complete data-level cache a parse ignoring them leaves;
-/// opened told nothing, the same scan refuses the field
-/// (`docs/design/decisions.md`, "D103").
+/// opened told nothing, or told a parse's `Strict`, the same scan refuses the
+/// field (`docs/design/decisions.md`, "D103").
 #[tokio::test]
 async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
     use arrow::array::{Array, Int32Array};
@@ -523,7 +523,12 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
     };
     let cached = CacheMode::enabled(cache::colocated_path(&copy));
     map_file(&source, &scan, &cached, &StatisticsRequest::DATA).await.unwrap();
-    for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Ignore] {
+    let modes = [
+        PostgresInvalidValues::Default,
+        PostgresInvalidValues::Strict,
+        PostgresInvalidValues::Ignore,
+    ];
+    for invalid in modes {
         let options =
             PgDumpOptions { postgres_invalid_values: invalid, ..PgDumpOptions::default() };
         let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
@@ -541,7 +546,7 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
         );
         let answer = ctx.sql(&sql).await.unwrap().collect().await;
         match invalid {
-            PostgresInvalidValues::Default => {
+            PostgresInvalidValues::Default | PostgresInvalidValues::Strict => {
                 let refused = answer.expect_err("the field is refused").to_string();
                 assert!(refused.contains("1.79769313486232e+308"), "{refused}");
             }

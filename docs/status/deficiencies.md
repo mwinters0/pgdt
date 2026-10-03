@@ -376,11 +376,11 @@ than reading as a phase nobody has sliced.
   by a hand-written dump doing so. Detail: `pgdump_query/src/preamble.rs`.
 
 - **KD88** — a query's typed read of an enum column emits a label the type
-  does not declare, which `enum_in` refuses, so such a field no parse keyed
-  — its column at the metadata level, its block declined — is refused only
-  by a query ordering on the column. **(c) unowned**; promoted by 31.14's
-  `strict`, which needs it refused where it decodes. Detail:
-  `pgdump_query/src/batch.rs`.
+  does not declare, which `enum_in` refuses, so such a field no default
+  parse keyed — its column at the metadata level, its block declined — is
+  refused only by a query ordering on the column. **(c) unowned**; a strict
+  parse refuses it, so promoted by a query wanted to refuse it without one.
+  Detail: `pgdump_query/src/batch.rs`.
 
 - **KD89** — an `ALTER TYPE … ADD VALUE … BEFORE` or `AFTER`, which no
   `pg_dump` writes, is folded as if it appended the label, so an ordering

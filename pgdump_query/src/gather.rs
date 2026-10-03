@@ -44,7 +44,8 @@
 //!
 //! **A block whose gathering passes the pass's statistics allowance declines**
 //! ([`Gatherer::decline`]): it frees what it holds, reads its remaining rows
-//! for the census alone, and answers [`BlockGathered::Declined`] with the
+//! for the census alone — and a strict parse's check ([`checker`]) — and
+//! answers [`BlockGathered::Declined`] with the
 //! allowance, which the map records (`docs/design/decisions.md`, "D85"). The
 //! close [`Gatherer::finish`] makes is kept even where it passes the
 //! allowance; the next block declines at its first charge.
@@ -66,20 +67,21 @@ use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
-use crate::predicate::ValueKey;
+use crate::predicate::{ValueKey, field_refused};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::PostgresInvalidValues;
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP,
-    Sortedness, StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group,
-    min_rows_group, text_heap, vec_heap,
+    FieldRefusal, GroupSizing, IgnoredRefusals, ROW_GROUP_DEFAULT_SIZE_BYTES, RowGroup,
+    STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount, StatisticsBackfill,
+    StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap, vec_heap,
 };
 use crate::unrepresentable::{ColumnTier, column_tiers};
 
-/// The observer for one block, or `None` when `request` tracks nothing in it,
-/// charging what it holds to `account`.
+/// The observer for one block, charging what it holds to `account`, or
+/// `None` when `request` tracks nothing in it — but under
+/// [`PostgresInvalidValues::Strict`], when it is the block's [`checker`].
 ///
 /// Resolved against an empty census: the census moves only an array column,
 /// and a nested column gets neither bounds nor a dictionary.
@@ -91,9 +93,107 @@ pub(crate) fn observer_for(
     account: &Arc<StatisticsAccount>,
     invalid: PostgresInvalidValues,
 ) -> Option<Box<dyn BlockObserver>> {
-    let tracked = request.tracked_columns(header)?;
-    let gathering = request.gathering(tracked.clone(), tracked);
-    Some(observer_tracking(&gathering, header, metadata, database, account, invalid))
+    match request.tracked_columns(header) {
+        Some(tracked) => {
+            let gathering = request.gathering(tracked.clone(), tracked);
+            Some(observer_tracking(&gathering, header, metadata, database, account, invalid))
+        }
+        None if invalid == PostgresInvalidValues::Strict => {
+            Some(checker(header, metadata, database, account))
+        }
+        None => None,
+    }
+}
+
+/// **An observer gathering nothing that checks every field of the block** as
+/// a strict parse does ([`PostgresInvalidValues::Strict`];
+/// `docs/design/decisions.md`, "D103"): what a block whose
+/// columns a request tracks none of is observed by, and what re-reads a block
+/// the cache holds that no strict parse checked. It answers
+/// [`BlockGathered::Checked`], or [`BlockGathered::Refused`] at the first
+/// field its type's `*_in` refuses, and never declines, holding nothing.
+pub(crate) fn checker(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    account: &Arc<StatisticsAccount>,
+) -> Box<dyn BlockObserver> {
+    let _attributed = StatisticsScope::enter();
+    let charge = Charge::new(Arc::clone(account), Term::Gathering);
+    let resolved = stored_resolution(header, metadata, database);
+    let checks = field_checks(header, metadata, database, &resolved);
+    drop(resolved);
+    // No group is ever opened, so the size is never read.
+    let sizing = Sizing {
+        group_size: ROW_GROUP_DEFAULT_SIZE_BYTES,
+        cap: None,
+        min_rows: None,
+        max_rows: None,
+        record: GroupSizing::Stated,
+    };
+    let mut gatherer = Gatherer::block(sizing, Vec::new(), charge);
+    gatherer.gathers = false;
+    gatherer.checks = Some(checks);
+    gatherer.charge_held();
+    Box::new(gatherer)
+}
+
+/// What a strict parse checks each of `header`'s columns by, positionally:
+/// its comparison under `resolved`, which is what names the type a field is
+/// read as ([`field_refused`]), and `None` for a column read as no type.
+fn field_checks(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    resolved: &ResolvedSchema,
+) -> Arc<[Option<FieldCheck>]> {
+    let qualified = header.qualified_name();
+    header
+        .columns
+        .iter()
+        .zip(&resolved.comparisons)
+        .map(|(name, plan)| {
+            let read = !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
+            read.then(|| FieldCheck {
+                plan: plan.clone(),
+                declared_type: declared_column(metadata, database, &qualified, name)
+                    .map(|def| def.declared_type.clone())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// One column's part of a strict parse's check ([`field_checks`]).
+struct FieldCheck {
+    plan: ComparisonPlan,
+    declared_type: String,
+}
+
+/// The first field of the row at `offset`, the `line`-th the observer was
+/// handed, that its column's check finds refused, in column order.
+fn check_row(
+    checks: &[Option<FieldCheck>],
+    offset: u64,
+    line: u64,
+    raw: &[u8],
+) -> Option<FieldRefusal> {
+    for (column, (field, check)) in split_fields(raw).zip(checks).enumerate() {
+        let Some(check) = check else { continue };
+        // A NULL is no value to refuse, and a field that is not text is no
+        // value at all, which no `*_in` is handed.
+        let Ok(Some(text)) = decode_field(field) else { continue };
+        if field_refused(&check.plan, &text) {
+            return Some(FieldRefusal {
+                offset,
+                line,
+                column,
+                declared_type: check.declared_type.clone(),
+                value: text.into_owned(),
+            });
+        }
+    }
+    None
 }
 
 /// The observer for one block gathering `plan`'s columns — positional to
@@ -102,7 +202,9 @@ pub(crate) fn observer_for(
 /// builds from [`StatisticsRequest::backfill`]'s answer. `invalid` says
 /// whether a field its type's `*_in` refuses stops the block, in the columns
 /// the plan's request tracks; in the rest it is gone past and recorded
-/// ([`StatisticsBackfill::requested`]).
+/// ([`StatisticsBackfill::requested`]) — but under
+/// [`PostgresInvalidValues::Strict`], which checks every field of every
+/// column first, as [`checker`] does, whether its statistics decline or not.
 pub(crate) fn observer_tracking(
     plan: &StatisticsBackfill,
     header: &CopyHeader,
@@ -117,6 +219,8 @@ pub(crate) fn observer_tracking(
     let charge = Charge::new(Arc::clone(account), Term::Gathering);
     let qualified = header.qualified_name();
     let resolved = stored_resolution(header, metadata, database);
+    let checks = (invalid == PostgresInvalidValues::Strict)
+        .then(|| field_checks(header, metadata, database, &resolved));
     let tiers = column_tiers(&resolved);
     let columns: Vec<Option<ColumnGatherer>> = header
         .columns
@@ -144,6 +248,7 @@ pub(crate) fn observer_tracking(
         .collect();
     drop((resolved, tiers, qualified));
     let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
+    gatherer.checks = checks;
     gatherer.charge_held();
     // An account already full declines this block before its first row, so a
     // pass past its allowance gathers no row of any block after it
@@ -311,7 +416,15 @@ struct Gatherer {
     open: Option<OpenGroup>,
     /// Whether any column is tracked, so a row is worth splitting.
     splits: bool,
+    /// Whether this observer gathers statistics at all, which a [`checker`]
+    /// does not: it opens no group, never declines, and answers
+    /// [`BlockGathered::Checked`].
+    gathers: bool,
     columns: Vec<Option<ColumnGatherer>>,
+    /// What a strict parse checks every field by, one per column, where this
+    /// observer checks them ([`PostgresInvalidValues::Strict`]): each row is
+    /// checked before it is gathered, and after a decline too.
+    checks: Option<Arc<[Option<FieldCheck>]>>,
     /// What the open groups have grown by since [`Self::charge_held`] last
     /// ran, which it runs again once this passes [`STATISTICS_ACCOUNT_CHARGE_STEP`].
     uncharged: i64,
@@ -323,7 +436,7 @@ struct Gatherer {
     /// observer's charge carries until the fold ends.
     carried: (u64, u64),
     /// The allowance this observer **declined** under, once the account passed
-    /// it: everything gathered is freed, no further row is read, and a block
+    /// it: everything gathered is freed, no further row is gathered, and a block
     /// answers [`BlockGathered::Declined`]
     /// (`docs/design/decisions.md`, "D85"). A piece carries it into the block
     /// it folds into, the block having lost that piece's rows.
@@ -361,7 +474,9 @@ impl Gatherer {
             head: None,
             open: None,
             splits: columns.iter().any(Option::is_some),
+            gathers: true,
             columns,
+            checks: None,
             uncharged: 0,
             over: false,
             carried: (0, 0),
@@ -373,8 +488,8 @@ impl Gatherer {
         }
     }
 
-    /// Whether this observer has stopped reading rows, having declined or
-    /// refused.
+    /// Whether this observer has stopped gathering rows, having declined or
+    /// refused; one that declined still checks them where it checks any.
     fn stopped(&self) -> bool {
         self.declined.is_some() || self.refused.is_some()
     }
@@ -430,7 +545,7 @@ impl Gatherer {
     /// Decline where the last charge update found the account over its
     /// allowance, which [`Self::charge_held`] records.
     fn decline_if_over(&mut self) {
-        if self.over && !self.stopped() {
+        if self.over && !self.stopped() && self.gathers {
             let allowance = self.charge.allowance().expect("only an allowance can be passed");
             self.decline(allowance);
         }
@@ -703,7 +818,18 @@ impl Drop for Gatherer {
 impl BlockObserver for Gatherer {
     fn observe_row(&mut self, offset: u64, raw: &[u8]) {
         self.rows += 1;
-        if self.stopped() {
+        if self.refused.is_some() {
+            return;
+        }
+        // **Checked before it is gathered, and whether or not gathering has
+        // declined**: a strict parse reads every field of every row.
+        let line = self.rows;
+        if let Some(refusal) = self.checks.as_deref().and_then(|c| check_row(c, offset, line, raw))
+        {
+            let _attributed = StatisticsScope::enter();
+            return self.refuse(refusal);
+        }
+        if self.stopped() || !self.gathers {
             return;
         }
         let _attributed = StatisticsScope::enter();
@@ -763,6 +889,9 @@ impl BlockObserver for Gatherer {
         if let Some(refusal) = self.refused.take() {
             return BlockGathered::Refused(refusal);
         }
+        if !self.gathers {
+            return BlockGathered::Checked;
+        }
         if let Some(allowance) = self.declined {
             return BlockGathered::Declined { allowance };
         }
@@ -796,6 +925,8 @@ impl BlockObserver for Gatherer {
         };
         let mut piece = Gatherer::block(sizing, columns, charge);
         piece.piece = true;
+        piece.gathers = self.gathers;
+        piece.checks = self.checks.clone();
         // A piece of a block that has already stopped gathers nothing: it
         // still reads its rows for the census and the block's extent, and
         // holds no statistic while it does.
@@ -835,6 +966,9 @@ impl BlockObserver for Gatherer {
         }
         IgnoredRefusals::fold(&mut self.ignored, ignored);
         self.rows += later.rows;
+        if !self.gathers {
+            return drop(later);
+        }
         match (self.declined, later.declined) {
             (Some(_), _) => drop(later),
             (None, Some(allowance)) => {
@@ -855,6 +989,10 @@ impl BlockObserver for Gatherer {
 
     fn take_ignored(&mut self) -> Option<IgnoredRefusals> {
         self.ignored.take()
+    }
+
+    fn checks_every_field(&self) -> bool {
+        self.checks.is_some()
     }
 }
 
@@ -1129,7 +1267,7 @@ impl ColumnGatherer {
                     }
                 }
                 if refused {
-                    if self.invalid == PostgresInvalidValues::Default {
+                    if self.invalid != PostgresInvalidValues::Ignore {
                         return Err(Refused);
                     }
                     // Ignored: no statistic a read could contradict (D103).

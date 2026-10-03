@@ -289,6 +289,14 @@ pub struct CopyBlock {
     /// ([`crate::Error::FieldRefusedRecorded`]).
     #[serde(default)]
     pub ignored_refusals: Option<Box<IgnoredRefusals>>,
+    /// **Whether a strict parse checked every field of this block**
+    /// ([`crate::PostgresInvalidValues::Strict`]), mapping or re-reading it,
+    /// and found none refused — a fact about the dump's bytes, which the
+    /// cache's identity binds it to. A strict parse re-reads every block
+    /// holding `false`, so a clean one has checked every field whichever runs
+    /// built the map; nothing else reads it.
+    #[serde(default)]
+    pub checked_in_full: bool,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order, and `None` for a block mapped at the
     /// [`crate::StatisticsLevel::Metadata`] level, which records nothing drawn

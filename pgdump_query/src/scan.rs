@@ -627,6 +627,16 @@ pub enum PostgresInvalidValues {
     /// `decode::float_field` reads it and fails on every other such field. A
     /// filter literal is never opted out.
     Ignore,
+    /// **A parse checks every field**, failing at the first its type's `*_in`
+    /// refuses as [`Self::Default`] does, but over the fields `Default` leaves
+    /// to a query: a column the request leaves at the metadata level, a nested
+    /// value's elements, a value too long to key, and the rows of a block whose
+    /// statistics declined. A block it checks whole records it
+    /// ([`crate::index::CopyBlock::checked_in_full`]), and one the cache holds
+    /// unchecked is re-read and checked, so a clean run has checked every field
+    /// whichever runs built the cache. A query reads under it as under
+    /// `Default`.
+    Strict,
 }
 
 /// Tuning knobs for a full-file scan.
@@ -689,8 +699,8 @@ pub struct ScanOptions {
     /// so on every other entry point it bounds nothing.
     pub statistics_allowance_bytes: Option<u64>,
     /// What gathering does with a field its type's `*_in` refuses: fails the
-    /// pass at the first, by default, or goes on past it
-    /// ([`PostgresInvalidValues`]). Read by [`crate::stream::map_file`] and
+    /// pass at the first, by default, or goes on past it, or checks every
+    /// field ([`PostgresInvalidValues`]). Read by [`crate::stream::map_file`] and
     /// [`crate::stream::gather_block_statistics`] alone, as gathering is; a
     /// query's reads are [`crate::QueryOptions::postgres_invalid_values`]'.
     pub postgres_invalid_values: PostgresInvalidValues,

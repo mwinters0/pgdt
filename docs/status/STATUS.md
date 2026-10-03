@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning; a field PostgreSQL refuses fails a data-level parse keying it, at the first — an enum's undeclared label where the preamble read its labels exactly (`KD87`) — and a query decoding it, an enum's label only under an ordering filter (`KD88`), unless told to ignore such fields, when a parse goes on past each, its cache recording them per column for a later refusing parse tracking the column to fail on, and a query reads a float past its range as the largest of its sign | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44, D103; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning; a field PostgreSQL refuses fails a data-level parse keying it, at the first — an enum's undeclared label where the preamble read its labels exactly (`KD87`) — and a query decoding it, an enum's label only under an ordering filter (`KD88`), unless told to ignore such fields, when a parse goes on past each, its cache recording them per column for a later refusing parse tracking the column to fail on, and a query reads a float past its range as the largest of its sign; told to be strict, a parse checks every field of a type it reads, re-reading each block its cache holds that no strict parse checked | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44, D103; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
@@ -103,7 +103,7 @@ approval, in the spec's opening note.
 - [x] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal — [notes](../design/roadmap-P31.13-postgres-invalid-values-notes.md)
 - [x] **31.13.1** A block records the refused fields an ignoring parse went past — the first in full, and a count — so a `default` parse over the cache fails with the recorded refusal, saying an ignoring parse recorded it and nothing was re-read, and `info` reports them; `CACHE_FORMAT_VERSION` bumped — [notes](../design/roadmap-P31.13.1-ignored-refusals-notes.md)
 - [x] **31.13.2** A block's record of the refused fields an ignoring parse went past is per column — each column holding one keeps its first in full and its count — so a `default` parse fails exactly when it tracks such a column, quoting the first among the columns it tracks, and `info` reports them by column; `CACHE_FORMAT_VERSION` bumped — [notes](../design/roadmap-P31.13.2-per-column-refusals-notes.md)
-- [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query
+- [x] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query — [notes](../design/roadmap-P31.14-strict-notes.md)
 
 ## Not started
 
@@ -134,4 +134,30 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A strict parse checks only the types this build reads** (31.14).
+  `--postgres-invalid-values strict` checks a field by its column's comparison
+  kind (`predicate::field_refused`), so a column held as its text — `json`,
+  `xml`, `money`, `bit`, the geometric types, a user base type — and a range
+  declaring its own `canonical` function are checked for nothing: malformed
+  JSON, which `json_in` refuses and a restore fails on, passes a clean strict
+  parse, short of [`../design/roadmap.md`](../design/roadmap.md)'s "a clean
+  parse means what a clean restore does" ("A literal is guaranteed in
+  `*_out`'s form and never read past `*_in`'s"). Made so because the slice row
+  names the fields a default parse skips — nested leaves, declined blocks,
+  metadata-level columns — and no reader here decodes a text-held type to
+  check; each would be its `*_in` grammar ported with an invariant, as 31.12.1
+  did for five kinds. Reconsidering means slices porting those grammars, or
+  that sentence narrowed to the types pgdt reads; the manual already lists
+  what goes unchecked.
+- **A strict parse does not fail from the record an ignoring parse left**
+  (31.14). It re-reads the block, as every block no strict parse checked, and
+  fails at the first refused field there, worded as read from the dump, where
+  31.13.1's notes had it owing the record what `Default` gives it, failing
+  before any read. Made so because the record holds only the columns an
+  ignoring parse keyed, so quoting it can name a later field than a fresh
+  strict read meets — the exactness 31.13.2 bought for `Default`; the cost is
+  reading every unchecked block before the recorded one. Reconsidering means
+  `refuse_recorded` serving `Strict` too, quoting the first recorded field
+  rather than the dump's first.
 

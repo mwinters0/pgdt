@@ -842,6 +842,41 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
     assert_eq!(copies, common::REFUSED_FIELDS.len() * common::VERSIONS.len());
 }
 
+/// **A strict parse of every fixture refuses no field PostgreSQL wrote but
+/// those [`common::REFUSED_FIELDS`] lists**, which it refuses as a default
+/// parse does, at the data level and at the metadata level alike — so every
+/// field a `pg_dump` writes, nested elements and range bounds among them, is
+/// one its check reads as the server does — and records every block checked
+/// in full.
+#[tokio::test]
+async fn a_strict_parse_refuses_no_fixture_field_but_the_listed_ones() {
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..Default::default()
+    };
+    for path in common::all_fixtures() {
+        let source = LocalFileSource::open(&path).unwrap();
+        for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
+            let run = map_file(&source, &strict, &CacheMode::DISABLED, &request).await;
+            match (common::refused_field(&path), run) {
+                (Some(refused), Err(Error::FieldRefused { table, column, .. })) => {
+                    assert_eq!((table.as_str(), column.as_str()), (refused.table, refused.column));
+                }
+                (None, Ok(run)) => {
+                    let unchecked: Vec<_> = run
+                        .index
+                        .blocks()
+                        .filter(|b| !b.checked_in_full)
+                        .map(|b| b.header.qualified_name())
+                        .collect();
+                    assert!(unchecked.is_empty(), "{}: {unchecked:?}", path.display());
+                }
+                (_, other) => panic!("{}: {other:?}", path.display()),
+            }
+        }
+    }
+}
+
 /// **Told to ignore them, a parse goes on past a float PostgreSQL refuses,
 /// and a query reads it as `float8out` meant it** (I57), at every major: the
 /// largest finite value of its sign, printed and filtered alike, a cache's

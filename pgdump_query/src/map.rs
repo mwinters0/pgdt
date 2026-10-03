@@ -1332,10 +1332,12 @@ impl Builder {
         // The `Arc` is sealed inside the scope too, its allocation being part
         // of what the account retains (`crate::instrument`).
         let mut ignored_refusals = None;
+        let mut checked_in_full = false;
         let (statistics, statistics_declined) = {
             let _attributed = StatisticsScope::enter();
             let gathered = self.pending_observer.take().map(|mut observer| {
                 ignored_refusals = observer.take_ignored().map(Box::new);
+                checked_in_full = observer.checks_every_field();
                 observer.finish(end.terminator_offset - copy_start.data_offset)
             });
             match gathered {
@@ -1344,7 +1346,7 @@ impl Builder {
                 Some(BlockGathered::Refused(refusal)) => {
                     return Err(refusal.into_error(&copy_start.header, copy_start.data_offset));
                 }
-                None => (None, None),
+                Some(BlockGathered::Checked) | None => (None, None),
             }
         };
         let mut block = CopyBlock {
@@ -1359,6 +1361,7 @@ impl Builder {
             statistics,
             statistics_declined,
             ignored_refusals,
+            checked_in_full,
             array_shapes: None,
             unrepresentable: None,
         };
