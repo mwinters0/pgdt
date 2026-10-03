@@ -405,7 +405,8 @@ than reading as a phase nobody has sliced.
   keys. **(c) unowned**; promoted by a user meeting it. Detail:
   `datafusion-pgdump/src/dump.rs`.
 
-- **KD93** — a line is measured against `max_line_bytes` only where a read
-  ends inside it, so one up to a read chunk past the limit is read or refused
-  by where the reads fall — the chunk size, `--jobs`, a resume point — not by
-  its length. **(b) owned by `M212`**. Detail: `pgdump_query/src/scan.rs`.
+- **KD93** — a `COPY` line past `max_line_bytes`, 64 MiB by default, is
+  refused though PostgreSQL writes and reads one up to I71's bound, and one up
+  to a read chunk past the limit is read or refused by where the reads fall —
+  the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
+  `P33`**. Detail: `pgdump_query/src/scan.rs`.

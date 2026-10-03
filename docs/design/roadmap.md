@@ -17,6 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P31 — correctness evidence: the emitter register and value oracles | Current | [spec](roadmap-P31-correctness-evidence.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — replaces `M212`; the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — allocated by P31's grilling; the maintainer sets its order |
 | P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
@@ -47,7 +48,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P32`** — nothing at or below it
+centering"). **Phase numbering continues from `P33`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -626,6 +627,21 @@ Specified in [its spec](roadmap-P31-correctness-evidence.md). Allocated by the p
 [2026-10-02](../status/history/2026-10-02.md): the coverage gap behind
 `KD60`–`KD70` is enumerated from `pg_dump`'s own source, and a value oracle the
 server writes gives the typed read a second reading.
+
+## P33 — Every line PostgreSQL writes and reads
+
+**What `pg_dump` writes is the floor and what PostgreSQL reads is the
+ceiling, for a `COPY` line as for a value** ("The input contract is valid
+PostgreSQL, not `pg_dump`'s output"; "A literal is guaranteed in `*_out`'s
+form and never read past `*_in`'s"). For a line the two are one bound,
+[`postgres-invariants.md`](postgres-invariants.md), "I71". A line under it is
+read whatever the chunk size, `--jobs`, the leader's split, a compressed
+source's blocks or the resume point; one over it is refused as a line
+PostgreSQL would not read, not as a buffer pgdt would not grow. Memory may
+slow a long line, and never refuses one under the bound. Today
+`max_line_bytes` refuses one past 64 MiB (`KD93`). Sketched to
+corner-avoidance depth; allocated 2026-10-03, replacing `M212`. The facts
+are in [its inbox](roadmap-P33-line-bound-inbox.md).
 
 ## P32 — The schema model: every object and property a dump declares
 
@@ -1230,14 +1246,6 @@ which is what makes the difference worth minding at the moment one is found.
   general rule sizes by rows per group at a block's end, because `varchar` and
   its kin leave a header silent on width ([`decisions.md`](decisions.md),
   "D82"); this is the cheaper case beside it, taken once that rule has shipped.
-
-- **A query's line limit taken from the map.** A parse that needed
-  `--max-line-bytes` has seen the dump's longest line, so the cache could
-  record it and a query read with the larger of that and the default, leaving
-  `pgdt query --max-line-bytes` and the provider's `pgdump.max_line_bytes` for
-  a dump whose cache predates it. The limit is also what one row may cost
-  resident ([`decisions.md`](decisions.md), "D23"), and the parse already paid
-  it. It moves the cache format.
 
 - **`RESET` for a provider's session settings, upstream.** It waits on
   DataFusion ([`../status/upstream.md`](../status/upstream.md), "UF3"), and is

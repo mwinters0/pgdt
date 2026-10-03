@@ -4643,3 +4643,55 @@ awk '/^enum_in\(/,/^}/' src/backend/utils/adt/enum.c | grep -n 'NAMEDATALEN\|ENU
 ```
 
 It prints the length check, the cache lookup and the two error codes.
+
+## I71 — a `COPY` text line, terminator included, is at most `MaxAllocSize − 1` bytes both ways
+
+**Claim.** `COPY TO` assembles each row, its `\n` included, in one
+`StringInfo` before sending it, and `COPY FROM` collects each line, its
+terminator (`\n`, `\r` or `\r\n`) included, in one `StringInfo` before
+stripping the terminator and splitting it. A `StringInfo` grows only while
+its length stays at most `MaxAllocSize − 1` (`0x3FFFFFFE`, 1 GiB − 2 bytes),
+so the longest line `pg_dump` writes and the longest a restore reads are the
+same, measured with the terminator: a longer row fails `COPY TO` and a longer
+line fails `COPY FROM`, both with "string buffer exceeds maximum allowed
+length". A row's stored size is no bound — up to 1600 columns of up to 1 GB
+each — so a table can hold a row `pg_dump` cannot write.
+
+**Proof.** `src/common/stringinfo.c` (`src/backend/lib/stringinfo.c` in 13),
+`enlargeStringInfo`: refuses `needed >= MaxAllocSize - str->len`, the
+`+ 1` after it being the NUL. `MaxAllocSize` is `0x3fffffff` in
+`src/include/utils/memutils.h`. `COPY TO`: `copyto.c` (`copy.c` in 13),
+`cstate->fe_msgbuf = makeStringInfo()`, every attribute appended to it and
+`CopySendEndOfRow` appending `\n` for a frontend destination before sending
+and resetting it. `COPY FROM`: `copyfromparse.c` (`copy.c` in 13),
+`CopyReadLine` appends through the terminator into `line_buf` and only then
+decrements `line_buf.len` past it.
+
+**Scope limit.** The bound is on the bytes in the server's buffer. `COPY TO`
+converts each attribute to the client encoding before appending it, so
+`pg_dump`'s bound is on the file's bytes. `COPY FROM` from v14 converts
+`input_buf` before the line reaches `line_buf`, so a restore into a database
+of another encoding bounds the converted line; v13 bounds the raw one and
+converts after. Under a matching encoding both are the file's bytes. A field's
+own input function may refuse a value of a line under the bound (an array
+whose binary form passes `MaxAllocSize`); that is the field's ceiling, not
+the line's. `COPY_FILE` on Windows writes `\r\n`; `pg_dump` never uses it.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6, master
+of 2026-08-21 (source).
+
+**Relied on by:** [`roadmap.md`](roadmap.md), "P33 — Every line PostgreSQL
+writes and reads", and `KD93`, which states the bound a line is held to.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'MaxAllocSize - (Size) str->len' src/common/stringinfo.c src/backend/lib/stringinfo.c 2>/dev/null
+grep -n 'define MaxAllocSize' src/include/utils/memutils.h
+grep -n 'fe_msgbuf = makeStringInfo\|initStringInfo(&cstate->line_buf)\|line_buf.len -= 2' src/backend/commands/copy*.c
+```
+
+It prints the growth check, the 1 GiB − 1 constant, the per-row buffer
+`COPY TO` builds, and `COPY FROM`'s line buffer and its terminator stripped
+after the fact.
