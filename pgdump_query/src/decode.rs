@@ -1112,6 +1112,12 @@ pub fn render_bytea(bytes: &[u8]) -> String {
 /// digits than a negative scale divides out is zero, which `numeric_out`
 /// prints as `0` at any scale (I51), so an all-zero digit string answers `0`
 /// there.
+///
+/// Deficiency register: `deficiency: KD81` — a field is not put through
+/// `apply_typmod`, which rounds it to the scale and then refuses one past the
+/// precision (I51): `1.005` in a `numeric(10,2)`, which the server stores as
+/// `1.01`, is refused here and read unrounded by `NumericKey` on a text-held
+/// `p > 76` column, and `123456789012` is read where the server refuses it.
 pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     if s == "NaN" {
         return None;
@@ -1174,6 +1180,33 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     out.extend((start..keep).map(|i| char::from(digit(i))));
     out.extend(std::iter::repeat_n('0', pad));
     Some(out)
+}
+
+/// `NUMERIC_DSCALE_MAX`: the most digits `numeric_in` stores after the point,
+/// a trailing zero counting (I63).
+pub const NUMERIC_DSCALE_MAX: usize = 16383;
+
+/// The most digits `numeric_in` stores before the point, a leading zero not
+/// counting: `NUMERIC_WEIGHT_MAX`, `i16::MAX`, base-10000 digits past the
+/// first (I63).
+pub const NUMERIC_INTEGER_DIGITS_MAX: usize = 4 * (i16::MAX as usize + 1);
+
+/// Whether `numeric_in` with no typmod stores the number written
+/// `[-]int[.frac]` rather than refusing it as overflowing the format (I63):
+/// every digit after the point counts toward its display scale, and its
+/// weight counts from the first non-zero digit before it. Only the two bounds
+/// are checked; the grammar is its reader's.
+///
+/// What it bounds is a bare `numeric`'s field and every literal, which the
+/// server coerces with no typmod. A typmod'd column's field is rounded to its
+/// scale before the bounds are checked, and never reaches them (I51).
+// pg-refuses: I63 — a display scale or a weight past the storage format's.
+pub fn numeric_in_stores(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let (int, frac) = digits.split_once('.').unwrap_or((digits, ""));
+    frac.len() <= NUMERIC_DSCALE_MAX
+        && (int.len() <= NUMERIC_INTEGER_DIGITS_MAX
+            || int.trim_start_matches('0').len() <= NUMERIC_INTEGER_DIGITS_MAX)
 }
 
 /// Render an unscaled decimal integer (`i128`/`i256`'s own `Display`, e.g.
@@ -1725,6 +1758,27 @@ mod tests {
         {
             let unscaled = decimal_unscaled_digits(text, scale).unwrap();
             assert_eq!(render_decimal(&unscaled, scale), text);
+        }
+    }
+
+    /// **`numeric_in`'s two storage bounds, each at its edge** (I63): a
+    /// display scale of 16383 digits, trailing zeros counting, and 131072
+    /// integer digits, leading zeros not counting, whatever the sign.
+    #[test]
+    fn numeric_in_stores_up_to_its_display_scale_and_weight() {
+        let zeros = |n| "0".repeat(n);
+        for (text, stored) in [
+            (format!("1.{}", zeros(16383)), true),
+            (format!("1.{}", zeros(16384)), false),
+            (format!("0.{}", zeros(16384)), false),
+            (format!("-.{}1", zeros(16382)), true),
+            (format!("1{}", zeros(131071)), true),
+            (format!("1{}", zeros(131072)), false),
+            (format!("-1{}", zeros(131072)), false),
+            (format!("{}1.5", zeros(200_000)), true),
+            ("0".to_string(), true),
+        ] {
+            assert_eq!(numeric_in_stores(&text), stored, "{}", text.len());
         }
     }
 

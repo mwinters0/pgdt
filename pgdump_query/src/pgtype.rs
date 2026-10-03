@@ -169,7 +169,8 @@ pub enum CompareKind {
     ///
     /// `infinities` says whether `Infinity`/`-Infinity` are values of the
     /// column. Any typmod rejects an infinity (I34), so only the bare form
-    /// admits the spelling.
+    /// admits the spelling, and it is the bare form's field alone that
+    /// `numeric_in`'s storage bounds reach, a typmod rounding first (I63).
     Numeric {
         infinities: bool,
     },

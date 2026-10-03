@@ -435,7 +435,8 @@ accepts are read too where that comes free — a `double precision` reads `1.50`
 and `1E5` as well as `1.5` and `100000` — and which those are may grow.
 **A value PostgreSQL itself refuses is refused here too**, rather than given a
 meaning the server would not give it: `1e400` and `1e-400` are out of range
-for a `double precision`, `70000` for a `smallint`, and `2020-02-30`,
+for a `double precision`, `70000` for a `smallint`, a number written with
+more than 16383 digits after the point for a `numeric`, and `2020-02-30`,
 `12:60:00` and `00:90:00` are no `date`, `time` or `interval`, so `--filter
 'v>1e400'` is an error, not a filter matching nothing.
 

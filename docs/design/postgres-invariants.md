@@ -4273,3 +4273,67 @@ grep -n 'total_months > INT_MAX' src/backend/utils/adt/timestamp.c
 
 The first prints the minute check, and from v15 the day and time overflow
 checks; the second the month total's.
+
+---
+
+## I63 — `numeric_in` with no typmod refuses a display scale past 16383 digits or more than 131072 integer digits; with one it rounds first
+
+**Claim.** `numeric_in` given no typmod refuses, `22003` "value overflows
+numeric format", a number whose display scale — every digit written after the
+point, trailing zeros counting, less any exponent, floored at zero — passes
+16383, or whose first non-zero digit stands more than 131072 digits before the
+point; a zero has no such digit. In an exponent it refuses a magnitude past
+`PG_INT32_MAX / 2`, 1073741823. Given a typmod it rounds to the scale and
+refuses past the precision first (I51), so neither bound is reached. A literal
+compared with a `numeric(p,s)` column is coerced with no typmod
+([`roadmap.md`](roadmap.md), "A literal is guaranteed in `*_out`'s form and
+never read past `*_in`'s"), a `COPY` field with the column's, and `jsonb_in`
+reads a number with none.
+
+**Proof.** `src/backend/utils/adt/numeric.c`: `set_var_from_str` counts
+`dscale` over the digits after the point and subtracts the exponent, flooring
+it at zero, and `strip_var` drops leading zero base-10000 digits from the
+weight; `make_result_opt_error` refuses a `dscale` past `NUMERIC_DSCALE_MASK`,
+`0x3FFF`, or a weight outside the `int16` `n_weight`, so `NUMERIC_WEIGHT_MAX`,
+`PG_INT16_MAX`, base-10000 digits past the first. `numeric_in` calls
+`apply_typmod`, whose `round_var` sets `dscale` to the scale, before
+`make_result_opt_error`. From v16 the exponent is refused past
+`PG_INT32_MAX / 2`; before, at `INT_MAX / 2` or beyond, one less: the newest
+bound is the union's (I35). `jsonb_in_scalar`
+(`src/backend/utils/adt/jsonb.c`) reads a number through `numeric_in` with
+typmod `-1`.
+
+**Observed.** The koji replica (PG16) refuses `1.` and 16384 zeros, `0.` and
+16384 zeros, `-1.` and 16384 zeros, `1` and 131072 zeros, and the first in a
+`numeric[]` and against a `numeric(10,2)` column; it reads `1.` and 16383
+zeros, `1` and 131071 zeros, and 200000 zeros then `1.5`. As `numeric(10,2)`
+and `numeric(100,2)`, by `numeric_in` with the typmod and by `COPY`, it reads
+`1.` and 16384 zeros as `1.00`. As `jsonb` it refuses `1e131072`, `10e131071`,
+`0.001e131075`, `1.5e-16383`, `1.50e-16382`, `0e1073741824`, `0e-16384` and
+`[1e131072]`, and reads `1e131071`, `10e131070`, `0.001e131074`, `1e100000`,
+`1.5e-16382`, `0e1073741823` and `-0e-16383`.
+
+**Scope limit.** The bounds of the digit form `numeric_out` writes, and of a
+JSON number. The other spellings `numeric_in` reads — a sign `+`, an
+underscore between digits, a `0x`, `0o` or `0b` integer, an exponent outside
+`jsonb` — are spellings, not bounds.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::numeric_in_stores`, which `predicate.rs` applies to
+a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
+semantics, and `JsonCursor::number`, which refuses a `jsonb` number so spelled,
+field and literal alike.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'define NUMERIC_DSCALE_MASK\|define NUMERIC_WEIGHT_MAX\|NUMERIC_WEIGHT(result) != weight\|exponent > PG_INT32_MAX / 2\|exponent >= INT_MAX / 2' src/backend/utils/adt/numeric.c
+awk '/^numeric_in\(/,/^}/' src/backend/utils/adt/numeric.c | grep -n 'apply_typmod(&value\|make_result\(_opt_error\)\?(&value'
+```
+
+The first prints the mask `0x3FFF`, `PG_INT16_MAX`, the overflow check and the
+exponent's bound, `PG_INT32_MAX / 2` from v16 and `INT_MAX / 2` before; the
+second `apply_typmod` ahead of `make_result`, `make_result_opt_error` from
+v16.

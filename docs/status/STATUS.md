@@ -98,6 +98,7 @@ approval, in the spec's opening note.
 - [ ] **31.12** A field `*_in` refuses fails the parse reading it at the first, naming table, column, line and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75`
 - [ ] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal
 - [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check; the manual says what `default` leaves to a query
+- [ ] **31.15** A `numeric(p,s)` field put through `apply_typmod` as `COPY` puts it — rounded to its scale and refused past its precision — on the typed and the text-held arms alike, closing `KD81`
 
 ## Not started
 

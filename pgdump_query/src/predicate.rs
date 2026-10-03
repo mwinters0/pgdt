@@ -552,13 +552,9 @@ impl NumericKey {
     /// `numeric_out` never writes ([`accepted_form`] lists them). It is the same
     /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
     /// typmod'd column. The two differ only on the typmod, which a bare
-    /// `numeric` has none of.
-    ///
-    /// Deficiency register: `deficiency: KD79` — no cap at `numeric_in`'s
-    /// display scale of 16383 or its weight, so a literal `numeric_in` refuses
-    /// as overflowing the format reads as a number; `decimal_unscaled_digits`
-    /// for `numeric(p,s)` and a `jsonb` number's bound, at a point position of
-    /// ±100000, share the gap.
+    /// `numeric` has none of. The storage format's bounds are the caller's
+    /// ([`decode::numeric_in_stores`]), a typmod'd column's field never
+    /// reaching them.
     fn parse(text: &str) -> Option<Self> {
         let (negative, rest) = match text.strip_prefix('-') {
             Some(rest) => (true, rest),
@@ -785,13 +781,9 @@ fn first_difference(mut answers: impl Iterator<Item = Ordering>) -> Ordering {
 /// Nothing a `jsonb_out` field of a real dump holds comes near it.
 const JSONB_MAX_DEPTH: usize = 1000;
 
-/// The furthest a `jsonb` number's exponent may move the decimal point,
-/// bounding the digit string this builds. Ours rather than PostgreSQL's —
-/// `numeric` reaches further, and what is bounded is where the decimal point
-/// lands rather than the exponent itself, so a field holding a number whose
-/// integer part runs past this many digits reaches it with no exponent
-/// written at all.
-const JSONB_MAX_EXPONENT: i64 = 100_000;
+/// The largest exponent `numeric_in` reads in a `jsonb` number, either sign:
+/// `PG_INT32_MAX / 2` (I63).
+const NUMERIC_EXPONENT_MAX: i64 = i32::MAX as i64 / 2;
 
 /// A recursive-descent reader over one JSON document, implementing what
 /// `jsonb_in` accepts and nothing wider (I41): RFC 8259 with PostgreSQL's two
@@ -1009,7 +1001,9 @@ impl<'a> JsonCursor<'a> {
     ///
     /// The result is the [`NumericKey`] the stored `numeric` would compare by,
     /// so the exponent is applied by moving the decimal point rather than
-    /// kept: `1e2`, `100` and `100.00` are one value (I41).
+    /// kept: `1e2`, `100` and `100.00` are one value (I41). `numeric_in`'s
+    /// bounds are checked before the point moves, which keeps the digit string
+    /// this builds within them (I63).
     // pg-refuses: I41 — `01`, `+1`, `.5`, `1.` and `NaN`.
     fn number(&mut self) -> Option<NumericKey> {
         let negative = self.eat(b'-');
@@ -1035,14 +1029,26 @@ impl<'a> JsonCursor<'a> {
                 exponent = -exponent;
             }
         }
-        // Where the point lands, counted in digits from the left of
-        // `int ++ frac`. Both directions need padding, and both are bounded;
-        // an exponent near `i64::MAX` is refused here rather than wrapping.
-        let point = i64::try_from(int.len()).ok()?.checked_add(exponent)?;
-        if !(-JSONB_MAX_EXPONENT..=JSONB_MAX_EXPONENT).contains(&point) {
+        // The display scale is the fraction's digits less the exponent, and
+        // the weight counts from the first non-zero digit: a zero has none,
+        // and is stored whatever its exponent moves.
+        // pg-refuses: I63 — an exponent past `PG_INT32_MAX / 2`, or a display
+        // scale or a weight past the storage format's.
+        if exponent.abs() > NUMERIC_EXPONENT_MAX
+            || i64::try_from(frac.len()).ok()? - exponent > decode::NUMERIC_DSCALE_MAX as i64
+        {
             return None;
         }
         let digits = format!("{int}{frac}");
+        let Some(first) = digits.bytes().position(|b| b != b'0') else {
+            return Some(NumericKey::from_parts(false, "", ""));
+        };
+        // Where the point lands, counted in digits from the left of
+        // `int ++ frac`. The two bounds above bound the padding either side.
+        let point = i64::try_from(int.len()).ok()? + exponent;
+        if point - i64::try_from(first).ok()? > decode::NUMERIC_INTEGER_DIGITS_MAX as i64 {
+            return None;
+        }
         let width = i64::try_from(digits.len()).ok()?;
         Some(match point {
             _ if point <= 0 => {
@@ -1353,7 +1359,15 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Decimal(scale) => {
             OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, *scale)?)?)
         }
-        CompareKind::Numeric { .. } => OrderKey::Numeric(NumericKey::parse(text)?),
+        // A bare column's field is bounded by `numeric_in` (I63); a typmod'd
+        // one, the kind admitting no infinity, never reaches the bounds. A
+        // literal in PostgreSQL's semantics is bounded by [`literal_key`].
+        CompareKind::Numeric { infinities: bare } => {
+            if *bare && !decode::numeric_in_stores(text) {
+                return None;
+            }
+            OrderKey::Numeric(NumericKey::parse(text)?)
+        }
         // A label the type does not declare is not a value of the column, so
         // it is the same fault an unparseable number is. The linear scan is
         // over a label list, a handful of entries in practice.
@@ -1384,13 +1398,16 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     })
 }
 
-/// A filter literal's key, which is [`order_key`]'s but for an integer, `real`
-/// or `double precision` literal in PostgreSQL's semantics: an integer is read
-/// by [`int_literal`] at the column's width, and a float by [`float_literal`]
-/// into the column's own type, where a field is read by the decoder, which
-/// takes I57's rounded largest finite value as that value. In DataFusion's
-/// semantics a literal is DataFusion's value, not the server's (`roadmap.md`,
-/// "A literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
+/// A filter literal's key, which is [`order_key`]'s but for an integer, `real`,
+/// `double precision` or `numeric` literal in PostgreSQL's semantics: an
+/// integer is read by [`int_literal`] at the column's width, a float by
+/// [`float_literal`] into the column's own type, where a field is read by the
+/// decoder, which takes I57's rounded largest finite value as that value, and
+/// a `numeric(p,s)`'s within `numeric_in`'s bounds, the server coercing it
+/// with no typmod where it rounds a field to the typmod first (I63). In
+/// DataFusion's semantics a literal is DataFusion's value, not the server's
+/// (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never read
+/// past `*_in`'s").
 fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
     match (semantics, kind) {
         (ComparisonSemantics::Postgres, CompareKind::Int { bytes }) => {
@@ -1401,6 +1418,11 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
         }
         (ComparisonSemantics::Postgres, CompareKind::Float64) => {
             Some(OrderKey::Float(float_literal(text, f64::is_infinite)?))
+        }
+        (ComparisonSemantics::Postgres, CompareKind::Decimal(_) | CompareKind::Numeric { .. })
+            if !decode::numeric_in_stores(text) =>
+        {
+            None
         }
         _ => order_key(kind, text),
     }
@@ -2143,6 +2165,11 @@ fn equality_comparison(
         }
         .to_string(),
         K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
+        K::Decimal(_)
+            if semantics == ComparisonSemantics::Postgres && !decode::numeric_in_stores(text) =>
+        {
+            return None;
+        }
         K::Decimal(scale) => {
             decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
         }
@@ -2288,10 +2315,12 @@ fn accepted_form(kind: &CompareKind) -> String {
         // typed arm carries a scale to be finer than: a `p > 76` column is
         // held as text and compared by value through `NumericKey`, which
         // normalizes rather than rescaling.
+        // The digit bounds are `numeric_in`'s storage format's (I63), which
+        // a typed arm's scale and `i256` already fall inside.
         K::Decimal(scale) => decimal_accepted_form(*scale),
-        K::Numeric { infinities: false } => "as a number, or `NaN`".into(),
+        K::Numeric { infinities: false } => format!("{NUMERIC_DIGITS}, or `NaN`"),
         K::Numeric { infinities: true } => {
-            "as a number, or `NaN`, `Infinity` or `-Infinity`".into()
+            format!("{NUMERIC_DIGITS}, or `NaN`, `Infinity` or `-Infinity`")
         }
         K::Enum(labels) if !labels.is_empty() => enum_accepted_form(labels),
         K::Enum(_) => "as one of the type's own declared labels".into(),
@@ -2383,6 +2412,11 @@ fn enum_accepted_form(labels: &[String]) -> String {
         ),
     }
 }
+
+/// A scale-free `numeric` literal's shape: `numeric_in`'s storage bounds
+/// (I63), stated as the digits either side of the point.
+const NUMERIC_DIGITS: &str =
+    "as a number of at most 131072 digits before the point and 16383 after it";
 
 /// The `numeric(p,s)` clause, which is about the **scale** because that is
 /// what the refusal is about: `decode::decimal_unscaled_digits` drops a
@@ -5359,6 +5393,94 @@ mod tests {
         assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
     }
 
+    /// **A number past `numeric_in`'s storage bounds is refused as a literal
+    /// on every `numeric` kind, and as a field where the server reads it with
+    /// no typmod** (I63): a display scale past 16383 or more than 131072
+    /// integer digits, under `=` and an ordering operator and inside an
+    /// array. A `numeric(p,s)` field so spelled is read, the server rounding
+    /// it to the scale first, and each edge inside the bounds is read. Each
+    /// was cast on PostgreSQL 16; `1.` and 16384 zeros once matched `1`.
+    #[test]
+    fn a_numeric_past_numeric_ins_bounds_is_refused_as_literal_and_bare_field() {
+        let fraction = |zeros: usize| format!("1.{}", "0".repeat(zeros));
+        let integer = |digits: usize| format!("1{}", "0".repeat(digits - 1));
+        let kinds = [
+            ("numeric", DataType::Utf8View),
+            ("numeric(10,2)", DataType::Decimal128(10, 2)),
+            ("numeric(100,2)", DataType::Utf8View),
+        ];
+        for refused in [fraction(16384), format!("-{}", fraction(16384)), integer(131073)] {
+            for (declared, data_type) in &kinds {
+                for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                    let p = order_predicate(op, &refused);
+                    let err = resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0)
+                        .unwrap_err();
+                    assert!(
+                        matches!(&err, Error::PredicateValueDecode { .. }),
+                        "{declared} {op:?} {}: {err:?}",
+                        refused.len()
+                    );
+                }
+            }
+            let got = ordered("numeric", DataType::Utf8View, PredicateOp::Eq, "1", &refused);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{}: {got:?}", refused.len());
+        }
+        let past_scale = fraction(16384);
+        for (declared, data_type) in &kinds[1..] {
+            let got = ordered(declared, data_type.clone(), PredicateOp::Ge, "1", &past_scale);
+            assert!(got.unwrap(), "{declared}");
+        }
+        for read in [fraction(16383), integer(131072), format!("{}1", "0".repeat(131073))] {
+            for (op, literal) in [(PredicateOp::Eq, read.as_str()), (PredicateOp::Ge, "1")] {
+                let got = ordered("numeric", DataType::Utf8View, op, literal, &read);
+                assert!(got.unwrap(), "{op:?} {}", read.len());
+            }
+        }
+        let verdict = nested_verdict(
+            "numeric[]",
+            &test_types(),
+            PredicateOp::Eq,
+            "{1}",
+            &format!("{{{}}}", fraction(16384)),
+        );
+        assert!(matches!(verdict, Err(Error::PredicateValueDecode { .. })), "{verdict:?}");
+    }
+
+    /// **A `jsonb` number is bounded as `numeric_in` bounds it** (I63), its
+    /// exponent applied first: an exponent past `PG_INT32_MAX / 2`, a display
+    /// scale past 16383 — the fraction's digits less the exponent — or more
+    /// than 131072 integer digits is refused as a literal and as a field, and
+    /// each edge inside is read, a zero whatever its exponent, and `1e100000`
+    /// among them. Each was cast on PostgreSQL 16.
+    #[test]
+    fn a_jsonb_number_is_bounded_as_numeric_in_bounds_it() {
+        let jsonb = |op, literal: &str, field: &str| {
+            ordered("jsonb", DataType::Utf8View, op, literal, field)
+        };
+        for refused in ["1e131072", "10e131071", "0.001e131075", "1.5e-16383", "1.50e-16382"]
+            .into_iter()
+            .chain(["0e1073741824", "0e-16384", "[1e131072]"])
+        {
+            let err = jsonb(PredicateOp::Ge, refused, "1").unwrap_err();
+            assert!(matches!(err, Error::PredicateValueDecode { .. }), "{refused}: {err:?}");
+            let got = jsonb(PredicateOp::Eq, "1", refused);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{refused}: {got:?}");
+        }
+        let largest = format!("1{}", "0".repeat(131071));
+        for (read, field) in [
+            ("1e131071", largest.as_str()),
+            ("10e131070", largest.as_str()),
+            ("0.001e131074", largest.as_str()),
+            ("1e100000", &format!("1{}", "0".repeat(100000))),
+            ("1.5e-16382", &format!("0.{}15", "0".repeat(16381))),
+            ("0e1073741823", "0"),
+            ("-0e-16383", "0"),
+        ] {
+            assert!(jsonb(PredicateOp::Eq, read, field).unwrap(), "{read}");
+            assert!(jsonb(PredicateOp::Eq, field, read).unwrap(), "{read}");
+        }
+    }
+
     /// A NULL field is excluded by every ordering operator, as under
     /// `Eq`/`Ne`.
     #[test]
@@ -6629,10 +6751,13 @@ mod tests {
             assert_eq!(accepted_form(&CompareKind::Decimal(scale)), expected, "scale {scale}");
         }
         // The scale-free arm keeps the scale-free clause: a `p > 76` column
-        // is held as text and refuses no literal for its shape.
+        // is held as text and refuses a literal only past `numeric_in`'s
+        // bounds (I63), which the clause states.
+        assert!(NUMERIC_DIGITS.contains(&decode::NUMERIC_INTEGER_DIGITS_MAX.to_string()));
+        assert!(NUMERIC_DIGITS.contains(&decode::NUMERIC_DSCALE_MAX.to_string()));
         assert_eq!(
             accepted_form(&CompareKind::Numeric { infinities: false }),
-            "as a number, or `NaN`"
+            "as a number of at most 131072 digits before the point and 16383 after it, or `NaN`"
         );
     }
 
@@ -7483,11 +7608,30 @@ mod tests {
             ]);
         }
 
+        /// **A `numeric` or `jsonb` literal the server refuses is refused, and
+        /// one it reads that this build reads means what it does to the
+        /// server**: every bare `numeric` and `jsonb` row of `literals.tsv` at
+        /// every major. The `numeric(p,s)` rows are cast with the typmod, which
+        /// a comparison's literal is not (I63).
+        #[test]
+        fn a_numeric_literal_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&["numeric", "jsonb"]);
+        }
+
         /// Each row of `literals.tsv` declaring one of `declared`, at every
         /// major, put to `=` against a field holding the server's output for
         /// it: one the server refuses is refused, and one it reads is either
-        /// read to the same value or refused as a shortfall (D55).
+        /// read to the same value or refused as a shortfall (D55). A literal an
+        /// older major refuses and the newest reads is the newest's (I35), as
+        /// a v13 `numeric`'s `Infinity` is.
         fn literals_are_read_as_the_server_reads_them(declared: &[&str]) {
+            let newest = MAJORS[MAJORS.len() - 1];
+            let newest_reads: BTreeSet<(Option<String>, Option<String>)> =
+                rows(&fixture(newest, "oracle/literals.tsv"))
+                    .into_iter()
+                    .filter(|row| row[2].as_deref() == Some("ok"))
+                    .map(|row| (row[0].clone(), row[1].clone()))
+                    .collect();
             let mut asserted = 0usize;
             for major in MAJORS {
                 for row in rows(&fixture(major, "oracle/literals.tsv")) {
@@ -7507,7 +7651,7 @@ mod tests {
                         } else {
                             assert_eq!(got, Ok(Truth::True), "{major} {ty} {literal}");
                         }
-                    } else {
+                    } else if !newest_reads.contains(&(row[0].clone(), row[1].clone())) {
                         let e = got.expect_err(&format!("{major} {ty} {literal} is refused"));
                         assert!(e.contains("filter value"), "{major} {ty} {literal}: {e}");
                     }
@@ -7758,7 +7902,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (43, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (44, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
