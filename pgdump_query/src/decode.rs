@@ -1740,7 +1740,9 @@ pub(crate) fn macaddr8_in(s: &str) -> Option<[u8; 8]> {
 /// where `oidin_subr` handed it base 10, so a `0x` or octal spelling reads
 /// from v16 and a decimal one with a leading zero changes its value there;
 /// a C23 glibc reads a `0b` prefix in base 0 too. A text one of them reads
-/// is not refused.
+/// is not refused: the exception `docs/design/roadmap.md`'s "A literal is
+/// guaranteed in `*_out`'s form and never read past `*_in`'s" makes to the
+/// newest major's reading.
 // deficiency: KD84 — the readers of an `oid` (`str::parse`, in the typed read
 // and `predicate::field_key`) take `010` for 10, as v15 and earlier do, where
 // v16 and later read it as octal 8 and refuse `08` (I66). Which the dump's

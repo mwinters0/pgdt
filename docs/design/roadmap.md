@@ -315,7 +315,15 @@ coerced to the column's base type by its `*_in`, the typmod not applied, so
 while `'70000'` against a `smallint` is refused. **The `*_in` is the newest
 supported major's**, `*_in` only ever widening, so a literal an older dump's
 server would refuse is read as a newer one reads it, never with a meaning no
-server gives. **The literal ceiling governs the PostgreSQL semantics only**:
+server gives. **`oidin` is the exception**, the one `*_in` a major narrowed:
+v16 reads base 0 where v15 read base 10 (I66), so no major's reading holds
+every other's. An `oid` field or literal is refused only where every supported
+major refuses it, and a spelling two majors read differently is read in
+decimal, as v13–v15 read it (KD84). **Every behaviour differing between
+supported majors is in the manual with the reading chosen for it**
+([`../manual/type-handling.md`](../manual/type-handling.md), "Where
+PostgreSQL majors differ"); walking the
+invariants at a new major is what finds a new one. **The literal ceiling governs the PostgreSQL semantics only**:
 under DataFusion's a literal is DataFusion's value, compared as DataFusion
 compares the emitted column.
 

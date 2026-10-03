@@ -132,12 +132,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An `oid` field fails a parse only where every supported major's `oidin`
-  refuses it** (31.12.1). v16 handed `strtoul` base 0 where v15 handed it base
-  10 (I66), so `08` is read before v16 and refused from it, and `0x1F` the
-  reverse. I35 has version-varying semantics taken as the newest's, which
-  would refuse `08` in every dump; the call refuses only what no major reads,
-  so no parse fails where some restore of the dump succeeds, and lets through
-  a spelling the newest refuses. Reconsidering makes `decode::oid_unread` ask
-  v16's reading alone, and `KD84` reads `010` the same way.

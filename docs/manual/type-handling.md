@@ -184,6 +184,9 @@ The server accepts a filter literal with a minus sign and silently wraps it
 refused with a message naming the value, rather than compared as −1, which no
 OID could ever equal. Write the value you mean.
 
+An OID written in hex, or with a leading zero, is read as "Where PostgreSQL
+majors differ" below says.
+
 ### Floating point round-trips exactly
 
 `pg_dump` sets `extra_float_digits = 3`, which is enough for `float4`/`float8`
@@ -956,6 +959,24 @@ which is where to look for the ones no column of yours happens to use; see
 `CREATE DOMAIN email AS text NOT NULL` gives you a `Utf8View` column that is
 known non-nullable. Domains over domains resolve transitively. Constraints
 beyond `NOT NULL` are not enforced — we are reading a dump, not validating it.
+
+## Where PostgreSQL majors differ
+
+A dump is read the same way whichever major wrote it. Where a newer
+PostgreSQL accepts a value an older one refused, the newer reading applies to
+every dump, since an older server could not have written the value. `oid` is
+the one type whose input changed meaning rather than only widening, and the
+table says what is done about it.
+
+| What changed | From | What pgdt does |
+|---|---|---|
+| bare `numeric` holds `Infinity` and `-Infinity` | 14 | Reads and filters them on a dump of any major — see "`numeric` with no precision is a string, but it still filters as a number" above |
+| the multirange types exist | 14 | Reads them — see "Arrays, composites, ranges, and multiranges" above; a 13 dump holds none |
+| a `numeric` scale may exceed its precision, or be negative | 15 | Maps the column as "`numeric` with no precision is a string, but it still filters as a number" above says |
+| an `interval`'s time part reaches `±2562047788:00:54.775807`, past `±2147483647:59:59.999999` | 15 | Reads to the newer bound — see "`interval` → `Interval(MonthDayNano)`" below |
+| an `oid` is read in hex after `0x` and in octal after a leading `0`, so `010` is 8 and `08` is refused | 16 | Reads `010` as 10 and `08` as 8, as 13–15 do, on a dump of any major, refuses only what every major refuses, and does not read a `0x` or `0b` spelling. Write an OID in decimal, as `pg_dump` does |
+| an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter; write the decimal digits |
+| `interval` holds `infinity` and `-infinity` | 17 | Has no Arrow value for them — see "`interval` keeps its three fields, and two kinds of value do not fit" above |
 
 ## When a value does not match its type
 

@@ -2079,7 +2079,10 @@ and adding a case is the only answer available (`comparison_oracle.py`'s
 one per major. And the text answers are **glibc's** — the Debian (`-trixie`)
 fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
-([`decisions.md`](decisions.md), "D70").
+([`decisions.md`](decisions.md), "D70"). One non-additive difference is known
+outside the cases: `oidin`'s base, which v16 changed (I66), and which
+[`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s form and
+never read past `*_in`'s" takes as the exception to the newest's semantics.
 
 **Proof.** Observed: `fixtures/<13…18>/oracle/` holds 2020 comparisons and 317
 literals per major as the server itself answered them, and
@@ -4329,8 +4332,8 @@ and `numeric(100,2)`, by `numeric_in` with the typmod and by `COPY`, it reads
 
 **Scope limit.** The bounds of the digit form `numeric_out` writes, and of a
 JSON number. The other spellings `numeric_in` reads — a sign `+`, an
-underscore between digits, a `0x`, `0o` or `0b` integer, an exponent outside
-`jsonb` — are spellings, not bounds.
+underscore between digits and a `0x`, `0o` or `0b` integer from v16, an
+exponent outside `jsonb` — are spellings, not bounds.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
