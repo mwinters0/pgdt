@@ -98,6 +98,7 @@ approval, in the spec's opening note.
 - [x] **31.15** A `numeric(p,s)` field put through `apply_typmod` as `COPY` puts it — rounded to its scale and refused past its precision — on the typed and the text-held arms alike, closing `KD81` — [notes](../design/roadmap-P31.15-numeric-typmod-notes.md)
 - [x] **31.12** A field its type's `*_in` refuses at a `pg-refuses` check fails the parse keying it at the first, naming table, column, line by its offset and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75` — [notes](../design/roadmap-P31.12-field-refusal-notes.md)
 - [ ] **31.12.1** A field of a kind with no `pg-refuses` check — `boolean`, an enum, `oid`, `inet`, `macaddr`, `bytea` — told refused from unread by its `*_in` grammar, each refusal marked against an invariant, so a parse keying it fails there too, closing `KD83`
+- [ ] **31.12.2** A refused field named as the restore names it — `COPY` line N of its block beside its offset — the rows before it counted through `absorb`; `FieldDecode` keeps its offset, worded as `FieldRefused`'s
 - [ ] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal
 - [ ] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check; the manual says what `default` leaves to a query
 
@@ -131,11 +132,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A refused field's line is named by its byte offset, not its number**
-  (31.12). The row asks for the line, and nothing in a scan counts lines: a
-  parallel piece starts mid-block knowing only its offset, and every other
-  error naming a place in the dump (`LineTooLong`, `UnterminatedCopyBlock`)
-  names an offset, so `Error::FieldRefused` says "the line at offset N".
-  Reconsidering means counting newlines — per block in the map, which the
-  cache would persist, or once, up to the refusal, re-reading the file's
-  prefix — for a number an editor can jump to.
+*(None open.)*
