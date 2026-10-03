@@ -593,4 +593,25 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         verified="git show 0911d0fd -- pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
     ),
+    Acknowledged(
+        commit="cb7ef7a0",
+        figures=(
+            "allocator",
+            "cross-file-floor",
+            "dynamic-filter-join",
+            "dynamic-filter-topk",
+            "nested-end-to-end",
+            "parallel-scan-throughput",
+            "predicate-terms",
+            "projection-widths",
+            "statistics-gathering",
+            "statistics-pruning",
+        ),
+        why="M205: an integer literal's width check runs once per literal as a term "
+        "resolves; on a row order_key's integer arm is the same i64 parse, CompareKind::Int "
+        "carrying its width built once per column; the rest is accepted_form's wording "
+        "and tests",
+        verified="git show cb7ef7a0 -- pgdump_query/src/predicate.rs pgdump_query/src/pgtype.rs "
+        "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
+    ),
 )
