@@ -350,12 +350,6 @@ than reading as a phase nobody has sliced.
   no parse refuses a field on PostgreSQL's terms.
   **(b) owned by P31**, slice 31.12. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD77** — a date, time or timestamp literal's or field's parts are not bounded as
-  `datetime.c` bounds them, so `2020-02-30` matches March 1, `12:60:00` 13:00
-  and a `+16` offset shifts the instant, and `12:-5:00` means 11:55 where the
-  server reads a zone. **(b) owned by `M206`**. Detail:
-  `pgdump_query/src/decode.rs`.
-
 - **KD78** — an interval literal's months and days are not narrowed to `i32`,
   nor a literal's or field's minute and second bounded, so `00:90:00` reads as
   01:30:00.

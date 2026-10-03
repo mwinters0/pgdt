@@ -2296,20 +2296,31 @@ fn accepted_form(kind: &CompareKind) -> String {
         }
         K::Enum(labels) if !labels.is_empty() => enum_accepted_form(labels),
         K::Enum(_) => "as one of the type's own declared labels".into(),
-        K::Date => "`YYYY-MM-DD`, optionally suffixed ` BC`, or `infinity`/`-infinity`".into(),
-        K::Time => "`HH:MM:SS`, optionally with a fractional second".into(),
+        // The range is half the sentence, as for an integer: a day the
+        // calendar lacks, or one past it, is the refusal a well-formed
+        // literal meets (I61).
+        K::Date => "`YYYY-MM-DD`, optionally suffixed ` BC`, a day from `4714-11-24 BC` to \
+                    `5874897-12-31`, or `infinity`/`-infinity`"
+            .into(),
+        K::Time => {
+            "`HH:MM:SS`, optionally with a fractional second, no later than `24:00:00`".into()
+        }
         K::Timestamp { with_tz: false } => {
-            "`YYYY-MM-DD HH:MM:SS`, optionally with a fractional second and suffixed ` BC`, or \
+            "`YYYY-MM-DD HH:MM:SS`, optionally with a fractional second and suffixed ` BC`, from \
+             `4714-11-24 00:00:00 BC` to `294276-12-31 23:59:59.999999`, or \
              `infinity`/`-infinity`"
                 .into()
         }
         K::Timestamp { with_tz: true } => {
-            "`YYYY-MM-DD HH:MM:SS+HH`, the offset required, optionally with a fractional second \
-             and suffixed ` BC`, or `infinity`/`-infinity`"
+            "`YYYY-MM-DD HH:MM:SS+HH`, the offset required and at most `15:59:59` either way, \
+             optionally with a fractional second and suffixed ` BC`, from `4714-11-24 00:00:00+00 \
+             BC` to `294276-12-31 23:59:59.999999+00`, or `infinity`/`-infinity`"
                 .into()
         }
         K::TimeTz => {
-            "`HH:MM:SS+HH`, the offset required, optionally with a fractional second".into()
+            "`HH:MM:SS+HH`, the offset required and at most `15:59:59` either way, optionally \
+             with a fractional second, no later than `24:00:00`"
+                .into()
         }
         // `interval_out` under `IntervalStyle = postgres` (I4), which is the
         // only style a `pg_dump` connection writes.
@@ -5249,6 +5260,68 @@ mod tests {
         }
     }
 
+    /// **A date, time or timestamp literal or field PostgreSQL refuses is
+    /// refused** (I61) — a day the calendar lacks, a time past
+    /// `time_overflows`, a zone past `±15:59:59`, an instant past the range —
+    /// under `=` and an ordering operator, inside an array and as a range's
+    /// bound, and a field so spelled raises `FieldDecode` where it is read
+    /// rather than being read as a neighbouring value. `12:-5:00`, which the server reads as
+    /// 12:00 at zone `-5`, is refused rather than read as 11:55. Each was
+    /// cast on PostgreSQL 16.
+    #[test]
+    fn a_date_or_time_postgresql_refuses_is_refused_as_literal_and_field() {
+        let timestamptz = DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()));
+        let cases = [
+            ("date", DataType::Date32, "2020-02-30", "2020-03-01"),
+            ("date", DataType::Date32, "0000-01-01", "0001-01-01"),
+            ("date", DataType::Date32, "5874898-01-01", "5874897-12-31"),
+            ("time", DataType::Time64(TimeUnit::Microsecond), "12:60:00", "13:00:00"),
+            ("time", DataType::Time64(TimeUnit::Microsecond), "12:-5:00", "11:55:00"),
+            ("time with time zone", DataType::Utf8View, "12:00:00+16", "12:00:00+00"),
+            ("time with time zone", DataType::Utf8View, "24:00:01+00", "24:00:00+00"),
+            (
+                "timestamp",
+                DataType::Timestamp(TimeUnit::Microsecond, None),
+                "294277-01-01 00:00:00",
+                "2020-01-01 00:00:00",
+            ),
+            (
+                "timestamp with time zone",
+                timestamptz,
+                "2020-01-01 00:00:00+16",
+                "2020-01-01 00:00:00+00",
+            ),
+        ];
+        for (declared, data_type, refused, field) in &cases {
+            for op in [PredicateOp::Eq, PredicateOp::Ge] {
+                let p = order_predicate(op, refused);
+                let err =
+                    resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
+                assert!(
+                    matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
+                    "{declared} {op:?} {refused}: {err:?}"
+                );
+            }
+            // `=` compares a field's spelling with the literal's canonical one
+            // and decodes no field, so an ordering is what reads one.
+            let got = ordered(declared, data_type.clone(), PredicateOp::Ge, field, refused);
+            assert!(matches!(got, Err(Error::FieldDecode { .. })), "{declared} {refused}: {got:?}");
+        }
+
+        let types = test_types();
+        for (declared, field, literal) in [
+            ("date[]", "{2020-01-01}", "{2020-02-30}"),
+            ("daterange", "[2020-01-01,2020-01-02)", "[2020-01-01,2020-13-01)"),
+            ("tsrange", "empty", "[2020-01-01 00:00:00,2020-01-01 25:00:00)"),
+        ] {
+            let verdict = nested_verdict(declared, &types, PredicateOp::Eq, field, literal);
+            assert!(
+                matches!(verdict, Err(Error::PredicateValueDecode { .. })),
+                "{declared} {literal}: {verdict:?}"
+            );
+        }
+    }
+
     /// A NULL field is excluded by every ordering operator, as under
     /// `Eq`/`Ne`.
     #[test]
@@ -7354,6 +7427,25 @@ mod tests {
             literals_are_read_as_the_server_reads_them(&["smallint", "integer", "bigint"]);
         }
 
+        /// **A date, time or timestamp literal the server refuses is refused,
+        /// and one it reads that this build reads means what it does to the
+        /// server**: every row of the five types and their ranges in
+        /// `literals.tsv` at every major, an impossible month, a time past
+        /// `24:00:00` and a timestamp past the range among them (I61).
+        #[test]
+        fn a_date_or_time_literal_is_read_as_the_server_reads_it() {
+            literals_are_read_as_the_server_reads_them(&[
+                "date",
+                "time without time zone",
+                "time with time zone",
+                "timestamp without time zone",
+                "timestamp with time zone",
+                "daterange",
+                "tsrange",
+                "tstzrange",
+            ]);
+        }
+
         /// Each row of `literals.tsv` declaring one of `declared`, at every
         /// major, put to `=` against a field holding the server's output for
         /// it: one the server refuses is refused, and one it reads is either
@@ -7629,7 +7721,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (41, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (42, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

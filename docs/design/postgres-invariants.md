@@ -4160,3 +4160,66 @@ grep -n -A1 'is out of range for type %s' src/backend/utils/adt/numutils.c src/b
 
 It prints each out-of-range message beside the type it names: `smallint`,
 `integer` and `bigint` all appear.
+
+---
+
+## I61 — `date_in`, `time_in`, `timetz_in` and the timestamp inputs refuse a part, or a value, past `datetime.c`'s bounds
+
+**Claim.** Each of the five refuses, `22008` or `22009`: a date whose year is
+zero (with or without `BC`), whose month is outside 1–12, or whose day is
+outside 1 to its month's length in the proleptic Gregorian calendar, 1 BC
+leap; a time of day whose minute passes 59 or second 60, or whose whole
+passes `24:00:00`; a numeric zone whose hour passes 15 or minute or second 59;
+a `date` outside `4714-11-24 BC` to `5874897-12-31`; and a timestamp whose
+instant, the zone applied, lies outside I49's range. `23:59:60` and
+`24:00:00` are read, a timestamp's carrying into the next day.
+
+**Proof.** `src/backend/utils/adt/datetime.c`: `ValidateDate` refuses the year,
+month and day (`day_tab[isleap(tm->tm_year)]`); `DecodeTime`
+(`DecodeTimeCommon` from v16) refuses the minute and second, and
+`DecodeDateTime` and `DecodeTimeOnly` call `time_overflows`
+(`src/backend/utils/adt/date.c`) after it, refusing an hour past 24 and a whole
+past `USECS_PER_DAY`; `DecodeTimezone` refuses the zone past
+`MAX_TZDISP_HOUR`. `date_in` raises `date out of range` past
+`IS_VALID_JULIAN` and `IS_VALID_DATE`, and `tm2timestamp`
+(`src/backend/utils/adt/timestamp.c`) fails past `IS_VALID_TIMESTAMP` after
+`dt2local` has applied the zone (`src/include/datatype/timestamp.h` for the
+limits). `ParseDateTime` splits a field at a sign, which opens a zone, so
+`12:-5:00` is 12:00 at zone `-5`, not a negative minute.
+
+**Observed.** The koji replica (PG16) refuses `2020-02-30`, `2019-02-29`,
+`2020-13-01`, `0000-01-01`, `4714-11-23 BC` and `5874898-01-01` as `date`;
+`12:60:00`, `12:05:61`, `24:00:00.000001` and `23:59:60.5` as `time`;
+`12:00:00+16`, `+05:60` and `+05:30:60` as `timetz`; `2020-01-01 24:00:01`,
+`4714-11-23 23:59:59.999999 BC` and `294277-01-01 00:00:00` as `timestamp`; and
+`4714-11-24 00:00:00+01 BC` and `294276-12-31 23:00:00-02` as `timestamptz`.
+It reads `4714-11-23 23:00:00-02 BC` as a `timestamptz`, `23:59:60` as
+`24:00:00`, and `12:-5:00` as `12:00:00` (`time`) and `12:00:00-05`
+(`timetz`). `fixtures/<major>/oracle/literals.tsv` refuses `2024-13-01`,
+`25:00:00` and `294277-01-01 00:00:00` at all six majors.
+
+**Scope limit.** The bounds of the ISO form `pg_dump` writes under `DateStyle
+= ISO` (I4). The other spellings each function reads — a textual month, a
+two-digit year read by `DateOrder`, a day of the year, a run-together zone, a
+named zone — are spellings, not bounds.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `decode::civil_days`, `decode::decode_date32`,
+`decode::parse_time_of_day`, `decode::extract_offset` and
+`decode::timestamp_micros_wide`, which refuse a field and a filter literal of
+any of the five types so spelled.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'tm_mday > day_tab\[isleap\|hr > MAX_TZDISP_HOUR\|min >= MINS_PER_HOUR\|sec >= SECS_PER_MINUTE\|time_overflows(tm->' src/backend/utils/adt/datetime.c
+grep -n -A3 '^time_overflows' src/backend/utils/adt/date.c
+grep -n '^#define \(MAX_TZDISP_HOUR\|DATE_END_JULIAN\|MIN_TIMESTAMP\|END_TIMESTAMP\)' src/include/datatype/timestamp.h
+```
+
+The first prints the day check, the three zone checks and the two
+`time_overflows` calls; the second its hour, minute and second bounds; the
+third the four limits, `15`, `2147483494`, `-211813488000000000` and
+`9223371331200000000`.

@@ -343,27 +343,74 @@ fn split_era(s: &str) -> (&str, bool) {
     }
 }
 
-/// `YYYY-MM-DD`, year unpadded past 4 digits and never negative (BCE is the
-/// `" BC"` suffix, handled by the caller) — `split_era` runs first, so this
-/// never sees one.
-///
-/// Deficiency register: `deficiency: KD77` — a literal read through this and
-/// the time and offset parsers beside it is bounded only by its integer types:
-/// no month or day range (`2020-02-30` rolls to March 1), a year of zero or
-/// under three digits, a `+` sign, the Julian and `MIN_TIMESTAMP`/
-/// `END_TIMESTAMP` ranges, `time_overflows`' bounds and a `±15:59:59` offset,
-/// where `datetime.c` refuses each; and `12:-5:00`, which the server reads as a
-/// zone. A hand-written dump's field can hold any of them, and the ceiling
-/// binds it too, so the bounds bind the field path, refused at parse.
-fn parse_ymd(s: &str) -> Option<(i64, u32, u32)> {
-    let mut parts = s.splitn(3, '-');
-    let y: i64 = parts.next()?.parse().ok()?;
-    let m: u32 = parts.next()?.parse().ok()?;
-    let d: u32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
+/// A date or time part as `strtoint` reads it once `ParseDateTime` has split
+/// the text at its signs: ASCII digits only, at least one. A sign is where the
+/// server starts a zone (`12:-5:00` is 12:00 at zone `-5`, `+2020-01-01`
+/// refused), so a part carrying one is refused here rather than read as a
+/// signed number — a shortfall where the server reads it
+/// (`docs/design/decisions.md`, "D55"). Past `i64` is refused as `strtoint`'s
+/// `ERANGE` is.
+fn unsigned_part(s: &str) -> Option<i64> {
+    if s.is_empty() {
         return None;
     }
-    Some((y, m, d))
+    s.bytes().try_fold(0i64, |value, b| {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        value.checked_mul(10)?.checked_add(i64::from(b - b'0'))
+    })
+}
+
+/// `JULIAN_MAXYEAR`, the year `IS_VALID_JULIAN` refuses from (its June, which
+/// the day ranges below lie well short of): every year a date or timestamp
+/// holds is below it, and a year bounded by it cannot overflow
+/// [`days_from_civil`].
+const JULIAN_MAX_YEAR: i64 = 5_874_898;
+
+/// The first day a `date` holds, `4714-11-24 BC` — Julian day 0,
+/// `DATETIME_MIN_JULIAN` — in days from 1970.
+const DATE_MIN_DAYS: i64 = -2_440_588;
+
+/// The first day past a `date`'s range, `5874898-01-01` — `DATE_END_JULIAN`
+/// — in days from 1970.
+const DATE_END_DAYS: i64 = 2_145_042_906;
+
+/// The days in month `m` (1–12) of astronomical year `y`, by `day_tab` and
+/// `isleap` over the proleptic Gregorian calendar, so 1 BC (year 0) is leap.
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// `YYYY-MM-DD`, its era already split off (`bc`), as days from 1970 —
+/// `None` for a day the calendar does not hold, as `ValidateDate` refuses it.
+///
+/// The year is three digits or more, as `pg_dump` writes four: a shorter one
+/// is read by `DateOrder` (`20-01-01` is a month 20 under `MDY`, the year 2020
+/// under `YMD`), so it is refused as a shortfall, as is a month of three
+/// digits, which the server reads as a day of the year (D55).
+fn civil_days(s: &str, bc: bool) -> Option<i64> {
+    let (year, rest) = s.split_once('-')?;
+    let (month, day) = rest.split_once('-')?;
+    if year.len() < 3 || month.len() > 2 {
+        return None;
+    }
+    let (y, m, d) = (unsigned_part(year)?, unsigned_part(month)?, unsigned_part(day)?);
+    // pg-refuses: I61 — no year zero either side of the era, a month past
+    // twelve, a day past its month's, a year past `IS_VALID_JULIAN`'s.
+    if y == 0 || y > JULIAN_MAX_YEAR || !(1..=12).contains(&m) {
+        return None;
+    }
+    let y = astronomical_year(y, bc);
+    if !(1..=days_in_month(y, m)).contains(&d) {
+        return None;
+    }
+    Some(days_from_civil(y, m as u32, d as u32))
 }
 
 /// `1 - year` turns a `" BC"`-suffixed calendar year into PostgreSQL's (and
@@ -375,8 +422,8 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 
 /// `None` for `infinity`/`-infinity` (PostgreSQL's own pseudo-values for
 /// "unbounded" — real, but `Date32` has no sentinel for them, so this is a
-/// decode failure by construction, not by accident) and for anything out of
-/// `Date32`'s `i32` day range.
+/// decode failure by construction, not by accident), and for a day outside
+/// PostgreSQL's range, which `Date32` holds whole.
 ///
 /// **The anchor for every one of these refusals** ([`decode_interval`]'s
 /// infinities and overflowing time part, `NaN` on a `Decimal128`, a
@@ -394,8 +441,11 @@ pub fn decode_date32(s: &str) -> Option<i32> {
         return None;
     }
     let (rest, bc) = split_era(s);
-    let (y, m, d) = parse_ymd(rest)?;
-    let days = days_from_civil(astronomical_year(y, bc), m, d);
+    let days = civil_days(rest, bc)?;
+    // pg-refuses: I61 — `IS_VALID_DATE`'s range.
+    if !(DATE_MIN_DAYS..DATE_END_DAYS).contains(&days) {
+        return None;
+    }
     i32::try_from(days).ok()
 }
 
@@ -426,13 +476,21 @@ const POW10: [i64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 /// same pair added onto a day count. `crate::predicate` reads it too, for the
 /// time half of a `time with time zone` comparison — that type has no Arrow
 /// mapping of its own, so its *ordering* is the only path that decodes it.
+///
+/// `None` past `time_overflows`' bounds, which `time`, `timetz` and both
+/// timestamps share: `24:00:00` is the last time of day, and `23:59:60` and
+/// `24:00:00` are both read, a timestamp's carrying into the next day.
 pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
     let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
     let mut parts = hms.splitn(3, ':');
-    let h: i64 = parts.next()?.parse().ok()?;
-    let mi: i64 = parts.next()?.parse().ok()?;
-    let se: i64 = parts.next()?.parse().ok()?;
+    let h = unsigned_part(parts.next()?)?;
+    let mi = unsigned_part(parts.next()?)?;
+    let se = unsigned_part(parts.next()?)?;
     if parts.next().is_some() || frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // pg-refuses: I61 — `time_overflows`, part by part.
+    if h > 24 || mi > 59 || se > 60 {
         return None;
     }
     // `frac` is checked above to be at most six ASCII digits, so padding it
@@ -442,7 +500,9 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
     for b in frac.bytes() {
         micros = micros * 10 + i64::from(b - b'0');
     }
-    Some((h * 3600 + mi * 60 + se, micros * POW10[6 - frac.len()]))
+    let (seconds, micros) = (h * 3600 + mi * 60 + se, micros * POW10[6 - frac.len()]);
+    // pg-refuses: I61 — and past `24:00:00` as a whole.
+    (seconds * 1_000_000 + micros <= DAY_MICROS).then_some((seconds, micros))
 }
 
 /// The exact inverse of [`parse_time_of_day`]'s micros-since-midnight value —
@@ -505,15 +565,23 @@ pub fn render_time64_micros_into(v: i64, out: &mut String) {
 /// with the two halves is not what a timestamp does: the offset is kept, not
 /// discarded, because two `timetz` values are equal only when the zone
 /// matches as well as the instant.
+///
+/// `None` past `DecodeTimezone`'s `±15:59:59`, part by part. The run-together
+/// `+0530` the server reads as `+05:30` is refused as an hour past fifteen, a
+/// shortfall (`docs/design/decisions.md`, "D55").
 pub(crate) fn extract_offset(s: &str) -> Option<(&str, i64)> {
     let idx = s.find(['+', '-'])?;
     let (time_only, off) = s.split_at(idx);
     let (sign, rest) = off.split_at(1);
     let sign_mult: i64 = if sign == "-" { -1 } else { 1 };
     let mut parts = rest.splitn(3, ':');
-    let hh: i64 = parts.next()?.parse().ok()?;
-    let mm: i64 = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
-    let ss: i64 = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
+    let hh = unsigned_part(parts.next()?)?;
+    let mm = parts.next().map(unsigned_part).unwrap_or(Some(0))?;
+    let ss = parts.next().map(unsigned_part).unwrap_or(Some(0))?;
+    // pg-refuses: I61 — `MAX_TZDISP_HOUR`, and a minute or second past 59.
+    if hh > 15 || mm > 59 || ss > 59 {
+        return None;
+    }
     Some((time_only, sign_mult * (hh * 3600 + mm * 60 + ss)))
 }
 
@@ -530,17 +598,16 @@ pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
 }
 
 /// [`decode_timestamp_micros`] before it narrows to `i64`: microseconds from
-/// the 1970 UTC epoch for any finite value the grammar reads, so a value past
-/// what `Timestamp(Microsecond)` holds is told from one that does not parse
-/// (`crate::unrepresentable`).
+/// the 1970 UTC epoch for any finite value the grammar reads and PostgreSQL's
+/// range holds, so a value past what `Timestamp(Microsecond)` holds is told
+/// from one that does not parse (`crate::unrepresentable`).
 pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
     if s == "infinity" || s == "-infinity" {
         return None;
     }
     let (rest, bc) = split_era(s);
     let (date_part, time_part) = rest.split_once(' ')?;
-    let (y, m, d) = parse_ymd(date_part)?;
-    let days = days_from_civil(astronomical_year(y, bc), m, d);
+    let days = civil_days(date_part, bc)?;
 
     let (time_only, offset_secs) =
         if with_tz { extract_offset(time_part)? } else { (time_part, 0) };
@@ -548,8 +615,20 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Option<i128> {
 
     let local_micros =
         i128::from(days) * 86_400_000_000 + i128::from(seconds) * 1_000_000 + i128::from(micros);
-    Some(local_micros - i128::from(offset_secs) * 1_000_000)
+    let utc = local_micros - i128::from(offset_secs) * 1_000_000;
+    // pg-refuses: I61 — `IS_VALID_TIMESTAMP`, of the instant: an offset can
+    // carry a local time on either side of the range across its edge.
+    let postgres = utc - POSTGRES_EPOCH_UNIX_MICROS;
+    (i128::from(MIN_TIMESTAMP) <= postgres && postgres < i128::from(END_TIMESTAMP)).then_some(utc)
 }
+
+/// `MIN_TIMESTAMP`, `4714-11-24 00:00:00 BC`, the first instant a timestamp
+/// holds, in microseconds from PostgreSQL's epoch (I49).
+const MIN_TIMESTAMP: i64 = -211_813_488_000_000_000;
+
+/// `END_TIMESTAMP`, `294277-01-01 00:00:00`, the first instant past a
+/// timestamp's range, in microseconds from PostgreSQL's epoch (I49).
+const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 
 /// PostgreSQL's epoch, 2000-01-01 00:00:00 UTC, in microseconds from the
 /// Unix epoch.
@@ -1221,6 +1300,153 @@ mod tests {
         assert_eq!(render_date32(0), "1970-01-01");
     }
 
+    /// The range's two ends are `DATETIME_MIN_JULIAN` and `DATE_END_JULIAN`
+    /// as days from 1970, which `timestamp.h` states as Julian days (I61).
+    #[test]
+    fn the_date_range_constants_are_julian_days_from_1970() {
+        let julian_1970 = 2_440_588;
+        assert_eq!(days_from_civil(-4713, 11, 24), DATE_MIN_DAYS);
+        assert_eq!(DATE_MIN_DAYS + julian_1970, 0);
+        assert_eq!(days_from_civil(JULIAN_MAX_YEAR, 1, 1), DATE_END_DAYS);
+        assert_eq!(DATE_END_DAYS + julian_1970, 2_147_483_494);
+        let postgres_epoch_days = 10_957;
+        assert_eq!(days_from_civil(2000, 1, 1), postgres_epoch_days);
+        let day = 86_400_000_000;
+        assert_eq!(i128::from(MIN_TIMESTAMP), (DATE_MIN_DAYS - postgres_epoch_days) as i128 * day);
+        let end_days = days_from_civil(294_277, 1, 1) - postgres_epoch_days;
+        assert_eq!(i128::from(END_TIMESTAMP), i128::from(end_days) * day);
+    }
+
+    /// **A date is bounded part by part as `ValidateDate` bounds it, and to
+    /// `IS_VALID_DATE`'s range** (I61). Each refusal was cast on PostgreSQL
+    /// 16; the shortfalls beside them are spellings the server reads by
+    /// `DateOrder` or as a day of the year, which this build does not (D55).
+    #[test]
+    fn a_date_the_calendar_does_not_hold_is_refused() {
+        for text in [
+            "2020-02-30",
+            "2019-02-29",
+            "2020-13-01",
+            "2020-00-01",
+            "2020-01-00",
+            "2020-01-32",
+            "2020-04-31",
+            "0000-01-01",
+            "0000-01-01 BC",
+            "+2020-01-01",
+            "2020-+1-01",
+            "2020-01-+1",
+            "4714-11-23 BC",
+            "5874898-01-01",
+            "99999999999999999999-01-01",
+        ] {
+            assert_eq!(decode_date32(text), None, "{text}");
+        }
+        // Shortfalls: the server reads each.
+        for text in ["20-01-01", "1-01-01", "2020-001-05"] {
+            assert_eq!(decode_date32(text), None, "{text}");
+        }
+        for (text, read_as) in [
+            ("2020-02-29", "2020-02-29"),
+            ("0001-02-29 BC", "0001-02-29 BC"),
+            ("020-01-01", "0020-01-01"),
+            ("2020-1-5", "2020-01-05"),
+            ("2020-01-001", "2020-01-01"),
+            ("4714-11-24 BC", "4714-11-24 BC"),
+            ("5874897-12-31", "5874897-12-31"),
+        ] {
+            let days = decode_date32(text).expect(text);
+            assert_eq!(render_date32(days), read_as, "{text}");
+        }
+    }
+
+    /// **A time of day is bounded as `time_overflows` bounds it**, and a
+    /// part carrying a sign is refused rather than read as a signed number:
+    /// the server reads `12:-5:00` as 12:00 at zone `-5`, where the prior
+    /// reading made it 11:55 (I61).
+    #[test]
+    fn a_time_past_time_overflows_is_refused() {
+        for text in [
+            "12:60:00",
+            "12:05:61",
+            "25:00:00",
+            "24:00:00.000001",
+            "24:00:01",
+            "24:01:00",
+            "23:59:60.5",
+            "12:-5:00",
+            "12:+5:00",
+            "12:05:+5",
+            "+12:00:00",
+            "-1:00:00",
+        ] {
+            assert_eq!(time_of_day_micros(text), None, "{text}");
+        }
+        for (text, micros) in [
+            ("12:59:60", 46_800_000_000),
+            ("23:59:60", DAY_MICROS),
+            ("24:00:00", DAY_MICROS),
+            ("012:05:00", 43_500_000_000),
+        ] {
+            assert_eq!(time_of_day_micros(text), Some(micros), "{text}");
+        }
+    }
+
+    /// **A numeric zone is bounded as `DecodeTimezone` bounds it**,
+    /// `±15:59:59`, part by part (I61).
+    #[test]
+    fn an_offset_past_fifteen_hours_is_refused() {
+        for text in [
+            "12:00:00+16",
+            "12:00:00-16",
+            "12:00:00+05:60",
+            "12:00:00+05:30:60",
+            "12:00:00+0530",
+            "12:00:00+-5",
+            "12:00:00+05:+3",
+        ] {
+            assert_eq!(extract_offset(text), None, "{text}");
+        }
+        for (text, seconds) in [
+            ("12:00:00+15:59:59", 57_599),
+            ("12:00:00-15:59:59", -57_599),
+            ("12:00:00-00:44:30", -2_670),
+            ("12:00:00+05", 18_000),
+        ] {
+            assert_eq!(extract_offset(text), Some(("12:00:00", seconds)), "{text}");
+        }
+    }
+
+    /// **A timestamp is bounded to `IS_VALID_TIMESTAMP`'s range by its
+    /// instant**, after its date and time are bounded as a `date`'s and a
+    /// `time`'s are, so an offset carries a local time across either end
+    /// (I61). Each was cast on PostgreSQL 16.
+    #[test]
+    fn a_timestamp_past_postgresqls_range_is_refused() {
+        for (text, with_tz) in [
+            ("2020-02-30 00:00:00", false),
+            ("2020-01-01 12:60:00", false),
+            ("2020-01-01 24:00:01", false),
+            ("2020-01-01 12:-5:00", false),
+            ("0000-01-01 00:00:00", false),
+            ("4714-11-23 23:59:59.999999 BC", false),
+            ("294277-01-01 00:00:00", false),
+            ("2020-01-01 00:00:00+16", true),
+            ("2020-01-01 12:-5:00", true),
+            ("4714-11-24 00:00:00+01 BC", true),
+            ("294276-12-31 23:00:00-02", true),
+        ] {
+            assert_eq!(timestamp_micros_wide(text, with_tz), None, "{text}");
+        }
+        let at = |text: &str, with_tz: bool| timestamp_postgres_micros(text, with_tz).expect(text);
+        assert_eq!(at("4714-11-24 00:00:00 BC", false), MIN_TIMESTAMP);
+        assert_eq!(at("294276-12-31 23:59:59.999999", false), END_TIMESTAMP - 1);
+        assert_eq!(at("4714-11-23 23:00:00-02 BC", true), MIN_TIMESTAMP + 3_600_000_000);
+        assert_eq!(at("294276-12-31 23:30:00+01", true), END_TIMESTAMP - 5_400_000_000);
+        assert_eq!(at("2020-01-01 24:00:00", false), at("2020-01-02 00:00:00", false));
+        assert_eq!(at("2020-01-01 23:59:60", false), at("2020-01-02 00:00:00", false));
+    }
+
     /// `interval_out` under `IntervalStyle = postgres` (I40), round-tripped
     /// through the triple. Every string here is a real server's answer (four
     /// of them `fixtures/*/types/default.sql`'s `t_interval`), because the
@@ -1728,10 +1954,29 @@ mod differential {
         (0..count).map(|_| rng.pick(b"0123456789")).collect()
     }
 
+    /// Whether `time_overflows` or a signed part refuses `s`, which the
+    /// shape [`parse_time_of_day`] replaced read: an hour past 24, a minute
+    /// past 59, a second past 60 or a whole past `24:00:00`, or a part
+    /// carrying a sign, the server's zone (I61).
+    fn past_time_overflows(s: &str) -> bool {
+        let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
+        let parts: Vec<&str> = hms.split(':').collect();
+        if parts.iter().any(|p| !p.bytes().all(|b| b.is_ascii_digit())) {
+            return true;
+        }
+        let [h, mi, se] = [0, 1, 2].map(|i| parts[i].parse::<i64>().unwrap());
+        let fraction = !frac.is_empty() && frac.bytes().any(|b| b != b'0');
+        h > 24 || mi > 59 || se > 60 || (h * 3600 + mi * 60 + se, fraction) > (86_400, false)
+    }
+
+    /// **The rewrite reads what the prior shape read, inside the bounds the
+    /// server keeps**: past them the prior shape read on where this refuses.
     #[test]
     fn time_of_day_agrees_with_the_shape_it_replaced() {
-        let check =
-            |s: &str| assert_eq!(parse_time_of_day(s), prior_shape::parse_time_of_day(s), "{s:?}");
+        let check = |s: &str| match (parse_time_of_day(s), prior_shape::parse_time_of_day(s)) {
+            (None, Some(_)) => assert!(past_time_overflows(s), "{s:?}"),
+            (got, prior) => assert_eq!(got, prior, "{s:?}"),
+        };
         fuzz(1, 20, check);
         shaped(
             11,
