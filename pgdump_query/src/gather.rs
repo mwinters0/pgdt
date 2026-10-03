@@ -72,9 +72,9 @@ use crate::scan::PostgresInvalidValues;
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    FieldRefusal, GroupSizing, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness,
-    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group,
-    text_heap, vec_heap,
+    FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup, STATISTICS_ACCOUNT_CHARGE_STEP,
+    Sortedness, StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group,
+    min_rows_group, text_heap, vec_heap,
 };
 use crate::unrepresentable::{ColumnTier, column_tiers};
 
@@ -228,6 +228,15 @@ pub(crate) fn declared_column<'m>(
 #[derive(Debug)]
 struct Refused;
 
+/// What [`ColumnGatherer::observe`] answers of a field it read.
+struct Observed {
+    /// What the column's heap grew by.
+    grew: i64,
+    /// Whether the field is one its type's `*_in` refuses, kept out of the
+    /// group's statistics rather than stopping the block.
+    ignored: bool,
+}
+
 /// The group a row is being added to.
 struct OpenGroup {
     index: u64,
@@ -317,6 +326,10 @@ struct Gatherer {
     /// does, and a block answers [`BlockGathered::Refused`]. A piece carries
     /// it into the block it folds into.
     refused: Option<FieldRefusal>,
+    /// The fields its type's `*_in` refuses that this observer keyed and went
+    /// past, told to ignore them. A piece's is folded into its block's, its
+    /// first numbered past the block's rows, as a refusal is.
+    ignored: Option<IgnoredRefusals>,
     /// The rows this observer has been handed, and, in a block, those of
     /// every piece it has folded in, **counted whether or not it has
     /// stopped**: a piece made before a decline can still refuse, and its
@@ -347,6 +360,7 @@ impl Gatherer {
             carried: (0, 0),
             declined: None,
             refused: None,
+            ignored: None,
             rows: 0,
             charge,
         }
@@ -703,19 +717,23 @@ impl BlockObserver for Gatherer {
         }
         for (at, (field, column)) in split_fields(raw).zip(self.columns.iter_mut()).enumerate() {
             let Some(column) = column else { continue };
+            let refusal = |column: &ColumnGatherer| FieldRefusal {
+                offset,
+                line: self.rows,
+                column: at,
+                declared_type: column.declared_type.clone().unwrap_or_default(),
+                value: decode_field(field).ok().flatten().unwrap_or_default().into_owned(),
+            };
             match column.observe(field) {
-                Ok(grew) => self.uncharged += grew,
+                Ok(Observed { grew, ignored }) => {
+                    self.uncharged += grew;
+                    if ignored {
+                        IgnoredRefusals::add(&mut self.ignored, refusal(column));
+                    }
+                }
                 Err(Refused) => {
-                    let declared_type = column.declared_type.clone().unwrap_or_default();
-                    let value = decode_field(field).ok().flatten().unwrap_or_default().into_owned();
-                    let line = self.rows;
-                    return self.refuse(FieldRefusal {
-                        offset,
-                        line,
-                        column: at,
-                        declared_type,
-                        value,
-                    });
+                    let refusal = refusal(column);
+                    return self.refuse(refusal);
                 }
             }
         }
@@ -804,6 +822,11 @@ impl BlockObserver for Gatherer {
             refusal.line += self.rows;
             return self.refuse(refusal);
         }
+        let mut ignored = later.ignored.take();
+        if let Some(ignored) = &mut ignored {
+            ignored.first.line += self.rows;
+        }
+        IgnoredRefusals::fold(&mut self.ignored, ignored);
         self.rows += later.rows;
         match (self.declined, later.declined) {
             (Some(_), _) => drop(later),
@@ -821,6 +844,10 @@ impl BlockObserver for Gatherer {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn take_ignored(&mut self) -> Option<IgnoredRefusals> {
+        self.ignored.take()
     }
 }
 
@@ -1061,15 +1088,16 @@ impl ColumnGatherer {
         self.head = Some(self.take_group());
     }
 
-    /// Observe one field, answering what the column's heap grew by, or
-    /// [`Refused`] where keying it found a value its type's `*_in` refuses
-    /// and [`Self::invalid`] refuses it.
-    fn observe(&mut self, field: &[u8]) -> Result<i64, Refused> {
+    /// Observe one field, answering what the column's heap grew by and
+    /// whether it went past a value its type's `*_in` refuses, or
+    /// [`Refused`] where keying it found one and [`Self::invalid`] refuses it.
+    fn observe(&mut self, field: &[u8]) -> Result<Observed, Refused> {
         let before = self.open_heap();
+        let mut ignored = false;
         match decode_field(field) {
             Ok(None) => {
                 self.group.nulls += 1;
-                return Ok(0);
+                return Ok(Observed { grew: 0, ignored });
             }
             Ok(Some(text)) => {
                 let tier = self.tier.as_ref().and_then(|tier| tier.of(&text));
@@ -1098,6 +1126,7 @@ impl ColumnGatherer {
                         return Err(Refused);
                     }
                     // Ignored: no statistic a read could contradict (D103).
+                    ignored = true;
                     self.group.sum = None;
                     for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
                         if let (Some(bounds), Some(group)) = (bounds, group) {
@@ -1123,7 +1152,7 @@ impl ColumnGatherer {
                 self.group.lose_texts();
             }
         }
-        Ok(self.open_heap() as i64 - before as i64)
+        Ok(Observed { grew: self.open_heap() as i64 - before as i64, ignored })
     }
 
     /// Close the open group, and move what it changed onto `charge` before
@@ -2950,6 +2979,12 @@ mod tests {
     /// the timestamp count what their types cannot hold — and an untracked
     /// one.
     fn join_columns() -> Vec<Option<ColumnGatherer>> {
+        join_columns_under(PostgresInvalidValues::Default)
+    }
+
+    /// [`join_columns`], each told what to do with a field its type's `*_in`
+    /// refuses.
+    fn join_columns_under(invalid: PostgresInvalidValues) -> Vec<Option<ColumnGatherer>> {
         let plan =
             |kind: &CompareKind| ComparisonPlan::Compared { kind: kind.clone(), divergence: None };
         JOIN_KINDS
@@ -2966,7 +3001,7 @@ mod tests {
                     &NestedPlan::Scalar,
                     &data_type,
                     crate::unrepresentable::scalar_tier(&data_type),
-                    PostgresInvalidValues::Default,
+                    invalid,
                 ))
             })
             .chain([None])
@@ -3664,18 +3699,26 @@ mod tests {
     /// pieces cut at random the rest, folded a window at a time, and the
     /// first of two refused rows is named by its place among all the block's
     /// rows, `1` being the first.
+    ///
+    /// **Told to ignore them, the block records the same first and counts
+    /// every one**, the two rows being one when they coincide.
     #[test]
     fn a_refusal_is_numbered_by_its_row_in_the_block_however_it_was_cut() {
         let mut rng = Rng(0x0031_0122);
-        for round in 0..300 {
+        for round in 0..600 {
+            let invalid = match round % 2 {
+                0 => PostgresInvalidValues::Default,
+                _ => PostgresInvalidValues::Ignore,
+            };
             let rows = 1 + rng.below(150) as usize;
             let first = rng.below(rows as u64) as usize;
             let second = first + rng.below((rows - first) as u64) as usize;
             let (lines, offsets) = refusing_block(rows, &[first, second]);
             let account = Arc::new(StatisticsAccount::default());
             let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+            let columns = join_columns_under(invalid);
             let mut observer: Box<dyn BlockObserver> =
-                Box::new(Gatherer::block(sized(64, None, None), join_columns(), charge));
+                Box::new(Gatherer::block(sized(64, None, None), columns, charge));
             let prefix = rng.below(rows as u64 + 1) as usize;
             for (line, &offset) in lines.iter().zip(&offsets).take(prefix) {
                 observer.observe_row(offset, line);
@@ -3699,7 +3742,16 @@ mod tests {
             }
             let end = offsets[rows - 1] + lines[rows - 1].len() as u64 + 1;
             let expected = (first as u64 + 1, offsets[first], 4, "2020-02-30".to_string());
-            assert_eq!(refusal(observer.finish(end)), expected, "round {round}");
+            if invalid == PostgresInvalidValues::Default {
+                assert_eq!(observer.take_ignored(), None, "round {round}");
+                assert_eq!(refusal(observer.finish(end)), expected, "round {round}");
+                continue;
+            }
+            let ignored = observer.take_ignored().expect("the block went past one");
+            let FieldRefusal { line, offset, column, value, .. } = ignored.first;
+            assert_eq!((line, offset, column, value), expected, "round {round}");
+            assert_eq!(ignored.count, 1 + u64::from(second != first), "round {round}");
+            assert!(observer.finish(end).gathered().is_some(), "round {round}");
         }
     }
 

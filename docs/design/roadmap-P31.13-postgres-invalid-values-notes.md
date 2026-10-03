@@ -51,7 +51,7 @@ where the mode is stated and why no cache records it is D103.
 - **31.13.1 and 31.14 inherit a cache that records facts, never the mode**
   ([`../status/history/2026-10-03.md`](../status/history/2026-10-03.md), "A
   cache records the refusals an ignoring parse went past"): a block keeps the
-  refusals an ignoring parse went past, and `strict` re-reads the held blocks
-  no strict parse checked, recording each as checked in full. Today no cache
-  records either, a resumed parse re-reading a block only for a column with no
-  bounds (`StatisticsRequest::backfill`).
+  refusals an ignoring parse went past
+  ([`roadmap-P31.13.1-ignored-refusals-notes.md`](roadmap-P31.13.1-ignored-refusals-notes.md)),
+  and `strict` re-reads the held blocks no strict parse checked, recording
+  each as checked in full.

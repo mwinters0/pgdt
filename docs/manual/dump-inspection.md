@@ -54,7 +54,8 @@ straight-through one produce the same index, byte for byte.
 the dump: `parse` fails naming the table, the column, the line — by the
 number the restore's own error gives it and by its byte offset — and the value,
 and the cache holds the scan as far as it last banked.
-`--postgres-invalid-values ignore` goes on past each instead.
+`--postgres-invalid-values ignore` goes on past each instead, recording them
+in the cache, so a later `parse` without it fails on the first just the same.
 Which values it checks, and what to do about one, is
 [`type-handling.md`](type-handling.md), "When a value does not match its type".
 
@@ -1178,7 +1179,11 @@ public.events (98765 rows)
 - **The table listing** is one entry per `COPY` block, in file order, with its
   row count, the level `parse` recorded it at (see "`--statistics-level`"
   above) and its column list. This is the view to read when you're deciding
-  what to query.
+  what to query. A block holding values PostgreSQL refuses that a `parse
+  --postgres-invalid-values ignore` went past says so on a `refused by
+  PostgreSQL:` line: how many, and the first by its `COPY` line, column, value
+  and offset ([type handling](type-handling.md), "When a value does not match
+  its type").
 
 Add `--detail` to also see each block's byte offsets and, per column that has
 something to say, what it became: the Arrow type it resolved to, or — for a
@@ -1508,7 +1513,10 @@ nothing and otherwise the statistics allowance the block's statistics would not
 fit (above, "`--statistics-level`: what `parse` records for later queries"). It is
 how a script tells a table nobody asked statistics for from one that asked and
 was refused the memory, and the number in it is the one to parse with more
-than.
+than. **`ignored_refusals`** is `null` too, or the values PostgreSQL refuses
+that an ignoring `parse` went past in the block: `first` (its row's `offset`
+from the block's data, its `COPY` `line`, its `column` by position in the
+header, its `declared_type` and `value`) and `count`.
 
 **This is a raw dump of pgdt's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field

@@ -2380,6 +2380,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
+            ignored_refusals: None,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         })))

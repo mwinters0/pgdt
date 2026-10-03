@@ -269,6 +269,18 @@ pub enum Error {
         line_offset: u64,
         value: String,
     },
+    /// [`Self::FieldRefused`], read from the cache rather than the dump: a
+    /// parse under [`crate::PostgresInvalidValues::Default`] whose cache
+    /// records a field an earlier parse ignoring such fields went past
+    /// ([`crate::index::CopyBlock::ignored_refusals`]) fails with the first it
+    /// records, in a block its request tracks, before reading anything — the
+    /// verdict being the dump's, not that of whichever run gathered the cache.
+    /// `refused` is that refusal as a read of the dump would have raised it.
+    #[error(
+        "{refused}. An earlier parse that went past the values PostgreSQL refuses recorded it in the cache {}, and nothing was re-read",
+        cache.display()
+    )]
+    FieldRefusedRecorded { refused: Box<Error>, cache: Box<std::path::Path> },
     /// A column the query materializes holds values PostgreSQL accepts for
     /// its declared type and its Arrow type cannot hold, and the query is
     /// under [`crate::UnrepresentableMode::Refuse`]: refused at planning,

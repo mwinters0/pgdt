@@ -436,6 +436,13 @@ pub(crate) trait BlockObserver: Send {
     /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
     /// recovers the concrete piece it made.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+
+    /// The fields its type's `*_in` refuses that this observer keyed and went
+    /// past, being told to ignore them
+    /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
+    /// [`Self::finish`]: what the block records
+    /// ([`crate::index::CopyBlock::ignored_refusals`]).
+    fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
 }
 
 /// What one block's observer answers: its statistics, or the decline that
@@ -476,8 +483,8 @@ impl BlockGathered {
 }
 
 /// A field PostgreSQL refuses, where a statistics observer met it
-/// ([`BlockGathered::Refused`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// ([`BlockGathered::Refused`], [`IgnoredRefusals::first`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldRefusal {
     /// Where the field's row starts, relative to the block's first data byte.
     pub offset: u64,
@@ -506,6 +513,61 @@ impl FieldRefusal {
             line: self.line,
             line_offset: data_offset + self.offset,
             value: self.value,
+        }
+    }
+}
+
+/// **The fields its type's `*_in` refuses that a parse told to ignore them
+/// went past in one block** ([`crate::index::CopyBlock::ignored_refusals`]):
+/// the first in the block's row order, in full, and how many. A fact about
+/// the dump, not the mode that met it, so a parse under
+/// [`crate::PostgresInvalidValues::Default`] over a cache holding one fails
+/// with it, re-reading nothing
+/// ([`crate::Error::FieldRefusedRecorded`]).
+///
+/// **Only the fields gathering keyed**, as a refusing parse checks only those:
+/// a tracked column's scalar values, up to the block's decline where it
+/// declined.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IgnoredRefusals {
+    /// The first, in the block's row order and then its columns'.
+    pub first: FieldRefusal,
+    /// Every one keyed, `first` included — a row holding two counting two.
+    pub count: u64,
+}
+
+impl IgnoredRefusals {
+    /// Count `refusal`, which follows every one already counted, keeping it
+    /// as the first where nothing was.
+    pub(crate) fn add(held: &mut Option<Self>, refusal: FieldRefusal) {
+        match held {
+            Some(held) => held.count += 1,
+            None => *held = Some(Self { first: refusal, count: 1 }),
+        }
+    }
+
+    /// Fold `later`'s, whose rows all follow those `held` counted.
+    pub(crate) fn fold(held: &mut Option<Self>, later: Option<Self>) {
+        match (held.as_mut(), later) {
+            (Some(held), Some(later)) => held.count += later.count,
+            (None, later) => *held = later,
+            (Some(_), None) => {}
+        }
+    }
+
+    /// The error a parse under [`crate::PostgresInvalidValues::Default`] fails
+    /// with over a cache, at `cache`, holding this block's record: the first
+    /// worded as [`FieldRefusal::into_error`] words it, saying where it was
+    /// read from.
+    pub(crate) fn into_error(
+        self,
+        header: &CopyHeader,
+        data_offset: u64,
+        cache: &std::path::Path,
+    ) -> Error {
+        Error::FieldRefusedRecorded {
+            refused: Box::new(self.first.into_error(header, data_offset)),
+            cache: cache.into(),
         }
     }
 }

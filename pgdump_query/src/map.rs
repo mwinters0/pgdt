@@ -1331,12 +1331,13 @@ impl Builder {
         // records the allowance instead (`docs/design/decisions.md`, "D85").
         // The `Arc` is sealed inside the scope too, its allocation being part
         // of what the account retains (`crate::instrument`).
+        let mut ignored_refusals = None;
         let (statistics, statistics_declined) = {
             let _attributed = StatisticsScope::enter();
-            let gathered = self
-                .pending_observer
-                .take()
-                .map(|observer| observer.finish(end.terminator_offset - copy_start.data_offset));
+            let gathered = self.pending_observer.take().map(|mut observer| {
+                ignored_refusals = observer.take_ignored().map(Box::new);
+                observer.finish(end.terminator_offset - copy_start.data_offset)
+            });
             match gathered {
                 Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
                 Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
@@ -1357,6 +1358,7 @@ impl Builder {
             partition_root,
             statistics,
             statistics_declined,
+            ignored_refusals,
             array_shapes: None,
             unrepresentable: None,
         };

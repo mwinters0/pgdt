@@ -841,9 +841,11 @@ enum Command {
         /// What to do with a value PostgreSQL refuses for its column's type —
         /// `70000` in a `smallint`, a `double precision` written past its
         /// range: `default` stops the scan at the first one it reads, as a
-        /// restore of the dump stops there; `ignore` goes on past each, keeping
-        /// no statistics of the stretch of its column it sits in, and a
-        /// `query` then reads it as its own `--postgres-invalid-values` says.
+        /// restore of the dump stops there, or at one an `ignore` parse
+        /// recorded in the cache; `ignore` goes on past each, keeping no
+        /// statistics of the stretch of its column it sits in and recording
+        /// it, and a `query` then reads it as its own
+        /// `--postgres-invalid-values` says.
         #[arg(
             long,
             value_name = "MODE",
@@ -1720,6 +1722,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
+        | Lib::FieldRefusedRecorded { .. }
         | Lib::Unrepresentable { .. }
         | Lib::UnrepresentableTestUntyped { .. }
         | Lib::FieldRender { .. } => false,
@@ -3169,6 +3172,9 @@ fn print_index(
         headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         println!("    level: {}", level_label(block));
+        if let Some(ignored) = &block.ignored_refusals {
+            println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, ignored));
+        }
         if block.header.columns.is_empty() {
             println!("    columns: none (every column dropped or generated, or none declared)");
         } else {
@@ -3257,6 +3263,27 @@ fn unrepresentable_line(count: &pgdump_query::Unrepresentable) -> String {
         ));
     }
     parts.join("; ")
+}
+
+/// What a block records of the fields PostgreSQL refuses that a parse under
+/// `--postgres-invalid-values ignore` went past: how many, and the first as
+/// the refusal names it — what a parse under `default` over this cache fails
+/// with.
+fn ignored_refusals_line(
+    block: &pgdump_query::CopyBlock,
+    ignored: &pgdump_query::IgnoredRefusals,
+) -> String {
+    let first = &ignored.first;
+    let column = block.header.columns.get(first.column).map_or("?", String::as_str);
+    format!(
+        "{} field(s) a parse under --postgres-invalid-values ignore went past, the first at COPY \
+         line {}, column {column}: `{}` as `{}`, at offset {}",
+        ignored.count,
+        first.line,
+        first.value,
+        first.declared_type,
+        block.data_offset + first.offset,
+    )
 }
 
 /// The level a block was mapped at, as `--statistics-level` spells it: `data`

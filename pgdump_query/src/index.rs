@@ -17,7 +17,7 @@ use crate::io::ByteRangeSource;
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, check_tiling};
 use crate::preamble::dump_metadata_from_spans;
 use crate::scan::{Event, ScanOptions, scan};
-use crate::statistics::{BlockStatistics, deserialize_block_statistics};
+use crate::statistics::{BlockStatistics, IgnoredRefusals, deserialize_block_statistics};
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
 /// list, user-defined type definitions. Populated by `crate::stream::build_index` via
@@ -280,6 +280,14 @@ pub struct CopyBlock {
     /// *different* request declines, and carries this beside them.
     #[serde(default)]
     pub statistics_declined: Option<u64>,
+    /// **The fields its type's `*_in` refuses that a parse told to ignore them
+    /// went past in this block** — the first in full and a count — and `None`
+    /// where no pass gathering it met one so. Recorded by the mapping pass
+    /// and replaced by a back-fill's re-read that gathers, kept by one that
+    /// declines; a parse refusing such fields over this map fails with it
+    /// ([`crate::Error::FieldRefusedRecorded`]).
+    #[serde(default)]
+    pub ignored_refusals: Option<Box<IgnoredRefusals>>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order, and `None` for a block mapped at the
     /// [`crate::StatisticsLevel::Metadata`] level, which records nothing drawn

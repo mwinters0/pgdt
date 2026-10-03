@@ -422,11 +422,11 @@ Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mod
 ### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
 `QueryOptions::unrepresentable` and `::postgres_invalid_values` are each stated by a `pgdt query` flag, `PgDumpOptions`, a `pgdump.*` table option and
 a shell suffix; the text mode changes a table's schema, which the provider fixes at `PgDumpTable::build`, so no `SET` reaches it. `--schema-mode` is
-about ignoring the DDL, which both modes read. The library's refusal names a mode in its own words, never a front end's flag. The invalid-values mode
-is a parse's too (`ScanOptions`), the refusal being one, and no cache records it: an ignoring parse keeps no statistic of a refused field's group,
-which either mode's query reads as it reads the rows. Rejected: a `pgdump.*` session setting, changing a schema a statement cannot rebuild; a third
-`SchemaMode`, a choice about values folded into one about the DDL; recording the parse's mode, the read being the query's choice. Defaults: `Null`,
-such values being rare and the floor's type kept (D38); `Default`, a restore refusing them. Code: `UnrepresentableMode`, `PostgresInvalidValues`.
+about ignoring the DDL, which both modes read. A library refusal names a mode in its own words, never a flag. The invalid-values mode is a parse's
+too (`ScanOptions`): an ignoring parse keeps no statistic of a refused field's group, and its block records the fields it went past, on which a
+`Default` parse over the cache fails, re-reading nothing, so a verdict is the dump's and not the gathering run's. Rejected: a `pgdump.*` setting,
+changing a schema no statement rebuilds; a third `SchemaMode`; recording the mode, the read being the query's choice; refusing such a cache (D20).
+Defaults: `Null`, such values rare and the floor's type kept (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `IgnoredRefusals`.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test

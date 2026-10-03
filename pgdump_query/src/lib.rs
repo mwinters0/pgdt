@@ -74,7 +74,7 @@ pub use scan::{
 pub use statistics::{
     BLOCK_MAX_ROW_GROUPS, BlockGathered, BlockStatistics, Bounds, BoundsSet, BoundsView,
     ColumnBounds, ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES,
-    DICTIONARY_MAX_ENTRIES, FieldRefusal, GroupSizing, ROW_GROUP_DEFAULT_MIN_ROWS,
+    DICTIONARY_MAX_ENTRIES, FieldRefusal, GroupSizing, IgnoredRefusals, ROW_GROUP_DEFAULT_MIN_ROWS,
     ROW_GROUP_DEFAULT_SIZE_BYTES, RowGroup, Sortedness, StatisticsBackfill, StatisticsHeld,
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget, StatisticsTerms,
     StatisticsView,

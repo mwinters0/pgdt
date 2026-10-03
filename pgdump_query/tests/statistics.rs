@@ -21,11 +21,11 @@ use bytes::Bytes;
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     BLOCK_MAX_ROW_GROUPS, BlockStatistics, ByteRangeSource, CopyBlock, DEFAULT_MEMORY_BUDGET,
-    DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
-    MapRun, Parallelism, PostgresInvalidValues, ROW_GROUP_DEFAULT_MIN_ROWS,
-    ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions, Sortedness, StatisticsBackfill, StatisticsLevel,
-    StatisticsRequest, StatisticsSelection, StatisticsTarget, bounded_columns,
-    gather_block_statistics, map_file,
+    DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, FieldRefusal, GroupSizing,
+    IgnoredRefusals, LocalFileSource, MapRun, Parallelism, PostgresInvalidValues,
+    ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, ScanOptions, Sortedness,
+    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -1310,7 +1310,9 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
 /// refuses**, serially, at every worker count and on a back-fill, and the
 /// group each sits in keeps no bounds or dictionary of its column, nor the
 /// column a sum, so no statistic says what a read of it would not: every other
-/// group keeps its own (`docs/design/decisions.md`, "D103").
+/// group keeps its own (`docs/design/decisions.md`, "D103"). **The block
+/// records what it went past**, the first in full and a count, alike in every
+/// arrangement.
 #[tokio::test]
 async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -1320,12 +1322,16 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     text.push_str("COPY public.t (a, f) FROM stdin;\n");
     let data = text.len() as u64;
     let mut refused_groups = Vec::new();
+    let mut first = 0;
     for i in 0..2000 {
         let (a, f) = match i {
             700 => ("70000".to_string(), "1.5".to_string()),
             1500 => (i.to_string(), "1.79769313486232e+308".to_string()),
             _ => (i.to_string(), format!("{i}.5")),
         };
+        if i == 700 {
+            first = text.len() as u64 - data;
+        }
         if i == 700 || i == 1500 {
             refused_groups.push(((text.len() as u64 - data) / 256) as usize);
         }
@@ -1355,6 +1361,15 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
             }
         }
         assert_eq!(t.columns[0].as_ref().unwrap().sums, None, "{at}: `a`'s sums");
+        let first = FieldRefusal {
+            offset: first,
+            line: 701,
+            column: 0,
+            declared_type: "smallint".to_string(),
+            value: "70000".to_string(),
+        };
+        let recorded = block(index, "public.t").ignored_refusals.clone();
+        assert_eq!(recorded.as_deref(), Some(&IgnoredRefusals { first, count: 2 }), "{at}");
     };
     check(&gathered_with(&dump, &serial, &wanted).await, "serial");
     let source = LocalFileSource::open(&dump).unwrap();
@@ -1371,6 +1386,73 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
         let run = map_file(&source, &parallel, &mode, &wanted).await.unwrap();
         check(&run.index, &format!("{at}, back-fill"));
     }
+}
+
+/// **A parse refusing fields PostgreSQL refuses fails over a cache recording
+/// one an ignoring parse went past**, with the recorded refusal, naming the
+/// cache, before reading the block or writing the cache — so a clean verdict
+/// does not depend on which run gathered the cache. A request leaving the
+/// table at the metadata level keys none of its fields and fails nothing, and
+/// an ignoring parse over the cache keeps the record.
+#[tokio::test]
+async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("recorded.sql");
+    let mut text = String::from("CREATE TABLE public.t (\n    a smallint\n);\n\n");
+    text.push_str("COPY public.t (a) FROM stdin;\n");
+    let mut first = 0;
+    for i in 0..200 {
+        if i == 70 {
+            first = text.len() as u64;
+            text.push_str("70000\n");
+        } else {
+            text.push_str(&format!("{i}\n"));
+        }
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    let ignoring = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..ScanOptions::default()
+    };
+    let mapped = mapped_into_cache(&dump, &ignoring, &StatisticsRequest::DATA).await;
+    let recorded = block(&mapped.index, "public.t").clone();
+    assert_eq!(recorded.ignored_refusals.as_ref().map(|r| r.count), Some(1));
+    let path = cache::colocated_path(&dump);
+    let saved = std::fs::read(&path).unwrap();
+
+    let source = RecordingSource::open(&dump);
+    let mode = CacheMode::enabled(path.clone());
+    let run = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await;
+    let Err(pgdump_query::Error::FieldRefusedRecorded { refused, cache }) = run else {
+        panic!("expected the recorded refusal, got {run:?}");
+    };
+    assert_eq!(&*cache, path.as_path());
+    match *refused {
+        pgdump_query::Error::FieldRefused {
+            table,
+            column,
+            declared_type,
+            line,
+            line_offset,
+            value,
+        } => {
+            assert_eq!(
+                (table.as_str(), column.as_str(), declared_type.as_str(), value.as_str()),
+                ("public.t", "a", "smallint", "70000")
+            );
+            assert_eq!((line, line_offset), (71, first));
+        }
+        other => panic!("expected the refusal as the dump's read raises it, got {other:?}"),
+    }
+    assert_eq!(source.reads_of(&recorded), 0, "nothing was re-read");
+    assert_eq!(std::fs::read(&path).unwrap(), saved, "nothing was written");
+
+    let metadata = StatisticsRequest::METADATA;
+    let refusing = mapped_into_cache(&dump, &ScanOptions::default(), &metadata).await;
+    assert_eq!(block(&refusing.index, "public.t"), &recorded);
+    let again = mapped_into_cache(&dump, &ignoring, &StatisticsRequest::DATA).await;
+    assert_eq!(block(&again.index, "public.t"), &recorded);
 }
 
 /// **A field of a kind this build reads narrower than its input function

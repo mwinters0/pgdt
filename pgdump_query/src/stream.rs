@@ -93,7 +93,7 @@ use crate::scan::{
     scan as scan_events,
 };
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, Sortedness, StatisticsAccount,
+    BlockGathered, BlockObserver, BlockStatistics, IgnoredRefusals, Sortedness, StatisticsAccount,
     StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
@@ -1292,6 +1292,7 @@ async fn map_file_watched(
             None => DumpIndex::default(),
         },
     };
+    refuse_recorded(scan_options, cache, statistics, &index)?;
     let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance_bytes));
     let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
@@ -1500,6 +1501,36 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
     held
 }
 
+/// **Fail a parse refusing the fields PostgreSQL refuses at the first such
+/// field `index` records an earlier parse went past**
+/// ([`CopyBlock::ignored_refusals`]), in file order, in a block `statistics`
+/// tracks — before anything is read, the cache being as much the dump's
+/// account as a re-read of the block would be, so the verdict does not depend
+/// on which run gathered it. A block the request leaves at the metadata level
+/// is one a refusing parse would not key, and is passed over.
+fn refuse_recorded(
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+    statistics: &StatisticsRequest,
+    index: &DumpIndex,
+) -> Result<()> {
+    if scan_options.postgres_invalid_values != PostgresInvalidValues::Default {
+        return Ok(());
+    }
+    // Only a cache read from a file can hold a record.
+    let CacheMode::Enabled { path, .. } = cache else { return Ok(()) };
+    let recorded = index.blocks().find(|block| {
+        block.ignored_refusals.is_some() && statistics.tracked_columns(&block.header).is_some()
+    });
+    match recorded {
+        Some(block) => {
+            let ignored = block.ignored_refusals.clone().expect("found holding one");
+            Err(ignored.into_error(&block.header, block.data_offset, path))
+        }
+        None => Ok(()),
+    }
+}
+
 /// What [`backfill_statistics`] did.
 struct BackfillRun {
     lacking: usize,
@@ -1601,7 +1632,7 @@ async fn backfill_statistics(
                 &mut shortfall_reported,
             )
             .await?;
-            let Some(BlockReread { gathered, census }) = gathered else {
+            let Some(BlockReread { gathered, census, ignored }) = gathered else {
                 cache.save(watch, source, index).await?;
                 run.interrupted = true;
                 return Ok(run);
@@ -1619,6 +1650,9 @@ async fn backfill_statistics(
                     // (`docs/design/decisions.md`, "D85").
                     BlockGathered::Declined { allowance } => {
                         block.statistics_declined = Some(allowance);
+                        if block.ignored_refusals.is_none() {
+                            block.ignored_refusals = ignored.map(Box::new);
+                        }
                     }
                     BlockGathered::Refused(_) => unreachable!("a re-read fails on a refusal"),
                     BlockGathered::Gathered(gathered) => {
@@ -1639,6 +1673,9 @@ async fn backfill_statistics(
                         // A block that holds what was asked declines nothing,
                         // so a record from an earlier, tighter allowance goes.
                         block.statistics_declined = None;
+                        // Every column it held was gathered again, so what
+                        // the re-read went past is all an earlier pass did.
+                        block.ignored_refusals = ignored.map(Box::new);
                         account.apply(&[(term, -(replaced as i64))]);
                     }
                 }
@@ -1750,6 +1787,13 @@ pub struct BlockReread {
     /// The block's census and count, which every re-read takes, having read
     /// every row — a declined one included.
     pub census: BlockCensus,
+    /// The fields its type's `*_in` refuses that the re-read keyed and went
+    /// past, under [`crate::PostgresInvalidValues::Ignore`]: what
+    /// [`CopyBlock::ignored_refusals`] holds after a re-read that gathered,
+    /// every column the block held being gathered again
+    /// ([`StatisticsBackfill`]), and after one that declined only where the
+    /// block held none.
+    pub ignored: Option<IgnoredRefusals>,
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —
@@ -1839,13 +1883,14 @@ async fn reread_block(
     // The observer's own allocation is freed as `finish` returns, attributed
     // as it was allocated (`crate::instrument`).
     let _attributed = StatisticsScope::enter();
+    let ignored = observer.take_ignored();
     let gathered = match observer.finish(block.terminator_offset - block.data_offset) {
         BlockGathered::Refused(refusal) => {
             return Err(refusal.into_error(&block.header, block.data_offset));
         }
         gathered => gathered,
     };
-    Ok(Some(BlockReread { gathered, census }))
+    Ok(Some(BlockReread { gathered, census, ignored }))
 }
 
 /// Read every row of `block` again, as a mapping pass reads them — offered
@@ -5784,6 +5829,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
+            ignored_refusals: None,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -5886,6 +5932,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
+            ignored_refusals: None,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -6178,6 +6225,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
+            ignored_refusals: None,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
@@ -6225,6 +6273,7 @@ mod tests {
             partition_root: None,
             statistics: None,
             statistics_declined: None,
+            ignored_refusals: None,
             array_shapes: Some(Vec::new()),
             unrepresentable: Some(Vec::new()),
         };
