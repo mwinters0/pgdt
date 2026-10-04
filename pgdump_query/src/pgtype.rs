@@ -814,16 +814,20 @@ impl Discrete {
 
 impl NestedCompare {
     /// The first position beneath this one with no order, as
-    /// `(path, declared type)` — `None` when every position is comparable.
-    /// The path is the accessor a user would write where one exists: `[]` for
-    /// an element, `.name` for a field, appended as the walk descends. A
-    /// range's bound has no subscript spelling, so `.bound` names it and a
-    /// multirange's is `[].bound`.
-    pub fn uncomparable(&self) -> Option<(String, String)> {
+    /// `(path, declared type, divergence)` — `None` when every position is
+    /// comparable. The path is the accessor a user would write where one
+    /// exists: `[]` for an element, `.name` for a field, appended as the walk
+    /// descends. A range's bound has no subscript spelling, so `.bound` names
+    /// it and a multirange's is `[].bound`. The divergence is the position's
+    /// own, which is what tells a refusal the server shares (`json`'s
+    /// [`ComparisonDivergence::AsText`]) from one only this build makes.
+    pub fn uncomparable(&self) -> Option<(String, String, Option<ComparisonDivergence>)> {
         let mut found = None;
         self.walk(&mut String::new(), &mut |path, leaf| {
-            if matches!(leaf, Self::Uncomparable { .. }) && found.is_none() {
-                found = Some((path.to_string(), leaf.declared().to_string()));
+            if let Self::Uncomparable { declared, divergence, .. } = leaf
+                && found.is_none()
+            {
+                found = Some((path.to_string(), declared.clone(), *divergence));
             }
         });
         found
@@ -4614,7 +4618,12 @@ mod tests {
             let plan = comparison_for(declared, None, &types, &[]);
             assert!(!plan.orders(), "{declared}");
             let ComparisonPlan::Nested(tree) = plan else { panic!("{declared}: not nested") };
-            assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
+            let divergence = announces.then_some(ComparisonDivergence::AsText);
+            assert_eq!(
+                tree.uncomparable(),
+                Some((path.to_string(), at.to_string(), divergence)),
+                "{declared}"
+            );
             // The three refused for a reason of *this build's* announce
             // nothing: PostgreSQL compares `box[]` element-wise, and this
             // build knows neither `public.gtype`'s order nor, here,

@@ -742,7 +742,7 @@ pgdt query --source dump.sql --table public.t --filter 'tags<{b}'
 A composite with two such parts warns twice, once per position — `label` and
 `tags[]` in a `(label text, tags text[])`.
 
-**A part with no order at all refuses the whole column**, naming it, because
+**A part with no order here refuses the whole column**, naming it. For `json`
 the server refuses it too — `json` has no comparison in PostgreSQL, so a
 `json[]` column has none either:
 
@@ -754,8 +754,21 @@ refuses the same comparison, since a container is ordered by its element type's
 own comparison and this type has none; use `=` or `!=` for a text comparison
 ```
 
-`=` and `!=` do still work there — they compare the whole value's text — and
-they warn for the same reason, naming the same part. PostgreSQL has no equality
+A part whose type pgdt models no order for — `money`, `bit`, `tsvector`, a
+type an extension defines — is refused the same way, and the message says only
+that pgdt has no order for it: PostgreSQL may well order such a column, as it
+orders `money[]`, and the refusal is pgdt's alone.
+
+```
+$ pgdt query --source dump.sql --table public.t --filter 'prices<{}'
+Error: `<` on column `prices` in the COPY block at offset 1234: the column is
+nested and `[]` inside it is `money`, for which this build models no order — a
+container is ordered by its element type's own comparison, so the column has
+none here either; use `=` or `!=` for a text comparison
+```
+
+`=` and `!=` do still work on either — they compare the whole value's text —
+and on a `json[]` they warn, naming the same part. PostgreSQL has no equality
 for a `json[]` either, so a text comparison is an answer the server does not
 have rather than a weaker one:
 

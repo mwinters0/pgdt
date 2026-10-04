@@ -3022,14 +3022,26 @@ const NESTED: &str = "the column is nested (array, composite, range or multirang
 
 /// The refusal a nested column earns when its *shape* is compared here and
 /// one position beneath it is not — an element, a field or a bound whose own
-/// declared type has no order (`json`, `box`, an unrecognised name). It names
-/// the position and its type.
-fn nested_refusal(path: &str, declared: &str) -> String {
-    format!(
-        "the column is nested and `{path}` inside it is `{declared}`, which has no order here — \
-         PostgreSQL refuses the same comparison, since a container is ordered by its element \
-         type's own comparison and this type has none"
-    )
+/// declared type has no order (`json`, `money`, `box`, an unrecognised name).
+/// It names the position and its type, and says the server refuses too only
+/// where the position's divergence is [`ComparisonDivergence::AsText`] —
+/// `json`, which has no comparison proc for `array_cmp` or `record_cmp` to
+/// find (I45). Any other position is one this build models no order for,
+/// many of which the server orders (`money[]` through `cash_cmp`), so its
+/// sentence makes no claim about PostgreSQL.
+fn nested_refusal(path: &str, declared: &str, divergence: Option<ComparisonDivergence>) -> String {
+    match divergence {
+        Some(ComparisonDivergence::AsText) => format!(
+            "the column is nested and `{path}` inside it is `{declared}`, which has no order here — \
+             PostgreSQL refuses the same comparison, since a container is ordered by its element \
+             type's own comparison and this type has none"
+        ),
+        _ => format!(
+            "the column is nested and `{path}` inside it is `{declared}`, for which this build \
+             models no order — a container is ordered by its element type's own comparison, so \
+             the column has none here either"
+        ),
+    }
 }
 const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
 const NESTED_IN_DATAFUSION: &str = "the column is nested (array, composite, range or \
@@ -3160,9 +3172,9 @@ pub(crate) fn resolve_term(
         // position, and `=`/`!=` fall back to a byte comparison of the
         // container's whole text, announced rather than silent — `array_cmp`
         // raises for a `json` element rather than returning a comparison.
-        if let Some((path, declared)) = tree.uncomparable() {
+        if let Some((path, declared, divergence)) = tree.uncomparable() {
             if ordering {
-                return Err(refuse(&nested_refusal(&path, &declared)));
+                return Err(refuse(&nested_refusal(&path, &declared, divergence)));
             }
             fell_back = Some(tree);
             plan = None;
@@ -7133,6 +7145,71 @@ mod tests {
             resolve_term(&p, 0, &one_column("mystery", DataType::UInt8), 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NO_ORDER
         ));
+    }
+
+    /// **The ordering refusal says the server refuses too only where it
+    /// does.** A `json` position takes the server's order away (I45), so its
+    /// sentence says so; a position this build merely models no order for —
+    /// `money`, `bit`, `tsvector`, a user base type — makes no claim about
+    /// PostgreSQL, which orders `money[]`, `bit[]` and `tsvector[]` through
+    /// their btree opclasses. The whole message is pinned: the manual prints
+    /// both for a user to recognise.
+    #[test]
+    fn a_nested_ordering_refusal_claims_the_server_refuses_only_for_json() {
+        let types = vec![
+            TypeDef { name: "public.gtype".into(), kind: TypeKind::base() },
+            TypeDef {
+                name: "public.jsonpair".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("ok", "integer"),
+                        ColumnDef::new("doc", "json"),
+                    ]),
+                },
+            },
+            TypeDef {
+                name: "public.tagged".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("ok", "integer"),
+                        ColumnDef::new("tag", "public.gtype"),
+                    ]),
+                },
+            },
+        ];
+        let message = |declared: &str| {
+            let p = order_predicate(PredicateOp::Lt, "{}");
+            resolve_term(&p, 0, &nested_column(declared, &types), 0).unwrap_err().to_string()
+        };
+        let server = |path: &str, at: &str| {
+            format!(
+                "`<` on column `v` in the COPY block at offset 0: the column is nested and \
+                 `{path}` inside it is `{at}`, which has no order here — PostgreSQL refuses the \
+                 same comparison, since a container is ordered by its element type's own \
+                 comparison and this type has none; use `=` or `!=` for a text comparison"
+            )
+        };
+        let unmodelled = |path: &str, at: &str| {
+            format!(
+                "`<` on column `v` in the COPY block at offset 0: the column is nested and \
+                 `{path}` inside it is `{at}`, for which this build models no order — a \
+                 container is ordered by its element type's own comparison, so the column has \
+                 none here either; use `=` or `!=` for a text comparison"
+            )
+        };
+        for (declared, path) in [("json[]", "[]"), ("public.jsonpair", ".doc")] {
+            assert_eq!(message(declared), server(path, "json"), "{declared}");
+        }
+        for (declared, path, at) in [
+            ("money[]", "[]", "money"),
+            ("bit(3)[]", "[]", "bit(3)"),
+            ("tsvector[]", "[]", "tsvector"),
+            ("public.tagged", ".tag", "public.gtype"),
+        ] {
+            let found = message(declared);
+            assert_eq!(found, unmodelled(path, at), "{declared}");
+            assert!(!found.contains("PostgreSQL"), "{found}");
+        }
     }
 
     /// Under DataFusion's semantics every comparing operator on a nested column is
