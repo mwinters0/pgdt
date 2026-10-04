@@ -16,8 +16,6 @@
 //! since a field one server reads is no refusal:
 //!
 //! - `DateStyle`'s field order, and `IntervalStyle`: every one is tried;
-//! - an `interval` column's field qualifier, which no reader here is handed:
-//!   every one is tried (`KD98`);
 //! - a word no keyword names, which may name a zone some tzdata holds, zone
 //!   names being open: it is read as a fixed-offset zone, the most
 //!   permissive reading of a zone, setting the zone and nothing else, which
@@ -36,6 +34,7 @@
 //! one is taken as read.
 
 use crate::decode;
+use crate::pgtype::IntervalQualifier;
 
 /// A supported major whose grammar differs from the one before it: 14 reads
 /// as 13 does.
@@ -178,24 +177,6 @@ const fn interval_mask(b: i32) -> i32 {
     1 << b
 }
 const INTERVAL_FULL_RANGE: i32 = 0x7FFF;
-
-/// An `interval` column's field qualifiers, each as the `range` its typmod
-/// hands `DecodeInterval`, one of each behaviour: the unit a bare number
-/// takes, and `minute to second`'s reading of `a:b` as minutes and seconds.
-// deficiency: KD98 — an interval column's field qualifier reaches no
-// comparison kind, `pgtype::builtin_name` dropping it as it names the type,
-// so every qualifier is tried here and a field only its own column's refuses
-// passes a strict parse: `3000000000` in an `interval year`, `100:30` in an
-// `interval minute to second`.
-const INTERVAL_RANGES: [i32; 7] = [
-    INTERVAL_FULL_RANGE,
-    interval_mask(YEAR),
-    interval_mask(MONTH),
-    interval_mask(DAY),
-    interval_mask(HOUR),
-    interval_mask(MINUTE),
-    interval_mask(MINUTE) | interval_mask(SECOND),
-];
 
 /// `datetktbl`, the keywords a date or time reads; `+infinity` from v16.
 const DATETKTBL: &[(&str, i32, i32)] = &[
@@ -378,26 +359,27 @@ pub(crate) fn datetime_reads(input: DateTimeInput, text: &str) -> bool {
     })
 }
 
-/// **Whether some supported major, under some `IntervalStyle` and some field
-/// qualifier, reads `text` as an `interval`**: `interval_in`'s
-/// `ParseDateTime` and `DecodeInterval`, then `DecodeISO8601Interval` where
-/// those found a bad format, then its month total's range.
+/// **Whether some supported major, under some `IntervalStyle`, reads `text`
+/// as an `interval` of a column qualified by `qualifier`** — `None` for one
+/// with none: `interval_in`'s `ParseDateTime` and `DecodeInterval` under the
+/// qualifier's range, then `DecodeISO8601Interval` where those found a bad
+/// format, then its month total's range. The column's precision refuses
+/// nothing every major refuses, 13 to 16 rounding past `int64` unchecked.
 // pg-refuses: I84 — every refusal here is every major's, under every setting.
-pub(crate) fn interval_reads(text: &str) -> bool {
+pub(crate) fn interval_reads(text: &str, qualifier: Option<IntervalQualifier>) -> bool {
     let b = text.as_bytes();
     if b.iter().any(|&c| c == 0 || c >= 0x80) {
         return true;
     }
+    let range = qualifier.map_or(INTERVAL_FULL_RANGE, IntervalQualifier::range);
     let fields = parse_date_time(b, 256);
     MAJORS.iter().any(|&major| {
         [false, true].iter().any(|&sql_standard| {
-            INTERVAL_RANGES.iter().any(|&range| {
-                if major >= Major::V15 {
-                    interval_accepts(b, fields.as_deref(), major, sql_standard, range)
-                } else {
-                    interval_accepts_v13(b, fields.as_deref(), sql_standard, range)
-                }
-            })
+            if major >= Major::V15 {
+                interval_accepts(b, fields.as_deref(), major, sql_standard, range)
+            } else {
+                interval_accepts_v13(b, fields.as_deref(), sql_standard, range)
+            }
         })
     })
 }
@@ -3692,8 +3674,106 @@ mod tests {
             ("-2147483648,day ago", "110000"),
             ("1-11 -2147483648 week", "110000"),
         ];
+        // The cases were put to every qualifier at once, as the union over
+        // them is what they were read by.
+        let any_qualifier = |text| {
+            std::iter::once(None)
+                .chain(IntervalQualifier::ALL.map(Some))
+                .any(|qualifier| interval_reads(text, qualifier))
+        };
         for (text, majors) in interval {
-            check(interval_reads(text), text, majors, "interval");
+            check(any_qualifier(text), text, majors, "interval");
+        }
+    }
+
+    /// **An `interval` is read exactly where some supported major reads it
+    /// under its column's field qualifier** (I84). Each case was put to
+    /// `interval_in` at 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6 under both
+    /// `IntervalStyle`s, through a literal of each type below, so the input
+    /// function is handed the qualifier's typmod; the fourteen digits say
+    /// under which some major reads it: none, then `year`, `month`, `day`,
+    /// `hour`, `minute`, `second`, `year to month`, `day to hour`, `day to
+    /// minute`, `day to second`, `hour to minute`, `hour to second` and
+    /// `minute to second`. The cases are up to three of each pattern of
+    /// verdicts across the qualifiers, hand-written first and then shortest,
+    /// from a differential run of 3,000 texts put to each qualifier and to
+    /// `interval(0)` and `interval second(0)`, whose precision decided none,
+    /// which this build read as the servers did.
+    #[test]
+    fn an_interval_is_read_exactly_where_some_major_reads_it_under_its_qualifier() {
+        use IntervalQualifier as Q;
+        let qualifiers = [
+            None,
+            Some(Q::Year),
+            Some(Q::Month),
+            Some(Q::Day),
+            Some(Q::Hour),
+            Some(Q::Minute),
+            Some(Q::Second),
+            Some(Q::YearToMonth),
+            Some(Q::DayToHour),
+            Some(Q::DayToMinute),
+            Some(Q::DayToSecond),
+            Some(Q::HourToMinute),
+            Some(Q::HourToSecond),
+            Some(Q::MinuteToSecond),
+        ];
+        let cases: &[(&str, &str)] = &[
+            ("59:60", "00000000000001"),
+            ("1:60", "00000000000001"),
+            ("\t1:60", "00000000000001"),
+            ("1 1", "00001000100000"),
+            ("1.5 1", "00001000100000"),
+            (".5.", "00001000100000"),
+            (" 1-11 178956971:-2147483648", "00010000000000"),
+            ("1000000 1:02:03 -2147483648", "00100001000000"),
+            ("12:-2147483648", "00110001000000"),
+            ("1:2.5-2147483647", "00110001000000"),
+            ("+1-2 1:2:3. 12", "01010000000000"),
+            ("D1-2 +1:02:>03", "01010000000000"),
+            (" -1$2:-5", "01100001000000"),
+            (". 1:2_:3", "01100001000000"),
+            ("5:+1", "01110001000000"),
+            ("0:1/2", "01110001000000"),
+            ("4294S~8", "01111101110100"),
+            ("1S8956970", "01111101110100"),
+            ("9223372036854", "10000010001011"),
+            ("214748368347", "10000010001011"),
+            ("217174483647", "10000010001011"),
+            ("2562047789", "10000110011111"),
+            ("3000000000", "10000110011111"),
+            ("-9717895697", "10000110011111"),
+            ("2147483648", "10001110111111"),
+            ("2562047788", "10001110111111"),
+            ("2147484648", "10001110111111"),
+            ("178956970-1:2", "10011110111111"),
+            (" 1-2 -2147483648", "10011110111111"),
+            ("-178956971", "10111111111111"),
+            ("-2147483648", "10111111111111"),
+            ("4y94968", "10111111111111"),
+            ("1-2 3", "11011110111111"),
+            ("1-:2", "11011110111111"),
+            ("1-:1.", "11011110111111"),
+            ("1 day 1", "11101111111111"),
+            ("1C:6D0", "11101111111111"),
+            ("1 dayS 1", "11101111111111"),
+            ("1 hour 1", "11110111011111"),
+            ("7hour 1", "11110111011111"),
+            ("1537228h67", "11110111011111"),
+            ("1>m2", "11111011101011"),
+            ("17895M970", "11111011101011"),
+            ("-2147483648:00", "11111111111110"),
+            ("1 100:30", "11111111111110"),
+            ("91:2", "11111111111110"),
+        ];
+        for (text, read) in cases {
+            for (qualifier, want) in qualifiers.iter().zip(read.chars()) {
+                assert_eq!(
+                    interval_reads(text, *qualifier),
+                    want == '1',
+                    "{text:?} under {qualifier:?}"
+                );
+            }
         }
     }
 }

@@ -145,6 +145,91 @@ pub struct NumericTypmod {
     pub scale: i16,
 }
 
+/// An `interval` column's field qualifier, one of the thirteen `gram.y`'s
+/// `opt_interval` writes and `intervaltypmodin` admits. It is part of the
+/// column's typmod, which `interval_in` hands `DecodeInterval`: the unit a
+/// number written with none takes, and whether `a:b` is minutes and seconds
+/// (I84). A column with none reads its fields under the full range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntervalQualifier {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    YearToMonth,
+    DayToHour,
+    DayToMinute,
+    DayToSecond,
+    HourToMinute,
+    HourToSecond,
+    MinuteToSecond,
+}
+
+impl IntervalQualifier {
+    /// Every qualifier, in `opt_interval`'s order.
+    pub const ALL: [Self; 13] = [
+        Self::Year,
+        Self::Month,
+        Self::Day,
+        Self::Hour,
+        Self::Minute,
+        Self::Second,
+        Self::YearToMonth,
+        Self::DayToHour,
+        Self::DayToMinute,
+        Self::DayToSecond,
+        Self::HourToMinute,
+        Self::HourToSecond,
+        Self::MinuteToSecond,
+    ];
+
+    /// The qualifier `words` spell — folded to lower case, single-spaced, and
+    /// without `second`'s precision — as `opt_interval` reads them.
+    fn parse(words: &str) -> Option<Self> {
+        Some(match words {
+            "year" => Self::Year,
+            "month" => Self::Month,
+            "day" => Self::Day,
+            "hour" => Self::Hour,
+            "minute" => Self::Minute,
+            "second" => Self::Second,
+            "year to month" => Self::YearToMonth,
+            "day to hour" => Self::DayToHour,
+            "day to minute" => Self::DayToMinute,
+            "day to second" => Self::DayToSecond,
+            "hour to minute" => Self::HourToMinute,
+            "hour to second" => Self::HourToSecond,
+            "minute to second" => Self::MinuteToSecond,
+            _ => return None,
+        })
+    }
+
+    /// `INTERVAL_RANGE(typmod)`: the `INTERVAL_MASK` bits of each field the
+    /// qualifier spans, `MONTH`, `YEAR` and `DAY` being bits 1 to 3 and
+    /// `HOUR`, `MINUTE` and `SECOND` 10 to 12 (`datetime.h`).
+    pub(crate) fn range(self) -> i32 {
+        let (year, month, day, hour, minute, second) =
+            (1 << 2, 1 << 1, 1 << 3, 1 << 10, 1 << 11, 1 << 12);
+        match self {
+            Self::Year => year,
+            Self::Month => month,
+            Self::Day => day,
+            Self::Hour => hour,
+            Self::Minute => minute,
+            Self::Second => second,
+            Self::YearToMonth => year | month,
+            Self::DayToHour => day | hour,
+            Self::DayToMinute => day | hour | minute,
+            Self::DayToSecond => day | hour | minute | second,
+            Self::HourToMinute => hour | minute,
+            Self::HourToSecond => hour | minute | second,
+            Self::MinuteToSecond => minute | second,
+        }
+    }
+}
+
 /// How one column's field text becomes a value two sides of a comparison can
 /// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
 /// thing `crate::predicate` needs in order to read a side.
@@ -244,7 +329,15 @@ pub enum CompareKind {
     /// Carries the two infinities unconditionally, in `date_out`'s spellings
     /// rather than `numeric_out`'s (I34). They are v17 values, read on an
     /// older file under the union rule (I35).
-    Interval,
+    ///
+    /// `qualifier` is the column's field qualifier, under which `interval_in`
+    /// reads a field and a strict parse checks one
+    /// ([`crate::datetime_in::interval_reads`]); `None` for a column with
+    /// none, and for a literal's reading, which no typmod reaches. It refuses
+    /// a field and never moves a key.
+    Interval {
+        qualifier: Option<IntervalQualifier>,
+    },
     /// `time with time zone`, compared by the UTC-equivalent instant first
     /// and by the stored zone second, so two values are equal only when both
     /// halves are (I40) — `00:00:00+00` and `01:00:00+01` are the same
@@ -279,8 +372,11 @@ pub enum CompareKind {
     /// `interval` under Arrow's order of `Interval(MonthDayNano)`: months,
     /// then days, then the time part, each compared alone, so `30 days` is
     /// below `1 mon` where [`Self::Interval`] equates them. Produced only by
-    /// [`Self::datafusion_order`].
-    IntervalFields,
+    /// [`Self::datafusion_order`], which keeps the qualifier, the field being
+    /// the one the server read.
+    IntervalFields {
+        qualifier: Option<IntervalQualifier>,
+    },
 }
 
 /// Which order a query's comparisons answer in.
@@ -318,7 +414,7 @@ impl CompareKind {
     /// the key, which no Arrow value contradicts.
     pub fn datafusion_order(&self) -> CompareKind {
         match self {
-            Self::Interval => Self::IntervalFields,
+            Self::Interval { qualifier } => Self::IntervalFields { qualifier: *qualifier },
             Self::Enum { .. }
             | Self::Numeric { .. }
             | Self::TimeTz
@@ -343,7 +439,7 @@ impl CompareKind {
             | Self::Network { .. }
             | Self::MacAddr { .. }
             | Self::Jsonb => Some(ComparisonDivergence::ValueAsText),
-            Self::Interval => Some(ComparisonDivergence::IntervalFields),
+            Self::Interval { .. } => Some(ComparisonDivergence::IntervalFields),
             Self::PaddedText { .. } => Some(ComparisonDivergence::PaddedText),
             _ => None,
         }
@@ -1131,16 +1227,19 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 }
 
 /// A built-in's declared spelling — no `.` in it (I8) — as the one name
-/// [`builtin_scalar`] and [`builtin_range_subtype`] match on, and its typmod,
-/// read the way PostgreSQL's grammar reads it (`docs/design/roadmap.md`, "The
-/// input contract is valid PostgreSQL").
+/// [`builtin_scalar`] and [`builtin_range_subtype`] match on, its typmod and
+/// an `interval`'s field qualifier, read the way PostgreSQL's grammar reads
+/// them (`docs/design/roadmap.md`, "The input contract is valid PostgreSQL").
 ///
 /// - **A typmod may sit mid-name**: `format_type` writes
 ///   `timestamp(3) with time zone`, `time(2) without time zone` and
 ///   `interval day to second(3)`, so the one parenthesized group is cut out
 ///   wherever it falls.
-/// - **`interval`'s field qualifiers** restrict what a value may hold, never
-///   how it is written, so `interval year to month` is `interval`.
+/// - **`interval`'s field qualifier is the rest of its typmod**, so
+///   `interval year to month` is `interval`, its qualifier
+///   [`IntervalQualifier::YearToMonth`]; only `opt_interval`'s thirteen
+///   spellings are one. Quoted, the typmod's first integer is the qualifier's
+///   `INTERVAL_MASK` bits, as `intervaltypmodin` reads `"interval"(4)`.
 /// - **An unquoted name is folded to lower case and its whitespace to one
 ///   space**, then read through the grammar's own keywords (`int`, `char`,
 ///   `varchar`, `dec`, `float(p)`, bare `timestamp`, …) and then as a catalog
@@ -1151,7 +1250,9 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 ///   reaches no arm; nor does `"integer"` or any spelling only the grammar
 ///   knows, which names a type `pg_catalog` does not hold and so answers
 ///   quoted.
-fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>) {
+fn builtin_name(
+    declared: &str,
+) -> (std::borrow::Cow<'static, str>, Option<&str>, Option<IntervalQualifier>) {
     let (words, typmod) = match (declared.find('('), declared.rfind(')')) {
         (Some(open), Some(close)) if open < close => (
             format!("{} {}", &declared[..open], &declared[close + 1..]),
@@ -1166,7 +1267,11 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
             None if CATALOG_NAMES.iter().any(|&(_, sql)| sql == quoted) => words.to_owned(),
             None => quoted.to_owned(),
         };
-        return (name.into(), typmod);
+        let qualifier = (name == "interval").then_some(typmod).flatten().and_then(|typmod| {
+            let range = typmod.split(',').next()?.trim().parse::<i32>().ok()?;
+            IntervalQualifier::ALL.into_iter().find(|q| q.range() == range)
+        });
+        return (name.into(), typmod, qualifier);
     }
     let words = words.split_ascii_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
     let keyword = match words.as_str() {
@@ -1177,13 +1282,13 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
         // chosen takes no typmod.
         "float" => {
             let real = typmod.and_then(|p| p.trim().parse::<u8>().ok()).is_some_and(|p| p <= 24);
-            return ((if real { "real" } else { "double precision" }).into(), None);
+            return ((if real { "real" } else { "double precision" }).into(), None, None);
         }
         // The SQL word with no length is `character(1)`, as the grammar
         // gives it one; `bpchar`, the catalog name, is the type with none,
         // which is how `format_type` writes such a column (I8).
         "character" | "char" | "nchar" | "national char" | "national character" => {
-            return ("character".into(), typmod.or(Some("1")));
+            return ("character".into(), typmod.or(Some("1")), None);
         }
         "char varying"
         | "nchar varying"
@@ -1191,17 +1296,16 @@ fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>
         | "national character varying" => "character varying",
         "timestamp" => "timestamp without time zone",
         "time" => "time without time zone",
-        w if w.strip_prefix("interval ").is_some_and(|fields| {
-            fields.split(' ').all(|f| {
-                matches!(f, "year" | "month" | "day" | "hour" | "minute" | "second" | "to")
-            })
-        }) =>
-        {
-            "interval"
+        w => {
+            let qualifier = w.strip_prefix("interval ").and_then(IntervalQualifier::parse);
+            if qualifier.is_some() {
+                return ("interval".into(), typmod, qualifier);
+            }
+            let name = catalog_name(w).map_or_else(|| words.clone(), str::to_owned);
+            return (name.into(), typmod, None);
         }
-        w => return (catalog_name(w).map_or_else(|| words.clone(), str::to_owned).into(), typmod),
     };
-    (keyword.into(), typmod)
+    (keyword.into(), typmod, None)
 }
 
 /// Each catalog type name whose SQL spelling is another, beside that
@@ -1298,6 +1402,8 @@ fn char_length(typmod: Option<&str>) -> Option<u32> {
 /// `collations` is what the dump's own `CREATE COLLATION` statements said
 /// about it; only the four collatable arms read either, and [`map_builtin`] —
 /// which wants the Arrow type alone — passes `None` and an empty list.
+/// `qualifier` is an `interval`'s field qualifier ([`builtin_name`]), which
+/// only that arm reads and `map_builtin` passes as `None` too.
 ///
 /// Deficiency register: `deficiency: KD13` — `money`'s absent arm is the one
 /// place this table falls below the ADBC floor: the driver answers `int64`
@@ -1309,6 +1415,7 @@ fn char_length(typmod: Option<&str>) -> Option<u32> {
 fn builtin_scalar(
     base: &str,
     typmod: Option<&str>,
+    qualifier: Option<IntervalQualifier>,
     collation: Option<&str>,
     collations: &[CollationDef],
 ) -> Option<(DataType, ComparisonPlan)> {
@@ -1391,8 +1498,9 @@ fn builtin_scalar(
         // Arrow's `Interval(MonthDayNano)` carries months, days and a time
         // part as three independent fields, exactly as PostgreSQL's
         // `Interval` does — the mapping is the struct, not a reading of it.
-        // The *comparison* is `interval_cmp_value`'s fused span (I40).
-        "interval" => (Interval(MonthDayNano), agrees(K::Interval)),
+        // The *comparison* is `interval_cmp_value`'s fused span (I40), and
+        // the field qualifier what its field is read under (I84).
+        "interval" => (Interval(MonthDayNano), agrees(K::Interval { qualifier })),
         // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
         // `memcmp` then length — both are `[u8]`'s own order (I33).
         "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
@@ -1521,10 +1629,10 @@ fn map_builtin(
     types: &[TypeDef],
     visits: Visits,
 ) -> Option<TypeOutcome> {
-    // No collation: an Arrow type never depends on one, and the comparison
-    // half of the pair is read here only for a decimal's precision and a
-    // text's length.
-    if let Some((mapped, comparison)) = builtin_scalar(base, typmod, None, &[]) {
+    // No collation or qualifier: an Arrow type never depends on either, and
+    // the comparison half of the pair is read here only for a decimal's
+    // precision and a text's length.
+    if let Some((mapped, comparison)) = builtin_scalar(base, typmod, None, None, &[]) {
         // The literal form is this walk's to say: a `smallint[]` column and
         // an `int2vector` one are both `List<Int16>` and are written in
         // different grammars (`docs/design/decisions.md`, "D39"). Exactly one
@@ -2000,7 +2108,7 @@ pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGram
         );
         return labelless.then_some(TextGrammar::RefusesAll);
     }
-    let (name, typmod) = builtin_name(terminal);
+    let (name, typmod, _) = builtin_name(terminal);
     // None of these takes a typmod, so one written with one is DDL no server
     // holds, read as no grammar.
     match &*name {
@@ -2334,7 +2442,7 @@ fn resolve_walk(declared: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
     if base.contains('.') {
         return resolve_user_type(base, types, visits);
     }
-    let (base, typmod) = builtin_name(declared);
+    let (base, typmod, _) = builtin_name(declared);
     map_builtin(&base, typmod, types, visits).unwrap_or(TypeOutcome::Unknown)
 }
 
@@ -2523,8 +2631,8 @@ fn comparison_walk(
     if base.contains('.') {
         return comparison_user_type(base, collation, types, collations, visits);
     }
-    let (base, typmod) = builtin_name(declared);
-    if let Some((_, plan)) = builtin_scalar(&base, typmod, collation, collations) {
+    let (base, typmod, qualifier) = builtin_name(declared);
+    if let Some((_, plan)) = builtin_scalar(&base, typmod, qualifier, collation, collations) {
         return plan;
     }
     // The twelve built-in range and multirange names, which reach no arm of
@@ -2745,8 +2853,9 @@ mod tests {
     }
 
     /// **A declared type is read as PostgreSQL's grammar reads it**: every
-    /// spelling on the left names the type on the right, a catalog name, a
-    /// grammar keyword or an `interval` field qualifier alike.
+    /// spelling on the left names the type on the right, a catalog name or a
+    /// grammar keyword alike; an `interval`'s field qualifier is
+    /// `an_interval_s_field_qualifier_reaches_its_comparison_kind`'s.
     #[test]
     fn every_spelling_of_a_built_in_is_that_built_in() {
         for (declared, canonical) in [
@@ -2775,9 +2884,8 @@ mod tests {
             ("TIMESTAMP(3)", "timestamp without time zone"),
             ("time", "time without time zone"),
             ("timetz", "time with time zone"),
-            ("interval year to month", "interval"),
-            ("interval day to second(3)", "interval"),
-            ("interval second", "interval"),
+            ("INTERVAL(3)", "interval"),
+            ("\"interval\"", "interval"),
             ("\"int4\"", "integer"),
             ("\"timestamptz\"", "timestamp with time zone"),
         ] {
@@ -2789,6 +2897,70 @@ mod tests {
                 comparison_for(canonical, None, &[], &[]),
                 "`{declared}`"
             );
+        }
+    }
+
+    /// **An `interval`'s field qualifier reaches its comparison kind**, read
+    /// as `opt_interval` reads it: each of the thirteen `format_type` writes,
+    /// with `second`'s precision or without, in any case and spacing, and
+    /// through an array and a domain; quoted, as the mask `intervaltypmodin`
+    /// takes. A precision alone is no qualifier, and words `opt_interval` does
+    /// not read name no built-in.
+    #[test]
+    fn an_interval_s_field_qualifier_reaches_its_comparison_kind() {
+        use IntervalQualifier as Q;
+        let kind =
+            |declared: &str, types: &[TypeDef]| match comparison_for(declared, None, types, &[]) {
+                ComparisonPlan::Compared { kind, .. } => kind,
+                ComparisonPlan::Nested(NestedCompare::Array(leaf)) => match *leaf {
+                    NestedCompare::Leaf { kind, .. } => kind,
+                    other => panic!("`{declared}`: {other:?}"),
+                },
+                other => panic!("`{declared}`: {other:?}"),
+            };
+        let interval = |qualifier| CompareKind::Interval { qualifier };
+        let types = [ty("public.span", TypeKind::domain("interval minute to second(2)"))];
+        for (declared, qualifier) in [
+            ("interval", None),
+            ("interval(3)", None),
+            ("interval year", Some(Q::Year)),
+            ("interval month", Some(Q::Month)),
+            ("interval day", Some(Q::Day)),
+            ("interval hour", Some(Q::Hour)),
+            ("interval minute", Some(Q::Minute)),
+            ("interval second", Some(Q::Second)),
+            ("interval second(3)", Some(Q::Second)),
+            ("interval year to month", Some(Q::YearToMonth)),
+            ("interval day to hour", Some(Q::DayToHour)),
+            ("interval day to minute", Some(Q::DayToMinute)),
+            ("interval day to second", Some(Q::DayToSecond)),
+            ("interval day to second(0)", Some(Q::DayToSecond)),
+            ("interval hour to minute", Some(Q::HourToMinute)),
+            ("interval hour to second(6)", Some(Q::HourToSecond)),
+            ("interval minute to second", Some(Q::MinuteToSecond)),
+            ("INTERVAL  Year\tTO MONTH", Some(Q::YearToMonth)),
+            ("\"interval\"(4)", Some(Q::Year)),
+            ("\"interval\"(6144, 3)", Some(Q::MinuteToSecond)),
+            ("interval day to second(3)[]", Some(Q::DayToSecond)),
+            ("public.span", Some(Q::MinuteToSecond)),
+        ] {
+            assert_eq!(kind(declared, &types), interval(qualifier), "`{declared}`");
+            assert_eq!(
+                resolve_declared_type(declared, &types),
+                resolve_declared_type(
+                    if declared.ends_with("[]") { "interval[]" } else { "interval" },
+                    &[]
+                ),
+                "`{declared}`"
+            );
+        }
+        for declared in ["interval year to second", "interval to month", "interval second to day"] {
+            assert_eq!(resolve_declared_type(declared, &[]), TypeOutcome::Unknown, "`{declared}`");
+        }
+        for qualifier in Q::ALL {
+            let range = qualifier.range();
+            let quoted = format!("\"interval\"({range})");
+            assert_eq!(kind(&quoted, &[]), interval(Some(qualifier)), "`{quoted}`");
         }
     }
 
@@ -3464,7 +3636,7 @@ mod tests {
         for (declared, extension, storage) in EXTENSIONS {
             assert_eq!(extension_for(declared, &[]), Some(extension), "{declared}");
             assert_eq!(
-                builtin_scalar(declared, None, None, &[]).map(|(dt, _)| dt),
+                builtin_scalar(declared, None, None, None, &[]).map(|(dt, _)| dt),
                 Some(storage.clone()),
                 "{declared}"
             );
@@ -3583,7 +3755,7 @@ mod tests {
             ("timestamp with time zone", agrees(K::Timestamp { with_tz: true })),
             ("time without time zone", agrees(K::Time)),
             ("time with time zone", agrees(K::TimeTz)),
-            ("interval", agrees(K::Interval)),
+            ("interval", agrees(K::Interval { qualifier: None })),
             ("uuid", agrees(K::Uuid)),
             ("bytea", agrees(K::Bytea)),
             // The one the register still holds as text, because the server
@@ -3709,8 +3881,15 @@ mod tests {
             assert_eq!(read(&plan), ([Some(kind.clone()), text()], Some(P), Some(F)), "{kind:?}");
         }
         assert_eq!(
-            read(&ComparisonPlan::agrees(CompareKind::Interval)),
-            ([Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], Some(P), Some(F))
+            read(&ComparisonPlan::agrees(CompareKind::Interval { qualifier: None })),
+            (
+                [
+                    Some(CompareKind::Interval { qualifier: None }),
+                    Some(CompareKind::IntervalFields { qualifier: None })
+                ],
+                Some(P),
+                Some(F)
+            )
         );
         for kind in
             [CompareKind::MacAddr { octets: 6 }, CompareKind::Int { bytes: 4 }, CompareKind::Bytea]
@@ -3748,7 +3927,14 @@ mod tests {
             ),
             ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
             ("integer", [Some(CompareKind::Int { bytes: 4 }), None], None),
-            ("interval", [Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], None),
+            (
+                "interval",
+                [
+                    Some(CompareKind::Interval { qualifier: None }),
+                    Some(CompareKind::IntervalFields { qualifier: None }),
+                ],
+                None,
+            ),
             ("a nested column", [None, None], None),
         ] {
             assert_eq!(bounds_set_keyed_by(&stored, &text), want, "{declared}");
@@ -3832,7 +4018,11 @@ mod tests {
                 Some("pg_catalog.\"C\""),
                 ComparisonPlan::agrees(CompareKind::Int { bytes: 4 }),
             ),
-            ("interval", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Interval)),
+            (
+                "interval",
+                Some("pg_catalog.\"C\""),
+                ComparisonPlan::agrees(CompareKind::Interval { qualifier: None }),
+            ),
             // Including one that is still held as text: `json` is not
             // collatable either, so a clause on it moves nothing.
             ("json", Some("pg_catalog.\"C\""), ComparisonPlan::AS_TEXT),

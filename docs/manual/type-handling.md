@@ -1037,8 +1037,7 @@ a type the dump does not declare, of a built-in pgdt has no reader of
 deeper than the restoring server's `max_stack_depth` lets it read, a date,
 time or timestamp whose reading the restoring server's settings decide — its
 `DateStyle`, a word its time zone abbreviations may name, a zone its zone
-files may hold, an offset its time zone may give — an `interval` refused only
-under its column's field qualifier (`3000000000` in an `interval year`), a value of a range
+files may hold, an offset its time zone may give — a value of a range
 type declaring its own `canonical` function, or a null element of an array,
 or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into

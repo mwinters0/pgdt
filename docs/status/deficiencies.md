@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD98 -->
+rather than being deleted. <!-- deficiency-watermark: KD99 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -429,8 +429,9 @@ than reading as a phase nobody has sliced.
   so a strict parse leaves it unchecked. **(b) owned by
   P31**, 31.26. Detail: `pgdump_query/src/pgtype.rs`.
 
-- **KD98** — an `interval` field refused only under its column's field
-  qualifier — `3000000000` in an `interval year`, `100:30` in an `interval
-  minute to second` — passes a strict parse, the qualifier reaching no
-  comparison kind. **(b) owned by P31**, 31.22.2. Detail:
-  `pgdump_query/src/datetime_in.rs`.
+- **KD99** — a `time(p)`, `timetz(p)`, `timestamp(p)`, `timestamptz(p)` or
+  qualified `interval` field is read as written, not rounded or truncated by
+  its typmod as PostgreSQL stores it, which no `pg_dump` writes, so a typed
+  read emits, keys and compares a value the server does not hold. **(c)
+  unowned**; promoted by a hand-written dump holding one. Detail:
+  `pgdump_query/src/decode.rs`.

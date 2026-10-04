@@ -5410,7 +5410,7 @@ crossed with every rule letter spells `AT` where no zone ever used it.
 **Claim.** `interval_in` splits its text by `ParseDateTime` (a 256-byte work
 buffer), reads the fields right to left by `DecodeInterval`, a number taking
 the unit after it or, with none, the column's field qualifier's last field,
-and on a bad format reads the whole text by `DecodeISO8601Interval`
+and `a:b` as minutes and seconds under `minute to second`, and on a bad format reads the whole text by `DecodeISO8601Interval`
 (`P1Y2M3DT4H`, `P0001-02-03T04:05:06`, its numbers by `strtod`), then refuses
 a month total past `int32`. `IntervalStyle = sql_standard` changes signs and
 nothing read. v13 and v14 add each part into an `int`, wrapping, and a
@@ -5418,6 +5418,8 @@ nothing read. v13 and v14 add each part into an `int`, wrapping, and a
 and `P-nanD` is read; v15 refuses each overflow. v17 reads `infinity`, ignores
 `at` and `on` and refuses a unit with no number before it, consecutive units
 and `ago` before the end, which v13 to v16 read (`1 day h`, `1 day  day`).
+The qualifier's precision then rounds the time part, which v17 refuses past
+`int64` and v13 to v16 wrap.
 
 **Proof.** `src/backend/utils/adt/datetime.c`'s `DecodeInterval`,
 `DecodeTimeForInterval` (`DecodeTime` before v15), `DecodeISO8601Interval`
@@ -5425,7 +5427,9 @@ and `ParseISO8601Number`, and `timestamp.c`'s `interval_in` and
 `itmin2interval` (`tm2interval` before v15), at each release: v15's rework is
 upstream `e39f9904671` ("Fix overflow hazards in interval input and output
 conversions"), v17's the infinite intervals and `617f9b7d4b1` ("Tighten unit
-parsing in internal values").
+parsing in internal values"); the qualifier's range in `DecodeInterval`'s
+`switch (range)` and `DecodeTimeCommon`, its precision in
+`AdjustIntervalForTypmod`.
 
 **Observed.** I83's differential run, its 42,000 `interval` texts put to
 `interval` and to each qualifier from `year` to `minute to second` under both
@@ -5433,22 +5437,28 @@ styles: `datetime_in::interval_reads` agreed with every server on every one.
 `4294968 millennium` and `P-nanD` are read by 13 and 14 alone, `1 day h` and
 `1 day  day` by 13 to 16, `1 day at` by 17 and 18, `3000000000` from 15 and
 never as an `interval year`, `100:30` but as an `interval minute to second`.
+A second run put 3,000 texts to each of the thirteen qualifiers, to none, and
+to `interval(0)` and `interval second(0)`, each alone: `interval_reads` under
+the column's qualifier agreed on all 48,000, no precision deciding one
+(`runs/interval-qualifier-oracle/`, machine-local).
 
-**Scope limit.** I83's on conversions and bytes past `0x7F`. The field
-qualifier is the column's typmod, which no reader here is handed (`KD98`).
+**Scope limit.** I83's on conversions and bytes past `0x7F`.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
 **Relied on by:** `datetime_in::interval_reads`, which refuses an `interval`
-field only where no major reads it under any style or qualifier.
+field only where no major reads it under any style and its column's
+qualifier (`pgtype::IntervalQualifier`).
 
 **Re-verify.**
 
 ```sh
 cd /mnt/wd12t/upstream/postgres/release-v<N>
-grep -n 'AdjustYears(val, 1000\|tm_year += val \* 1000\|parsing_unit_val = true\|"ago" is only allowed' src/backend/utils/adt/datetime.c
+grep -n 'AdjustYears(val, 1000\|tm_year += val \* 1000\|parsing_unit_val = true\|"ago" is only allowed\|MINUTE TO SECOND interval' src/backend/utils/adt/datetime.c
+grep -n 'pg_add_s64_overflow(interval->time,' src/backend/utils/adt/timestamp.c
 ```
 
-It prints the wrapping millennium to v14, the checked one from v15, and from
-v17 the unit and `ago` checks.
+The first prints the wrapping millennium to v14, the checked one from v15,
+from v17 the unit and `ago` checks, and at every major the `mm:ss` reading;
+the second the checked rounding, from v17.

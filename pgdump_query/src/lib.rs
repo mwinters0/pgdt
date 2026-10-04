@@ -56,8 +56,8 @@ pub use map::{
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
-    NestedCompare, NestedPlan, NumericTypmod, TypeOutcome, UnanswerableReason, Unchecked,
-    bounds_set_keyed_by, comparison_for, extension_for, resolve_declared_type,
+    IntervalQualifier, NestedCompare, NestedPlan, NumericTypmod, TypeOutcome, UnanswerableReason,
+    Unchecked, bounds_set_keyed_by, comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
     CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TableDef,

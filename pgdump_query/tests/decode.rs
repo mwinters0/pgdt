@@ -976,6 +976,68 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
     }
 }
 
+/// **An `interval` field is refused under its column's field qualifier**
+/// (I84): a bare number is a count of the qualifier's last field and `a:b`
+/// minutes and seconds under `minute to second`, so a field one column reads
+/// another refuses — `3000000000` as a year, `100:30` as minutes — and a
+/// data-level parse keying it fails naming it, as a strict one does, which
+/// alone finds it beneath an array. Every case put to `interval_in` under its
+/// qualifier at each supported major (`datetime_in`'s tests).
+#[tokio::test]
+async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
+    let dir = tempfile::tempdir().unwrap();
+    let disabled = CacheMode::DISABLED;
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..Default::default()
+    };
+    for (declared, field) in [
+        ("interval", "3000000000"),
+        ("interval second", "3000000000"),
+        ("interval", "100:30"),
+        ("interval minute to second", "59:60"),
+        ("interval hour", "1 1"),
+        ("interval year[]", "{1}"),
+    ] {
+        let path = char_typmod_dump(dir.path(), declared, field);
+        let source = LocalFileSource::open(&path).unwrap();
+        for scan in [ScanOptions::default(), strict.clone()] {
+            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
+                .await
+                .unwrap_or_else(|e| panic!("{declared} `{field}`: refused: {e}"));
+        }
+    }
+    for (declared, field, strict_alone) in [
+        ("interval year", "3000000000", false),
+        ("interval year to month", "3000000000", false),
+        ("interval minute to second", "100:30", false),
+        ("interval", "59:60", false),
+        ("interval", "1 1", false),
+        ("interval year[]", "{3000000000}", true),
+        ("interval minute to second[]", "{100:30}", true),
+    ] {
+        let path = char_typmod_dump(dir.path(), declared, field);
+        let source = LocalFileSource::open(&path).unwrap();
+        let default =
+            map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await;
+        match (default, strict_alone) {
+            (Ok(_), true) => {}
+            (Err(Error::FieldRefused { column, line, value, .. }), false) => {
+                assert_eq!((column.as_str(), line, value.as_str()), ("v", 2, field), "{declared}");
+            }
+            (other, _) => panic!("{declared} `{field}`: a default parse answered {other:?}"),
+        }
+        match map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await {
+            Err(Error::FieldRefused { column, line, value, .. }) => {
+                assert_eq!((column.as_str(), line, value.as_str()), ("v", 2, field), "{declared}");
+            }
+            other => {
+                panic!("{declared} `{field}`: expected a strict parse to refuse it, got {other:?}")
+            }
+        }
+    }
+}
+
 /// A dump whose `public.t` holds `id` 1 to 3 and `v` 5, NULL and 7, the
 /// table declared by `ddl`, which ends in `;`, after two domains: `public.nn`,
 /// an `integer` declared `NOT NULL`, and `public.over_nn` over it.

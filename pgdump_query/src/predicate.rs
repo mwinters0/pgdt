@@ -17,7 +17,8 @@ use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, Geometric,
-    NestedCompare, TextGrammar, UnanswerableReason, datafusion_position_divergences,
+    IntervalQualifier, NestedCompare, TextGrammar, UnanswerableReason,
+    datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::scan::PostgresInvalidValues;
@@ -1271,8 +1272,8 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
         CompareKind::Date
         | CompareKind::Timestamp { .. }
-        | CompareKind::Interval
-        | CompareKind::IntervalFields => match text {
+        | CompareKind::Interval { .. }
+        | CompareKind::IntervalFields { .. } => match text {
             "infinity" => Some(OrderKey::PositiveInfinity),
             "-infinity" => Some(OrderKey::NegativeInfinity),
             _ => None,
@@ -1480,9 +1481,15 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
                 text,
             )?)
         }
-        CompareKind::Interval => OrderKey::Interval(interval_read(interval_span(text), text)?),
-        CompareKind::IntervalFields => {
-            let (months, days, time) = interval_read(decode::interval_parts(text), text)?;
+        // A field the reader does not read is refused where `interval_in`
+        // refuses it under the column's qualifier. A literal is read under
+        // none ([`literal_key`]).
+        CompareKind::Interval { qualifier } => {
+            OrderKey::Interval(interval_read(interval_span(text), text, *qualifier)?)
+        }
+        CompareKind::IntervalFields { qualifier } => {
+            let (months, days, time) =
+                interval_read(decode::interval_parts(text), text, *qualifier)?;
             OrderKey::IntervalFields(months, days, time)
         }
         CompareKind::TimeTz => datetime_read(timetz_key(text), DateTimeInput::TimeTz, text)?,
@@ -1534,11 +1541,16 @@ fn datetime_read<T>(read: Read<T>, input: DateTimeInput, text: &str) -> Read<T> 
     })
 }
 
-/// [`datetime_read`] for an `interval` ([`datetime_in::interval_reads`]).
-fn interval_read<T>(read: Read<T>, text: &str) -> Read<T> {
-    read.map_err(
-        |_| if datetime_in::interval_reads(text) { Unread::Unparsed } else { Unread::Refused },
-    )
+/// [`datetime_read`] for an `interval` of a column qualified by `qualifier`
+/// ([`datetime_in::interval_reads`]).
+fn interval_read<T>(read: Read<T>, text: &str, qualifier: Option<IntervalQualifier>) -> Read<T> {
+    read.map_err(|_| {
+        if datetime_in::interval_reads(text, qualifier) {
+            Unread::Unparsed
+        } else {
+            Unread::Refused
+        }
+    })
 }
 
 /// A filter literal's key, which is [`order_key`]'s — a field's — but for an
@@ -1575,6 +1587,12 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
         (_, CompareKind::Text { .. }) => order_key(&CompareKind::Text { length: None }, text),
         (_, CompareKind::PaddedText { .. }) => {
             order_key(&CompareKind::PaddedText { length: None }, text)
+        }
+        (_, CompareKind::Interval { .. }) => {
+            order_key(&CompareKind::Interval { qualifier: None }, text)
+        }
+        (_, CompareKind::IntervalFields { .. }) => {
+            order_key(&CompareKind::IntervalFields { qualifier: None }, text)
         }
         _ => order_key(kind, text),
     }
@@ -2489,8 +2507,8 @@ fn equality_comparison(
         K::Float32
         | K::Float64
         | K::Numeric { .. }
-        | K::Interval
-        | K::IntervalFields
+        | K::Interval { .. }
+        | K::IntervalFields { .. }
         | K::Jsonb
         | K::TimeTz
         | K::Network { .. } => {
@@ -2706,7 +2724,7 @@ fn accepted_form(kind: &CompareKind) -> String {
         }
         // `interval_out` under `IntervalStyle = postgres` (I4), which is the
         // only style a `pg_dump` connection writes; the bounds are I62's.
-        K::Interval | K::IntervalFields => {
+        K::Interval { .. } | K::IntervalFields { .. } => {
             "the way `interval` prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for \
              zero — each unit once, its minutes under `60` and seconds at most `60`, or \
              `infinity`/`-infinity`"
@@ -5886,8 +5904,8 @@ mod tests {
             (K::Time, "24:00:01"),
             (K::Timestamp { with_tz: false }, "294277-01-01 00:00:00"),
             (K::Timestamp { with_tz: true }, "2020-01-01 00:00:00+16"),
-            (K::Interval, "00:90:00"),
-            (K::IntervalFields, "1 day 1 day"),
+            (K::Interval { qualifier: None }, "00:90:00"),
+            (K::IntervalFields { qualifier: None }, "1 day 1 day"),
             (K::TimeTz, "12:00:00+16"),
             (K::Network { cidr: true }, "10.0.0.1/8"),
             (K::Jsonb, "\"a\u{1}\""),
@@ -5925,7 +5943,7 @@ mod tests {
             (K::Time, "12:-5:00"),
             (K::Timestamp { with_tz: true }, "2020-01-01 00:00:00+0530"),
             (K::Timestamp { with_tz: false }, "2020-01-01T00:00:00"),
-            (K::Interval, "1 hour"),
+            (K::Interval { qualifier: None }, "1 hour"),
             (K::TimeTz, "12:00:00+0530"),
             (bare.clone(), &past_dscale_by_exponent),
             (K::UnsignedInt, " 5"),
@@ -6385,11 +6403,13 @@ mod tests {
     /// not read is put to the grammar (`abc`, `KD90`'s case), and so is text
     /// they refuse, split otherwise than `ParseDateTime` splits it — the time
     /// zone `+99` in `12:34:56.789 t a/b-99:00` is part of a POSIX zone, and
-    /// `day` in `1 day  day` a unit with no count, which 13 to 16 read. Each
-    /// case's reading by the servers is `datetime_in`'s tests'.
+    /// `day` in `1 day  day` a unit with no count, which 13 to 16 read — and
+    /// an `interval` under its column's field qualifier. Each case's reading
+    /// by the servers is `datetime_in`'s tests'.
     #[test]
     fn a_date_or_time_field_is_refused_only_where_no_major_reads_it() {
         use CompareKind as K;
+        use IntervalQualifier as Q;
         let tz = K::Timestamp { with_tz: true };
         let cases: &[(CompareKind, &str, bool)] = &[
             (K::Date, "abc", false),
@@ -6404,10 +6424,21 @@ mod tests {
             (K::Timestamp { with_tz: false }, "294277-01-01", false),
             (tz.clone(), "294277-01-01", true),
             (tz, "294277-01-01 +00", false),
-            (K::Interval, "1 day  day", true),
-            (K::IntervalFields, "1 year 1 mon 1 day ! year", true),
-            (K::Interval, "1 day 1 day", false),
-            (K::IntervalFields, "abc", false),
+            (K::Interval { qualifier: None }, "1 day  day", true),
+            (K::IntervalFields { qualifier: None }, "1 year 1 mon 1 day ! year", true),
+            (K::Interval { qualifier: None }, "1 day 1 day", false),
+            (K::IntervalFields { qualifier: None }, "abc", false),
+            // Under the column's qualifier: a bare number is a year in an
+            // `interval year`, and `a:b` minutes and seconds in an `interval
+            // minute to second`.
+            (K::Interval { qualifier: None }, "3000000000", true),
+            (K::Interval { qualifier: Some(Q::Year) }, "3000000000", false),
+            (K::IntervalFields { qualifier: Some(Q::Year) }, "3000000000", false),
+            (K::Interval { qualifier: Some(Q::Second) }, "3000000000", true),
+            (K::Interval { qualifier: None }, "100:30", true),
+            (K::Interval { qualifier: Some(Q::MinuteToSecond) }, "100:30", false),
+            (K::IntervalFields { qualifier: Some(Q::MinuteToSecond) }, "100:30", false),
+            (K::Interval { qualifier: Some(Q::MinuteToSecond) }, "59:30", true),
         ];
         for (kind, text, read) in cases {
             let refused = field_key(kind, text) == Err(Unread::Refused);
@@ -9254,7 +9285,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (61, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (62, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -9414,12 +9445,12 @@ mod tests {
                 CompareKind::PaddedText { .. } => "PaddedText",
                 CompareKind::Numeric { .. } => "Numeric",
                 CompareKind::Enum { .. } => "Enum",
-                CompareKind::Interval => "Interval",
+                CompareKind::Interval { .. } => "Interval",
                 CompareKind::TimeTz => "TimeTz",
                 CompareKind::Network { .. } => "Network",
                 CompareKind::MacAddr { .. } => "MacAddr",
                 CompareKind::Jsonb => "Jsonb",
-                CompareKind::IntervalFields => "IntervalFields",
+                CompareKind::IntervalFields { .. } => "IntervalFields",
             }
         }
 

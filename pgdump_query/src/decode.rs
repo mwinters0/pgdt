@@ -1171,6 +1171,17 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
 ///   `int64` *microseconds* against Arrow's `int64` nanoseconds, a
 ///   thousandth of the range, and nothing normalizes hours into days (I40);
 /// - a value `interval_in` refuses, which [`interval_parts`] refuses (I62).
+// deficiency: KD99 — a field is read as written, not through its column's
+// typmod: `AdjustIntervalForTypmod` zeroes the fields right of an `interval`'s
+// qualifier and rounds its time part to the precision, and
+// `AdjustTimeForTypmod` and `AdjustTimestampForTypmod` round a `time(p)`,
+// `timetz(p)`, `timestamp(p)` or `timestamptz(p)` field, so `1 year 3 mons` in
+// an `interval year` or `12:00:00.5` in a `time(0)` emits a value the server
+// does not hold, and keys and compares as it. No `pg_dump` writes one, its
+// `*_out` text being of the stored value. The fix carries each typmod to its
+// kind, as `CompareKind::Interval` carries the qualifier, and adjusts the
+// field in the read, the key and the bounds, as `typmod_unscaled_digits` does
+// a `numeric(p,s)`.
 pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
     let (months, days, micros) = interval_parts(s).ok()?;
     Some((months, days, micros.checked_mul(1_000)?))

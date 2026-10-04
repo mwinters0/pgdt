@@ -62,9 +62,6 @@ but the classifier is a whole grammar: `datetime.c`'s input path, ported.
 
 ## What the slices after this inherit
 
-- **31.22.2** (`KD98`) owes `interval`'s field qualifier to the comparison kind:
-  `pgtype::builtin_name` drops `year to month` as it names the type, and
-  `datetime_in::INTERVAL_RANGES` is tried whole in its place. A qualifier
-  changes the unit a bare number takes and reads `a:b` as minutes and seconds
-  under `minute to second`; `scripts/oracle_register.py` parses the
-  `agrees(K::Interval)` arm (D71), so the kind's shape is that script's too.
+- **An `interval` is read under its column's field qualifier**, which 31.22.2
+  carries to the comparison kind
+  ([notes](roadmap-P31.22.2-interval-qualifier-notes.md)).
