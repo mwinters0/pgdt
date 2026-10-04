@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD103 -->
-**`KD1`–`KD103` are allocated, and nothing at or below `KD103` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD105 -->
+**`KD1`–`KD105` are allocated, and nothing at or below `KD105` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -416,11 +416,11 @@ than reading as a phase nobody has sliced.
   unowned**; promoted by a hand-written dump holding one. Detail:
   `pgdump_query/src/decode.rs`.
 
-- **KD101** — a `COPY` row's terminator is not checked against its block's,
-  which `COPY` fixes from the block's first row and enforces, so a raw `\r\n`
-  row in a `\n` block is read where a restore refuses it and a block whose
-  rows end in a bare `\r` is read as one line. **(b) owned by P31**, 31.29.
-  Detail: `pgdump_query/src/scan.rs`.
+- **KD101** — a `COPY` block whose first row holds a raw CR before its
+  line's end, its rows ending in a bare CR, is read as LF-split lines and
+  checked for nothing, where a restore splits it at each CR, ends it at `\.`
+  CR and discards what psql sends after that (I91). **(b) owned by P31**,
+  31.29.1. Detail: `pgdump_query/src/scan.rs`.
 
 - **KD102** — a partition declared `CREATE TABLE … PARTITION OF`, which no
   `pg_dump` writes (I86), takes its columns, `NOT NULL`s and `CHECK`s from its
@@ -435,3 +435,14 @@ than reading as a phase nobody has sliced.
   after a CR on a comment's line is read as that comment; no `pg_dump` writes
   one (I90). **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `pgdump_query/src/lex.rs`.
+
+- **KD104** — a backslash before a raw LF or tab in a `COPY` row makes that
+  byte data, as a restore reads it (I91), where the scanner ends the row at
+  the LF and `split_fields` splits at the tab; no `pg_dump` writes either
+  (I15). **(c) unowned**; promoted by a hand-written dump holding one.
+  Detail: `pgdump_query/src/scan.rs`.
+
+- **KD105** — a `\.` line at the file's end with no LF after it ends its
+  block, where a restore refuses it as a corrupt or mismatched marker (I91);
+  `pg_dump` ends every line with an LF. **(c) unowned**; promoted by a
+  hand-written dump holding one. Detail: `pgdump_query/src/scan.rs`.

@@ -122,7 +122,8 @@ maintainer's standing approval, in the spec's opening note.
 - [x] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse — [notes](../design/roadmap-P31.27-partition-bound-notes.md)
 - [x] **31.30** The emitter register's function list held to what the readers consume: a check mapping each statement keyword the preamble and the scanner recognise to the emitter writing it, a buffer read as a query only where an execute call reads it, a listed function's first major, every consumed emitter listed, and schema content reaching every literal that uncovers, findings filed as `KD`s and appended here — [notes](../design/roadmap-P31.30-function-list-notes.md)
 - [x] **31.28** A raw carriage return ending a line inside a quoted SQL literal kept in the statement the preamble reads, as psql keeps it whatever the file's line endings, so an enum label or `CHECK` holding one is the one the server holds, closing `KD100` — [notes](../design/roadmap-P31.28-cr-in-literal-notes.md)
-- [ ] **31.29** Each `COPY` block's line ending read off its first row — `\n`, `\r\n` or `\r` — as `CopyReadLine` reads it, and a row ending otherwise refused where a restore refuses it, closing `KD101`
+- [x] **31.29** Each `COPY` block's rows held to its first row's line ending — `\n` or `\r\n`, by the first CR no backslash escapes — as `CopyReadLine` holds them, and a row ending otherwise refused where a restore refuses it, serially and in a split block, so a dump converted to CR LF reads as its original — [notes](../design/roadmap-P31.29-row-endings-notes.md)
+- [ ] **31.29.1** A block whose rows end in a bare `\r` split at each, ended at `\.` CR, and what a restore discards after it read as discarded, closing `KD101`
 
 ## Not started
 
@@ -153,3 +154,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **31.29.1 may not be worth building.** 31.29 landed the `\n` and `\r\n`
+  halves of its row and left bare-`\r` blocks to 31.29.1 (`KD101`), whose row
+  reads them as `CopyReadLine` does. But psql frames a restore by LF alone
+  (I91): it never finds a `\.` CR line, so the server, ending the block there,
+  discards everything psql sends up to its next `\.` line — on the replica the
+  statement after one never ran — and a file converted wholly to bare CRs is
+  one psql line, whose `COPY` reads no rows. No file restores such a block
+  cleanly but one ending in it, and building it means resyncing the interior
+  split and a query's segments on CR from an ending the cache records, and a
+  map span for bytes a restore discards. Asked: keep 31.29.1, or strike it and
+  leave `KD101` (c) unowned, promoted by a hand-written dump holding one, as
+  `KD103` and `KD104` are. Reasoning:
+  [`history/2026-10-04.md`](history/2026-10-04.md), "31.29 lands without bare-CR
+  blocks; 31.29.1 earned".

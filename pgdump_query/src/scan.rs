@@ -14,7 +14,8 @@
 //! * While inside a COPY block the scanner looks for nothing but the `\.`
 //!   terminator, so data can never be mistaken for structure. COPY TEXT
 //!   escapes a literal backslash as `\\`, so a line that *is* exactly `\.` is
-//!   unambiguously the terminator.
+//!   unambiguously the terminator. Each row's line ending is held to its
+//!   block's first row's, as a restore holds it (I91).
 //! * psql meta-command lines (`\restrict`, `\unrestrict`, `\connect`, and any
 //!   other leading-backslash line) are ordinary [`Event::Line`]s: outside a
 //!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
@@ -37,7 +38,7 @@ use tokio::sync::Notify;
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header};
 use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
 use crate::lex::{Lexer, Region, standard_conforming_strings};
-use crate::{Error, Result};
+use crate::{Error, Result, RowEndingRefusal};
 
 /// The start of a COPY data block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,8 +59,9 @@ pub struct Row<'a> {
     pub offset: u64,
     /// Zero-based index of the row within its COPY block.
     pub index: u64,
-    /// The row line with its terminating newline (and any `\r` before it)
-    /// stripped. Fields are still delimiter-separated and still escaped; use
+    /// The row line with its terminating newline stripped, and a `\r` before
+    /// it unless a backslash escapes it, when it is the last field's own byte
+    /// (I91). Fields are still delimiter-separated and still escaped; use
     /// [`crate::copy::split_fields`] and [`crate::copy::decode_field`].
     pub raw: &'a [u8],
 }
@@ -145,6 +147,81 @@ pub enum Event<'a> {
     LargeObjectEnd(LargeObjectEnd),
 }
 
+/// How a `COPY` row's line ends, as `CopyReadLineText` reads it (I91): by the
+/// first raw CR no backslash escapes, or by its LF where it holds none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowEnding {
+    /// No unescaped CR: the row ends at its LF.
+    Lf,
+    /// The one unescaped CR is the byte before the LF.
+    CrLf,
+    /// An unescaped CR before the line's last byte, which ends the row where
+    /// `COPY` reads it: in a block's first row, rows ending in a bare CR,
+    /// which this scanner does not split (`KD101`).
+    Cr,
+}
+
+impl RowEnding {
+    /// How `line`, a row's bytes before its LF, ends.
+    fn of(line: &[u8]) -> Self {
+        match memchr::memchr_iter(b'\r', line).find(|&at| !escaped(line, at)) {
+            None => Self::Lf,
+            Some(at) if at + 1 == line.len() => Self::CrLf,
+            Some(_) => Self::Cr,
+        }
+    }
+
+    /// What a restore says of a row ending as `self` in a block whose first row
+    /// ended as `block` — `CopyReadLineText`'s refusal, or `None` where it reads
+    /// the row. A block of bare-CR rows is checked for nothing (`KD101`).
+    pub(crate) fn refused_in(self, block: Self) -> Option<RowEndingRefusal> {
+        match (block, self) {
+            // deficiency: KD101 — `CopyReadLineText` splits such a block's
+            // rows at each unescaped CR and ends it at `\.` CR, discarding
+            // what psql sends after that up to the next line it reads as `\.`
+            // (I91); here its rows are the LF-split lines, each read whole,
+            // and nothing holds them to an ending.
+            (Self::Cr, _) => None,
+            (block, row) if block == row => None,
+            (Self::CrLf, Self::Lf) => Some(RowEndingRefusal::LiteralNewline),
+            _ => Some(RowEndingRefusal::LiteralCarriageReturn),
+        }
+    }
+}
+
+/// Whether the byte at `at` is escaped: `COPY` takes the byte after a
+/// backslash as data, so a CR behind an odd run of backslashes is no line
+/// ending (I91).
+fn escaped(line: &[u8], at: usize) -> bool {
+    line[..at].iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1
+}
+
+/// The rows of one piece of a block's interior, as their endings stand
+/// against each other: what the leader holds against the block's first row
+/// (`crate::leader::scan_piece`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PieceEndings {
+    /// The ending of the piece's first row, and that row's offset.
+    pub(crate) first: Option<(RowEnding, u64)>,
+    /// The first row ending otherwise than `first`: its index among the
+    /// piece's rows, its offset and its ending.
+    pub(crate) mismatch: Option<(u64, u64, RowEnding)>,
+}
+
+/// How a scanner holds a block's rows to the ending its first row fixed.
+#[derive(Debug)]
+enum Endings {
+    /// Entered inside the block: the pass that entered it at its header
+    /// checked its rows, and every replay reads a block that pass mapped.
+    Unchecked,
+    /// Entered at the header: a row ending otherwise than the first is
+    /// refused, naming `table`, as a restore refuses it.
+    Refused { table: String, first: Option<RowEnding> },
+    /// One piece of the interior, which cannot tell its first row from the
+    /// block's: recorded for the leader, which can.
+    Recorded(PieceEndings),
+}
+
 #[derive(Debug)]
 enum State {
     Outside,
@@ -182,6 +259,9 @@ pub struct CopyScanner {
     /// `standard_conforming_strings` the file last stated. Always between
     /// tokens while `state` is `InCopy`: a header line begins and ends there.
     lexer: Lexer,
+    /// How the open block's rows are held to its first row's ending; read
+    /// only while `state` is `InCopy`.
+    endings: Endings,
 }
 
 impl Default for CopyScanner {
@@ -192,7 +272,13 @@ impl Default for CopyScanner {
 
 impl CopyScanner {
     pub fn new() -> Self {
-        Self { base: 0, pos: 0, state: State::Outside, lexer: Lexer::new() }
+        Self {
+            base: 0,
+            pos: 0,
+            state: State::Outside,
+            lexer: Lexer::new(),
+            endings: Endings::Unchecked,
+        }
     }
 
     /// Resume scanning at `offset`, as if `take_consumed` had just been
@@ -209,12 +295,32 @@ impl CopyScanner {
     /// `standard_conforming_strings = on` unless
     /// [`with_standard_strings`](Self::with_standard_strings) says otherwise:
     /// a literal `pg_dump` writes under `off` lexes alike under either (I50).
+    ///
+    /// **A scanner resumed inside a block checks none of its row endings**:
+    /// the pass that entered the block at its header did, and what is resumed
+    /// is a block that pass mapped. One entered at a later header checks that
+    /// block's.
     pub fn resume(offset: u64, in_copy: Option<(u64, u64)>) -> Self {
         let state = match in_copy {
             Some((header_offset, rows)) => State::InCopy { rows, header_offset },
             None => State::Outside,
         };
-        Self { base: offset, pos: 0, state, lexer: Lexer::new() }
+        Self { base: offset, pos: 0, state, lexer: Lexer::new(), endings: Endings::Unchecked }
+    }
+
+    /// The same scanner, recording how the rows of the block it was resumed
+    /// in end rather than checking nothing, for [`piece_endings`](Self::piece_endings).
+    pub(crate) fn recording_endings(mut self) -> Self {
+        self.endings = Endings::Recorded(PieceEndings::default());
+        self
+    }
+
+    /// What a scanner [`recording_endings`](Self::recording_endings) found.
+    pub(crate) fn piece_endings(&self) -> PieceEndings {
+        match &self.endings {
+            Endings::Recorded(piece) => piece.clone(),
+            Endings::Unchecked | Endings::Refused { .. } => PieceEndings::default(),
+        }
     }
 
     /// The same scanner, lexing under the `standard_conforming_strings` a
@@ -279,16 +385,35 @@ impl CopyScanner {
             }
 
             let rest = &buf[self.pos..];
-            let (line, advance) = match memchr::memchr(b'\n', rest) {
-                Some(nl) => (&rest[..nl], nl + 1),
-                None if eof => (rest, rest.len()),
-                None => return Ok(None),
+            // A row's line is found by whichever of CR and LF comes first, so
+            // a row holding no CR is read in one pass and known to end in LF.
+            // deficiency: KD104 — a backslash before a raw LF makes it data,
+            // the row running on past it, as one before a raw tab makes that
+            // data too (I91); here every LF ends a row, and `split_fields`
+            // splits at every tab. `pg_dump` escapes both (I15).
+            let (line, advance, holds_cr) = match self.state {
+                State::InCopy { .. } => match memchr::memchr2(b'\n', b'\r', rest) {
+                    Some(nl) if rest[nl] == b'\n' => (&rest[..nl], nl + 1, false),
+                    Some(cr) => match memchr::memchr(b'\n', &rest[cr..]) {
+                        Some(nl) => (&rest[..cr + nl], cr + nl + 1, true),
+                        None if eof => (rest, rest.len(), true),
+                        None => return Ok(None),
+                    },
+                    None if eof => (rest, rest.len(), false),
+                    None => return Ok(None),
+                },
+                State::Outside | State::InLargeObjectRegion { .. } => {
+                    match memchr::memchr(b'\n', rest) {
+                        Some(nl) => (&rest[..nl], nl + 1, false),
+                        None if eof => (rest, rest.len(), false),
+                        None => return Ok(None),
+                    }
+                }
             };
             // A raw CR before the newline is stripped from a line that ends
-            // outside a quoted region: COPY TEXT escapes an in-value carriage
-            // return as `\r`, so in a row it is never data, and psql reads one
-            // between tokens as whitespace. Inside a literal or a quoted
-            // identifier it is the value's own byte, kept below (I90).
+            // outside a quoted region, psql reading one between tokens as
+            // whitespace; inside a literal or a quoted identifier it is the
+            // value's own byte, kept below (I90). A row strips its own (I91).
             let unstripped = line;
             let line = line.strip_suffix(b"\r").unwrap_or(line);
 
@@ -334,6 +459,8 @@ impl CopyScanner {
                     // `BEGIN;` aside (below).
                     if let Some(header) = parse_copy_header(line) {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
+                        self.endings =
+                            Endings::Refused { table: header.qualified_name(), first: None };
                         return Ok(Some(Event::CopyStart(CopyStart {
                             header,
                             header_offset: line_offset,
@@ -357,12 +484,12 @@ impl CopyScanner {
                     return Ok(Some(Event::Line(Line { offset: line_offset, raw: surfaced })));
                 }
                 State::InCopy { rows, header_offset } => {
-                    // deficiency: KD101 — a row's terminator is not checked
-                    // against its block's: `CopyReadLine` fixes a block's from
-                    // its first row (`\n`, `\r\n` or `\r`) and refuses a row
-                    // ending otherwise, where the strip above reads a raw
-                    // `\r\n` row in a `\n` block, and a block whose rows end
-                    // in a bare `\r` is read as one line.
+                    // The `\.` line is psql's to find, which it does whatever
+                    // the block's rows end in (I91).
+                    // deficiency: KD105 — at the file's end with no LF after
+                    // it, psql does not find it and the server refuses it, a
+                    // corrupt marker, or `\.` CR a mismatched one in a block
+                    // of rows (I91); here it ends the block all the same.
                     if is_terminator(line) {
                         self.state = State::Outside;
                         return Ok(Some(Event::CopyEnd(CopyEnd {
@@ -371,12 +498,39 @@ impl CopyScanner {
                             row_count: rows,
                         })));
                     }
+                    let ending = if holds_cr { RowEnding::of(unstripped) } else { RowEnding::Lf };
+                    match &mut self.endings {
+                        Endings::Unchecked => {}
+                        Endings::Refused { table, first } => match *first {
+                            None => *first = Some(ending),
+                            Some(block) => {
+                                if let Some(refusal) = ending.refused_in(block) {
+                                    return Err(Error::RowEndingRefused {
+                                        table: std::mem::take(table),
+                                        line: rows + 1,
+                                        line_offset,
+                                        refusal,
+                                    });
+                                }
+                            }
+                        },
+                        Endings::Recorded(piece) => match piece.first {
+                            None => piece.first = Some((ending, line_offset)),
+                            Some((first, _)) => {
+                                if piece.mismatch.is_none() && ending != first {
+                                    piece.mismatch = Some((rows, line_offset, ending));
+                                }
+                            }
+                        },
+                    }
+                    // A CR a backslash escapes is the last field's byte; one
+                    // ending a bare-CR block's line is stripped (`KD101`).
+                    let raw = match unstripped.split_last() {
+                        Some((b'\r', head)) if !escaped(unstripped, head.len()) => head,
+                        _ => unstripped,
+                    };
                     self.state = State::InCopy { rows: rows + 1, header_offset };
-                    return Ok(Some(Event::Row(Row {
-                        offset: line_offset,
-                        index: rows,
-                        raw: line,
-                    })));
+                    return Ok(Some(Event::Row(Row { offset: line_offset, index: rows, raw })));
                 }
                 State::InLargeObjectRegion { .. } => {
                     if line == b"COMMIT;" {
@@ -994,6 +1148,112 @@ mod tests {
             let got = lines(file, chunk_size);
             assert_eq!(got, expected.map(<[u8]>::to_vec), "chunk_size {chunk_size}");
         }
+    }
+
+    /// Every row's bytes `scanner` surfaces over `file` in `chunk_size` chunks,
+    /// or the error it stops on.
+    fn rows_of(mut scanner: CopyScanner, file: &[u8], chunk_size: usize) -> Result<Vec<Vec<u8>>> {
+        let mut carry = ChunkCarry::new();
+        let (mut out, mut read_pos) = (Vec::new(), 0usize);
+        loop {
+            let want = chunk_size.min(file.len() - read_pos);
+            let chunk = &file[read_pos..read_pos + want];
+            read_pos += want;
+            let eof = read_pos >= file.len();
+            carry.absorb(chunk);
+            for pass in ChunkCarry::PASSES {
+                let (span, span_eof) = carry.span(pass, chunk, eof);
+                while let Some(event) = scanner.next_event(span, span_eof)? {
+                    if let Event::Row(row) = event {
+                        out.push(row.raw.to_vec());
+                    }
+                }
+                carry.consumed(pass, chunk, scanner.take_consumed());
+            }
+            if eof {
+                return Ok(out);
+            }
+        }
+    }
+
+    /// A row's ending is its first CR no backslash escapes, an escaped one —
+    /// behind an odd run of backslashes — being data.
+    #[test]
+    fn a_row_ends_at_its_first_unescaped_cr() {
+        let cases: [(&[u8], RowEnding); 8] = [
+            (b"1\ta", RowEnding::Lf),
+            (b"1\ta\r", RowEnding::CrLf),
+            (b"1\ta\\\r", RowEnding::Lf),
+            (b"1\ta\\\\\r", RowEnding::CrLf),
+            (b"1\\\r\ta\r", RowEnding::CrLf),
+            (b"1\ra\r", RowEnding::Cr),
+            (b"1\\\\\ra", RowEnding::Cr),
+            (b"\r", RowEnding::CrLf),
+        ];
+        for (line, ending) in cases {
+            assert_eq!(RowEnding::of(line), ending, "{:?}", String::from_utf8_lossy(line));
+        }
+    }
+
+    /// **A row ending otherwise than its block's first row is refused as a
+    /// restore refuses it** (I91), naming the table and `COPY`'s line,
+    /// wherever a chunk boundary falls; the `\.` line ends a block whatever
+    /// its rows end in, and the next block fixes its own.
+    #[test]
+    fn a_row_ending_otherwise_than_its_block_s_first_is_refused() {
+        let refused: [(&[u8], u64, RowEndingRefusal); 4] = [
+            (b"1\n2\r\n3\n", 2, RowEndingRefusal::LiteralCarriageReturn),
+            (b"1\n2\r3\n", 2, RowEndingRefusal::LiteralCarriageReturn),
+            (b"1\r\n2\r\n3\n", 3, RowEndingRefusal::LiteralNewline),
+            (b"1\r\n2\r3\r\n", 2, RowEndingRefusal::LiteralCarriageReturn),
+        ];
+        for (rows, at, why) in refused {
+            let mut file = b"COPY public.ok (a) FROM stdin;\r\n1\r\n\\.\n".to_vec();
+            file.extend_from_slice(b"COPY public.t (a) FROM stdin;\n");
+            let line_offset = file.len() as u64
+                + rows
+                    .split_inclusive(|&b| b == b'\n')
+                    .take(at as usize - 1)
+                    .map(<[u8]>::len)
+                    .sum::<usize>() as u64;
+            file.extend_from_slice(rows);
+            file.extend_from_slice(b"\\.\n");
+            for chunk_size in [1usize, 2, 7, 4096] {
+                match rows_of(CopyScanner::new(), &file, chunk_size) {
+                    Err(Error::RowEndingRefused { table, line, line_offset: offset, refusal }) => {
+                        assert_eq!(
+                            (table.as_str(), line, offset, refusal),
+                            ("public.t", at, line_offset, why),
+                            "{rows:?} at chunk_size {chunk_size}"
+                        );
+                    }
+                    other => panic!("{rows:?} at chunk_size {chunk_size}: {other:?}"),
+                }
+            }
+        }
+    }
+
+    /// The rows a restore reads are read, each without its ending: a CR LF
+    /// block's, a CR a backslash escapes kept as the last field's byte, the
+    /// `\.` line ending either block in either form; a block whose first row
+    /// holds a bare CR is checked for nothing (`KD101`); and a scanner resumed
+    /// inside a block checks nothing, its mapping pass having checked.
+    #[test]
+    fn the_rows_a_restore_reads_are_read_without_their_endings() {
+        let file: &[u8] = b"COPY public.t (a) FROM stdin;\r\n1\r\n2\\\r\r\n\\.\n\
+            COPY public.u (a) FROM stdin;\n3\\\r\n4\n\\.\r\n\
+            COPY public.v (a) FROM stdin;\n5\r6\n7\r\n\\.\n";
+        let expected: [&[u8]; 6] = [b"1", b"2\\\r", b"3\\\r", b"4", b"5\r6", b"7"];
+        for chunk_size in [1usize, 2, 7, 4096] {
+            let got = rows_of(CopyScanner::new(), file, chunk_size).unwrap();
+            assert_eq!(got, expected.map(<[u8]>::to_vec), "chunk_size {chunk_size}");
+        }
+        let interior: &[u8] = b"1\n2\r\n3\n\\.\n";
+        let resumed = CopyScanner::resume(0, Some((0, 1)));
+        assert_eq!(
+            rows_of(resumed, interior, 3).unwrap(),
+            [&b"1"[..], b"2", b"3"].map(<[u8]>::to_vec)
+        );
     }
 
     /// A line many chunks long is handed to the scanner once, when the chunk

@@ -34,10 +34,10 @@ use std::sync::Arc;
 use crate::index::BlockCensus;
 use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy};
 use crate::map::{FieldCount, census_row};
-use crate::scan::{CopyEnd, CopyScanner, Event, ScanOptions};
+use crate::scan::{CopyEnd, CopyScanner, Event, PieceEndings, RowEnding, ScanOptions};
 use crate::statistics::BlockObserver;
 use crate::stream::{cut, worker_count};
-use crate::{Error, Result};
+use crate::{Error, Result, RowEndingRefusal};
 
 /// Where a piece's first byte sits relative to the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +83,9 @@ pub(crate) struct PieceScan {
     /// contiguous next piece's resync lands, and what a caller checks the
     /// tiling against.
     pub through: u64,
+    /// How this piece's rows end against each other, which [`BlockEndings`]
+    /// holds against the block's first row.
+    pub endings: PieceEndings,
     /// How a piece continuing from [`PieceScan::through`] must enter.
     ///
     /// **[`PieceEntry::RowStart`] almost always, and the exception is why this
@@ -138,6 +141,7 @@ pub(crate) fn scan_piece(
         census: empty_census(census),
         terminator: None,
         through,
+        endings: PieceEndings::default(),
         next,
     };
 
@@ -165,7 +169,7 @@ pub(crate) fn scan_piece(
     // which this loop cannot raise: it never claims end of file, so a piece
     // out of bytes reports no terminator rather than an unterminated block.
     // Deciding that is the leader's, the only party that knows.
-    let mut scanner = CopyScanner::resume(start, Some((0, 0)));
+    let mut scanner = CopyScanner::resume(start, Some((0, 0))).recording_endings();
     let plan = census;
     let mut census = empty_census(plan);
     let mut rows = 0u64;
@@ -210,8 +214,44 @@ pub(crate) fn scan_piece(
         census,
         terminator,
         through: scanner.position(),
+        endings: scanner.piece_endings(),
         next: PieceEntry::RowStart,
     })
+}
+
+/// **The block's rows held to its first row's ending, piece by piece in file
+/// order** (I91): a piece's own rows are held to its first, which is held to
+/// the block's, so the first refusal found is the one a serial scan meets.
+/// Nothing past the piece holding the terminator is held, being past the
+/// block.
+#[derive(Debug, Default)]
+struct BlockEndings {
+    /// The block's first row's ending, once a piece has held a row.
+    first: Option<RowEnding>,
+    /// The block's rows in the pieces held so far.
+    rows: u64,
+    /// Whether a piece held so far held the terminator.
+    closed: bool,
+}
+
+impl BlockEndings {
+    /// Hold `piece`, the next in file order: the `(line, offset, refusal)` of
+    /// the first row in it a restore refuses for its ending, if any.
+    fn hold(&mut self, piece: &PieceScan) -> Option<(u64, u64, RowEndingRefusal)> {
+        if self.closed {
+            return None;
+        }
+        let rows = self.rows;
+        self.rows += piece.rows;
+        self.closed = piece.terminator.is_some();
+        let (ending, offset) = piece.endings.first?;
+        let block = *self.first.get_or_insert(ending);
+        if let Some(refusal) = ending.refused_in(block) {
+            return Some((rows + 1, offset, refusal));
+        }
+        let (index, offset, row) = piece.endings.mismatch?;
+        row.refused_in(block).map(|refusal| (rows + index + 1, offset, refusal))
+    }
 }
 
 /// A census for a block as `plan` sizes it, before a row is folded in —
@@ -390,9 +430,11 @@ pub(crate) struct Shortfall {
 /// decoder: such a tail is left serial until it is worth more than one reader
 /// costs. Erring towards the serial scanner is the direction this bound is
 /// wanted in — the alternative admits readers the budget never granted.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    table: &str,
     header_offset: u64,
     data_offset: u64,
     census: Option<CensusPlan>,
@@ -420,7 +462,8 @@ pub(crate) async fn scan_region(
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
     let scanned =
-        run_region(source, options, &advice, workers, data_offset, census, size, observer).await;
+        run_region(source, options, table, &advice, workers, data_offset, census, size, observer)
+            .await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
@@ -491,6 +534,7 @@ fn shortfall(
 async fn run_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    table: &str,
     advice: &Partitioning,
     workers: usize,
     data_offset: u64,
@@ -502,6 +546,7 @@ async fn run_region(
     let mut census = empty_census(plan.as_ref());
     let mut frontier = data_offset;
     let mut entry = PieceEntry::RowStart;
+    let mut endings = BlockEndings::default();
 
     while frontier < size {
         // Once per window, on the same argument the mapping loop checks once
@@ -545,6 +590,14 @@ async fn run_region(
         // `try_join_all` would return the first error it *observes*.
         while let Some(partition) = futures::StreamExt::next(&mut dispatched).await {
             let (partition_scans, piece) = partition?;
+            // Held here, in file order, so a refusal is raised ahead of any
+            // later partition's error.
+            for scan in &partition_scans {
+                if let Some((line, line_offset, refusal)) = endings.hold(scan) {
+                    let table = table.to_owned();
+                    return Err(Error::RowEndingRefused { table, line, line_offset, refusal });
+                }
+            }
             let terminates = partition_scans.iter().any(|scan| scan.terminator.is_some());
             scans.extend(partition_scans);
             pieces.push((piece, terminates));
@@ -1073,6 +1126,7 @@ mod tests {
                     let got = scan_region(
                         &source,
                         &options,
+                        "public.t",
                         block.header_offset,
                         block.data_offset,
                         plan(block.columns),
@@ -1172,6 +1226,7 @@ mod tests {
                 let got = scan_region(
                     &source,
                     &options,
+                    "public.t",
                     block.header_offset,
                     block.data_offset,
                     plan(block.columns),
@@ -1247,6 +1302,7 @@ mod tests {
                 let got = scan_region(
                     &source,
                     &options,
+                    "public.t",
                     block.header_offset,
                     block.data_offset,
                     plan(block.columns),
@@ -1307,6 +1363,7 @@ mod tests {
         let got = scan_region(
             &source,
             &serial,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1325,6 +1382,7 @@ mod tests {
         let got = scan_region(
             &source,
             &shipped,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1349,6 +1407,7 @@ mod tests {
         let got = scan_region(
             &source,
             &options,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1382,6 +1441,7 @@ mod tests {
         let got = scan_region(
             &source,
             &options,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1420,6 +1480,7 @@ mod tests {
         let got = scan_region(
             &source,
             &serial,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1442,6 +1503,7 @@ mod tests {
         let got = scan_region(
             &source,
             &shipped,
+            "public.t",
             block.header_offset,
             block.data_offset,
             plan(block.columns),
@@ -1470,10 +1532,18 @@ mod tests {
 
         let source = LocalFileSource::open(&path).unwrap();
         let options = scheduled(&source, 4);
-        let err =
-            scan_region(&source, &options, 0, data_offset, plan(Some(1)), file.len() as u64, None)
-                .await
-                .expect_err("a COPY block with no terminator");
+        let err = scan_region(
+            &source,
+            &options,
+            "public.t",
+            0,
+            data_offset,
+            plan(Some(1)),
+            file.len() as u64,
+            None,
+        )
+        .await
+        .expect_err("a COPY block with no terminator");
         assert!(
             matches!(err, Error::UnterminatedCopyBlock { header_offset: 0 }),
             "unexpected error: {err}"
@@ -1500,6 +1570,7 @@ mod tests {
             let got = scan_region(
                 &source,
                 &options,
+                "public.t",
                 block.header_offset,
                 block.data_offset,
                 plan(block.columns),
@@ -1509,6 +1580,73 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(got.scan, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
+        }
+    }
+
+    /// **A split block refuses the row a serial scan refuses** (I91): the
+    /// first row ending otherwise than the block's first, named by `COPY`'s
+    /// line and its offset, whichever piece it falls in and whether or not it
+    /// starts one; and the DDL after the terminator, scanned as rows by a piece
+    /// past the block, is held to nothing — a literal's raw CR included (I90).
+    #[tokio::test]
+    async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
+        const TAIL: &[u8] = b"\\.\n\nCREATE TYPE public.e AS ENUM (\n    'a\r\nb'\n);\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("endings.sql");
+        let header = b"COPY public.t (a) FROM stdin;\n";
+        for (block, odd, refusal) in [
+            ("\n", "\r\n", crate::RowEndingRefusal::LiteralCarriageReturn),
+            ("\r\n", "\n", crate::RowEndingRefusal::LiteralNewline),
+        ] {
+            for odd_row in [None, Some(1u64), Some(37), Some(150), Some(299)] {
+                let mut file = header.to_vec();
+                let mut odd_offset = 0u64;
+                for i in 0..300u64 {
+                    if Some(i) == odd_row {
+                        odd_offset = file.len() as u64;
+                    }
+                    let ending = if Some(i) == odd_row { odd } else { block };
+                    file.extend_from_slice(format!("{i}{ending}").as_bytes());
+                }
+                file.extend_from_slice(TAIL);
+                std::fs::write(&path, &file).unwrap();
+                let source = LocalFileSource::open(&path).unwrap();
+                for jobs in [2usize, 3, 8] {
+                    let options = scheduled(&source, jobs);
+                    let got = scan_region(
+                        &source,
+                        &options,
+                        "public.t",
+                        0,
+                        header.len() as u64,
+                        plan(Some(1)),
+                        file.len() as u64,
+                        None,
+                    )
+                    .await;
+                    let context = format!("{block:?} block, odd row {odd_row:?}, {jobs} jobs");
+                    match (odd_row, got) {
+                        (None, Ok(outcome)) => {
+                            assert_eq!(
+                                outcome.scan,
+                                RegionScan::Closed(reference(&file)[0].interior.clone()),
+                                "{context}"
+                            );
+                        }
+                        (
+                            Some(row),
+                            Err(Error::RowEndingRefused { table, line, line_offset, refusal: why }),
+                        ) => {
+                            assert_eq!(
+                                (table.as_str(), line, line_offset, why),
+                                ("public.t", row + 1, odd_offset, refusal),
+                                "{context}"
+                            );
+                        }
+                        (_, other) => panic!("{context}: {other:?}"),
+                    }
+                }
+            }
         }
     }
 }

@@ -5735,3 +5735,66 @@ grep -n '^xqinside\|^xeinside\|^xdinside\|^space\|^newline' src/fe_utils/psqlsca
 
 The first two print one line each; the third shows the three quoted bodies
 excluding only their closing byte, and `\r` in `space` and `newline`.
+
+## I91 — A restore holds each `COPY` row to its block's first row's line ending, and psql alone reads the `\.` line
+
+**Claim.** psql restoring a plain dump hands a `COPY` block's lines to the
+server as it reads them, splitting on LF alone, and the server's
+`CopyReadLineText` fixes the block's line ending from its first row — LF,
+CR LF, or a bare CR, by the first raw CR or LF in it — and refuses a later row
+ending otherwise: a raw CR where rows end in LF, or one not before the LF where
+they end in CR LF, as `literal carriage return found in data`, and an LF
+without its CR as `literal newline found in data`, naming the row by
+`COPY`'s line. A backslash takes the byte after it as data, a raw CR, LF or
+tab included. The `\.` line is psql's to find, at a line start as `\.` LF or
+`\.` CR LF in any block: psql 13, 14 and 18 do not send it, and 15–17 send it
+to a server refusing one whose ending is not the block's, `end-of-copy marker
+does not match previous newline style`. A `\.` at the file's end with no LF
+after it psql does not find, and the server refuses it, `end-of-copy marker
+corrupt` (`… is not alone on its line` at 18), or `\.` CR there as a
+mismatched marker in a block of rows. A block of bare-CR rows is split at
+each CR, and ends at `\.` CR, past which the server discards everything psql
+sends — every line up to the next it reads as `\.`, or the file's end.
+
+**Proof.** `src/backend/commands/copyfromparse.c` (`copy.c` at v13),
+`CopyReadLineText`: `eol_type` set from `EOL_UNKNOWN` at the first CR or LF,
+the two `literal … found in data` refusals, and `c == '\\'` consuming the next
+byte; `CopyReadLine` discards the rest of a frontend copy after `\.`.
+`CopyReadAttributesText` reads `\` before any byte but an escape letter or
+digit as that byte. `src/bin/psql/copy.c`, `handleCopyIn`: `fgets` per line,
+and the `"\\.\n"`/`"\\.\r\n"` test, ending the copy before the line is sent at
+13 and 14, after it is buffered at 15–17, and with it removed at 18.
+
+**Observed.** The koji replica (PG16) under psql 16's `psql -f -`: a `\r\n`
+row in an LF block and a bare CR inside a CR LF one are refused as a literal
+carriage return at line 2, an LF row in a CR LF block as a literal newline;
+`1\<CR><LF>` in an LF block reads `310d` and `2\<CR><CR><LF>` in a CR LF one
+`320d`; `\.` LF ending a CR LF block and `\.` CR LF ending an LF one are
+refused as a mismatched marker, and accepted in a block of no rows; `1<CR>2<CR>\.<CR><LF>`
+loads two rows and discards the statement after it; `1\<LF>2` reads `310a32`
+and `1\<TAB>2` as one field; a file ending `\.` with no LF is refused as a
+corrupt marker, with rows or without, and one ending `\.` CR as a mismatched
+one.
+
+**Scope limit.** What psql reads; a restore through another client is not
+covered. pgdt reads every `\.` line psql finds as the block's end, the
+restoring psql's major being outside the file.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+v16.15 (observed).
+
+**Relied on by:** `scan.rs`, `CopyScanner::next_event` and `RowEnding`;
+`leader.rs`, `BlockEndings`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+f=src/backend/commands/copyfromparse.c; [ -f $f ] || f=src/backend/commands/copy.c
+grep -n 'eol_type = EOL_\|literal carriage return found\|literal newline found\|considered an eof-of copy\|marker corrupt\|not alone on its line' $f
+grep -n -A4 'memcmp(fgresult, "\\\\.\\n", 3)\|strcmp(buf, "\\\\.\\n")' src/bin/psql/copy.c
+```
+
+The first shows `eol_type` fixed as CR LF, CR and LF, the two refusals in
+each form, the backslash skip and the marker refused without its line end; the second the marker test and whether the line
+is dropped, buffered or removed after it.

@@ -1752,6 +1752,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
+        | Lib::RowEndingRefused { .. }
         | Lib::NullRefused { .. }
         | Lib::FieldRefusedRecorded { .. }
         | Lib::Unrepresentable { .. }

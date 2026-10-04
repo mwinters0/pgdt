@@ -34,7 +34,7 @@ pub use batch::{
 };
 pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
-pub use error::Error;
+pub use error::{Error, RowEndingRefusal};
 pub use gather::{
     StrictUnchecked, UncheckedBound, UncheckedCheck, UncheckedColumn, strict_unchecked,
 };

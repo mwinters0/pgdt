@@ -269,6 +269,15 @@ pub enum Error {
         line_offset: u64,
         value: String,
     },
+    /// A `COPY` row ending otherwise than its block's first row, which a
+    /// restore refuses (I91) — wherever a pass enters the block at its header,
+    /// the field's `--postgres-invalid-values` aside, the row being framing
+    /// rather than a value. `line` is `COPY`'s count, as
+    /// [`Self::FieldRefused`]'s is.
+    #[error(
+        "COPY {table}, line {line}: {refusal} — its block's first row ends otherwise, and restoring this dump fails this table's COPY there, and so does this read; the line is at offset {line_offset}"
+    )]
+    RowEndingRefused { table: String, line: u64, line_offset: u64, refusal: RowEndingRefusal },
     /// A NULL in a column its declaration makes `NOT NULL` — on the column, at
     /// the table, through a parent or through a domain — which a restore
     /// refuses (I76): [`Self::FieldRefused`]'s counterpart, met wherever such
@@ -461,4 +470,24 @@ fn cache_unusable(path: &Path, unusable: &Unusable) -> String {
         ),
     };
     format!("{found}{}", OVERWRITE_WAYS_OUT)
+}
+
+/// Why a restore refuses a row ending other than its block's first row does,
+/// in `CopyReadLineText`'s words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowEndingRefusal {
+    /// A raw CR in a block whose rows end in LF, or one not before the LF in a
+    /// block whose rows end in CR LF.
+    LiteralCarriageReturn,
+    /// A row ending in a bare LF in a block whose rows end in CR LF.
+    LiteralNewline,
+}
+
+impl std::fmt::Display for RowEndingRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::LiteralCarriageReturn => "literal carriage return found in data",
+            Self::LiteralNewline => "literal newline found in data",
+        })
+    }
 }

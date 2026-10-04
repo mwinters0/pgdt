@@ -835,6 +835,7 @@ async fn map_forward(
                         let outcome = leader::scan_region(
                             source,
                             scan_options,
+                            &header.qualified_name(),
                             header_offset,
                             data_offset,
                             plan,
@@ -2050,6 +2051,7 @@ async fn reread_rows(
     let outcome = leader::scan_region(
         source,
         scan_options,
+        &block.header.qualified_name(),
         block.header_offset,
         block.data_offset,
         Some(plan.clone()),

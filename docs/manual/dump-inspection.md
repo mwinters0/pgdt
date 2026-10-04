@@ -65,6 +65,14 @@ already covered the whole file, saying so on the line above the listing.
 Which values it checks, and what to do about one, is
 [`type-handling.md`](type-handling.md), "When a value does not match its type".
 
+**So does a `COPY` row ending otherwise than the first row of its table's
+data**, whatever `--postgres-invalid-values` says: a dump converted to CR LF
+line endings reads as the dump it was converted from, but one mixing LF and
+CR LF rows in a table, or holding a raw carriage return in a row, fails
+`parse` — and `query`, which maps the dump the same way — naming the table
+and the line, as a restore of it fails. A table whose rows end in a bare
+carriage return, which no `pg_dump` writes, is not split into its rows.
+
 **Ctrl-C stops it cleanly.** On `SIGINT` (Ctrl-C) or `SIGTERM` (`docker stop`,
 `kill`), `parse` stops at the next block or chunk boundary, writes everything
 it has scanned to the cache, says where it stopped, and then ends by that same

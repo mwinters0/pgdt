@@ -5,11 +5,15 @@ use std::fmt::Write as _;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
+use pgdump_query::cache::CacheMode;
 use pgdump_query::copy::{decode_field, encode_field, split_fields};
-use pgdump_query::{Event, LocalFileSource, ScanOptions, build_index, scan};
+use pgdump_query::{
+    DEFAULT_MEMORY_BUDGET, Event, LocalFileSource, Parallelism, RowEndingRefusal, ScanOptions,
+    StatisticsRequest, build_index, map_file, scan,
+};
 
 mod common;
-use common::{edge_cases, edge_cases_fixture};
+use common::{edge_cases, edge_cases_fixture, types_fixture};
 
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
@@ -299,6 +303,121 @@ async fn crlf_line_endings_are_tolerated() {
     .await
     .unwrap();
     assert_eq!(rows, vec![vec![Some("1".to_string()), Some("one".to_string())]]);
+}
+
+/// Every block's table and decoded rows, as the serial scanner reads them.
+async fn decoded_blocks(path: &Path) -> Vec<(String, Vec<Vec<Option<String>>>)> {
+    let source = LocalFileSource::open(path).unwrap();
+    let mut blocks: Vec<(String, Vec<Vec<Option<String>>>)> = Vec::new();
+    scan(&source, &ScanOptions::default(), |event| {
+        match event {
+            Event::CopyStart(start) => blocks.push((start.header.qualified_name(), Vec::new())),
+            Event::Row(row) => blocks.last_mut().unwrap().1.push(
+                split_fields(row.raw)
+                    .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                    .collect(),
+            ),
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+    blocks
+}
+
+/// A mapping pass read serially, and one split four ways at a size that cuts
+/// a fixture's blocks into pieces.
+fn serial_and_split() -> [ScanOptions; 2] {
+    [
+        ScanOptions::default(),
+        ScanOptions {
+            chunk_size_bytes: 64,
+            parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
+            ..ScanOptions::default()
+        },
+    ]
+}
+
+/// **A dump converted to CR LF reads as the dump it was converted from**, and
+/// one row in it ending otherwise than its block's first is refused where a
+/// restore refuses it, serially and split (I91): a stray CR LF in an LF dump
+/// as a literal carriage return, a stray LF in a CR LF one as a literal
+/// newline, each naming `COPY`'s line.
+#[tokio::test]
+async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
+    let lf = std::fs::read(types_fixture(16, "default")).unwrap();
+    let crlf: Vec<u8> = lf.split_inclusive(|&b| b == b'\n').fold(Vec::new(), |mut out, line| {
+        match line.strip_suffix(b"\n") {
+            Some(head) => out.extend_from_slice(&[head, b"\r\n"].concat()),
+            None => out.extend_from_slice(line),
+        }
+        out
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let (lf_path, crlf_path) = (dir.path().join("lf.sql"), dir.path().join("crlf.sql"));
+    std::fs::write(&lf_path, &lf).unwrap();
+    std::fs::write(&crlf_path, &crlf).unwrap();
+
+    let expected = decoded_blocks(&lf_path).await;
+    assert!(expected.iter().filter(|(_, rows)| rows.len() >= 2).count() > 5);
+    assert_eq!(decoded_blocks(&crlf_path).await, expected);
+    let counts = |index: &pgdump_query::DumpIndex| -> Vec<(String, u64)> {
+        index.blocks().map(|b| (b.header.qualified_name(), b.row_count)).collect()
+    };
+    let expected_counts: Vec<(String, u64)> =
+        expected.iter().map(|(table, rows)| (table.clone(), rows.len() as u64)).collect();
+    for options in serial_and_split() {
+        let source = LocalFileSource::open(&crlf_path).unwrap();
+        let run = map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+            .await
+            .unwrap();
+        assert_eq!(counts(&run.index), expected_counts, "{:?}", options.parallelism);
+    }
+
+    // The second row of the first block holding two, its ending flipped.
+    let (table, _) = expected.iter().find(|(_, rows)| rows.len() >= 2).unwrap();
+    for (file, why) in
+        [(&lf, RowEndingRefusal::LiteralCarriageReturn), (&crlf, RowEndingRefusal::LiteralNewline)]
+    {
+        let header = format!("COPY {table} ");
+        let at = file.windows(header.len()).position(|w| w == header.as_bytes()).unwrap();
+        let first_row = at + memchr_lf(&file[at..]) + 1;
+        let second_row = first_row + memchr_lf(&file[first_row..]) + 1;
+        let lf_at = second_row + memchr_lf(&file[second_row..]);
+        let mut stray = file.clone();
+        if why == RowEndingRefusal::LiteralCarriageReturn {
+            stray.insert(lf_at, b'\r');
+        } else {
+            stray.remove(lf_at - 1);
+        }
+        let path = dir.path().join("stray.sql");
+        std::fs::write(&path, &stray).unwrap();
+        for options in serial_and_split() {
+            let source = LocalFileSource::open(&path).unwrap();
+            match map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA).await
+            {
+                Err(pgdump_query::Error::RowEndingRefused {
+                    table: t,
+                    line,
+                    line_offset,
+                    refusal,
+                }) => {
+                    assert_eq!(
+                        (t.as_str(), line, line_offset, refusal),
+                        (table.as_str(), 2, second_row as u64, why),
+                        "{:?}",
+                        options.parallelism
+                    );
+                }
+                other => panic!("{why:?} under {:?}: {:?}", options.parallelism, other.map(|_| ())),
+            }
+        }
+    }
+}
+
+fn memchr_lf(bytes: &[u8]) -> usize {
+    bytes.iter().position(|&b| b == b'\n').unwrap()
 }
 
 #[tokio::test]
