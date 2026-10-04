@@ -1910,6 +1910,10 @@ pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGram
     if let Some(geometric) = geometric {
         return typmod.is_none().then_some(TextGrammar::Geometric(geometric));
     }
+    // deficiency: KD95 — no fixture holds a `bit` or `bit varying` column, so
+    // the spellings read here, `"bit"` as no length and bare `bit` as `bit(1)`,
+    // rest on `format_type.c` and I73's observations, never on a real dump; a
+    // misreading would have a strict parse refuse a field PostgreSQL reads.
     let varying = match &*name {
         "bit" => false,
         "bit varying" => true,

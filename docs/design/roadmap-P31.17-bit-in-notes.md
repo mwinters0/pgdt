@@ -38,10 +38,9 @@ shape it follows is 31.16's
 ## Negative results and limits
 
 - **No fixture holds a `bit` or `bit varying` column**, at any major, and the
-  comparison oracle asks no bit literal. I8 says
-  `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries `"bit"`;
-  it carries `bpchar` alone, which a repoint should correct. I73's
-  observations stand in for the fixture.
+  comparison oracle asks no bit literal; I8 had claimed `t_type_spelling`
+  carries `"bit"`, which it never has. The gap is `KD95`, for 31.25, and
+  I73's observations stand in for the fixture until then.
 - **A bit string has no order here**, so a filter on one is refused past
   `=`/`!=` as before, and its literal is not checked; a `default` parse and a
   query read the column as its text.

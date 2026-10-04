@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD94 -->
+rather than being deleted. <!-- deficiency-watermark: KD95 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -415,3 +415,8 @@ than reading as a phase nobody has sliced.
   `,`, held in a composite, is split at `,` by a strict parse's check, which
   refuses a field PostgreSQL reads. **(b) owned by P31**, 31.24. Detail:
   `pgdump_query/src/predicate.rs`.
+
+- **KD95** — no fixture holds a `bit` or `bit varying` column, so the
+  spellings a strict parse reads a bit string's length off rest on
+  `format_type.c` and I73's observations, never on a real dump. **(b) owned
+  by P31**, 31.25. Detail: `pgdump_query/src/pgtype.rs`.

@@ -113,6 +113,7 @@ approval, in the spec's opening note.
 - [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
 - [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
 - [ ] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94`
+- [ ] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95`
 
 ## Not started
 

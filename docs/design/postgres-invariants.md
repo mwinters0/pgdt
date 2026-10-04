@@ -372,8 +372,9 @@ typmod where the grammar does — `timestamp(3) with time zone`,
 `time(2) without time zone`, `interval day to second(2)` — and writes a
 `character` or `bit` column with no typmod as `bpchar` and `"bit"`, the SQL
 word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
-cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries each
-at all six majors; `pgtype.rs`'s `builtin_name` reads them.
+cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
+`bpchar` at all six majors; no fixture holds a `bit` column (KD95), so
+`"bit"` rests on the source alone. `pgtype.rs`'s `builtin_name` reads both.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
 `format_type` passes a name it does not spell as a keyword through
