@@ -52,16 +52,19 @@ complete", is this phase's first decision.
 
 ## `ALTER TABLE` and `ALTER TYPE` forms that move an object's state
 
-**Fact.** P31 reads two `ALTER` forms beyond today's `ALTER TYPE … ADD
+**Fact.** P31 reads these `ALTER` forms beyond today's `ALTER TYPE … ADD
 VALUE`: `ALTER TABLE ONLY … INHERIT` and `… OF`, which `--binary-upgrade`
-writes after a full column list, and `ALTER TYPE … DROP ATTRIBUTE`.
+writes after a full column list, `ALTER TYPE … DROP ATTRIBUTE`, and `ALTER
+TABLE ONLY <parent> ATTACH PARTITION` (`dumpTableAttach`), its bound kept as
+text — a hand-written `CREATE TABLE … PARTITION OF` records the same, but no
+lookup walks to its parent's columns (`KD102`).
 It resolves inherited and typed-table columns by walking the references
 against the preamble's final state, so a later `ALTER TABLE parent ADD
 COLUMN` or `ALTER TYPE … ADD ATTRIBUTE … CASCADE` is reached by
 construction. Every other `ALTER TABLE` form is ignored: `ADD COLUMN`,
 `ALTER COLUMN … SET DEFAULT`, `… SET NOT NULL`, `… ADD GENERATED … AS
-IDENTITY`, `… SET COMPRESSION`, `… SET STATISTICS`, `ATTACH PARTITION`
-(`dumpTableAttach`), `ADD CONSTRAINT`, `DISABLE TRIGGER ALL` (I31, `KD1`).
+IDENTITY`, `… SET COMPRESSION`, `… SET STATISTICS`, `ADD CONSTRAINT`,
+`DISABLE TRIGGER ALL` (I31, `KD1`).
 
 **Why P32 cares.** A model of each object at the end of the file is a fold
 of every one of these, and P31's walk is the precedent for reading final

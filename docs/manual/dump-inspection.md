@@ -1202,9 +1202,13 @@ public.events (98765 rows)
   built-in pgdt has no reader of, a declaration pgdt did not read in full, an
   array of arrays, an enum whose labels pgdt does not hold exactly, a column
   declared nowhere, a domain's `CHECK` — and
-  each `CHECK` the table carries, its own or the parent's it inherits; a
+  each `CHECK` the table carries, its own or the parent's it inherits, then
+  each partition bound a block loaded into a partition must fall within, its
+  own and each ancestor's, and, for a block loaded through a partitioned
+  table, a line saying its rows are routed by its partitions' bounds; a
   table the dump declares nowhere, as in a `--data-only` dump, gets one line
-  saying no value of it is checked. A listing where some block holds any
+  saying no value of it is checked, and that routing line where the block
+  carries `pg_dump`'s `load via partition root` marker. A listing where some block holds any
   closes with a line counting them, which, where the lines are not printed,
   points at `pgdt info --detail`.
 

@@ -119,7 +119,7 @@ maintainer's standing approval, in the spec's opening note.
 - [x] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94` — [notes](../design/roadmap-P31.24-base-type-delimiter-notes.md)
 - [x] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95` — [notes](../design/roadmap-P31.25-bit-fixture-notes.md)
 - [x] **31.26** A `NOT NULL` domain's NULL element of an array, or NULL field of a composite, refused wherever the field is read, as `array_in` and `record_in` refuse it, closing `KD97` — [notes](../design/roadmap-P31.26-not-null-beneath-notes.md)
-- [ ] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse
+- [x] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse — [notes](../design/roadmap-P31.27-partition-bound-notes.md)
 - [ ] **31.28** A raw carriage return ending a line inside a quoted SQL literal kept in the statement the preamble reads, as psql keeps it whatever the file's line endings, so an enum label or `CHECK` holding one is the one the server holds, closing `KD100`
 - [ ] **31.29** Each `COPY` block's line ending read off its first row — `\n`, `\r\n` or `\r` — as `CopyReadLine` reads it, and a row ending otherwise refused where a restore refuses it, closing `KD101`
 
@@ -152,4 +152,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The emitter register does not list `dumpTableAttach`** (31.27). The
+  spec's rule is that the register lists every function whose output a pgdt
+  reader consumes, and the preamble now reads the `ATTACH PARTITION`
+  `dumpTableAttach` writes from v14 (I86); v13 writes it in
+  `dumpTableSchema`, whose literal is registered, and the `partitions`
+  fixture holds it at every major. I left `FUNCTIONS` alone because adding
+  it is a change to the register's extraction, not to the preamble: the
+  function is absent at v13, which `extract` reports as a problem, and it
+  reuses one buffer for its `PREPARE` query and its output, which
+  `query_buffers` refuses as mixed. Reconsidering means a slice teaching the
+  extraction a function's first major and a buffer used as both, then
+  registering it.
 

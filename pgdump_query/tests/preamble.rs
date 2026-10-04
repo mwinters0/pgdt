@@ -1014,14 +1014,14 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
             assert!(index.blocks().next().is_some(), "{label}");
             for block in index.blocks() {
                 let table = block.header.qualified_name();
-                let unchecked = strict_unchecked(
-                    &block.header,
-                    index.metadata.as_ref(),
-                    block.database.as_deref(),
-                );
+                let unchecked = strict_unchecked(block, index.metadata.as_ref());
                 if flag_set == "data-only" {
                     assert!(!unchecked.declared, "{label}: {table}");
-                    assert!(unchecked.columns.is_empty() && unchecked.checks.is_empty());
+                    assert_eq!(
+                        unchecked,
+                        pgdump_query::StrictUnchecked::default(),
+                        "{label}: {table}"
+                    );
                     continue;
                 }
                 assert!(unchecked.declared, "{label}: {table}");
@@ -1095,4 +1095,159 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
             }
         }
     }
+}
+
+/// **A block loaded into a partition is named with its bound, and one loaded
+/// through its root as routed**, in the `partitions` schema at every major
+/// and both flag sets (I86): `evt_a` and `evt_z` load into themselves
+/// unless `--load-via-partition-root` sends them through `evt`, and `feel`,
+/// `shuffle` and `spread`, hash-partitioned on an enum, always load through
+/// their root. A table neither a partition nor partitioned is named with
+/// neither, and nothing else is named in this schema.
+#[tokio::test]
+async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
+    use pgdump_query::{StrictUnchecked, UncheckedBound, strict_unchecked};
+    let bound = |partition: &str, parent: &str, bound: &str| UncheckedBound {
+        partition: partition.to_string(),
+        parent: parent.to_string(),
+        bound: Some(bound.to_string()),
+    };
+    for version in VERSIONS {
+        for flag_set in ["default", "load-via-partition-root"] {
+            let path = fixture(version, "partitions", flag_set);
+            let source = LocalFileSource::open(&path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let label = format!("pg_dump {version} {flag_set}");
+            let via_root = flag_set == "load-via-partition-root";
+            let mut named = Vec::new();
+            for block in index.blocks() {
+                let table = block.header.qualified_name();
+                let unchecked = strict_unchecked(block, index.metadata.as_ref());
+                let expected = match table.as_str() {
+                    "public.evt_a" if !via_root => {
+                        vec![bound("public.evt_a", "public.evt", "FOR VALUES IN ('a')")]
+                    }
+                    "public.evt_z" if !via_root => {
+                        vec![bound("public.evt_z", "public.evt", "FOR VALUES IN ('z')")]
+                    }
+                    _ => vec![],
+                };
+                assert_eq!(unchecked.bounds, expected, "{label}: {table}");
+                let routed =
+                    matches!(table.as_str(), "public.feel" | "public.shuffle" | "public.spread")
+                        || (via_root && table == "public.evt");
+                assert_eq!(
+                    unchecked.routed_through.as_deref(),
+                    routed.then_some(table.as_str()),
+                    "{label}: {table}"
+                );
+                assert_eq!(
+                    unchecked,
+                    StrictUnchecked {
+                        declared: true,
+                        bounds: unchecked.bounds.clone(),
+                        routed_through: unchecked.routed_through.clone(),
+                        ..StrictUnchecked::default()
+                    },
+                    "{label}: {table}"
+                );
+                if !unchecked.is_empty() {
+                    named.push(table);
+                }
+            }
+            named.dedup();
+            let expected: &[&str] = if via_root {
+                &["public.evt", "public.feel", "public.shuffle", "public.spread"]
+            } else {
+                &["public.evt_a", "public.evt_z", "public.feel", "public.shuffle", "public.spread"]
+            };
+            assert_eq!(named, expected, "{label}");
+            // The bound is the partition's whichever way its rows load.
+            let db = index.metadata.as_ref().unwrap().databases.first().unwrap();
+            let feel_a = db.tables["public.feel_a"].partition_of.as_ref().unwrap();
+            assert_eq!(
+                (feel_a.parent.as_str(), feel_a.bound.as_deref()),
+                ("public.feel", Some("FOR VALUES WITH (modulus 2, remainder 0)")),
+                "{label}"
+            );
+        }
+    }
+}
+
+/// **A hand-written dump's partitions are named as `pg_dump`'s are**: a
+/// `COPY` into a partition of a partition carries both bounds, one into the
+/// partitioned table it routes through without the marker, one into a
+/// partition declared `PARTITION OF` its bound (its columns read nowhere,
+/// `KD102`), and a `--data-only` dump's marked block is routed though no
+/// table is declared.
+#[tokio::test]
+async fn a_hand_written_partition_hierarchy_is_named_per_block() {
+    use pgdump_query::{Unchecked, UncheckedBound, strict_unchecked};
+    let dir = tempfile::tempdir().unwrap();
+    let unchecked_of = |text: &str| {
+        let path = dir.path().join("dump.sql");
+        std::fs::write(&path, text).unwrap();
+        async move {
+            let source = LocalFileSource::open(&path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            index
+                .blocks()
+                .map(|block| {
+                    (
+                        block.header.qualified_name(),
+                        strict_unchecked(block, index.metadata.as_ref()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let bound = |partition: &str, parent: &str, bound: &str| UncheckedBound {
+        partition: partition.to_string(),
+        parent: parent.to_string(),
+        bound: Some(bound.to_string()),
+    };
+    let blocks = unchecked_of(
+        "CREATE TABLE public.top (id integer, at date) PARTITION BY RANGE (at);\n\
+         CREATE TABLE public.mid (id integer, at date) PARTITION BY LIST (id);\n\
+         CREATE TABLE public.leaf (id integer, at date);\n\
+         CREATE TABLE public.side PARTITION OF public.top DEFAULT;\n\
+         ALTER TABLE ONLY public.top ATTACH PARTITION public.mid\n\
+         \x20   FOR VALUES FROM ('2020-01-01') TO ('2021-01-01');\n\
+         ALTER TABLE ONLY public.mid ATTACH PARTITION public.leaf FOR VALUES IN (1, 2);\n\
+         COPY public.leaf (id, at) FROM stdin;\n1\t2020-02-02\n\\.\n\
+         COPY public.top (id, at) FROM stdin;\n1\t2020-02-02\n\\.\n\
+         COPY public.side (id, at) FROM stdin;\n1\t1999-02-02\n\\.\n",
+    )
+    .await;
+    let [(leaf, leaf_unchecked), (top, top_unchecked), (side, side_unchecked)] =
+        <[_; 3]>::try_from(blocks).unwrap();
+    assert_eq!(
+        (leaf.as_str(), top.as_str(), side.as_str()),
+        ("public.leaf", "public.top", "public.side")
+    );
+    assert_eq!(
+        leaf_unchecked.bounds,
+        [
+            bound("public.leaf", "public.mid", "FOR VALUES IN (1, 2)"),
+            bound("public.mid", "public.top", "FOR VALUES FROM ('2020-01-01') TO ('2021-01-01')"),
+        ]
+    );
+    assert_eq!(leaf_unchecked.routed_through, None);
+    assert!(leaf_unchecked.columns.is_empty() && leaf_unchecked.checks.is_empty());
+    assert_eq!(top_unchecked.bounds, []);
+    assert_eq!(top_unchecked.routed_through.as_deref(), Some("public.top"));
+    assert_eq!(side_unchecked.bounds, [bound("public.side", "public.top", "DEFAULT")]);
+    let undeclared: Vec<(&str, &Unchecked)> =
+        side_unchecked.columns.iter().map(|c| (c.column.as_str(), &c.why)).collect();
+    assert_eq!(undeclared, [("id", &Unchecked::Undeclared), ("at", &Unchecked::Undeclared)]);
+
+    let blocks = unchecked_of(
+        "--\n-- Data for Name: feel_a; Type: TABLE DATA; Schema: public; Owner: postgres\n--\n\
+         -- load via partition root public.feel\n\n\
+         COPY public.feel (id) FROM stdin;\n1\n\\.\n",
+    )
+    .await;
+    let [(_, unchecked)] = <[_; 1]>::try_from(blocks).unwrap();
+    assert!(!unchecked.declared);
+    assert_eq!(unchecked.routed_through.as_deref(), Some("public.feel"));
 }

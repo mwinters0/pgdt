@@ -819,6 +819,34 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     );
 }
 
+/// **A partition's bound and a root's routing are listed beneath the block**
+/// they bind, by a strict parse and `info --detail` alike, and `--map` names
+/// the `ATTACH PARTITION` it read the bound from.
+#[test]
+fn a_strict_parse_lists_a_partition_s_bound_and_its_root_s_routing() {
+    let (_dir, dump) = sandboxed("16/partitions/default.sql", "partitions.sql");
+    let source = dump.to_str().unwrap();
+    let said = run_ok(&["parse", "--source", source, "--postgres-invalid-values", "strict"]);
+    let listed: Vec<&str> =
+        said.lines().filter_map(|l| l.strip_prefix("    unchecked by a strict parse: ")).collect();
+    for expected in [
+        "public.evt_a PARTITION OF public.evt FOR VALUES IN ('a'): a partition bound, compared \
+         under its key's operator classes",
+        "routed through public.feel: a row no partition's bound admits is refused",
+    ] {
+        assert!(listed.contains(&expected), "{expected}: {said}");
+    }
+    let info = run_ok(&["info", "--source", source, "--detail"]);
+    let detailed: Vec<&str> =
+        info.lines().filter_map(|l| l.strip_prefix("    unchecked by a strict parse: ")).collect();
+    assert_eq!(detailed, listed, "{info}");
+    let map = run_ok(&["info", "--source", source, "--map"]);
+    assert!(
+        map.contains("ALTER TABLE public.evt ATTACH PARTITION public.evt_a FOR VALUES IN ('a')"),
+        "{map}"
+    );
+}
+
 /// **`--postgres-invalid-values` reaches both commands.** `parse` stops at the
 /// float `--extra-float-digits=0` rounds past `DBL_MAX` unless told `ignore`,
 /// which leaves a cache; `query` over it refuses the field unless told

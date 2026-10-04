@@ -1048,10 +1048,13 @@ a constraint checks — a `CHECK`, a partition's bound, which a row loaded into
 the partition or through its root must fall within, or a unique, primary or
 foreign key added once the data has loaded, which is when a restore checks it. What a
 column's type or declaration leaves unchecked in your dump — all of the above but a `json`'s
-depth, a server's settings, a partition's bound and a key — is named under each table of a strict `parse`'s listing
+depth, a server's settings and a key — is named under each table of a strict `parse`'s listing
 and `pgdt info --detail`'s, on an `unchecked by a strict parse:` line per column — or element,
-field or bound within one — saying why, and per `CHECK` the table or a
-domain of its columns carries ([dump inspection](dump-inspection.md), "`info`:
+field or bound within one — saying why, per `CHECK` the table or a
+domain of its columns carries, per partition bound a block loaded into a
+partition must fall within — the partition's own and each ancestor's — and,
+for a block loaded through a partitioned table, one saying its rows are routed
+by its partitions' bounds ([dump inspection](dump-inspection.md), "`info`:
 reporting what is known").
 Each table it checks is recorded in the cache as checked, and a `strict` parse
 over a cache an earlier `parse` built re-reads the tables no `strict` parse

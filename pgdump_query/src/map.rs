@@ -417,7 +417,8 @@ pub enum SpanBody {
     /// An `ALTER TABLE` adding to a table what
     /// [`crate::preamble::parse_alter_table_reference`] reads — a
     /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
-    /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL` — recognized so
+    /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL`, an `ATTACH PARTITION`,
+    /// whose `table` is the partition it attaches — recognized so
     /// [`crate::preamble::dump_metadata_from_spans`] can fold the reference
     /// into the [`Table`](SpanBody::Table) span it targets.
     AlterTableReference {

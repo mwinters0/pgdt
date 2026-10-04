@@ -5533,3 +5533,60 @@ grep -n 'strcmp(.1, "public") == 0\|errmsg("role name \\"%s\\" is reserved",' sr
 grep -n -A4 '^IsReservedName' src/backend/catalog/catalog.c
 grep -n 'IsReservedName' src/backend/commands/tablespace.c
 ```
+
+---
+
+## I86 — `COPY` checks a partition's bound and its ancestors', and routes through a partitioned table by its partitions'; `pg_dump` writes each bound before the data
+
+**Claim.** A `COPY` into a partition checks each row against its partition
+constraint, which holds its own bound and every ancestor's that is a
+partition too, refusing a row outside it (`23514`); one into a partitioned
+table routes each row to the partition whose bound admits it, checking the
+target's constraint first where it is itself a partition, and refuses a row
+no partition admits (`23514`). A bound compares the partition key, which may
+be an expression, under its operator classes and collations — nothing the
+field alone decides. Every supported `pg_dump` writes a partition as a plain
+`CREATE TABLE` with every column, its `NOT NULL`s and its `CHECK`s, and its
+bound as `ALTER TABLE ONLY <parent> ATTACH PARTITION <partition> <bound>;`,
+`<bound>` being `pg_get_expr(relpartbound)` — `FOR VALUES IN (…)`, `FROM (…)
+TO (…)`, `WITH (modulus …, remainder …)` or `DEFAULT` — before any data: in
+the table's own entry at v13, and in a `TABLE ATTACH` entry of the pre-data
+section from v14. None writes `CREATE TABLE … PARTITION OF`.
+
+**Proof.** `src/backend/commands/copyfrom.c` (`copy.c` at 13), `CopyFrom`'s
+`ExecPartitionCheck` where the target is a partition and no route was taken,
+and `ExecFindPartition` where it is partitioned;
+`src/backend/executor/execPartition.c`, `ExecFindPartition`'s check of a root
+that is a partition and its `no partition of relation "%s" found for row`;
+`src/backend/utils/cache/partcache.c`, `generate_partition_qual`'s "Add the
+parent's quals". `src/bin/pg_dump/pg_dump.c`: `dumpTableSchema`'s `ALTER
+TABLE ONLY %s ATTACH PARTITION %s %s;` at v13 and `dumpTableAttach`'s from
+v14 (`SECTION_PRE_DATA`), `shouldPrintColumn`'s `|| tbinfo->ispartition`, and
+the `ispartition` arms printing a `NOT NULL` and a `CHECK`.
+
+**Observed.** `fixtures/<13–18>/partitions/default.sql` holds `ALTER TABLE
+ONLY public.evt ATTACH PARTITION public.evt_a FOR VALUES IN ('a');` and the
+hash partitions' `FOR VALUES WITH (modulus 2, remainder 0)` before the first
+`COPY`, at every major.
+
+**Scope limit.** A `DETACH PARTITION` before the data, which no `pg_dump`
+writes, is not followed. A partition declared `PARTITION OF` takes its
+parent's columns, which no lookup reaches (`KD102`).
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+the fixtures at every major (observed).
+
+**Relied on by:** `preamble::parse_alter_table_reference` and
+`parse_create_table`, which read a partition's parent and bound into
+`TableDef::partition_of`; `gather::strict_unchecked`, which names a block's
+bounds and its routing as unchecked.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'ATTACH PARTITION %s %s\|SECTION_PRE_DATA\|tbinfo->ispartition' src/bin/pg_dump/pg_dump.c
+grep -n 'ExecPartitionCheck\|ExecFindPartition' src/backend/commands/copyfrom.c
+grep -n 'relispartition\|found for row' src/backend/executor/execPartition.c
+grep -n "Add the parent's quals" src/backend/utils/cache/partcache.c
+```

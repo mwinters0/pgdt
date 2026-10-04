@@ -64,7 +64,7 @@ use crate::decode::{
     Unread, bytea_unread, char_typmod_refuses, decode_bytea, decode_bytea_escape, render_bytea,
     typmod_unscaled_digits,
 };
-use crate::index::{Unrepresentable, UnrepresentableTier};
+use crate::index::{CopyBlock, Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, Unchecked,
@@ -198,13 +198,26 @@ pub struct StrictUnchecked {
     /// The `CHECK` constraints a restore evaluates against each row, its own
     /// and those it inherits.
     pub checks: Vec<UncheckedCheck>,
+    /// The partition bounds a restore checks each row against where the
+    /// block loads into a partition: its own, then each ancestor's that is a
+    /// partition too (I86).
+    pub bounds: Vec<UncheckedBound>,
+    /// The partitioned table a restore routes each row through to the
+    /// partition whose bound admits it, refusing one none admits: the
+    /// block's table, where it carries `pg_dump`'s `load via partition root`
+    /// marker or the preamble declares a partition of it (I86).
+    pub routed_through: Option<String>,
 }
 
 impl StrictUnchecked {
     /// Whether a strict parse checks everything a restore refuses a row by
     /// in this block but its post-data constraints.
     pub fn is_empty(&self) -> bool {
-        self.declared && self.columns.is_empty() && self.checks.is_empty()
+        self.declared
+            && self.columns.is_empty()
+            && self.checks.is_empty()
+            && self.bounds.is_empty()
+            && self.routed_through.is_none()
     }
 }
 
@@ -233,22 +246,38 @@ pub struct UncheckedCheck {
     pub inherited_from: Option<String>,
 }
 
-/// What a strict parse checks nothing of in a `COPY` block of `header`'s
-/// table, read off the preamble in `metadata` for `database` as the parse's
-/// own check is ([`field_checks`]): the same resolution, the same plan and
-/// grammar per column, so the two cannot disagree.
+/// A partition bound a restore checks each row of a block against
+/// ([`StrictUnchecked`]): an expression over the partition key, compared
+/// under its operator classes and collations.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UncheckedBound {
+    /// The partition it bounds: the block's table, or an ancestor of it.
+    pub partition: String,
+    /// The partitioned table it is a partition of.
+    pub parent: String,
+    /// Its text ([`crate::preamble::PartitionOf::bound`]), `None` where the
+    /// preamble names the parent and the bound is not read.
+    pub bound: Option<String>,
+}
+
+/// What a strict parse checks nothing of in `block`, read off the preamble
+/// in `metadata` for the block's database as the parse's own check is
+/// ([`field_checks`]): the same resolution, the same plan and grammar per
+/// column, so the two cannot disagree.
 ///
-/// A property of the dump's declarations, not of any run: the same for a
-/// block a strict parse checked and one it never read.
-pub fn strict_unchecked(
-    header: &CopyHeader,
-    metadata: Option<&DumpMetadata>,
-    database: Option<&str>,
-) -> StrictUnchecked {
+/// A property of the dump's declarations and the block's own framing, not of
+/// any run: the same for a block a strict parse checked and one it never
+/// read.
+pub fn strict_unchecked(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> StrictUnchecked {
+    let header = &block.header;
+    let database = block.database.as_deref();
     let qualified = header.qualified_name();
     let db = metadata.and_then(|m| database_for_name(m, database));
+    let routed =
+        block.partition_root.is_some() || db.is_some_and(|db| db.has_partitions(&qualified));
+    let routed_through = routed.then(|| qualified.clone());
     let Some(db) = db.filter(|db| db.tables.contains_key(&qualified)) else {
-        return StrictUnchecked::default();
+        return StrictUnchecked { routed_through, ..StrictUnchecked::default() };
     };
     let resolved = stored_resolution(header, metadata, database);
     let mut columns = Vec::new();
@@ -282,7 +311,16 @@ pub fn strict_unchecked(
             inherited_from: from.map(str::to_string),
         })
         .collect();
-    StrictUnchecked { declared: true, columns, checks }
+    let bounds = db
+        .partition_bounds(&qualified)
+        .into_iter()
+        .map(|(partition, of)| UncheckedBound {
+            partition: partition.to_string(),
+            parent: of.parent.clone(),
+            bound: of.bound.clone(),
+        })
+        .collect();
+    StrictUnchecked { declared: true, columns, checks, bounds, routed_through }
 }
 
 /// One column's part of a strict parse's check ([`field_checks`]).

@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD101 -->
-**`KD1`–`KD101` are allocated, and nothing at or below `KD101` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD102 -->
+**`KD1`–`KD102` are allocated, and nothing at or below `KD102` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -427,3 +427,10 @@ than reading as a phase nobody has sliced.
   row in a `\n` block is read where a restore refuses it and a block whose
   rows end in a bare `\r` is read as one line. **(b) owned by P31**, 31.29.
   Detail: `pgdump_query/src/scan.rs`.
+
+- **KD102** — a partition declared `CREATE TABLE … PARTITION OF`, which no
+  `pg_dump` writes (I86), takes its columns, `NOT NULL`s and `CHECK`s from its
+  parent, and no lookup reaches them: each of its columns is declared
+  nowhere, so read as text and checked for nothing, and a parent's `CHECK` is
+  not named for it. **(c) unowned**; promoted by a hand-written dump holding
+  one. Detail: `pgdump_query/src/preamble.rs`.

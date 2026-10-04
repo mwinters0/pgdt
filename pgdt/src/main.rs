@@ -3339,18 +3339,23 @@ fn print_index(
 }
 
 /// What a strict parse checks nothing of in `block`, read off the cache's
-/// preamble (`pgdump_query::strict_unchecked`): a property of the dump's
-/// declarations, so the same whichever mode built the cache.
+/// preamble and the block's own framing (`pgdump_query::strict_unchecked`):
+/// a property of the dump, so the same whichever mode built the cache.
 fn block_unchecked(index: &DumpIndex, block: &pgdump_query::CopyBlock) -> StrictUnchecked {
-    strict_unchecked(&block.header, index.metadata.as_ref(), block.database.as_deref())
+    strict_unchecked(block, index.metadata.as_ref())
 }
 
 /// One line per position a strict parse checks nothing of, then one per
-/// `CHECK` — or one for a table the dump declares nowhere, every field of
-/// which goes unchecked.
+/// `CHECK`, then one per partition bound and one for routing through a
+/// partitioned table — or, for a table the dump declares nowhere, every
+/// field of which goes unchecked, one saying so and the routing.
 fn unchecked_lines(unchecked: &StrictUnchecked) -> Vec<String> {
+    let routed = unchecked.routed_through.iter().map(|table| {
+        format!("routed through {table}: a row no partition's bound admits is refused")
+    });
     if !unchecked.declared {
-        return vec!["every value — the table is declared nowhere in the dump".to_string()];
+        let undeclared = "every value — the table is declared nowhere in the dump".to_string();
+        return std::iter::once(undeclared).chain(routed).collect();
     }
     let columns = unchecked.columns.iter().map(|c| {
         let at = format!("{}{}", c.column, c.path);
@@ -3366,7 +3371,15 @@ fn unchecked_lines(unchecked: &StrictUnchecked) -> Vec<String> {
             None => format!("CHECK{name}: an expression"),
         }
     });
-    columns.chain(checks).collect()
+    let bounds = unchecked.bounds.iter().map(|b| {
+        let bound = b.bound.as_deref().unwrap_or("(its bound not read)");
+        format!(
+            "{} PARTITION OF {} {bound}: a partition bound, compared under its key's operator \
+             classes",
+            b.partition, b.parent
+        )
+    });
+    columns.chain(checks).chain(bounds).chain(routed).collect()
 }
 
 /// A column's unrepresentable count, as `info --detail` states it beneath the
@@ -3566,6 +3579,11 @@ fn span_summary(span: &Span) -> String {
                 Some(name) => format!("ALTER TABLE {table} ADD CONSTRAINT {name} CHECK"),
                 None => format!("ALTER TABLE {table} ADD CHECK"),
             },
+            TableReference::PartitionOf(of) => format!(
+                "ALTER TABLE {} ATTACH PARTITION {table} {}",
+                of.parent,
+                of.bound.as_deref().unwrap_or("(bound not read)")
+            ),
         },
         SpanBody::Framing => "framing".to_string(),
         SpanBody::Unparsed => match &span.toc {

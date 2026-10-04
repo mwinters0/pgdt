@@ -268,8 +268,8 @@ Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `r
 list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect` segment is not a database (I9). L1
 stores text, never a type's conclusion: a declared type is its words, block comments and spacing dropped, a collation clause verbatim, `None`
 collation is "no clause" (I37), and `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
-both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, and a column is found through them as it
-is looked up. Of what the DDL implies, L1 keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
+both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, a column found through them as it
+is looked up, and a partition its parent and bound, the bound as text (I86). Of what the DDL implies, L1 keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
 
 ## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
 ### D37 The bar: the dump alone determines the value

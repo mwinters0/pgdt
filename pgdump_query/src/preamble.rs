@@ -243,6 +243,30 @@ impl DatabaseMetadata {
         }
     }
 
+    /// The partition bounds a row loaded into table `table` must fall within:
+    /// its own, then its parent's where that is a partition too, and so up,
+    /// each paired with the partition it bounds — a partition's constraint
+    /// holding every ancestor's (I86). Empty for a table that is no
+    /// partition; a cycle, which no server holds, ends where it returns.
+    pub fn partition_bounds(&self, table: &str) -> Vec<(&str, &PartitionOf)> {
+        let mut bounds: Vec<(&str, &PartitionOf)> = Vec::new();
+        let mut next = self.tables.get_key_value(table);
+        while let Some((name, def)) = next
+            && let Some(partition_of) = &def.partition_of
+            && !bounds.iter().any(|(held, _)| held == name)
+        {
+            bounds.push((name.as_str(), partition_of));
+            next = self.tables.get_key_value(&partition_of.parent);
+        }
+        bounds
+    }
+
+    /// Whether some table this preamble declares is a partition of table
+    /// `table`, so a row loaded into `table` is routed to one by their bounds.
+    pub fn has_partitions(&self, table: &str) -> bool {
+        self.tables.values().any(|def| def.partition_of.as_ref().is_some_and(|p| p.parent == table))
+    }
+
     /// The fields of the composite `type_name` names, where it parsed, the
     /// two names compared in their canonical spelling (I29).
     fn composite_fields(&self, type_name: &str) -> Option<&[ColumnDef]> {
@@ -389,6 +413,25 @@ pub struct TableDef {
     /// table inherits. One it takes from a parent is found through
     /// [`DatabaseMetadata::table_checks`].
     pub checks: Vec<CheckConstraint>,
+    /// The partitioned table this one is a partition of, and its bound: from
+    /// the `ALTER TABLE ONLY <parent> ATTACH PARTITION <this> <bound>;` every
+    /// supported `pg_dump` writes before the data, or a hand-written `CREATE
+    /// TABLE <this> PARTITION OF <parent> … <bound>` (I86).
+    pub partition_of: Option<PartitionOf>,
+}
+
+/// A partition's place in its partitioned table ([`TableDef::partition_of`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartitionOf {
+    /// The partitioned table, qualified as a key of
+    /// [`DatabaseMetadata::tables`] is.
+    pub parent: String,
+    /// gram.y's `PartitionBoundSpec` as its text — `FOR VALUES IN ('a')`,
+    /// `FOR VALUES FROM (1) TO (10)`, `FOR VALUES WITH (modulus 2, remainder
+    /// 0)` or `DEFAULT` — block comments dropped and each run of spacing
+    /// outside a literal one space; `None` where the statement names the
+    /// parent and its bound is not one of those.
+    pub bound: Option<String>,
 }
 
 /// A `CHECK` constraint a table declares: an expression a restore evaluates
@@ -421,6 +464,9 @@ impl TableDef {
                 self.not_null.push((column.clone(), NotNull::Inherited));
             }
             TableReference::Check(check) => self.checks.push(check.clone()),
+            TableReference::PartitionOf(partition_of) => {
+                self.partition_of = Some(partition_of.clone());
+            }
         }
     }
 }
@@ -428,7 +474,8 @@ impl TableDef {
 /// What an `ALTER TABLE` adds to a table already declared: the references
 /// `--binary-upgrade` writes after a full column list in place of the
 /// `CREATE TABLE`'s own clauses, the `NOT NULL` a dump before v18 writes
-/// for a column the table does not print, and a `CHECK` it adds.
+/// for a column the table does not print, a `CHECK` it adds, and the
+/// partitioned table it is attached to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TableReference {
     /// `INHERIT <parent>`, qualified as [`TableDef::parents`] is.
@@ -439,6 +486,10 @@ pub enum TableReference {
     NotNull(String),
     /// `ADD [CONSTRAINT <name>] CHECK (…)`, into [`TableDef::checks`].
     Check(CheckConstraint),
+    /// `ALTER TABLE [ONLY] <parent> ATTACH PARTITION <table> <bound>`, which
+    /// alters the parent and is folded into the partition it names, into
+    /// [`TableDef::partition_of`].
+    PartitionOf(PartitionOf),
 }
 
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
@@ -1057,6 +1108,10 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 /// or a table constraint, and never holds a type, so it declares no column of
 /// its own: each is its type's field ([`TableDef`]), and only a `NOT NULL` and
 /// a `CHECK` among its options are kept.
+///
+/// A partition's `CREATE TABLE <name> PARTITION OF <parent> [(<options>,
+/// ...)] <bound>`, which no supported `pg_dump` writes (I86), takes the same
+/// list a typed table does, and records its parent and bound.
 fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let mut after = rest[consumed..].trim_start();
@@ -1066,11 +1121,33 @@ fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
         table.of_type = Some(of_type);
         after = of[consumed..].trim_start();
     }
+    // deficiency: KD102 — a partition declared `PARTITION OF` takes every
+    // column, in its parent's order, and every `NOT NULL` and `CHECK` from
+    // its parent, and only its parent and bound are recorded here: no lookup
+    // walks to the parent, so each of its columns is declared nowhere, read
+    // as text and checked for nothing, and a parent's `CHECK` is not named
+    // for it. No `pg_dump` writes one (I86). The fix walks `partition_of`'s
+    // parent as `OF`'s type is walked for a table declaring no column of its
+    // own — never for an attached one, whose own list is whole and in its own
+    // order — and in `column_not_null` and `table_checks` as a parent is.
+    let mut partition_parent = None;
+    if let Some(of) = strip_kw(after, "PARTITION").and_then(|p| strip_kw(p, "OF")) {
+        let (parent, consumed) = parse_qualified_name(of)?;
+        partition_parent = Some(parent);
+        after = of[consumed..].trim_start();
+    }
+    let partition_of = |tail: &str| {
+        partition_parent
+            .clone()
+            .map(|parent| PartitionOf { parent, bound: partition_bound(tail).map(|(b, _)| b) })
+    };
     if !after.starts_with('(') {
+        table.partition_of = partition_of(after);
         return Some((name, table));
     }
     let close = matching_paren(after.as_bytes(), 0)?;
-    let typed = table.of_type.is_some();
+    table.partition_of = partition_of(&after[close + 1..]);
+    let typed = table.of_type.is_some() || table.partition_of.is_some();
     for fragment in split_top_level_commas(&after[1..close]) {
         let element = parse_table_element(fragment, typed);
         // A column's, a typed table's column option's and a table
@@ -1107,6 +1184,55 @@ fn whole_table_name(s: &str) -> Option<String> {
     s[consumed..].trim().is_empty().then_some(name)
 }
 
+/// gram.y's `PartitionBoundSpec` at the start of `s` — `DEFAULT`, or `FOR
+/// VALUES` then `IN (…)`, `FROM (…) TO (…)` or `WITH (…)` — as
+/// [`PartitionOf::bound`] holds it, and what follows it.
+fn partition_bound(s: &str) -> Option<(String, &str)> {
+    fn parenthesized<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
+        let open = strip_kw(s, kw)?;
+        if !open.starts_with('(') {
+            return None;
+        }
+        Some(&open[matching_paren(open.as_bytes(), 0)? + 1..])
+    }
+    let start = s.trim_start();
+    let after = match strip_kw(start, "DEFAULT") {
+        Some(after) => after,
+        None => {
+            let values = strip_kw(strip_kw(start, "FOR")?, "VALUES")?;
+            parenthesized(values, "IN")
+                .or_else(|| parenthesized(values, "WITH"))
+                .or_else(|| parenthesized(parenthesized(values, "FROM")?.trim_start(), "TO"))?
+        }
+    };
+    let text = &start[..start.len() - after.len()];
+    Some((collapse_spacing(&strip_block_comments(text)), after))
+}
+
+/// `s` with each run of whitespace outside a `'…'` literal or a `"…"`
+/// identifier one space, and none at either end.
+fn collapse_spacing(s: &str) -> String {
+    let bytes = s.trim().as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let end = match bytes[i] {
+            b'\'' => skip_quoted(bytes, i),
+            b'"' => skip_double_quoted(bytes, i),
+            b if b.is_ascii_whitespace() => {
+                out.push(b' ');
+                i += bytes[i..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+                continue;
+            }
+            _ => i + 1,
+        };
+        out.extend_from_slice(&bytes[i..end]);
+        i = end;
+    }
+    // Cut only beside ASCII bytes, so as whole as `s`.
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `… OF
 /// <type>;` — the two references `--binary-upgrade` writes
 /// after a table's full column list (`dumpTableSchema`) — `… ALTER
@@ -1114,7 +1240,10 @@ fn whole_table_name(s: &str) -> Option<String> {
 /// `CREATE TABLE` not printing the column (I76), or `… ADD [CONSTRAINT
 /// <name>] CHECK (…) …;`, which `--binary-upgrade` writes for a `CHECK` the
 /// table inherits and a dump writes after the data for one it holds apart
-/// (I77), as the table they alter and what they add. `None` for every other
+/// (I77), as the table they alter and what they add; or `ALTER TABLE [ONLY]
+/// <parent> ATTACH PARTITION <partition> <bound>;`, which every supported
+/// `pg_dump` writes before the data (I86), as the partition it attaches and
+/// its parent and bound. `None` for every other
 /// `ALTER TABLE`, one listing several subcommands included, which the dump
 /// never writes for these. `pub(crate)` for [`crate::map::classify`], as
 /// [`parse_alter_type_add_value_body`] is.
@@ -1124,6 +1253,22 @@ pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableRe
     let rest = strip_kw(rest, "ONLY").unwrap_or(rest);
     let (table, consumed) = parse_qualified_name(rest)?;
     let rest = rest[consumed..].trim_start();
+    // gram.y's `partition_cmd` stands alone in its statement, so the bound
+    // ends it; one that is none of `PartitionBoundSpec`'s forms is recorded
+    // as unread rather than dropping the parent.
+    if let Some(attach) = strip_kw(rest, "ATTACH").and_then(|a| strip_kw(a, "PARTITION")) {
+        let (partition, consumed) = parse_qualified_name(attach)?;
+        let tail = &attach[consumed..];
+        let bound = partition_bound(tail).filter(|(_, after)| after.trim() == ";");
+        if bound.is_none() && !tail.trim_end().ends_with(';') {
+            return None;
+        }
+        let bound = bound.map(|(bound, _)| bound);
+        return Some((
+            partition,
+            TableReference::PartitionOf(PartitionOf { parent: table, bound }),
+        ));
+    }
     if let Some(add) = strip_kw(rest, "ADD") {
         let body = add.trim_end().strip_suffix(';')?;
         let opens = strip_kw(body, "CONSTRAINT").is_some() || strip_kw(body, "CHECK").is_some();
@@ -2155,6 +2300,7 @@ mod tests {
                 of_type: None,
                 not_null: vec![("label".to_string(), NotNull::Inherited)],
                 checks: Vec::new(),
+                partition_of: None,
             }
         );
         // A child declaring nothing of its own keeps its empty list and its
@@ -2185,6 +2331,7 @@ mod tests {
                 of_type: Some("emitters.person".to_string()),
                 not_null: vec![("name".to_string(), NotNull::Inherited)],
                 checks: Vec::new(),
+                partition_of: None,
             }
         );
         let (_, table) = parse_table_def(&["CREATE TABLE public.t OF PUBLIC.\"Person\";"]);
@@ -2261,6 +2408,7 @@ mod tests {
                     of_type: of_type.map(str::to_string),
                     not_null: Vec::new(),
                     checks: Vec::new(),
+                    partition_of: None,
                 },
             );
         }
@@ -2550,6 +2698,151 @@ mod tests {
         assert_eq!(named("public.c"), [(s("g_pos"), None), (None, s("public.g"))]);
         assert_eq!(named("public.loop"), [(s("l"), None)]);
         assert_eq!(named("public.absent"), []);
+    }
+
+    /// Each of `PartitionBoundSpec`'s four forms is read whole, spacing
+    /// collapsed outside a literal and a block comment dropped, with what
+    /// follows it left alone; anything else is no bound.
+    #[test]
+    fn a_partition_bound_is_read_in_each_of_its_forms() {
+        let bound = |s: &str| partition_bound(s).map(|(b, after)| (b, after.trim().to_string()));
+        let read = |b: &str, after: &str| Some((b.to_string(), after.to_string()));
+        assert_eq!(bound(" FOR VALUES IN ('a');"), read("FOR VALUES IN ('a')", ";"));
+        assert_eq!(
+            bound("for values in ('a  b', 'c'')')\n PARTITION BY RANGE (id);"),
+            read("for values in ('a  b', 'c'')')", "PARTITION BY RANGE (id);")
+        );
+        assert_eq!(
+            bound("FOR VALUES FROM (MINVALUE)\n    TO ('2020-01-01') ;"),
+            read("FOR VALUES FROM (MINVALUE) TO ('2020-01-01')", ";")
+        );
+        assert_eq!(
+            bound("FOR VALUES WITH (modulus 2, /* x */ remainder 0);"),
+            read("FOR VALUES WITH (modulus 2, remainder 0)", ";")
+        );
+        assert_eq!(bound("DEFAULT;"), read("DEFAULT", ";"));
+        for none in [
+            "FOR VALUES FROM (1);",
+            "FOR VALUES IN 'a';",
+            "FOR VALUES;",
+            "DEFAULTS;",
+            "/* x */ DEFAULT;",
+        ] {
+            assert_eq!(partition_bound(none), None, "{none}");
+        }
+    }
+
+    /// `ATTACH PARTITION` alters the parent and is read into the partition
+    /// it names, the bound ending the statement; a bound none of the forms
+    /// reads keeps the parent, and a statement not ending there is none.
+    /// `CREATE TABLE … PARTITION OF` reads its parent and bound, and its
+    /// list as a typed table's — options and constraints, no column.
+    #[test]
+    fn a_partition_s_parent_and_bound_are_read_from_either_statement() {
+        let of = |parent: &str, bound: Option<&str>| PartitionOf {
+            parent: parent.to_string(),
+            bound: bound.map(str::to_string),
+        };
+        assert_eq!(
+            parse_alter_table_reference(
+                "ALTER TABLE ONLY public.evt ATTACH PARTITION public.evt_a FOR VALUES IN ('a');"
+            ),
+            Some((
+                "public.evt_a".to_string(),
+                TableReference::PartitionOf(of("public.evt", Some("FOR VALUES IN ('a')")))
+            ))
+        );
+        assert_eq!(
+            parse_alter_table_reference(
+                "alter table \"P\".t attach partition \"P\".\"T1\" default;"
+            ),
+            Some(("P.T1".to_string(), TableReference::PartitionOf(of("P.t", Some("default")))))
+        );
+        assert_eq!(
+            parse_alter_table_reference(
+                "ALTER TABLE ONLY public.t ATTACH PARTITION public.t1 FOR VALUES /* x */ IN (1);"
+            ),
+            Some(("public.t1".to_string(), TableReference::PartitionOf(of("public.t", None))))
+        );
+        for none in [
+            "ALTER TABLE ONLY public.t ATTACH PARTITION public.t1 FOR VALUES IN (1)",
+            "ALTER TABLE ONLY public.t DETACH PARTITION public.t1;",
+        ] {
+            assert_eq!(parse_alter_table_reference(none), None, "{none}");
+        }
+
+        let (name, table) = parse_table_def(&[
+            "CREATE TABLE public.r_2020 PARTITION OF public.r (",
+            "    id NOT NULL,",
+            "    CONSTRAINT r_pos CHECK ((id > 0))",
+            ")",
+            "FOR VALUES FROM ('2020-01-01') TO ('2021-01-01')",
+            "PARTITION BY LIST (region);",
+        ]);
+        assert_eq!(name, "public.r_2020");
+        assert_eq!(
+            table,
+            TableDef {
+                not_null: vec![("id".to_string(), NotNull::Inherited)],
+                checks: vec![CheckConstraint {
+                    name: Some("r_pos".to_string()),
+                    no_inherit: false
+                }],
+                partition_of: Some(of(
+                    "public.r",
+                    Some("FOR VALUES FROM ('2020-01-01') TO ('2021-01-01')")
+                )),
+                ..TableDef::default()
+            }
+        );
+        let (_, table) =
+            parse_table_def(&["CREATE TABLE public.r_d PARTITION OF public.r DEFAULT;"]);
+        assert_eq!(table.partition_of, Some(of("public.r", Some("DEFAULT"))));
+        let (_, table) = parse_table_def(&["CREATE TABLE public.r_x PARTITION OF public.r;"]);
+        assert_eq!(table.partition_of, Some(of("public.r", None)));
+    }
+
+    /// A partition's bounds run up through every ancestor that is a
+    /// partition too, and stop at a cycle; a table any partition names as
+    /// its parent has partitions, whether or not it is one itself.
+    #[test]
+    fn a_partition_s_bounds_run_up_its_ancestors() {
+        let mut db = with_tables(
+            &[
+                ("public.top", &[("id", "integer")], &[], None),
+                ("public.mid", &[("id", "integer")], &[], None),
+                ("public.leaf", &[("id", "integer")], &[], None),
+                ("public.loop", &[("id", "integer")], &[], None),
+            ],
+            Vec::new(),
+        );
+        let of = |parent: &str, bound: &str| {
+            Some(PartitionOf { parent: parent.to_string(), bound: Some(bound.to_string()) })
+        };
+        let tables = &mut db.tables;
+        tables.get_mut("public.mid").unwrap().partition_of = of("public.top", "FOR VALUES IN (1)");
+        tables.get_mut("public.leaf").unwrap().partition_of = of("public.mid", "DEFAULT");
+        tables.get_mut("public.loop").unwrap().partition_of = of("public.loop", "DEFAULT");
+        let bounds = |table: &str| -> Vec<(String, String)> {
+            db.partition_bounds(table)
+                .into_iter()
+                .map(|(partition, of)| (partition.to_string(), of.parent.clone()))
+                .collect()
+        };
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(
+            bounds("public.leaf"),
+            [pair("public.leaf", "public.mid"), pair("public.mid", "public.top")]
+        );
+        assert_eq!(bounds("public.mid"), [pair("public.mid", "public.top")]);
+        assert_eq!(bounds("public.top"), []);
+        assert_eq!(bounds("public.loop"), [pair("public.loop", "public.loop")]);
+        assert_eq!(bounds("public.absent"), []);
+        let partitioned: Vec<bool> = ["public.top", "public.mid", "public.leaf", "public.absent"]
+            .into_iter()
+            .map(|t| db.has_partitions(t))
+            .collect();
+        assert_eq!(partitioned, [true, true, false, false]);
     }
 
     /// A reference reaching nothing — a parent or type the preamble does not
@@ -2842,6 +3135,7 @@ mod tests {
                 of_type: Some("public.t".to_string()),
                 not_null: vec![("label".to_string(), NotNull::Inherited)],
                 checks: Vec::new(),
+                partition_of: None,
             }
         );
     }

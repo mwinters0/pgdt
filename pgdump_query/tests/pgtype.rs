@@ -501,7 +501,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
                 .collect();
             assert_eq!(declared, spelled, "{label}");
             assert!(block.checked_in_full, "{label}");
-            let unchecked = strict_unchecked(&block.header, Some(meta), block.database.as_deref());
+            let unchecked = strict_unchecked(block, Some(meta));
             assert!(unchecked.is_empty(), "{label}: {unchecked:?}");
         }
         assert!(flag_sets > 2, "pg_dump {version}: {flag_sets} flag sets");
