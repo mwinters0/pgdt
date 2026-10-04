@@ -400,11 +400,6 @@ than reading as a phase nobody has sliced.
   the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
   `P33`**. Detail: `pgdump_query/src/scan.rs`.
 
-- **KD95** — no fixture holds a `bit` or `bit varying` column, so the
-  spellings a strict parse reads a bit string's length off rest on
-  `format_type.c` and I73's observations, never on a real dump. **(b) owned
-  by P31**, 31.25. Detail: `pgdump_query/src/pgtype.rs`.
-
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
   keeps them, and a `char(n)` one shorter than `n` is not padded, neither of

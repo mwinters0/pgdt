@@ -37,10 +37,10 @@ shape it follows is 31.16's
 
 ## Negative results and limits
 
-- **No fixture holds a `bit` or `bit varying` column**, at any major, and the
-  comparison oracle asks no bit literal; I8 had claimed `t_type_spelling`
-  carries `"bit"`, which it never has. The gap is `KD95`, for 31.25, and
-  I73's observations stand in for the fixture until then.
+- **The comparison oracle asks no bit literal**; I8 had claimed
+  `t_type_spelling` carries `"bit"`, which it never has. The `types`
+  fixture's `t_bit` holds each spelling
+  ([`roadmap-P31.25-bit-fixture-notes.md`](roadmap-P31.25-bit-fixture-notes.md)).
 - **A bit string has no order here**, so a filter on one is refused past
   `=`/`!=` as before, and its literal is not checked; a `default` parse and a
   query read the column as its text.

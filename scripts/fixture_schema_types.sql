@@ -181,6 +181,25 @@ INSERT INTO public.t_type_spelling VALUES
         '12:34:56.789+02', '1 year 2 months', '3 days 04:05:06.789', 'ab  '),
     (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
+-- The spellings `format_type` writes for a bit string (I8): `bit` alone is
+-- `bit(1)`, so it is written so; one with no typmod is written as the quoted
+-- catalog name `"bit"`, which the parser gives none; and `bit varying` with a
+-- length or without. Each value is as long as its column admits and no
+-- longer, so a strict parse reading a length off the wrong spelling refuses a
+-- value the server holds.
+CREATE TABLE public.t_bit (
+    id integer PRIMARY KEY,
+    v_bit bit,
+    v_bit3 bit(3),
+    v_varbit bit varying,
+    v_varbit5 bit varying(5),
+    v_bit_any "bit"
+);
+INSERT INTO public.t_bit VALUES
+    (1, B'1', B'101', B'', B'10101', B'1100110011'),
+    (2, B'0', B'000', B'1010101010101010101010101010101010101010', B'1', B'1'),
+    (3, NULL, NULL, NULL, NULL, NULL);
+
 CREATE TABLE public.t_bytea (
     id integer PRIMARY KEY,
     v_bytea bytea

@@ -80,6 +80,9 @@ public.t_base_type	id	1		integer	00000001
 public.t_base_type	id	2		integer	00000002
 public.t_base_type	v_mybase_array	1		mybase[]	2
 public.t_base_type	v_mybase_array	2		mybase[]	\N
+public.t_bit	id	1		integer	00000001
+public.t_bit	id	2		integer	00000002
+public.t_bit	id	3		integer	00000003
 public.t_bytea	id	1		integer	00000001
 public.t_bytea	id	2		integer	00000002
 public.t_bytea	id	3		integer	00000003

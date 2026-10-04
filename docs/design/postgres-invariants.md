@@ -373,9 +373,10 @@ typmod where the grammar does — `timestamp(3) with time zone`,
 `character` or `bit` column with no typmod as `bpchar` and `"bit"`, the SQL
 word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
 cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
-`bpchar` at all six majors; no fixture holds a `bit` column (KD95), so
-`"bit"` rests on the source alone. `pgtype.rs` reads both: `builtin_name` gives
-`character` its length of 1, and `text_grammar` gives `bit` its.
+`bpchar`, and its `t_bit` a column declared `bit` written `bit(1)` and one
+declared `"bit"` written so, at all six majors. `pgtype.rs` reads both:
+`builtin_name` gives `character` its length of 1, and `text_grammar` gives
+`bit` its.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
 `format_type` passes a name it does not spell as a keyword through
@@ -393,7 +394,8 @@ the empty-`search_path` line.
 confirm fixtures still contain `set_config('search_path', '', false)`;
 `grep -n 'BPCHAROID' -A14 src/backend/utils/adt/format_type.c`;
 `grep -n 'implicitly-searched namespaces' -A14 src/backend/catalog/namespace.c`; and
-`cargo test -p pgdump_query --test pgtype`, which reads `t_type_spelling`.
+`cargo test -p pgdump_query --test pgtype`, which reads `t_type_spelling` and
+`t_bit`.
 
 ---
 

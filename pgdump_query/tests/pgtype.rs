@@ -445,6 +445,104 @@ async fn every_column_resolves_alike_with_every_identifier_quoted() {
     }
 }
 
+/// **A bit string's length is read off the spelling `format_type` writes**
+/// (I8): a column declared `bit` written `bit(1)`, one with no typmod written
+/// `"bit"`, and `bit varying` with a length and without, at every major and
+/// in every flag set declaring the table. A strict parse reads `t_bit`, whose
+/// values are each as long as their column admits, and checks every column
+/// of it; one bit more or fewer in a column with a length is refused there,
+/// as `bit_in` and `varbit_in` refuse it, and a digit no bit string holds is
+/// refused in `"bit"`, which reads any length.
+#[tokio::test]
+async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
+    use pgdump_query::cache::CacheMode;
+    use pgdump_query::{
+        Error, PostgresInvalidValues, StatisticsRequest, map_file, strict_unchecked,
+    };
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..ScanOptions::default()
+    };
+    let spelled = [
+        ("id", "integer"),
+        ("v_bit", "bit(1)"),
+        ("v_bit3", "bit(3)"),
+        ("v_varbit", "bit varying"),
+        ("v_varbit5", "bit varying(5)"),
+        ("v_bit_any", "\"bit\""),
+    ];
+    for version in common::VERSIONS {
+        let dir = types_fixture(version, "default").parent().unwrap().to_path_buf();
+        let mut flag_sets = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "sql") || common::refused_field(&path).is_some()
+            {
+                continue;
+            }
+            flag_sets += 1;
+            let label = format!("pg_dump {version} {}", path.display());
+            let source = LocalFileSource::open(&path).unwrap();
+            let run = map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+                .await
+                .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
+            let block = run.index.blocks_for("public.t_bit").next();
+            let block = block.unwrap_or_else(|| panic!("{label}: no `t_bit` block"));
+            let Some(meta) = run.index.metadata.as_ref() else { panic!("{label}") };
+            let db = meta.databases.first().unwrap();
+            if !db.tables.contains_key("public.t_bit") {
+                assert!(path.ends_with("data-only.sql"), "{label}");
+                continue;
+            }
+            let declared: Vec<(&str, &str)> = db
+                .declared_columns("public.t_bit")
+                .iter()
+                .map(|c| (c.name.as_str(), c.declared_type.as_str()))
+                .collect();
+            assert_eq!(declared, spelled, "{label}");
+            assert!(block.checked_in_full, "{label}");
+            let unchecked = strict_unchecked(&block.header, Some(meta), block.database.as_deref());
+            assert!(unchecked.is_empty(), "{label}: {unchecked:?}");
+        }
+        assert!(flag_sets > 2, "pg_dump {version}: {flag_sets} flag sets");
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let row = "\n1\t1\t101\t\t10101\t1100110011\n";
+    for version in common::VERSIONS {
+        let text = std::fs::read_to_string(types_fixture(version, "default")).unwrap();
+        assert_eq!(text.matches(row).count(), 1, "pg_dump {version}");
+        for (column, declared, field) in [
+            ("v_bit", "bit(1)", "10"),
+            ("v_bit", "bit(1)", ""),
+            ("v_bit3", "bit(3)", "1010"),
+            ("v_bit3", "bit(3)", "10"),
+            ("v_varbit5", "bit varying(5)", "101010"),
+            ("v_varbit", "bit varying", "102"),
+            ("v_bit_any", "\"bit\"", "12"),
+        ] {
+            let at = spelled.iter().position(|(name, _)| *name == column).unwrap();
+            let mut cells: Vec<&str> = row.trim_matches('\n').split('\t').collect();
+            cells[at] = field;
+            let mutated = format!("\n{}\n", cells.join("\t"));
+            let path = tmp.path().join(format!("{version}-{column}-{field}.sql"));
+            std::fs::write(&path, text.replace(row, &mutated)).unwrap();
+            let label = format!("pg_dump {version}: {column} `{field}`");
+            let source = LocalFileSource::open(&path).unwrap();
+            match map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA).await {
+                Err(Error::FieldRefused { column: named, declared_type, line, value, .. }) => {
+                    assert_eq!(
+                        (named.as_str(), declared_type.as_str(), line, value.as_str()),
+                        (column, declared, 1, field),
+                        "{label}"
+                    );
+                }
+                other => panic!("{label}: expected a strict parse to refuse it, got {other:?}"),
+            }
+        }
+    }
+}
+
 /// I29's own dump, as `pg_dump 16.14` wrote it: every type name needs quoting,
 /// and each column resolves to the type it names, the arrays included — the
 /// definition and the declaration compared in one spelling.

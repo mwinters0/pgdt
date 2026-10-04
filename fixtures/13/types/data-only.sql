@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict a1w5wiaUieVLb620rU9ylfXRZMogzkltRcVawRxn7koLzmHyfroQVAqWNYVzlXo
+\restrict yqxOsDwzUwdsY8HugsOxm6eu4xywm4YF0hYKbbjw21yblI4mGwa8EaGa7Ybw0Tj
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -57,6 +57,17 @@ COPY public.t_array_spelling (id, v_bounded, v_bounded_2d, v_array_kw, v_array_k
 COPY public.t_base_type (id, v_mybase, v_mybase_array) FROM stdin;
 1	hello	{hello,"a,b"}
 2	\N	\N
+\.
+
+
+--
+-- Data for Name: t_bit; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_bit (id, v_bit, v_bit3, v_varbit, v_varbit5, v_bit_any) FROM stdin;
+1	1	101		10101	1100110011
+2	0	000	1010101010101010101010101010101010101010	1	1
+3	\N	\N	\N	\N	\N
 \.
 
 
@@ -405,5 +416,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict a1w5wiaUieVLb620rU9ylfXRZMogzkltRcVawRxn7koLzmHyfroQVAqWNYVzlXo
+\unrestrict yqxOsDwzUwdsY8HugsOxm6eu4xywm4YF0hYKbbjw21yblI4mGwa8EaGa7Ybw0Tj
 

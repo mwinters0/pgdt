@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 7jrT1SFKxMIKRGRQSJqxhSo9b1KpUwFN18zZqigvqeu0RPitxytGFiGxIFC7GVm
+\restrict yn0sE9hhH9Kx1O5V6mHhW6xXFTVtcAnjF4KZFfGh8ffDGiCLQxagP8MVWCN3aqd
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -42,11 +42,11 @@ ALTER COLLATION public.nd_collation OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16625'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16633'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16624'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16632'::pg_catalog.oid);
 
 CREATE DOMAIN public.intarr AS integer[];
 
@@ -59,15 +59,15 @@ ALTER DOMAIN public.intarr OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16628'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16636'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16627'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16635'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16626'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16634'::pg_catalog.oid);
 
 CREATE TYPE public.arr_holder AS (
 	label text,
@@ -100,11 +100,11 @@ ALTER DOMAIN public.base_domain OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16591'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16599'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16590'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16598'::pg_catalog.oid);
 
 CREATE DOMAIN public.box_domain AS box;
 
@@ -117,15 +117,15 @@ ALTER DOMAIN public.box_domain OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16546'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16554'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16545'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16553'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16544'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16552'::pg_catalog.oid);
 
 CREATE TYPE public.point2d AS (
 	x integer,
@@ -141,15 +141,15 @@ ALTER TYPE public.point2d OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16633'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16641'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16632'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16640'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16631'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16639'::pg_catalog.oid);
 
 CREATE TYPE public.boxed_point AS (
 	label text,
@@ -165,15 +165,15 @@ ALTER TYPE public.boxed_point OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16486'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16494'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16485'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16493'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16484'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16492'::pg_catalog.oid);
 
 CREATE TYPE public.collated_pair AS (
 	plain text,
@@ -189,15 +189,15 @@ ALTER TYPE public.collated_pair OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16654'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16662'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16653'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16661'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16652'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16660'::pg_catalog.oid);
 
 CREATE TYPE public.dated AS (
 	label text,
@@ -230,15 +230,15 @@ ALTER DOMAIN public.derived_domain OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16552'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16560'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16551'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16559'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16550'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16558'::pg_catalog.oid);
 
 CREATE TYPE public.empty_comp AS (
 );
@@ -308,11 +308,11 @@ ALTER TYPE public.mood OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16578'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16586'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16581'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16589'::pg_catalog.oid);
 
 CREATE TYPE public.mybase;
 
@@ -345,11 +345,11 @@ ALTER FUNCTION public.mybase_out(public.mybase) OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16578'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16586'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16581'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16589'::pg_catalog.oid);
 
 CREATE TYPE public.mybase (
     INTERNALLENGTH = variable,
@@ -368,11 +368,11 @@ ALTER TYPE public.mybase OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16601'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16609'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16600'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16608'::pg_catalog.oid);
 
 CREATE TYPE public.myrange AS RANGE (
     subtype = double precision
@@ -387,11 +387,11 @@ ALTER TYPE public.myrange OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16630'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16638'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16629'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16637'::pg_catalog.oid);
 
 CREATE DOMAIN public.pointdom AS public.point2d;
 
@@ -404,11 +404,11 @@ ALTER DOMAIN public.pointdom OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16635'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16643'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16634'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16642'::pg_catalog.oid);
 
 CREATE DOMAIN public.rangedom AS public.myrange;
 
@@ -421,7 +421,7 @@ ALTER DOMAIN public.rangedom OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16577'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16585'::pg_catalog.oid);
 
 CREATE TYPE public.shellonly;
 
@@ -434,15 +434,15 @@ ALTER TYPE public.shellonly OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16549'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16557'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16548'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16556'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16547'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16555'::pg_catalog.oid);
 
 CREATE TYPE public.tagged AS (
 	label text,
@@ -458,11 +458,11 @@ ALTER TYPE public.tagged OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16483'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16491'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16482'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16490'::pg_catalog.oid);
 
 CREATE DOMAIN public.text_c AS text COLLATE pg_catalog."C";
 
@@ -475,11 +475,11 @@ ALTER DOMAIN public.text_c OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16613'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16621'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16612'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16620'::pg_catalog.oid);
 
 CREATE TYPE public.textrange AS RANGE (
     subtype = text,
@@ -495,50 +495,6 @@ SET default_table_access_method = heap;
 
 --
 -- Name: t_array; Type: TABLE; Schema: public; Owner: postgres
---
-
-
--- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16522'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16521'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16524'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16520'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16523'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16525'::pg_catalog.oid);
-
-CREATE TABLE public.t_array (
-    id integer NOT NULL,
-    v_empty integer[],
-    v_with_null integer[],
-    v_null_array integer[],
-    v_text_special text[],
-    v_enum_array public.mood[]
-);
-
--- For binary upgrade, set heap's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '529', relminmxid = '1'
-WHERE oid = 'public.t_array'::pg_catalog.regclass;
-
--- For binary upgrade, set toast's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '529', relminmxid = '1'
-WHERE oid = '16523';
-
-
-ALTER TABLE public.t_array OWNER TO postgres;
-
---
--- Name: t_array_shape; Type: TABLE; Schema: public; Owner: postgres
 --
 
 
@@ -559,17 +515,19 @@ SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16528'::pg_catalog.
 SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16531'::pg_catalog.oid);
 SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16533'::pg_catalog.oid);
 
-CREATE TABLE public.t_array_shape (
+CREATE TABLE public.t_array (
     id integer NOT NULL,
-    v_multidim integer[],
-    v_mixed_dim integer[],
-    v_lbound integer[]
+    v_empty integer[],
+    v_with_null integer[],
+    v_null_array integer[],
+    v_text_special text[],
+    v_enum_array public.mood[]
 );
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
 SET relfrozenxid = '531', relminmxid = '1'
-WHERE oid = 'public.t_array_shape'::pg_catalog.regclass;
+WHERE oid = 'public.t_array'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
@@ -577,10 +535,10 @@ SET relfrozenxid = '531', relminmxid = '1'
 WHERE oid = '16531';
 
 
-ALTER TABLE public.t_array_shape OWNER TO postgres;
+ALTER TABLE public.t_array OWNER TO postgres;
 
 --
--- Name: t_array_spelling; Type: TABLE; Schema: public; Owner: postgres
+-- Name: t_array_shape; Type: TABLE; Schema: public; Owner: postgres
 --
 
 
@@ -601,6 +559,48 @@ SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16536'::pg_catalog.
 SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16539'::pg_catalog.oid);
 SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16541'::pg_catalog.oid);
 
+CREATE TABLE public.t_array_shape (
+    id integer NOT NULL,
+    v_multidim integer[],
+    v_mixed_dim integer[],
+    v_lbound integer[]
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '533', relminmxid = '1'
+WHERE oid = 'public.t_array_shape'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '533', relminmxid = '1'
+WHERE oid = '16539';
+
+
+ALTER TABLE public.t_array_shape OWNER TO postgres;
+
+--
+-- Name: t_array_spelling; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16546'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16545'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type toast oid
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16548'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16544'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16547'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16549'::pg_catalog.oid);
+
 CREATE TABLE public.t_array_spelling (
     id integer NOT NULL,
     v_bounded integer[],
@@ -611,13 +611,13 @@ CREATE TABLE public.t_array_spelling (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '533', relminmxid = '1'
+SET relfrozenxid = '535', relminmxid = '1'
 WHERE oid = 'public.t_array_spelling'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '533', relminmxid = '1'
-WHERE oid = '16539';
+SET relfrozenxid = '535', relminmxid = '1'
+WHERE oid = '16547';
 
 
 ALTER TABLE public.t_array_spelling OWNER TO postgres;
@@ -628,21 +628,21 @@ ALTER TABLE public.t_array_spelling OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16584'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16592'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16583'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16591'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16586'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16594'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16582'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16585'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16587'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16590'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16593'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16595'::pg_catalog.oid);
 
 CREATE TABLE public.t_base_type (
     id integer NOT NULL,
@@ -652,19 +652,19 @@ CREATE TABLE public.t_base_type (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '549', relminmxid = '1'
+SET relfrozenxid = '551', relminmxid = '1'
 WHERE oid = 'public.t_base_type'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '549', relminmxid = '1'
-WHERE oid = '16585';
+SET relfrozenxid = '551', relminmxid = '1'
+WHERE oid = '16593';
 
 
 ALTER TABLE public.t_base_type OWNER TO postgres;
 
 --
--- Name: t_bytea; Type: TABLE; Schema: public; Owner: postgres
+-- Name: t_bit; Type: TABLE; Schema: public; Owner: postgres
 --
 
 
@@ -685,6 +685,50 @@ SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16461'::pg_catalog.
 SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16464'::pg_catalog.oid);
 SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16466'::pg_catalog.oid);
 
+CREATE TABLE public.t_bit (
+    id integer NOT NULL,
+    v_bit bit(1),
+    v_bit3 bit(3),
+    v_varbit bit varying,
+    v_varbit5 bit varying(5),
+    v_bit_any "bit"
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '511', relminmxid = '1'
+WHERE oid = 'public.t_bit'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '511', relminmxid = '1'
+WHERE oid = '16464';
+
+
+ALTER TABLE public.t_bit OWNER TO postgres;
+
+--
+-- Name: t_bytea; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16471'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16470'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type toast oid
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16473'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16469'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16472'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16474'::pg_catalog.oid);
+
 CREATE TABLE public.t_bytea (
     id integer NOT NULL,
     v_bytea bytea
@@ -692,13 +736,13 @@ CREATE TABLE public.t_bytea (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '511', relminmxid = '1'
+SET relfrozenxid = '513', relminmxid = '1'
 WHERE oid = 'public.t_bytea'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '511', relminmxid = '1'
-WHERE oid = '16464';
+SET relfrozenxid = '513', relminmxid = '1'
+WHERE oid = '16472';
 
 
 ALTER TABLE public.t_bytea OWNER TO postgres;
@@ -709,21 +753,21 @@ ALTER TABLE public.t_bytea OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16491'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16499'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16490'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16498'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16495'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16503'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16489'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16494'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16496'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16497'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16502'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16504'::pg_catalog.oid);
 
 CREATE TABLE public.t_collate (
     id integer NOT NULL,
@@ -742,62 +786,19 @@ CREATE TABLE public.t_collate (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '521', relminmxid = '1'
+SET relfrozenxid = '523', relminmxid = '1'
 WHERE oid = 'public.t_collate'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '521', relminmxid = '1'
-WHERE oid = '16494';
+SET relfrozenxid = '523', relminmxid = '1'
+WHERE oid = '16502';
 
 
 ALTER TABLE public.t_collate OWNER TO postgres;
 
 --
 -- Name: t_composite; Type: TABLE; Schema: public; Owner: postgres
---
-
-
--- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16555'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16554'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16557'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16553'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16556'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16558'::pg_catalog.oid);
-
-CREATE TABLE public.t_composite (
-    id integer NOT NULL,
-    v_point public.point2d,
-    v_points public.point2d[],
-    v_tagged public.tagged,
-    v_empty_comp public.empty_comp
-);
-
--- For binary upgrade, set heap's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '538', relminmxid = '1'
-WHERE oid = 'public.t_composite'::pg_catalog.regclass;
-
--- For binary upgrade, set toast's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '538', relminmxid = '1'
-WHERE oid = '16556';
-
-
-ALTER TABLE public.t_composite OWNER TO postgres;
-
---
--- Name: t_composite_matrix; Type: TABLE; Schema: public; Owner: postgres
 --
 
 
@@ -818,6 +819,49 @@ SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16561'::pg_catalog.
 SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16564'::pg_catalog.oid);
 SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16566'::pg_catalog.oid);
 
+CREATE TABLE public.t_composite (
+    id integer NOT NULL,
+    v_point public.point2d,
+    v_points public.point2d[],
+    v_tagged public.tagged,
+    v_empty_comp public.empty_comp
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '540', relminmxid = '1'
+WHERE oid = 'public.t_composite'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '540', relminmxid = '1'
+WHERE oid = '16564';
+
+
+ALTER TABLE public.t_composite OWNER TO postgres;
+
+--
+-- Name: t_composite_matrix; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16571'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16570'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type toast oid
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16573'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16569'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16572'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16574'::pg_catalog.oid);
+
 CREATE TABLE public.t_composite_matrix (
     id integer NOT NULL,
     v_tagged public.tagged
@@ -825,13 +869,13 @@ CREATE TABLE public.t_composite_matrix (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '540', relminmxid = '1'
+SET relfrozenxid = '542', relminmxid = '1'
 WHERE oid = 'public.t_composite_matrix'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '540', relminmxid = '1'
-WHERE oid = '16564';
+SET relfrozenxid = '542', relminmxid = '1'
+WHERE oid = '16572';
 
 
 ALTER TABLE public.t_composite_matrix OWNER TO postgres;
@@ -871,21 +915,21 @@ ALTER TABLE public.t_date OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16594'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16602'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16593'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16601'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16596'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16604'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16592'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16595'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16597'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16600'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16603'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16605'::pg_catalog.oid);
 
 CREATE TABLE public.t_delimiter (
     id integer NOT NULL,
@@ -895,13 +939,13 @@ CREATE TABLE public.t_delimiter (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '552', relminmxid = '1'
+SET relfrozenxid = '554', relminmxid = '1'
 WHERE oid = 'public.t_delimiter'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '552', relminmxid = '1'
-WHERE oid = '16595';
+SET relfrozenxid = '554', relminmxid = '1'
+WHERE oid = '16603';
 
 
 ALTER TABLE public.t_delimiter OWNER TO postgres;
@@ -912,15 +956,15 @@ ALTER TABLE public.t_delimiter OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16517'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16525'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16516'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16524'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16515'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16523'::pg_catalog.oid);
 
 CREATE TABLE public.t_enum_domain (
     id integer NOT NULL,
@@ -931,7 +975,7 @@ CREATE TABLE public.t_enum_domain (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '527', relminmxid = '1'
+SET relfrozenxid = '529', relminmxid = '1'
 WHERE oid = 'public.t_enum_domain'::pg_catalog.regclass;
 
 
@@ -943,21 +987,21 @@ ALTER TABLE public.t_enum_domain OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16646'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16654'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16645'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16653'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16648'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16656'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16644'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16647'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16649'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16652'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16655'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16657'::pg_catalog.oid);
 
 CREATE TABLE public.t_extremes (
     id integer NOT NULL,
@@ -982,13 +1026,13 @@ CREATE TABLE public.t_extremes (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '567', relminmxid = '1'
+SET relfrozenxid = '569', relminmxid = '1'
 WHERE oid = 'public.t_extremes'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '567', relminmxid = '1'
-WHERE oid = '16647';
+SET relfrozenxid = '569', relminmxid = '1'
+WHERE oid = '16655';
 
 
 ALTER TABLE public.t_extremes OWNER TO postgres;
@@ -999,21 +1043,21 @@ ALTER TABLE public.t_extremes OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16657'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16665'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16656'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16664'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16659'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16667'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16655'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16658'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16660'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16663'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16666'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16668'::pg_catalog.oid);
 
 CREATE TABLE public.t_extremes_nested (
     id integer NOT NULL,
@@ -1025,13 +1069,13 @@ CREATE TABLE public.t_extremes_nested (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '575', relminmxid = '1'
+SET relfrozenxid = '577', relminmxid = '1'
 WHERE oid = 'public.t_extremes_nested'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '575', relminmxid = '1'
-WHERE oid = '16658';
+SET relfrozenxid = '577', relminmxid = '1'
+WHERE oid = '16666';
 
 
 ALTER TABLE public.t_extremes_nested OWNER TO postgres;
@@ -1161,93 +1205,6 @@ ALTER TABLE public.t_interval OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16501'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16500'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16503'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16499'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16502'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16504'::pg_catalog.oid);
-
-CREATE TABLE public.t_json (
-    id integer NOT NULL,
-    v_json json,
-    v_jsonb jsonb
-);
-
--- For binary upgrade, set heap's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '523', relminmxid = '1'
-WHERE oid = 'public.t_json'::pg_catalog.regclass;
-
--- For binary upgrade, set toast's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '523', relminmxid = '1'
-WHERE oid = '16502';
-
-
-ALTER TABLE public.t_json OWNER TO postgres;
-
---
--- Name: t_nested_array; Type: TABLE; Schema: public; Owner: postgres
---
-
-
--- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16638'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16637'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16640'::pg_catalog.oid);
-
-
--- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16636'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16639'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16641'::pg_catalog.oid);
-
-CREATE TABLE public.t_nested_array (
-    id integer NOT NULL,
-    v_nested_array public.intarr[],
-    v_arr_holder public.arr_holder,
-    v_pointdom public.pointdom,
-    v_pointdom_array public.pointdom[],
-    v_boxed_point public.boxed_point,
-    v_myrange_array public.myrange[],
-    v_rangedom public.rangedom
-);
-
--- For binary upgrade, set heap's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '565', relminmxid = '1'
-WHERE oid = 'public.t_nested_array'::pg_catalog.regclass;
-
--- For binary upgrade, set toast's relfrozenxid and relminmxid
-UPDATE pg_catalog.pg_class
-SET relfrozenxid = '565', relminmxid = '1'
-WHERE oid = '16639';
-
-
-ALTER TABLE public.t_nested_array OWNER TO postgres;
-
---
--- Name: t_net; Type: TABLE; Schema: public; Owner: postgres
---
-
-
--- For binary upgrade, must preserve pg_type oid
 SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16509'::pg_catalog.oid);
 
 
@@ -1264,6 +1221,93 @@ SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16507'::pg_catalog.
 SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16510'::pg_catalog.oid);
 SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16512'::pg_catalog.oid);
 
+CREATE TABLE public.t_json (
+    id integer NOT NULL,
+    v_json json,
+    v_jsonb jsonb
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '525', relminmxid = '1'
+WHERE oid = 'public.t_json'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '525', relminmxid = '1'
+WHERE oid = '16510';
+
+
+ALTER TABLE public.t_json OWNER TO postgres;
+
+--
+-- Name: t_nested_array; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16646'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16645'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type toast oid
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16648'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16644'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16647'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16649'::pg_catalog.oid);
+
+CREATE TABLE public.t_nested_array (
+    id integer NOT NULL,
+    v_nested_array public.intarr[],
+    v_arr_holder public.arr_holder,
+    v_pointdom public.pointdom,
+    v_pointdom_array public.pointdom[],
+    v_boxed_point public.boxed_point,
+    v_myrange_array public.myrange[],
+    v_rangedom public.rangedom
+);
+
+-- For binary upgrade, set heap's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '567', relminmxid = '1'
+WHERE oid = 'public.t_nested_array'::pg_catalog.regclass;
+
+-- For binary upgrade, set toast's relfrozenxid and relminmxid
+UPDATE pg_catalog.pg_class
+SET relfrozenxid = '567', relminmxid = '1'
+WHERE oid = '16647';
+
+
+ALTER TABLE public.t_nested_array OWNER TO postgres;
+
+--
+-- Name: t_net; Type: TABLE; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_type oid
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16517'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type array oid
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16516'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_type toast oid
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16519'::pg_catalog.oid);
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16515'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16518'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16520'::pg_catalog.oid);
+
 CREATE TABLE public.t_net (
     id integer NOT NULL,
     v_inet inet,
@@ -1274,13 +1318,13 @@ CREATE TABLE public.t_net (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '525', relminmxid = '1'
+SET relfrozenxid = '527', relminmxid = '1'
 WHERE oid = 'public.t_net'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '525', relminmxid = '1'
-WHERE oid = '16510';
+SET relfrozenxid = '527', relminmxid = '1'
+WHERE oid = '16518';
 
 
 ALTER TABLE public.t_net OWNER TO postgres;
@@ -1363,21 +1407,21 @@ ALTER TABLE public.t_oid OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16571'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16579'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16570'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16578'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16573'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16581'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16569'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16572'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16574'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16577'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16580'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16582'::pg_catalog.oid);
 
 CREATE TABLE public.t_range (
     id integer NOT NULL,
@@ -1386,13 +1430,13 @@ CREATE TABLE public.t_range (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '542', relminmxid = '1'
+SET relfrozenxid = '544', relminmxid = '1'
 WHERE oid = 'public.t_range'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '542', relminmxid = '1'
-WHERE oid = '16572';
+SET relfrozenxid = '544', relminmxid = '1'
+WHERE oid = '16580';
 
 
 ALTER TABLE public.t_range OWNER TO postgres;
@@ -1403,21 +1447,21 @@ ALTER TABLE public.t_range OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16476'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16484'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16475'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16483'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16478'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16486'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16474'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16477'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16479'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16482'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16485'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16487'::pg_catalog.oid);
 
 CREATE TABLE public.t_text (
     id integer NOT NULL,
@@ -1428,13 +1472,13 @@ CREATE TABLE public.t_text (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '515', relminmxid = '1'
+SET relfrozenxid = '517', relminmxid = '1'
 WHERE oid = 'public.t_text'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '515', relminmxid = '1'
-WHERE oid = '16477';
+SET relfrozenxid = '517', relminmxid = '1'
+WHERE oid = '16485';
 
 
 ALTER TABLE public.t_text OWNER TO postgres;
@@ -1445,21 +1489,21 @@ ALTER TABLE public.t_text OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16618'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16626'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16617'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16625'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16620'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16628'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16616'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16619'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16621'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16624'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16627'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16629'::pg_catalog.oid);
 
 CREATE TABLE public.t_text_range (
     id integer NOT NULL,
@@ -1468,13 +1512,13 @@ CREATE TABLE public.t_text_range (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '558', relminmxid = '1'
+SET relfrozenxid = '560', relminmxid = '1'
 WHERE oid = 'public.t_text_range'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '558', relminmxid = '1'
-WHERE oid = '16619';
+SET relfrozenxid = '560', relminmxid = '1'
+WHERE oid = '16627';
 
 
 ALTER TABLE public.t_text_range OWNER TO postgres;
@@ -1591,21 +1635,21 @@ ALTER TABLE public.t_type_spelling OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16606'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16614'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16605'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16613'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type toast oid
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16608'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_type_oid('16616'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16604'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16607'::pg_catalog.oid);
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16609'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16612'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_toast_pg_class_oid('16615'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16617'::pg_catalog.oid);
 
 CREATE TABLE public.t_user_range (
     id integer NOT NULL,
@@ -1614,13 +1658,13 @@ CREATE TABLE public.t_user_range (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '555', relminmxid = '1'
+SET relfrozenxid = '557', relminmxid = '1'
 WHERE oid = 'public.t_user_range'::pg_catalog.regclass;
 
 -- For binary upgrade, set toast's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '555', relminmxid = '1'
-WHERE oid = '16607';
+SET relfrozenxid = '557', relminmxid = '1'
+WHERE oid = '16615';
 
 
 ALTER TABLE public.t_user_range OWNER TO postgres;
@@ -1631,15 +1675,15 @@ ALTER TABLE public.t_user_range OWNER TO postgres;
 
 
 -- For binary upgrade, must preserve pg_type oid
-SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16471'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16479'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_type array oid
-SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16470'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_array_pg_type_oid('16478'::pg_catalog.oid);
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16469'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_heap_pg_class_oid('16477'::pg_catalog.oid);
 
 CREATE TABLE public.t_uuid (
     id integer NOT NULL,
@@ -1648,7 +1692,7 @@ CREATE TABLE public.t_uuid (
 
 -- For binary upgrade, set heap's relfrozenxid and relminmxid
 UPDATE pg_catalog.pg_class
-SET relfrozenxid = '513', relminmxid = '1'
+SET relfrozenxid = '515', relminmxid = '1'
 WHERE oid = 'public.t_uuid'::pg_catalog.regclass;
 
 
@@ -1693,6 +1737,17 @@ COPY public.t_array_spelling (id, v_bounded, v_bounded_2d, v_array_kw, v_array_k
 COPY public.t_base_type (id, v_mybase, v_mybase_array) FROM stdin;
 1	hello	{hello,"a,b"}
 2	\N	\N
+\.
+
+
+--
+-- Data for Name: t_bit; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_bit (id, v_bit, v_bit3, v_varbit, v_varbit5, v_bit_any) FROM stdin;
+1	1	101		10101	1100110011
+2	0	000	1010101010101010101010101010101010101010	1	1
+3	\N	\N	\N	\N	\N
 \.
 
 
@@ -2043,7 +2098,7 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16526'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16534'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_array
     ADD CONSTRAINT t_array_pkey PRIMARY KEY (id);
@@ -2055,7 +2110,7 @@ ALTER TABLE ONLY public.t_array
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16534'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16542'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_array_shape
     ADD CONSTRAINT t_array_shape_pkey PRIMARY KEY (id);
@@ -2067,7 +2122,7 @@ ALTER TABLE ONLY public.t_array_shape
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16542'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16550'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_array_spelling
     ADD CONSTRAINT t_array_spelling_pkey PRIMARY KEY (id);
@@ -2079,10 +2134,22 @@ ALTER TABLE ONLY public.t_array_spelling
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16588'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16596'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_base_type
     ADD CONSTRAINT t_base_type_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: t_bit t_bit_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+
+-- For binary upgrade, must preserve pg_class oids
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16467'::pg_catalog.oid);
+
+ALTER TABLE ONLY public.t_bit
+    ADD CONSTRAINT t_bit_pkey PRIMARY KEY (id);
 
 
 --
@@ -2091,7 +2158,7 @@ ALTER TABLE ONLY public.t_base_type
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16467'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16475'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_bytea
     ADD CONSTRAINT t_bytea_pkey PRIMARY KEY (id);
@@ -2103,7 +2170,7 @@ ALTER TABLE ONLY public.t_bytea
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16497'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16505'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_collate
     ADD CONSTRAINT t_collate_pkey PRIMARY KEY (id);
@@ -2115,7 +2182,7 @@ ALTER TABLE ONLY public.t_collate
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16567'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16575'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_composite_matrix
     ADD CONSTRAINT t_composite_matrix_pkey PRIMARY KEY (id);
@@ -2127,7 +2194,7 @@ ALTER TABLE ONLY public.t_composite_matrix
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16559'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16567'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_composite
     ADD CONSTRAINT t_composite_pkey PRIMARY KEY (id);
@@ -2151,7 +2218,7 @@ ALTER TABLE ONLY public.t_date
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16598'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16606'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_delimiter
     ADD CONSTRAINT t_delimiter_pkey PRIMARY KEY (id);
@@ -2163,7 +2230,7 @@ ALTER TABLE ONLY public.t_delimiter
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16518'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16526'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_enum_domain
     ADD CONSTRAINT t_enum_domain_pkey PRIMARY KEY (id);
@@ -2175,7 +2242,7 @@ ALTER TABLE ONLY public.t_enum_domain
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16661'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16669'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_extremes_nested
     ADD CONSTRAINT t_extremes_nested_pkey PRIMARY KEY (id);
@@ -2187,7 +2254,7 @@ ALTER TABLE ONLY public.t_extremes_nested
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16650'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16658'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_extremes
     ADD CONSTRAINT t_extremes_pkey PRIMARY KEY (id);
@@ -2247,7 +2314,7 @@ ALTER TABLE ONLY public.t_interval
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16505'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16513'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_json
     ADD CONSTRAINT t_json_pkey PRIMARY KEY (id);
@@ -2259,7 +2326,7 @@ ALTER TABLE ONLY public.t_json
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16642'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16650'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_nested_array
     ADD CONSTRAINT t_nested_array_pkey PRIMARY KEY (id);
@@ -2271,7 +2338,7 @@ ALTER TABLE ONLY public.t_nested_array
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16513'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16521'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_net
     ADD CONSTRAINT t_net_pkey PRIMARY KEY (id);
@@ -2307,7 +2374,7 @@ ALTER TABLE ONLY public.t_oid
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16575'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16583'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_range
     ADD CONSTRAINT t_range_pkey PRIMARY KEY (id);
@@ -2319,7 +2386,7 @@ ALTER TABLE ONLY public.t_range
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16480'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16488'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_text
     ADD CONSTRAINT t_text_pkey PRIMARY KEY (id);
@@ -2331,7 +2398,7 @@ ALTER TABLE ONLY public.t_text
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16622'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16630'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_text_range
     ADD CONSTRAINT t_text_range_pkey PRIMARY KEY (id);
@@ -2379,7 +2446,7 @@ ALTER TABLE ONLY public.t_type_spelling
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16610'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16618'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_user_range
     ADD CONSTRAINT t_user_range_pkey PRIMARY KEY (id);
@@ -2391,7 +2458,7 @@ ALTER TABLE ONLY public.t_user_range
 
 
 -- For binary upgrade, must preserve pg_class oids
-SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16472'::pg_catalog.oid);
+SELECT pg_catalog.binary_upgrade_set_next_index_pg_class_oid('16480'::pg_catalog.oid);
 
 ALTER TABLE ONLY public.t_uuid
     ADD CONSTRAINT t_uuid_pkey PRIMARY KEY (id);
@@ -2401,5 +2468,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 7jrT1SFKxMIKRGRQSJqxhSo9b1KpUwFN18zZqigvqeu0RPitxytGFiGxIFC7GVm
+\unrestrict yn0sE9hhH9Kx1O5V6mHhW6xXFTVtcAnjF4KZFfGh8ffDGiCLQxagP8MVWCN3aqd
 

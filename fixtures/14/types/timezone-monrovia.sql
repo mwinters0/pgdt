@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict dta6pUjkpp5HaSkq5XjYdi46es1JtaJ0D6pKWroI3VVNdj0lZEDTKqijOBa2smG
+\restrict iKNtt7aqQUwxWfgqKupkW7r320a5H5s8AQtHIoK2LzkJnehxAfsebHusClEgYDZ
 
 -- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
 -- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
@@ -346,6 +346,22 @@ CREATE TABLE public.t_base_type (
 
 
 ALTER TABLE public.t_base_type OWNER TO postgres;
+
+--
+-- Name: t_bit; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_bit (
+    id integer NOT NULL,
+    v_bit bit(1),
+    v_bit3 bit(3),
+    v_varbit bit varying,
+    v_varbit5 bit varying(5),
+    v_bit_any "bit"
+);
+
+
+ALTER TABLE public.t_bit OWNER TO postgres;
 
 --
 -- Name: t_bytea; Type: TABLE; Schema: public; Owner: postgres
@@ -776,6 +792,17 @@ COPY public.t_base_type (id, v_mybase, v_mybase_array) FROM stdin;
 
 
 --
+-- Data for Name: t_bit; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_bit (id, v_bit, v_bit3, v_varbit, v_varbit5, v_bit_any) FROM stdin;
+1	1	101		10101	1100110011
+2	0	000	1010101010101010101010101010101010101010	1	1
+3	\N	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_bytea; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1160,6 +1187,14 @@ ALTER TABLE ONLY public.t_base_type
 
 
 --
+-- Name: t_bit t_bit_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_bit
+    ADD CONSTRAINT t_bit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_bytea t_bytea_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1379,5 +1414,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dta6pUjkpp5HaSkq5XjYdi46es1JtaJ0D6pKWroI3VVNdj0lZEDTKqijOBa2smG
+\unrestrict iKNtt7aqQUwxWfgqKupkW7r320a5H5s8AQtHIoK2LzkJnehxAfsebHusClEgYDZ
 

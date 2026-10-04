@@ -51,7 +51,7 @@ built-in type with no reader is outside the strict promise by scope".
 - **No fixture holds a column of any type this slice reads**: a
   `pg_node_tree` column can only be made from a catalog, and the rest would
   each be a fixture column whose only evidence is that nothing is refused.
-  The source reading is the evidence (I78, I79), as for `KD95`'s spellings.
+  The source reading is the evidence (I78, I79).
 - **An unqualified name `pg_catalog` holds no type under is
   `UndeclaredType`**, where 31.21 called it `NoReader`: a hand-written dump
   may name a type its search path finds, and pgdt cannot tell which.
