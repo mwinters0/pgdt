@@ -27,15 +27,14 @@ What the slices after this one inherit. The spec is
 
 ## Rules the spec did not state, and why
 
-- **A buffer whose `data` an execute call reads is a query, and nothing
-  appended to it is a row.** Read literally, "every string constant passed to
-  a buffer-append call" takes in every catalog query the type emitters build
-  (`SELECT … FROM pg_catalog.pg_enum`), none of which a dump holds. The rule
-  checks itself: a query buffer read anywhere else is a problem the
-  extraction stops on, and none is, in the listed functions at any of the six
-  releases. **So `setup_connection` yields no row at any major** — every
-  statement it builds goes to the server — and the test pins that it is the
-  only listed function contributing nothing.
+- **An append a catalog query's text is no row.** Read literally, "every
+  string constant passed to a buffer-append call" takes in every catalog
+  query the type emitters build (`SELECT … FROM pg_catalog.pg_enum`), none of
+  which a dump holds. 31.30 made the rule per append
+  ([`roadmap-P31.30-function-list-notes.md`](roadmap-P31.30-function-list-notes.md)).
+  **`setup_connection` yields no row at any major** — every statement it
+  builds goes to the server — and the test pins that it is the only listed
+  function contributing nothing.
 - **`MIN_RUN` binds a plain constant as well as a format run.** A constant
   under three characters is punctuation every fixture holds.
 - **A constant inside `PQfnumber`/`PQgetvalue`/`PQgetisnull` names a result
@@ -57,15 +56,11 @@ What the slices after this one inherit. The spec is
 - **A format string's longest run is often its least telling word**:
   `CREATE %s%s %s` contributes `CREATE `, and the distinguishing bytes are
   its argument constants (`UNLOGGED `), which is why those are rows.
-- **A spelling selected by a constant under three characters is invisible**:
+- **A spelling selected by a short constant is not asked by its row**:
   `_doSetFixedOutputState`'s `standard_conforming_strings` writes `on` or
-  `off` as an argument, so even a listed emitter would leave `off` unasked.
-  That is the value-form half's kind of fact, not the literal half's.
-- **Widening the function list trips the query-buffer check**:
-  `_selectOutputSchema`, `_selectTablespace`, `_selectTableAccessMethod`,
-  `_printTableAccessMethodNoStorage`, `dumpTableData_copy`,
-  `dumpTableData_insert` and `dumpDatabase` each read one buffer both as a
-  query and as output (filed in P32's inbox, which owns the widening).
+  `off` as an argument, `on` under the minimum and `off` held by bytes any
+  fixture has. That is the value-form half's kind of fact, not the literal
+  half's; a flag set reaches it (`emitters/standard-conforming-strings-off`).
 
 ## Every uncovered row, classified
 

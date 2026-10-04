@@ -58,6 +58,39 @@ literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	ALTER FOREIGN TABLE 	ALTER FOR
 literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 REPLICA IDENTITY NOTHING;\n	\nALTER TABLE ONLY %s REPLICA IDENTITY NOTHING;\n
 literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 REPLICA IDENTITY FULL;\n	\nALTER TABLE ONLY %s REPLICA IDENTITY FULL;\n
 literal	src/bin/pg_dump/pg_dump.c	dumpTableSchema	 FORCE ROW LEVEL SECURITY;\n	\nALTER TABLE ONLY %s FORCE ROW LEVEL SECURITY;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableAttach	ALTER TABLE ONLY 	ALTER TABLE ONLY %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableAttach	ATTACH PARTITION 	ATTACH PARTITION %s %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData	-- load via partition root 	-- load via partition root %s
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData	COPY 	COPY %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData	 FROM stdin;\n	%s FROM stdin;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_copy	\\.\n\n\n	\\.\n\n\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	INSERT INTO 	INSERT INTO %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	DEFAULT VALUES;\n	DEFAULT VALUES;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	OVERRIDING SYSTEM VALUE 	OVERRIDING SYSTEM VALUE 
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	VALUES	VALUES
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	,\n\t(	,\n\t(
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	\n\t(	\n\t(
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	DEFAULT	DEFAULT
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	NULL	NULL
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	true	true
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	false	false
+literal	src/bin/pg_dump/pg_dump.c	dumpTableData_insert	 ON CONFLICT DO NOTHING;\n	 ON CONFLICT DO NOTHING;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	TABLE ONLY 	ALTER %sTABLE ONLY %s\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	    ADD CONSTRAINT 	    ADD CONSTRAINT %s 
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	PRIMARY KEY	PRIMARY KEY
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	UNIQUE	UNIQUE
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	) INCLUDE (	) INCLUDE (
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 WITH (	 WITH (
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 DEFERRABLE	 DEFERRABLE
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 INITIALLY DEFERRED	 INITIALLY DEFERRED
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	\nALTER TABLE 	\nALTER TABLE %s CLUSTER
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 ON 	 ON %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 REPLICA IDENTITY USING	\nALTER TABLE ONLY %s REPLICA IDENTITY USING
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	 INDEX 	 INDEX %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	DROP CONSTRAINT 	DROP CONSTRAINT %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	ALTER 	ALTER %sTABLE %s%s\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	ALTER DOMAIN 	ALTER DOMAIN %s\n
+literal	src/bin/pg_dump/pg_dump.c	dumpConstraint	CONSTRAINT 	CONSTRAINT %s ON DOMAIN
 literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	CREATE TYPE 	CREATE TYPE %s AS (
 literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	 COLLATE 	 COLLATE %s
 literal	src/bin/pg_dump/pg_dump.c	dumpCompositeType	 INTEGER /* dummy */	%s INTEGER /* dummy */
@@ -120,6 +153,44 @@ literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = extended	,\n    
 literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    STORAGE = main	,\n    STORAGE = main
 literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	,\n    PASSEDBYVALUE	,\n    PASSEDBYVALUE
 literal	src/bin/pg_dump/pg_dump.c	dumpBaseType	\n);\n	\n);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpShellType	CREATE TYPE 	CREATE TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpUndefinedType	DROP TYPE 	DROP TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpUndefinedType	CREATE TYPE 	CREATE TYPE %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	DROP EXTENSION 	DROP EXTENSION %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	CREATE EXTENSION IF NOT EXISTS 	CREATE EXTENSION IF NOT EXISTS %s WITH SCHEMA %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	-- For binary upgrade, create an empty extension and insert objects into it\n	-- For binary upgrade, create an empty extension and insert objects into it\n
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	DROP EXTENSION IF EXISTS 	DROP EXTENSION IF EXISTS %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	SELECT pg_catalog.binary_upgrade_create_empty_extension(	SELECT pg_catalog.binary_upgrade_create_empty_extension(
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	true	true
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	false	false
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	NULL	NULL
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	ARRAY[	ARRAY[
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	]::pg_catalog.text[]	]::pg_catalog.text[]
+literal	src/bin/pg_dump/pg_dump.c	dumpExtension	);\n	);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	DROP COLLATION 	DROP COLLATION %s;\n
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	CREATE COLLATION 	CREATE COLLATION %s (
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	provider = 	provider = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	libc	libc
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	icu	icu
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	default	default
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	, deterministic = false	, deterministic = false
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	, locale = 	, locale = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	, lc_collate = 	, lc_collate = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	, lc_ctype = 	, lc_ctype = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	, version = 	, version = 
+literal	src/bin/pg_dump/pg_dump.c	dumpCollation	);\n	);\n
+literal	src/bin/pg_dump/pg_dump.c	dumpSearchPath	SELECT pg_catalog.set_config('search_path', 	SELECT pg_catalog.set_config('search_path', 
+literal	src/bin/pg_dump/pg_dump.c	dumpSearchPath	, false);\n	, false);\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	--\n-- PostgreSQL database dump\n--\n\n	--\n-- PostgreSQL database dump\n--\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	\\restrict 	\\restrict %s\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	-- Dumped from database version 	-- Dumped from database version %s\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	-- Dumped by pg_dump version 	-- Dumped by pg_dump version %s\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	BEGIN;\n\n	BEGIN;\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	ALTER TABLE IF EXISTS	ALTER TABLE IF EXISTS
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	 IF EXISTS	%s%s IF EXISTS%s
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	COMMIT;\n\n	COMMIT;\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	--\n-- PostgreSQL database dump complete\n--\n\n	--\n-- PostgreSQL database dump complete\n--\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	RestoreArchive	\\unrestrict 	\\unrestrict %s\n\n
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	--\n	--\n
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	-- TOC entry 	-- TOC entry %d (class %u OID %u)\n
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	-- Dependencies:	-- Dependencies:
@@ -129,10 +200,65 @@ literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	--\n\n	--\n\n
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	CREATE SCHEMA 	CREATE SCHEMA %s;\n\n\n
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	ALTER 	ALTER 
 literal	src/bin/pg_dump/pg_backup_archiver.c	_printTocEntry	 OWNER TO 	 OWNER TO %s;
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET statement_timeout = 0;\n	SET statement_timeout = 0;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET lock_timeout = 0;\n	SET lock_timeout = 0;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET idle_in_transaction_session_timeout = 0;\n	SET idle_in_transaction_session_timeout = 0;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET client_encoding = '	SET client_encoding = '%s';\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET standard_conforming_strings = 	SET standard_conforming_strings = %s;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	off	off
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET ROLE 	SET ROLE %s;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET check_function_bodies = false;\n	SET check_function_bodies = false;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET xmloption = content;\n	SET xmloption = content;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET client_min_messages = warning;\n	SET client_min_messages = warning;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET escape_string_warning = off;\n	SET escape_string_warning = off;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET row_security = on;\n	SET row_security = on;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetFixedOutputState	SET row_security = off;\n	SET row_security = off;\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetSessionAuth	SET SESSION AUTHORIZATION 	SET SESSION AUTHORIZATION 
+literal	src/bin/pg_dump/pg_backup_archiver.c	_doSetSessionAuth	DEFAULT	DEFAULT
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectOutputSchema	SET search_path = 	SET search_path = %s
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectOutputSchema	, pg_catalog	, pg_catalog
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectOutputSchema	;\n\n	%s;\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectTablespace	SET default_tablespace = ''	SET default_tablespace = ''
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectTablespace	SET default_tablespace = 	SET default_tablespace = %s
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectTablespace	;\n\n	%s;\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	_selectTableAccessMethod	SET default_table_access_method = 	SET default_table_access_method = %s;
+literal	src/bin/pg_dump/pg_backup_archiver.c	StartRestoreBlobs	BEGIN;\n\n	BEGIN;\n\n
+literal	src/bin/pg_dump/pg_backup_archiver.c	EndRestoreBlobs	COMMIT;\n\n	COMMIT;\n\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	REVOKE ALL	%sREVOKE ALL
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	 ON 	 ON %s 
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	 FROM PUBLIC;\n	%s FROM PUBLIC;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	REVOKE 	%sREVOKE %s ON %s 
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	 FROM 	%s FROM 
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	PUBLIC;\n	PUBLIC;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	GROUP 	GROUP %s;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	GRANT CONNECT ON 	%sGRANT CONNECT ON %s %s TO PUBLIC;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	GRANT 	%sGRANT %s ON %s 
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	 TO 	%s TO %s;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	 WITH GRANT OPTION;\n	%s TO %s WITH GRANT OPTION;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	SET SESSION AUTHORIZATION 	SET SESSION AUTHORIZATION %s;\n
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	PUBLIC	PUBLIC
+literal	src/bin/pg_dump/dumputils.c	buildACLCommands	RESET SESSION AUTHORIZATION;\n	RESET SESSION AUTHORIZATION;\n
+literal	src/bin/pg_dump/dumputils.c	buildDefaultACLCommands	ALTER DEFAULT PRIVILEGES FOR ROLE 	ALTER DEFAULT PRIVILEGES FOR ROLE %s 
+literal	src/bin/pg_dump/dumputils.c	buildDefaultACLCommands	IN SCHEMA 	IN SCHEMA %s 
+literal	src/bin/pg_dump/dumputils.c	buildDefaultACLCommands	SELECT pg_catalog.binary_upgrade_set_record_init_privs(true);\n	SELECT pg_catalog.binary_upgrade_set_record_init_privs(true);\n
+literal	src/bin/pg_dump/dumputils.c	buildDefaultACLCommands	SELECT pg_catalog.binary_upgrade_set_record_init_privs(false);\n	SELECT pg_catalog.binary_upgrade_set_record_init_privs(false);\n
 literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\encoding SQL_ASCII\n	\\encoding SQL_ASCII\n
 literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\connect -reuse-previous=on 	\\connect -reuse-previous=on 
 literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	dbname=	dbname=
 literal	src/fe_utils/string_utils.c	appendPsqlMetaConnect	\\connect 	\\connect 
+literal	src/bin/pg_dump/pg_dumpall.c	main	--\n-- PostgreSQL database cluster dump\n--\n\n	--\n-- PostgreSQL database cluster dump\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	\\restrict 	\\restrict %s\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	SET default_transaction_read_only = off;\n\n	SET default_transaction_read_only = off;\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	SET client_encoding = '	SET client_encoding = '%s';\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	SET standard_conforming_strings = 	SET standard_conforming_strings = %s;\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	SET escape_string_warning = off;\n	SET escape_string_warning = off;\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	\\unrestrict 	\\unrestrict %s\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	main	--\n-- PostgreSQL database cluster dump complete\n--\n\n	--\n-- PostgreSQL database cluster dump complete\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpRoleMembership	--\n-- Role memberships\n--\n\n	--\n-- Role memberships\n--\n\n
+literal	src/bin/pg_dump/pg_dumpall.c	dumpRoleMembership	GRANT 	GRANT %s
+literal	src/bin/pg_dump/pg_dumpall.c	dumpRoleMembership	 TO 	 TO %s
+literal	src/bin/pg_dump/pg_dumpall.c	dumpRoleMembership	 WITH ADMIN OPTION	 WITH ADMIN OPTION
+literal	src/bin/pg_dump/pg_dumpall.c	dumpRoleMembership	 GRANTED BY 	 GRANTED BY %s
 literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	--\n-- Tablespaces\n--\n\n	--\n-- Tablespaces\n--\n\n
 literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	CREATE TABLESPACE 	CREATE TABLESPACE %s
 literal	src/bin/pg_dump/pg_dumpall.c	dumpTablespaces	 OWNER 	 OWNER %s

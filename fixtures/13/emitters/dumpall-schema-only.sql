@@ -13,10 +13,21 @@ SET standard_conforming_strings = on;
 -- Roles
 --
 
+CREATE ROLE "emitters_grantor";
+ALTER ROLE "emitters_grantor" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE "emitters_member";
+ALTER ROLE "emitters_member" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE "emitters_other";
+ALTER ROLE "emitters_other" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE "postgres";
 ALTER ROLE "postgres" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS;
 
 
+--
+-- Role memberships
+--
+
+GRANT "emitters_grantor" TO "emitters_member" WITH ADMIN OPTION GRANTED BY "postgres";
 
 
 \unrestrict pgdtfixture
@@ -182,6 +193,13 @@ SET row_security = off;
 --
 
 CREATE SCHEMA "emitters";
+
+
+--
+-- Name: c_split; Type: COLLATION; Schema: emitters; Owner: -
+--
+
+CREATE COLLATION "emitters"."c_split" (provider = libc, lc_collate = 'C', lc_ctype = 'POSIX');
 
 
 --
@@ -590,6 +608,16 @@ ALTER TABLE ONLY "emitters"."child" ALTER COLUMN "label" SET NOT NULL;
 
 
 --
+-- Name: collated; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."collated" (
+    "id" integer,
+    "label" "text" COLLATE "emitters"."c_split"
+);
+
+
+--
 -- Name: delimited; Type: TABLE; Schema: emitters; Owner: -
 --
 
@@ -637,6 +665,49 @@ CREATE TABLE "emitters"."grown" (
     "id" integer NOT NULL,
     "b" "text",
     "added" "date" DEFAULT '2024-02-29'::"date"
+);
+
+
+--
+-- Name: identified; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."identified" (
+    "id" integer NOT NULL,
+    "label" "text"
+);
+
+
+--
+-- Name: identified_id_seq; Type: SEQUENCE; Schema: emitters; Owner: -
+--
+
+ALTER TABLE "emitters"."identified" ALTER COLUMN "id" ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME "emitters"."identified_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: keyed; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."keyed" (
+    "id" integer NOT NULL,
+    "code" "text",
+    "note" "text"
+);
+
+
+--
+-- Name: no_columns; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."no_columns" (
 );
 
 
@@ -774,6 +845,24 @@ ALTER TABLE ONLY "emitters"."domain_values"
 
 ALTER TABLE ONLY "emitters"."grown"
     ADD CONSTRAINT "grown_pkey" PRIMARY KEY ("id");
+
+
+--
+-- Name: keyed keyed_code_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."keyed"
+    ADD CONSTRAINT "keyed_code_key" UNIQUE ("code") INCLUDE ("note") DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: keyed keyed_id_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."keyed"
+    ADD CONSTRAINT "keyed_id_key" UNIQUE ("id");
+
+ALTER TABLE ONLY "emitters"."keyed" REPLICA IDENTITY USING INDEX "keyed_id_key";
 
 
 --

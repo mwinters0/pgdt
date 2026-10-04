@@ -23,9 +23,7 @@ import generate_fixtures as gf
 
 
 def rows_of(body: str, function: str = "f") -> list[str]:
-    rows, problems = er.literals(body, "x.c", function)
-    assert problems == [], problems
-    return [row.entry for row in rows]
+    return [row.entry for row in er.literals(body, "x.c", function)]
 
 
 class Lexing(unittest.TestCase):
@@ -95,15 +93,52 @@ class Literals(unittest.TestCase):
         }"""
         self.assertEqual(rows_of(body), ["CREATE TYPE "])
 
-    def test_a_query_buffer_also_read_as_output_is_a_problem(self):
+    def test_a_buffer_reset_after_its_query_is_output_after_the_reset(self):
         body = """{
-            appendPQExpBufferStr(query, "SELECT 1");
-            ExecuteSqlStatement(fout, query->data);
-            appendPQExpBufferStr(q, query->data);
+            appendPQExpBufferStr(query, "SELECT typname FROM pg_type");
+            res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+            resetPQExpBuffer(query);
+            appendPQExpBufferStr(query, "CREATE TYPE ");
+            ArchiveEntry(fout, query->data);
         }"""
-        _, problems = er.literals(body, "x.c", "f")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("query", problems[0])
+        self.assertEqual(rows_of(body), ["CREATE TYPE "])
+
+    def test_a_buffer_executed_when_connected_and_printed_otherwise_is_output(self):
+        # The archiver's helpers: `_selectTablespace` and its siblings.
+        body = """{
+            appendPQExpBuffer(qry, "SET default_tablespace = %s", want);
+            if (RestoringToDB(AH))
+                res = PQexec(AH->connection, qry->data);
+            else
+                ahprintf(AH, "%s;\\n\\n", qry->data);
+        }"""
+        self.assertEqual(rows_of(body), ["SET default_tablespace = ", ";\n\n"])
+
+    def test_a_query_quoted_by_a_diagnostic_stays_a_query(self):
+        body = """{
+            appendPQExpBufferStr(q, "COPY (SELECT ");
+            q->data[q->len - 1] = ' ';
+            res = ExecuteSqlQuery(fout, q->data, PGRES_COPY_OUT);
+            pg_log_error_detail("Command was: %s", q->data);
+            fprintf(stderr, "%s", q->data);
+        }"""
+        self.assertEqual(rows_of(body), [])
+
+    def test_a_buffer_nothing_here_reads_is_output(self):
+        # Handed out by pointer, as `appendPsqlMetaConnect`'s is.
+        self.assertEqual(rows_of('{ appendPQExpBufferStr(buf, "\\\\connect "); }'), ["\\connect "])
+
+    def test_a_shell_command_s_buffer_is_no_output(self):
+        body = """{
+            appendPQExpBufferStr(pgdumpopts, " --binary-upgrade");
+            appendShellString(pgdumpopts, optarg);
+            fprintf(OPF, "SET default_transaction_read_only = off;\\n\\n");
+        }"""
+        self.assertEqual(rows_of(body), ["SET default_transaction_read_only = off;\n\n"])
+
+    def test_a_string_measured_or_compared_is_no_row(self):
+        body = '{ appendPQExpBuffer(q, "GROUP %s;", fmtId(g->data + strlen("group "))); }'
+        self.assertEqual(rows_of(body), ["GROUP "])
 
     def test_a_result_column_s_name_is_no_row(self):
         body = '{ appendPQExpBuffer(q, ",\\n    x = %s", PQgetvalue(res, 0, PQfnumber(res, "rngtype"))); }'
@@ -114,8 +149,65 @@ class Literals(unittest.TestCase):
         self.assertEqual(rows_of(body), ["--\n-- Tablespaces\n"])
 
     def test_a_row_keeps_the_whole_constant_as_its_detail(self):
-        (row,), _ = er.literals('{ ahprintf(AH, "-- TOC entry %d (class %u)\\n", a, b); }', "x.c", "f")
+        (row,) = er.literals('{ ahprintf(AH, "-- TOC entry %d (class %u)\\n", a, b); }', "x.c", "f")
         self.assertEqual((row.entry, row.detail), ("-- TOC entry ", "-- TOC entry %d (class %u)\n"))
+
+
+class ReaderKeywords(unittest.TestCase):
+    def test_a_keyword_call_s_constant_is_a_keyword_in_any_case(self):
+        src = 'fn f(p: &mut Cursor) { p.eat_keyword(b"copy")?; strip_kw(s, "ATTACH"); x("plain"); }'
+        self.assertEqual(er.reader_keywords(src), ["copy", "ATTACH"])
+
+    def test_a_constant_shaped_as_a_keyword_is_one_anywhere(self):
+        src = r'''fn f() { let a = ["CREATE TABLE", "Name: "]; s.strip_prefix("-- Name: "); b"\\."; "\\connect "; b"\\N"; }'''
+        self.assertEqual(er.reader_keywords(src), ["CREATE TABLE", "-- Name: ", "\\.", "\\connect "])
+
+    def test_comments_and_the_test_module_are_not_read(self):
+        src = 'fn f() {} // strip_kw(s, "GONE")\n/* "ALSO GONE" */\n#[cfg(test)]\nmod tests { strip_kw(s, "TESTED"); }\n'
+        self.assertEqual(er.reader_keywords(src), [])
+
+    def test_a_lifetime_is_no_literal(self):
+        src = "fn f<'a>(s: &'a str) -> Option<&'a str> { strip_kw(s, \"GRANT \") }"
+        self.assertEqual(er.reader_keywords(src), ["GRANT "])
+
+    SOURCES = {"r.rs": 'fn f() { strip_kw(s, "ALTER TABLE"); strip_kw(s, "ONLY"); }'}
+
+    def test_each_keyword_has_a_row_naming_listed_emitters(self):
+        reads = (
+            er.Read("r.rs", "ALTER TABLE", ("dumpTableSchema",)),
+            er.Clause("r.rs", "ONLY", ("ALTER TABLE",)),
+        )
+        self.assertEqual(er.reads_problems(reads, self.SOURCES), [])
+
+    def test_a_keyword_with_no_row_fails(self):
+        reads = (er.Read("r.rs", "ALTER TABLE", ("dumpTableSchema",)),)
+        (problem,) = er.reads_problems(reads, self.SOURCES)
+        self.assertIn("'ONLY'", problem)
+
+    def test_a_row_the_reader_no_longer_holds_fails(self):
+        reads = (
+            er.Read("r.rs", "ALTER TABLE", ("dumpTableSchema",)),
+            er.Clause("r.rs", "ONLY", ("ALTER TABLE",)),
+            er.Read("r.rs", "ATTACH", ("dumpTableAttach",)),
+        )
+        (problem,) = er.reads_problems(reads, self.SOURCES)
+        self.assertIn("no longer recognises", problem)
+
+    def test_a_keyword_written_by_an_unlisted_function_fails(self):
+        reads = (
+            er.Read("r.rs", "ALTER TABLE", ("dumpTableSchema", "dumpSomethingNew")),
+            er.Clause("r.rs", "ONLY", ("ALTER TABLE",)),
+        )
+        (problem,) = er.reads_problems(reads, self.SOURCES)
+        self.assertIn("`dumpSomethingNew`", problem)
+
+    def test_a_clause_lies_within_a_read_of_its_own_reader(self):
+        reads = (
+            er.Read("r.rs", "ALTER TABLE", ("dumpTableSchema",)),
+            er.Clause("r.rs", "ONLY", ("CREATE TABLE",)),
+        )
+        (problem,) = er.reads_problems(reads, self.SOURCES)
+        self.assertIn("'CREATE TABLE'", problem)
 
 
 class Options(unittest.TestCase):
@@ -366,14 +458,21 @@ class Extracting(unittest.TestCase):
         self.assertIn("'18.0'", problems[0])
 
     def test_a_function_gone_from_the_tree_is_a_problem_not_a_shorter_register(self):
-        with TemporaryDirectory() as tmp:
-            checkout = Path(tmp)
-            for file, _ in er.FUNCTIONS:
-                (checkout / file).parent.mkdir(parents=True, exist_ok=True)
-                (checkout / file).write_text("static void\nunrelated(void)\n{\n}\n")
-            _, problems = er.extract(checkout)
-        expected = sum(len(names) for _, names in er.FUNCTIONS)
-        self.assertEqual(sum("no function" in p for p in problems), expected)
+        for major in ("13", "18"):
+            with self.subTest(major=major), TemporaryDirectory() as tmp:
+                checkout = Path(tmp)
+                for file, _ in er.FUNCTIONS:
+                    (checkout / file).parent.mkdir(parents=True, exist_ok=True)
+                    (checkout / file).write_text("static void\nunrelated(void)\n{\n}\n")
+                _, problems = er.extract(checkout, major)
+                expected = sum(e.at(major) for _, emitters in er.FUNCTIONS for e in emitters)
+                self.assertEqual(sum("no function" in p for p in problems), expected)
+
+    def test_a_function_is_asked_for_only_at_the_majors_it_exists_at(self):
+        attach = er.listed()["dumpTableAttach"]
+        self.assertEqual((attach.at("13"), attach.at("14"), attach.at("18")), (False, True, True))
+        blobs = er.listed()["StartRestoreBlobs"]
+        self.assertEqual((blobs.at("13"), blobs.at("15"), blobs.at("16")), (True, True, False))
 
 
 class CommittedTree(unittest.TestCase):
@@ -419,9 +518,25 @@ class CommittedTree(unittest.TestCase):
         for major in er.majors():
             register = er.parse((er.FIXTURES / major / er.REGISTER_NAME).read_text())
             seen = {r.function for r in register.rows if r.kind == "literal"}
-            listed = {name for _, names in er.FUNCTIONS for name in names}
+            listed = {e.name for _, emitters in er.FUNCTIONS for e in emitters if e.at(major)}
             with self.subTest(major=major):
                 self.assertEqual(listed - seen, {"setup_connection"})
+
+    def test_every_keyword_a_reader_recognises_maps_to_a_listed_emitter(self):
+        # The check that keeps FUNCTIONS on the spec's criterion: a reader
+        # taught a statement brings its emitter into the list.
+        self.assertEqual(er.reads_problems(), [])
+
+    def test_the_emitter_the_list_once_missed_is_read(self):
+        # `dumpTableAttach`, the drift the check exists for
+        # (docs/status/history/2026-10-04.md).
+        for major in er.majors():
+            register = er.parse((er.FIXTURES / major / er.REGISTER_NAME).read_text())
+            found = {(r.function, r.entry) for r in register.rows if r.kind == "literal"}
+            with self.subTest(major=major):
+                self.assertEqual(
+                    ("dumpTableAttach", "ATTACH PARTITION ") in found, int(major) >= 14
+                )
 
 
 if __name__ == "__main__":

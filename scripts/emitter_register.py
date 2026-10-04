@@ -22,13 +22,24 @@ remembered.
   literals (`INT64_FORMAT`) each ending a run, `%%` being a `%` inside one. A
   run under [`MIN_RUN`] characters is no entry, for a plain constant as for a
   format string: what it would assert is punctuation every fixture holds.
-* **What a function sends the server is not an emitter.** A buffer whose
-  `data` reaches an execute call ([`EXECUTE_CALLS`]) inside the same function
-  is a query buffer, and nothing appended to it is a row: a catalog query's
-  text is never in a dump. So `setup_connection`, every statement of which
-  goes to the server, contributes no row at any major; the settings it pins
-  are I4's. A query buffer whose `data` is read anywhere but an execute call
-  is a problem the extraction stops on, since its output would be dropped.
+* **What a function sends the server is not an emitter.** An append whose
+  buffer only execute calls ([`EXECUTE_CALLS`]) read after it, before the
+  buffer is next reset, is a query's text, and no row: a catalog query's text
+  is never in a dump ([`query_appends`]). So one buffer used for a query and
+  then for output, or executed when connected and printed otherwise, yields
+  its output's rows; a diagnostic quoting a buffer is neither, and a buffer
+  quoted into a shell command (`pg_dumpall`'s options for `pg_dump`) is no
+  output. `setup_connection`, every statement of which goes to the server,
+  contributes no row at any major; the settings it pins are I4's.
+* **The function list follows the readers.** [`FUNCTIONS`] lists the
+  functions whose output some pgdt reader consumes, each with the majors it
+  exists at, and [`READS`] maps every keyword the scanner, the `COPY` framing,
+  the lexer, the map and the preamble recognise ([`reader_keywords`], read
+  out of their Rust source) to the listed functions writing it, or to the
+  statement it is a clause of. A keyword with no row, a row no reader holds,
+  or a function a row names that the list lacks fails the join
+  ([`reads_problems`]), so a reader taught a statement brings its emitter
+  into the list.
 * **The option half.** Every entry of `pg_dump`'s and `pg_dumpall`'s
   `long_options` table, with its short letter where it has one. An option is
   covered when a flag set `generate_fixtures.py` runs at that major passes it,
@@ -104,28 +115,83 @@ REGISTER_NAME = "emitters.tsv"
 SOURCE_ENV = "PGDT_POSTGRES_SOURCE"
 DEFAULT_SOURCE = Path("/mnt/wd12t/upstream/postgres")
 
-#: The functions whose output some pgdt reader consumes, by file. A function
-#: missing from a major's tree is a problem, never a shorter register.
-FUNCTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+@dataclass(frozen=True)
+class Emitter:
+    """A listed function, and the majors it exists at: absent before `first`
+    and after `last`, and a problem only between them."""
+
+    name: str
+    first: str | None = None
+    last: str | None = None
+
+    def at(self, major: str) -> bool:
+        return (self.first is None or int(major) >= int(self.first)) and (
+            self.last is None or int(major) <= int(self.last)
+        )
+
+
+#: The functions whose output some pgdt reader consumes, by file: what
+#: [`READS`] names, and nothing it does not. A function missing from a major
+#: it should exist at is a problem, never a shorter register.
+FUNCTIONS: tuple[tuple[str, tuple[Emitter, ...]], ...] = (
     (
         "src/bin/pg_dump/pg_dump.c",
         (
-            "dumpTableSchema",
-            "dumpCompositeType",
-            "dumpEnumType",
-            "dumpRangeType",
-            "dumpDomain",
-            "dumpBaseType",
-            "setup_connection",
+            Emitter("dumpTableSchema"),
+            Emitter("dumpTableAttach", first="14"),
+            Emitter("dumpTableData"),
+            Emitter("dumpTableData_copy"),
+            Emitter("dumpTableData_insert"),
+            Emitter("dumpConstraint"),
+            Emitter("dumpCompositeType"),
+            Emitter("dumpEnumType"),
+            Emitter("dumpRangeType"),
+            Emitter("dumpDomain"),
+            Emitter("dumpBaseType"),
+            Emitter("dumpShellType"),
+            Emitter("dumpUndefinedType"),
+            Emitter("dumpExtension"),
+            Emitter("dumpCollation"),
+            Emitter("dumpSearchPath"),
+            Emitter("setup_connection"),
         ),
     ),
-    ("src/bin/pg_dump/pg_backup_archiver.c", ("_printTocEntry",)),
-    ("src/fe_utils/string_utils.c", ("appendPsqlMetaConnect",)),
+    (
+        "src/bin/pg_dump/pg_backup_archiver.c",
+        (
+            Emitter("RestoreArchive"),
+            Emitter("_printTocEntry"),
+            Emitter("_doSetFixedOutputState"),
+            Emitter("_doSetSessionAuth"),
+            Emitter("_selectOutputSchema"),
+            Emitter("_selectTablespace"),
+            Emitter("_selectTableAccessMethod"),
+            Emitter("StartRestoreBlobs", last="15"),
+            Emitter("EndRestoreBlobs", last="15"),
+            Emitter("StartRestoreLOs", first="16"),
+            Emitter("EndRestoreLOs", first="16"),
+        ),
+    ),
+    ("src/bin/pg_dump/dumputils.c", (Emitter("buildACLCommands"), Emitter("buildDefaultACLCommands"))),
+    ("src/fe_utils/string_utils.c", (Emitter("appendPsqlMetaConnect"),)),
     (
         "src/bin/pg_dump/pg_dumpall.c",
-        ("dumpTablespaces", "dropTablespaces", "dumpDatabases", "dropDBs"),
+        (
+            Emitter("main"),
+            Emitter("dumpRoleMembership"),
+            Emitter("dumpTablespaces"),
+            Emitter("dropTablespaces"),
+            Emitter("dumpDatabases"),
+            Emitter("dropDBs"),
+        ),
     ),
 )
+
+
+def listed() -> dict[str, Emitter]:
+    """Every listed function by name."""
+    return {e.name: e for _, emitters in FUNCTIONS for e in emitters}
+
 
 #: Each program's option table, read out of the file holding its `main`.
 OPTION_TABLES: tuple[tuple[str, str], ...] = (
@@ -141,11 +207,26 @@ APPEND_CALLS: dict[str, int | None] = {
     "printfPQExpBuffer": 1,
     "appendPQExpBufferStr": None,
     "ahprintf": 1,
+    "archprintf": 1,
+    "archputs": None,
     "fprintf": 1,
 }
 
-#: Calls that send a buffer's text to the server. A buffer whose `data` one of
-#: these reads is a query buffer.
+#: The append calls whose first argument is a buffer, rather than a stream.
+BUFFER_APPEND_CALLS = frozenset({"appendPQExpBuffer", "printfPQExpBuffer", "appendPQExpBufferStr"})
+
+#: Calls that empty a buffer: what was appended before one is never read
+#: after it.
+RESET_CALLS = frozenset(
+    {"resetPQExpBuffer", "initPQExpBuffer", "termPQExpBuffer", "destroyPQExpBuffer"}
+)
+
+#: Calls quoting a word into a shell command: a buffer one appends to is a
+#: command line, never output ([`command_buffers`]).
+SHELL_CALLS = frozenset({"appendShellString"})
+
+#: Calls that send a buffer's text to the server. An append whose buffer only
+#: these read is a query's text ([`query_appends`]).
 EXECUTE_CALLS = frozenset(
     {
         "ExecuteSqlQuery",
@@ -157,9 +238,33 @@ EXECUTE_CALLS = frozenset(
     }
 )
 
+#: Calls that report to the user: a buffer they quote is neither a query nor
+#: output (`pg_log_error_detail("Command was: %s", q->data)`), and so is one
+#: `fprintf(stderr, …)` quotes.
+DIAGNOSTIC_CALLS = frozenset(
+    {
+        "pg_log_error",
+        "pg_log_error_detail",
+        "pg_log_error_hint",
+        "pg_log_warning",
+        "pg_log_warning_detail",
+        "pg_log_info",
+        "pg_log_debug",
+        "pg_fatal",
+        "fatal",
+        "exit_horribly",
+        "warn_or_exit_horribly",
+    }
+)
+
 #: Calls reading a query's result. A constant among their arguments names a
 #: result column (`PQfnumber(res, "rngmultitype")`), and is no output.
 RESULT_CALLS = frozenset({"PQfnumber", "PQgetvalue", "PQgetisnull"})
+
+#: Calls a constant is an argument of without being written: a result
+#: column's name, and a string measured or compared
+#: (`fmtId(grantee->data + strlen("group "))`).
+UNWRITTEN_CALLS = RESULT_CALLS | {"strlen", "strcmp", "strncmp"}
 
 #: The shortest run that is an entry.
 MIN_RUN = 3
@@ -333,6 +438,8 @@ def function_body(text: str, name: str) -> str | None:
 class Call:
     callee: str
     args: tuple[tuple[Token, ...], ...]
+    #: The index of the callee's token.
+    at: int = -1
 
 
 _OPEN = {"(": ")", "[": "]", "{": "}"}
@@ -367,33 +474,114 @@ def calls(tokens: Sequence[Token], names: Iterable[str]) -> list[Call]:
                 current = []
                 continue
             current.append(tok2)
-        out.append(Call(tok.text, tuple(args)))
+        out.append(Call(tok.text, tuple(args), i))
     return out
 
 
 def _data_reads(tokens: Sequence[Token]) -> list[str]:
     """Each `q->data` or `q.data` among the tokens, as the buffer's name."""
+    return [name for _, name in _data_reads_at(tokens)]
+
+
+def _data_reads_at(tokens: Sequence[Token]) -> list[tuple[int, str]]:
+    """Each `q->data` or `q.data`, with the index of the buffer's token."""
     return [
-        a.text
-        for a, b, c in zip(tokens, tokens[1:], tokens[2:])
+        (i, a.text)
+        for i, (a, b, c) in enumerate(zip(tokens, tokens[1:], tokens[2:]))
         if a.kind == "ident" and b.text in ("->", ".") and c.text == "data"
     ]
 
 
-def query_buffers(tokens: Sequence[Token]) -> tuple[set[str], list[str]]:
-    """Buffers whose `data` an execute call reads, and any of them whose
-    `data` is read anywhere else too -- a buffer that is both a query and
-    output, whose output this rule would drop silently."""
-    found: set[str] = set()
-    executed = 0
-    for call in calls(tokens, EXECUTE_CALLS):
-        for arg in call.args:
-            reads = _data_reads(arg)
-            found.update(reads)
-            executed += len(reads)
-    every = [name for name in _data_reads(tokens) if name in found]
-    mixed = sorted(found) if len(every) != executed else []
-    return found, mixed
+def _call_spans(tokens: Sequence[Token], names: Iterable[str]) -> list[tuple[str, int, int]]:
+    """Each call to one of `names`: its callee and the token span from the
+    callee to its closing parenthesis."""
+    wanted = set(names)
+    out: list[tuple[str, int, int]] = []
+    for i, tok in enumerate(tokens):
+        if tok.kind != "ident" or tok.text not in wanted:
+            continue
+        if i + 1 >= len(tokens) or tokens[i + 1].text != "(":
+            continue
+        if i > 0 and tokens[i - 1].text in (".", "->"):
+            continue
+        depth = 0
+        for j in range(i + 1, len(tokens)):
+            if tokens[j].kind == "punct" and tokens[j].text in _OPEN:
+                depth += 1
+            elif tokens[j].kind == "punct" and tokens[j].text in _OPEN.values():
+                depth -= 1
+                if depth == 0:
+                    out.append((tok.text, i, j))
+                    break
+    return out
+
+
+def query_appends(tokens: Sequence[Token]) -> set[int]:
+    """The appends that are a query's text rather than output, by the index
+    of their callee's token.
+
+    An append is output when some read of its buffer's `data` after it,
+    before the buffer's next reset ([`RESET_CALLS`], or a
+    `printfPQExpBuffer`, which resets before it appends), is not inside an
+    execute call ([`EXECUTE_CALLS`]); it is a query's when every such read
+    is, and there is at least one. A buffer nothing reads here is output: it
+    is handed out by pointer, as `appendPsqlMetaConnect`'s is. So one buffer
+    used for a catalog query and then for output, or executed when connected
+    and printed otherwise, is read in token order, which is source order:
+    the branch that prints is a read after the append like the one that
+    executes."""
+    executed: set[int] = set()
+    for _, start, end in _call_spans(tokens, EXECUTE_CALLS):
+        executed.update(start + i for i, _ in _data_reads_at(tokens[start : end + 1]))
+    diagnostic: set[int] = set()
+    for callee, start, end in _call_spans(tokens, DIAGNOSTIC_CALLS | {"fprintf"}):
+        if callee == "fprintf" and tokens[start + 2].text != "stderr":
+            continue
+        diagnostic.update(start + i for i, _ in _data_reads_at(tokens[start : end + 1]))
+    events: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for index, name in _data_reads_at(tokens):
+        if index in diagnostic or (index + 3 < len(tokens) and tokens[index + 3].text == "["):
+            # A diagnostic quoting the buffer, or a byte of it rewritten in
+            # place, is neither a query nor output.
+            continue
+        events[name].append((index, "exec" if index in executed else "read"))
+    for call in calls(tokens, RESET_CALLS | {"printfPQExpBuffer"}):
+        name = _buffer(call.args[0]) if call.args else None
+        if name is not None:
+            events[name].append((call.at, "reset"))
+    for i, tok in enumerate(tokens):
+        # `q = createPQExpBuffer();` starts a buffer afresh.
+        if (
+            tok.text == "createPQExpBuffer"
+            and i >= 2
+            and tokens[i - 1].text == "="
+            and tokens[i - 2].kind == "ident"
+        ):
+            events[tokens[i - 2].text].append((i, "reset"))
+    query: set[int] = set()
+    for call in calls(tokens, BUFFER_APPEND_CALLS):
+        name = _buffer(call.args[0]) if call.args else None
+        if name is None:
+            continue
+        reads = []
+        for _, kind in sorted(e for e in events.get(name, []) if e[0] > call.at):
+            if kind == "reset":
+                break
+            reads.append(kind)
+        if reads and all(kind == "exec" for kind in reads):
+            query.add(call.at)
+    return query
+
+
+def command_buffers(tokens: Sequence[Token]) -> set[str]:
+    """Buffers holding a command line rather than output: any a
+    [`SHELL_CALLS`] call quotes into, as `pg_dumpall` builds the options it
+    runs each database's `pg_dump` with."""
+    return {
+        name
+        for call in calls(tokens, SHELL_CALLS)
+        if call.args and (name := _buffer(call.args[0])) is not None
+    }
 
 
 def _buffer(arg: Sequence[Token]) -> str | None:
@@ -404,7 +592,7 @@ def _buffer(arg: Sequence[Token]) -> str | None:
 def constants(arg: Sequence[Token]) -> list[str]:
     """The string constants in one argument, adjacent literals concatenated
     and a macro between two of them standing as a [`BREAK`]. A constant
-    inside a [`RESULT_CALLS`] call is none."""
+    inside an [`UNWRITTEN_CALLS`] call is none."""
     arg = _without_result_calls(arg)
     out: list[str] = []
     i = 0
@@ -438,7 +626,7 @@ def _without_result_calls(arg: Sequence[Token]) -> list[Token]:
     while i < len(arg):
         if (
             arg[i].kind == "ident"
-            and arg[i].text in RESULT_CALLS
+            and arg[i].text in UNWRITTEN_CALLS
             and i + 1 < len(arg)
             and arg[i + 1].text == "("
         ):
@@ -506,19 +694,16 @@ class Row:
         )
 
 
-def literals(body: str, file: str, function: str) -> tuple[list[Row], list[str]]:
+def literals(body: str, file: str, function: str) -> list[Row]:
     """A function's literal rows, one per distinct entry, in first-seen
-    order, and the problem a query buffer read as output too would be."""
+    order."""
     tokens = lex(body)
-    skip, mixed = query_buffers(tokens)
-    problems = [
-        f"{file}: `{function}` reads a query buffer's text outside an execute call "
-        f"({', '.join(mixed)}) — its output would be dropped as a query's"
-    ] if mixed else []
+    query = query_appends(tokens)
+    commands = command_buffers(tokens)
     rows: dict[str, Row] = {}
     for call in calls(tokens, APPEND_CALLS):
-        if call.callee.endswith("PQExpBuffer") or call.callee.endswith("PQExpBufferStr"):
-            if not call.args or _buffer(call.args[0]) in skip:
+        if call.callee in BUFFER_APPEND_CALLS:
+            if not call.args or call.at in query or _buffer(call.args[0]) in commands:
                 continue
         elif call.args and _buffer(call.args[0]) == "stderr":
             continue
@@ -530,7 +715,7 @@ def literals(body: str, file: str, function: str) -> tuple[list[Row], list[str]]
                 if entry is not None and entry not in rows:
                     detail = constant.replace(BREAK, "%" if is_format else "")
                     rows[entry] = Row("literal", file, function, entry, detail)
-    return list(rows.values()), problems
+    return list(rows.values())
 
 
 def options(text: str, file: str, program: str) -> tuple[list[Row], list[str]]:
@@ -575,6 +760,335 @@ def _split(tokens: Sequence[Token], sep: str) -> Iterable[Sequence[Token]]:
         else:
             current.append(tok)
     yield current
+
+
+# --------------------------------------------------------------------------
+# The readers' keywords
+# --------------------------------------------------------------------------
+
+#: The pgdt modules that read a dump's statements: the scanner, the `COPY`
+#: framing, the lexer, the map's classification and the preamble's grammar.
+READERS: tuple[str, ...] = (
+    "pgdump_query/src/scan.rs",
+    "pgdump_query/src/copy.rs",
+    "pgdump_query/src/lex.rs",
+    "pgdump_query/src/map.rs",
+    "pgdump_query/src/preamble.rs",
+)
+
+#: Calls a reader matches a keyword with: a constant they take is a keyword
+#: whatever its case (`eat_keyword(b"copy")`).
+KEYWORD_CALLS = frozenset(
+    {
+        "eat_keyword",
+        "strip_word",
+        "strip_kw",
+        "find_ci",
+        "ident_after",
+        "eq_ignore_ascii_case",
+        "upper_prefix",
+        "holds_word",
+        "parenthesized",
+    }
+)
+
+#: A constant anywhere in a reader that is a keyword by its shape: led by an
+#: upper-case SQL word, a psql meta-command, `COPY`'s terminator, or a comment
+#: line the reader reads (`-- Name: `).
+_KEYWORD_SHAPE = re.compile(r"^(?:\\[a-z]{2,}|\\\.$|-- |[A-Z][A-Z_]+(?![A-Za-z0-9_]))")
+
+_RUST_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'", "0": "\0"}
+
+
+def rust_tokens(src: str) -> list[Token]:
+    """Rust tokens, comments dropped and string literals decoded (a byte
+    string as its text): enough to find each constant and the call it is an
+    argument of. A lifetime is no literal."""
+    tokens: list[Token] = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c in " \t\r\n":
+            i += 1
+            continue
+        if src.startswith("//", i):
+            end = src.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if src.startswith("/*", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if src.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif src.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            continue
+        raw = re.match(r'b?r(#*)"', src[i:])
+        if raw and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
+            close = '"' + raw.group(1)
+            end = src.find(close, i + raw.end())
+            tokens.append(Token("str", src[i + raw.end() : end]))
+            i = end + len(close)
+            continue
+        if c == '"' or (c == "b" and src.startswith('"', i + 1) and not (i and (src[i - 1].isalnum() or src[i - 1] == "_"))):
+            i += 1 if c == '"' else 2
+            out: list[str] = []
+            while src[i] != '"':
+                if src[i] == "\\":
+                    e = src[i + 1]
+                    if e == "\n":
+                        i += 2
+                        while src[i] in " \t\r\n":
+                            i += 1
+                        continue
+                    if e == "x":
+                        out.append(chr(int(src[i + 2 : i + 4], 16)))
+                        i += 4
+                        continue
+                    if e == "u":
+                        end = src.index("}", i)
+                        out.append(chr(int(src[i + 3 : end], 16)))
+                        i = end + 1
+                        continue
+                    out.append(_RUST_ESCAPES[e])
+                    i += 2
+                    continue
+                out.append(src[i])
+                i += 1
+            tokens.append(Token("str", "".join(out)))
+            i += 1
+            continue
+        char = re.match(r"b?'(?:\\u\{[0-9a-fA-F]+\}|\\x[0-9a-fA-F]{2}|\\.|[^\\'])'", src[i:])
+        if char and (c == "'" or not (i and (src[i - 1].isalnum() or src[i - 1] == "_"))):
+            tokens.append(Token("char", char.group(0)))
+            i += char.end()
+            continue
+        if c == "'":
+            i += 1  # a lifetime
+            continue
+        if c.isalpha() or c == "_":
+            j = i
+            while j < n and (src[j].isalnum() or src[j] == "_"):
+                j += 1
+            tokens.append(Token("ident", src[i:j]))
+            i = j
+            continue
+        if c.isdigit():
+            j = i
+            while j < n and (src[j].isalnum() or src[j] in "._"):
+                j += 1
+            tokens.append(Token("num", src[i:j]))
+            i = j
+            continue
+        tokens.append(Token("punct", c))
+        i += 1
+    return tokens
+
+
+def reader_keywords(src: str) -> list[str]:
+    """The keywords one reader recognises, in first-seen order: each
+    constant of its non-test code that a [`KEYWORD_CALLS`] call takes or
+    whose shape is a keyword's. The test module is the file's last item, so
+    everything from its `#[cfg(test)]` on is not read."""
+    cut = src.find("#[cfg(test)]")
+    tokens = rust_tokens(src if cut < 0 else src[:cut])
+    found: dict[str, None] = {}
+    opens: list[int] = []
+    for i, tok in enumerate(tokens):
+        if tok.kind == "punct" and tok.text in "([{":
+            opens.append(i)
+        elif tok.kind == "punct" and tok.text in ")]}":
+            if opens:
+                opens.pop()
+        elif tok.kind == "str":
+            callee = None
+            if opens and tokens[opens[-1]].text == "(" and opens[-1] > 0:
+                before = tokens[opens[-1] - 1]
+                callee = before.text if before.kind == "ident" else None
+            if callee in KEYWORD_CALLS or _KEYWORD_SHAPE.match(tok.text):
+                found.setdefault(tok.text)
+    return list(found)
+
+
+@dataclass(frozen=True)
+class Read:
+    """A keyword one reader dispatches on -- what tells it which statement,
+    or which form of one, it holds -- and every listed function writing a
+    statement it reads there."""
+
+    reader: str
+    keyword: str
+    emitters: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Clause:
+    """A keyword one reader reads only inside a statement a [`Read`] of the
+    same reader names, so that statement's emitters are this keyword's."""
+
+    reader: str
+    keyword: str
+    within: tuple[str, ...]
+
+
+_SCAN, _COPY, _LEX, _MAP, _PREAMBLE = READERS
+
+_TYPE_EMITTERS = (
+    "dumpCompositeType",
+    "dumpEnumType",
+    "dumpRangeType",
+    "dumpBaseType",
+    "dumpShellType",
+    "dumpUndefinedType",
+)
+_ALTER_TABLE_EMITTERS = ("dumpTableSchema", "dumpTableAttach", "dumpConstraint")
+
+
+def _clauses(reader: str, within: tuple[str, ...], *keywords: str) -> tuple[Clause, ...]:
+    return tuple(Clause(reader, keyword, within) for keyword in keywords)
+
+
+#: Every keyword a reader recognises ([`reader_keywords`]), each either a
+#: [`Read`] naming the emitters of what it reads or a [`Clause`] inside one.
+#: A keyword in neither fails the check, and so does a row whose keyword no
+#: reader holds, or a `Read` naming a function [`FUNCTIONS`] does not list
+#: (docs/design/roadmap-P31-correctness-evidence.md, "The emitter register").
+READS: tuple[Read | Clause, ...] = (
+    # The scanner: a large-object region, opened and closed by its own
+    # transaction (and, under `pg_restore`'s options, by RestoreArchive's).
+    Read(_SCAN, "BEGIN;", ("StartRestoreBlobs", "StartRestoreLOs", "RestoreArchive")),
+    Read(_SCAN, "COMMIT;", ("EndRestoreBlobs", "EndRestoreLOs", "RestoreArchive")),
+    # `COPY` framing: the header and the terminator.
+    Read(_COPY, "copy", ("dumpTableData",)),
+    *_clauses(_COPY, ("copy",), "from", "stdin"),
+    Read(_COPY, "\\.", ("dumpTableData_copy",)),
+    # The lexer's literal syntax (I50).
+    Read(_LEX, "SET", ("_doSetFixedOutputState", "main")),
+    *_clauses(_LEX, ("SET",), "standard_conforming_strings", "TO"),
+    # The map: TOC headers, the dump's own header, framing, data runs.
+    Read(_MAP, "-- ", ("_printTocEntry",)),
+    Read(_MAP, "-- Name: ", ("_printTocEntry",)),
+    Read(_MAP, "-- Statistics for Name: ", ("_printTocEntry",)),
+    Read(_MAP, "-- load via partition root ", ("dumpTableData",)),
+    Read(_MAP, "INSERT INTO ", ("dumpTableData_insert",)),
+    Read(_MAP, "-- Dumped from database version ", ("RestoreArchive",)),
+    Read(_MAP, "-- Dumped by pg_dump version ", ("RestoreArchive",)),
+    Read(
+        _MAP,
+        "SET ",
+        (
+            "_doSetFixedOutputState",
+            "_doSetSessionAuth",
+            "_selectOutputSchema",
+            "_selectTablespace",
+            "_selectTableAccessMethod",
+            "buildACLCommands",
+            "main",
+        ),
+    ),
+    Read(_MAP, "SELECT pg_catalog.set_config(", ("dumpSearchPath",)),
+    Read(_MAP, "ALTER TYPE", ("dumpEnumType", "dumpCompositeType")),
+    # The preamble: each statement it folds, and the forms of each.
+    Read(_PREAMBLE, "CREATE TABLE", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "CREATE UNLOGGED TABLE", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "CREATE FOREIGN TABLE", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "OF", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "PARTITION", ("dumpTableSchema", "dumpTableAttach")),
+    Read(_PREAMBLE, "ALTER TABLE", _ALTER_TABLE_EMITTERS),
+    Read(_PREAMBLE, "ALTER FOREIGN TABLE", _ALTER_TABLE_EMITTERS),
+    # v13 writes `ATTACH PARTITION` in dumpTableSchema, 14 on in its own.
+    Read(_PREAMBLE, "ATTACH", ("dumpTableAttach", "dumpTableSchema")),
+    Read(_PREAMBLE, "ADD", ("dumpConstraint", "dumpEnumType")),
+    Read(_PREAMBLE, "INHERIT", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "ALTER", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "SET", ("dumpTableSchema",)),
+    Read(_PREAMBLE, "CREATE TYPE", _TYPE_EMITTERS),
+    Read(_PREAMBLE, "AS", ("dumpCompositeType", "dumpDomain")),
+    Read(_PREAMBLE, "AS ENUM", ("dumpEnumType",)),
+    Read(_PREAMBLE, "AS RANGE", ("dumpRangeType",)),
+    Read(_PREAMBLE, "VALUE", ("dumpEnumType",)),
+    Read(_PREAMBLE, "DROP ATTRIBUTE", ("dumpCompositeType",)),
+    Read(_PREAMBLE, "CREATE DOMAIN", ("dumpDomain",)),
+    Read(_PREAMBLE, "CREATE EXTENSION", ("dumpExtension",)),
+    Read(_PREAMBLE, "CREATE COLLATION", ("dumpCollation",)),
+    Read(_PREAMBLE, "OWNER TO ", ("_printTocEntry",)),
+    Read(_PREAMBLE, "ALTER DEFAULT PRIVILEGES FOR ROLE", ("buildDefaultACLCommands",)),
+    Read(_PREAMBLE, "GRANT ", ("buildACLCommands", "dumpRoleMembership")),
+    Read(_PREAMBLE, "REVOKE ", ("buildACLCommands",)),
+    Read(_PREAMBLE, "SET default_tablespace", ("_selectTablespace",)),
+    Read(_PREAMBLE, "\\connect ", ("appendPsqlMetaConnect",)),
+    # A column's, an attribute's or a domain's type ends at one of these.
+    *_clauses(
+        _PREAMBLE,
+        ("CREATE TABLE", "CREATE TYPE", "CREATE DOMAIN", "ALTER TABLE"),
+        "COLLATE",
+        "NOT",
+        "DEFAULT",
+        "GENERATED",
+        "PRIMARY",
+        "REFERENCES",
+        "CHECK",
+        "UNIQUE",
+        "CONSTRAINT",
+    ),
+    # A column's or a domain's constraints.
+    *_clauses(
+        _PREAMBLE, ("CREATE TABLE", "CREATE DOMAIN", "ALTER TABLE"), "NULL", "NO", "KEY", "IDENTITY"
+    ),
+    # A table's list, its parents, and a partition's bound.
+    *_clauses(_PREAMBLE, ("CREATE TABLE",), "INHERITS", "FOREIGN", "LIKE", "EXCLUDE", "USING"),
+    *_clauses(_PREAMBLE, ("CREATE TABLE", "ALTER TABLE"), "FOR", "VALUES", "IN", "WITH", "FROM", "TO"),
+    *_clauses(_PREAMBLE, ("ALTER TABLE",), "ONLY", "COLUMN"),
+    *_clauses(_PREAMBLE, ("CREATE EXTENSION",), "IF NOT EXISTS", "SCHEMA"),
+    *_clauses(_PREAMBLE, ("CREATE COLLATION",), "deterministic", "false"),
+    *_clauses(_PREAMBLE, ("CREATE TYPE",), "subtype", "multirange_type_name", "canonical", "delimiter"),
+    *_clauses(_PREAMBLE, ("GRANT ",), " TO "),
+    *_clauses(_PREAMBLE, ("REVOKE ",), " FROM "),
+)
+
+
+def reads_problems(
+    reads: Sequence[Read | Clause] = READS, sources: dict[str, str] | None = None
+) -> list[str]:
+    """The readers' keywords against [`READS`]: each recognised keyword has
+    a row, each row's keyword is recognised, each `Read` names only listed
+    functions, and each `Clause` lies inside a `Read` of its own reader."""
+    if sources is None:
+        sources = {reader: (REPO / reader).read_text() for reader in READERS}
+    problems: list[str] = []
+    rows: dict[tuple[str, str], Read | Clause] = {}
+    for row in reads:
+        key = (row.reader, row.keyword)
+        if key in rows:
+            problems.append(f"{row.reader}: {row.keyword!r} has two rows")
+        rows[key] = row
+    found = {(reader, k) for reader, text in sources.items() for k in reader_keywords(text)}
+    for reader, keyword in sorted(found - rows.keys()):
+        problems.append(
+            f"{reader} recognises {keyword!r} and no row of READS says what writes it — "
+            "a Read naming its emitters, or a Clause naming the statement it lies in"
+        )
+    for reader, keyword in sorted(rows.keys() - found):
+        problems.append(f"{reader}: READS holds {keyword!r} and the reader no longer recognises it")
+    names = listed()
+    for row in reads:
+        if isinstance(row, Read):
+            for emitter in row.emitters:
+                if emitter not in names:
+                    problems.append(
+                        f"{row.reader}: {row.keyword!r} is written by `{emitter}`, which "
+                        "FUNCTIONS does not list"
+                    )
+        else:
+            for keyword in row.within:
+                if not isinstance(rows.get((row.reader, keyword)), Read):
+                    problems.append(
+                        f"{row.reader}: {row.keyword!r} lies within {keyword!r}, which is no Read "
+                        "of the same reader"
+                    )
+    return problems
 
 
 # --------------------------------------------------------------------------
@@ -675,24 +1189,25 @@ def pinned_release(major: str) -> str:
     return image.split(":", 1)[1].split("-", 1)[0]
 
 
-def extract(checkout: Path) -> tuple[list[Row], list[str]]:
-    """Every row a checkout yields, or the problems that stopped it."""
+def extract(checkout: Path, major: str) -> tuple[list[Row], list[str]]:
+    """Every row a checkout of `major` yields, or the problems that stopped
+    it."""
     rows: list[Row] = []
     problems: list[str] = []
-    for file, names in FUNCTIONS:
+    for file, emitters in FUNCTIONS:
         path = checkout / file
         if not path.is_file():
             problems.append(f"{path}: missing")
             continue
         text = path.read_text(errors="replace")
-        for name in names:
-            body = function_body(text, name)
-            if body is None:
-                problems.append(f"{file}: no function `{name}` — the emitter has moved")
+        for emitter in emitters:
+            if not emitter.at(major):
                 continue
-            found, more = literals(body, file, name)
-            rows.extend(found)
-            problems.extend(more)
+            body = function_body(text, emitter.name)
+            if body is None:
+                problems.append(f"{file}: no function `{emitter.name}` — the emitter has moved")
+                continue
+            rows.extend(literals(body, file, emitter.name))
     text_of: dict[str, str] = {}
     for file, program in OPTION_TABLES:
         path = checkout / file
@@ -719,7 +1234,7 @@ def extract_major(major: str, root: Path, fixtures: Path = FIXTURES) -> list[str
     stated = checkout_release(checkout)
     if stated != release:
         return [f"{checkout}: says it is {stated!r}, the fixtures are {release!r}"]
-    rows, problems = extract(checkout)
+    rows, problems = extract(checkout, major)
     if problems:
         return problems
     (fixtures / major / REGISTER_NAME).write_text(render(rows, release))
@@ -936,6 +1451,22 @@ EXEMPTIONS: tuple[Exemption, ...] = (
         "dumpTableSchema",
         "::pg_catalog.regclass AND\nconkey IN (",
         Invariant("I52"),
+    ),
+    Exemption("literal", "_doSetFixedOutputState", "SET ROLE ", Invariant("I87")),
+    Exemption("literal", "RestoreArchive", "COMMIT;\nBEGIN;\n", Invariant("I87")),
+    Exemption("literal", "_selectOutputSchema", "SET search_path = ", Invariant("I88")),
+    Exemption("literal", "_selectOutputSchema", ", pg_catalog", Invariant("I88")),
+    Exemption(
+        "literal",
+        "buildDefaultACLCommands",
+        "SELECT pg_catalog.binary_upgrade_set_record_init_privs(true);\n",
+        Invariant("I89"),
+    ),
+    Exemption(
+        "literal",
+        "buildDefaultACLCommands",
+        "SELECT pg_catalog.binary_upgrade_set_record_init_privs(false);\n",
+        Invariant("I89"),
     ),
     Exemption("option", "pg_dump", "format", Unsupported("`--format=custom`")),
     Exemption(
@@ -1247,7 +1778,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
             print(f"problem: {p}", file=sys.stderr)
         return 1 if problems else 0
     results = []
-    problems = value_form_problems() + reason_problems()
+    problems = value_form_problems() + reason_problems() + reads_problems()
     for major in chosen:
         result, more = join_major(major)
         results.append(result)

@@ -254,6 +254,10 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "binary-upgrade": ["--binary-upgrade"],
         "clean": ["--clean", "--if-exists"],
         "data-only": ["--data-only", "--disable-triggers", "--superuser=postgres"],
+        # `_doSetFixedOutputState`'s `escape_string_warning`, and every string
+        # literal written as `appendStringLiteralAH` writes one without
+        # standard strings (I50).
+        "standard-conforming-strings-off": Setting("standard_conforming_strings", "off"),
         "dumpall": Dumpall(),
         "dumpall-clean": Dumpall(("--clean", "--if-exists", "--exclude-database=postgres")),
         "dumpall-binary-upgrade": Dumpall(("--binary-upgrade",)),
@@ -373,17 +377,24 @@ class ClusterScript:
     tablespace_dir: str
     tablespaces: tuple[str, ...]
     databases: tuple[str, ...]
+    roles: tuple[str, ...] = ()
+
+    def files(self, version: str, directory: Path = SCRIPT_DIR) -> list[Path]:
+        """The script and its version sidecars at `version`, in load order, as
+        [`schema_files`] gives a schema's."""
+        return schema_files(self.file.removeprefix("fixture_schema_").removesuffix(".sql"), version, directory)
 
 
 #: The `emitters` schema's globals: a tablespace with options and a comment,
-#: and a database whose name `appendPsqlMetaConnect` cannot write bare
-#: (fixture_schema_emitters_cluster.sql).
+#: a database whose name `appendPsqlMetaConnect` cannot write bare, and roles
+#: granted to one another (fixture_schema_emitters_cluster.sql).
 CLUSTER_SCRIPTS: dict[str, ClusterScript] = {
     "emitters": ClusterScript(
         file="fixture_schema_emitters_cluster.sql",
         tablespace_dir="/var/lib/postgresql/emitters_tablespace",
         tablespaces=("emitters_ts",),
         databases=("pgdt-emitters",),
+        roles=("emitters_member", "emitters_other", "emitters_grantor"),
     ),
 }
 
@@ -484,7 +495,8 @@ def create_fixture_db(
         prepare_tablespace_dir(name)
     if (cluster := CLUSTER_SCRIPTS.get(schema)) is not None:
         prepare_tablespace_dir(name, cluster.tablespace_dir)
-        load_sql(name, "postgres", (SCRIPT_DIR / cluster.file).read_text())
+        for path in cluster.files(version):
+            load_sql(name, "postgres", path.read_text())
     for path in schema_files(schema, version):
         load_sql(name, DB_NAME, path.read_text())
     if schema == TENANT_SCHEMA:
@@ -530,6 +542,8 @@ def drop_fixture_db(name: str) -> None:
             run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, "--if-exists", database], capture_output=True)
         for tablespace in cluster.tablespaces:
             psql_command(name, "postgres", f"DROP TABLESPACE IF EXISTS {tablespace}")
+        for role in cluster.roles:
+            psql_command(name, "postgres", f"DROP ROLE IF EXISTS {role}")
 
 
 def psql_command(name: str, database: str, sql: str) -> None:

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict qi0nrDV5R2tV8uwimUiPtlBEapApXGl5xvkcveJ1TelU38vakHTcpjgkzRiYurP
+\restrict j19j11O14ZVUyIUg8fBXjDgjoWLXYKwRNLZcHNWI143zB3vHlRTVJ0YMLlgxkUS
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -36,6 +36,20 @@ COPY emitters.base_values (id, v_varchar, v_char, v_int2, v_main, v_pair) FROM s
 ALTER TABLE emitters.base_values ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: built; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.built DISABLE TRIGGER ALL;
+
+COPY emitters.built (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+ALTER TABLE emitters.built ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: child; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -48,6 +62,20 @@ COPY emitters.child (id, label, born, extra) FROM stdin;
 
 
 ALTER TABLE emitters.child ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: collated; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.collated DISABLE TRIGGER ALL;
+
+COPY emitters.collated (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+ALTER TABLE emitters.collated ENABLE TRIGGER ALL;
 
 --
 -- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
@@ -94,6 +122,48 @@ COPY emitters.grown (id, b, added) FROM stdin;
 ALTER TABLE emitters.grown ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: identified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.identified DISABLE TRIGGER ALL;
+
+COPY emitters.identified (id, label) FROM stdin;
+1	one
+2	\N
+\.
+
+
+ALTER TABLE emitters.identified ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: keyed; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.keyed DISABLE TRIGGER ALL;
+
+COPY emitters.keyed (id, code, note) FROM stdin;
+1	a	first
+2	\N	\N
+\.
+
+
+ALTER TABLE emitters.keyed ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: no_columns; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.no_columns DISABLE TRIGGER ALL;
+
+COPY emitters.no_columns  FROM stdin;
+
+
+\.
+
+
+ALTER TABLE emitters.no_columns ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: parent; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -134,6 +204,20 @@ COPY emitters.range_values (id, v_canon, v_diff, v_pattern) FROM stdin;
 
 
 ALTER TABLE emitters.range_values ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: ruled; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.ruled DISABLE TRIGGER ALL;
+
+COPY emitters.ruled (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+ALTER TABLE emitters.ruled ENABLE TRIGGER ALL;
 
 --
 -- Data for Name: scratch; Type: TABLE DATA; Schema: emitters; Owner: postgres
@@ -205,8 +289,15 @@ COPY emitters.unidentified (id, label) FROM stdin;
 ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 
 --
+-- Name: identified_id_seq; Type: SEQUENCE SET; Schema: emitters; Owner: postgres
+--
+
+SELECT pg_catalog.setval('emitters.identified_id_seq', 2, true);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict qi0nrDV5R2tV8uwimUiPtlBEapApXGl5xvkcveJ1TelU38vakHTcpjgkzRiYurP
+\unrestrict j19j11O14ZVUyIUg8fBXjDgjoWLXYKwRNLZcHNWI143zB3vHlRTVJ0YMLlgxkUS
 

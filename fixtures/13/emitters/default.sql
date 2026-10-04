@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict u3nLaOCdZF9dV5ynuDKKmujBgQz2Hh8Vdc8IDbLYV7ikRi53tbtiDo230JyHkKB
+\restrict n81AaNzaQbD8VYGDcaGUU8CQLx82dzo2msfn8JbSKM1otfhrl7ZpYUxMTpmAqlS
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -26,6 +26,15 @@ CREATE SCHEMA emitters;
 
 
 ALTER SCHEMA emitters OWNER TO postgres;
+
+--
+-- Name: c_split; Type: COLLATION; Schema: emitters; Owner: postgres
+--
+
+CREATE COLLATION emitters.c_split (provider = libc, lc_collate = 'C', lc_ctype = 'POSIX');
+
+
+ALTER COLLATION emitters.c_split OWNER TO postgres;
 
 --
 -- Name: file_fdw; Type: EXTENSION; Schema: -; Owner: -
@@ -510,6 +519,18 @@ ALTER TABLE ONLY emitters.child ALTER COLUMN label SET NOT NULL;
 ALTER TABLE emitters.child OWNER TO postgres;
 
 --
+-- Name: collated; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.collated (
+    id integer,
+    label text COLLATE emitters.c_split
+);
+
+
+ALTER TABLE emitters.collated OWNER TO postgres;
+
+--
 -- Name: delimited; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -567,6 +588,62 @@ CREATE TABLE emitters.grown (
 
 
 ALTER TABLE emitters.grown OWNER TO postgres;
+
+--
+-- Name: identified; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.identified (
+    id integer NOT NULL,
+    label text
+);
+
+
+ALTER TABLE emitters.identified OWNER TO postgres;
+
+--
+-- Name: identified_id_seq; Type: SEQUENCE; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.identified ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME emitters.identified_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: keyed; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.keyed (
+    id integer NOT NULL,
+    code text,
+    note text
+);
+
+
+ALTER TABLE emitters.keyed OWNER TO postgres;
+
+--
+-- Name: TABLE keyed; Type: COMMENT; Schema: emitters; Owner: postgres
+--
+
+COMMENT ON TABLE emitters.keyed IS 'keyed by C:\path';
+
+
+--
+-- Name: no_columns; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.no_columns (
+);
+
+
+ALTER TABLE emitters.no_columns OWNER TO postgres;
 
 --
 -- Name: people; Type: TABLE; Schema: emitters; Owner: postgres
@@ -711,6 +788,16 @@ COPY emitters.child (id, label, born, extra) FROM stdin;
 
 
 --
+-- Data for Name: collated; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.collated (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+--
 -- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -739,6 +826,36 @@ COPY emitters.grown (id, b, added) FROM stdin;
 1	b	2024-02-29
 2	b2	2024-02-29
 3	b3	2024-02-29
+\.
+
+
+--
+-- Data for Name: identified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.identified (id, label) FROM stdin;
+1	one
+2	\N
+\.
+
+
+--
+-- Data for Name: keyed; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.keyed (id, code, note) FROM stdin;
+1	a	first
+2	\N	\N
+\.
+
+
+--
+-- Data for Name: no_columns; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.no_columns  FROM stdin;
+
+
 \.
 
 
@@ -822,6 +939,13 @@ COPY emitters.unidentified (id, label) FROM stdin;
 
 
 --
+-- Name: identified_id_seq; Type: SEQUENCE SET; Schema: emitters; Owner: postgres
+--
+
+SELECT pg_catalog.setval('emitters.identified_id_seq', 2, true);
+
+
+--
 -- Name: base_values base_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -851,6 +975,24 @@ ALTER TABLE ONLY emitters.domain_values
 
 ALTER TABLE ONLY emitters.grown
     ADD CONSTRAINT grown_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: keyed keyed_code_key; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.keyed
+    ADD CONSTRAINT keyed_code_key UNIQUE (code) INCLUDE (note) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: keyed keyed_id_key; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.keyed
+    ADD CONSTRAINT keyed_id_key UNIQUE (id);
+
+ALTER TABLE ONLY emitters.keyed REPLICA IDENTITY USING INDEX keyed_id_key;
 
 
 --
@@ -892,6 +1034,23 @@ ALTER TABLE ONLY emitters.tuned
 ALTER TABLE emitters.tuned ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: SCHEMA emitters; Type: ACL; Schema: -; Owner: postgres
+--
+
+GRANT USAGE ON SCHEMA emitters TO emitters_grantor;
+
+
+--
+-- Name: TABLE keyed; Type: ACL; Schema: emitters; Owner: postgres
+--
+
+GRANT SELECT ON TABLE emitters.keyed TO emitters_grantor WITH GRANT OPTION;
+SET SESSION AUTHORIZATION emitters_grantor;
+GRANT SELECT ON TABLE emitters.keyed TO emitters_member;
+RESET SESSION AUTHORIZATION;
+
+
+--
 -- Name: tuned_totals; Type: MATERIALIZED VIEW DATA; Schema: emitters; Owner: postgres
 --
 
@@ -902,5 +1061,5 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict u3nLaOCdZF9dV5ynuDKKmujBgQz2Hh8Vdc8IDbLYV7ikRi53tbtiDo230JyHkKB
+\unrestrict n81AaNzaQbD8VYGDcaGUU8CQLx82dzo2msfn8JbSKM1otfhrl7ZpYUxMTpmAqlS
 

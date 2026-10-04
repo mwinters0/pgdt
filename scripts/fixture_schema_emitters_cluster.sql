@@ -17,6 +17,15 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- By I30 it follows `template1` and precedes `pgdt_fixture`, `-` sorting
 -- below `_`, and it carries a table, so a segment attributed to the database
 -- before it shows.
+-- Three roles: `emitters_grantor` holds a privilege `WITH GRANT OPTION` and
+-- grants it on to `emitters_member` (the schema file), and is granted to
+-- `emitters_member` `WITH ADMIN OPTION`, which `dumpRoleMembership` writes
+-- with its grantor. `emitters_other` is the member of the v16 sidecar's grant.
+CREATE ROLE emitters_grantor;
+CREATE ROLE emitters_member;
+CREATE ROLE emitters_other;
+GRANT emitters_grantor TO emitters_member WITH ADMIN OPTION;
+
 CREATE DATABASE "pgdt-emitters";
 \connect "pgdt-emitters"
 CREATE TABLE public.named (id integer PRIMARY KEY, label text, born date);

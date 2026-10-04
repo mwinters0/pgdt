@@ -9,6 +9,7 @@ flag set is, which a run would only show as a load failure or a missing file.
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -67,10 +68,11 @@ class Sidecars(unittest.TestCase):
 
 class CommittedSchemas(unittest.TestCase):
     def test_every_committed_sidecar_names_a_schema_and_a_routine_major(self):
+        clusters = {c.file.removeprefix("fixture_schema_").removesuffix(".sql") for c in gf.CLUSTER_SCRIPTS.values()}
         for path in gf.SCRIPT_DIR.glob("fixture_schema_*.*.sql"):
             schema, major = path.name.removeprefix("fixture_schema_").split(".")[:2]
             with self.subTest(path=path.name):
-                self.assertIn(schema, gf.SCHEMAS)
+                self.assertIn(schema, set(gf.SCHEMAS) | clusters)
                 self.assertIn(major, gf.ROUTINE_VERSIONS)
 
     def test_a_cluster_script_belongs_to_a_schema_and_makes_what_is_dropped(self):
@@ -78,7 +80,11 @@ class CommittedSchemas(unittest.TestCase):
         # schema's `pg_dumpall` in the same container would hold it.
         for schema, cluster in gf.CLUSTER_SCRIPTS.items():
             text = (gf.SCRIPT_DIR / cluster.file).read_text()
+            every = "".join(path.read_text() for path in cluster.files(max(gf.ROUTINE_VERSIONS, key=int)))
             with self.subTest(schema=schema):
+                self.assertEqual(
+                    sorted(re.findall(r"^CREATE ROLE (\w+);", every, re.MULTILINE)), sorted(cluster.roles)
+                )
                 self.assertIn(schema, gf.SCHEMAS)
                 self.assertIn(f"LOCATION '{cluster.tablespace_dir}'", text)
                 for tablespace in cluster.tablespaces:

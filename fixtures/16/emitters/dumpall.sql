@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict YGbLs4bflOBIyeeL70CjXjpftRvzIl8xqu0FaWFjpE6ZinLKbjKQtA8eI1J2qd6
+\restrict zTDihFGYR67cA8xPitg8fyY7gMrcd2nicccWqxbhc0BAEfFCg3sjthWu1wHeIdN
 
 SET default_transaction_read_only = off;
 
@@ -13,6 +13,12 @@ SET standard_conforming_strings = on;
 -- Roles
 --
 
+CREATE ROLE emitters_grantor;
+ALTER ROLE emitters_grantor WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_member;
+ALTER ROLE emitters_member WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_other;
+ALTER ROLE emitters_other WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE postgres;
 ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS;
 
@@ -21,6 +27,12 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 --
 
 
+--
+-- Role memberships
+--
+
+GRANT emitters_grantor TO emitters_member WITH ADMIN OPTION, INHERIT TRUE GRANTED BY postgres;
+GRANT emitters_grantor TO emitters_other WITH INHERIT FALSE, SET FALSE GRANTED BY postgres;
 
 
 
@@ -34,7 +46,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict YGbLs4bflOBIyeeL70CjXjpftRvzIl8xqu0FaWFjpE6ZinLKbjKQtA8eI1J2qd6
+\unrestrict zTDihFGYR67cA8xPitg8fyY7gMrcd2nicccWqxbhc0BAEfFCg3sjthWu1wHeIdN
 
 --
 -- Databases
@@ -50,7 +62,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- PostgreSQL database dump
 --
 
-\restrict QnCxCAg89bQd1q8mlM3mK3cF2T8840lmj9GHaV12UHS6AYZrl3K9yzBIMfl7jR8
+\restrict pPDttgyDld6HrGKfeYtWUSVtrm31qYX7u6lObY0Dfbxsl3urMbHQv3PNnPzo7b4
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -70,7 +82,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict QnCxCAg89bQd1q8mlM3mK3cF2T8840lmj9GHaV12UHS6AYZrl3K9yzBIMfl7jR8
+\unrestrict pPDttgyDld6HrGKfeYtWUSVtrm31qYX7u6lObY0Dfbxsl3urMbHQv3PNnPzo7b4
 
 --
 -- Database "pgdt-emitters" dump
@@ -80,7 +92,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict enRuCv6wycIhgWtGFKyrgSKr8iBkvIO07dlgdZR6ML6XQnkAaRTeiJgX7QhDjVC
+\restrict xCIc017l9WNhf3UcKagpVnIasA4yX3KExfx9hWPxHxgWiF2klNETyqsyiJ16EBC
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -105,10 +117,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict enRuCv6wycIhgWtGFKyrgSKr8iBkvIO07dlgdZR6ML6XQnkAaRTeiJgX7QhDjVC
+\unrestrict xCIc017l9WNhf3UcKagpVnIasA4yX3KExfx9hWPxHxgWiF2klNETyqsyiJ16EBC
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict enRuCv6wycIhgWtGFKyrgSKr8iBkvIO07dlgdZR6ML6XQnkAaRTeiJgX7QhDjVC
+\restrict xCIc017l9WNhf3UcKagpVnIasA4yX3KExfx9hWPxHxgWiF2klNETyqsyiJ16EBC
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -160,7 +172,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump complete
 --
 
-\unrestrict enRuCv6wycIhgWtGFKyrgSKr8iBkvIO07dlgdZR6ML6XQnkAaRTeiJgX7QhDjVC
+\unrestrict xCIc017l9WNhf3UcKagpVnIasA4yX3KExfx9hWPxHxgWiF2klNETyqsyiJ16EBC
 
 --
 -- Database "pgdt_fixture" dump
@@ -170,7 +182,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump
 --
 
-\restrict n5L3fUkLNKb7m6076cOC7VoSK9tQGiBBcKV8Qjp0sPcaF9kg4gm2JcSuDe1jSLH
+\restrict NfkvHvTTbb9nbLWhXoT1xeCFeQa9A7pQZ0sDTZtTKmjd19IQ4zA1eRwb8LR3nXW
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -195,9 +207,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict n5L3fUkLNKb7m6076cOC7VoSK9tQGiBBcKV8Qjp0sPcaF9kg4gm2JcSuDe1jSLH
+\unrestrict NfkvHvTTbb9nbLWhXoT1xeCFeQa9A7pQZ0sDTZtTKmjd19IQ4zA1eRwb8LR3nXW
 \connect pgdt_fixture
-\restrict n5L3fUkLNKb7m6076cOC7VoSK9tQGiBBcKV8Qjp0sPcaF9kg4gm2JcSuDe1jSLH
+\restrict NfkvHvTTbb9nbLWhXoT1xeCFeQa9A7pQZ0sDTZtTKmjd19IQ4zA1eRwb8LR3nXW
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -218,6 +230,24 @@ CREATE SCHEMA emitters;
 
 
 ALTER SCHEMA emitters OWNER TO postgres;
+
+--
+-- Name: c_rules; Type: COLLATION; Schema: emitters; Owner: postgres
+--
+
+CREATE COLLATION emitters.c_rules (provider = icu, locale = 'und', rules = '&a < b');
+
+
+ALTER COLLATION emitters.c_rules OWNER TO postgres;
+
+--
+-- Name: c_split; Type: COLLATION; Schema: emitters; Owner: postgres
+--
+
+CREATE COLLATION emitters.c_split (provider = libc, lc_collate = 'C', lc_ctype = 'POSIX');
+
+
+ALTER COLLATION emitters.c_split OWNER TO postgres;
 
 --
 -- Name: file_fdw; Type: EXTENSION; Schema: -; Owner: -
@@ -706,6 +736,18 @@ ALTER TABLE ONLY emitters.child ALTER COLUMN label SET NOT NULL;
 ALTER TABLE emitters.child OWNER TO postgres;
 
 --
+-- Name: collated; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.collated (
+    id integer,
+    label text COLLATE emitters.c_split
+);
+
+
+ALTER TABLE emitters.collated OWNER TO postgres;
+
+--
 -- Name: delimited; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -765,6 +807,62 @@ CREATE TABLE emitters.grown (
 ALTER TABLE emitters.grown OWNER TO postgres;
 
 --
+-- Name: identified; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.identified (
+    id integer NOT NULL,
+    label text
+);
+
+
+ALTER TABLE emitters.identified OWNER TO postgres;
+
+--
+-- Name: identified_id_seq; Type: SEQUENCE; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.identified ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME emitters.identified_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: keyed; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.keyed (
+    id integer NOT NULL,
+    code text,
+    note text
+);
+
+
+ALTER TABLE emitters.keyed OWNER TO postgres;
+
+--
+-- Name: TABLE keyed; Type: COMMENT; Schema: emitters; Owner: postgres
+--
+
+COMMENT ON TABLE emitters.keyed IS 'keyed by C:\path';
+
+
+--
+-- Name: no_columns; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.no_columns (
+);
+
+
+ALTER TABLE emitters.no_columns OWNER TO postgres;
+
+--
 -- Name: people; Type: TABLE; Schema: emitters; Owner: postgres
 --
 
@@ -822,6 +920,18 @@ CREATE TABLE emitters.range_values (
 
 
 ALTER TABLE emitters.range_values OWNER TO postgres;
+
+--
+-- Name: ruled; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.ruled (
+    id integer,
+    label text COLLATE emitters.c_rules
+);
+
+
+ALTER TABLE emitters.ruled OWNER TO postgres;
 
 --
 -- Name: scratch; Type: TABLE; Schema: emitters; Owner: postgres
@@ -908,6 +1018,16 @@ COPY emitters.child (id, label, born, extra) FROM stdin;
 
 
 --
+-- Data for Name: collated; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.collated (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+--
 -- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -940,6 +1060,36 @@ COPY emitters.grown (id, b, added) FROM stdin;
 
 
 --
+-- Data for Name: identified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.identified (id, label) FROM stdin;
+1	one
+2	\N
+\.
+
+
+--
+-- Data for Name: keyed; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.keyed (id, code, note) FROM stdin;
+1	a	first
+2	\N	\N
+\.
+
+
+--
+-- Data for Name: no_columns; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.no_columns  FROM stdin;
+
+
+\.
+
+
+--
 -- Data for Name: parent; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -966,6 +1116,16 @@ COPY emitters.range_values (id, v_canon, v_diff, v_pattern) FROM stdin;
 1	[1,6)	[1.5,2.5)	[a,m)
 2	empty	(,0]	[n,)
 3	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: ruled; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.ruled (id, label) FROM stdin;
+1	b
+2	a
 \.
 
 
@@ -1019,6 +1179,13 @@ COPY emitters.unidentified (id, label) FROM stdin;
 
 
 --
+-- Name: identified_id_seq; Type: SEQUENCE SET; Schema: emitters; Owner: postgres
+--
+
+SELECT pg_catalog.setval('emitters.identified_id_seq', 2, true);
+
+
+--
 -- Name: base_values base_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -1048,6 +1215,32 @@ ALTER TABLE ONLY emitters.domain_values
 
 ALTER TABLE ONLY emitters.grown
     ADD CONSTRAINT grown_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: keyed keyed_code_key; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.keyed
+    ADD CONSTRAINT keyed_code_key UNIQUE (code) INCLUDE (note) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: keyed keyed_id_key; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.keyed
+    ADD CONSTRAINT keyed_id_key UNIQUE (id);
+
+ALTER TABLE ONLY emitters.keyed REPLICA IDENTITY USING INDEX keyed_id_key;
+
+
+--
+-- Name: keyed keyed_note_key; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.keyed
+    ADD CONSTRAINT keyed_note_key UNIQUE NULLS NOT DISTINCT (note);
 
 
 --
@@ -1089,6 +1282,23 @@ ALTER TABLE ONLY emitters.tuned
 ALTER TABLE emitters.tuned ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: SCHEMA emitters; Type: ACL; Schema: -; Owner: postgres
+--
+
+GRANT USAGE ON SCHEMA emitters TO emitters_grantor;
+
+
+--
+-- Name: TABLE keyed; Type: ACL; Schema: emitters; Owner: postgres
+--
+
+GRANT SELECT ON TABLE emitters.keyed TO emitters_grantor WITH GRANT OPTION;
+SET SESSION AUTHORIZATION emitters_grantor;
+GRANT SELECT ON TABLE emitters.keyed TO emitters_member;
+RESET SESSION AUTHORIZATION;
+
+
+--
 -- Name: tuned_totals; Type: MATERIALIZED VIEW DATA; Schema: emitters; Owner: postgres
 --
 
@@ -1099,7 +1309,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict n5L3fUkLNKb7m6076cOC7VoSK9tQGiBBcKV8Qjp0sPcaF9kg4gm2JcSuDe1jSLH
+\unrestrict NfkvHvTTbb9nbLWhXoT1xeCFeQa9A7pQZ0sDTZtTKmjd19IQ4zA1eRwb8LR3nXW
 
 --
 -- Database "postgres" dump
@@ -1111,7 +1321,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump
 --
 
-\restrict iZhAbzLJ09kpJ55PqPgvFpVqK3jPVWtOjpCpsWA454AVJhBlEZwfeh3nAz38kfF
+\restrict cUtBzW4tCgETgQ4CbfYmreR5YMFKafJRXh8UE09skmSjHjnUL0bfpTDKGKcDy5O
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -1131,7 +1341,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict iZhAbzLJ09kpJ55PqPgvFpVqK3jPVWtOjpCpsWA454AVJhBlEZwfeh3nAz38kfF
+\unrestrict cUtBzW4tCgETgQ4CbfYmreR5YMFKafJRXh8UE09skmSjHjnUL0bfpTDKGKcDy5O
 
 --
 -- PostgreSQL database cluster dump complete

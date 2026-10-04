@@ -2,14 +2,14 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict aolzhrUJ1gVYnuPL8J5SQNQTWpRInvCWr4JBZgpaukWhJshXHdsMYBSYWO376q5
+\restrict NlEn039uwV4JGYpViPjLVffYmZni8W4hzQOlix88HcfoZPcogWFhn2aNqPMldVa
 
 SET default_transaction_read_only = off;
 
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 
-\unrestrict aolzhrUJ1gVYnuPL8J5SQNQTWpRInvCWr4JBZgpaukWhJshXHdsMYBSYWO376q5
+\unrestrict NlEn039uwV4JGYpViPjLVffYmZni8W4hzQOlix88HcfoZPcogWFhn2aNqPMldVa
 
 --
 -- Databases
@@ -25,7 +25,7 @@ SET standard_conforming_strings = on;
 -- PostgreSQL database dump
 --
 
-\restrict 96d1lFQbRpSwarKzwJGc2jNWVPX9HUZVpRUli8P4hTfjS7qT58OtDWO10U9q7Tj
+\restrict W6YgW4zm5XvXkeUimSaZ5BV0JKWtr4AG7d7vvMAJLjDybI4HbICWVAbrKrLJnB5
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -46,7 +46,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 96d1lFQbRpSwarKzwJGc2jNWVPX9HUZVpRUli8P4hTfjS7qT58OtDWO10U9q7Tj
+\unrestrict W6YgW4zm5XvXkeUimSaZ5BV0JKWtr4AG7d7vvMAJLjDybI4HbICWVAbrKrLJnB5
 
 --
 -- Database "pgdt-emitters" dump
@@ -56,7 +56,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict ID90lhXJeGaIzkAd2upSSQBLmX9Gzq6c7aQQOhEEQUEP4ABt2KTxoRIkt8XoLLN
+\restrict MC6hRtaI8FDeLzmdhd88KFeaRyNUEN5MX5t4vI5kvC2qduCi3lrLbth9uUrDvry
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -82,10 +82,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict ID90lhXJeGaIzkAd2upSSQBLmX9Gzq6c7aQQOhEEQUEP4ABt2KTxoRIkt8XoLLN
+\unrestrict MC6hRtaI8FDeLzmdhd88KFeaRyNUEN5MX5t4vI5kvC2qduCi3lrLbth9uUrDvry
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict ID90lhXJeGaIzkAd2upSSQBLmX9Gzq6c7aQQOhEEQUEP4ABt2KTxoRIkt8XoLLN
+\restrict MC6hRtaI8FDeLzmdhd88KFeaRyNUEN5MX5t4vI5kvC2qduCi3lrLbth9uUrDvry
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -143,7 +143,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ID90lhXJeGaIzkAd2upSSQBLmX9Gzq6c7aQQOhEEQUEP4ABt2KTxoRIkt8XoLLN
+\unrestrict MC6hRtaI8FDeLzmdhd88KFeaRyNUEN5MX5t4vI5kvC2qduCi3lrLbth9uUrDvry
 
 --
 -- Database "pgdt_fixture" dump
@@ -153,7 +153,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump
 --
 
-\restrict WROEFqjq18M4w6uVlDtgIV3QJPEVVyDXxkTxbNeYCzWCSjHbh5j99irlcf4Xb0k
+\restrict OT5trghyRhz4uaaxIm9Iehv3Tf7PcOhrnY6I5w6gNdlM9ArG5I3X4hzBjeLSwNZ
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -179,9 +179,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict WROEFqjq18M4w6uVlDtgIV3QJPEVVyDXxkTxbNeYCzWCSjHbh5j99irlcf4Xb0k
+\unrestrict OT5trghyRhz4uaaxIm9Iehv3Tf7PcOhrnY6I5w6gNdlM9ArG5I3X4hzBjeLSwNZ
 \connect pgdt_fixture
-\restrict WROEFqjq18M4w6uVlDtgIV3QJPEVVyDXxkTxbNeYCzWCSjHbh5j99irlcf4Xb0k
+\restrict OT5trghyRhz4uaaxIm9Iehv3Tf7PcOhrnY6I5w6gNdlM9ArG5I3X4hzBjeLSwNZ
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -206,12 +206,41 @@ COPY emitters.base_values (id, v_varchar, v_char, v_int2, v_main, v_pair) FROM s
 
 
 --
+-- Data for Name: booked; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.booked (room, during) FROM stdin;
+[1,2)	[2024-01-01,2024-01-05)
+\.
+
+
+--
+-- Data for Name: built; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.built (id, label) FROM stdin;
+1	b
+2	a
+\.
+
+
+--
 -- Data for Name: child; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
 COPY emitters.child (id, label, born, extra) FROM stdin;
 2	c	2024-01-02	1.25
 3	d	\N	\N
+\.
+
+
+--
+-- Data for Name: collated; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.collated (id, label) FROM stdin;
+1	b
+2	a
 \.
 
 
@@ -248,6 +277,36 @@ COPY emitters.grown (id, b, added) FROM stdin;
 
 
 --
+-- Data for Name: identified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.identified (id, label) FROM stdin;
+1	one
+2	\N
+\.
+
+
+--
+-- Data for Name: keyed; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.keyed (id, code, note) FROM stdin;
+1	a	first
+2	\N	\N
+\.
+
+
+--
+-- Data for Name: no_columns; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.no_columns  FROM stdin;
+
+
+\.
+
+
+--
 -- Data for Name: parent; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -274,6 +333,16 @@ COPY emitters.range_values (id, v_canon, v_diff, v_pattern) FROM stdin;
 1	[1,6)	[1.5,2.5)	[a,m)
 2	empty	(,0]	[n,)
 3	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: ruled; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.ruled (id, label) FROM stdin;
+1	b
+2	a
 \.
 
 
@@ -327,6 +396,13 @@ COPY emitters.unidentified (id, label) FROM stdin;
 
 
 --
+-- Name: identified_id_seq; Type: SEQUENCE SET; Schema: emitters; Owner: postgres
+--
+
+SELECT pg_catalog.setval('emitters.identified_id_seq', 2, true);
+
+
+--
 -- Statistics for Name: base_values; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -342,6 +418,36 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 
 
 --
+-- Statistics for Name: booked; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'booked',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: built; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'built',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Statistics for Name: child; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -349,6 +455,21 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 	'version', '180006'::integer,
 	'schemaname', 'emitters',
 	'relname', 'child',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: collated; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'collated',
 	'relpages', '0'::integer,
 	'reltuples', '-1'::real,
 	'relallvisible', '0'::integer,
@@ -417,6 +538,51 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 
 
 --
+-- Statistics for Name: identified; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'identified',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: keyed; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'keyed',
+	'relpages', '1'::integer,
+	'reltuples', '2'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: no_columns; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'no_columns',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Statistics for Name: parent; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -454,6 +620,21 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 	'version', '180006'::integer,
 	'schemaname', 'emitters',
 	'relname', 'range_values',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: ruled; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'ruled',
 	'relpages', '0'::integer,
 	'reltuples', '-1'::real,
 	'relallvisible', '0'::integer,
@@ -552,6 +733,21 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 
 
 --
+-- Statistics for Name: booked_key; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'booked_key',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Statistics for Name: delimited_pkey; Type: STATISTICS DATA; Schema: emitters; Owner: -
 --
 
@@ -591,6 +787,51 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 	'relname', 'grown_pkey',
 	'relpages', '1'::integer,
 	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: keyed_code_key; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'keyed_code_key',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: keyed_id_key; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'keyed_id_key',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: keyed_note_key; Type: STATISTICS DATA; Schema: emitters; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'emitters',
+	'relname', 'keyed_note_key',
+	'relpages', '2'::integer,
+	'reltuples', '2'::real,
 	'relallvisible', '0'::integer,
 	'relallfrozen', '0'::integer
 );
@@ -675,7 +916,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WROEFqjq18M4w6uVlDtgIV3QJPEVVyDXxkTxbNeYCzWCSjHbh5j99irlcf4Xb0k
+\unrestrict OT5trghyRhz4uaaxIm9Iehv3Tf7PcOhrnY6I5w6gNdlM9ArG5I3X4hzBjeLSwNZ
 
 --
 -- Database "postgres" dump
@@ -687,7 +928,7 @@ SELECT * FROM pg_catalog.pg_restore_relation_stats(
 -- PostgreSQL database dump
 --
 
-\restrict hmGgpnWPW6RUjg5BRq7ywEBidhLvi56j0Vusz5w1mxBAi844Eb7Um2XdN8iZ9lv
+\restrict zi5jMJ0nl2B2iUDbGrbb9gjOSaaKiyjmRV7YCm4VcP8cSBHZQbOJmtWXB3cNtbc
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -708,7 +949,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hmGgpnWPW6RUjg5BRq7ywEBidhLvi56j0Vusz5w1mxBAi844Eb7Um2XdN8iZ9lv
+\unrestrict zi5jMJ0nl2B2iUDbGrbb9gjOSaaKiyjmRV7YCm4VcP8cSBHZQbOJmtWXB3cNtbc
 
 --
 -- PostgreSQL database cluster dump complete

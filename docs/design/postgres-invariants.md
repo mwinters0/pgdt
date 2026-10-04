@@ -5590,3 +5590,101 @@ grep -n 'ExecPartitionCheck\|ExecFindPartition' src/backend/commands/copyfrom.c
 grep -n 'relispartition\|found for row' src/backend/executor/execPartition.c
 grep -n "Add the parent's quals" src/backend/utils/cache/partcache.c
 ```
+
+## I87 — `pg_dump` leaves `pg_restore`'s `--role`, `--single-transaction` and `--transaction-size` unset in the plain output it writes
+
+**Claim.** A plain dump is written by the archiver's `RestoreArchive` under
+the `RestoreOptions` `pg_dump` builds, which never sets `use_role`,
+`single_txn` or `txn_size`. So no plain dump `pg_dump` or `pg_dumpall` writes
+holds `_doSetFixedOutputState`'s `SET ROLE` or `RestoreArchive`'s
+`COMMIT;\nBEGIN;\n` between transaction-size batches; only `pg_restore`, given
+those options, writes them.
+
+**Proof.** `src/bin/pg_dump/pg_dump.c`, `main`: `ropt = NewRestoreOptions()`,
+which `pg_malloc0`s it, then one assignment per option `pg_dump` passes on,
+none of them `use_role`, `single_txn` or `txn_size`. `pg_dump --role` sets the
+connection's role in `setup_connection`, which writes nothing.
+`src/bin/pg_dump/pg_restore.c` alone assigns `opts->use_role`,
+`opts->single_txn` and (from v17) `opts->txn_size`. `pg_dumpall` runs
+`pg_dump` for each database.
+
+**Scope limit.** A file `pg_restore -f` writes from an archive is not a
+`pg_dump` plain dump, and the generator takes none.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6.
+
+**Relied on by:** `scripts/emitter_register.py`'s exemptions of `SET ROLE `
+and `COMMIT;\nBEGIN;\n`, `EXEMPTIONS`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump
+grep -n 'ropt->\(use_role\|single_txn\|txn_size\) *=' pg_dump.c pg_dumpall.c
+grep -n 'opts->\(use_role\|single_txn\|txn_size\)' pg_restore.c
+```
+
+The first prints nothing; the second prints `pg_restore`'s assignments.
+
+## I88 — `pg_dump` always writes its search path, so `_selectOutputSchema` writes nothing
+
+**Claim.** `pg_dump` sets the archive's search path before anything is
+printed, and `_selectOutputSchema` returns at its first test whenever one is
+set, so no plain dump holds its `SET search_path = …, pg_catalog`. The search
+path a dump holds is `dumpSearchPath`'s `SELECT pg_catalog.set_config(…)`.
+
+**Proof.** `src/bin/pg_dump/pg_dump.c`, `main`: `dumpSearchPath(fout)`
+unconditionally, beside `dumpEncoding` and `dumpStdStrings`; `dumpSearchPath`
+ends `AH->searchpath = pg_strdup(qry->data)` ("in case we're doing plain text
+dump"). `src/bin/pg_dump/pg_backup_archiver.c`, `_selectOutputSchema`: `if
+(AH->public.searchpath) return;` before its append.
+
+**Scope limit.** An archive older than the `SEARCHPATH` entry, restored by
+`pg_restore`, takes the other branch; the generator takes none.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6.
+
+**Relied on by:** `scripts/emitter_register.py`'s exemptions of
+`_selectOutputSchema`'s literals, `EXEMPTIONS`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump
+awk '/^main\(/,/^}/' pg_dump.c | grep -n 'dumpSearchPath(fout)'
+awk '/^dumpSearchPath\(/,/^}/' pg_dump.c | grep -n 'AH->searchpath ='
+awk '/^_selectOutputSchema\(/,/^}/' pg_backup_archiver.c | grep -n 'searchpath'
+```
+
+Each prints one line; the last is the early return, above the append.
+
+## I89 — No default ACL has initial privileges, so 13 and 14's `buildDefaultACLCommands` never records one
+
+**Claim.** `pg_init_privs` records the initial privileges of objects an
+extension script or `initdb` creates, and an `ALTER DEFAULT PRIVILEGES` entry
+is never among them. So the `binary_upgrade_set_record_init_privs` calls
+`buildDefaultACLCommands` writes at 13 and 14 when a default ACL has initial
+privileges are written by no dump; 15 removed the branch.
+
+**Proof.** `src/bin/pg_dump/dumputils.c` at v15.19, `buildDefaultACLCommands`:
+"There's no such thing as initprivs for a default ACL, so the base ACL is
+always just the object-type-specific default." At v13.23 and v14.24 the
+branch is `if (strlen(initacls) != 0 || strlen(initracls) != 0)`.
+`src/backend/catalog/aclchk.c`, `SetDefaultACL`, records no initial privilege.
+
+**Scope limit.** None; the fix-up exists only at 13 and 14.
+
+**Verified against:** v13.23, v14.24, v15.19.
+
+**Relied on by:** `scripts/emitter_register.py`'s exemptions of the two
+`binary_upgrade_set_record_init_privs` literals, `EXEMPTIONS`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres
+grep -n "no such thing as initprivs for a default ACL" release-v15.19/src/bin/pg_dump/dumputils.c
+awk '/^SetDefaultACL\(/,/^}/' release-v<N>/src/backend/catalog/aclchk.c | grep -c 'recordExtensionInitPriv'
+```
+
+The first prints one line; the second prints `0`.

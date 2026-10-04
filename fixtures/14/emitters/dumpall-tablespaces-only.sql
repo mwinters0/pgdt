@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict wa7DC8JkjmEO5ThwOo5wqmWwocZhGRjvfC6I5qxGnbcjRQmw8vWJ0yhlGCkoa5r
+\restrict eU0u4gBKmy3mD6fvFUyZtpDkjdsIrBseGpaSej8io4a71Luhbx26dPQJloVfL0A
 
 SET default_transaction_read_only = off;
 
@@ -18,7 +18,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict wa7DC8JkjmEO5ThwOo5wqmWwocZhGRjvfC6I5qxGnbcjRQmw8vWJ0yhlGCkoa5r
+\unrestrict eU0u4gBKmy3mD6fvFUyZtpDkjdsIrBseGpaSej8io4a71Luhbx26dPQJloVfL0A
 
 --
 -- PostgreSQL database cluster dump complete

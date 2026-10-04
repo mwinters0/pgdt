@@ -2,9 +2,9 @@
 -- PostgreSQL database cluster dump
 --
 
--- Started on 2026-10-04 16:44:32 UTC
+-- Started on 2026-10-04 19:47:53 UTC
 
-\restrict 0wM7qUQO8qFW7xJkjcqZtMm4VQPQRS8I2fxJM5eHxlVMJ0kRaWe4bVt0SVDFGXS
+\restrict P540STwmfkmSVmpeUI9SpvM3ag2Suypigtvuwka5VugtB6Y69ryLL6XAhKvWYUV
 
 SET default_transaction_read_only = off;
 
@@ -15,6 +15,12 @@ SET standard_conforming_strings = on;
 -- Roles
 --
 
+CREATE ROLE emitters_grantor;
+ALTER ROLE emitters_grantor WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_member;
+ALTER ROLE emitters_member WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_other;
+ALTER ROLE emitters_other WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE postgres;
 ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS;
 
@@ -23,6 +29,11 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 --
 
 
+--
+-- Role memberships
+--
+
+GRANT emitters_grantor TO emitters_member WITH ADMIN OPTION GRANTED BY postgres;
 
 
 
@@ -36,9 +47,9 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict 0wM7qUQO8qFW7xJkjcqZtMm4VQPQRS8I2fxJM5eHxlVMJ0kRaWe4bVt0SVDFGXS
+\unrestrict P540STwmfkmSVmpeUI9SpvM3ag2Suypigtvuwka5VugtB6Y69ryLL6XAhKvWYUV
 
--- Completed on 2026-10-04 16:44:32 UTC
+-- Completed on 2026-10-04 19:47:53 UTC
 
 --
 -- PostgreSQL database cluster dump complete

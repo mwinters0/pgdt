@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict 5x3jdRfoQ5OH5OmNMLCM3cNBnDkIS0POd1noYTddla9AwFp5RjLIJlmcUJt91KG
+\restrict lwkLP1VpFSL4eJh0T1agX6dv3cG0xbyCgwInFEN3VQ1JSQwg1mkbwO3GoajvkOP
 
 SET default_transaction_read_only = off;
 
@@ -13,6 +13,12 @@ SET standard_conforming_strings = on;
 -- Roles
 --
 
+CREATE ROLE emitters_grantor;
+ALTER ROLE emitters_grantor WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_member;
+ALTER ROLE emitters_member WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE emitters_other;
+ALTER ROLE emitters_other WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE postgres;
 ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS;
 
@@ -21,11 +27,17 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 --
 
 
+--
+-- Role memberships
+--
+
+GRANT emitters_grantor TO emitters_member WITH ADMIN OPTION, INHERIT TRUE GRANTED BY postgres;
+GRANT emitters_grantor TO emitters_other WITH INHERIT FALSE, SET FALSE GRANTED BY postgres;
 
 
 
 
-\unrestrict 5x3jdRfoQ5OH5OmNMLCM3cNBnDkIS0POd1noYTddla9AwFp5RjLIJlmcUJt91KG
+\unrestrict lwkLP1VpFSL4eJh0T1agX6dv3cG0xbyCgwInFEN3VQ1JSQwg1mkbwO3GoajvkOP
 
 --
 -- PostgreSQL database cluster dump complete

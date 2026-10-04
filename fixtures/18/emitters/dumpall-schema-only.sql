@@ -13,6 +13,12 @@ SET standard_conforming_strings = on;
 -- Roles
 --
 
+CREATE ROLE "emitters_grantor";
+ALTER ROLE "emitters_grantor" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE "emitters_member";
+ALTER ROLE "emitters_member" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
+CREATE ROLE "emitters_other";
+ALTER ROLE "emitters_other" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
 CREATE ROLE "postgres";
 ALTER ROLE "postgres" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS;
 
@@ -21,6 +27,12 @@ ALTER ROLE "postgres" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATI
 --
 
 
+--
+-- Role memberships
+--
+
+GRANT "emitters_grantor" TO "emitters_member" WITH ADMIN OPTION, INHERIT TRUE GRANTED BY "postgres";
+GRANT "emitters_grantor" TO "emitters_other" WITH INHERIT FALSE, SET FALSE GRANTED BY "postgres";
 
 
 \unrestrict pgdtfixture
@@ -191,6 +203,27 @@ SET row_security = off;
 --
 
 CREATE SCHEMA "emitters";
+
+
+--
+-- Name: c_builtin; Type: COLLATION; Schema: emitters; Owner: -
+--
+
+CREATE COLLATION "emitters"."c_builtin" (provider = builtin, locale = 'C');
+
+
+--
+-- Name: c_rules; Type: COLLATION; Schema: emitters; Owner: -
+--
+
+CREATE COLLATION "emitters"."c_rules" (provider = icu, locale = 'und', rules = '&a < b');
+
+
+--
+-- Name: c_split; Type: COLLATION; Schema: emitters; Owner: -
+--
+
+CREATE COLLATION "emitters"."c_split" (provider = libc, lc_collate = 'C', lc_ctype = 'POSIX');
 
 
 --
@@ -580,6 +613,26 @@ CREATE TABLE "emitters"."base_values" (
 
 
 --
+-- Name: booked; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."booked" (
+    "room" "int4range",
+    "during" "daterange"
+);
+
+
+--
+-- Name: built; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."built" (
+    "id" integer,
+    "label" "text" COLLATE "emitters"."c_builtin"
+);
+
+
+--
 -- Name: parent; Type: TABLE; Schema: emitters; Owner: -
 --
 
@@ -600,6 +653,16 @@ CREATE TABLE "emitters"."child" (
     "extra" numeric(6,2)
 )
 INHERITS ("emitters"."parent");
+
+
+--
+-- Name: collated; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."collated" (
+    "id" integer,
+    "label" "text" COLLATE "emitters"."c_split"
+);
 
 
 --
@@ -654,6 +717,49 @@ CREATE TABLE "emitters"."grown" (
 
 
 --
+-- Name: identified; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."identified" (
+    "id" integer NOT NULL,
+    "label" "text"
+);
+
+
+--
+-- Name: identified_id_seq; Type: SEQUENCE; Schema: emitters; Owner: -
+--
+
+ALTER TABLE "emitters"."identified" ALTER COLUMN "id" ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME "emitters"."identified_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: keyed; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."keyed" (
+    "id" integer NOT NULL,
+    "code" "text",
+    "note" "text"
+);
+
+
+--
+-- Name: no_columns; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."no_columns" (
+);
+
+
+--
 -- Name: people; Type: TABLE; Schema: emitters; Owner: -
 --
 
@@ -701,6 +807,16 @@ CREATE TABLE "emitters"."range_values" (
     "v_canon" "emitters"."r_canon",
     "v_diff" "emitters"."r_diff",
     "v_pattern" "emitters"."r_pattern"
+);
+
+
+--
+-- Name: ruled; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."ruled" (
+    "id" integer,
+    "label" "text" COLLATE "emitters"."c_rules"
 );
 
 
@@ -767,6 +883,14 @@ ALTER TABLE ONLY "emitters"."base_values"
 
 
 --
+-- Name: booked booked_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."booked"
+    ADD CONSTRAINT "booked_key" UNIQUE ("room", "during" WITHOUT OVERLAPS);
+
+
+--
 -- Name: delimited delimited_pkey; Type: CONSTRAINT; Schema: emitters; Owner: -
 --
 
@@ -788,6 +912,32 @@ ALTER TABLE ONLY "emitters"."domain_values"
 
 ALTER TABLE ONLY "emitters"."grown"
     ADD CONSTRAINT "grown_pkey" PRIMARY KEY ("id");
+
+
+--
+-- Name: keyed keyed_code_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."keyed"
+    ADD CONSTRAINT "keyed_code_key" UNIQUE ("code") INCLUDE ("note") DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: keyed keyed_id_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."keyed"
+    ADD CONSTRAINT "keyed_id_key" UNIQUE ("id");
+
+ALTER TABLE ONLY "emitters"."keyed" REPLICA IDENTITY USING INDEX "keyed_id_key";
+
+
+--
+-- Name: keyed keyed_note_key; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."keyed"
+    ADD CONSTRAINT "keyed_note_key" UNIQUE NULLS NOT DISTINCT ("note");
 
 
 --

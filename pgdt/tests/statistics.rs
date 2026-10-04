@@ -763,7 +763,7 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     let counted = |listing: &str| {
         assert!(
             listing.contains(
-                "6 of 13 COPY block(s) hold what a strict parse does not check — `pgdt info \
+                "6 of 18 COPY block(s) hold what a strict parse does not check — `pgdt info \
                  --detail` lists it"
             ),
             "{listing}"
@@ -796,7 +796,7 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     }
     assert!(
         said.contains(
-            "6 of 13 COPY block(s) hold what a strict parse does not check, each listed as \
+            "6 of 18 COPY block(s) hold what a strict parse does not check, each listed as \
              `unchecked by a strict parse`"
         ),
         "{said}"

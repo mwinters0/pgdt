@@ -10,7 +10,7 @@
 --
 -- The cluster-global half -- a commented tablespace with options, and a
 -- database whose name `appendPsqlMetaConnect` cannot write bare -- is set up
--- by scripts/generate_fixtures.py (`CLUSTER_EXTRAS`), since `pg_dumpall` is
+-- by scripts/generate_fixtures.py (`CLUSTER_SCRIPTS`), since `pg_dumpall` is
 -- what reads it.
 
 CREATE SCHEMA emitters;
@@ -266,6 +266,48 @@ CREATE FOREIGN TABLE emitters.external (id integer, gone text, label text)
     SERVER emitters_files OPTIONS (filename '/tmp/emitters_external.tsv');
 ALTER FOREIGN TABLE emitters.external ALTER COLUMN label OPTIONS (force_not_null 'true');
 ALTER FOREIGN TABLE emitters.external DROP COLUMN gone;
+
+-- dumpConstraint: a `UNIQUE` constraint with included columns, deferred,
+-- and one whose index is the table's replica identity, which it writes as its
+-- own `ALTER TABLE ONLY ... REPLICA IDENTITY USING INDEX`.
+CREATE TABLE emitters.keyed (
+    id integer NOT NULL,
+    code text,
+    note text,
+    CONSTRAINT keyed_id_key UNIQUE (id),
+    CONSTRAINT keyed_code_key UNIQUE (code) INCLUDE (note) DEFERRABLE INITIALLY DEFERRED
+);
+ALTER TABLE emitters.keyed REPLICA IDENTITY USING INDEX keyed_id_key;
+INSERT INTO emitters.keyed VALUES (1, 'a', 'first'), (2, NULL, NULL);
+-- A comment holding a backslash, which `appendStringLiteralAH` writes as
+-- `E'...'` with the backslash doubled where `standard_conforming_strings` is
+-- off (`emitters/standard-conforming-strings-off`, I50).
+COMMENT ON TABLE emitters.keyed IS 'keyed by C:\path';
+
+-- dumpCollation: a libc collation whose `LC_COLLATE` and `LC_CTYPE` differ,
+-- which it writes as two properties rather than `locale`; a column of it.
+CREATE COLLATION emitters.c_split (lc_collate = 'C', lc_ctype = 'POSIX');
+CREATE TABLE emitters.collated (id integer, label text COLLATE emitters.c_split);
+INSERT INTO emitters.collated VALUES (1, 'b'), (2, 'a');
+
+-- dumpTableData_insert under `--inserts`: a table with no columns, whose rows
+-- it writes as `DEFAULT VALUES`, and one with an identity column `GENERATED
+-- ALWAYS`, whose rows it writes `OVERRIDING SYSTEM VALUE`.
+CREATE TABLE emitters.no_columns ();
+INSERT INTO emitters.no_columns DEFAULT VALUES;
+INSERT INTO emitters.no_columns DEFAULT VALUES;
+CREATE TABLE emitters.identified (id integer GENERATED ALWAYS AS IDENTITY, label text);
+INSERT INTO emitters.identified (label) VALUES ('one'), (NULL);
+
+-- buildACLCommands: a privilege granted `WITH GRANT OPTION` to a role, and the
+-- privilege that role grants on, which it writes between `SET SESSION
+-- AUTHORIZATION` and `RESET SESSION AUTHORIZATION`. The roles are the cluster
+-- script's (fixture_schema_emitters_cluster.sql).
+GRANT USAGE ON SCHEMA emitters TO emitters_grantor;
+GRANT SELECT ON TABLE emitters.keyed TO emitters_grantor WITH GRANT OPTION;
+SET ROLE emitters_grantor;
+GRANT SELECT ON TABLE emitters.keyed TO emitters_member;
+RESET ROLE;
 
 -- The filter file `pg_dumpall --filter` reads at 17 and later
 -- (scripts/generate_fixtures.py, `emitters/dumpall-filter`).

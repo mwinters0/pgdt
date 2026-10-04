@@ -80,10 +80,13 @@ as specified.
 
 **Fact.** P31's register extracts every literal the `pg_dump` functions pgdt
 reads append, and every long option, at each major, and requires each to
-reach a fixture. Its function list is limited to what pgdt reads today:
-`dumpTableSchema`, `dumpCompositeType`, `dumpEnumType`, `dumpRangeType`,
-`dumpDomain`, `dumpBaseType`, `appendPsqlMetaConnect`, `_printTocEntry`,
-`setup_connection`, and `pg_dumpall`'s database and tablespace emitters.
+reach a fixture. Its function list is `scripts/emitter_register.py`'s
+`FUNCTIONS`, held to what pgdt reads today by a check: each statement keyword
+the scanner, the map and the preamble recognise maps, in `READS`, to the
+listed functions writing it. A buffer's append is a query's text only where
+every read of the buffer after it is an execute call, so a function reusing a
+buffer for a query and its output, or executing a statement when connected
+and printing it otherwise, is listed like any other.
 
 **Why P32 cares.** "Every object and property" needs a completeness
 criterion, and the register is a mechanical one: widening its function list
@@ -95,27 +98,6 @@ register in the shape its spec gives.
 
 ---
 
-## Widening the emitter register's function list needs a finer query rule
-
-**Fact.** The extraction drops a buffer whose `data` an execute call reads,
-as a catalog query, and stops on one whose `data` is read anywhere else too
-(`scripts/emitter_register.py`, `query_buffers`). At 18.6, `dumpDatabase`,
-`dumpTableData_copy`, `dumpTableData_insert`, `_selectOutputSchema`,
-`_selectTablespace`, `_selectTableAccessMethod` and
-`_printTableAccessMethodNoStorage` each trip it: the archiver's helpers
-execute a statement when connected and print it otherwise, and the others
-reuse a buffer across both.
-
-**Why P32 cares.** Its completeness criterion is the register widened to
-every `dump*` function; these are among the first it would add, and each
-needs a rule telling a buffer's query uses from its output ones before its
-literals can be rows.
-
-**Origin.** P31.1, 2026-10-02, a trial extraction over the widened list.
-*Contingent on* the extraction keeping its buffer-level rule.
-
----
-
 ## The `emitters` fixtures hold properties no model captures
 
 **Fact.** `fixtures/<major>/emitters/` holds, at every major, a form of each
@@ -123,9 +105,12 @@ property P31's listed emitters write that pgdt reads into nothing: a base
 type's `CREATE TYPE` properties, a range's `canonical`, `subtype_diff` and
 `subtype_opclass`, a domain's named `CHECK`, reloptions and toast
 reloptions, a view's check option, forced row security, replica identity, a
-column's statistics target and compression, and a tablespace's options and
-comment under `pg_dumpall` (`scripts/fixture_schema_emitters.sql`,
-`fixture_schema_emitters_cluster.sql`).
+column's statistics target and compression, a collation's split `lc_collate`
+and `lc_ctype`, its ICU `rules` (16+) and `builtin` provider (17+), a
+`UNIQUE` constraint's `INCLUDE`, deferral, `NULLS NOT DISTINCT` (15+) and
+`WITHOUT OVERLAPS` (18), and under `pg_dumpall` a tablespace's options and
+comment and role memberships' options (`scripts/fixture_schema_emitters*.sql`,
+`fixture_schema_emitters_cluster*.sql`).
 
 **Why P32 cares.** Capturing each of them needs a real dump holding it, and
 these are already generated and committed; a property captured can be

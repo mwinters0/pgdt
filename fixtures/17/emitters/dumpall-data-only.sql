@@ -2,14 +2,14 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict N2YtLoQeZscFBhNWxF9hQ8PhZslERsZt10YfQL6bGfcH4WZDALYPe0KTRajaplL
+\restrict buroWWNj6wxZFfWSTD71gqhKw98t9iA8M7FcsweA2pZ02HMLo3oyYXzgqnMoTET
 
 SET default_transaction_read_only = off;
 
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 
-\unrestrict N2YtLoQeZscFBhNWxF9hQ8PhZslERsZt10YfQL6bGfcH4WZDALYPe0KTRajaplL
+\unrestrict buroWWNj6wxZFfWSTD71gqhKw98t9iA8M7FcsweA2pZ02HMLo3oyYXzgqnMoTET
 
 --
 -- Databases
@@ -25,7 +25,7 @@ SET standard_conforming_strings = on;
 -- PostgreSQL database dump
 --
 
-\restrict at6fktSDRHyRmpBAxlemPsjkrM7yv8qYYPQbfhgB40chZzeVKtymBGpBOnKbacy
+\restrict 9tlxIdKHY9cRSbOApnGPS30f3J3ewEfnvxqJp5XbpqVq33bcMQyaxyU92lv2Zte
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -46,7 +46,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict at6fktSDRHyRmpBAxlemPsjkrM7yv8qYYPQbfhgB40chZzeVKtymBGpBOnKbacy
+\unrestrict 9tlxIdKHY9cRSbOApnGPS30f3J3ewEfnvxqJp5XbpqVq33bcMQyaxyU92lv2Zte
 
 --
 -- Database "pgdt-emitters" dump
@@ -56,7 +56,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict keU8d87haLUUv7cYSyvj6ifc4pT7H2nWdI0asCvhBKGvr2qWvTg5Udaslv7GazP
+\restrict GlDleBCejianrQZYv4ujEDDidMTYyDUO3f1tIoUNCDAuc86LSJoUbRqbAwd7YND
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -82,10 +82,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict keU8d87haLUUv7cYSyvj6ifc4pT7H2nWdI0asCvhBKGvr2qWvTg5Udaslv7GazP
+\unrestrict GlDleBCejianrQZYv4ujEDDidMTYyDUO3f1tIoUNCDAuc86LSJoUbRqbAwd7YND
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict keU8d87haLUUv7cYSyvj6ifc4pT7H2nWdI0asCvhBKGvr2qWvTg5Udaslv7GazP
+\restrict GlDleBCejianrQZYv4ujEDDidMTYyDUO3f1tIoUNCDAuc86LSJoUbRqbAwd7YND
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -118,7 +118,7 @@ ALTER TABLE public.named ENABLE TRIGGER ALL;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict keU8d87haLUUv7cYSyvj6ifc4pT7H2nWdI0asCvhBKGvr2qWvTg5Udaslv7GazP
+\unrestrict GlDleBCejianrQZYv4ujEDDidMTYyDUO3f1tIoUNCDAuc86LSJoUbRqbAwd7YND
 
 --
 -- Database "pgdt_fixture" dump
@@ -128,7 +128,7 @@ ALTER TABLE public.named ENABLE TRIGGER ALL;
 -- PostgreSQL database dump
 --
 
-\restrict UfXlCVi1RD7wlhNFh0hAMCbRNKTEarCYOeA96jYblGxZa7B2O4c99s7dsKdvQaN
+\restrict eXoGOiEVVTL8z26iWY7PPLhpcKvQ8wukIzOBiNkcrhDYPl4wSJaP03gyk7flsKo
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -154,9 +154,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict UfXlCVi1RD7wlhNFh0hAMCbRNKTEarCYOeA96jYblGxZa7B2O4c99s7dsKdvQaN
+\unrestrict eXoGOiEVVTL8z26iWY7PPLhpcKvQ8wukIzOBiNkcrhDYPl4wSJaP03gyk7flsKo
 \connect pgdt_fixture
-\restrict UfXlCVi1RD7wlhNFh0hAMCbRNKTEarCYOeA96jYblGxZa7B2O4c99s7dsKdvQaN
+\restrict eXoGOiEVVTL8z26iWY7PPLhpcKvQ8wukIzOBiNkcrhDYPl4wSJaP03gyk7flsKo
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -186,6 +186,19 @@ INSERT INTO emitters.base_values (id, v_varchar, v_char, v_int2, v_main, v_pair)
 ALTER TABLE emitters.base_values ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: built; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.built DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.built (id, label) VALUES
+	(1, 'b'),
+	(2, 'a') ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.built ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: child; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -197,6 +210,19 @@ INSERT INTO emitters.child (id, label, born, extra) VALUES
 
 
 ALTER TABLE emitters.child ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: collated; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.collated DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.collated (id, label) VALUES
+	(1, 'b'),
+	(2, 'a') ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.collated ENABLE TRIGGER ALL;
 
 --
 -- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
@@ -242,6 +268,44 @@ INSERT INTO emitters.grown (id, b, added) VALUES
 ALTER TABLE emitters.grown ENABLE TRIGGER ALL;
 
 --
+-- Data for Name: identified; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.identified DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.identified (id, label) OVERRIDING SYSTEM VALUE VALUES
+	(1, 'one'),
+	(2, NULL) ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.identified ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: keyed; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.keyed DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.keyed (id, code, note) VALUES
+	(1, 'a', 'first'),
+	(2, NULL, NULL) ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.keyed ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: no_columns; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.no_columns DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.no_columns DEFAULT VALUES;
+INSERT INTO emitters.no_columns DEFAULT VALUES;
+
+
+ALTER TABLE emitters.no_columns ENABLE TRIGGER ALL;
+
+--
 -- Data for Name: parent; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -280,6 +344,19 @@ INSERT INTO emitters.range_values (id, v_canon, v_diff, v_pattern) VALUES
 
 
 ALTER TABLE emitters.range_values ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: ruled; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.ruled DISABLE TRIGGER ALL;
+
+INSERT INTO emitters.ruled (id, label) VALUES
+	(1, 'b'),
+	(2, 'a') ON CONFLICT DO NOTHING;
+
+
+ALTER TABLE emitters.ruled ENABLE TRIGGER ALL;
 
 --
 -- Data for Name: scratch; Type: TABLE DATA; Schema: emitters; Owner: postgres
@@ -346,10 +423,17 @@ INSERT INTO emitters.unidentified (id, label) VALUES
 ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 
 --
+-- Name: identified_id_seq; Type: SEQUENCE SET; Schema: emitters; Owner: postgres
+--
+
+SELECT pg_catalog.setval('emitters.identified_id_seq', 2, true);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict UfXlCVi1RD7wlhNFh0hAMCbRNKTEarCYOeA96jYblGxZa7B2O4c99s7dsKdvQaN
+\unrestrict eXoGOiEVVTL8z26iWY7PPLhpcKvQ8wukIzOBiNkcrhDYPl4wSJaP03gyk7flsKo
 
 --
 -- Database "postgres" dump
@@ -361,7 +445,7 @@ ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 -- PostgreSQL database dump
 --
 
-\restrict IqAdT7Vt2y52QJpnId7idwgTllZZaw5hg8KATPauhBloVmowFKfY7OdIuz39Nei
+\restrict TgYGmgf0Nr6CHZMgbn7f4gX3P8X8yIRFoJ4maFQYGr5FuD5MutgdKJHJXvyxSA6
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -382,7 +466,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict IqAdT7Vt2y52QJpnId7idwgTllZZaw5hg8KATPauhBloVmowFKfY7OdIuz39Nei
+\unrestrict TgYGmgf0Nr6CHZMgbn7f4gX3P8X8yIRFoJ4maFQYGr5FuD5MutgdKJHJXvyxSA6
 
 --
 -- PostgreSQL database cluster dump complete
