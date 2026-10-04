@@ -324,16 +324,18 @@ refuses counts, not only the spellings `pg_dump` writes. The mechanism is
 coerced to the column's base type by its `*_in`, the typmod not applied, so
 `'12345678901'` against a `numeric(10,2)` compares, as it does in the server,
 while `'70000'` against a `smallint` is refused. **The `*_in` is the newest
-supported major's**, an `*_in` widening at a new major but in the two
+supported major's**, an `*_in` widening at a new major but in the
 exceptions below, so a literal an older dump's
 server would refuse is read as a newer one reads it, never with a meaning no
 server gives. **`oidin` is an exception**, an `*_in` a major narrowed:
 v16 reads base 0 where v15 read base 10 (I66), so no major's reading holds
 every other's. An `oid` field or literal is refused only where every supported
 major refuses it, and a spelling two majors read differently is read in
-decimal, as v13–v15 read it (KD84). `line_in`'s two-point form is the
-other: v14 rebuilt its arithmetic, narrowing it as well as widening it, and a
-`line` is refused only where every supported major refuses it (I74).
+decimal, as v13–v15 read it (KD84). `line_in`'s two-point form is another:
+v14 rebuilt its arithmetic, narrowing it as well as widening it, and a
+`line` is refused only where every supported major refuses it (I74). So are
+`xidin`, `xid8in` and `cidin`, which v16 narrowed from reading anything
+(I79), so a field of one is refused nowhere.
 **Every behaviour differing between
 supported majors is in the manual with the reading chosen for it**
 ([`../manual/type-handling.md`](../manual/type-handling.md), "Where

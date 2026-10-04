@@ -1196,7 +1196,9 @@ public.events (98765 rows)
   built the cache, an `unchecked by a strict parse:` line names each thing a
   strict `parse` does not check in it: a column, or a position within one
   (`v[]`, `v.field`), with its declared type and why — an input the restoring
-  server decides, a type pgdt reads no input of, a domain's `CHECK` — and
+  server decides, by its catalog or a type the dump does not declare, a
+  built-in pgdt has no reader of, a declaration pgdt did not read in full, a
+  domain's `CHECK` — and
   each `CHECK` the table carries, its own or the parent's it inherits; a
   table the dump declares nowhere, as in a `--data-only` dump, gets one line
   saying no value of it is checked. A closing line counts the blocks holding

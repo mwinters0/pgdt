@@ -1950,6 +1950,8 @@ pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
             };
             checked_key(&NestedCompare::Array(Box::new(element)), text).is_ok()
         }
+        TextGrammar::RefusesAll => false,
+        TextGrammar::RefusesNothing => true,
     };
     !reads
 }
@@ -5694,7 +5696,7 @@ mod tests {
                 _ => field_refused(&plan, text),
             }
         };
-        let cases: [(&str, &str, bool); 80] = [
+        let cases: [(&str, &str, bool); 89] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
@@ -5775,6 +5777,15 @@ mod tests {
             ("public.shapes", r#"("{""(1,1),(0,0)"";(2,2),(1,1)}","(1,2)")"#, false),
             ("public.shapes", r#"("{(1,1),(0,0);(2,2)}","(1,2)")"#, true),
             ("public.shapes", r#"("{(1,1),(0,0)}",(1))"#, true),
+            ("pg_node_tree", "{QUERY}", true),
+            ("pg_mcv_list[]", "{NULL}", false),
+            ("pg_mcv_list[]", "{x}", true),
+            ("\"char\"", "anything", false),
+            ("refcursor", "", false),
+            ("xid", "abc", false),
+            ("cid", "4294967296", false),
+            ("xid8[]", "{1,abc}", false),
+            ("xid8[]", "{1,abc", true),
         ];
         for (declared, text, expected) in cases {
             assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
@@ -8728,7 +8739,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (58, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (59, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

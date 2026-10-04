@@ -1953,6 +1953,16 @@ pub enum TextGrammar {
     /// whose elements `box_in` reads: the one array a column holds that no
     /// nested plan reads, its element type being opaque here.
     BoxArray,
+    /// A type whose input function refuses every value — the planner's and
+    /// the extended statistics' internal types and `gtsvector` (I78), and an
+    /// enum declaring no labels, which `enum_in` has none to read (I70) — so
+    /// every field of it is refused.
+    RefusesAll,
+    /// A type whose input function refuses nothing at some supported major —
+    /// `"char"`, `refcursor`, and `xid`, `xid8` and `cid`, which v16 narrowed
+    /// (I79) — so a field of it is read and refused by nothing, as one is
+    /// refused only where every supported major refuses it.
+    RefusesNothing,
 }
 
 /// A geometric type, naming the input function a field of it is read by.
@@ -1983,9 +1993,31 @@ pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGram
         return is_box(domain_terminal(element, types)).then_some(TextGrammar::BoxArray);
     }
     if base.contains('.') {
-        return None;
+        // pg-refuses: I70 — an enum whose labels are exactly none.
+        let labelless = matches!(
+            find_type(base, types).map(|t| &t.kind),
+            Some(TypeKind::Enum { labels, exact: true }) if labels.is_empty()
+        );
+        return labelless.then_some(TextGrammar::RefusesAll);
     }
     let (name, typmod) = builtin_name(terminal);
+    // None of these takes a typmod, so one written with one is DDL no server
+    // holds, read as no grammar.
+    match &*name {
+        // pg-refuses: I78 — an input function refusing every value.
+        "pg_node_tree"
+        | "pg_ndistinct"
+        | "pg_dependencies"
+        | "pg_mcv_list"
+        | "pg_brin_bloom_summary"
+        | "pg_brin_minmax_multi_summary"
+        | "gtsvector" => return typmod.is_none().then_some(TextGrammar::RefusesAll),
+        // `"char"` alone reaches here quoted, bare `char` being `character`.
+        "char" | "refcursor" | "xid" | "xid8" | "cid" => {
+            return typmod.is_none().then_some(TextGrammar::RefusesNothing);
+        }
+        _ => {}
+    }
     let geometric = match &*name {
         "point" => Some(Geometric::Point),
         "line" => Some(Geometric::Line),
@@ -2053,10 +2085,26 @@ pub enum Unchecked {
     /// A range declaring its own `canonical` function, which only the
     /// restoring server runs (I46).
     RangeCanonical { function: String },
-    /// A type this build reads no input of: a built-in it does not model, a
-    /// type the preamble does not declare, a composite whose fields did not
-    /// parse, or an array shape it reads as its text.
+    /// A `reg*` type or `aclitem`, whose input function looks the name it
+    /// reads up in the restoring server's catalog.
+    Catalog,
+    /// A type the dump does not declare, as an extension's is not, read by
+    /// whatever the restoring server holds under its name.
+    UndeclaredType,
+    /// A built-in type this build has no reader of — `tsvector`, `tsquery`,
+    /// `pg_lsn`, `jsonpath`, `tid`, `oidvector`, `pg_snapshot`,
+    /// `txid_snapshot` — outside a strict parse's promise by scope
+    /// (`docs/design/roadmap.md`, "A literal is guaranteed in `*_out`'s form
+    /// and never read past `*_in`'s").
     NoReader,
+    /// A type whose declaration this build did not read in full — a
+    /// composite whose fields, or a range whose subtype, the preamble did not
+    /// parse, or a built-in read by a grammar here but for a typmod no server
+    /// holds — so it reads the field as its text.
+    Unparsed,
+    /// An array whose element type is itself an array, which this build
+    /// reads as its text (`KD3`).
+    ArrayShape,
     /// An enum whose labels the preamble does not hold exactly, so a label
     /// it lacks is not refused (I70).
     LabelsInexact,
@@ -2082,7 +2130,13 @@ impl Unchecked {
             Self::RangeCanonical { function } => {
                 format!("a range whose canonical function, {function}, only the restoring server runs")
             }
-            Self::NoReader => "a type pgdt reads no input of".to_string(),
+            Self::Catalog => "read against the restoring server's catalog".to_string(),
+            Self::UndeclaredType => {
+                "a type the dump does not declare, read by the restoring server".to_string()
+            }
+            Self::NoReader => "a built-in type pgdt has no reader of".to_string(),
+            Self::Unparsed => "a type whose declaration pgdt did not read in full".to_string(),
+            Self::ArrayShape => "an array of arrays, which pgdt reads as its text".to_string(),
             Self::LabelsInexact => {
                 "an enum whose labels pgdt does not hold exactly, so a label it lacks is not refused"
                     .to_string()
@@ -2136,6 +2190,13 @@ pub(crate) fn unchecked_positions(
                 NestedCompare::Leaf { kind: CompareKind::Enum { exact: false, .. }, .. } => {
                     Unchecked::LabelsInexact
                 }
+                // A position holding an array is an array's element, every
+                // other array being a node of its own.
+                NestedCompare::Uncomparable { divergence: None, grammar: None, declared }
+                    if array_element(domain_terminal(declared, types)).is_some() =>
+                {
+                    Unchecked::ArrayShape
+                }
                 NestedCompare::Uncomparable { divergence: None, grammar: None, declared } => {
                     unread(declared, types)
                 }
@@ -2149,29 +2210,46 @@ pub(crate) fn unchecked_positions(
     out
 }
 
-/// Why a field of `declared`, read by no grammar, is checked for nothing:
-/// its terminal type's input is decided by the restoring server, or no reader
-/// here reads it. An array is its element's reason.
+/// Why a field of `declared`, read by no grammar, is checked for nothing: its
+/// terminal type's input is decided by the restoring server, or this build
+/// reads none of it. An array is its element's reason, but an array of arrays.
 fn unread(declared: &str, types: &[TypeDef]) -> Unchecked {
     let terminal = domain_terminal(declared, types);
     if let Some(element) = array_element(terminal) {
+        if array_element(domain_terminal(element, types)).is_some() {
+            return Unchecked::ArrayShape;
+        }
         return unread(element, types);
     }
     let (base, _) = split_typmod(terminal);
     if base.contains('.') {
         return match find_type(base, types).map(|t| &t.kind) {
-            Some(TypeKind::Base) => Unchecked::BaseType,
+            // A shell is completed only as a base type.
+            Some(TypeKind::Base | TypeKind::Shell) => Unchecked::BaseType,
             Some(TypeKind::Range { canonical: Some(function), .. }) => {
                 Unchecked::RangeCanonical { function: function.clone() }
             }
             Some(TypeKind::Enum { exact: false, .. }) => Unchecked::LabelsInexact,
-            _ => Unchecked::NoReader,
+            None if companion_range(base, types).is_none() => Unchecked::UndeclaredType,
+            // A composite or range read short, its multirange companion, and
+            // a domain whose chain never ends.
+            _ => Unchecked::Unparsed,
         };
+    }
+    if text_grammar(base, types).is_some() {
+        return Unchecked::Unparsed;
     }
     match &*builtin_name(terminal).0 {
         "xml" => Unchecked::Xml,
         "money" => Unchecked::Money,
-        _ => Unchecked::NoReader,
+        "aclitem" | "regclass" | "regcollation" | "regconfig" | "regdictionary"
+        | "regnamespace" | "regoper" | "regoperator" | "regproc" | "regprocedure" | "regrole"
+        | "regtype" => Unchecked::Catalog,
+        "tsvector" | "tsquery" | "pg_lsn" | "jsonpath" | "tid" | "oidvector" | "pg_snapshot"
+        | "txid_snapshot" => Unchecked::NoReader,
+        // A name `pg_catalog` holds no type under, as a hand-written dump may
+        // write a type its search path finds.
+        _ => Unchecked::UndeclaredType,
     }
 }
 
@@ -4488,6 +4566,54 @@ mod tests {
         assert!(!domain_not_null("public.a", &types));
     }
 
+    /// **A type whose input function refuses every value, or none, has a
+    /// grammar saying so**: the internal types I78 names and an enum whose
+    /// labels are exactly none (I70) refuse every field, and `"char"`,
+    /// `refcursor`, `xid`, `xid8` and `cid` none (I79) — bare `char` being
+    /// `character`, a typmod none of them takes no grammar, and a nested
+    /// position carrying its own.
+    #[test]
+    fn a_type_refusing_every_value_or_none_has_a_grammar_saying_so() {
+        let types = [
+            ty("public.none", TypeKind::exact_enum::<&str>([])),
+            ty("public.unread", TypeKind::Enum { labels: vec![], exact: false }),
+            ty("public.tree", TypeKind::domain("pg_node_tree")),
+        ];
+        let all = Some(TextGrammar::RefusesAll);
+        let nothing = Some(TextGrammar::RefusesNothing);
+        for (declared, expected) in [
+            ("pg_node_tree", all),
+            ("pg_ndistinct", all),
+            ("pg_dependencies", all),
+            ("pg_mcv_list", all),
+            ("pg_brin_bloom_summary", all),
+            ("pg_brin_minmax_multi_summary", all),
+            ("\"gtsvector\"", all),
+            ("public.tree", all),
+            ("public.none", all),
+            ("public.unread", None),
+            ("\"char\"", nothing),
+            ("refcursor", nothing),
+            ("xid", nothing),
+            ("XID8", nothing),
+            ("cid", nothing),
+            ("char", None),
+            ("xid(4)", None),
+            ("xid[]", None),
+            ("pg_catalog.xid", None),
+        ] {
+            assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
+        }
+        let ComparisonPlan::Nested(NestedCompare::Array(element)) =
+            comparison_for("xid8[]", None, &types, &[])
+        else {
+            panic!("an array of `xid8` is nested");
+        };
+        assert!(
+            matches!(*element, NestedCompare::Uncomparable { grammar, .. } if grammar == nothing)
+        );
+    }
+
     /// **What a strict parse leaves unchecked is named at every position,
     /// with its reason** (`unchecked_positions`): a type the restoring server
     /// decides the input of, at the column or beneath it, a type no reader
@@ -4524,6 +4650,22 @@ mod tests {
                 },
             ),
             ty("public.mood", TypeKind::Enum { labels: vec!["ok".into()], exact: false }),
+            ty("public.none", TypeKind::exact_enum::<&str>([])),
+            ty("public.shell", TypeKind::Shell),
+            ty("public.unparsed", TypeKind::Composite { fields: None }),
+            ty(
+                "public.nosub",
+                TypeKind::Range {
+                    subtype: None,
+                    multirange_type_name: Some("public.nosubmulti".into()),
+                    canonical: None,
+                },
+            ),
+            ty("public.ints", TypeKind::domain("integer[]")),
+            ty(
+                "public.grid",
+                TypeKind::Composite { fields: Some(vec![ColumnDef::new("rows", "public.ints[]")]) },
+            ),
             ty("public.pos", domain("integer", false, true)),
             ty("public.over_pos", domain("public.pos", false, false)),
             ty("public.nn", domain("integer", true, false)),
@@ -4554,7 +4696,23 @@ mod tests {
             ("money", vec![at("", "money", Unchecked::Money)]),
             ("money[]", vec![at("[]", "money", Unchecked::Money)]),
             ("tsvector", vec![at("", "tsvector", Unchecked::NoReader)]),
-            ("public.nowhere", vec![at("", "public.nowhere", Unchecked::NoReader)]),
+            ("pg_lsn[]", vec![at("[]", "pg_lsn", Unchecked::NoReader)]),
+            ("regclass", vec![at("", "regclass", Unchecked::Catalog)]),
+            ("aclitem[]", vec![at("[]", "aclitem", Unchecked::Catalog)]),
+            ("\"char\"", vec![]),
+            ("xid[]", vec![]),
+            ("pg_node_tree", vec![]),
+            ("public.none", vec![]),
+            ("public.nowhere", vec![at("", "public.nowhere", Unchecked::UndeclaredType)]),
+            ("nowhere", vec![at("", "nowhere", Unchecked::UndeclaredType)]),
+            ("public.nowhere[]", vec![at("[]", "public.nowhere", Unchecked::UndeclaredType)]),
+            ("public.shell", vec![at("", "public.shell", Unchecked::BaseType)]),
+            ("public.unparsed", vec![at("", "public.unparsed", Unchecked::Unparsed)]),
+            ("public.nosub", vec![at("", "public.nosub", Unchecked::Unparsed)]),
+            ("public.nosubmulti", vec![at("", "public.nosubmulti", Unchecked::Unparsed)]),
+            ("bit(0)", vec![at("", "bit(0)", Unchecked::Unparsed)]),
+            ("public.ints[]", vec![at("[]", "public.ints", Unchecked::ArrayShape)]),
+            ("public.grid", vec![at(".rows[]", "public.ints", Unchecked::ArrayShape)]),
             ("public.gtype", vec![at("", "public.gtype", Unchecked::BaseType)]),
             ("public.gtype[]", vec![at("[]", "public.gtype", Unchecked::BaseType)]),
             ("public.canon", vec![at("", "public.canon", canon())]),

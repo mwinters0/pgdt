@@ -1593,9 +1593,9 @@ fn reading(invalid: PostgresInvalidValues, jobs: usize) -> ScanOptions {
 fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> std::path::PathBuf {
     let dump = dir.join("strict.sql");
     let mut text = String::from(
-        "CREATE TABLE public.t (\n    a smallint,\n    v smallint[],\n    n numeric(10,2),\n    r int4range,\n    j json,\n    b bit(3),\n    g box[]\n);\n\n",
+        "CREATE TABLE public.t (\n    a smallint,\n    v smallint[],\n    n numeric(10,2),\n    r int4range,\n    j json,\n    b bit(3),\n    g box[],\n    p pg_node_tree,\n    x xid\n);\n\n",
     );
-    text.push_str("COPY public.t (a, v, n, r, j, b, g) FROM stdin;\n");
+    text.push_str("COPY public.t (a, v, n, r, j, b, g, p, x) FROM stdin;\n");
     for i in 0..rows {
         let mut fields = [
             i.to_string(),
@@ -1605,6 +1605,8 @@ fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> st
             format!("{{\"i\": [{i}]}}"),
             format!("{:03b}", i % 8),
             format!("{{({i},{i}),(0,0);(1,1),(0,0)}}"),
+            "\\N".to_string(),
+            format!("x{i}"),
         ];
         if let Some((row, column, field)) = bad
             && row == i
@@ -1624,9 +1626,11 @@ fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> st
 /// request leaves at the metadata level, an array's element, a value too long
 /// to key, a range's bound order, a `json` held as its text, a `bit(3)` of
 /// four bits, ordered by nothing here, a `box` array's element, which this
-/// build reads no array of, and the rows of a
+/// build reads no array of, a `pg_node_tree`, whose every value its input
+/// function refuses, and the rows of a
 /// block whose statistics declined — serially and at four workers, naming the field as a read of the
-/// dump does. A clean strict parse gathers what a default one gathers and
+/// dump does. A clean strict parse — its `xid` column spelled as only v13 to
+/// v15 read it — gathers what a default one gathers and
 /// records every block checked in full, the metadata-level table staying at
 /// its level (`PostgresInvalidValues::Strict`).
 #[tokio::test]
@@ -1642,7 +1646,7 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
     };
     // What is bad, where, and the request and allowance a default parse
     // passes it under.
-    let cases: [(&str, usize, &str, &StatisticsRequest, Option<u64>); 8] = [
+    let cases: [(&str, usize, &str, &StatisticsRequest, Option<u64>); 9] = [
         ("a column at the metadata level", 0, "70000", &only_v, None),
         ("an array's element", 1, "{1,70000}", &StatisticsRequest::DATA, None),
         ("a value too long to key", 2, &long, &StatisticsRequest::DATA, None),
@@ -1651,8 +1655,9 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
         ("a json held as its text", 4, "{\"i\": [1,]}", &StatisticsRequest::DATA, None),
         ("a bit string past its length", 5, "1010", &StatisticsRequest::DATA, None),
         ("a box array's element", 6, "{(1,1),(0,0);(2,2)}", &StatisticsRequest::DATA, None),
+        ("a type refusing every value", 7, "{QUERY}", &StatisticsRequest::DATA, None),
     ];
-    let names = ["a", "v", "n", "r", "j", "b", "g"];
+    let names = ["a", "v", "n", "r", "j", "b", "g", "p", "x"];
     for (what, column, field, wanted, allowance) in cases {
         let dump = strict_dump(dir.path(), 400, Some((300, column, field)));
         let source = LocalFileSource::open(&dump).unwrap();

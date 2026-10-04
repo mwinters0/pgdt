@@ -4636,7 +4636,8 @@ meets; no field is refused here for it.
 **Relied on by:** `predicate.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
-it holds.
+it holds; `pgtype::text_grammar`, whose `TextGrammar::RefusesAll` refuses
+every field of an enum whose labels are exactly none.
 
 **Re-verify.**
 
@@ -5072,3 +5073,89 @@ grep -n 'separate = !validated' src/bin/pg_dump/pg_dump.c
 It prints the `COPY`'s constraint check, the domain's, every form
 `pg_dump` writes a `CHECK` in, the partition exception and what it holds
 apart.
+
+---
+
+## I78 — Seven internal types' input functions refuse every value
+
+**Claim.** `pg_node_tree_in`, `pg_ndistinct_in`, `pg_dependencies_in`,
+`pg_mcv_list_in`, `brin_bloom_summary_in`, `brin_minmax_multi_summary_in`
+and `gtsvectorin` raise an error (`0A000`) whatever text they are handed, so
+a `COPY` field of `pg_node_tree`, `pg_ndistinct`, `pg_dependencies`,
+`pg_mcv_list`, `pg_brin_bloom_summary`, `pg_brin_minmax_multi_summary` or
+`gtsvector` fails the restore unless it is `\N`. Each type has an output
+function, so a table holding one — `CREATE TABLE … AS SELECT` from a catalog
+— dumps values no server reads back. The two `pg_brin_*` types exist from v14.
+
+**Proof.** `src/backend/utils/adt/pseudotypes.c`,
+`PSEUDOTYPE_DUMMY_INPUT_FUNC(pg_node_tree)`; `src/backend/statistics/`
+`mvdistinct.c`, `dependencies.c` and `mcv.c`; `src/backend/access/brin/`
+`brin_bloom.c` and `brin_minmax_multi.c` (v14 on);
+`src/backend/utils/adt/tsgistidx.c`, `gtsvectorin`, which says `gtsvector_in
+not implemented` to v15 and `cannot accept a value of type gtsvector` from v16.
+Each body is one `ereport(ERROR, …)`.
+
+**Observed.** Nothing was asked of a server.
+
+**Scope limit.** The supported majors; a later one may give a type an input
+function, as statistics import may.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `pgtype::text_grammar`, whose `TextGrammar::RefusesAll`
+refuses every non-NULL field of these types.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'DUMMY_INPUT_FUNC(pg_node_tree)' src/backend/utils/adt/pseudotypes.c
+grep -n -A8 '^pg_ndistinct_in\|^pg_dependencies_in\|^pg_mcv_list_in\|^brin_bloom_summary_in\|^brin_minmax_multi_summary_in\|^gtsvectorin' -r src/backend | grep -c 'ereport(ERROR'
+```
+
+It prints the dummy input function, and `6` (`4` before v14): one error per
+function, each its body's first statement.
+
+---
+
+## I79 — `charin` and `textin` refuse nothing, nor `xidin`, `xid8in` and `cidin` before v16
+
+**Claim.** `charin` (`"char"`) takes the first byte of its text, or from v15
+a `\ooo` octal escape, and refuses nothing; `refcursor`'s input function is
+`textin`, which refuses nothing. On v13 to v15 `xidin`, `xid8in` and `cidin`
+take `strtoul` or `strtou64` of the text, base 0, with no end pointer and no
+error check, so they refuse nothing either: `abc` is `0`. v16 to v18 read
+them through `uint32in_subr` and `uint64in_subr`, as `oidin` (I66), refusing
+trailing garbage and a value past the width.
+
+**Proof.** `src/backend/utils/adt/char.c`, `charin`; `pg_type.dat`'s
+`refcursor` row (`typinput => 'textin'`) and `varlena.c`'s `textin`;
+`src/backend/utils/adt/xid.c`, `xidin`, `xid8in` and `cidin`, compared at
+v15.19 and v16.15. The change is upstream `eb8312a22a8` ("Detect bad input
+for types xid, xid8, and cid", 2022-12-27), absent from v13.23 to v15.19.
+
+**Observed.** On the koji replica (16), `'abc'::xid` is refused as invalid
+input syntax and `'4294967296'::cid` as out of range; `' 0x10 '::cid` reads
+`16`. No v13 to v15 server was asked.
+
+**Scope limit.** Encoding validity, which `COPY` checks of every field before
+any input function, is not an input function's refusal.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
+
+**Relied on by:** `pgtype::text_grammar`, whose `TextGrammar::RefusesNothing`
+reads a field of these types and refuses none, a field being refused only
+where every supported major refuses it.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+sed -n '/^charin/,/^}/p' src/backend/utils/adt/char.c
+grep -n -A1 "typname => 'refcursor'" src/include/catalog/pg_type.dat
+sed -n '/^xidin/,/^}/p;/^xid8in/,/^}/p;/^cidin/,/^}/p' src/backend/utils/adt/xid.c
+```
+
+It prints `charin` with no error, `refcursor`'s `textin`, and the three
+functions — passing `NULL` as the end pointer and checking nothing to v15,
+calling `uint32in_subr`/`uint64in_subr` from v16.

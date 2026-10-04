@@ -23,9 +23,9 @@ external facts are I77 (a `CHECK`) and I76 (a domain's `NOT NULL`).
   inexact enum, an `Unanswerable` canonical range — and every domain at or
   beneath it declaring a `CHECK`, and every `NOT NULL` domain beneath a
   container (`KD97`). Paths are `NestedCompare::walk`'s.
-- **`Unchecked`'s reasons**: `Undeclared`, `Xml`, `Money`, `BaseType`,
-  `RangeCanonical`, `NoReader`, `LabelsInexact`, `DomainCheck`,
-  `DomainNotNullBeneath`, each worded by `describe`.
+- **`Unchecked`'s reasons**, each worded by `describe`; 31.21.1 split
+  `NoReader` by what decides the input
+  ([notes](roadmap-P31.21.1-unchecked-reasons-notes.md)).
 - **The preamble reads every `CHECK` before the data** (`check_constraints`,
   off `top_level_words`, which now yields a quoted identifier as its text so
   a constraint's name survives): `TableDef::checks` (a table constraint, a
@@ -62,17 +62,13 @@ external facts are I77 (a `CHECK`) and I76 (a domain's `NOT NULL`).
 - **A built-in type with no reader here** — `tsvector`, `pg_lsn`, `jsonpath`
   — is named as `NoReader`, outside the promise by scope
   ([`roadmap.md`](roadmap.md), "A literal is guaranteed in `*_out`'s form and
-  never read past `*_in`'s"). `NoReader` also holds what is not that, which
-  31.21.1 separates.
+  never read past `*_in`'s").
 - **A column whose plan `resolve_columns` refuses whole is named at the
   column**, where `comparison_for` alone would name the position: an array of
   an opaque element (I22) is `""`, the reason its element's.
 
 ## What the slices after this inherit
 
-- **31.21.1** splits `NoReader` by what decides the input
-  ([`../status/history/2026-10-04.md`](../status/history/2026-10-04.md), "A
-  built-in type with no reader is outside the strict promise by scope").
 - **31.21.2** prints the per-block lines under `info --detail` and a strict
   `parse` alone (same entry, "The strict listing's lines print where they are
   asked for").
