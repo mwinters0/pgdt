@@ -4,8 +4,8 @@ What the slices after this one inherit. The external fact is I91; why line
 endings follow PostgreSQL's two readers is
 [`../status/history/2026-10-04.md`](../status/history/2026-10-04.md), "Line
 endings follow PostgreSQL's two readers", and why the bare-CR half is
-31.29.1's is the same day's "31.29 lands without bare-CR blocks; 31.29.1
-earned".
+unowned is the same day's "31.29 lands without bare-CR blocks; `KD101`
+unowned".
 
 ## What exists
 
@@ -54,7 +54,7 @@ earned".
   block, `missing_trailing_newline_is_tolerated` asserting it, where a restore
   refuses it, rows or none.
 
-## What 31.29.1 inherits
+## What a reader of bare-CR blocks inherits
 
 - `RowEnding::Cr` is the block's ending where its first row's first
   unescaped CR is not its line's last byte; `refused_in` returns `None` for

@@ -180,7 +180,12 @@ impl RowEnding {
             // rows at each unescaped CR and ends it at `\.` CR, discarding
             // what psql sends after that up to the next line it reads as `\.`
             // (I91); here its rows are the LF-split lines, each read whole,
-            // and nothing holds them to an ending.
+            // and nothing holds them to an ending. The lines a restore
+            // discards are read as rows, and both resume past psql's `\.`
+            // line, so only this block is misread, though a field in it may
+            // be refused where PostgreSQL reads it. Not refused as a
+            // shortfall: that would fail the whole parse, and this match is
+            // PostgreSQL's refusals alone.
             (Self::Cr, _) => None,
             (block, row) if block == row => None,
             (Self::CrLf, Self::Lf) => Some(RowEndingRefusal::LiteralNewline),

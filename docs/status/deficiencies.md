@@ -419,8 +419,10 @@ than reading as a phase nobody has sliced.
 - **KD101** — a `COPY` block whose first row holds a raw CR before its
   line's end, its rows ending in a bare CR, is read as LF-split lines and
   checked for nothing, where a restore splits it at each CR, ends it at `\.`
-  CR and discards what psql sends after that (I91). **(b) owned by P31**,
-  31.29.1. Detail: `pgdump_query/src/scan.rs`.
+  CR and discards what psql sends after that (I91): that block's rows are
+  wrong, and a field among them may be refused where PostgreSQL reads it; no
+  `pg_dump` writes one. **(c) unowned**; promoted by a hand-written dump
+  holding one. Detail: `pgdump_query/src/scan.rs`.
 
 - **KD102** — a partition declared `CREATE TABLE … PARTITION OF`, which no
   `pg_dump` writes (I86), takes its columns, `NOT NULL`s and `CHECK`s from its
