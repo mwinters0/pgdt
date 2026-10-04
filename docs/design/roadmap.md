@@ -307,11 +307,14 @@ a query decodes them. `--postgres-invalid-values`, on every surface the
 unrepresentable mode has (D103), is `default` for that; `strict` has the parse
 check every field against what PostgreSQL refuses by the field and its column's
 declaration alone — its type's `*_in`, its typmod, a `NOT NULL` on the column,
-the table or a domain — for every type whose input is decided there, a built-in
-type held as its text having its grammar ported. Outside it, and named by the
-manual: a `CHECK` (an expression), an input the restoring server decides
-(`xml`, `money`, a user base type, a user range's `canonical`), and a post-data
-constraint. A clean restore is not the promise, being out of reach; `ignore`
+the table or a domain — for every type whose input is decided there and that
+pgdt has a reader of, a built-in type it holds as its text having its grammar
+ported. Outside it, and named by the manual: a `CHECK` (an expression), an
+input the restoring server decides (`xml`, `money`, the `reg*` types and
+`aclitem`, a user base type, a user range's `canonical`), a built-in type pgdt
+has no reader of (`tsvector`, `pg_lsn`, `jsonpath`), outside by scope though
+its input is the field's, a partition's bound, the table's declaration as a
+`CHECK` is, and a post-data constraint. A clean restore is not the promise, being out of reach; `ignore`
 opts a dump's fields out with no contract, the decoders reading them as they
 read them. A literal has no opt-out, rewriting it being its remedy. A hand-written dump is in scope (the rule above), so any field `*_in`
 refuses counts, not only the spellings `pg_dump` writes. The mechanism is
@@ -1190,6 +1193,17 @@ which is what makes the difference worth minding at the moment one is found.
   mapping** above, which is the same knob at a different granularity, and
   adding it breaks nothing — it only ever changes columns that are `Utf8View`
   today, or a shape the caller has told us to represent differently.
+
+- **A built-in type with no reader, read by its own grammar.** `tsvector`,
+  `tsquery`, `pg_lsn`, `jsonpath`, `tid`, `oidvector`, `pg_snapshot` and
+  `txid_snapshot` are held as no type, so a `strict` parse checks nothing of
+  them although each `*_in` reads the field alone; the strict promise excludes
+  them by scope ("A literal is guaranteed in `*_out`'s form and never read past
+  `*_in`'s"). Each leaves the exclusion by a port of its `*_in` and an
+  invariant, as `json`, `bit` and the geometric types did, and a reader of its
+  own is what a filter on it would need besides. Reasoning:
+  [2026-10-04](../status/history/2026-10-04.md), "A built-in type with no
+  reader is outside the strict promise by scope".
 
 - **A diagnostic for a brace run past `MAXDIM`.** `array_out` cannot emit more
   than 6 leading braces (I25), so a longer run means the file is not `pg_dump`

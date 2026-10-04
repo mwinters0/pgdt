@@ -10,7 +10,7 @@ majors differ" — together the index of the differences acted on, not repeated
 here.
 
 - **`VD<n>` is allocated on discovery, never renumbered and never reused.**
-  <!-- difference-watermark: VD1 -->
+  <!-- difference-watermark: VD2 -->
 - **An entry holds** a **Claim** naming the majors on each side, falsifiable;
   its **Proof**, upstream source first and the commit that made the
   difference where one is found; what was **Observed**, or that nothing was;
@@ -56,3 +56,32 @@ for v in release-v*; do echo "== $v"; sed -n '/^float4_div/,/^}/p;/^float8_div/,
 
 It prints both functions per release; v13 lacks `!isnan(val1)` in the
 zero-divisor test and `!isinf(val2)` in the underflow test.
+
+---
+
+## VD2 — v16 refuses an `xid`, `xid8` or `cid` v13 to v15 read as anything
+
+**Claim.** On v13 to v15, `xidin`, `xid8in` and `cidin` take `strtoul` or
+`strtou64` of the text with no end pointer and no error check, so they refuse
+nothing: `abc` is `0`, and a value past the width wraps or saturates. v16 to
+v18 read them through `uint32in_subr` and `uint64in_subr`, as `oidin` (I66),
+refusing trailing garbage and a value past the width.
+
+**Proof.** `src/backend/utils/adt/xid.c`, `xidin`, `xid8in` and `cidin`,
+compared at v15.19 and v16.15. The change is upstream `eb8312a22a8` ("Detect
+bad input for types xid, xid8, and cid", 2022-12-27), absent from
+release-v13.23 to v15.19 and present from v16.15.
+
+**Observed.** On the koji replica (16), `'abc'::xid` is refused as invalid
+input syntax and `'4294967296'::cid` as out of range; `' 0x10 '::cid` reads
+`16`. No v13 to v15 server was asked.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres
+for v in release-v*; do echo "== $v"; sed -n '/^xidin/,/^}/p;/^xid8in/,/^}/p;/^cidin/,/^}/p' "$v/src/backend/utils/adt/xid.c"; done
+```
+
+It prints the three functions per release; v13 to v15 pass `NULL` as the end
+pointer and check nothing.

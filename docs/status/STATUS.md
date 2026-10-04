@@ -110,11 +110,14 @@ approval, in the spec's opening note.
 - [x] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it — [notes](../design/roadmap-P31.19-char-length-notes.md)
 - [x] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so — [notes](../design/roadmap-P31.20-not-null-notes.md)
 - [x] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same — [notes](../design/roadmap-P31.21-strict-unchecked-notes.md)
+- [ ] **31.21.1** The listing's reasons split by what decides the input: the `reg*` types and `aclitem` named as read against the restoring server's catalog, a type the dump does not declare as read by the restoring server, a composite whose fields did not parse and an array shape read as its text as pgdt's reading falling short; `pg_node_tree`, `pg_ndistinct`, `pg_dependencies`, `pg_mcv_list`, the `pg_brin_*_summary` types and `gtsvector` refused at any non-NULL field, and `"char"`, `refcursor`, `xid`, `xid8` and `cid` read by a grammar refusing nothing — the three numeric ones refused only where every supported major refuses, their v16 narrowing an invariant — each leaving the listing; `NoReader` then names only a built-in type pgdt has no reader of
+- [ ] **31.21.2** The `unchecked by a strict parse:` lines printed beneath each block by `pgdt info --detail` and after a `strict` `parse` alone, every other listing keeping the closing count, which points at `info --detail`; `--json` carries each block's `unchecked` as before
 - [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
 - [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
 - [ ] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94`
 - [ ] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95`
 - [ ] **31.26** A `NOT NULL` domain's NULL element of an array, or NULL field of a composite, refused wherever the field is read, as `array_in` and `record_in` refuse it, closing `KD97`
+- [ ] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse
 
 ## Not started
 
@@ -146,31 +149,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **31.21 names a built-in type with no reader here as outside a strict
-  parse's check, not as a gap in it.** `tsvector`, `tsquery`, `pg_lsn`,
-  `jsonpath`, `xid`, `oidvector`, the `reg*` types and the like are listed
-  `a type pgdt reads no input of`, beside `xml` and `money`, and no `KD` was
-  filed. Why: the manual already lists "a type it has no reader for" among
-  what `strict` does not check, and the 2026-10-03 history entry enumerated
-  the gaps inside the promise as `json`, `bit`/`varbit` and the geometric
-  types alone. Against it: the roadmap's "A literal is guaranteed in
-  `*_out`'s form and never read past `*_in`'s" binds `strict` "for every type
-  whose input is decided" by the field, which `tsvector_in` or `pg_lsn_in`
-  is (the `reg*` types and `aclitem` read the server's catalog and are
-  outside). Reconsidering files one `KD` owned by P31 and appends a slice
-  porting each such `*_in`, P31 not wrapping until it lands.
-- **31.21 names each `CHECK` a table carries, not a partition's bound.** A
-  `COPY` into a partition is refused for a row its bound excludes, and under
-  `--load-via-partition-root` for one no partition takes, which is as far
-  outside the field and its declaration as a `CHECK`. Why: the slice's row
-  names `CHECK`s, and the preamble reads no `ATTACH PARTITION`. Reconsidering
-  reads `ALTER TABLE … ATTACH PARTITION … FOR VALUES` into the partition's
-  `TableDef` and lists a partition, or a root loaded through, as checked
-  against its bound — a slice of its own.
-- **The `unchecked by a strict parse:` lines print under every block of every
-  listing**, `parse` in any mode and `info`, rather than only after a strict
-  parse. Why: they are a property of the dump's declarations, not of a run,
-  and `info` must show the same whatever built the cache. Against it: a
-  `default` parse's listing, and a `--data-only` dump's, grows a line per
-  block nobody asked for. Reconsidering prints them under `info --detail`
-  and a strict `parse` only, a change to `print_index`'s one caller flag.

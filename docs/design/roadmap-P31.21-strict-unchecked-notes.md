@@ -56,20 +56,26 @@ external facts are I77 (a `CHECK`) and I76 (a domain's `NOT NULL`).
 - **A post-data constraint is not named per table**: a `CHECK` held apart
   (I77), a unique, primary or foreign key. The manual names the class.
 - **A partition's bound is not named**, though a `COPY` into the partition,
-  or routed through its root, is checked against it; STATUS's "Decisions
-  worth another look" carries the call.
+  or routed through its root, is checked against it; 31.27 names it.
 - **A spelling a reader here cannot read at all is not named per column**
   (`KD90`): it would name every typed column.
-- **A built-in type with no reader here** — `tsvector`, `pg_lsn`, `jsonpath`,
-  `xid` — is named as `NoReader`, beside `xml` and `money`, rather than filed
-  as a gap in the promise; STATUS's "Decisions worth another look" carries
-  the call.
+- **A built-in type with no reader here** — `tsvector`, `pg_lsn`, `jsonpath`
+  — is named as `NoReader`, outside the promise by scope
+  ([`roadmap.md`](roadmap.md), "A literal is guaranteed in `*_out`'s form and
+  never read past `*_in`'s"). `NoReader` also holds what is not that, which
+  31.21.1 separates.
 - **A column whose plan `resolve_columns` refuses whole is named at the
   column**, where `comparison_for` alone would name the position: an array of
   an opaque element (I22) is `""`, the reason its element's.
 
 ## What the slices after this inherit
 
+- **31.21.1** splits `NoReader` by what decides the input
+  ([`../status/history/2026-10-04.md`](../status/history/2026-10-04.md), "A
+  built-in type with no reader is outside the strict promise by scope").
+- **31.21.2** prints the per-block lines under `info --detail` and a strict
+  `parse` alone (same entry, "The strict listing's lines print where they are
+  asked for").
 - **31.22** changes no position here: `KD90` is per value.
 - **31.26** closes `KD97` by carrying the flag into `NestedPlan`; it then
   drops `Unchecked::DomainNotNullBeneath` and `domains_beneath`'s arm naming
