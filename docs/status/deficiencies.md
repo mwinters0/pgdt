@@ -425,6 +425,7 @@ than reading as a phase nobody has sliced.
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
   keeps them, and a `char(n)` one shorter than `n` is not padded, neither of
   which `pg_dump` writes, so a typed read emits a value the server does not
-  hold and a `varchar(n)`'s `<` and `=` answer otherwise over the first.
-  **(c) unowned**; promoted by a hand-written dump holding one. Detail:
+  hold; only the `varchar(n)` half changes an answer, its `<` and `=`, the
+  latter needing `KD82` closed too. **(c) unowned**; promoted by a
+  hand-written dump holding one. Detail:
   `pgdump_query/src/decode.rs`.

@@ -1985,12 +1985,18 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Read<Strin
 // deficiency: KD96 — a field longer than `length` only by trailing blanks,
 // which `varchar_input` and `bpchar_input` cut to `length` characters (I75),
 // keeps them here, and a `character(n)` field shorter than `length`, which
-// `bpchar_input` pads, is not padded: a typed read emits a value the server
-// does not hold, and a `character varying(n)`'s longer one is keyed, bounded
-// and compared with its blanks, so `<` and `=` answer otherwise than the
-// server over it. No `pg_dump` writes either. Cutting it means a key no
-// `SchemaMode::Strings` term shares, which reads the column as its text
-// (D79). **(c) unowned**; promoted by a hand-written dump holding one.
+// `bpchar_input` pads, is not padded. Either way a typed read emits a value
+// the server does not hold; only a `character varying(n)`'s longer field also
+// answers otherwise, keyed, bounded and compared with its blanks, so `<` and
+// `=` differ from the server over it, where `character(n)`'s comparison trims
+// both sides. No `pg_dump` writes either. The fix cuts the field in the read,
+// the key and the bounds, and records per group whether any field was cut: a
+// `SchemaMode::Strings` term reads the column as its text from the same set
+// (D79), so it reads only a group where none was, never losing a real dump's
+// bounds; `=`, `!=` and `IN` answer by the cut value only once `KD82` closes.
+// `numeric(p,s)` is rounded where this is not because its rounding decides
+// its refusal (I51), and no refusal here needs the cut. **(c) unowned**;
+// promoted by a hand-written dump holding one.
 // pg-refuses: I75 — a non-blank past the typmod's length.
 pub fn char_typmod_refuses(text: &str, length: u32) -> bool {
     let length = length as usize;

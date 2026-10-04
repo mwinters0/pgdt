@@ -54,7 +54,7 @@ shape it follows is 31.15's
 
 - **A field longer than `n` only by blanks is read with them** (`KD96`),
   where the server cuts it to `n`: cutting it would give a `varchar(n)` a key
-  no `SchemaMode::Strings` term shares. It is a "Decision worth another look".
+  no `SchemaMode::Strings` term shares; `KD96`'s marker says what the fix is.
 - **`=`, `!=` and `IN` never decode the field**, so they do not refuse one
   past its length, as they do not a `numeric(p,s)` past its precision.
 - **A `char(n)` field shorter than `n` is read unpadded**, as before
