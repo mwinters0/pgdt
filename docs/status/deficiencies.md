@@ -388,11 +388,6 @@ than reading as a phase nobody has sliced.
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `pgdump_query/src/preamble.rs`.
 
-- **KD91** — a role quoted `"PUBLIC"` or a tablespace quoted `"PG_DEFAULT"`,
-  each a name a server can hold, is dropped from the inventory as the
-  pseudo-role or the default tablespace is. **(b) owned by P31**, 31.23.
-  Detail: `pgdump_query/src/preamble.rs`.
-
 - **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
   want of a complete cache, names a `pgdt parse` without
   `--postgres-invalid-values ignore`, which fails at the first such field it

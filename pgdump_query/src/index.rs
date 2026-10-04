@@ -382,7 +382,7 @@ pub struct DumpIndex {
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
     /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
     /// PRIVILEGES FOR ROLE` (`docs/design/decisions.md`,
-    /// "D31"). `PUBLIC` is never included. Flat and per-file — a
+    /// "D31"). The pseudo-role `PUBLIC` is never included. Flat and per-file — a
     /// per-database view is a filter over `Span::database`. Persisted, unlike
     /// `diagnostics` (`docs/design/decisions.md`, "D34"), and
     /// complete only once `scanned_through` reaches the file's size.

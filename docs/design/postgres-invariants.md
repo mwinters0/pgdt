@@ -5462,3 +5462,48 @@ grep -n 'pg_add_s64_overflow(interval->time,' src/backend/utils/adt/timestamp.c
 The first prints the wrapping millennium to v14, the checked one from v15,
 from v17 the unit and `ago` checks, and at every major the `mm:ss` reading;
 the second the checked rounding, from v17.
+
+---
+
+## I85 — No role is named `public`, and `pg_default` is the default tablespace's name alone
+
+**Claim.** A role cannot be named `public`: `gram.y`'s `RoleSpec` reads the
+identifier `public`, quoted or not, as the pseudo-role, and `RoleId` refuses
+it, so `CREATE ROLE` and `ALTER ROLE … RENAME TO` refuse it in either spelling.
+`PUBLIC`, quoted, is an ordinary role name, which `fmtId` writes quoted. A
+tablespace name with the prefix `pg_` is refused by `IsReservedName`, a
+case-sensitive test, so `pg_default` names only the built-in default
+tablespace while `PG_DEFAULT` is an ordinary name. A TOC header's `Owner:`
+and `Tablespace:` fields hold the name raw (I18), unquoted whatever its case.
+
+**Proof.** `src/backend/parser/gram.y`'s `RoleSpec` (`strcmp($1, "public")`)
+and `RoleId` (`role name "%s" is reserved`); `src/backend/catalog/catalog.c`'s
+`IsReservedName`, called by `tablespace.c`'s `CreateTableSpace` and
+`RenameTableSpace`.
+
+**Observed.** A 16.15 server refused `CREATE ROLE "public"` and `CREATE
+TABLESPACE pg_x`, and created a role `"PUBLIC"` and a tablespace
+`"PG_DEFAULT"`, which its `pg_dump` wrote as `Owner: PUBLIC; Tablespace:
+PG_DEFAULT`, `OWNER TO "PUBLIC"`, `SET default_tablespace = "PG_DEFAULT"` and
+`TO "PUBLIC"` beside the pseudo-role's bare `TO PUBLIC` — the dump
+`tests/map.rs`'s
+`a_role_named_public_and_a_tablespace_named_pg_default_are_kept` holds.
+
+**Scope limit.** A superuser with `allow_system_table_mods` may create or
+rename a tablespace into `pg_`; one renaming the built-in default away and
+another to `pg_default` would be dropped from the inventory.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+v16.15 (server).
+
+**Relied on by:** `preamble::insert_role` and `preamble::insert_tablespace`,
+which drop exactly `public` and `pg_default` from the inventory.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'strcmp(.1, "public") == 0\|errmsg("role name \\"%s\\" is reserved",' src/backend/parser/gram.y
+grep -n -A4 '^IsReservedName' src/backend/catalog/catalog.c
+grep -n 'IsReservedName' src/backend/commands/tablespace.c
+```

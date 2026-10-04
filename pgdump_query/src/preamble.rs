@@ -1489,27 +1489,23 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
     Cursor::new(rest.as_bytes()).parse_ident()
 }
 
-/// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
-/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty:
-/// `PUBLIC` is never reported as a role. [`ident_after`]'s
-/// [`Cursor::parse_ident`] lowercases every *unquoted* identifier, so the
-/// keyword arrives here as `public`, a name no role can take, quoted or not
-/// (gram.y's `RoleSpec`).
-// deficiency: KD91 — compared case-insensitively, so a role quoted
-// `"PUBLIC"`, which a server can hold, is dropped too, and a tablespace
-// quoted `"PG_DEFAULT"` by `insert_tablespace`.
+/// Filters out the pseudo-role `buildACLCommands` writes literally as
+/// `PUBLIC` whenever a grant/revoke's grantee list is empty, and nothing
+/// else. [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
+/// *unquoted* identifier, so the keyword arrives here as `public`, the one
+/// name no role can hold (I85); a role quoted `"PUBLIC"` arrives as itself
+/// and is kept, as is a TOC `Owner:` field's raw `PUBLIC`, which names it.
 pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
-    if !role.eq_ignore_ascii_case("PUBLIC") {
+    if role != "public" {
         roles.insert(role);
     }
 }
 
-/// Filters out `pg_default`, the reserved, uncreatable name for a database's
-/// implicit default tablespace — never reported as one, the same way
-/// `PUBLIC` is filtered from roles, and compared as [`insert_role`] compares
-/// it (`KD91`).
+/// Filters out `pg_default`, the database's built-in default tablespace,
+/// compared exactly as [`insert_role`] compares `public`: a tablespace
+/// quoted `"PG_DEFAULT"` is one a server can create (I85), and is kept.
 pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: String) {
-    if !tablespace.eq_ignore_ascii_case("pg_default") {
+    if tablespace != "pg_default" {
         tablespaces.insert(tablespace);
     }
 }
@@ -3484,6 +3480,23 @@ mod tests {
     #[test]
     fn pg_default_is_never_recorded_even_if_named_explicitly() {
         assert!(refs_of("SET default_tablespace = pg_default;").1.is_empty());
+    }
+
+    /// `fmtId` quotes a name holding a capital, so a role `PUBLIC` and a
+    /// tablespace `PG_DEFAULT` are written quoted and are kept; `public`,
+    /// quoted or not, is the pseudo-role to the server (I85), and is not.
+    #[test]
+    fn a_quoted_public_role_and_pg_default_tablespace_are_kept() {
+        assert_eq!(
+            refs_of("GRANT SELECT ON TABLE objects.widgets TO \"PUBLIC\";").0,
+            vec!["PUBLIC".to_string()]
+        );
+        assert_eq!(refs_of("ALTER TABLE objects.t OWNER TO \"PUBLIC\";").0, vec!["PUBLIC"]);
+        assert!(refs_of("REVOKE ALL ON TABLE objects.t FROM \"public\";").0.is_empty());
+        assert_eq!(
+            refs_of("SET default_tablespace = \"PG_DEFAULT\";").1,
+            vec!["PG_DEFAULT".to_string()]
+        );
     }
 
     /// `fmtId()`'s quoted form (a role/tablespace name that needs quoting,

@@ -692,6 +692,120 @@ async fn build_index_records_referenced_roles_and_tablespaces() {
     assert_eq!(index.tablespaces, ["fixture_ts".to_string()].into_iter().collect());
 }
 
+/// A role named `PUBLIC` and a tablespace named `PG_DEFAULT`, each a name a
+/// server can create, in `pg_dump` 16.15's output verbatim but for its
+/// `\restrict` key: kept wherever the dump names them — the TOC `Owner:`
+/// and `Tablespace:` fields raw, `OWNER TO`, `SET default_tablespace` and a
+/// grantee quoted — while the pseudo-role, written bare as `PUBLIC`, is not
+/// (I85).
+#[tokio::test]
+async fn a_role_named_public_and_a_tablespace_named_pg_default_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kd91.sql");
+    std::fs::write(&path, PUBLIC_ROLE_DUMP).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let roles: Vec<&str> = index.roles.iter().map(String::as_str).collect();
+    assert_eq!(roles, ["PUBLIC", "postgres"]);
+    assert_eq!(index.tablespaces, ["PG_DEFAULT".to_string()].into_iter().collect());
+
+    // The pseudo-role is the one grant on `t` naming `PUBLIC` bare.
+    let mut without_role = PUBLIC_ROLE_DUMP.replace("Owner: PUBLIC", "Owner: postgres");
+    without_role = without_role.replace("OWNER TO \"PUBLIC\"", "OWNER TO postgres");
+    without_role = without_role.replace("TO \"PUBLIC\";", "TO fixture_reader;");
+    std::fs::write(&path, without_role).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let roles: Vec<&str> = index.roles.iter().map(String::as_str).collect();
+    assert_eq!(roles, ["fixture_reader", "postgres"]);
+}
+
+const PUBLIC_ROLE_DUMP: &str = r#"--
+-- PostgreSQL database dump
+--
+
+\restrict kd91
+
+-- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
+-- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+SET default_tablespace = "PG_DEFAULT";
+
+SET default_table_access_method = heap;
+
+--
+-- Name: t; Type: TABLE; Schema: public; Owner: PUBLIC; Tablespace: PG_DEFAULT
+--
+
+CREATE TABLE public.t (
+    id integer
+);
+
+
+ALTER TABLE public.t OWNER TO "PUBLIC";
+
+SET default_tablespace = '';
+
+--
+-- Name: u; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.u (
+    id integer
+);
+
+
+ALTER TABLE public.u OWNER TO postgres;
+
+--
+-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: PUBLIC
+--
+
+COPY public.t (id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: u; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.u (id) FROM stdin;
+\.
+
+
+--
+-- Name: TABLE t; Type: ACL; Schema: public; Owner: PUBLIC
+--
+
+GRANT SELECT ON TABLE public.t TO PUBLIC;
+
+
+--
+-- Name: TABLE u; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT ON TABLE public.u TO "PUBLIC";
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict kd91
+
+"#;
+
 /// An `INSERT` run's value holding `$$` neither ends the run nor hides the
 /// block after it: the scanner and the run's end lex alike (`crate::lex`).
 #[tokio::test]

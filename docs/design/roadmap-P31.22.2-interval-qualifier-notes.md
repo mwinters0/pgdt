@@ -28,7 +28,7 @@ entry it closes was `KD98`.
 - **A literal is read under no qualifier** (`literal_key`), the server
   coercing one with no typmod; the readers' keys are the same either way, the
   qualifier deciding only a text they do not read.
-- **`CACHE_FORMAT_VERSION` is 62**: a block a strict parse checked under 61
+- **`CACHE_FORMAT_VERSION` moved past 61**: a block a strict parse checked under 61
   may hold a field this build refuses. Neither pinned digest moved.
 - **Evidence**: `datetime_in`'s
   `an_interval_is_read_exactly_where_some_major_reads_it_under_its_qualifier`,
