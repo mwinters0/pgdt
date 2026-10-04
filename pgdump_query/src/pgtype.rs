@@ -1904,6 +1904,31 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
     name
 }
 
+/// Whether `declared` is a domain declaring `NOT NULL`, or a domain over one
+/// — a chain [`domain_terminal`] walks — which `domain_in` refuses a NULL
+/// under, `COPY` handing it each NULL field (I76). An array of such a domain
+/// is not one: its column holds a NULL array.
+// pg-refuses: I76 — a domain's `NOT NULL`, which `domain_in` checks of a NULL.
+//
+// deficiency: KD97 — asked of a column's declared type alone: a NULL element
+// of an array, or field of a composite, whose type is such a domain is read
+// as NULL, where `array_in` and `record_in` hand it to `domain_in`, which
+// refuses it (I76), so a strict parse leaves it unchecked. Closing it carries the domain's `NOT NULL` into the nested
+// position's `NestedPlan`, as a `varchar(n)`'s length rides in
+// `NestedPlan::Text`, read where `batch::append_nested` appends a NULL leaf
+// and where a strict parse walks one.
+pub(crate) fn domain_not_null(declared: &str, types: &[TypeDef]) -> bool {
+    let mut name = declared.trim();
+    for _ in 0..=types.len() {
+        match find_type(name, types).map(|t| &t.kind) {
+            Some(TypeKind::Domain { not_null: true, .. }) => return true,
+            Some(TypeKind::Domain { base_type, .. }) => name = base_type.trim(),
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Whether `terminal` names the built-in `box`, read as [`builtin_name`]
 /// reads every built-in: unqualified, and bare in any case or quoted in the
 /// catalog's, as `--quote-all-identifiers` writes it (I8).
@@ -2276,7 +2301,7 @@ fn comparison_user_type(
         // way. The collation walks down with it and the *column's* clause
         // wins: a domain's own `COLLATE` is its type default, which a
         // column-level clause only overrides (I37).
-        TypeKind::Domain { base_type, collation: domain_collation } => comparison_walk(
+        TypeKind::Domain { base_type, collation: domain_collation, .. } => comparison_walk(
             base_type,
             collation.or(domain_collation.as_deref()),
             types,
@@ -3186,11 +3211,8 @@ mod tests {
     #[test]
     fn a_domain_over_uuid_carries_the_name() {
         let types = [
-            ty("public.d_uuid", TypeKind::Domain { base_type: "uuid".into(), collation: None }),
-            ty(
-                "public.d_deep",
-                TypeKind::Domain { base_type: "public.d_uuid".into(), collation: None },
-            ),
+            ty("public.d_uuid", TypeKind::domain("uuid")),
+            ty("public.d_deep", TypeKind::domain("public.d_uuid")),
         ];
         assert_eq!(extension_for("public.d_deep", &types), Some(CanonicalExtension::Uuid));
     }
@@ -3202,7 +3224,7 @@ mod tests {
     fn nothing_else_carries_a_name() {
         let types = [
             ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()], exact: true }),
-            ty("public.d_int", TypeKind::Domain { base_type: "integer".into(), collation: None }),
+            ty("public.d_int", TypeKind::domain("integer")),
         ];
         for declared in ["uuid[]", "json[]", "text", "integer", "public.mood", "public.d_int"] {
             assert_eq!(extension_for(declared, &types), None, "{declared}");
@@ -3580,6 +3602,7 @@ mod tests {
             TypeKind::Domain {
                 base_type: "text".to_string(),
                 collation: Some("public.icu_ci".to_string()),
+                not_null: false,
             },
         )];
         assert_eq!(
@@ -3661,6 +3684,7 @@ mod tests {
                 TypeKind::Domain {
                     base_type: "text".to_string(),
                     collation: Some("pg_catalog.\"C\"".to_string()),
+                    not_null: false,
                 },
             ),
             ty("public.dom_plain", TypeKind::domain("text")),
@@ -4102,6 +4126,7 @@ mod tests {
                         name: "c".to_string(),
                         declared_type: "text".to_string(),
                         collation: Some("pg_catalog.\"C\"".to_string()),
+                        not_null: None,
                     },
                 ]),
             },
@@ -4221,6 +4246,31 @@ mod tests {
     /// both reaches its base; a cycle only case could make — a domain over
     /// its own name spelled unquoted — is no cycle, the unquoted spelling
     /// naming another type.
+    /// **A domain's `NOT NULL` binds every domain over it, and no array of
+    /// it** (I76), found in any spelling of its name; a cycle ends.
+    #[test]
+    fn a_domain_not_null_binds_the_domains_over_it() {
+        let not_null = |base: &str| TypeKind::Domain {
+            base_type: base.into(),
+            collation: None,
+            not_null: true,
+        };
+        let types = [
+            ty("public.nn", not_null("integer")),
+            ty("public.over", TypeKind::domain("PUBLIC.nn")),
+            ty("public.plain", TypeKind::domain("integer")),
+            ty("public.a", TypeKind::domain("public.b")),
+            ty("public.b", TypeKind::domain("public.a")),
+        ];
+        assert!(domain_not_null("public.nn", &types));
+        assert!(domain_not_null("public.over", &types));
+        assert!(domain_not_null(r#""public"."over""#, &types));
+        assert!(!domain_not_null("public.nn[]", &types));
+        assert!(!domain_not_null("public.plain", &types));
+        assert!(!domain_not_null("integer", &types));
+        assert!(!domain_not_null("public.a", &types));
+    }
+
     #[test]
     fn spellings_of_one_name_are_one_definition() {
         let types = [

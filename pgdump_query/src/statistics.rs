@@ -520,8 +520,9 @@ pub struct FieldRefusal {
     pub column: usize,
     /// The column's declared type.
     pub declared_type: String,
-    /// The field, unescaped.
-    pub value: String,
+    /// The field, unescaped, or `None` for a NULL its column's `NOT NULL`
+    /// refuses ([`crate::Error::NullRefused`]).
+    pub value: Option<String>,
 }
 
 impl FieldRefusal {
@@ -529,13 +530,19 @@ impl FieldRefusal {
     /// `header` and the row's line by its number and by its offset in the
     /// file, the block's data starting at `data_offset`.
     pub(crate) fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error {
-        Error::FieldRefused {
-            table: header.qualified_name(),
-            column: header.columns.get(self.column).cloned().unwrap_or_default(),
-            declared_type: self.declared_type,
-            line: self.line,
-            line_offset: data_offset + self.offset,
-            value: self.value,
+        let table = header.qualified_name();
+        let column = header.columns.get(self.column).cloned().unwrap_or_default();
+        let line_offset = data_offset + self.offset;
+        match self.value {
+            Some(value) => Error::FieldRefused {
+                table,
+                column,
+                declared_type: self.declared_type,
+                line: self.line,
+                line_offset,
+                value,
+            },
+            None => Error::NullRefused { table, column, line: Some(self.line), line_offset },
         }
     }
 }
@@ -1376,7 +1383,7 @@ mod tests {
             line,
             column,
             declared_type: "smallint".to_string(),
-            value: format!("7000{line}"),
+            value: Some(format!("7000{line}")),
         }
     }
 

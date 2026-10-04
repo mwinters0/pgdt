@@ -687,7 +687,7 @@ async fn the_detail_listing_names_every_user_defined_type() {
         "public.mood            enum: 'sad', 'ok', 'happy', 'has space', 'has,comma', 'has''quote'",
         "public.empty_enum      enum: (no labels)",
         "public.text_c          domain over text COLLATE pg_catalog.\"C\"",
-        "public.derived_domain  domain over public.base_domain",
+        "public.derived_domain  domain over public.base_domain NOT NULL",
         "public.point2d         composite: x integer, y text",
         "public.collated_pair   composite: plain text, c text COLLATE pg_catalog.\"C\"",
         "public.empty_comp      composite: (no fields)",

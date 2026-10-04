@@ -16,7 +16,7 @@ use crate::diagnostic::{Finding, Severity};
 use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
 use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TypeOutcome, comparison_for,
-    resolve_declared_type, with_extension,
+    domain_not_null, resolve_declared_type, with_extension,
 };
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
@@ -216,6 +216,14 @@ pub struct ResolvedSchema {
     /// [`crate::ComparisonSemantics::Postgres`], which keeps the declared
     /// type's plan ([`read_as_text`]).
     pub comparisons: Vec<ComparisonPlan>,
+    /// Whether each column's declaration makes it `NOT NULL` — on the column,
+    /// at the table, through a parent or through a domain — positional like
+    /// `columns` (I76). A NULL in such a column is refused wherever it is
+    /// read, but under [`crate::PostgresInvalidValues::Ignore`]; the Arrow
+    /// field stays nullable whatever this says (`docs/design/decisions.md`,
+    /// "D37"). `false` for every column of a schema resolved with no DDL, the
+    /// strings schema mode's included.
+    pub not_null: Vec<bool>,
 }
 
 impl Default for ResolvedSchema {
@@ -228,6 +236,7 @@ impl Default for ResolvedSchema {
             notes: Vec::new(),
             plans: Vec::new(),
             comparisons: Vec::new(),
+            not_null: Vec::new(),
         }
     }
 }
@@ -401,6 +410,7 @@ pub fn resolve_columns(
     let mut notes = Vec::with_capacity(columns.len());
     let mut plans = Vec::with_capacity(columns.len());
     let mut comparisons = Vec::with_capacity(columns.len());
+    let mut not_null = Vec::with_capacity(columns.len());
 
     let string = || (arrow::datatypes::DataType::Utf8View, NestedPlan::Scalar);
     for (i, name) in columns.iter().enumerate() {
@@ -477,6 +487,13 @@ pub fn resolve_columns(
         resolutions.push(resolution);
         plans.push(plan);
         comparisons.push(comparison);
+        // Whatever the type resolved to: a column read as its text is still
+        // declared `NOT NULL`.
+        not_null.push(declared.is_some_and(|column| {
+            let db = db.expect("a declared column came from a database entry");
+            db.column_not_null(qualified_table, name)
+                || domain_not_null(&column.declared_type, &db.types)
+        }));
     }
 
     ResolvedSchema {
@@ -485,6 +502,7 @@ pub fn resolve_columns(
         notes,
         plans,
         comparisons,
+        not_null,
     }
 }
 

@@ -959,9 +959,12 @@ which is where to look for the ones no column of yours happens to use; see
 
 ### Domains resolve to their base type
 
-`CREATE DOMAIN email AS text NOT NULL` gives you a `Utf8View` column that is
-known non-nullable. Domains over domains resolve transitively. Constraints
-beyond `NOT NULL` are not enforced — we are reading a dump, not validating it.
+`CREATE DOMAIN email AS text NOT NULL` gives you a `Utf8View` column whose
+`NOT NULL` is held as a column's own is: a null in it is refused wherever it is
+read ("When a value does not match its type", below), the Arrow field staying
+nullable. Domains over domains resolve transitively, a `NOT NULL` with them.
+Constraints beyond `NOT NULL` are not enforced — we are reading a dump, not
+validating it.
 
 ## Where PostgreSQL majors differ
 
@@ -1002,7 +1005,12 @@ past its range, `maybe` in a `boolean`, `::1/08` in an `inet`, `abcd` in a
 `varchar(3)` or a `char(3)`. A `varchar(n)` or `char(n)` value longer than `n`
 characters only by trailing spaces is not refused, as PostgreSQL does not
 refuse it, and is read as the dump holds it, spaces and all, where a restore
-cuts it to `n` characters. `parse` checks
+cuts it to `n` characters. **So does a null in a column declared `NOT NULL`** —
+on the column, at the table (`NOT NULL <column>`, a `PRIMARY KEY (…)`, an
+`ALTER TABLE … SET NOT NULL`), through a parent the table inherits it from, or
+through a domain — and a query reading the column or filtering on it, `IS NOT
+NULL` included, fails there too; the strings schema mode, which reads no
+declaration, reads it. `parse` checks
 only the values it reads anyway to gather statistics, which leaves to a query
 a column at the metadata level, an array's or a composite's elements, a
 range's bounds, a value longer than 256 bytes but a `bytea`, and every value
@@ -1018,9 +1026,10 @@ geometric types (`xml`, `money`, a type it has no reader for), a `json` nested
 deeper than the restoring server's `max_stack_depth` lets it read, a value
 spelled in a way pgdt cannot read for its type at all, which PostgreSQL may
 refuse or not (`abc` in an `integer`, a malformed `jsonb`), a value of a range
-type declaring its own `canonical` function, or a null in a `NOT NULL`
-column; nor anything a constraint checks — a `CHECK`, or a unique, primary or
-foreign key, which a restore checks once the data has loaded.
+type declaring its own `canonical` function, or a null element of an array,
+or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
+a constraint checks — a `CHECK`, or a unique, primary or foreign key added
+once the data has loaded, which is when a restore checks it.
 Each table it checks is recorded in the cache as checked, and a `strict` parse
 over a cache an earlier `parse` built re-reads the tables no `strict` parse
 checked, in the same pass that fills in any statistics they lack, so the
@@ -1039,8 +1048,9 @@ read exactly)` after them.
 `query` alike, with no promise about what it reads: `parse` goes on past each,
 keeping no bounds, sum or dictionary of the stretch of its column it sits in, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
-sign and one below its smallest as zero, and a `varchar(n)` or `char(n)` value
-past its length as the dump holds it, and refuses every other as before.
+sign and one below its smallest as zero, a `varchar(n)` or `char(n)` value
+past its length as the dump holds it, and a null in a `NOT NULL` column as the
+null it is, and refuses every other as before.
 **The cache remembers what `parse` went past**: in each `COPY` block, each
 column's first such value and how many, which `pgdt info` lists under the
 block's table as one `refused by PostgreSQL:` line per column, so a later

@@ -2881,6 +2881,33 @@ pub(crate) struct ResolvedTerm {
     /// How the query reads a field its type's `*_in` refuses
     /// ([`ResolvedExpr::invalid_values`]).
     invalid: PostgresInvalidValues,
+    /// The column's name, where its declaration makes it `NOT NULL`, so a
+    /// NULL field is refused ([`Error::NullRefused`]) but under
+    /// [`PostgresInvalidValues::Ignore`], whatever the operator.
+    not_null: Option<String>,
+}
+
+/// The [`ResolvedTerm::not_null`] of column `index` of `resolved`, named
+/// `column`.
+fn not_null_column(resolved: &ResolvedSchema, index: usize, column: &str) -> Option<String> {
+    resolved.not_null.get(index).copied().unwrap_or(false).then(|| column.to_string())
+}
+
+/// The [`Error::NullRefused`] a term or a membership raises over a NULL field
+/// of `column`, where it is read under `invalid`, or `None`.
+fn null_refused(
+    not_null: Option<&str>,
+    invalid: PostgresInvalidValues,
+    table: &str,
+    row_offset: u64,
+) -> Option<Error> {
+    let column = not_null.filter(|_| invalid != PostgresInvalidValues::Ignore)?;
+    Some(Error::NullRefused {
+        table: table.to_string(),
+        column: column.to_string(),
+        line: None,
+        line_offset: row_offset,
+    })
 }
 
 impl ResolvedTerm {
@@ -2987,6 +3014,7 @@ pub(crate) fn resolve_term(
             unrepresentable: None,
             tested: None,
             invalid: PostgresInvalidValues::Default,
+            not_null: not_null_column(resolved, index, &predicate.column),
         });
     }
     let ordering = predicate.op.is_ordering();
@@ -3197,6 +3225,7 @@ pub(crate) fn resolve_term(
         unrepresentable: None,
         tested: None,
         invalid: PostgresInvalidValues::Default,
+        not_null: not_null_column(resolved, index, &predicate.column),
         compared: Some(ComparedTerm {
             column: predicate.column.clone(),
             comparison,
@@ -3226,8 +3255,10 @@ impl ResolvedTerm {
     /// Evaluate this term against `raw_row`, in SQL's three-valued domain.
     /// `table` and `row_offset` are context for the error a field raises that
     /// does not decode as its mapped type under a comparison that reads it,
-    /// `Error::FieldDecode`, worded exactly as the typed build path words it;
-    /// a field that does not unescape raises the row's own error.
+    /// `Error::FieldDecode`, worded exactly as the typed build path words it,
+    /// and for the `Error::NullRefused` a NULL its column's `NOT NULL`
+    /// refuses raises under every operator; a field that does not unescape
+    /// raises the row's own error.
     ///
     /// A NULL field is [`Truth::Unknown`] under every comparing operator. The
     /// six that answer two-valued instead are `IsNull`/`IsNotNull` and the two
@@ -3242,10 +3273,18 @@ impl ResolvedTerm {
         row_offset: u64,
     ) -> Result<Truth> {
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
+        let located = field.is_some();
         let decoded = match field {
             Some(f) => timed!(Part::Unescape, raw_row.decode(f))?,
             None => None,
         };
+        if located
+            && decoded.is_none()
+            && let Some(refused) =
+                null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
+        {
+            return Err(refused);
+        }
         self.eval_value(decoded.as_deref())
             .ok_or_else(|| self.field_decode(table, row_offset, decoded.as_deref()))
     }
@@ -3419,6 +3458,8 @@ pub(crate) struct ResolvedMembership {
     unrepresentable: Option<UnrepresentableRead>,
     /// As [`ResolvedTerm`]'s.
     invalid: PostgresInvalidValues,
+    /// As [`ResolvedTerm`]'s.
+    not_null: Option<String>,
 }
 
 /// Every non-NULL value of one membership, held the way its `=` terms
@@ -3570,6 +3611,7 @@ pub(crate) fn resolve_membership(
         terms,
         unrepresentable: None,
         invalid: PostgresInvalidValues::Default,
+        not_null: not_null_column(resolved, index, &membership.column),
     })
 }
 
@@ -3626,10 +3668,19 @@ impl ResolvedMembership {
         row_offset: u64,
     ) -> Result<Truth> {
         let Some(first) = self.terms.first() else { return Ok(self.unmatched()) };
-        let decoded = match timed!(Part::Locate, split.field(raw_row.bytes(), self.index)) {
+        let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
+        let located = field.is_some();
+        let decoded = match field {
             Some(field) => timed!(Part::Unescape, raw_row.decode(field))?,
             None => None,
         };
+        if located
+            && decoded.is_none()
+            && let Some(refused) =
+                null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
+        {
+            return Err(refused);
+        }
         self.eval_value(decoded.as_deref())
             .ok_or_else(|| first.field_decode(table, row_offset, decoded.as_deref()))
     }
@@ -4356,6 +4407,7 @@ mod tests {
             unrepresentable: None,
             tested: None,
             invalid: PostgresInvalidValues::Default,
+            not_null: None,
         }
     }
 
@@ -4427,6 +4479,7 @@ mod tests {
             }],
             plans: vec![NestedPlan::Scalar],
             comparisons: vec![comparison_for(declared, None, &test_types(), &[])],
+            not_null: vec![false],
         }
     }
 
@@ -4449,6 +4502,7 @@ mod tests {
             }],
             plans: vec![plan],
             comparisons: vec![comparison_for(declared, None, types, &[])],
+            not_null: vec![false],
         }
     }
 
@@ -4968,6 +5022,7 @@ mod tests {
             notes: vec![note("a"), note("b")],
             plans: vec![NestedPlan::Scalar; 2],
             comparisons: vec![comparison_for("integer", None, &[], &[]); 2],
+            not_null: vec![false; 2],
         }
     }
 
@@ -8226,6 +8281,7 @@ mod tests {
                 name: "v".into(),
                 declared_type: declared.into(),
                 collation: collation.map(str::to_string),
+                not_null: None,
             };
             let metadata = DumpMetadata {
                 databases: vec![DatabaseMetadata {
@@ -8672,7 +8728,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (56, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (57, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -9644,9 +9700,12 @@ mod tests {
                     if terms.is_empty() {
                         continue;
                     }
+                    // A `NOT NULL` domain's column holds no NULL a dump can
+                    // restore, and a read refuses one.
+                    let nullable = !resolved.not_null[0];
                     for _ in 0..30 {
                         let group_rows: Vec<Option<&str>> = (0..rng.below(6))
-                            .map(|_| (!rng.chance(4)).then(|| *rng.pick(&pool)))
+                            .map(|_| (!(nullable && rng.chance(4))).then(|| *rng.pick(&pool)))
                             .collect();
                         let present: Vec<&str> = group_rows.iter().flatten().copied().collect();
                         let nulls = group_rows.len() - present.len();

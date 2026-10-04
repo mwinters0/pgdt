@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD96 -->
+rather than being deleted. <!-- deficiency-watermark: KD97 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -429,3 +429,8 @@ than reading as a phase nobody has sliced.
   latter needing `KD82` closed too. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail:
   `pgdump_query/src/decode.rs`.
+
+- **KD97** — a NULL element of an array or a NULL field of a composite whose
+  type is a `NOT NULL` domain is read as NULL, where `COPY` refuses it (I76),
+  so a strict parse leaves it unchecked. **(b) owned by
+  P31**, 31.26. Detail: `pgdump_query/src/pgtype.rs`.

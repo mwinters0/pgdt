@@ -959,6 +959,9 @@ pub(crate) struct RowBatcher {
     /// cannot hold are read, where it can hold one
     /// ([`crate::unrepresentable::unrepresentable_reads`]).
     unrepresentable: Vec<Option<UnrepresentableRead>>,
+    /// Parallel to `columns`: whether each column's declaration makes it `NOT
+    /// NULL`, so a NULL in it is refused ([`Error::NullRefused`]).
+    not_null: Vec<bool>,
     options: QueryOptions,
 }
 
@@ -1003,6 +1006,7 @@ impl RowBatcher {
             bytes_in_batch: 0,
             span: None,
             unrepresentable: projected,
+            not_null: resolved.not_null.clone(),
             options,
         }
     }
@@ -1116,7 +1120,8 @@ impl RowBatcher {
         Ok(())
     }
 
-    /// Append one field's text to projected column `col`.
+    /// Append one field's text to projected column `col`, a NULL its
+    /// column's `NOT NULL` refuses being [`Error::NullRefused`].
     ///
     /// **A value the query reads as NULL is NULL before it is decoded**, as a
     /// whole: an array, range or composite holding one leaf its type cannot
@@ -1138,9 +1143,19 @@ impl RowBatcher {
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table`/`declared_types` are only ever read, on the
         // (rare) error path.
-        let Self { schema, table, declared_types, columns, unrepresentable, options, .. } = self;
+        let Self {
+            schema, table, declared_types, columns, unrepresentable, not_null, options, ..
+        } = self;
         let builder = &mut columns[col];
         let Some(text) = decoded else {
+            if not_null[col] && options.postgres_invalid_values != PostgresInvalidValues::Ignore {
+                return Err(Error::NullRefused {
+                    table: table.clone(),
+                    column: schema.field(col).name().clone(),
+                    line: None,
+                    line_offset: row_offset,
+                });
+            }
             append_null(builder);
             return Ok(());
         };
@@ -1958,6 +1973,7 @@ mod tests {
             }],
             plans: vec![NestedPlan::Scalar],
             comparisons: vec![comparison_for(declared, None, &[], &[])],
+            not_null: vec![false],
         };
         RowBatcher::new(&resolved, "public.t".into(), options, field_targets, Vec::new())
     }

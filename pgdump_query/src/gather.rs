@@ -144,8 +144,9 @@ pub(crate) fn checker(
 /// What a strict parse checks each of `header`'s columns by, positionally:
 /// its comparison under `resolved`, which is what names the type a field is
 /// read as ([`field_refused`]), or for a column ordered by nothing its
-/// declared type's input grammar ([`text_grammar`]), and `None` for a column
-/// read as no type.
+/// declared type's input grammar ([`text_grammar`]), and whether its
+/// declaration makes it `NOT NULL`; `None` for a column read as no type and
+/// declared nullable.
 fn field_checks(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
@@ -158,8 +159,8 @@ fn field_checks(
     header
         .columns
         .iter()
-        .zip(&resolved.comparisons)
-        .map(|(name, plan)| {
+        .zip(resolved.comparisons.iter().zip(&resolved.not_null))
+        .map(|(name, (plan, &not_null))| {
             let declared_type = declared_column(metadata, database, &qualified, name)
                 .map(|def| def.declared_type.clone())
                 .unwrap_or_default();
@@ -167,9 +168,15 @@ fn field_checks(
                 ComparisonPlan::Refused => text_grammar(&declared_type, types),
                 _ => None,
             };
-            let read = grammar.is_some()
+            let reads = grammar.is_some()
                 || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
-            read.then(|| FieldCheck { plan: plan.clone(), grammar, declared_type })
+            (reads || not_null).then(|| FieldCheck {
+                plan: plan.clone(),
+                grammar,
+                declared_type,
+                reads,
+                not_null,
+            })
         })
         .collect()
 }
@@ -180,6 +187,10 @@ struct FieldCheck {
     /// Read in place of `plan`, which then orders nothing.
     grammar: Option<TextGrammar>,
     declared_type: String,
+    /// Whether a value is checked, by `grammar` or `plan`.
+    reads: bool,
+    /// Whether a NULL is refused (I76).
+    not_null: bool,
 }
 
 /// The first field of the row at `offset`, the `line`-th the observer was
@@ -192,22 +203,29 @@ fn check_row(
 ) -> Option<FieldRefusal> {
     for (column, (field, check)) in split_fields(raw).zip(checks).enumerate() {
         let Some(check) = check else { continue };
-        // A NULL is no value to refuse, and a field that is not text is no
-        // value at all, which no `*_in` is handed.
-        let Ok(Some(text)) = decode_field(field) else { continue };
-        let refused = match check.grammar {
-            Some(grammar) => grammar_refuses(grammar, &text),
-            None => field_refused(&check.plan, &text),
+        // A NULL is refused only by a `NOT NULL`, and a field that is not
+        // text is no value at all, which no `*_in` is handed.
+        let value = match decode_field(field) {
+            Ok(None) if check.not_null => None,
+            Ok(Some(text)) if check.reads => {
+                let refused = match check.grammar {
+                    Some(grammar) => grammar_refuses(grammar, &text),
+                    None => field_refused(&check.plan, &text),
+                };
+                if !refused {
+                    continue;
+                }
+                Some(text.into_owned())
+            }
+            _ => continue,
         };
-        if refused {
-            return Some(FieldRefusal {
-                offset,
-                line,
-                column,
-                declared_type: check.declared_type.clone(),
-                value: text.into_owned(),
-            });
-        }
+        return Some(FieldRefusal {
+            offset,
+            line,
+            column,
+            declared_type: check.declared_type.clone(),
+            value,
+        });
     }
     None
 }
@@ -245,7 +263,7 @@ pub(crate) fn observer_tracking(
         .map(|(i, name)| {
             plan.columns.get(i).is_some_and(|&t| t).then(|| {
                 let def = declared_column(metadata, database, &qualified, name);
-                ColumnGatherer::new(
+                let mut column = ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
                     def.and_then(|d| d.collation.clone()),
                     resolved.bounds_kinds(i),
@@ -258,7 +276,9 @@ pub(crate) fn observer_tracking(
                     } else {
                         PostgresInvalidValues::Ignore
                     },
-                )
+                );
+                column.not_null = resolved.not_null[i];
+                column
             })
         })
         .collect();
@@ -874,7 +894,7 @@ impl BlockObserver for Gatherer {
                 line: self.rows,
                 column: at,
                 declared_type: column.declared_type.clone().unwrap_or_default(),
-                value: decode_field(field).ok().flatten().unwrap_or_default().into_owned(),
+                value: decode_field(field).ok().flatten().map(Cow::into_owned),
             };
             match column.observe(field) {
                 Ok(Observed { grew, ignored }) => {
@@ -1134,6 +1154,9 @@ struct ColumnGatherer {
     /// Whether a field its type's `*_in` refuses stops the block, or is kept
     /// out of the group's statistics ([`Self::observe`]).
     invalid: PostgresInvalidValues,
+    /// Whether the column's declaration makes it `NOT NULL`, so a NULL is
+    /// refused as such a field is (I76).
+    not_null: bool,
 }
 
 impl ColumnGatherer {
@@ -1192,6 +1215,7 @@ impl ColumnGatherer {
             group,
             head: None,
             invalid,
+            not_null: false,
         }
     }
 
@@ -1231,7 +1255,7 @@ impl ColumnGatherer {
     /// A column of this one's kind that has gathered nothing: what a piece
     /// starts from.
     fn fresh(&self) -> Self {
-        Self::with(
+        let fresh = Self::with(
             self.declared_type.clone(),
             self.collation.clone(),
             self.bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh)),
@@ -1239,7 +1263,8 @@ impl ColumnGatherer {
             self.summand,
             self.tier.clone(),
             self.invalid,
-        )
+        );
+        Self { not_null: self.not_null, ..fresh }
     }
 
     /// The open group's state, leaving a fresh one open.
@@ -1259,7 +1284,16 @@ impl ColumnGatherer {
         let before = self.open_heap();
         let mut ignored = false;
         match decode_field(field) {
+            // A NULL its `NOT NULL` refuses and that is gone past is counted,
+            // the read taking it as the NULL it is: no statistic contradicts
+            // it (D103).
             Ok(None) => {
+                if self.not_null {
+                    if self.invalid != PostgresInvalidValues::Ignore {
+                        return Err(Refused);
+                    }
+                    ignored = true;
+                }
                 self.group.nulls += 1;
                 return Ok(Observed { grew: 0, ignored });
             }
@@ -3863,7 +3897,7 @@ mod tests {
     fn refusal(gathered: BlockGathered) -> (u64, u64, usize, String) {
         match gathered {
             BlockGathered::Refused(FieldRefusal { line, offset, column, value, .. }) => {
-                (line, offset, column, value)
+                (line, offset, column, value.expect("a value, not a NULL"))
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
@@ -3927,7 +3961,7 @@ mod tests {
                 panic!("round {round}: one column refuses, recorded {ignored:?}");
             };
             let FieldRefusal { line, offset, column, value, .. } = recorded.first.clone();
-            assert_eq!((line, offset, column, value), expected, "round {round}");
+            assert_eq!((line, offset, column, value.unwrap()), expected, "round {round}");
             assert_eq!(recorded.count, 1 + u64::from(second != first), "round {round}");
             assert!(observer.finish(end).gathered().is_some(), "round {round}");
         }

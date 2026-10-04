@@ -269,6 +269,15 @@ pub enum Error {
         line_offset: u64,
         value: String,
     },
+    /// A NULL in a column its declaration makes `NOT NULL` — on the column, at
+    /// the table, through a parent or through a domain — which a restore
+    /// refuses (I76): [`Self::FieldRefused`]'s counterpart, met wherever such
+    /// a field is read but under [`crate::PostgresInvalidValues::Ignore`].
+    /// `line` is `COPY`'s count where a pass numbers it, as
+    /// [`Self::FieldRefused`]'s is, and `None` for a query, which names the
+    /// line by its offset alone, as [`Self::FieldDecode`] does.
+    #[error("{}", null_refused(table, column, *line, *line_offset))]
+    NullRefused { table: String, column: String, line: Option<u64>, line_offset: u64 },
     /// [`Self::FieldRefused`], read from the cache rather than the dump: a
     /// parse under [`crate::PostgresInvalidValues::Default`] whose cache
     /// records a field an earlier parse ignoring such fields went past
@@ -317,6 +326,20 @@ pub enum Error {
     /// NULL element, which its text form has no encoding for.
     #[error("this Arrow value has no `{declared_type}` text form: {reason}")]
     FieldRender { declared_type: &'static str, reason: String },
+}
+
+/// [`Error::NullRefused`]'s sentence: worded as [`Error::FieldRefused`]'s
+/// where the line is numbered, and as [`Error::FieldDecode`]'s where it is
+/// named by its offset alone.
+fn null_refused(table: &str, column: &str, line: Option<u64>, line_offset: u64) -> String {
+    const REFUSED: &str = "a NULL, which PostgreSQL refuses in a column declared `NOT NULL` — \
+                           restoring this dump fails this table's COPY there, and so does this read";
+    match line {
+        Some(line) => format!(
+            "COPY {table}, line {line}, column {column}: {REFUSED}; the line is at offset {line_offset}"
+        ),
+        None => format!("{table}.{column}: the line at offset {line_offset} holds {REFUSED}"),
+    }
 }
 
 /// [`Error::CachedBlockChanged`]'s sentence: the cache named where there is

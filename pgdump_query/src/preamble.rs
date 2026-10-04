@@ -167,6 +167,38 @@ impl DatabaseMetadata {
         }
     }
 
+    /// Whether table `table` declares column `column` `NOT NULL` — on the
+    /// column, at the table, or by an `ALTER TABLE … SET NOT NULL` — or takes
+    /// it from a parent, in `INHERITS` order and each parent asked the same
+    /// way, which passes on every `NOT NULL` but v18's `NO INHERIT` (I76). A
+    /// domain's is its type's, [`crate::pgtype::domain_not_null`]'s to say.
+    ///
+    /// Read against the preamble's final state, as
+    /// [`declared_column`](Self::declared_column) is; a `NOT NULL` added after
+    /// the data (v18's `NOT VALID`, a post-data primary key) is never in it.
+    pub fn column_not_null(&self, table: &str, column: &str) -> bool {
+        self.not_null_from(table, column, true, &mut BTreeSet::new())
+    }
+
+    /// [`column_not_null`](Self::column_not_null) over `table`, which is the
+    /// table asked about where `own` and an ancestor of it elsewhere.
+    fn not_null_from<'a>(
+        &'a self,
+        table: &str,
+        column: &str,
+        own: bool,
+        visited: &mut BTreeSet<&'a str>,
+    ) -> bool {
+        let Some((name, def)) = self.tables.get_key_value(table) else { return false };
+        if !visited.insert(name) {
+            return false;
+        }
+        let binds = |not_null: NotNull| own || not_null == NotNull::Inherited;
+        def.columns.iter().filter(|c| c.name == column).filter_map(|c| c.not_null).any(binds)
+            || def.not_null.iter().any(|(c, not_null)| c == column && binds(*not_null))
+            || def.parents.iter().any(|parent| self.not_null_from(parent, column, false, visited))
+    }
+
     /// The fields of the composite `type_name` names, where it parsed, the
     /// two names compared in their canonical spelling (I29).
     fn composite_fields(&self, type_name: &str) -> Option<&[ColumnDef]> {
@@ -241,19 +273,43 @@ pub struct Extension {
 /// `name` column is `C` and a bare `text` column is the database's — two
 /// facts behind one absence, decided by
 /// [`crate::pgtype::comparison_for`].
+///
+/// `not_null` is the `NOT NULL` among its constraints, or what implies one —
+/// an inline `PRIMARY KEY`, `GENERATED … AS IDENTITY` or a `serial` type —
+/// read at their top level (I76). It is this declaration's alone: a column the table inherits it
+/// for is found through [`DatabaseMetadata::column_not_null`]. A composite's
+/// field never carries one, the server refusing a constraint there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnDef {
     pub name: String,
     pub declared_type: String,
     pub collation: Option<String>,
+    pub not_null: Option<NotNull>,
 }
 
 impl ColumnDef {
-    /// A column carrying no `COLLATE` clause — the ordinary case, and the one
-    /// a test or an embedder building metadata by hand wants.
+    /// A column carrying no `COLLATE` clause and no `NOT NULL` — the ordinary
+    /// case, and the one a test or an embedder building metadata by hand
+    /// wants.
     pub fn new(name: impl Into<String>, declared_type: impl Into<String>) -> Self {
-        Self { name: name.into(), declared_type: declared_type.into(), collation: None }
+        Self {
+            name: name.into(),
+            declared_type: declared_type.into(),
+            collation: None,
+            not_null: None,
+        }
     }
+}
+
+/// A `NOT NULL` a table declares on one of its columns, by whether the
+/// table's inheritance children take it (I76).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NotNull {
+    /// Taken by every child: every `NOT NULL` before v18, and from v18 every
+    /// one but `NO INHERIT`'s, a primary key's and an identity's included.
+    Inherited,
+    /// v18's `NOT NULL … NO INHERIT`: this table's alone.
+    NoInherit,
 }
 
 /// One table's declaration, as the DDL wrote it: its own columns, and the
@@ -263,7 +319,8 @@ impl ColumnDef {
 /// inheritance child's `CREATE TABLE` omits every column it inherits
 /// (`shouldPrintColumn`), and a typed table's writes none with its type, only
 /// the options of one carrying a default or `NOT NULL` — which hold no type
-/// and so are no [`ColumnDef`] here. Both are found through
+/// and so are no [`ColumnDef`] here, a `NOT NULL` among them going to
+/// [`TableDef::not_null`]. Both are found through
 /// [`DatabaseMetadata::declared_column`]. Under `--binary-upgrade` every
 /// column is written, and the references arrive after the `CREATE TABLE`, as
 /// `ALTER TABLE ONLY … INHERIT …` and `… OF …` ([`TableReference`]).
@@ -276,6 +333,12 @@ pub struct TableDef {
     pub parents: Vec<String>,
     /// The `OF <type>` composite, in [`TypeDef::name`]'s canonical spelling.
     pub of_type: Option<String>,
+    /// The columns a `NOT NULL` outside their own definition names, in the
+    /// order written: v18's table-level `NOT NULL <column>`, a typed table's
+    /// column options, a `PRIMARY KEY (…)` list, and the `ALTER TABLE … ALTER
+    /// COLUMN … SET NOT NULL` a dump before v18 writes for an inherited
+    /// column (I76).
+    pub not_null: Vec<(String, NotNull)>,
 }
 
 impl TableDef {
@@ -293,19 +356,25 @@ impl TableDef {
             }
             TableReference::Parent(_) => {}
             TableReference::OfType(of_type) => self.of_type = Some(of_type.clone()),
+            TableReference::NotNull(column) => {
+                self.not_null.push((column.clone(), NotNull::Inherited));
+            }
         }
     }
 }
 
-/// A reference `ALTER TABLE` adds to a table already declared: the forms
+/// What an `ALTER TABLE` adds to a table already declared: the references
 /// `--binary-upgrade` writes after a full column list in place of the
-/// `CREATE TABLE`'s own clauses.
+/// `CREATE TABLE`'s own clauses, and the `NOT NULL` a dump before v18 writes
+/// for a column the table does not print.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TableReference {
     /// `INHERIT <parent>`, qualified as [`TableDef::parents`] is.
     Parent(String),
     /// `OF <type>`, spelled as [`TableDef::of_type`] is.
     OfType(String),
+    /// `ALTER [COLUMN] <column> SET NOT NULL`, into [`TableDef::not_null`].
+    NotNull(String),
 }
 
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
@@ -339,15 +408,18 @@ pub enum TypeKind {
     /// ([`fold_enum_labels_unread`]). Nothing `pg_dump` writes clears it.
     Enum { labels: Vec<String>, exact: bool },
     /// Reduces to a base type, resolved transitively by [`crate::pgtype`] (a
-    /// domain over a domain is legal). `NOT NULL` is discarded — every Arrow
-    /// field is nullable regardless.
+    /// domain over a domain is legal).
     ///
     /// `collation` is the domain's own `COLLATE` clause, verbatim, which
     /// `pg_dump` writes only where the domain's collation differs from its
     /// base type's (I37). It is the domain's *type default*, so a column
     /// declared with this domain and carrying no clause of its own inherits
-    /// it — which is why it is kept rather than discarded like `NOT NULL`.
-    Domain { base_type: String, collation: Option<String> },
+    /// it.
+    ///
+    /// `not_null` is whether the domain declares `NOT NULL`, which `domain_in`
+    /// checks of a NULL it is handed, and every domain over this one with it
+    /// ([`crate::pgtype::domain_not_null`], I76).
+    Domain { base_type: String, collation: Option<String>, not_null: bool },
     /// Field name -> declared type, in declaration order — or `None` when the
     /// body held a fragment this grammar could not parse.
     ///
@@ -386,10 +458,11 @@ pub enum TypeKind {
 }
 
 impl TypeKind {
-    /// A domain carrying no `COLLATE` clause of its own — the ordinary shape,
-    /// and the one a test or an embedder building a type list by hand wants.
+    /// A domain carrying no `COLLATE` clause and no `NOT NULL` of its own —
+    /// the ordinary shape, and the one a test or an embedder building a type
+    /// list by hand wants.
     pub fn domain(base_type: impl Into<String>) -> Self {
-        Self::Domain { base_type: base_type.into(), collation: None }
+        Self::Domain { base_type: base_type.into(), collation: None, not_null: false }
     }
 
     /// An enum whose labels are exactly these, in declaration order — what
@@ -765,6 +838,76 @@ fn extract_type_words(rest: &str) -> String {
     joined
 }
 
+/// The words of `rest` at its top level — outside parens, `'…'` and `"…"` —
+/// as keywords: a quoted identifier, and a word a `.` qualifies, being no
+/// keyword, are each an empty word, so no sequence matches across them.
+fn top_level_words(rest: &str) -> Vec<&str> {
+    let bytes = rest.as_bytes();
+    let mut words = Vec::new();
+    let mut depth: i32 = 0;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                i = skip_quoted(bytes, i);
+                continue;
+            }
+            b'"' => {
+                i = skip_double_quoted(bytes, i);
+                if depth == 0 {
+                    words.push("");
+                }
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            // A number's run, `1e5` say, is read whole and is no word.
+            b if ident_cont(b) => {
+                let start = i;
+                while i < bytes.len() && ident_cont(bytes[i]) {
+                    i += 1;
+                }
+                let keyword = depth == 0
+                    && !bytes[start].is_ascii_digit()
+                    && bytes[start] != b'$'
+                    && (start == 0 || bytes[start - 1] != b'.');
+                if depth == 0 {
+                    words.push(if keyword { &rest[start..i] } else { "" });
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    words
+}
+
+/// The `NOT NULL` among a column's or a domain's constraints — `rest` being
+/// the tail after its name or `AS` — or what makes the column one: an inline
+/// `PRIMARY KEY`, or `GENERATED … AS IDENTITY` (I76). Read off the top-level
+/// words, so a `CHECK (v IS NOT NULL)`, a `GENERATED ALWAYS AS (…)` expression
+/// and a `'NOT NULL'` literal are stepped over; a default cannot hold `IS
+/// NOT NULL` outside parens, gram.y's `b_expr` having no `IS NULL`.
+fn not_null_clause(rest: &str) -> Option<NotNull> {
+    let rest = strip_block_comments(rest);
+    let words = top_level_words(&rest);
+    let is = |at: usize, word: &str| words.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
+    let mut found = None;
+    for at in 0..words.len() {
+        if is(at, "NOT") && is(at + 1, "NULL") {
+            let no_inherit = is(at + 2, "NO") && is(at + 3, "INHERIT");
+            found =
+                found.or(Some(if no_inherit { NotNull::NoInherit } else { NotNull::Inherited }));
+        } else if (is(at, "PRIMARY") && is(at + 1, "KEY"))
+            || (is(at, "AS") && is(at + 1, "IDENTITY"))
+        {
+            found = Some(NotNull::Inherited);
+        }
+    }
+    found
+}
+
 /// Parse one `<name> <type> [constraints...]` fragment from a column or
 /// composite-field list.
 fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
@@ -779,7 +922,13 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
     if declared_type.is_empty() {
         return None;
     }
-    Some(ColumnDef { name, declared_type, collation: extract_collation(rest) })
+    // `serial` and its kin are no type but a column made `NOT NULL`, as
+    // gram.y's caller `transformColumnDefinition` makes it (I76).
+    let serial = ["smallserial", "serial2", "serial", "serial4", "bigserial", "serial8"]
+        .iter()
+        .any(|kind| declared_type.eq_ignore_ascii_case(kind));
+    let not_null = not_null_clause(rest).or(serial.then_some(NotNull::Inherited));
+    Some(ColumnDef { name, declared_type, collation: extract_collation(rest), not_null })
 }
 
 /// `CREATE TABLE <name> (<col> <type>, ...) [INHERITS (<parent>, ...)] …;`,
@@ -789,7 +938,8 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 ///
 /// A typed table's list is gram.y's `TypedTableElement`, a column's options
 /// or a table constraint, and never holds a type, so it declares no column of
-/// its own: each is its type's field ([`TableDef`]).
+/// its own: each is its type's field ([`TableDef`]), and only a `NOT NULL`
+/// among its options is kept.
 fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let mut after = rest[consumed..].trim_start();
@@ -803,14 +953,15 @@ fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
         return Some((name, table));
     }
     let close = matching_paren(after.as_bytes(), 0)?;
-    if table.of_type.is_none() {
-        table.columns = split_top_level_commas(&after[1..close])
-            .into_iter()
-            .filter_map(|fragment| match parse_table_element(fragment)? {
-                TableElement::Column(column) => Some(column),
-                TableElement::Constraint | TableElement::Like => None,
-            })
-            .collect();
+    let typed = table.of_type.is_some();
+    for fragment in split_top_level_commas(&after[1..close]) {
+        match parse_table_element(fragment, typed) {
+            Some(TableElement::Column(column)) => table.columns.push(column),
+            Some(TableElement::NotNull(columns, not_null)) => {
+                table.not_null.extend(columns.into_iter().map(|column| (column, not_null)));
+            }
+            Some(TableElement::Constraint | TableElement::Like) | None => {}
+        }
     }
     // A parent the identifier grammar refuses reaches nothing, as an unparsed
     // column fragment does, rather than costing the table its own columns.
@@ -835,8 +986,10 @@ fn whole_table_name(s: &str) -> Option<String> {
 
 /// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `… OF
 /// <type>;` — the two references `--binary-upgrade` writes
-/// after a table's full column list (`dumpTableSchema`) — as the table they
-/// alter and the reference they add. `None` for every other `ALTER TABLE`,
+/// after a table's full column list (`dumpTableSchema`) — or `… ALTER
+/// [COLUMN] <column> SET NOT NULL;`, which a dump before v18 writes after a
+/// `CREATE TABLE` not printing the column (I76), as the table they
+/// alter and what they add. `None` for every other `ALTER TABLE`,
 /// one listing several subcommands included, which the dump never writes for
 /// these. `pub(crate)` for [`crate::map::classify`], as
 /// [`parse_alter_type_add_value_body`] is.
@@ -849,6 +1002,13 @@ pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableRe
     let (reference, tail) = if let Some(inherit) = strip_kw(rest, "INHERIT") {
         let (parent, consumed) = parse_qualified_name(inherit)?;
         (TableReference::Parent(parent), &inherit[consumed..])
+    } else if let Some(alter) = strip_kw(rest, "ALTER") {
+        let column = strip_kw(alter, "COLUMN").unwrap_or(alter);
+        let mut cur = Cursor::new(column.as_bytes());
+        let name = cur.parse_ident()?;
+        let set = strip_kw(column[cur.pos()..].trim_start(), "SET")?;
+        let tail = strip_kw(strip_kw(set, "NOT")?, "NULL")?;
+        (TableReference::NotNull(name), tail)
     } else {
         let of = strip_kw(rest, "OF")?;
         let (of_type, consumed) = parse_type_name(of)?;
@@ -858,12 +1018,18 @@ pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableRe
 }
 
 /// One top-level fragment of a `CREATE TABLE` list: gram.y's `TableElement`,
-/// a `columnDef`, a `TableConstraint` or a `TableLikeClause`.
+/// a `columnDef`, a `TableConstraint` or a `TableLikeClause` — or, in a typed
+/// table's list, a `TypedTableElement`, a column's options or a constraint.
 ///
-/// Only a column is held, the others being told apart and dropped: no reader
-/// reads a table constraint, and a `LIKE`'s columns are not followed.
+/// A column is held, and the columns a constraint makes `NOT NULL`; the rest
+/// is told apart and dropped: no reader reads another table constraint, and a
+/// `LIKE`'s columns are not followed.
 enum TableElement {
     Column(ColumnDef),
+    /// v18's `[CONSTRAINT <name>] NOT NULL <column> [NO INHERIT]`, a `PRIMARY
+    /// KEY (…)`'s columns, or a typed table's column options holding a `NOT
+    /// NULL` (I76).
+    NotNull(Vec<String>, NotNull),
     Constraint,
     Like,
 }
@@ -871,13 +1037,15 @@ enum TableElement {
 /// Which [`TableElement`] `frag` is, told by its first word: a constraint or
 /// a `LIKE` opens with a keyword no column's name can be written as bare, but
 /// for `EXCLUDE`, which opens one only where `USING` or `(` follows (I53).
-/// `NOT` is 18's table-level `NOT NULL <column>`.
-fn parse_table_element(frag: &str) -> Option<TableElement> {
+/// `NOT` is 18's table-level `NOT NULL <column>`. In a `typed` table's list
+/// anything else is a column's options, `<name> [WITH OPTIONS] <constraints>`,
+/// which declares no type.
+fn parse_table_element(frag: &str, typed: bool) -> Option<TableElement> {
     const CONSTRAINT_WORDS: &[&str] =
         &["CONSTRAINT", "CHECK", "UNIQUE", "PRIMARY", "FOREIGN", "NOT"];
     let frag = frag.trim_start();
     if CONSTRAINT_WORDS.iter().any(|kw| strip_kw(frag, kw).is_some()) {
-        return Some(TableElement::Constraint);
+        return Some(table_constraint_not_null(frag).unwrap_or(TableElement::Constraint));
     }
     if strip_kw(frag, "LIKE").is_some() {
         return Some(TableElement::Like);
@@ -887,7 +1055,48 @@ fn parse_table_element(frag: &str) -> Option<TableElement> {
     {
         return Some(TableElement::Constraint);
     }
+    if typed {
+        let mut cur = Cursor::new(frag.as_bytes());
+        let name = cur.parse_ident()?;
+        let not_null = not_null_clause(&frag[cur.pos()..])?;
+        return Some(TableElement::NotNull(vec![name], not_null));
+    }
     parse_column_fragment(frag).map(TableElement::Column)
+}
+
+/// The columns table constraint `frag` makes `NOT NULL`, where it is one that
+/// does: `[CONSTRAINT <name>] NOT NULL <column> [NO INHERIT]`, which v18
+/// writes for a column the table does not print, or `[CONSTRAINT <name>]
+/// PRIMARY KEY (<column>, …)` (I76).
+fn table_constraint_not_null(frag: &str) -> Option<TableElement> {
+    let mut rest = frag.trim_start();
+    if let Some(named) = strip_kw(rest, "CONSTRAINT") {
+        let mut cur = Cursor::new(named.as_bytes());
+        cur.parse_ident()?;
+        rest = named[cur.pos()..].trim_start();
+    }
+    if let Some(column) = strip_kw(rest, "NOT").and_then(|not| strip_kw(not, "NULL")) {
+        let mut cur = Cursor::new(column.as_bytes());
+        let name = cur.parse_ident()?;
+        let tail = column[cur.pos()..].trim_start();
+        let no_inherit = strip_kw(tail, "NO").is_some_and(|t| strip_kw(t, "INHERIT").is_some());
+        let not_null = if no_inherit { NotNull::NoInherit } else { NotNull::Inherited };
+        return Some(TableElement::NotNull(vec![name], not_null));
+    }
+    let key = strip_kw(strip_kw(rest, "PRIMARY")?, "KEY")?;
+    if !key.starts_with('(') {
+        return None;
+    }
+    let close = matching_paren(key.as_bytes(), 0)?;
+    let columns = split_top_level_commas(&key[1..close])
+        .into_iter()
+        .map(|column| {
+            let mut cur = Cursor::new(column.as_bytes());
+            let name = cur.parse_ident()?;
+            column[cur.pos()..].trim().is_empty().then_some(name)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(TableElement::NotNull(columns, NotNull::Inherited))
 }
 
 /// `CREATE DOMAIN <name> AS <basetype> [COLLATE ...] [constraints...];`
@@ -899,7 +1108,8 @@ fn parse_create_domain(rest: &str) -> Option<TypeDef> {
         return None;
     }
     let collation = extract_collation(after_as);
-    Some(TypeDef { name, kind: TypeKind::Domain { base_type, collation } })
+    let not_null = not_null_clause(after_as).is_some();
+    Some(TypeDef { name, kind: TypeKind::Domain { base_type, collation, not_null } })
 }
 
 /// `CREATE EXTENSION [IF NOT EXISTS] <name> [WITH] [SCHEMA <schema>];`
@@ -1655,6 +1865,12 @@ mod tests {
         }
     }
 
+    /// A column `name` of `declared_type` carrying a `NOT NULL` its children
+    /// take.
+    fn not_null(name: &str, declared_type: &str) -> ColumnDef {
+        ColumnDef { not_null: Some(NotNull::Inherited), ..ColumnDef::new(name, declared_type) }
+    }
+
     #[test]
     fn parses_a_simple_table() {
         let (_, columns) = parse_table(&[
@@ -1667,7 +1883,7 @@ mod tests {
         assert_eq!(
             columns,
             vec![
-                ColumnDef::new("id", "integer"),
+                not_null("id", "integer"),
                 ColumnDef::new("v_smallint", "smallint"),
                 ColumnDef::new("v_bigint", "bigint"),
             ]
@@ -1684,7 +1900,7 @@ mod tests {
             "    d public.mood",
             ");",
         ]);
-        assert_eq!(cols[0], ColumnDef::new("a", "character varying(16)"));
+        assert_eq!(cols[0], not_null("a", "character varying(16)"));
         assert_eq!(cols[1], ColumnDef::new("b", "numeric(38,10)"));
         assert_eq!(cols[2], ColumnDef::new("c", "timestamp with time zone"));
         assert_eq!(cols[3], ColumnDef::new("d", "public.mood"));
@@ -1737,7 +1953,7 @@ mod tests {
         assert_eq!(
             cols,
             vec![
-                ColumnDef::new("id", "integer"),
+                not_null("id", "integer"),
                 ColumnDef::new("exclude", "integer"),
                 ColumnDef::new("constraint", "text"),
                 ColumnDef::new("not", "boolean"),
@@ -1785,6 +2001,7 @@ mod tests {
                 columns: vec![ColumnDef::new("extra", "numeric(6,2)")],
                 parents: vec!["emitters.parent".to_string(), "Other.second".to_string()],
                 of_type: None,
+                not_null: vec![("label".to_string(), NotNull::Inherited)],
             }
         );
         // A child declaring nothing of its own keeps its empty list and its
@@ -1795,8 +2012,9 @@ mod tests {
 
     /// A typed table's list is a column's options, never its type — the
     /// `NOT NULL` or default `pg_dump` writes beside the name alone — so it
-    /// declares no column of its own, its type naming them all; with no such
-    /// option there is no list at all.
+    /// declares no column of its own, its type naming them all, and a `NOT
+    /// NULL` among them is the table's; with no such option there is no list
+    /// at all.
     #[test]
     fn a_typed_table_records_its_type_and_declares_no_column() {
         let (name, table) = parse_table_def(&[
@@ -1812,6 +2030,7 @@ mod tests {
                 columns: Vec::new(),
                 parents: Vec::new(),
                 of_type: Some("emitters.person".to_string()),
+                not_null: vec![("name".to_string(), NotNull::Inherited)],
             }
         );
         let (_, table) = parse_table_def(&["CREATE TABLE public.t OF PUBLIC.\"Person\";"]);
@@ -1819,11 +2038,12 @@ mod tests {
     }
 
     /// The two references `--binary-upgrade` writes after a full column list,
-    /// and nothing else an `ALTER TABLE` says: the removals, a statement
-    /// holding more than the one subcommand, and every other subcommand are
-    /// none of them.
+    /// the `SET NOT NULL` a dump before v18 writes for a column its list does
+    /// not print (I76), and nothing else an `ALTER TABLE` says: the removals,
+    /// a statement holding more than the one subcommand, and every other
+    /// subcommand are none of them.
     #[test]
-    fn only_an_added_parent_or_type_is_a_table_reference() {
+    fn only_an_added_parent_type_or_not_null_is_a_table_reference() {
         let parent = |p: &str| Some(TableReference::Parent(p.to_string()));
         let reference = |stmt: &str| parse_alter_table_reference(stmt).map(|(t, r)| (t, Some(r)));
         assert_eq!(
@@ -1845,7 +2065,19 @@ mod tests {
             reference("alter table public.c inherit public.p;"),
             Some(("public.c".to_string(), parent("public.p")))
         );
+        let not_null = |c: &str| Some(TableReference::NotNull(c.to_string()));
+        assert_eq!(
+            reference("ALTER TABLE ONLY emitters.child ALTER COLUMN label SET NOT NULL;\n"),
+            Some(("emitters.child".to_string(), not_null("label")))
+        );
+        assert_eq!(
+            reference("ALTER FOREIGN TABLE ONLY public.f ALTER \"Label\" SET NOT NULL;"),
+            Some(("public.f".to_string(), not_null("Label")))
+        );
         for other in [
+            "ALTER TABLE ONLY public.c ALTER COLUMN label DROP NOT NULL;",
+            "ALTER TABLE ONLY public.c ALTER COLUMN label SET DEFAULT 1;",
+            "ALTER TABLE ONLY public.c ALTER COLUMN label SET NOT NULL, ADD COLUMN x integer;",
             "ALTER TABLE ONLY public.c NO INHERIT public.p;",
             "ALTER TABLE ONLY public.t NOT OF;",
             "ALTER TABLE ONLY public.c INHERIT public.p, ADD COLUMN x integer;",
@@ -1872,6 +2104,7 @@ mod tests {
                     columns: columns.iter().map(|(c, t)| ColumnDef::new(*c, *t)).collect(),
                     parents: parents.iter().map(|p| p.to_string()).collect(),
                     of_type: of_type.map(str::to_string),
+                    not_null: Vec::new(),
                 },
             );
         }
@@ -1928,6 +2161,118 @@ mod tests {
         for column in db.declared_columns("public.c") {
             assert_eq!(db.declared_column("public.c", &column.name), Some(column));
         }
+    }
+
+    /// **Every form a `NOT NULL` is declared in is read, and nothing that only
+    /// spells the words** (I76): on the column, plain, named and v18's `NO
+    /// INHERIT`, and implied by an inline `PRIMARY KEY`, an identity or a
+    /// `serial` type; at the
+    /// table, v18's element and a `PRIMARY KEY` list; on a domain, plain and
+    /// named. A `CHECK`, a generated expression, a literal, a quoted name and
+    /// a qualified type's `not` declare none.
+    #[test]
+    fn every_form_of_not_null_is_read_and_nothing_else() {
+        let (_, table) = parse_table_def(&[
+            "CREATE TABLE public.t (",
+            "    a integer NOT NULL,",
+            "    b text CONSTRAINT t_b_not_null NOT NULL COLLATE pg_catalog.\"C\",",
+            "    c text NOT NULL NO INHERIT,",
+            "    d integer PRIMARY KEY,",
+            "    e bigint GENERATED ALWAYS AS IDENTITY (START WITH 1),",
+            "    f boolean CHECK ((f IS NOT NULL)),",
+            "    g boolean GENERATED ALWAYS AS ((a IS NOT NULL)) STORED,",
+            "    h text DEFAULT 'NOT NULL'::text,",
+            "    i public.\"not\" /* NOT NULL */,",
+            "    j public.not,",
+            "    k integer NULL,",
+            "    l bigserial,",
+            "    NOT NULL inherited,",
+            "    CONSTRAINT own_nn NOT NULL \"Own\" NO INHERIT,",
+            "    CONSTRAINT t_pkey PRIMARY KEY (a, \"Key\"),",
+            "    CONSTRAINT t_check CHECK ((k IS NOT NULL))",
+            ");",
+        ]);
+        let declared: Vec<(&str, Option<NotNull>)> =
+            table.columns.iter().map(|c| (c.name.as_str(), c.not_null)).collect();
+        let inherited = Some(NotNull::Inherited);
+        assert_eq!(
+            declared,
+            [
+                ("a", inherited),
+                ("b", inherited),
+                ("c", Some(NotNull::NoInherit)),
+                ("d", inherited),
+                ("e", inherited),
+                ("f", None),
+                ("g", None),
+                ("h", None),
+                ("i", None),
+                ("j", None),
+                ("k", None),
+                ("l", inherited),
+            ]
+        );
+        let at_table = |name: &str, not_null| (name.to_string(), not_null);
+        assert_eq!(
+            table.not_null,
+            [
+                at_table("inherited", NotNull::Inherited),
+                at_table("Own", NotNull::NoInherit),
+                at_table("a", NotNull::Inherited),
+                at_table("Key", NotNull::Inherited),
+            ]
+        );
+        for (stmt, not_null) in [
+            ("CREATE DOMAIN public.d AS integer NOT NULL;", true),
+            ("CREATE DOMAIN public.d AS integer CONSTRAINT d_nn NOT NULL DEFAULT 0;", true),
+            (
+                "CREATE DOMAIN public.d AS integer CONSTRAINT d_check CHECK ((VALUE IS NOT NULL));",
+                false,
+            ),
+            ("CREATE DOMAIN public.d AS text DEFAULT 'NOT NULL'::text;", false),
+        ] {
+            let kind = parse_type(&[stmt]).kind;
+            assert!(
+                matches!(kind, TypeKind::Domain { not_null: n, .. } if n == not_null),
+                "{stmt}: {kind:?}"
+            );
+        }
+    }
+
+    /// **A column is `NOT NULL` where its table declares it so, or any
+    /// ancestor passes it on** (I76): its own definition, the table's list —
+    /// v18's element, a typed table's option, a `SET NOT NULL` — and each
+    /// parent's, a grandparent's through the parent, but for a `NO INHERIT`
+    /// one, which binds its own table alone. A cycle ends.
+    #[test]
+    fn a_not_null_is_found_on_the_table_and_through_its_ancestors() {
+        let mut db = with_tables(
+            &[
+                ("public.g", &[("gid", "bigint")], &[], None),
+                ("public.p", &[("id", "integer"), ("own", "text")], &["public.g"], None),
+                ("public.c", &[("extra", "date")], &["public.p"], None),
+                ("public.people", &[], &[], Some("public.person")),
+                ("public.loop", &[("x", "integer")], &["public.loop"], None),
+            ],
+            Vec::new(),
+        );
+        let tables = &mut db.tables;
+        tables.get_mut("public.g").unwrap().columns[0].not_null = Some(NotNull::Inherited);
+        tables.get_mut("public.p").unwrap().not_null.push(("own".into(), NotNull::NoInherit));
+        tables.get_mut("public.c").unwrap().not_null.push(("id".into(), NotNull::Inherited));
+        tables.get_mut("public.people").unwrap().not_null.push(("name".into(), NotNull::Inherited));
+        assert!(db.column_not_null("public.g", "gid"));
+        assert!(db.column_not_null("public.p", "gid"));
+        assert!(db.column_not_null("public.c", "gid"));
+        assert!(db.column_not_null("public.p", "own"));
+        assert!(!db.column_not_null("public.c", "own"));
+        assert!(db.column_not_null("public.c", "id"));
+        assert!(!db.column_not_null("public.p", "id"));
+        assert!(!db.column_not_null("public.c", "extra"));
+        assert!(db.column_not_null("public.people", "name"));
+        assert!(!db.column_not_null("public.people", "born"));
+        assert!(!db.column_not_null("public.loop", "x"));
+        assert!(!db.column_not_null("public.missing", "id"));
     }
 
     /// A reference reaching nothing — a parent or type the preamble does not
@@ -2000,8 +2345,8 @@ mod tests {
     }
 
     /// A domain carries its own `COLLATE`, which is its *type default* — the
-    /// thing a column-level clause exists to override — so it is kept rather
-    /// than discarded the way `NOT NULL` is.
+    /// thing a column-level clause exists to override — and its `NOT NULL`,
+    /// which a `CHECK` beside it does not hide.
     #[test]
     fn a_domain_keeps_its_own_collate_clause() {
         let plain = parse_type(&["CREATE DOMAIN public.d AS text;"]);
@@ -2013,6 +2358,7 @@ mod tests {
             TypeKind::Domain {
                 base_type: "text".to_string(),
                 collation: Some("pg_catalog.\"C\"".to_string()),
+                not_null: false,
             }
         );
 
@@ -2025,6 +2371,7 @@ mod tests {
             TypeKind::Domain {
                 base_type: "character varying(10)".to_string(),
                 collation: Some("pg_catalog.\"C\"".to_string()),
+                not_null: true,
             }
         );
     }
@@ -2178,17 +2525,15 @@ mod tests {
             ");",
         ]);
         assert_eq!(name, "objects.imported");
-        assert_eq!(
-            table.columns,
-            [ColumnDef::new("id", "integer"), ColumnDef::new("born", "date")]
-        );
+        assert_eq!(table.columns, [not_null("id", "integer"), ColumnDef::new("born", "date")]);
         assert_eq!(table.parents, ["objects.base"]);
         assert!(classify_statement("CREATE UNLOGGED SEQUENCE public.s;").is_none());
     }
 
-    /// `--binary-upgrade`'s references arrive after the full column list and
-    /// fold into the table they name, a parent named twice once; one naming
-    /// a table not declared is dropped rather than declaring one.
+    /// `--binary-upgrade`'s references arrive after the full column list, as
+    /// a `SET NOT NULL` before v18 arrives after a list not printing its
+    /// column, and fold into the table they name, a parent named twice once;
+    /// one naming a table not declared is dropped rather than declaring one.
     #[test]
     fn binary_upgrade_table_references_arrive_via_alter_table() {
         let reference = |table: &str, reference: TableReference| {
@@ -2204,6 +2549,7 @@ mod tests {
             reference("public.c", parent()),
             reference("public.c", parent()),
             reference("public.c", TableReference::OfType("public.t".to_string())),
+            reference("public.c", TableReference::NotNull("label".to_string())),
             reference("public.elsewhere", parent()),
         ];
         let meta = dump_metadata_from_spans(&spans);
@@ -2215,6 +2561,7 @@ mod tests {
                 columns: vec![ColumnDef::new("id", "integer")],
                 parents: vec!["public.p".to_string()],
                 of_type: Some("public.t".to_string()),
+                not_null: vec![("label".to_string(), NotNull::Inherited)],
             }
         );
     }
@@ -2226,7 +2573,11 @@ mod tests {
             def,
             TypeDef {
                 name: "public.derived".to_string(),
-                kind: TypeKind::domain("public.base_domain"),
+                kind: TypeKind::Domain {
+                    base_type: "public.base_domain".to_string(),
+                    collation: None,
+                    not_null: true,
+                },
             }
         );
     }

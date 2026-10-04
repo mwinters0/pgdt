@@ -1365,7 +1365,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
                 line,
                 column,
                 declared_type: declared_type.to_string(),
-                value: value.to_string(),
+                value: Some(value.to_string()),
             },
             count: 1,
         };

@@ -976,6 +976,167 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
     }
 }
 
+/// A dump whose `public.t` holds `id` 1 to 3 and `v` 5, NULL and 7, the
+/// table declared by `ddl`, which ends in `;`, after two domains: `public.nn`,
+/// an `integer` declared `NOT NULL`, and `public.over_nn` over it.
+/// Hand-written: no `pg_dump` writes a NULL into a `NOT NULL` column.
+fn not_null_dump(dir: &Path, ddl: &str) -> PathBuf {
+    let dump = dir.join("not_null.sql");
+    let text = format!(
+        "CREATE DOMAIN public.nn AS integer NOT NULL;\n\n\
+         CREATE DOMAIN public.over_nn AS public.nn;\n\n\
+         {ddl}\n\n\
+         COPY public.t (id, v) FROM stdin;\n1\t5\n2\t\\N\n3\t7\n\\.\n\nSELECT 1;\n"
+    );
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A NULL in a column its declaration makes `NOT NULL` is refused wherever
+/// it is read** (I76) — on the column, at the table, by a primary key, by
+/// `SET NOT NULL`, through a parent, as a typed table's option, through a
+/// domain or a domain over one, whatever the column's type resolves to: a
+/// data-level `parse` keying it fails naming it by its `COPY` line, as a
+/// strict one does, and so does a metadata-level strict one, which a default
+/// one leaves to the query; a query reading it fails, a filter term naming
+/// it — `IS NOT NULL` included — fails, and the strings schema mode, which
+/// reads no declaration, reads it. Told to ignore it, a query reads the NULL,
+/// and a parse goes past it and records it, so a default parse over the cache
+/// fails with it. A `NOT NULL` that does not bind the column — a parent's `NO
+/// INHERIT`, a `CHECK` — refuses nothing.
+#[tokio::test]
+async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let disabled = CacheMode::DISABLED;
+    let read = |path: PathBuf, options: QueryOptions| async move {
+        try_rows_in(&path, "public.t", options).await.map(|(rows, _)| rows)
+    };
+    let rows = |v: &[Option<&str>]| -> Vec<Vec<Option<String>>> {
+        (1..=3).zip(v).map(|(id, v)| vec![Some(id.to_string()), v.map(str::to_string)]).collect()
+    };
+    let with_null = rows(&[Some("5"), None, Some("7")]);
+    let line_offset =
+        |path: &Path| std::fs::read_to_string(path).unwrap().find("\n2\t").unwrap() as u64 + 1;
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..Default::default()
+    };
+    let ignoring = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..Default::default()
+    };
+
+    for ddl in [
+        "CREATE TABLE public.t (\n    id integer,\n    v integer NOT NULL\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v integer CONSTRAINT t_v NOT NULL NO INHERIT\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v integer,\n    NOT NULL v\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v integer,\n    PRIMARY KEY (v)\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v integer\n);\n\
+         ALTER TABLE ONLY public.t ALTER COLUMN v SET NOT NULL;",
+        "CREATE TABLE public.p (\n    v integer NOT NULL\n);\n\n\
+         CREATE TABLE public.t (\n    id integer\n)\nINHERITS (public.p);",
+        "CREATE TYPE public.pair AS (\n\tid integer,\n\tv integer\n);\n\n\
+         CREATE TABLE public.t OF public.pair (\n    v NOT NULL\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v public.nn\n);",
+        "CREATE TABLE public.t (\n    id integer,\n    v public.over_nn\n);",
+        "CREATE TYPE public.opaque;\n\n\
+         CREATE TABLE public.t (\n    id integer,\n    v public.opaque NOT NULL\n);",
+    ] {
+        let path = not_null_dump(dir.path(), ddl);
+        let source = LocalFileSource::open(&path).unwrap();
+        for (scan, request) in [
+            (ScanOptions::default(), StatisticsRequest::DATA),
+            (strict.clone(), StatisticsRequest::DATA),
+            (strict.clone(), StatisticsRequest::METADATA),
+        ] {
+            match map_file(&source, &scan, &disabled, &request).await {
+                Err(Error::NullRefused { table, column, line, line_offset: at }) => {
+                    assert_eq!(
+                        (table.as_str(), column.as_str(), line, at),
+                        ("public.t", "v", Some(2), line_offset(&path)),
+                        "{ddl}"
+                    );
+                }
+                other => panic!("{ddl}: expected the parse to refuse the NULL, got {other:?}"),
+            }
+        }
+        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::METADATA)
+            .await
+            .unwrap_or_else(|e| panic!("{ddl}: a metadata-level parse refused: {e}"));
+        match read(path.clone(), QueryOptions::default()).await {
+            Err(Error::NullRefused { column, line: None, line_offset: at, .. }) => {
+                assert_eq!((column.as_str(), at), ("v", line_offset(&path)), "{ddl}");
+            }
+            other => panic!("{ddl}: expected the read to refuse the NULL, got {other:?}"),
+        }
+        let filtered = QueryOptions {
+            filter: Expr::all([Predicate {
+                column: "v".into(),
+                op: PredicateOp::IsNotNull,
+                value: None,
+            }]),
+            projection: Some(vec!["id".into()]),
+            ..Default::default()
+        };
+        match read(path.clone(), filtered).await {
+            Err(Error::NullRefused { column, .. }) => assert_eq!(column, "v", "{ddl}"),
+            other => panic!("{ddl}: expected the filter to refuse the NULL, got {other:?}"),
+        }
+        // Projected: the query emits an inherited column ahead of the
+        // table's own.
+        let both = || Some(vec!["id".to_string(), "v".to_string()]);
+        let untyped = QueryOptions {
+            schema_mode: SchemaMode::Strings,
+            projection: both(),
+            ..Default::default()
+        };
+        assert_eq!(read(path.clone(), untyped).await.unwrap(), with_null, "{ddl}: strings");
+        let ignored = QueryOptions {
+            postgres_invalid_values: PostgresInvalidValues::Ignore,
+            projection: both(),
+            ..Default::default()
+        };
+        assert_eq!(read(path.clone(), ignored).await.unwrap(), with_null, "{ddl}: ignored");
+
+        let mode = CacheMode::enabled(cache::colocated_path(&path));
+        let _ = std::fs::remove_file(cache::colocated_path(&path));
+        let mapped = map_file(&source, &ignoring, &mode, &StatisticsRequest::DATA).await.unwrap();
+        let block = mapped.index.blocks().find(|b| b.header.table == "t").unwrap();
+        let recorded = block.ignored_refusals.as_ref().expect("the NULL is recorded");
+        assert_eq!(
+            (recorded.columns[0].first.value.as_deref(), recorded.columns[0].count),
+            (None, 1)
+        );
+        match map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await {
+            Err(Error::FieldRefusedRecorded { refused, .. }) => {
+                assert!(matches!(*refused, Error::NullRefused { line: Some(2), .. }), "{ddl}");
+            }
+            other => panic!("{ddl}: expected the recorded refusal, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(cache::colocated_path(&path));
+    }
+
+    for ddl in [
+        "CREATE TABLE public.t (\n    id integer,\n    v integer\n);",
+        "CREATE TABLE public.p (\n    v integer NOT NULL NO INHERIT\n);\n\n\
+         CREATE TABLE public.t (\n    id integer\n)\nINHERITS (public.p);",
+        "CREATE TABLE public.t (\n    id integer,\n    v integer CHECK ((v IS NOT NULL))\n);",
+    ] {
+        let path = not_null_dump(dir.path(), ddl);
+        let source = LocalFileSource::open(&path).unwrap();
+        for scan in [ScanOptions::default(), strict.clone()] {
+            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
+                .await
+                .unwrap_or_else(|e| panic!("{ddl}: refused: {e}"));
+        }
+        let both = QueryOptions {
+            projection: Some(vec!["id".to_string(), "v".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(read(path, both).await.unwrap(), with_null, "{ddl}");
+    }
+}
+
 /// The line `COPY` numbers the row at `line_offset` in `text`, a restore
 /// counting from 1 at its block's first data line (`copyfrom.c`'s
 /// `CopyFromErrorCallback`): read off the file, not off the parse.

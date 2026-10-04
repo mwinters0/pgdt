@@ -275,8 +275,8 @@ is looked up. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; refe
 ### D37 The bar: the dump alone determines the value
 A declared type maps to a real Arrow type only if its text round-trips consulting nothing outside
 the file; otherwise `Utf8View` with a note naming the kind of unknown. Misreading is unrecoverable,
-not recognizing is not; `money` fails it (`KD13`). Every column is nullable regardless of DDL; a
-range's three flags are not. Rejected: a bare built-in name `Unknown` where a declared type could
+not recognizing is not; `money` fails it (`KD13`). Every column is nullable regardless of DDL, a
+`NOT NULL` refusing a NULL instead, which `ignore` reads (I76); a range's three flags are not. Rejected: a bare built-in name `Unknown` where a declared type could
 shadow it — `pg_dump` writes built-ins bare under an emptied path (I8), so it would demote its own
 columns; a collation takes the weaker verdict because `pg_dump` qualifies every one (`KD48`).
 

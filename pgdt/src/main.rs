@@ -1746,6 +1746,7 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
+        | Lib::NullRefused { .. }
         | Lib::FieldRefusedRecorded { .. }
         | Lib::Unrepresentable { .. }
         | Lib::UnrepresentableTestUntyped { .. }
@@ -2938,9 +2939,10 @@ fn type_kind_summary(kind: &TypeKind) -> String {
         TypeKind::Enum { labels, exact: false } => {
             format!("enum: {} (labels not read exactly)", label_list(labels))
         }
-        TypeKind::Domain { base_type, collation: None } => format!("domain over {base_type}"),
-        TypeKind::Domain { base_type, collation: Some(c) } => {
-            format!("domain over {base_type} COLLATE {c}")
+        TypeKind::Domain { base_type, collation, not_null } => {
+            let collation = collation.as_ref().map(|c| format!(" COLLATE {c}")).unwrap_or_default();
+            let not_null = if *not_null { " NOT NULL" } else { "" };
+            format!("domain over {base_type}{collation}{not_null}")
         }
         TypeKind::Composite { fields: None } => "composite: (fields not parsed)".to_string(),
         TypeKind::Composite { fields: Some(fields) } if fields.is_empty() => {
@@ -3325,13 +3327,15 @@ fn ignored_refusals_line(
 ) -> String {
     let first = &ignored.first;
     let column = block.header.columns.get(first.column).map_or("?", String::as_str);
+    let value = match &first.value {
+        Some(value) => format!("`{value}` as `{}`", first.declared_type),
+        None => "a NULL in a column declared `NOT NULL`".to_string(),
+    };
     format!(
         "column {column}, {} field(s) a parse under --postgres-invalid-values ignore went past, \
-         the first at COPY line {}: `{}` as `{}`, at offset {}",
+         the first at COPY line {}: {value}, at offset {}",
         ignored.count,
         first.line,
-        first.value,
-        first.declared_type,
         block.data_offset + first.offset,
     )
 }
@@ -3485,6 +3489,9 @@ fn span_summary(span: &Span) -> String {
         SpanBody::AlterTableReference { table, reference } => match reference {
             TableReference::Parent(parent) => format!("ALTER TABLE {table} INHERIT {parent}"),
             TableReference::OfType(of_type) => format!("ALTER TABLE {table} OF {of_type}"),
+            TableReference::NotNull(column) => {
+                format!("ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL")
+            }
         },
         SpanBody::Framing => "framing".to_string(),
         SpanBody::Unparsed => match &span.toc {
@@ -4835,8 +4842,17 @@ mod tests {
             type_kind_summary(&TypeKind::Domain {
                 base_type: "text".to_string(),
                 collation: Some(r#"pg_catalog."C""#.to_string()),
+                not_null: false,
             }),
             r#"domain over text COLLATE pg_catalog."C""#
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Domain {
+                base_type: "integer".to_string(),
+                collation: None,
+                not_null: true,
+            }),
+            "domain over integer NOT NULL"
         );
         assert_eq!(
             type_kind_summary(&TypeKind::Composite {
@@ -4846,6 +4862,7 @@ mod tests {
                         name: "c".to_string(),
                         declared_type: "text".to_string(),
                         collation: Some(r#"pg_catalog."C""#.to_string()),
+                        not_null: None,
                     },
                 ]),
             }),

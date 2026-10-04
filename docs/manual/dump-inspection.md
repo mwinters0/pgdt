@@ -1217,8 +1217,8 @@ user-defined types: 7
 ```
 
 That is every type, not only the enums, and each line carries whatever its
-kind has to say: an enum's labels, a domain's base type and any `COLLATE`
-clause, a composite's fields, a range's subtype. The two `pg_dump` never
+kind has to say: an enum's labels, a domain's base type, any `COLLATE`
+clause and a `NOT NULL`, a composite's fields, a range's subtype. The two `pg_dump` never
 writes but pgdt can still meet are spelled out rather than left blank —
 `composite: (fields not parsed)` for a body pgdt could not read (that is the
 one case that changes how a column of the type resolves), and `range (subtype

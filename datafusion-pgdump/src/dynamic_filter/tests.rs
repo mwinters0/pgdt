@@ -581,6 +581,7 @@ fn resolved(fields: Vec<(&str, DataType, bool)>) -> ResolvedSchema {
         notes: Vec::new(),
         plans: vec![pgdump_query::NestedPlan::Scalar; n],
         comparisons: vec![pgdump_query::ComparisonPlan::Refused; n],
+        not_null: vec![false; n],
     }
 }
 

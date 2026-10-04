@@ -8,7 +8,7 @@ use std::path::Path;
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
-use pgdump_query::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
+use pgdump_query::preamble::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
     DatabaseMetadata, DumpMetadata, LocalFileSource, QueryOptions, ResolvedSchema, ScanOptions,
@@ -17,6 +17,11 @@ use pgdump_query::{
 
 mod common;
 use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
+
+/// `column`, declared `NOT NULL` with a constraint its children take.
+fn not_null(column: ColumnDef) -> ColumnDef {
+    ColumnDef { not_null: Some(NotNull::Inherited), ..column }
+}
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
@@ -48,7 +53,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             int_cols,
             &vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("v_smallint", "smallint"),
                 ColumnDef::new("v_integer", "integer"),
                 ColumnDef::new("v_bigint", "bigint"),
@@ -60,7 +65,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             numeric_cols,
             &vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("v_typed", "numeric(38,10)"),
                 ColumnDef::new("v_typed39", "numeric(39,10)"),
                 ColumnDef::new("v_small", "numeric(10,2)"),
@@ -104,7 +109,11 @@ async fn default_dump_declares_every_mapped_column_type() {
         );
         assert_eq!(
             find_type(&db, "public.derived_domain").kind,
-            TypeKind::domain("public.base_domain"),
+            TypeKind::Domain {
+                base_type: "public.base_domain".to_string(),
+                collation: None,
+                not_null: true,
+            },
             "pg_dump {version}"
         );
 
@@ -327,15 +336,17 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
             name: name.to_string(),
             declared_type: declared_type.to_string(),
             collation: Some(collation.to_string()),
+            not_null: None,
         }
     }
+    let not_null = |column: ColumnDef| ColumnDef { not_null: Some(NotNull::Inherited), ..column };
 
     for version in VERSIONS {
         let db = single_database(&types_fixture(version, "default")).await;
         assert_eq!(
             db.tables.get("public.t_collate").map(|t| &t.columns).unwrap(),
             &vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 collated("v_text_c", "text", r#"pg_catalog."C""#),
                 collated("v_text_locale", "text", r#"pg_catalog."en_US.utf8""#),
                 collated("v_text_ucs", "text", "pg_catalog.ucs_basic"),
@@ -346,7 +357,7 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
                 collated("v_user", "text", "public.c_collation"),
                 collated("v_nd", "text", "public.nd_collation"),
                 ColumnDef::new("v_src", "text"),
-                collated("v_gen_nn", "text", r#"pg_catalog."C""#),
+                not_null(collated("v_gen_nn", "text", r#"pg_catalog."C""#)),
             ],
             "pg_dump {version}"
         );
@@ -363,10 +374,11 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
 #[tokio::test]
 async fn v18_s_column_shapes_keep_their_type_and_their_displaced_collation() {
     let c = r#"pg_catalog."C""#;
-    let collated = |name: &str| ColumnDef {
+    let collated = |name: &str, not_null| ColumnDef {
         name: name.to_string(),
         declared_type: "text".to_string(),
         collation: Some(c.to_string()),
+        not_null,
     };
     for version in VERSIONS {
         let db = single_database(&types_fixture(version, "default")).await;
@@ -378,10 +390,10 @@ async fn v18_s_column_shapes_keep_their_type_and_their_displaced_collation() {
         assert_eq!(
             table.unwrap(),
             &vec![
-                ColumnDef::new("id", "integer"),
-                collated("v_named"),
-                collated("v_no_inherit"),
-                collated("v_virtual"),
+                ColumnDef { not_null: Some(NotNull::Inherited), ..ColumnDef::new("id", "integer") },
+                collated("v_named", Some(NotNull::Inherited)),
+                collated("v_no_inherit", Some(NotNull::NoInherit)),
+                collated("v_virtual", None),
                 ColumnDef::new("v_virtual_len", "integer"),
                 ColumnDef::new("v_after", "date"),
             ],
@@ -534,7 +546,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         assert_eq!(
             db.tables.get("public.widgets").map(|t| &t.columns).unwrap(),
             &vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("name", "text"),
                 ColumnDef::new("description", "text"),
                 ColumnDef::new("is_active", "boolean"),
@@ -549,7 +561,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         assert_eq!(
             db.tables.get("public.dropped_column").map(|t| &t.columns).unwrap(),
             &vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("keep_me", "text"),
                 ColumnDef::new("also_keep", "boolean"),
             ],
@@ -578,7 +590,7 @@ async fn emitters_tables_declare_their_columns_and_nothing_else() {
         assert_eq!(
             declared("emitters.parent"),
             vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("label", "text"),
                 ColumnDef::new("born", "date"),
             ],
@@ -592,7 +604,7 @@ async fn emitters_tables_declare_their_columns_and_nothing_else() {
         assert_eq!(
             declared("emitters.stamped"),
             vec![
-                ColumnDef::new("id", "integer"),
+                not_null(ColumnDef::new("id", "integer")),
                 ColumnDef::new("stamps", "timestamp with time zone[]"),
                 ColumnDef::new("now", "integer"),
             ],
@@ -606,11 +618,19 @@ async fn emitters_tables_declare_their_columns_and_nothing_else() {
 /// `INHERITS` and `OF` clauses, and under `--binary-upgrade`, where the full
 /// list is the table's own, through the `ALTER TABLE ONLY` forms after it.
 /// Each column in the server's order, as its `COPY` header lists it, and
-/// each reads typed.
+/// each reads typed. **Each is `NOT NULL` exactly where the server holds it
+/// so** (I76): the child's `id` through its parent, its `label` by the `SET
+/// NOT NULL` before 18 and the table-level `NOT NULL label` from 18, the
+/// typed table's `name` by its column option — or, under `--binary-upgrade`,
+/// on each column.
 #[tokio::test]
 async fn inherited_and_typed_columns_are_declared_through_their_references() {
     let child = [("id", "integer"), ("label", "text"), ("born", "date"), ("extra", "numeric(6,2)")];
     let people = [("name", "text"), ("born", "date"), ("height", "integer")];
+    let not_null = [
+        ("emitters.child", &[true, true, false, false][..]),
+        ("emitters.people", &[true, false, false]),
+    ];
     for version in VERSIONS {
         for flag_set in ["default", "binary-upgrade"] {
             let path = fixture(version, "emitters", flag_set);
@@ -640,6 +660,8 @@ async fn inherited_and_typed_columns_are_declared_through_their_references() {
                     "{label}: {table} resolves {:?}",
                     resolved.columns
                 );
+                let (_, expected) = not_null.iter().find(|(t, _)| *t == table).unwrap();
+                assert_eq!(resolved.not_null, *expected, "{label}: {table}");
             }
         }
     }
@@ -667,7 +689,7 @@ async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy(
     for version in [13, 16, 18] {
         let db = single_database(&edge_cases_fixture(version, "binary-upgrade")).await;
         let cols = db.tables.get("public.dropped_column").map(|t| &t.columns).unwrap();
-        assert_eq!(cols[0], ColumnDef::new("id", "integer"));
+        assert_eq!(cols[0], not_null(ColumnDef::new("id", "integer")));
         assert_eq!(cols[1], ColumnDef::new("keep_me", "text"));
         // I5: the mangled, quoted placeholder name and the C-comment-suffixed
         // dummy type, exactly as real `pg_dump --binary-upgrade` writes them.

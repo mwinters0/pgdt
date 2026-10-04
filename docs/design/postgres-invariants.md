@@ -4934,3 +4934,81 @@ grep -n -A12 '^CharacterWithoutLength' src/backend/parser/gram.y
 
 It prints, for each function, the typmod test, the clip and the blank test;
 then the grammar's default length.
+
+## I76 — `COPY` refuses a NULL where the column's declaration makes it `NOT NULL`, which `pg_dump` writes before the data
+
+**Claim.** A `COPY` row holding `\N` in a column that is `NOT NULL` fails the
+table's `COPY` (`23502`), as does one in a column whose type is a domain
+declaring `NOT NULL`, or a domain over such a domain (`23502`, from
+`domain_in`). A column is `NOT NULL` where its `CREATE TABLE` says so — the
+column's `NOT NULL` or `CONSTRAINT <name> NOT NULL`, an inline `PRIMARY KEY`,
+`GENERATED … AS IDENTITY` or a `serial` type, a table-level `[CONSTRAINT
+<name>] NOT NULL <column>` (18) or `PRIMARY KEY (<column>, …)`, a typed
+table's column option — or an `ALTER TABLE … ALTER COLUMN … SET NOT NULL`
+says so, or a parent it inherits the column from holds it `NOT NULL`: before
+18 a child always takes it, and from 18 it takes every one but `NO INHERIT`'s.
+`pg_dump` writes every such `NOT NULL` in the table's pre-data entry: `NOT
+NULL` on a column it prints, suppressed where the child inherits it; before 18
+`ALTER TABLE ONLY <t> ALTER COLUMN <c> SET NOT NULL;` for a column it does not
+print whose `NOT NULL` is not inherited, and from 18 the table-level element,
+` CONSTRAINT %s NOT NULL` for a named one and ` NO INHERIT` after either. The
+exceptions are post-data, and bind no `COPY`: 18's `NOT VALID` not-null
+constraints, and a primary key `pg_dump` adds after the data. A domain's is
+` NOT NULL`, or from 17 ` CONSTRAINT %s NOT NULL` for a named one. `array_in`
+and `record_in` hand a NULL element or field to its type's input function, so
+a NULL element of an array, or field of a composite, of a `NOT NULL` domain is
+refused too; an array of such a domain may itself be NULL.
+
+**Proof.** `src/backend/commands/copyfromparse.c`, `NextCopyFrom`: every field,
+NULL included, through `InputFunctionCallSafe`;
+`src/backend/utils/adt/domains.c`, `domain_in`'s `domain_check_input(value,
+(string == NULL), …)`; `src/backend/executor/execMain.c`, `ExecConstraints`'
+`attnotnull && slot_attisnull`. `src/bin/pg_dump/pg_dump.c`,
+`dumpTableSchema`'s `print_notnull` and, 13–17, its `ALTER COLUMN %s SET NOT
+NULL`, 18 its `NOT NULL %s` and `CONSTRAINT %s NOT NULL %s`, and
+`determineNotNullFlags`' invalid constraints; `dumpDomain`'s `typnotnull`.
+`src/backend/commands/tablecmds.c`, `MergeAttributes`' `def->is_not_null |=
+attribute->attnotnull` (13–17); `src/backend/parser/parse_utilcmd.c`,
+`transformColumnDefinition`, which sets `is_not_null` for `PRIMARY KEY`,
+`serial` and an identity (by `need_notnull` at 18).
+`src/backend/utils/adt/arrayfuncs.c`, `ReadArrayStr`'s input call handed
+`NULL` for a NULL element, and `rowtypes.c`, `record_in`'s for a NULL field.
+
+**Observed.** The koji replica (PG16), in a rolled-back transaction: `COPY`
+refuses `\N` into a child's column inherited from a `NOT NULL` parent column
+(the child's `attnotnull` is `t`), into a domain over a `NOT NULL` domain
+(`domain over_nn does not allow null values`), into an inline `PRIMARY KEY`, a
+`serial` and an identity column, and `{1,NULL}` into an array of the `NOT
+NULL` domain; it reads `\N` into that array column.
+`fixtures/<13–17>/emitters/default.sql` holds `ALTER TABLE ONLY
+emitters.child ALTER COLUMN label SET NOT NULL;`,
+`fixtures/18/emitters/default.sql` `NOT NULL label,` and
+`fixtures/18/types/default.sql` `CONSTRAINT t_v18_named_present NOT NULL` and
+`NOT NULL NO INHERIT`.
+
+**Scope limit.** A `CHECK`, and a `NOT NULL` a statement this build does not
+read adds (`ALTER DOMAIN … SET NOT NULL`, an `ALTER TABLE` naming several
+subcommands), are not followed; no `pg_dump` writes the latter.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+16.15 (observed).
+
+**Relied on by:** `preamble::DatabaseMetadata::column_not_null` and
+`pgtype::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
+keying, a query reading or filtering on and a strict parse checking a column
+refuse a NULL by.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'print_notnull\|SET NOT NULL;\|"NOT NULL %s"\|NOT NULL %s",\|" NO INHERIT"' src/bin/pg_dump/pg_dump.c
+grep -n -A3 'typnotnull\[0\] ==' src/bin/pg_dump/pg_dump.c
+grep -n 'domain_check_input(value, (string == NULL)' src/backend/utils/adt/domains.c
+grep -n -A1 'InputFunctionCall[A-Za-z]*(inputproc' src/backend/utils/adt/arrayfuncs.c
+grep -n 'is_not_null = true\|need_notnull = true' src/backend/parser/parse_utilcmd.c
+```
+
+It prints `dumpTableSchema`'s not-null emissions, `dumpDomain`'s, the NULL
+`domain_in` checks, the input call `array_in` hands a NULL element, and where
+a column's definition is made `NOT NULL`.
