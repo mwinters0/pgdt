@@ -109,7 +109,7 @@ Options:
           `--postgres-invalid-values` says; `strict` stops as `default` does but reads every value
           to find one, those `default` leaves to a query included, re-reading each table the cache
           holds that no `strict` parse checked, so a clean run means every value of a type pgdt
-          reads was checked
+          reads was checked; the listing names, under each table, what `strict` does not check
           
           [default: default]
           [possible values: default, ignore, strict]

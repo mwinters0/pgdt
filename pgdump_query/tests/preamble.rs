@@ -113,6 +113,7 @@ async fn default_dump_declares_every_mapped_column_type() {
                 base_type: "public.base_domain".to_string(),
                 collation: None,
                 not_null: true,
+                check: false,
             },
             "pg_dump {version}"
         );
@@ -958,6 +959,96 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
                 "pg_dump {version} {flags}: {:?}",
                 resolved.columns
             );
+        }
+    }
+}
+
+/// **What a strict parse leaves unchecked in the `emitters` schema is named
+/// per table, at every major and in both forms a dump declares it**
+/// (`strict_unchecked`; I77): each base type's column, the range declaring a
+/// canonical function, the domain declaring a `CHECK`, the parent's `CHECK`
+/// and the child's, inherited by default and re-declared under
+/// `--binary-upgrade` — and nothing in any other table. A `--data-only` dump
+/// declares no table, so no field of any is checked.
+#[tokio::test]
+async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() {
+    use pgdump_query::{Unchecked, strict_unchecked};
+    fn base<'a>(column: &'a str, declared: &str) -> (&'a str, String, Unchecked) {
+        (column, declared.to_string(), Unchecked::BaseType)
+    }
+    for version in VERSIONS {
+        for flag_set in ["default", "binary-upgrade", "data-only"] {
+            let path = fixture(version, "emitters", flag_set);
+            let source = LocalFileSource::open(&path).unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let label = format!("pg_dump {version} {flag_set}");
+            assert!(index.blocks().next().is_some(), "{label}");
+            for block in index.blocks() {
+                let table = block.header.qualified_name();
+                let unchecked = strict_unchecked(
+                    &block.header,
+                    index.metadata.as_ref(),
+                    block.database.as_deref(),
+                );
+                if flag_set == "data-only" {
+                    assert!(!unchecked.declared, "{label}: {table}");
+                    assert!(unchecked.columns.is_empty() && unchecked.checks.is_empty());
+                    continue;
+                }
+                assert!(unchecked.declared, "{label}: {table}");
+                let columns: Vec<(&str, String, Unchecked)> = unchecked
+                    .columns
+                    .iter()
+                    .map(|c| {
+                        assert_eq!(c.path, "", "{label}: {table}");
+                        (c.column.as_str(), c.declared.clone(), c.why.clone())
+                    })
+                    .collect();
+                let checks: Vec<(Option<&str>, Option<&str>)> = unchecked
+                    .checks
+                    .iter()
+                    .map(|c| (c.name.as_deref(), c.inherited_from.as_deref()))
+                    .collect();
+                let positive = Some("parent_id_positive");
+                let (expected_columns, expected_checks) = match table.as_str() {
+                    "emitters.base_values" => (
+                        vec![
+                            base("v_varchar", "emitters.bt_varchar(8)"),
+                            base("v_char", "emitters.bt_char"),
+                            base("v_int2", "emitters.bt_int2"),
+                            base("v_main", "emitters.bt_text_main"),
+                            base("v_pair", "emitters.bt_pair"),
+                        ],
+                        vec![],
+                    ),
+                    "emitters.range_values" => (
+                        vec![(
+                            "v_canon",
+                            "emitters.r_canon".to_string(),
+                            Unchecked::RangeCanonical {
+                                function: "emitters.r_canon_canonical".into(),
+                            },
+                        )],
+                        vec![],
+                    ),
+                    "emitters.domain_values" => (
+                        vec![(
+                            "v_positive",
+                            "emitters.positive".to_string(),
+                            Unchecked::DomainCheck,
+                        )],
+                        vec![],
+                    ),
+                    "emitters.parent" => (vec![], vec![(positive, None)]),
+                    "emitters.child" if flag_set == "binary-upgrade" => {
+                        (vec![], vec![(positive, None)])
+                    }
+                    "emitters.child" => (vec![], vec![(positive, Some("emitters.parent"))]),
+                    _ => (vec![], vec![]),
+                };
+                assert_eq!(columns, expected_columns, "{label}: {table}");
+                assert_eq!(checks, expected_checks, "{label}: {table}");
+            }
         }
     }
 }

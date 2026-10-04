@@ -412,8 +412,10 @@ pub enum SpanBody {
     EnumLabelsUnread {
         type_name: Option<String>,
     },
-    /// A `--binary-upgrade` dump's `ALTER TABLE ONLY <name> INHERIT
-    /// <parent>;` or `… OF <type>;` — recognized so
+    /// An `ALTER TABLE` adding to a table what
+    /// [`crate::preamble::parse_alter_table_reference`] reads — a
+    /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
+    /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL` — recognized so
     /// [`crate::preamble::dump_metadata_from_spans`] can fold the reference
     /// into the [`Table`](SpanBody::Table) span it targets.
     AlterTableReference {

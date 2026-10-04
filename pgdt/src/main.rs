@@ -22,8 +22,8 @@ use pgdump_query::{
     DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
     Parallelism, PostgresInvalidValues, Predicate, PredicateOp, QueryOptions,
     ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ScanOptions, Severity, Span, SpanBody, StatisticsLevel,
-    StatisticsRequest, StatisticsSelection, StatisticsTarget, TableReference, TypeKind,
-    UnrepresentableMode, open, preamble_only, render_field_into,
+    StatisticsRequest, StatisticsSelection, StatisticsTarget, StrictUnchecked, TableReference,
+    TypeKind, UnrepresentableMode, open, preamble_only, render_field_into, strict_unchecked,
 };
 use tracing::Instrument;
 
@@ -869,7 +869,8 @@ enum Command {
         /// but reads every value to find one, those `default` leaves to a
         /// query included, re-reading each table the cache holds that no
         /// `strict` parse checked, so a clean run means every value of a type
-        /// pgdt reads was checked.
+        /// pgdt reads was checked; the listing names, under each table, what
+        /// `strict` does not check.
         #[arg(
             long,
             value_name = "MODE",
@@ -2939,10 +2940,11 @@ fn type_kind_summary(kind: &TypeKind) -> String {
         TypeKind::Enum { labels, exact: false } => {
             format!("enum: {} (labels not read exactly)", label_list(labels))
         }
-        TypeKind::Domain { base_type, collation, not_null } => {
+        TypeKind::Domain { base_type, collation, not_null, check } => {
             let collation = collation.as_ref().map(|c| format!(" COLLATE {c}")).unwrap_or_default();
             let not_null = if *not_null { " NOT NULL" } else { "" };
-            format!("domain over {base_type}{collation}{not_null}")
+            let check = if *check { " CHECK" } else { "" };
+            format!("domain over {base_type}{collation}{not_null}{check}")
         }
         TypeKind::Composite { fields: None } => "composite: (fields not parsed)".to_string(),
         TypeKind::Composite { fields: Some(fields) } if fields.is_empty() => {
@@ -3053,6 +3055,9 @@ struct BlockResolutionJson<'a> {
     table: String,
     header_offset: u64,
     columns: Vec<ColumnResolutionJson<'a>>,
+    /// What a strict parse checks nothing of, as the listing's `unchecked by
+    /// a strict parse` lines state it.
+    unchecked: StrictUnchecked,
 }
 
 /// One column's resolution: what the DDL declared, what it became, and why.
@@ -3098,6 +3103,7 @@ fn print_index_json(
                     plan: &resolved.plans[i],
                 })
                 .collect(),
+            unchecked: block_unchecked(index, block),
         })
         .collect();
     let wrapped = IndexJson {
@@ -3214,6 +3220,7 @@ fn print_index(
 
     let mut total_columns = 0usize;
     let mut total_unmapped = 0usize;
+    let mut outside_strict = 0usize;
 
     let mut headings = DatabaseHeadings::new(blocks.iter().map(|(b, _)| &b.database));
 
@@ -3224,6 +3231,11 @@ fn print_index(
         if block.checked_in_full {
             println!("    checked: every value, by a strict parse");
         }
+        let unchecked = block_unchecked(index, block);
+        for line in unchecked_lines(&unchecked) {
+            println!("    unchecked by a strict parse: {line}");
+        }
+        outside_strict += usize::from(!unchecked.is_empty());
         for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
             println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }
@@ -3297,6 +3309,45 @@ fn print_index(
             "{total_unmapped} of {total_columns} columns unmapped — run with --detail for details"
         );
     }
+    if outside_strict > 0 {
+        println!(
+            "{outside_strict} of {} COPY block(s) hold what a strict parse does not check, each \
+             listed as `unchecked by a strict parse`",
+            blocks.len()
+        );
+    }
+}
+
+/// What a strict parse checks nothing of in `block`, read off the cache's
+/// preamble (`pgdump_query::strict_unchecked`): a property of the dump's
+/// declarations, so `parse` and `info` list it alike under every block,
+/// whichever mode built the cache.
+fn block_unchecked(index: &DumpIndex, block: &pgdump_query::CopyBlock) -> StrictUnchecked {
+    strict_unchecked(&block.header, index.metadata.as_ref(), block.database.as_deref())
+}
+
+/// One line per position a strict parse checks nothing of, then one per
+/// `CHECK` — or one for a table the dump declares nowhere, every field of
+/// which goes unchecked.
+fn unchecked_lines(unchecked: &StrictUnchecked) -> Vec<String> {
+    if !unchecked.declared {
+        return vec!["every value — the table is declared nowhere in the dump".to_string()];
+    }
+    let columns = unchecked.columns.iter().map(|c| {
+        let at = format!("{}{}", c.column, c.path);
+        match c.declared.as_str() {
+            "" => format!("{at}: {}", c.why.describe()),
+            declared => format!("{at} {declared}: {}", c.why.describe()),
+        }
+    });
+    let checks = unchecked.checks.iter().map(|check| {
+        let name = check.name.as_deref().map(|n| format!(" {n}")).unwrap_or_default();
+        match &check.inherited_from {
+            Some(from) => format!("CHECK{name}, inherited from {from}: an expression"),
+            None => format!("CHECK{name}: an expression"),
+        }
+    });
+    columns.chain(checks).collect()
 }
 
 /// A column's unrepresentable count, as `info --detail` states it beneath the
@@ -3492,6 +3543,10 @@ fn span_summary(span: &Span) -> String {
             TableReference::NotNull(column) => {
                 format!("ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL")
             }
+            TableReference::Check(check) => match &check.name {
+                Some(name) => format!("ALTER TABLE {table} ADD CONSTRAINT {name} CHECK"),
+                None => format!("ALTER TABLE {table} ADD CHECK"),
+            },
         },
         SpanBody::Framing => "framing".to_string(),
         SpanBody::Unparsed => match &span.toc {
@@ -4843,6 +4898,7 @@ mod tests {
                 base_type: "text".to_string(),
                 collation: Some(r#"pg_catalog."C""#.to_string()),
                 not_null: false,
+                check: false,
             }),
             r#"domain over text COLLATE pg_catalog."C""#
         );
@@ -4851,8 +4907,9 @@ mod tests {
                 base_type: "integer".to_string(),
                 collation: None,
                 not_null: true,
+                check: true,
             }),
-            "domain over integer NOT NULL"
+            "domain over integer NOT NULL CHECK"
         );
         assert_eq!(
             type_kind_summary(&TypeKind::Composite {

@@ -199,6 +199,50 @@ impl DatabaseMetadata {
             || def.parents.iter().any(|parent| self.not_null_from(parent, column, false, visited))
     }
 
+    /// The `CHECK` constraints a restore evaluates against each row of table
+    /// `table`, in declaration order: its own, then each parent's it takes,
+    /// in `INHERITS` order and each parent asked the same way, a parent
+    /// passing on every one but a `NO INHERIT` one (I77). Each is paired with
+    /// the ancestor declaring it, `None` for the table's own. A name met
+    /// twice is one constraint, the server merging an inherited `CHECK` into
+    /// a child's own of that name, as `--binary-upgrade`'s child re-declares
+    /// it; an unnamed one is never merged.
+    ///
+    /// Read against the preamble's final state, as
+    /// [`declared_column`](Self::declared_column) is; a `CHECK` added after
+    /// the data is never in it.
+    pub fn table_checks(&self, table: &str) -> Vec<(&CheckConstraint, Option<&str>)> {
+        let mut checks = Vec::new();
+        self.checks_from(table, true, &mut BTreeSet::new(), &mut checks);
+        checks
+    }
+
+    /// [`table_checks`](Self::table_checks) over `table`, which is the table
+    /// asked about where `own` and an ancestor of it elsewhere.
+    fn checks_from<'a>(
+        &'a self,
+        table: &str,
+        own: bool,
+        visited: &mut BTreeSet<&'a str>,
+        checks: &mut Vec<(&'a CheckConstraint, Option<&'a str>)>,
+    ) {
+        let Some((name, def)) = self.tables.get_key_value(table) else { return };
+        if !visited.insert(name) {
+            return;
+        }
+        let declared_by = (!own).then_some(name.as_str());
+        for check in def.checks.iter().filter(|c| own || !c.no_inherit) {
+            let merged =
+                check.name.is_some() && checks.iter().any(|(held, _)| held.name == check.name);
+            if !merged {
+                checks.push((check, declared_by));
+            }
+        }
+        for parent in &def.parents {
+            self.checks_from(parent, false, visited, checks);
+        }
+    }
+
     /// The fields of the composite `type_name` names, where it parsed, the
     /// two names compared in their canonical spelling (I29).
     fn composite_fields(&self, type_name: &str) -> Option<&[ColumnDef]> {
@@ -339,6 +383,23 @@ pub struct TableDef {
     /// COLUMN … SET NOT NULL` a dump before v18 writes for an inherited
     /// column (I76).
     pub not_null: Vec<(String, NotNull)>,
+    /// The `CHECK` constraints the table declares before its data, in the
+    /// order written: in its list, on a column, or by an `ALTER TABLE … ADD
+    /// CONSTRAINT … CHECK`, which `--binary-upgrade` writes for one the
+    /// table inherits. One it takes from a parent is found through
+    /// [`DatabaseMetadata::table_checks`].
+    pub checks: Vec<CheckConstraint>,
+}
+
+/// A `CHECK` constraint a table declares: an expression a restore evaluates
+/// against each row, which no reading of the field can (I77).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckConstraint {
+    /// `CONSTRAINT <name>`'s name, folded as the server folds it; `None`
+    /// for one written without, which `pg_dump` never writes.
+    pub name: Option<String>,
+    /// `NO INHERIT`: this table's alone, no inheritance child taking it.
+    pub no_inherit: bool,
 }
 
 impl TableDef {
@@ -359,14 +420,15 @@ impl TableDef {
             TableReference::NotNull(column) => {
                 self.not_null.push((column.clone(), NotNull::Inherited));
             }
+            TableReference::Check(check) => self.checks.push(check.clone()),
         }
     }
 }
 
 /// What an `ALTER TABLE` adds to a table already declared: the references
 /// `--binary-upgrade` writes after a full column list in place of the
-/// `CREATE TABLE`'s own clauses, and the `NOT NULL` a dump before v18 writes
-/// for a column the table does not print.
+/// `CREATE TABLE`'s own clauses, the `NOT NULL` a dump before v18 writes
+/// for a column the table does not print, and a `CHECK` it adds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TableReference {
     /// `INHERIT <parent>`, qualified as [`TableDef::parents`] is.
@@ -375,6 +437,8 @@ pub enum TableReference {
     OfType(String),
     /// `ALTER [COLUMN] <column> SET NOT NULL`, into [`TableDef::not_null`].
     NotNull(String),
+    /// `ADD [CONSTRAINT <name>] CHECK (…)`, into [`TableDef::checks`].
+    Check(CheckConstraint),
 }
 
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
@@ -419,7 +483,10 @@ pub enum TypeKind {
     /// `not_null` is whether the domain declares `NOT NULL`, which `domain_in`
     /// checks of a NULL it is handed, and every domain over this one with it
     /// ([`crate::pgtype::domain_not_null`], I76).
-    Domain { base_type: String, collation: Option<String>, not_null: bool },
+    ///
+    /// `check` is whether its `CREATE DOMAIN` declares a `CHECK`, an
+    /// expression `domain_in` evaluates against each value of it (I77).
+    Domain { base_type: String, collation: Option<String>, not_null: bool, check: bool },
     /// Field name -> declared type, in declaration order — or `None` when the
     /// body held a fragment this grammar could not parse.
     ///
@@ -458,11 +525,11 @@ pub enum TypeKind {
 }
 
 impl TypeKind {
-    /// A domain carrying no `COLLATE` clause and no `NOT NULL` of its own —
-    /// the ordinary shape, and the one a test or an embedder building a type
-    /// list by hand wants.
+    /// A domain carrying no `COLLATE` clause, `NOT NULL` or `CHECK` of its
+    /// own — the ordinary shape, and the one a test or an embedder building a
+    /// type list by hand wants.
     pub fn domain(base_type: impl Into<String>) -> Self {
-        Self::Domain { base_type: base_type.into(), collation: None, not_null: false }
+        Self::Domain { base_type: base_type.into(), collation: None, not_null: false, check: false }
     }
 
     /// An enum whose labels are exactly these, in declaration order — what
@@ -838,9 +905,10 @@ fn extract_type_words(rest: &str) -> String {
     joined
 }
 
-/// The words of `rest` at its top level — outside parens, `'…'` and `"…"` —
-/// as keywords: a quoted identifier, and a word a `.` qualifies, being no
-/// keyword, are each an empty word, so no sequence matches across them.
+/// The words of `rest` at its top level — outside parens and `'…'` — as
+/// keywords: a quoted identifier is its text, quotes and all, and a word a `.`
+/// qualifies an empty word, neither matching a keyword, so no sequence matches
+/// across them.
 fn top_level_words(rest: &str) -> Vec<&str> {
     let bytes = rest.as_bytes();
     let mut words = Vec::new();
@@ -853,9 +921,10 @@ fn top_level_words(rest: &str) -> Vec<&str> {
                 continue;
             }
             b'"' => {
+                let start = i;
                 i = skip_double_quoted(bytes, i);
                 if depth == 0 {
-                    words.push("");
+                    words.push(rest.get(start..i).unwrap_or(""));
                 }
                 continue;
             }
@@ -908,6 +977,37 @@ fn not_null_clause(rest: &str) -> Option<NotNull> {
     found
 }
 
+/// The `CHECK` constraints among a column's constraints, a table constraint,
+/// or a domain's constraints — `rest` being the fragment, or the tail after
+/// `AS` — read off the top-level words, as [`not_null_clause`] reads, so a
+/// `CHECK` word stands only where gram.y's `ConstraintElem` or
+/// `ColConstraintElem` opens one (`check` being reserved, a name spelled so is
+/// quoted). Each is named by a `CONSTRAINT <name>` before it, and is `NO
+/// INHERIT` where those words follow it before the next constraint.
+fn check_constraints(rest: &str) -> Vec<CheckConstraint> {
+    let rest = strip_block_comments(rest);
+    let words = top_level_words(&rest);
+    let is = |at: usize, word: &str| words.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
+    (0..words.len())
+        .filter(|&at| is(at, "CHECK"))
+        .map(|at| {
+            let name = at
+                .checked_sub(2)
+                .filter(|&named| is(named, "CONSTRAINT"))
+                .and_then(|named| Cursor::new(words[named + 1].as_bytes()).parse_ident());
+            let attributes = words[at + 1..]
+                .iter()
+                .take_while(|w| {
+                    !w.eq_ignore_ascii_case("CONSTRAINT") && !w.eq_ignore_ascii_case("CHECK")
+                })
+                .count();
+            let no_inherit =
+                (at + 1..at + 1 + attributes).any(|i| is(i, "NO") && is(i + 1, "INHERIT"));
+            CheckConstraint { name, no_inherit }
+        })
+        .collect()
+}
+
 /// Parse one `<name> <type> [constraints...]` fragment from a column or
 /// composite-field list.
 fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
@@ -955,7 +1055,13 @@ fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
     let close = matching_paren(after.as_bytes(), 0)?;
     let typed = table.of_type.is_some();
     for fragment in split_top_level_commas(&after[1..close]) {
-        match parse_table_element(fragment, typed) {
+        let element = parse_table_element(fragment, typed);
+        // A column's, a typed table's column option's and a table
+        // constraint's `CHECK` alike; a `LIKE`'s options hold none.
+        if !matches!(element, Some(TableElement::Like)) {
+            table.checks.extend(check_constraints(fragment));
+        }
+        match element {
             Some(TableElement::Column(column)) => table.columns.push(column),
             Some(TableElement::NotNull(columns, not_null)) => {
                 table.not_null.extend(columns.into_iter().map(|column| (column, not_null)));
@@ -986,12 +1092,14 @@ fn whole_table_name(s: &str) -> Option<String> {
 
 /// `ALTER [FOREIGN] TABLE [ONLY] <name> INHERIT <parent>;` or `… OF
 /// <type>;` — the two references `--binary-upgrade` writes
-/// after a table's full column list (`dumpTableSchema`) — or `… ALTER
+/// after a table's full column list (`dumpTableSchema`) — `… ALTER
 /// [COLUMN] <column> SET NOT NULL;`, which a dump before v18 writes after a
-/// `CREATE TABLE` not printing the column (I76), as the table they
-/// alter and what they add. `None` for every other `ALTER TABLE`,
-/// one listing several subcommands included, which the dump never writes for
-/// these. `pub(crate)` for [`crate::map::classify`], as
+/// `CREATE TABLE` not printing the column (I76), or `… ADD [CONSTRAINT
+/// <name>] CHECK (…) …;`, which `--binary-upgrade` writes for a `CHECK` the
+/// table inherits and a dump writes after the data for one it holds apart
+/// (I77), as the table they alter and what they add. `None` for every other
+/// `ALTER TABLE`, one listing several subcommands included, which the dump
+/// never writes for these. `pub(crate)` for [`crate::map::classify`], as
 /// [`parse_alter_type_add_value_body`] is.
 pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableReference)> {
     let stmt = stmt.trim_start();
@@ -999,6 +1107,13 @@ pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableRe
     let rest = strip_kw(rest, "ONLY").unwrap_or(rest);
     let (table, consumed) = parse_qualified_name(rest)?;
     let rest = rest[consumed..].trim_start();
+    if let Some(add) = strip_kw(rest, "ADD") {
+        let body = add.trim_end().strip_suffix(';')?;
+        let opens = strip_kw(body, "CONSTRAINT").is_some() || strip_kw(body, "CHECK").is_some();
+        let [check] = <[CheckConstraint; 1]>::try_from(check_constraints(body)).ok()?;
+        return (opens && split_top_level_commas(body).len() == 1)
+            .then_some((table, TableReference::Check(check)));
+    }
     let (reference, tail) = if let Some(inherit) = strip_kw(rest, "INHERIT") {
         let (parent, consumed) = parse_qualified_name(inherit)?;
         (TableReference::Parent(parent), &inherit[consumed..])
@@ -1109,7 +1224,8 @@ fn parse_create_domain(rest: &str) -> Option<TypeDef> {
     }
     let collation = extract_collation(after_as);
     let not_null = not_null_clause(after_as).is_some();
-    Some(TypeDef { name, kind: TypeKind::Domain { base_type, collation, not_null } })
+    let check = !check_constraints(after_as).is_empty();
+    Some(TypeDef { name, kind: TypeKind::Domain { base_type, collation, not_null, check } })
 }
 
 /// `CREATE EXTENSION [IF NOT EXISTS] <name> [WITH] [SCHEMA <schema>];`
@@ -2002,6 +2118,7 @@ mod tests {
                 parents: vec!["emitters.parent".to_string(), "Other.second".to_string()],
                 of_type: None,
                 not_null: vec![("label".to_string(), NotNull::Inherited)],
+                checks: Vec::new(),
             }
         );
         // A child declaring nothing of its own keeps its empty list and its
@@ -2031,6 +2148,7 @@ mod tests {
                 parents: Vec::new(),
                 of_type: Some("emitters.person".to_string()),
                 not_null: vec![("name".to_string(), NotNull::Inherited)],
+                checks: Vec::new(),
             }
         );
         let (_, table) = parse_table_def(&["CREATE TABLE public.t OF PUBLIC.\"Person\";"]);
@@ -2105,6 +2223,7 @@ mod tests {
                     parents: parents.iter().map(|p| p.to_string()).collect(),
                     of_type: of_type.map(str::to_string),
                     not_null: Vec::new(),
+                    checks: Vec::new(),
                 },
             );
         }
@@ -2275,6 +2394,127 @@ mod tests {
         assert!(!db.column_not_null("public.missing", "id"));
     }
 
+    /// **Every form a `CHECK` is declared in is read, and nothing that only
+    /// spells the word** (I77): a table constraint, named, unnamed and `NO
+    /// INHERIT`; a column's, named or not; a typed table's column option; a
+    /// domain's; and the `ALTER TABLE … ADD CONSTRAINT … CHECK` a dump writes
+    /// apart, alone. A literal, a quoted name, a default calling a function
+    /// named like it and a view's `CHECK OPTION` declare none; nor does an
+    /// `ALTER TABLE` adding any other constraint, or two.
+    #[test]
+    fn every_form_of_check_is_read_and_nothing_else() {
+        let check = |name: Option<&str>, no_inherit| CheckConstraint {
+            name: name.map(str::to_string),
+            no_inherit,
+        };
+        let (_, table) = parse_table_def(&[
+            "CREATE TABLE public.t (",
+            "    a integer CHECK ((a > 0)),",
+            "    b integer CONSTRAINT \"B_pos\" CHECK ((b > 0)) NOT NULL,",
+            "    \"check\" text DEFAULT 'CHECK'::text,",
+            "    d integer DEFAULT public.check_d(),",
+            "    CONSTRAINT t_a_b CHECK ((a < b)),",
+            "    CHECK ((a <> 7)) NO INHERIT,",
+            "    CONSTRAINT t_pkey PRIMARY KEY (a)",
+            ");",
+        ]);
+        assert_eq!(
+            table.checks,
+            [
+                check(None, false),
+                check(Some("B_pos"), false),
+                check(Some("t_a_b"), false),
+                check(None, true),
+            ]
+        );
+        assert_eq!(table.columns.len(), 4, "a CHECK costs no column: {:?}", table.columns);
+        let (_, typed) = parse_table_def(&[
+            "CREATE TABLE public.people OF public.person (",
+            "    height WITH OPTIONS CONSTRAINT tall CHECK ((height > 100))",
+            ");",
+        ]);
+        assert_eq!(typed.checks, [check(Some("tall"), false)]);
+
+        let added = |stmt: &str| parse_alter_table_reference(stmt).map(|(_, reference)| reference);
+        assert_eq!(
+            added(
+                "ALTER TABLE ONLY emitters.child ADD CONSTRAINT parent_id_positive CHECK ((id > 0));"
+            ),
+            Some(TableReference::Check(check(Some("parent_id_positive"), false)))
+        );
+        assert_eq!(
+            added("ALTER TABLE public.t\n    ADD CONSTRAINT t_x CHECK ((x > 0)) NOT VALID;"),
+            Some(TableReference::Check(check(Some("t_x"), false)))
+        );
+        assert_eq!(
+            added("ALTER TABLE public.t ADD CHECK ((x > 0)) NO INHERIT;"),
+            Some(TableReference::Check(check(None, true)))
+        );
+        for stmt in [
+            "ALTER TABLE ONLY public.t ADD CONSTRAINT t_pkey PRIMARY KEY (id);",
+            "ALTER TABLE public.t ADD CONSTRAINT a CHECK ((x > 0)), ADD CONSTRAINT b CHECK ((y > 0));",
+            "ALTER TABLE public.t ADD COLUMN \"check\" integer;",
+        ] {
+            assert_eq!(added(stmt), None, "{stmt}");
+        }
+
+        for (stmt, check) in [
+            ("CREATE DOMAIN public.d AS integer CONSTRAINT d_check CHECK ((VALUE > 0));", true),
+            ("CREATE DOMAIN public.d AS integer CHECK ((VALUE > 0)) NOT NULL;", true),
+            ("CREATE DOMAIN public.d AS text DEFAULT 'CHECK'::text;", false),
+            ("CREATE DOMAIN public.d AS integer NOT NULL;", false),
+        ] {
+            let kind = parse_type(&[stmt]).kind;
+            assert!(
+                matches!(kind, TypeKind::Domain { check: c, .. } if c == check),
+                "{stmt}: {kind:?}"
+            );
+        }
+    }
+
+    /// **A table's rows are held to its own `CHECK`s and every one an ancestor
+    /// passes on** (I77), each named with the ancestor declaring it: a
+    /// grandparent's through the parent, but for a `NO INHERIT` one; a name
+    /// met twice, as `--binary-upgrade`'s child re-declares its parent's, is
+    /// one constraint, and an unnamed one is never merged. A cycle ends.
+    #[test]
+    fn a_check_is_found_on_the_table_and_through_its_ancestors() {
+        let mut db = with_tables(
+            &[
+                ("public.g", &[("gid", "bigint")], &[], None),
+                ("public.p", &[("id", "integer")], &["public.g"], None),
+                ("public.c", &[("extra", "date")], &["public.p"], None),
+                ("public.loop", &[("x", "integer")], &["public.loop"], None),
+            ],
+            Vec::new(),
+        );
+        let check = |name: Option<&str>, no_inherit| CheckConstraint {
+            name: name.map(str::to_string),
+            no_inherit,
+        };
+        let tables = &mut db.tables;
+        tables.get_mut("public.g").unwrap().checks =
+            vec![check(Some("g_pos"), false), check(None, false)];
+        tables.get_mut("public.p").unwrap().checks = vec![check(Some("p_own"), true)];
+        tables.get_mut("public.c").unwrap().checks = vec![check(Some("g_pos"), false)];
+        tables.get_mut("public.loop").unwrap().checks = vec![check(Some("l"), false)];
+        let named = |table: &str| -> Vec<(Option<String>, Option<String>)> {
+            db.table_checks(table)
+                .into_iter()
+                .map(|(c, from)| (c.name.clone(), from.map(str::to_string)))
+                .collect()
+        };
+        let s = |s: &str| Some(s.to_string());
+        assert_eq!(named("public.g"), [(s("g_pos"), None), (None, None)]);
+        assert_eq!(
+            named("public.p"),
+            [(s("p_own"), None), (s("g_pos"), s("public.g")), (None, s("public.g"))]
+        );
+        assert_eq!(named("public.c"), [(s("g_pos"), None), (None, s("public.g"))]);
+        assert_eq!(named("public.loop"), [(s("l"), None)]);
+        assert_eq!(named("public.absent"), []);
+    }
+
     /// A reference reaching nothing — a parent or type the preamble does not
     /// hold, a composite whose list did not parse, a cycle only a
     /// hand-written file can hold — answers `None` rather than guessing or
@@ -2359,6 +2599,7 @@ mod tests {
                 base_type: "text".to_string(),
                 collation: Some("pg_catalog.\"C\"".to_string()),
                 not_null: false,
+                check: false,
             }
         );
 
@@ -2372,6 +2613,7 @@ mod tests {
                 base_type: "character varying(10)".to_string(),
                 collation: Some("pg_catalog.\"C\"".to_string()),
                 not_null: true,
+                check: true,
             }
         );
     }
@@ -2562,6 +2804,7 @@ mod tests {
                 parents: vec!["public.p".to_string()],
                 of_type: Some("public.t".to_string()),
                 not_null: vec![("label".to_string(), NotNull::Inherited)],
+                checks: Vec::new(),
             }
         );
     }
@@ -2577,6 +2820,7 @@ mod tests {
                     base_type: "public.base_domain".to_string(),
                     collation: None,
                     not_null: true,
+                    check: false,
                 },
             }
         );

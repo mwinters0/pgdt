@@ -34,6 +34,7 @@ pub use batch::{
 pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 pub use error::Error;
+pub use gather::{StrictUnchecked, UncheckedCheck, UncheckedColumn, strict_unchecked};
 pub use index::{
     ArrayShape, BlockCensus, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, TableName, Unrepresentable,
     UnrepresentableTier, calendar_end, preamble_only, union_census,
@@ -54,12 +55,12 @@ pub use map::{
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
-    NestedCompare, NestedPlan, NumericTypmod, TypeOutcome, UnanswerableReason, bounds_set_keyed_by,
-    comparison_for, extension_for, resolve_declared_type,
+    NestedCompare, NestedPlan, NumericTypmod, TypeOutcome, UnanswerableReason, Unchecked,
+    bounds_set_keyed_by, comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
-    CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TableDef, TableReference,
-    TypeDef, TypeKind, dump_metadata_from_spans,
+    CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TableDef,
+    TableReference, TypeDef, TypeKind, dump_metadata_from_spans,
 };
 pub use predicate::{
     ComparisonNote, Expr, Membership, Predicate, PredicateOp, Truth, column_divergences,

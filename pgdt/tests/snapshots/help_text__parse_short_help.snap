@@ -105,8 +105,9 @@ Options:
                                         `default` does but reads every value to find one, those
                                         `default` leaves to a query included, re-reading each table
                                         the cache holds that no `strict` parse checked, so a clean
-                                        run means every value of a type pgdt reads was checked
-                                        [default: default] [possible values: default, ignore,
+                                        run means every value of a type pgdt reads was checked; the
+                                        listing names, under each table, what `strict` does not
+                                        check [default: default] [possible values: default, ignore,
                                         strict]
       --strict-identity[=<TERMS>]       Which weak signs of a source's identity must hold, as a
                                         comma-separated selection of `time` and `location`, or

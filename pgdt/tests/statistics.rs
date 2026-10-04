@@ -750,6 +750,53 @@ fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
     assert!(said.contains("invalid value 'strict'"), "{said}");
 }
 
+/// **A strict parse names what it leaves unchecked under each table, and
+/// `info` names the same**, in its listing and its export: a base type's
+/// column, a range declaring a canonical function, a domain's `CHECK`, and a
+/// table's `CHECK`, its own or inherited, each with its reason.
+#[test]
+fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
+    let (_dir, dump) = sandboxed("16/emitters/default.sql", "unchecked.sql");
+    let source = dump.to_str().unwrap();
+    let unchecked = |listing: &str| -> Vec<String> {
+        listing
+            .lines()
+            .filter_map(|l| l.strip_prefix("    unchecked by a strict parse: "))
+            .map(str::to_string)
+            .collect()
+    };
+    let said = run_ok(&["parse", "--source", source, "--postgres-invalid-values", "strict"]);
+    let listed = unchecked(&said);
+    for expected in [
+        "v_int2 emitters.bt_int2: a base type, read by an input function only the restoring \
+         server runs",
+        "v_canon emitters.r_canon: a range whose canonical function, \
+         emitters.r_canon_canonical, only the restoring server runs",
+        "v_positive emitters.positive: the domain's CHECK, an expression",
+        "CHECK parent_id_positive: an expression",
+        "CHECK parent_id_positive, inherited from emitters.parent: an expression",
+    ] {
+        assert!(listed.iter().any(|l| l == expected), "{expected}: {said}");
+    }
+    assert!(
+        said.contains("5 of 12 COPY block(s) hold what a strict parse does not check"),
+        "{said}"
+    );
+    let info = run_ok(&["info", "--source", source]);
+    assert_eq!(unchecked(&info), listed, "{info}");
+    let json = info_json(&dump);
+    let child = json["resolution"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["table"] == "emitters.child")
+        .unwrap();
+    assert_eq!(
+        child["unchecked"]["checks"],
+        serde_json::json!([{"name": "parent_id_positive", "inherited_from": "emitters.parent"}])
+    );
+}
+
 /// **`--postgres-invalid-values` reaches both commands.** `parse` stops at the
 /// float `--extra-float-digits=0` rounds past `DBL_MAX` unless told `ignore`,
 /// which leaves a cache; `query` over it refuses the field unless told

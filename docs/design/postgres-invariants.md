@@ -5012,3 +5012,63 @@ grep -n 'is_not_null = true\|need_notnull = true' src/backend/parser/parse_utilc
 It prints `dumpTableSchema`'s not-null emissions, `dumpDomain`'s, the NULL
 `domain_in` checks, the input call `array_in` hands a NULL element, and where
 a column's definition is made `NOT NULL`.
+
+## I77 — `COPY` evaluates a table's `CHECK`s and a domain's, which `pg_dump` writes before the data unless it holds one apart
+
+**Claim.** A `COPY` row fails the table's `COPY` (`23514`) where a `CHECK`
+constraint of the table evaluates false — its own, or one a parent passes
+on, which every parent does but for a `NO INHERIT` one — and a field fails
+it where a `CHECK` of its column's domain, or of a domain beneath it as an
+array element, composite field or range bound, evaluates false, `domain_in`
+running the expression. Both are arbitrary SQL. `pg_dump` writes a table's
+`CHECK` in its `CREATE TABLE` as `CONSTRAINT <name> <condef>`, omitting one
+an inheritance child inherits but writing it for a partition, and under
+`--binary-upgrade` writes the inherited one as `ALTER TABLE ONLY <t> ADD
+CONSTRAINT <name> <condef>;` in the same pre-data entry; a domain's in its
+`CREATE DOMAIN` as `CONSTRAINT <name> <condef>`. One it holds apart — `NOT
+VALID`, or split out of a dependency loop — is post-data, `ALTER TABLE …
+ADD CONSTRAINT` or `ALTER DOMAIN … ADD CONSTRAINT`, and binds no `COPY`.
+
+**Proof.** `src/backend/commands/copyfrom.c` (`copy.c` at 13), `CopyFrom`'s
+`ExecConstraints`; `src/backend/executor/execMain.c`, `ExecConstraints`'
+`ExecRelCheck`; `src/backend/utils/adt/domains.c`, `domain_check_input`'s
+`DOM_CONSTRAINT_CHECK`; `src/backend/commands/tablecmds.c`,
+`MergeAttributes`' inherited constraints and `connoinherit`.
+`src/bin/pg_dump/pg_dump.c`, `dumpTableSchema`'s `CONSTRAINT %s ` (skipping
+`!conislocal && !ispartition`) and binary-upgrade `ALTER %sTABLE ONLY %s ADD
+CONSTRAINT %s %s;`, `dumpDomain`'s `\n\tCONSTRAINT %s %s`, `dumpConstraint`'s
+post-data `    ADD CONSTRAINT %s %s;`; `getConstraints`' and
+`getDomainConstraints`' `separate = !validated`; `pg_dump_sort.c`'s
+`repair*ConstraintMultiLoop`.
+
+**Observed.** `fixtures/<13–18>/emitters/default.sql` holds
+`CONSTRAINT parent_id_positive CHECK ((id > 0))` in `emitters.parent` and
+none in `emitters.child`, and `CONSTRAINT positive_check CHECK ((VALUE >
+0))` in `emitters.positive`; `binary-upgrade.sql` adds `ALTER TABLE ONLY
+emitters.child ADD CONSTRAINT parent_id_positive CHECK ((id > 0));`.
+
+**Scope limit.** A post-data `CHECK` is not followed: a restore checks it
+once the data has loaded, as it does every post-data constraint. Nor is an
+`ALTER DOMAIN … ADD CONSTRAINT` before the data, which no `pg_dump` writes.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+the fixtures at every major (observed).
+
+**Relied on by:** `preamble::DatabaseMetadata::table_checks` and
+`TypeKind::Domain`'s `check`, through `strict_unchecked`, which names each as
+what a strict parse does not check.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'ExecConstraints(resultRelInfo' src/backend/commands/copyfrom.c src/backend/commands/copy.c
+grep -n 'case DOM_CONSTRAINT_CHECK' src/backend/utils/adt/domains.c
+grep -n '"CONSTRAINT %s "\|ADD CONSTRAINT %s %s;\\n"\|"\\n\\tCONSTRAINT %s %s"' src/bin/pg_dump/pg_dump.c
+grep -n -A1 '!constr->conislocal && !tbinfo->ispartition' src/bin/pg_dump/pg_dump.c
+grep -n 'separate = !validated' src/bin/pg_dump/pg_dump.c
+```
+
+It prints the `COPY`'s constraint check, the domain's, every form
+`pg_dump` writes a `CHECK` in, the partition exception and what it holds
+apart.

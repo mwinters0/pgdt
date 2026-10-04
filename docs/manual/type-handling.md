@@ -1029,7 +1029,12 @@ refuse or not (`abc` in an `integer`, a malformed `jsonb`), a value of a range
 type declaring its own `canonical` function, or a null element of an array,
 or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, or a unique, primary or foreign key added
-once the data has loaded, which is when a restore checks it.
+once the data has loaded, which is when a restore checks it. What it does not
+check in your dump is named under each table of `parse`'s and `pgdt info`'s
+listing, on an `unchecked by a strict parse:` line per column — or element,
+field or bound within one — saying why, and per `CHECK` the table or a
+domain of its columns carries ([dump inspection](dump-inspection.md), "`info`:
+reporting what is known").
 Each table it checks is recorded in the cache as checked, and a `strict` parse
 over a cache an earlier `parse` built re-reads the tables no `strict` parse
 checked, in the same pass that fills in any statistics they lack, so the

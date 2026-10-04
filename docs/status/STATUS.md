@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Capability | State | Where |
 |---|---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working | `stream.rs`, `batch.rs`; D46–D50 |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning; a field PostgreSQL refuses fails a data-level parse keying it, at the first — an enum's undeclared label where the preamble read its labels exactly (`KD87`), and a NULL a `NOT NULL` refuses, a domain's beneath a container excepted (`KD97`) — and a query decoding it, an enum's label only under an ordering filter (`KD88`), unless told to ignore such fields, when a parse goes on past each, its cache recording them per column for a later refusing parse tracking the column to fail on, and a query reads a float past its range as the largest of its sign; told to be strict, a parse checks every field of a type it reads, passing text it cannot read at all (`KD90`), re-reading each block its cache holds that no strict parse checked | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44, D103; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), a `bytea_output = escape` dump's `bytea` renders `hex` (D66), and a value a typed column cannot hold reads as NULL by default, or its column as its text, the rest typed, or, told to refuse, refuses a query materializing its column at planning; a field PostgreSQL refuses fails a data-level parse keying it, at the first — an enum's undeclared label where the preamble read its labels exactly (`KD87`), and a NULL a `NOT NULL` refuses, a domain's beneath a container excepted (`KD97`) — and a query decoding it, an enum's label only under an ordering filter (`KD88`), unless told to ignore such fields, when a parse goes on past each, its cache recording them per column for a later refusing parse tracking the column to fail on, and a query reads a float past its range as the largest of its sign; told to be strict, a parse checks every field of a type it reads, passing text it cannot read at all (`KD90`), re-reading each block its cache holds that no strict parse checked, and `parse` and `info` name under each table what it does not check | `pgtype.rs`, `resolve.rs`, `decode.rs`, `gather.rs`; D37–D44, D103; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
 | Structural cache with source-identity checking and cache-only inspection | working; a cache that cannot be used — another file's, another build's, damaged, or not a pgdt cache — is refused before the dump is read past its first bytes, and `--overwrite-unusable-cache` replaces any but the last; a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing, unless `--strict-identity=none` | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" and "When `info` says it cannot answer" |
@@ -109,7 +109,7 @@ approval, in the spec's opening note.
 - [x] **31.18** The seven geometric types' input grammars: a `strict` parse refuses a `point`, `line`, `lseg`, `box`, `path`, `polygon` or `circle` field PostgreSQL refuses — [notes](../design/roadmap-P31.18-geometric-in-notes.md)
 - [x] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it — [notes](../design/roadmap-P31.19-char-length-notes.md)
 - [x] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so — [notes](../design/roadmap-P31.20-not-null-notes.md)
-- [ ] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same
+- [x] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same — [notes](../design/roadmap-P31.21-strict-unchecked-notes.md)
 - [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
 - [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
 - [ ] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94`
@@ -145,3 +145,32 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **31.21 names a built-in type with no reader here as outside a strict
+  parse's check, not as a gap in it.** `tsvector`, `tsquery`, `pg_lsn`,
+  `jsonpath`, `xid`, `oidvector`, the `reg*` types and the like are listed
+  `a type pgdt reads no input of`, beside `xml` and `money`, and no `KD` was
+  filed. Why: the manual already lists "a type it has no reader for" among
+  what `strict` does not check, and the 2026-10-03 history entry enumerated
+  the gaps inside the promise as `json`, `bit`/`varbit` and the geometric
+  types alone. Against it: the roadmap's "A literal is guaranteed in
+  `*_out`'s form and never read past `*_in`'s" binds `strict` "for every type
+  whose input is decided" by the field, which `tsvector_in` or `pg_lsn_in`
+  is (the `reg*` types and `aclitem` read the server's catalog and are
+  outside). Reconsidering files one `KD` owned by P31 and appends a slice
+  porting each such `*_in`, P31 not wrapping until it lands.
+- **31.21 names each `CHECK` a table carries, not a partition's bound.** A
+  `COPY` into a partition is refused for a row its bound excludes, and under
+  `--load-via-partition-root` for one no partition takes, which is as far
+  outside the field and its declaration as a `CHECK`. Why: the slice's row
+  names `CHECK`s, and the preamble reads no `ATTACH PARTITION`. Reconsidering
+  reads `ALTER TABLE … ATTACH PARTITION … FOR VALUES` into the partition's
+  `TableDef` and lists a partition, or a root loaded through, as checked
+  against its bound — a slice of its own.
+- **The `unchecked by a strict parse:` lines print under every block of every
+  listing**, `parse` in any mode and `info`, rather than only after a strict
+  parse. Why: they are a property of the dump's declarations, not of a run,
+  and `info` must show the same whatever built the cache. Against it: a
+  `default` parse's listing, and a `--data-only` dump's, grows a line per
+  block nobody asked for. Reconsidering prints them under `info --detail`
+  and a strict `parse` only, a change to `print_index`'s one caller flag.

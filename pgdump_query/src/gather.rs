@@ -67,7 +67,8 @@ use crate::decode::{
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::pgtype::{
-    CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, text_grammar,
+    CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, Unchecked,
+    column_grammar, unchecked_positions,
 };
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::{ValueKey, field_refused, grammar_refuses};
@@ -164,10 +165,7 @@ fn field_checks(
             let declared_type = declared_column(metadata, database, &qualified, name)
                 .map(|def| def.declared_type.clone())
                 .unwrap_or_default();
-            let grammar = match plan {
-                ComparisonPlan::Refused => text_grammar(&declared_type, types),
-                _ => None,
-            };
+            let grammar = column_grammar(plan, &declared_type, types);
             let reads = grammar.is_some()
                 || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
             (reads || not_null).then(|| FieldCheck {
@@ -179,6 +177,112 @@ fn field_checks(
             })
         })
         .collect()
+}
+
+/// **What a strict parse checks nothing of in a `COPY` block** of a table
+/// ([`strict_unchecked`]): what PostgreSQL refuses there is decided by
+/// something besides the field and its column's declaration, or no reader
+/// here reads it — the boundary a clean strict parse's promise stops at,
+/// named per dump, since nothing else lets that promise be checked against
+/// one (`docs/design/roadmap.md`, "A literal is guaranteed in `*_out`'s form
+/// and never read past `*_in`'s").
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct StrictUnchecked {
+    /// Whether the dump declares the table. Where it does not, as in a
+    /// `--data-only` dump, no column has a type or a `NOT NULL` to check by,
+    /// so no field of it is checked and `columns` lists none.
+    pub declared: bool,
+    /// Each column, or position within one, whose fields a strict parse
+    /// checks for nothing, in column order and each column's in walk order.
+    pub columns: Vec<UncheckedColumn>,
+    /// The `CHECK` constraints a restore evaluates against each row, its own
+    /// and those it inherits.
+    pub checks: Vec<UncheckedCheck>,
+}
+
+impl StrictUnchecked {
+    /// Whether a strict parse checks everything a restore refuses a row by
+    /// in this block but its post-data constraints.
+    pub fn is_empty(&self) -> bool {
+        self.declared && self.columns.is_empty() && self.checks.is_empty()
+    }
+}
+
+/// One position a strict parse checks nothing of ([`StrictUnchecked`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UncheckedColumn {
+    pub column: String,
+    /// The position within the column's value, spelled as
+    /// [`crate::NestedCompare::uncomparable`] spells one — `[]` an element,
+    /// `.name` a field, `.bound` a range's bound — and empty for the value.
+    pub path: String,
+    /// The type declared at that position, as the dump wrote it; empty for
+    /// a column declared nowhere.
+    pub declared: String,
+    #[serde(flatten)]
+    pub why: Unchecked,
+}
+
+/// A `CHECK` constraint a restore evaluates against each row of a table
+/// ([`StrictUnchecked`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UncheckedCheck {
+    /// Its name, `None` for one written without.
+    pub name: Option<String>,
+    /// The ancestor declaring it, `None` for the table's own.
+    pub inherited_from: Option<String>,
+}
+
+/// What a strict parse checks nothing of in a `COPY` block of `header`'s
+/// table, read off the preamble in `metadata` for `database` as the parse's
+/// own check is ([`field_checks`]): the same resolution, the same plan and
+/// grammar per column, so the two cannot disagree.
+///
+/// A property of the dump's declarations, not of any run: the same for a
+/// block a strict parse checked and one it never read.
+pub fn strict_unchecked(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> StrictUnchecked {
+    let qualified = header.qualified_name();
+    let db = metadata.and_then(|m| database_for_name(m, database));
+    let Some(db) = db.filter(|db| db.tables.contains_key(&qualified)) else {
+        return StrictUnchecked::default();
+    };
+    let resolved = stored_resolution(header, metadata, database);
+    let mut columns = Vec::new();
+    for (name, plan) in header.columns.iter().zip(&resolved.comparisons) {
+        let Some(def) = db.declared_column(&qualified, name) else {
+            columns.push(UncheckedColumn {
+                column: name.clone(),
+                path: String::new(),
+                declared: String::new(),
+                why: Unchecked::Undeclared,
+            });
+            continue;
+        };
+        let grammar = column_grammar(plan, &def.declared_type, &db.types);
+        columns.extend(
+            unchecked_positions(&def.declared_type, plan, grammar, &db.types).into_iter().map(
+                |(path, declared, why)| UncheckedColumn {
+                    column: name.clone(),
+                    path,
+                    declared,
+                    why,
+                },
+            ),
+        );
+    }
+    let checks = db
+        .table_checks(&qualified)
+        .into_iter()
+        .map(|(check, from)| UncheckedCheck {
+            name: check.name.clone(),
+            inherited_from: from.map(str::to_string),
+        })
+        .collect();
+    StrictUnchecked { declared: true, columns, checks }
 }
 
 /// One column's part of a strict parse's check ([`field_checks`]).

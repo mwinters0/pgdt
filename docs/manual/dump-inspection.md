@@ -1192,7 +1192,15 @@ public.events (98765 rows)
   first by its `COPY` line, value and offset ([type
   handling](type-handling.md), "When a value does not match its type"). One a
   `parse --postgres-invalid-values strict` checked says so on a `checked:
-  every value, by a strict parse` line.
+  every value, by a strict parse` line. Beneath every block, whichever mode
+  built the cache, an `unchecked by a strict parse:` line names each thing a
+  strict `parse` does not check in it: a column, or a position within one
+  (`v[]`, `v.field`), with its declared type and why — an input the restoring
+  server decides, a type pgdt reads no input of, a domain's `CHECK` — and
+  each `CHECK` the table carries, its own or the parent's it inherits; a
+  table the dump declares nowhere, as in a `--data-only` dump, gets one line
+  saying no value of it is checked. A closing line counts the blocks holding
+  any.
 
 Add `--detail` to also see each block's byte offsets and, per column that has
 something to say, what it became: the Arrow type it resolved to, or — for a
@@ -1218,7 +1226,7 @@ user-defined types: 7
 
 That is every type, not only the enums, and each line carries whatever its
 kind has to say: an enum's labels, a domain's base type, any `COLLATE`
-clause and a `NOT NULL`, a composite's fields, a range's subtype. The two `pg_dump` never
+clause, a `NOT NULL` and whether it declares a `CHECK`, a composite's fields, a range's subtype. The two `pg_dump` never
 writes but pgdt can still meet are spelled out rather than left blank —
 `composite: (fields not parsed)` for a body pgdt could not read (that is the
 one case that changes how a column of the type resolves), and `range (subtype
@@ -1469,7 +1477,11 @@ carries three things the text views state differently:
   `--detail` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,
   `metadata_not_scanned`, …), the Arrow type, and the nested plan. This is the
-  only machine-readable form of "why is this column a string".
+  only machine-readable form of "why is this column a string". Its
+  `unchecked` is the block's `unchecked by a strict parse` lines: `declared`
+  (whether the dump declares the table), `columns` (each with its `column`,
+  `path`, `declared` type and `reason` token) and `checks` (each `name` and
+  the `inherited_from` table, `null` for the table's own).
 
   There is no per-column `labels` array: the whole preamble is already in the
   object, so every user-defined type is under `metadata.databases[].types[]`
