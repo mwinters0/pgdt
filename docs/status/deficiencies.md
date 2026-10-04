@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD100 -->
-**`KD1`–`KD100` are allocated, and nothing at or below `KD100` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD101 -->
+**`KD1`–`KD101` are allocated, and nothing at or below `KD101` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -430,4 +430,10 @@ than reading as a phase nobody has sliced.
   is dropped from the preamble line the scanner surfaces, as a `COPY` row's
   would be, so a value read off such a literal — an enum's label, a `CHECK`'s
   text — is not the one the server holds. **(b) owned by P31**, 31.28.
+  Detail: `pgdump_query/src/scan.rs`.
+
+- **KD101** — a `COPY` row's terminator is not checked against its block's,
+  which `COPY` fixes from the block's first row and enforces, so a raw `\r\n`
+  row in a `\n` block is read where a restore refuses it and a block whose
+  rows end in a bare `\r` is read as one line. **(b) owned by P31**, 31.29.
   Detail: `pgdump_query/src/scan.rs`.

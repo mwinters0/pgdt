@@ -353,6 +353,12 @@ impl CopyScanner {
                     return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                 }
                 State::InCopy { rows, header_offset } => {
+                    // deficiency: KD101 — a row's terminator is not checked
+                    // against its block's: `CopyReadLine` fixes a block's from
+                    // its first row (`\n`, `\r\n` or `\r`) and refuses a row
+                    // ending otherwise, where the strip above reads a raw
+                    // `\r\n` row in a `\n` block, and a block whose rows end
+                    // in a bare `\r` is read as one line.
                     if is_terminator(line) {
                         self.state = State::Outside;
                         return Ok(Some(Event::CopyEnd(CopyEnd {

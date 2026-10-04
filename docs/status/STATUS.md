@@ -120,7 +120,8 @@ maintainer's standing approval, in the spec's opening note.
 - [ ] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95`
 - [ ] **31.26** A `NOT NULL` domain's NULL element of an array, or NULL field of a composite, refused wherever the field is read, as `array_in` and `record_in` refuse it, closing `KD97`
 - [ ] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse
-- [ ] **31.28** A raw carriage return ending a line inside a quoted SQL literal kept in the statement the preamble reads, as psql's lexer keeps it, so an enum label or `CHECK` holding one is the one the server holds, closing `KD100`
+- [ ] **31.28** A raw carriage return ending a line inside a quoted SQL literal kept in the statement the preamble reads, as psql keeps it whatever the file's line endings, so an enum label or `CHECK` holding one is the one the server holds, closing `KD100`
+- [ ] **31.29** Each `COPY` block's line ending read off its first row — `\n`, `\r\n` or `\r` — as `CopyReadLine` reads it, and a row ending otherwise refused where a restore refuses it, closing `KD101`
 
 ## Not started
 
