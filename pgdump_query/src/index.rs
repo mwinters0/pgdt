@@ -520,7 +520,7 @@ pub(crate) async fn scan_preamble(
             // scan never closes. The stop retreats to a pending TOC
             // comment's own start rather than guessing the comment's kind,
             // leaving it for the later scan that absorbs it into the `Data`
-            // span (`docs/design/decisions.md`, "D32", "D33").
+            // span (`docs/design/decisions.md`, "D31", "D33").
             end = spans.pending_comment_start().unwrap_or(start.header_offset);
             ControlFlow::Break(())
         }

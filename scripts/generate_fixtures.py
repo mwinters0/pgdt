@@ -140,8 +140,10 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # A third shape is a **session-setting variant**, [`Setting`]: a plain `pg_dump`
 # run while the schema's database carries one setting `pg_dump` does not pin
 # (I4), set by `ALTER DATABASE ... SET` as a real server's would be. One
-# variant per setting, never a cross product
-# (docs/design/roadmap-P31-correctness-evidence.md, "The session-setting axis").
+# variant per setting, never a cross product (docs/design/decisions.md, "D71").
+# Not `lc_monetary`, `money` staying text (`KD13`), nor `client_encoding`, an
+# `Unsupported` row of `pg-dump-compatibility.md`. The value oracle's readings
+# are server-side, so every variant is held to the same `values.tsv`.
 
 
 @dataclass(frozen=True)
@@ -352,9 +354,8 @@ def schema_files(schema: str, version: str, directory: Path = SCRIPT_DIR) -> lis
 
     A sidecar holds DDL an older major refuses, so the base file loads on
     every major and the sidecar only where it parses
-    (docs/design/roadmap-P31-correctness-evidence.md, "Version-conditioned
-    schemas"). A file named like a sidecar of this schema whose middle is not
-    a major is an error, not a file skipped.
+    (docs/design/decisions.md, "D71"). A file named like a sidecar of this
+    schema whose middle is not a major is an error, not a file skipped.
     """
     sidecars: list[tuple[int, Path]] = []
     for path in directory.glob(f"fixture_schema_{schema}.*.sql"):

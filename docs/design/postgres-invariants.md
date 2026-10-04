@@ -1310,7 +1310,7 @@ in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
 `t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
 
 **Relied on by:** `decisions.md`, "Type resolution and decoders" (the all-or-nothing
-field list) and "D39" — "no fields parsed" and "no fields declared" have to stay
+field list) and "D43" — "no fields parsed" and "no fields declared" have to stay
 distinguishable in the type definition when the literal cannot tell them apart,
 which is why `TypeKind::Composite::fields` is an `Option`.
 

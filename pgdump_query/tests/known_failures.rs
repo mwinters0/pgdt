@@ -1,7 +1,8 @@
 //! The strict known-failure table: a fixture that exposes a defect lands
 //! before its fix, and this asserts that the defect is still there
-//! (`docs/design/roadmap-P31-correctness-evidence.md`, "A known failure is
-//! asserted to fail").
+//! (`docs/design/decisions.md`, "D71"): the test-side mirror of the emitter
+//! register's `KD<k>` exemption, keeping the evidence first without a gap
+//! reading as coverage.
 //!
 //! Each row names a register entry, a fixture by `<schema>/<flag-set>`, and
 //! the **case**: what reading that fixture correctly would show. The walk

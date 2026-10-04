@@ -2,8 +2,8 @@
 """The emitter register: every literal `pg_dump` can append to a dump, and
 every option it takes, joined against the fixtures that hold them.
 
-`docs/design/roadmap-P31-correctness-evidence.md`, "The emitter register", is
-the description; this module is the extraction and the join.
+`docs/design/decisions.md`, "D71", is why it has this shape; this module is
+the description, the extraction and the join.
 
 **What it exists to check.** The other reconciliations enumerate *our* side --
 the comparison register's arms (`oracle_register.py`), the mapping's rows
@@ -60,9 +60,11 @@ minor than the fixtures were taken at would join two different producers.
   overrides one it pins, is no literal in `pg_dump`'s source, so it is
   hand-listed here ([`VALUE_FORMS`]) rather than extracted: each row the bytes
   a `COPY` block holds for it -- after `COPY`'s own escaping -- and the
-  session-setting variant or flag set `generate_fixtures.py` runs to reach it
-  (`docs/design/roadmap-P31-correctness-evidence.md`, "The session-setting
-  axis"). A row is joined at every major, as a literal is.
+  session-setting variant ([`generate_fixtures.Setting`]) or flag set
+  `generate_fixtures.py` runs to reach it. A row is joined at every major, as
+  a literal is. A variant's spelling reaches every comparison path, not only
+  the decoder: equality's canonical arm and gathering's `Canonical` read it
+  too.
 
 **A literal is covered when a fixture of the same major holds its bytes**, and
 so is a value form:
@@ -84,6 +86,17 @@ holding the option. An exemption whose row a fixture reaches, or that no
 register holds, is a problem: it is struck. Besides those, the join exits
 non-zero on a major with no register, a malformed row or a flag naming no
 option.
+
+**What the join cannot see.** It is by bytes, so a literal two functions
+write (`" INTEGER /* dummy */"`, `dumpTableSchema`'s and
+`dumpCompositeType`'s) is covered by either. A format string's longest run is
+often its least telling word (`CREATE %s%s %s` gives `CREATE `), which is why
+its argument constants are rows; a spelling a constant under [`MIN_RUN`]
+selects (`standard_conforming_strings`'s `on` or `off`) is no row, and is a
+flag set's to reach. The reader check is per keyword, not per use: a reader
+that starts dispatching on a word [`READS`] already holds passes unchanged,
+and one matching by a character is seen by no keyword (the map takes any line
+opening with a backslash as a meta-command, `\\restrict` among them).
 
 Usage:
 
@@ -954,7 +967,7 @@ def _clauses(reader: str, within: tuple[str, ...], *keywords: str) -> tuple[Clau
 #: [`Read`] naming the emitters of what it reads or a [`Clause`] inside one.
 #: A keyword in neither fails the check, and so does a row whose keyword no
 #: reader holds, or a `Read` naming a function [`FUNCTIONS`] does not list
-#: (docs/design/roadmap-P31-correctness-evidence.md, "The emitter register").
+#: (docs/design/decisions.md, "D71").
 READS: tuple[Read | Clause, ...] = (
     # The scanner: a large-object region, opened and closed by its own
     # transaction (and, under `pg_restore`'s options, by RestoreArchive's).
@@ -1444,7 +1457,7 @@ def _no_output(program: str, entry: str, needle: str) -> Exemption:
 #: Every row a fixture does not reach, with the reason it need not. A
 #: literal may be exempt only by an `I<n>` or a `KD<k>`: every byte passes
 #: through the map, so there is no "pgdt does not read this"
-#: (docs/design/roadmap-P31-correctness-evidence.md, "The emitter register").
+#: (docs/design/decisions.md, "D71").
 EXEMPTIONS: tuple[Exemption, ...] = (
     Exemption(
         "literal",

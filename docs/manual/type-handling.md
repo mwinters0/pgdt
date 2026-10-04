@@ -1031,7 +1031,8 @@ cuts it to `n` characters. **So does a null in a column declared `NOT NULL`** �
 on the column, at the table (`NOT NULL <column>`, a `PRIMARY KEY (…)`, an
 `ALTER TABLE … SET NOT NULL`), through a parent the table inherits it from, or
 through a domain — and a query reading the column or filtering on it, `IS NOT
-NULL` included, fails there too; the strings schema mode, which reads no
+NULL` included, fails there too, at any row it reads (a group its statistics
+rule out or answer is not read); the strings schema mode, which reads no
 declaration, reads it. A null element of an array, or null field of a
 composite, whose type is a `NOT NULL` domain fails a query reading the column
 or comparing it, and a filter literal holding one, as PostgreSQL refuses

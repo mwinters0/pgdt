@@ -1,6 +1,6 @@
 -- The emitter-coverage fixture schema: DDL whose dump holds a literal of
 -- `pg_dump`'s emitters that no other schema reaches
--- (docs/design/roadmap-P31-correctness-evidence.md, "The emitter register";
+-- (docs/design/decisions.md, "D71";
 -- scripts/emitter_register.py is the register it is joined against).
 --
 -- Every object below exists for a literal some listed emitter appends, named

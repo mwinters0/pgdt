@@ -401,7 +401,7 @@ enum ColumnBuilder {
     Array(ListParts),
     /// `List<` range struct `>` filled from a `multirange_out` literal —
     /// structurally identical to an array of ranges and written differently
-    /// (`docs/design/decisions.md`, "D39").
+    /// (`docs/design/decisions.md`, "D43").
     Multirange(ListParts),
     /// `List<Int16>` filled from an `int2vectorout` literal — the same Arrow
     /// type a `smallint[]` column gets, written in a grammar of its own:
@@ -1285,7 +1285,7 @@ fn push_utf8view_field(
 /// [`crate::resolve::ResolvedSchema::plans`], positionally; a caller that
 /// knows its column is scalar passes `&NestedPlan::Scalar`, which is
 /// [`NestedPlan`]'s `Default`. There is no plan-less entry point
-/// (`docs/design/decisions.md`, "D39").
+/// (`docs/design/decisions.md`, "D43").
 pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result<Option<String>> {
     // Checked here rather than left to the sink so a SQL NULL costs no
     // allocation at all.

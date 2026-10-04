@@ -2,9 +2,8 @@
 """The value oracle: the server's own second reading of every typed value in
 the `types` fixture, and the reconciliation holding it to the typed arms.
 
-docs/design/roadmap-P31-correctness-evidence.md, "The value oracle", is the
-intent; docs/design/decisions.md, "D73", says which test holds which half of
-"decode is right". `generate_fixtures.py` runs the pass in the database the
+docs/design/decisions.md, "D73", says which test holds which half of "decode
+is right". `generate_fixtures.py` runs the pass in the database the
 comparison oracle is asked in, and writes `fixtures/<major>/oracle/values.tsv`;
 `pgdump_query/tests/value_oracle.rs` holds every typed read of every `types`
 flag set that has DDL to it.
@@ -27,6 +26,12 @@ range by range. A container is a row of its own -- its dimension lengths
 (`2x2`, `0` when empty) or `()` -- so a NULL container and an empty one differ.
 A leaf no reading names (`text`, an enum, `json`) contributes no row; the
 round trip holds those.
+
+**Its reach** is the `types` schema alone, a column another schema declares
+being held to nothing here. No fixture holds a multi-dimensional array of
+composites, which it reads one dimension deep ([`Walk.unnest`]), so one would
+show as typed nodes it does not read; a generated column is not read, `COPY`
+omitting it.
 
 **One row per node**: `table`, `column`, `row` (1-based, in `ctid` order, which
 is the order `COPY` writes), `path` (`''` for the column's own value, then

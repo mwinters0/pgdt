@@ -222,12 +222,10 @@ header, I1) runs up front in both mapping entry points, or an interrupted `parse
 no DDL. `attach_text` slices span text after building and `Data` spans store none, which is why
 `query` cannot run cache-only. Evidence: `preamble-prepass`.
 
-### D31 `Span::toc` is "belongs to", vetoed after classification
+### D31 `Span::toc` is "belongs to", vetoed after classification; boundary rules that read as bugs
 Follow-ons inherit `governing_toc` (else coverage reads half on healthy input) and `toc_owned`
 counts objects; `Framing` vetoes after the transition that seeded the inheritance, and `Connect` is
 never seeded. The boundary predicate refuses `"Data for "` and accepts `"Statistics for "`, which matters under `--disable-triggers` (I31).
-
-### D32 Boundary rules that read as bugs
 A blank line does not close a pending comment (`_printTocEntry` writes `--\n\n`); `scan_preamble`
 retreats to `pending_comment_start()` rather than guessing the comment's kind.
 
@@ -289,10 +287,6 @@ arm, never guessing. It binds the typed mode alone: the untyped mode, like `--sc
 asking for a type wider than the floor, and widens only a column the map says its front end cannot hold (D100).
 Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
-### D39 `NestedPlan` travels beside the `DataType`, built with it
-An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `List<Struct>`);
-every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
-
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
 sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. DataFusion
@@ -313,7 +307,9 @@ length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 a time part past Arrow's nanoseconds are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are. The six built-in
 ranges and their six multiranges are fixed (I10); a user-defined range declaring `canonical` is unanswerable (I46).
 
-### D43 The census speaks after the DDL and moves the pair
+### D43 `NestedPlan` travels beside the `DataType`; the census speaks after the DDL and moves the pair
+An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `List<Struct>`), so
+every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 `retype_from_census` and the text mode's `read_as_text` (D100) alone change `(DataType, NestedPlan)` after
 resolution, the census a parameter so no caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
 refuses a stream and degrades a listing: same output as `NotDeclared`, opposite advice.
@@ -352,12 +348,10 @@ map. A cancelled mapping pass fails a query rather than shortening it (I1). Cach
 cold interior split share `worker_count` and `cut`, and differ in what they cut and in the replay
 charging each sub-stream its batch span (D84).
 
-### D49 One target per query, and the early stop is conservative
+### D49 One target per query, the early stop conservative, and `ResumeToken` opaque, fingerprinting the query
 Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`; `target_settled`
 vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
-
-### D50 `ResumeToken` is opaque and fingerprints the query
-The filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
+The token's filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
 `scan_extent`, the batching knobs and `use_statistics` stay out, no skipped group holding a resumed row.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
@@ -670,9 +664,14 @@ ICU is in one fixture and out of the oracle. Semantics are the newest major's, a
 by classing every cell moving between adjacent majors as additive or not (I37, I38, I42), a non-additive one failing unless its
 literal is exempt beside the invariant narrowing it, each move a row of the manual's "Where PostgreSQL majors differ", every row asked.
 
-### D71 Register arms are parsed out of `pgtype.rs`
-A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the finest closable unit, the join is
-existence rather than branch coverage, and an exemption carries `Evidence(file, needle)` the check resolves.
+### D71 Registers are read out of their producer's source, and the join is existence
+A `match` cannot be enumerated at run time, so `oracle_register.py` parses `pgtype.rs`'s arms; `emitter_register.py` reads the literals `pg_dump`
+appends in each function some reader consumes, and its long options, out of a checkout into `emitters.tsv`, extraction being generation and the join
+over committed files the check, the checkouts being machine-local. Anchors turn a rewrite into a report. An arm or a literal is the finest closable unit,
+joined by existence — an arm in the oracle's cases, a literal in fixture bytes at its own major — never by branch coverage; an exemption names what the
+check resolves (`Evidence(file, needle)`, an `I<n>`, a `KD<k>`), a fixture exposing a `KD<k>` held failing (`known_failures.rs`) until its fix deletes
+the row. Rejected: a C parser; a "pgdt does not read this" exemption, the map tiling every byte; the function list enumerated once, which drifted as the
+readers grew (`READS` holds them together); a cross product of session settings, one variant each; a `DO` block testing the version in place of a sidecar file.
 
 ### D73 Round trips, asserted shapes, and a hand-verified signal path
 `Typed` against `Strings` over a fixture and `encode(decode(raw))` against on-disk bytes; boundary

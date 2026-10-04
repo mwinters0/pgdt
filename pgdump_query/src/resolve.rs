@@ -197,7 +197,7 @@ pub struct ResolvedSchema {
     /// Which PostgreSQL literal form fills each field — positional, parallel
     /// to `schema.fields()` like `columns`.
     ///
-    /// The Arrow type cannot say (`docs/design/decisions.md`, "D39"), so the
+    /// The Arrow type cannot say (`docs/design/decisions.md`, "D43"), so the
     /// plan travels beside it from resolution into `crate::batch::RowBatcher`
     /// and `crate::batch::render_field`. A scalar column's entry is
     /// `NestedPlan::Scalar`, so every column has one.
@@ -316,7 +316,7 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 }
 
 /// Retype one column's `(DataType, NestedPlan)` pair from its census —
-/// **the pair, never a half** (`docs/design/decisions.md`, "D39"). This and
+/// **the pair, never a half** (`docs/design/decisions.md`, "D43"). This and
 /// [`read_as_text`] are the only places after `resolve_declared_type` where
 /// either changes.
 ///

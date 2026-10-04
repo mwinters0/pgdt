@@ -5,7 +5,7 @@
 //! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
 //! same machinery [`crate::batch::read_table`] (push mode) drives internally.
 //! [`ResumeToken`] resumes a consumption within the same process; it holds no
-//! public fields (`docs/design/decisions.md`, "D50").
+//! public fields (`docs/design/decisions.md`, "D49").
 //!
 //! **Mapping and streaming are separate passes**
 //! (`docs/design/decisions.md`, "D48"). A query runs in two phases, never
@@ -300,7 +300,7 @@ fn project(
 /// projection, the filter terms and their semantics, the schema mode, how a
 /// value its column cannot hold is read and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
-/// (`docs/design/decisions.md`, "D50"). The hasher's output is not stable
+/// (`docs/design/decisions.md`, "D49"). The hasher's output is not stable
 /// across Rust releases: a token is valid only within its own process.
 ///
 /// **`partition` is what keeps a sub-stream's token from resuming as a whole
@@ -351,7 +351,7 @@ fn query_fingerprint(
 /// then each child in order — so two trees of different shape cannot collide
 /// by carrying the same terms. Two conjunctions differing only in term order
 /// fingerprint differently; canonicalizing instead would make the stamp depend
-/// on an ordering rule of its own (`docs/design/decisions.md`, "D50").
+/// on an ordering rule of its own (`docs/design/decisions.md`, "D49").
 fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
     use std::hash::Hash;
 
@@ -421,7 +421,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// the next one starts**.
 ///
 /// That is what keeps interstitial blank lines attributed to the span before
-/// them (`docs/design/decisions.md`, "D32") even across a stopping point. A previous scan
+/// them (`docs/design/decisions.md`, "D31") even across a stopping point. A previous scan
 /// that stopped on a block's `end_offset` left that block's span ending
 /// exactly there; the blank line that follows belongs to it, not to whatever
 /// the next segment happens to recognize first.
@@ -5287,7 +5287,7 @@ fn plan_replay(
     // **The span the plan was solved against is the span the batches use**, or
     // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
     // outside the resume fingerprint, being a batching knob
-    // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
+    // (`docs/design/decisions.md`, "D49"), so writing it back moves no token.
     plan.query_options.max_source_span = span;
     plan_notes.extend(plan.notes());
     Ok(PlannedReplay { plan: Arc::new(plan), groups, plan_notes, advice })
@@ -5485,7 +5485,7 @@ impl TablePartitions {
     /// A fresh stream over partition `partition`, cutting batches at
     /// `max_rows` rows — the one batching knob a scheduler states only when it
     /// runs the partition, and outside the plan it was cut under
-    /// (`docs/design/decisions.md`, "D50"). Each call starts the partition from
+    /// (`docs/design/decisions.md`, "D49"). Each call starts the partition from
     /// its beginning; a partition past [`Self::len`] is an empty stream.
     pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
         self.sub_stream(partition, max_rows, None)

@@ -900,7 +900,7 @@ impl Builder {
     /// `end` is the stop point [`finish`](Self::finish) is closing out at,
     /// needed here because [`crate::index::scan_preamble`] can retreat it to
     /// a pending comment's own `start` rather than guess that comment's kind
-    /// (`docs/design/decisions.md`, "D32"). A comment with `start >= end` is
+    /// (`docs/design/decisions.md`, "D31"). A comment with `start >= end` is
     /// exactly that case, so it is dropped rather than pushed as a
     /// zero-length, wrongly-guessed span.
     fn flush_pending(&mut self, end: u64) {
@@ -1063,7 +1063,7 @@ impl Builder {
                     // (`_printTocEntry()` writes `--\n\n` whether a DDL
                     // statement or a `COPY` header follows, I3), so it is
                     // absorbed without deciding either way
-                    // (`docs/design/decisions.md`, "D32"). Staying in
+                    // (`docs/design/decisions.md`, "D31"). Staying in
                     // `Mode::Comment` is what lets `on_copy_start`'s own arm
                     // still see this block and its `toc`; only a non-blank,
                     // non-`--` line reaches the close logic below.
@@ -1110,7 +1110,7 @@ impl Builder {
             Mode::Statement { start, buf, toc, toc_owned } => {
                 // A `--` line outside a quote closes a statement even
                 // though `buf` never reached `statement_complete`
-                // (`docs/design/decisions.md`, "D32") — the case a
+                // (`docs/design/decisions.md`, "D31") — the case a
                 // dollar-quoted body's invisible closing line creates, where
                 // nothing ever supplies the swallowed `;`. The `in_open_quote`
                 // guard is what keeps a `--`-looking continuation line that
@@ -1224,7 +1224,7 @@ impl Builder {
     /// own: `pg_dump` writes the statement's own terminating
     /// `;` on the closing line (`AS $$ … $$;`), and that line never reaches
     /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
-    /// statement (`docs/design/decisions.md`, "D32").
+    /// statement (`docs/design/decisions.md`, "D31").
     ///
     /// This is what completes every dollar-quoted statement, `pg_dump`'s
     /// included, so an entry's `ALTER … OWNER TO` after its `$$;` is a span of
@@ -1544,7 +1544,7 @@ impl Builder {
     /// `None` unless `self.mode` is [`Mode::Comment`]. A caller that must stop
     /// scanning *before* the decision a `--`-prefixed run is waiting on
     /// ([`crate::index::scan_preamble`]) retreats its stop point here rather
-    /// than guess the comment's kind (`docs/design/decisions.md`, "D32"):
+    /// than guess the comment's kind (`docs/design/decisions.md`, "D31"):
     /// closing out at the stopping point would swallow it as a guessed
     /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span, permanently wrong
     /// for a `-- Data for Name: ...` block.

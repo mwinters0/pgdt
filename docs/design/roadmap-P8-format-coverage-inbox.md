@@ -168,7 +168,7 @@ which put it on the scanner's lexer. The mechanism is
 ## A refused field fails a parse at a `COPY` block's close
 
 **Fact.** A field its type's `*_in` refuses at a `pg-refuses` check fails a
-data-level parse keying it (31.12): the statistics observer answers
+data-level parse keying it: the statistics observer answers
 `BlockGathered::Refused`, and `map::Builder::on_copy_end` raises
 `Error::FieldRefused`, as a restore under `ON_ERROR_STOP` fails the table's
 `COPY`. Nothing raises it for an `INSERT` run, whose rows nothing reads yet.
@@ -178,9 +178,7 @@ data-level parse keying it (31.12): the statistics observer answers
 it loses the one row and goes on. Whether the parse fails at a refused
 `INSERT` value as at a `COPY` field, where the raise sits when a run has
 no `on_copy_end`, and what it names the statement by — `FieldRefused`'s
-`line` is `COPY`'s count of a block's rows (31.12.2), which a run of
+`line` is `COPY`'s count of a block's rows, which a run of
 statements has no counterpart of — is that track's to decide.
 
-**Origin.** 31.12, 2026-10-03; P31's notes are
-[`roadmap-P31-correctness-evidence-notes.md`](roadmap-P31-correctness-evidence-notes.md).
-Contingent on the raise staying at the block's close.
+**Origin.** The field refusal's landing, 2026-10-03. Contingent on the raise staying at the block's close.

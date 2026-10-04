@@ -1510,7 +1510,10 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
 /// `,` where it names none (I22). `None` where the list is not closed or the
 /// value is no plain string literal — `pg_dump` writing one through
 /// `appendStringLiteralAH`, whose doubled backslash under
-/// `standard_conforming_strings = off` leaves the first byte as it was.
+/// `standard_conforming_strings = off` leaves the first byte as it was. A v15+
+/// server writes a non-ASCII `typdelim` as `charout`'s octal escape,
+/// `DELIMITER = '\377'`, which a restore takes as `\`; this reads that byte,
+/// and the split declines it.
 fn base_type_delimiter(body: &str) -> Option<u8> {
     if !body.starts_with('(') {
         return None;

@@ -549,7 +549,7 @@ async fn text_over_the_cap_is_truncated_and_marked() {
 /// What `Event::DollarQuoteEnd` is for: with no TOC comments, `scan.rs` emits
 /// no `Event::Line` for the line carrying a `CREATE FUNCTION`'s own closing
 /// `;`, so nothing else tells the accumulator the statement has ended
-/// (`docs/design/decisions.md`, "D32") — without it, the two functions and
+/// (`docs/design/decisions.md`, "D31") — without it, the two functions and
 /// the table after them would collapse into **one** `Unparsed` span instead
 /// of degrading to one span per object.
 #[tokio::test]

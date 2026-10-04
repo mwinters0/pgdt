@@ -7,7 +7,7 @@ entry, fold it into the spec or discard it as stale, and delete this file. See
 
 ---
 
-## P31 discards table constraints; P32 is where they are held
+## Table constraints are discarded; P32 is where they are held
 
 **Fact.** `preamble.rs`'s `parse_table_element` classifies a `CONSTRAINT`,
 `CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, 18's table-level
@@ -16,8 +16,9 @@ only the columns a `NOT NULL` or a `PRIMARY KEY` makes `NOT NULL`
 (`TableDef::not_null`, I76) and dropping the rest, because no reader reads one
 today; a `LIKE`'s columns are not followed either, so a hand-written `CREATE
 TABLE t (LIKE s)` declares none. The
-maintainer's aim, stated at P31's grilling, is to capture every object and
-property, so the drop is P31's scope and not the design.
+maintainer's aim, stated at the emitter register's grilling, is to capture
+every object and property, so the drop is that work's scope and not the
+design.
 
 **Why P32 cares.** The grammar already tells a constraint from a
 column, so holding one is additive: the decision is the model's shape, not
@@ -25,9 +26,9 @@ the parse. A `NOT NULL` is held already (`ResolvedSchema::not_null`, refusing
 a NULL), the Arrow field staying nullable because `ignore` reads one (D37);
 a `PRIMARY KEY` or `UNIQUE` could answer a distinct count without statistics.
 
-**Origin.** P31 grilling, 2026-10-02
-(`roadmap-P31-correctness-evidence.md`, "Columns declared elsewhere, and what
-the preamble holds"); landed at 31.5.
+**Origin.** The emitter register's grilling, 2026-10-02; the grammar is
+`parse_table_element`, and why references are walked rather than flattened
+is [`decisions.md`](decisions.md), "D36".
 
 ---
 
@@ -45,14 +46,14 @@ data, or by a read of the file's tail. Whether a metadata-level scan reaches
 post-data DDL, and whether `preamble_complete` still means "the model is
 complete", is this phase's first decision.
 
-**Origin.** P31 grilling, 2026-10-02, reading 18.6's `dumpConstraint`.
+**Origin.** The emitter register's grilling, 2026-10-02, reading 18.6's `dumpConstraint`.
 *Contingent on* the section assignment, re-read at each major.
 
 ---
 
 ## `ALTER TABLE` and `ALTER TYPE` forms that move an object's state
 
-**Fact.** P31 reads these `ALTER` forms beyond today's `ALTER TYPE … ADD
+**Fact.** The preamble reads these `ALTER` forms beyond `ALTER TYPE … ADD
 VALUE`: `ALTER TABLE ONLY … INHERIT` and `… OF`, which `--binary-upgrade`
 writes after a full column list, `ALTER TYPE … DROP ATTRIBUTE`, and `ALTER
 TABLE ONLY <parent> ATTACH PARTITION` (`dumpTableAttach`), its bound kept as
@@ -67,18 +68,19 @@ IDENTITY`, `… SET COMPRESSION`, `… SET STATISTICS`, `ADD CONSTRAINT`,
 `DISABLE TRIGGER ALL` (I31, `KD1`).
 
 **Why P32 cares.** A model of each object at the end of the file is a fold
-of every one of these, and P31's walk is the precedent for reading final
-state rather than first declaration. Whether P31's walk becomes this model's
+of every one of these, and the walk (D36) is the precedent for reading
+final state rather than first declaration. Whether it becomes this model's
 general mechanism or is replaced by it is the grilling's.
 
-**Origin.** P31 grilling, 2026-10-02. *Contingent on* P31 landing the walk
-as specified.
+**Origin.** The emitter register's grilling, 2026-10-02. *Contingent on* the
+walk staying as D36 states it.
 
 ---
 
-## P31's emitter register enumerates what there is to capture
+## The emitter register enumerates what there is to capture
 
-**Fact.** P31's register extracts every literal the `pg_dump` functions pgdt
+**Fact.** The emitter register ([`decisions.md`](decisions.md), "D71")
+extracts every literal the `pg_dump` functions pgdt
 reads append, and every long option, at each major, and requires each to
 reach a fixture. Its function list is `scripts/emitter_register.py`'s
 `FUNCTIONS`, held to what pgdt reads today by a check: each statement keyword
@@ -93,15 +95,15 @@ criterion, and the register is a mechanical one: widening its function list
 to every `dump*` function and asking that each literal map to a captured
 property states the goal as a check rather than an aspiration.
 
-**Origin.** P31 grilling, 2026-10-02. *Contingent on* P31 landing the
-register in the shape its spec gives.
+**Origin.** The emitter register's grilling, 2026-10-02. *Contingent on*
+the register keeping the shape D71 gives it.
 
 ---
 
 ## The `emitters` fixtures hold properties no model captures
 
 **Fact.** `fixtures/<major>/emitters/` holds, at every major, a form of each
-property P31's listed emitters write that pgdt reads into nothing: a base
+property the register's listed emitters write that pgdt reads into nothing: a base
 type's `CREATE TYPE` properties, a range's `canonical`, `subtype_diff` and
 `subtype_opclass`, a domain's named `CHECK`, reloptions and toast
 reloptions, a view's check option, forced row security, replica identity, a
@@ -116,5 +118,5 @@ comment and role memberships' options (`scripts/fixture_schema_emitters*.sql`,
 these are already generated and committed; a property captured can be
 asserted against them without a new schema.
 
-**Origin.** P31.4, 2026-10-02. *Contingent on* the `emitters` schema keeping
+**Origin.** The register's gate, 2026-10-02. *Contingent on* the `emitters` schema keeping
 those objects.

@@ -27,7 +27,7 @@ pub enum TypeOutcome {
     /// literal form fills it. This module produces a declared type's pair;
     /// `resolve` adds only the `Utf8View` fallback and a census's further
     /// `List` levels, building each pair whole (`docs/design/decisions.md`,
-    /// "D39").
+    /// "D43").
     Mapped(DataType, NestedPlan),
     /// A declared type string this build has no mapping for at all — neither
     /// a built-in, nor found in the database's `CREATE TYPE`/`DOMAIN` list,
@@ -72,13 +72,14 @@ pub enum TypeOutcome {
     /// A C-level base type or a shell/undefined type — genuinely
     /// information-free, not merely unimplemented.
     OpaqueBaseType,
-    /// A `CREATE TYPE ... AS ENUM ()` with no labels at all.
+    /// A `CREATE TYPE ... AS ENUM ()` with no labels at all — or an inexact
+    /// enum no label of which was read, which only `info` tells apart.
     EmptyEnum,
 }
 
 /// Which PostgreSQL literal form fills a resolved Arrow type, at every
 /// position in it. The Arrow type alone cannot say
-/// (`docs/design/decisions.md`, "D39"); it is a tree because the answer
+/// (`docs/design/decisions.md`, "D43"); it is a tree because the answer
 /// differs per nesting level.
 ///
 /// A `Scalar`, `Decimal` or `Text` leaf is anything [`crate::decode`] handles
@@ -1684,7 +1685,7 @@ fn map_builtin(
     if let Some((mapped, comparison)) = builtin_scalar(base, typmod, None, None, &[]) {
         // The literal form is this walk's to say: a `smallint[]` column and
         // an `int2vector` one are both `List<Int16>` and are written in
-        // different grammars (`docs/design/decisions.md`, "D39"). Exactly one
+        // different grammars (`docs/design/decisions.md`, "D43"). Exactly one
         // built-in is a container.
         let plan = match (base, comparison) {
             ("int2vector", _) => NestedPlan::Int2Vector,

@@ -28,14 +28,23 @@ use crate::scan::PostgresInvalidValues;
 pub enum Unread {
     /// The type's `*_in` refuses it: found at a check carrying a
     /// `pg-refuses: I<n>` marker, so a release lifting the refusal is found
-    /// by walking that invariant.
+    /// by walking that invariant. Such a check sits behind a grammar no wider
+    /// than the server's at the parts it bounds, or a shortfall's spelling
+    /// reaches it — a run-together `+0530` read as an hour of 530, digits
+    /// counted before an exponent moved the point — and refuses what the
+    /// server reads; so every failure of a date or time reader, its own
+    /// refusals included, is put to `crate::datetime_in`, the readers
+    /// splitting a text outside `*_out`'s form otherwise than `ParseDateTime`.
     Refused,
     /// A spelling this build reads no value from that the server reads at
     /// some supported major — a shortfall (`docs/design/decisions.md`,
     /// "D55"). Each reader classifies what it fails on by the server's
     /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
     /// `crate::predicate`'s `jsonb_unread`, and `crate::datetime_in` for the
-    /// date and time types).
+    /// date and time types). No reader is widened to read one: a blank
+    /// around a number, a hexadecimal float, `nan(…)`, an exponent in a
+    /// `numeric` field, `0x1F`, `1_000` and `y2001m02d04` stay unparsed, and
+    /// a query decoding one fails with `FieldDecode`.
     Unparsed,
 }
 

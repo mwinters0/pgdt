@@ -15,10 +15,9 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P31 — correctness evidence: the emitter register and value oracles | Complete | [spec](roadmap-P31-correctness-evidence.md); [notes](roadmap-P31-correctness-evidence-notes.md) |
-| P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — replaces `M212`; the maintainer sets its order |
-| P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — allocated by P31's grilling; the maintainer sets its order |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
+| P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
@@ -638,13 +637,6 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P31 — Correctness evidence: the emitter register and value oracles
-
-Specified in [its spec](roadmap-P31-correctness-evidence.md). Allocated by the parsing audit of
-[2026-10-02](../status/history/2026-10-02.md): the coverage gap behind
-`KD60`–`KD70` is enumerated from `pg_dump`'s own source, and a value oracle the
-server writes gives the typed read a second reading.
-
 ## P33 — Every line PostgreSQL writes and reads
 
 **What `pg_dump` writes is the floor and what PostgreSQL reads is the
@@ -657,7 +649,7 @@ source's blocks or the resume point; one over it is refused as a line
 PostgreSQL would not read, not as a buffer pgdt would not grow. Memory may
 slow a long line, and never refuses one under the bound. Today
 `max_line_bytes` refuses one past 64 MiB (`KD93`). Sketched to
-corner-avoidance depth; allocated 2026-10-03, replacing `M212`. The facts
+corner-avoidance depth. The facts
 are in [its inbox](roadmap-P33-line-bound-inbox.md).
 
 ## P32 — The schema model: every object and property a dump declares
@@ -670,9 +662,9 @@ census name the rest without reading them ([`decisions.md`](decisions.md), "D31"
 Every valid statement — table constraints, `ALTER TABLE` in each of its forms,
 indexes, `ATTACH PARTITION` — folded into one model of each object's state at
 the end of the file, so a reader that wants a property finds it held. Sketched
-to corner-avoidance depth; P31's emitter register enumerates the same
-emitters, and is the candidate completeness criterion. Allocated by P31's
-grilling, 2026-10-02. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
+to corner-avoidance depth; the emitter register ([`decisions.md`](decisions.md),
+"D71") enumerates the same emitters, and is the candidate completeness
+criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
 ## P30 — One binary for distribution
 
@@ -837,6 +829,8 @@ What it inherits:
   default. A cold-NVMe figure of the default `parse` is this phase's first
   evidence, before D10 is re-read. The `INSERT` path meets the same condition
   at any statistics setting (`KD9`).
+- **A strict parse's check holds a comparison plan per column that no account
+  charges** (`gather::checker`).
 
 ## P26 — Statistics refused on their cost, reconsidered
 

@@ -116,7 +116,9 @@ pub(crate) fn observer_for(
 /// the cache holds that no strict parse checked. It answers
 /// [`BlockGathered::Checked`], or [`BlockGathered::Refused`] at the first
 /// field its type's `*_in` refuses or NULL its column's `NOT NULL` refuses,
-/// and never declines, holding nothing.
+/// and never declines, holding nothing. What it holds to check — a
+/// comparison plan per column — is charged to no account (D81): fixed per
+/// block, shared with the block's pieces and freed with the observer.
 pub(crate) fn checker(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,

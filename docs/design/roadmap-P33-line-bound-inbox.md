@@ -23,7 +23,7 @@ how one is admitted when the budget is drawn, and what is said when a stated
 memory, not the line. `MEMORY_RESERVE`'s premise changes with it
 (`decisions.md`, "I/O, memory and parallelism").
 
-**Origin.** The 2026-10-03 session that withdrew `M212`.
+**Origin.** The 2026-10-03 session that withdrew the out-of-band item hardening `max_line_bytes`.
 
 ---
 

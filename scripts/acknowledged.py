@@ -322,7 +322,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M198: decode.rs changes only the branch a negative scale reaches "
+        why="decode.rs changes only the branch a negative scale reaches "
         "with fewer digits than its zeros, and render_decimal's scale <= 0 arm; "
         "every measured input's numeric has a positive scale, so neither runs",
         verified="git show 4ecb705d -- pgdump_query/src/decode.rs; "
@@ -331,7 +331,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="c68568ea",
         figures=("preamble-prepass", "rss-attribution"),
-        why="31.4 files KD73: one deficiency marker added in preamble.rs above "
+        why="files KD73: one deficiency marker added in preamble.rs above "
         "the Connect arm, comments only, which comment_only_commit cannot place "
         "in that file",
         verified="git show c68568ea -- pgdump_query/src/preamble.rs "
@@ -358,7 +358,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "dynamic-filter-join",
             "dynamic-filter-topk",
         ),
-        why="M199: lex.rs only widens ident_cont's visibility; preamble.rs's "
+        why="lex.rs only widens ident_cont's visibility; preamble.rs's "
         "strip_kw adds one byte check after a keyword match, allocating nothing, "
         "and re-classifies only CREATE TABLESPACE, which no measured input holds",
         verified="git show 28fb62ae -- pgdump_query/src/lex.rs pgdump_query/src/preamble.rs "
@@ -367,7 +367,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="1014ac5c",
         figures=("preamble-prepass", "rss-attribution"),
-        why="M200: dump_metadata_from_spans changes only its Connect and "
+        why="dump_metadata_from_spans changes only its Connect and "
         "VersionHeader arms, a handful of spans per file, with the same clones "
         "and no new allocation; no per-line or per-row path moves",
         verified="git show 1014ac5c -- pgdump_query/src/preamble.rs "
@@ -376,7 +376,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="a5b5f99f",
         figures=("preamble-prepass", "rss-attribution"),
-        why="31.5: parse_table_element adds at most seven keyword-prefix checks "
+        why="parse_table_element adds at most seven keyword-prefix checks "
         "per CREATE TABLE column-list entry, and the comma split two byte arms; "
         "both run on the preamble's table statements only, allocate nothing new, "
         "and keep fewer column definitions",
@@ -399,7 +399,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="M202: CACHE_FORMAT_VERSION's value moves 33 -> 34, a fixed-width u32 "
+        why="CACHE_FORMAT_VERSION's value moves 33 -> 34, a fixed-width u32 "
         "written and compared in the cache header alike; the rest is rustdoc and "
         "GOLDEN_ORDER, a constant inside a #[cfg(test)] module",
         verified="git show f6aedf59 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
@@ -421,7 +421,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="M201: map_numeric runs once per column as a schema resolves, never per "
+        why="map_numeric runs once per column as a schema resolves, never per "
         "row, and every generated input declares numeric(20,6) or numeric(12,2), "
         "which map to the type they did; cache.rs moves CACHE_FORMAT_VERSION's u32 "
         "value and predicate.rs a #[cfg(test)] constant",
@@ -447,7 +447,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="31.6: no measured input declares an INHERITS or OF table, so every column "
+        why="no measured input declares an INHERITS or OF table, so every column "
         "resolves as before; classify tries one more keyword prefix per statement, and "
         "gather, prune and summary look a column up per block and column, never per row",
         verified="git show 6418a001 -- pgdump_query/src/gather.rs pgdump_query/src/map.rs "
@@ -472,7 +472,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="31.7: two keyword prefixes per non-table CREATE, one parse per ALTER TYPE "
+        why="two keyword prefixes per non-table CREATE, one parse per ALTER TYPE "
         "that adds no value and one prefix per \\connect, all per statement; no "
         "generated input holds an unlogged or foreign table, a DROP ATTRIBUTE or a "
         "connection-string \\connect; the rest is a constant, a test pin and a --map label",
@@ -482,7 +482,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="db949970",
         figures=("reserve",),
-        why="31.8: in reserve's set only cache.rs changed, and there only "
+        why="in reserve's set only cache.rs changed, and there only "
         "CACHE_FORMAT_VERSION's u32 value, written and compared in the header alike",
         verified="git show db949970 -- pgdump_query/src/cache.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
@@ -505,7 +505,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="31.9: is_box runs once per array column as its schema resolves and changes "
+        why="is_box runs once per array column as its schema resolves and changes "
         "the answer only for a quoted box element, which no generated input holds; the "
         "rest is CACHE_FORMAT_VERSION's u32 value and a #[cfg(test)] pin",
         verified="git show d1caf819 -- pgdump_query/src/pgtype.rs pgdump_query/src/cache.rs "
@@ -521,7 +521,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "rss-attribution",
             "statistics-gathering",
         ),
-        why="31.10: in these figures' sets only cache.rs and predicate.rs changed, "
+        why="in these figures' sets only cache.rs and predicate.rs changed, "
         "CACHE_FORMAT_VERSION's u32 value and a #[cfg(test)] pin",
         verified="git show 4d946f8e -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
@@ -544,7 +544,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="31.11: one match guard on a \\connect span that follows another, which no "
+        why="one match guard on a \\connect span that follows another, which no "
         "generated input holds; the rest is CACHE_FORMAT_VERSION's u32 value, a "
         "#[cfg(test)] pin and unit tests",
         verified="git show 39466c97 -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
@@ -562,7 +562,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "projection-widths",
             "statistics-pruning",
         ),
-        why="31.10, acknowledged by the maintainer without a re-take: one is_infinite "
+        why="acknowledged by the maintainer without a re-take: one is_infinite "
         "test per float decoded, changing the value only for a digit spelling past the "
         "type's largest finite value, which no generated input holds",
         verified="git show 4d946f8e -- pgdump_query/src/decode.rs "
@@ -582,7 +582,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="M203: a float literal's reader runs once per literal as a term resolves; "
+        why="a float literal's reader runs once per literal as a term resolves; "
         "on a row the only change is a bool guard on nested_key's leaf arm, and the field "
         "reader, the stored keys and GOLDEN_ORDER's field order are unchanged; the rest "
         "is accepted_form's wording and unit tests",
@@ -603,7 +603,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="M205: an integer literal's width check runs once per literal as a term "
+        why="an integer literal's width check runs once per literal as a term "
         "resolves; on a row order_key's integer arm is the same i64 parse, CompareKind::Int "
         "carrying its width built once per column; the rest is accepted_form's wording "
         "and tests",
@@ -616,7 +616,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "predicate-terms",
             "reserve",
         ),
-        why="M206: in these figures' sets only cache.rs and predicate.rs changed, "
+        why="in these figures' sets only cache.rs and predicate.rs changed, "
         "CACHE_FORMAT_VERSION's u32 value, accepted_form's wording reached only on an "
         "error, and tests",
         verified="git show d9019a1a -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
@@ -632,7 +632,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "rss-attribution",
             "statistics-gathering",
         ),
-        why="M207: in these figures' sets only cache.rs, predicate.rs and "
+        why="in these figures' sets only cache.rs, predicate.rs and "
         "unrepresentable.rs changed: CACHE_FORMAT_VERSION's u32 value, an interval key's "
         "narrower integers with fewer checked operations, the interval tier test as one "
         "checked_mul, accepted_form's error wording, and tests",
@@ -657,7 +657,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "statistics-gathering",
             "statistics-pruning",
         ),
-        why="M208: the per-row bound runs only on a bare numeric field or a jsonb number, "
+        why="the per-row bound runs only on a bare numeric field or a jsonb number, "
         "and every generated input declares numeric(20,6) or numeric(12,2), read by the "
         "unchanged Decimal arm, and no jsonb; a literal's bound runs once per term; the rest "
         "is CACHE_FORMAT_VERSION's u32 value, accepted_form's error wording and tests",
@@ -674,7 +674,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "reserve",
             "rss-attribution",
         ),
-        why="M209: in these figures' sets only cache.rs and predicate.rs changed, "
+        why="in these figures' sets only cache.rs and predicate.rs changed, "
         "CACHE_FORMAT_VERSION's u32 value, accepted_form's error wording and tests",
         verified="git show 74eea90d -- pgdump_query/src/cache.rs pgdump_query/src/predicate.rs "
         "| grep '^[-+]' | grep -v '^[-+][[:space:]]*//'",
@@ -685,7 +685,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "nested-decode-micro",
             "reserve",
         ),
-        why="31.15: reserve's set changed only CACHE_FORMAT_VERSION's u32 value; "
+        why="reserve's set changed only CACHE_FORMAT_VERSION's u32 value; "
         "nested-decode-micro runs the decoders bench filtered to its nested group, and the "
         "bench changed only inside float_family's numeric case",
         verified="git show 100e377a -- pgdump_query/src/cache.rs pgdump_query/benches/decoders.rs "
@@ -706,7 +706,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "scan-throughput-nvme",
             "scan-throughput-warm",
         ),
-        why="31.12: these are metadata-level scans, which gather no statistics; in their "
+        why="these are metadata-level scans, which gather no statistics; in their "
         "sets on_copy_end returns a Result whose Refused arm only a gathering observer "
         "reaches, eager_pass and close_copy_block propagate it, the back-fill and re-read "
         "paths a metadata scan never takes, pgdt's error match gains one arm, "
