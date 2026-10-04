@@ -87,8 +87,9 @@ pub struct CopyEnd {
 pub struct Line<'a> {
     /// Absolute file offset of the line's first byte.
     pub offset: u64,
-    /// The line with its terminating newline (and any `\r` before it)
-    /// stripped.
+    /// The line with its terminating newline stripped, and a `\r` before it
+    /// too unless the line ends inside a quoted literal or identifier, where
+    /// the `\r` is the value's own byte (I90).
     pub raw: &'a [u8],
 }
 
@@ -283,15 +284,12 @@ impl CopyScanner {
                 None if eof => (rest, rest.len()),
                 None => return Ok(None),
             };
-            // A raw CR before the newline is stripped from every line: COPY
-            // TEXT escapes an in-value carriage return as `\r`, so in a row it
-            // is never data.
-            // deficiency: KD100 — outside a row it can be: a quoted SQL literal
-            // spanning lines keeps a raw CR ending one as its own byte, as
-            // `appendStringLiteral` writes it and psql's lexer reads it, and
-            // the line surfaced here has lost it, so a value read off such a
-            // literal — an enum's label, a `CHECK`'s text — is not the one the
-            // server holds.
+            // A raw CR before the newline is stripped from a line that ends
+            // outside a quoted region: COPY TEXT escapes an in-value carriage
+            // return as `\r`, so in a row it is never data, and psql reads one
+            // between tokens as whitespace. Inside a literal or a quoted
+            // identifier it is the value's own byte, kept below (I90).
+            let unstripped = line;
             let line = line.strip_suffix(b"\r").unwrap_or(line);
 
             let line_offset = self.position();
@@ -300,7 +298,13 @@ impl CopyScanner {
             match self.state {
                 State::Outside => {
                     let between_tokens = *self.lexer.region() == Region::Code;
-                    let lexed = self.lexer.line(line, |_| {});
+                    let lexed = self.lexer.line(unstripped, |_| {});
+                    // A CR opens and closes no region, so the region the line
+                    // ends in is the one its last byte lies in.
+                    let surfaced = match self.lexer.region() {
+                        Region::Quoted(_) | Region::Identifier => unstripped,
+                        _ => line,
+                    };
                     if lexed.dollar {
                         // Inside, entering, or leaving a dollar-quoted
                         // string: this line is body text or quoting syntax,
@@ -319,7 +323,7 @@ impl CopyScanner {
                         // The continuation of a string, a quoted identifier
                         // or a comment: content, surfaced as the statement's
                         // next line and never read as structure.
-                        return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
+                        return Ok(Some(Event::Line(Line { offset: line_offset, raw: surfaced })));
                     }
 
                     // Line-anchored: only a line that both starts with `COPY`,
@@ -350,7 +354,7 @@ impl CopyScanner {
                     if let Some(on) = standard_conforming_strings(line) {
                         self.lexer.set_standard_strings(on);
                     }
-                    return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
+                    return Ok(Some(Event::Line(Line { offset: line_offset, raw: surfaced })));
                 }
                 State::InCopy { rows, header_offset } => {
                     // deficiency: KD101 — a row's terminator is not checked
@@ -939,6 +943,57 @@ mod tests {
         file.extend_from_slice(b"\n3\tshort\n\\.\n");
         file.extend_from_slice(value.as_bytes());
         file
+    }
+
+    /// **A raw CR ending a line keeps its byte only where the line ends inside
+    /// a quoted literal or identifier** (I90), an `E''` one's escaped CR
+    /// included; a statement's line, a comment, a block comment's line and a
+    /// `COPY` row lose it, wherever a chunk boundary falls.
+    #[test]
+    fn a_raw_cr_ending_a_line_is_kept_only_inside_a_quoted_region() {
+        fn lines(file: &[u8], chunk_size: usize) -> Vec<Vec<u8>> {
+            let mut scanner = CopyScanner::new();
+            let mut carry = ChunkCarry::new();
+            let (mut out, mut read_pos) = (Vec::new(), 0usize);
+            loop {
+                let want = chunk_size.min(file.len() - read_pos);
+                let chunk = &file[read_pos..read_pos + want];
+                read_pos += want;
+                let eof = read_pos >= file.len();
+                carry.absorb(chunk);
+                for pass in ChunkCarry::PASSES {
+                    let (span, span_eof) = carry.span(pass, chunk, eof);
+                    while let Some(event) = scanner.next_event(span, span_eof).unwrap() {
+                        match event {
+                            Event::Line(line) => out.push(line.raw.to_vec()),
+                            Event::Row(row) => out.push(row.raw.to_vec()),
+                            _ => {}
+                        }
+                    }
+                    carry.consumed(pass, chunk, scanner.take_consumed());
+                }
+                if eof {
+                    return out;
+                }
+            }
+        }
+        let file: &[u8] = b"-- comment\r\nCREATE TYPE e AS ENUM ('a\r\nb', E'c\\\r\nd');\r\n\
+            CREATE TABLE \"t\r\nu\" (/* x\r\n */ m e);\r\n\
+            COPY public.t (m) FROM stdin;\r\na\\r\\nb\r\n\\.\r\n";
+        let expected: [&[u8]; 8] = [
+            b"-- comment",
+            b"CREATE TYPE e AS ENUM ('a\r",
+            b"b', E'c\\\r",
+            b"d');",
+            b"CREATE TABLE \"t\r",
+            b"u\" (/* x",
+            b" */ m e);",
+            b"a\\r\\nb",
+        ];
+        for chunk_size in [1usize, 2, 7, 4096] {
+            let got = lines(file, chunk_size);
+            assert_eq!(got, expected.map(<[u8]>::to_vec), "chunk_size {chunk_size}");
+        }
     }
 
     /// A line many chunks long is handed to the scanner once, when the chunk

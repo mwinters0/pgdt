@@ -1251,3 +1251,68 @@ async fn a_hand_written_partition_hierarchy_is_named_per_block() {
     assert!(!unchecked.declared);
     assert_eq!(unchecked.routed_through.as_deref(), Some("public.feel"));
 }
+
+/// **A raw CR ending a line inside a quoted literal or identifier is the
+/// value's own byte, whatever the file's line endings** (I90): an enum's
+/// label, a `CHECK`'s quoted name and a partition's bound each hold the CR
+/// LF the server holds, in a file written as `appendStringLiteral` writes it
+/// and in the same file converted to CRLF; a strict parse reads the label's
+/// field and refuses the same text without its CR.
+#[tokio::test]
+async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
+    use pgdump_query::preamble::PartitionOf;
+    // `\r\n` is a literal's own line break, `\n` the file's.
+    let dump_with = |row: &str| {
+        format!(
+            "CREATE TYPE public.mood AS ENUM (\n    'a\r\nb',\n    'ok'\n);\n\n\
+             CREATE TABLE public.p (\n    m public.mood,\n    CONSTRAINT \"ck\r\nx\" \
+             CHECK ((m <> 'ok'::public.mood))\n)\nPARTITION BY LIST (m);\n\n\
+             CREATE TABLE public.p1 (\n    m public.mood\n);\n\n\
+             ALTER TABLE ONLY public.p ATTACH PARTITION public.p1 FOR VALUES IN ('a\r\nb');\n\n\
+             COPY public.p1 (m) FROM stdin;\n{row}\n\\.\n\n"
+        )
+    };
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        chunk_size_bytes: 7,
+        ..ScanOptions::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cr.sql");
+    for crlf in [false, true] {
+        let file = |row: &str| {
+            let text = dump_with(row);
+            if crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text }
+        };
+        std::fs::write(&path, file("a\\r\\nb")).unwrap();
+        let db = single_database(&path).await;
+        let TypeKind::Enum { labels, exact } = &find_type(&db, "public.mood").kind else {
+            panic!("public.mood is no enum")
+        };
+        assert_eq!((labels.as_slice(), *exact), (&["a\r\nb".to_string(), "ok".into()][..], true));
+        let checks = db.table_checks("public.p");
+        assert_eq!(checks.len(), 1, "crlf {crlf}");
+        assert_eq!(checks[0].0.name.as_deref(), Some("ck\r\nx"), "crlf {crlf}");
+        assert_eq!(
+            db.tables["public.p1"].partition_of,
+            Some(PartitionOf {
+                parent: "public.p".into(),
+                bound: Some("FOR VALUES IN ('a\r\nb')".into()),
+            }),
+            "crlf {crlf}"
+        );
+        let source = LocalFileSource::open(&path).unwrap();
+        map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+            .await
+            .unwrap_or_else(|e| panic!("crlf {crlf}: a strict parse refused: {e}"));
+
+        std::fs::write(&path, file("a\\nb")).unwrap();
+        let source = LocalFileSource::open(&path).unwrap();
+        match map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA).await {
+            Err(pgdump_query::Error::FieldRefused { column, value, .. }) => {
+                assert_eq!((column.as_str(), value.as_str()), ("m", "a\nb"), "crlf {crlf}")
+            }
+            other => panic!("crlf {crlf}: expected `a\\nb` refused, got {other:?}"),
+        }
+    }
+}

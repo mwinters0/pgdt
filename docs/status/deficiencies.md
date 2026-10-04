@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD102 -->
-**`KD1`–`KD102` are allocated, and nothing at or below `KD102` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD103 -->
+**`KD1`–`KD103` are allocated, and nothing at or below `KD103` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -416,12 +416,6 @@ than reading as a phase nobody has sliced.
   unowned**; promoted by a hand-written dump holding one. Detail:
   `pgdump_query/src/decode.rs`.
 
-- **KD100** — a raw carriage return ending a line inside a quoted SQL literal
-  is dropped from the preamble line the scanner surfaces, as a `COPY` row's
-  would be, so a value read off such a literal — an enum's label, a `CHECK`'s
-  text — is not the one the server holds. **(b) owned by P31**, 31.28.
-  Detail: `pgdump_query/src/scan.rs`.
-
 - **KD101** — a `COPY` row's terminator is not checked against its block's,
   which `COPY` fixes from the block's first row and enforces, so a raw `\r\n`
   row in a `\n` block is read where a restore refuses it and a block whose
@@ -434,3 +428,10 @@ than reading as a phase nobody has sliced.
   nowhere, so read as text and checked for nothing, and a parent's `CHECK` is
   not named for it. **(c) unowned**; promoted by a hand-written dump holding
   one. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD103** — a carriage return inside a line outside a quoted region ends a
+  `--` comment and is the newline a literal's continuation needs, as psql's
+  lexer reads it, where the lexer takes only the line's end, so a statement
+  after a CR on a comment's line is read as that comment; no `pg_dump` writes
+  one (I90). **(c) unowned**; promoted by a hand-written dump holding one.
+  Detail: `pgdump_query/src/lex.rs`.

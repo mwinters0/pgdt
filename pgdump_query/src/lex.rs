@@ -186,6 +186,12 @@ impl Lexer {
                             i = stop + 1;
                         }
                         b'-' if line.get(stop + 1) == Some(&b'-') => {
+                            // deficiency: KD103 — psql's `newline` is `[\n\r]`,
+                            // so a CR inside the line ends this comment, the
+                            // code after it running as a statement, and counts
+                            // as the newline a literal's continuation needs
+                            // (`quotecontinue`); here only the line's end does.
+                            // `pg_dump` writes no CR outside a literal (I90).
                             return LineLex { dollar, line_comment: true };
                         }
                         b'/' if line.get(stop + 1) == Some(&b'*') => {

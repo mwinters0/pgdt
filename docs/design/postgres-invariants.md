@@ -5688,3 +5688,50 @@ awk '/^SetDefaultACL\(/,/^}/' release-v<N>/src/backend/catalog/aclchk.c | grep -
 ```
 
 The first prints one line; the second prints `0`.
+
+## I90 — psql keeps a raw CR inside a quoted literal or identifier as the value's byte, and reads one outside as whitespace
+
+**Claim.** `pg_dump` writes a value's CR and LF raw inside a literal
+(`appendStringLiteral`) or a quoted identifier (`fmtId`), so a value holding a
+line break spans lines of the file. psql running a file reads it line by line,
+stripping the `\n` alone, so a CR before it stays in the line; its lexer keeps
+every byte of a quoted literal or `"…"` identifier, a CR included, and reads a
+CR between tokens as whitespace. So the value a restore holds keeps every CR
+ending a line inside the literal — in a CRLF file too, where each line break
+inside it becomes CR LF — and a CR ending any other line changes nothing.
+
+**Proof.** `src/fe_utils/string_utils.c`: `appendStringLiteral` copies every
+byte but the one `SQL_STR_DOUBLE` doubles, and `fmtIdEnc` doubles `"` alone.
+`src/bin/psql/command.c`, `process_file`: `fopen(filename, PG_BINARY_R)`.
+`src/bin/psql/input.c`, `gets_fromFile`: strips a final `\n` and nothing
+else. `src/fe_utils/psqlscan.l`: `xqinside [^']+`, `xeinside [^\\']+`,
+`xdinside [^"]+`, and `space` holding `\r`.
+
+**Observed.** The koji replica (PG16) run under `psql -f` on a CRLF file reads
+`'a<CR><LF>b'` as `610d0a62`, `'c<CR><CR><LF>d'` as `630d0d0a64` and the
+identifier `"x<CR><LF>y"` as `780d0a79`, the statement's other CRs read as
+spacing.
+
+**Scope limit.** A file psql reads from standard input is opened in text mode,
+which on Windows drops each CR before a `\n`. A CR not ending a line is
+psql's `newline` too, ending a `--` comment and continuing a literal across
+it; `pg_dump` writes none outside a literal, a comment's being sanitized
+(I18).
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+v16.15 (observed).
+
+**Relied on by:** `scan.rs`, `CopyScanner::next_event`, which keeps such a CR
+in the line it surfaces.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'fopen(filename, PG_BINARY_R)' src/bin/psql/command.c
+grep -n "buffer->data\[buffer->len - 1\] == '\\\\n'" src/bin/psql/input.c
+grep -n '^xqinside\|^xeinside\|^xdinside\|^space\|^newline' src/fe_utils/psqlscan.l
+```
+
+The first two print one line each; the third shows the three quoted bodies
+excluding only their closing byte, and `\r` in `space` and `newline`.
