@@ -31,16 +31,9 @@ pub enum Unread {
     Refused,
     /// A spelling this build reads no value from that the server reads at
     /// some supported major — a shortfall (`docs/design/decisions.md`,
-    /// "D55") — or, of a date, a time, a timestamp or an `interval`, a
-    /// refusal of the server's no marked check makes.
-    // deficiency: KD90 — a date, time, timestamp or interval field is refused
-    // only at a marked bound, so text its reader here cannot read at all passes
-    // a strict parse, whether or not the server refuses it: `abc` in a `date`,
-    // a date's year or an interval's count past `i64`. The other readers each
-    // classify what they fail on by the server's grammar (`int_unread`,
-    // `float_unread`, `numeric_unread`, `jsonb_unread`); these need
-    // `ParseDateTime` and `DecodeDateTime`'s, under the restoring server's
-    // `DateStyle` and zone names, which decide some spellings.
+    /// "D55"). Each reader classifies what it fails on by the server's
+    /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
+    /// `jsonb_unread`, and `crate::datetime_in` for the date and time types).
     Unparsed,
 }
 
@@ -679,8 +672,7 @@ fn split_era(s: &str) -> (&str, bool) {
 /// server starts a zone (`12:-5:00` is 12:00 at zone `-5`, `+2020-01-01`
 /// refused), so a part carrying one is refused here rather than read as a
 /// signed number — a shortfall where the server reads it
-/// (`docs/design/decisions.md`, "D55"). Past `i64` is `None` too, where the
-/// server's `strtoint` refuses it on `ERANGE` (`KD90`).
+/// (`docs/design/decisions.md`, "D55"). Past `i64` is `None` too.
 fn unsigned_part(s: &str) -> Option<i64> {
     if s.is_empty() {
         return None;
@@ -1151,7 +1143,7 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
             }
         };
         // pg-refuses: I62 — a unit given twice, and a count past `int32`
-        // but not past `i64`, which is unparsed (`KD90`).
+        // but not past `i64`, which is unparsed.
         if counts[unit].is_some() {
             return Err(Unread::Refused);
         }
@@ -2890,7 +2882,7 @@ fn single_decode(b: &[u8], at: usize) -> Option<(f64, usize)> {
 /// past `double precision`'s range — overflowed to an infinity, or a nonzero
 /// spelling read as zero, where `strtod` sets `ERANGE`. `None` where it reads
 /// nothing.
-fn strtod(b: &[u8], at: usize) -> Option<(f64, usize, bool)> {
+pub(crate) fn strtod(b: &[u8], at: usize) -> Option<(f64, usize, bool)> {
     let negative = c_at(b, at) == b'-';
     let i = at + usize::from(matches!(c_at(b, at), b'+' | b'-'));
     let signed = |v: f64| if negative { -v } else { v };

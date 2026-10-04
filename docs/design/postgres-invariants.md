@@ -4229,8 +4229,9 @@ named zone — are spellings, not bounds.
 
 **Relied on by:** `decode::civil_days`, `decode::date_days`,
 `decode::parse_time_of_day`, `decode::extract_offset` and
-`decode::timestamp_micros_wide`, which refuse a field and a filter literal of
-any of the five types so spelled, a parse keying the field failing on it.
+`decode::timestamp_micros_wide`, which refuse a filter literal of any of the
+five types so spelled, and a field where `datetime_in::datetime_reads` reads
+it at no major too (I83), a parse keying the field failing on it.
 
 **Re-verify.**
 
@@ -4283,7 +4284,8 @@ bounds.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `decode::interval_parts` and `decode::interval_time_micros`,
-which refuse a field and a filter literal so spelled.
+which refuse a filter literal so spelled, and a field where
+`datetime_in::interval_reads` reads it at no major too (I84).
 
 **Re-verify.**
 
@@ -5306,3 +5308,136 @@ awk '/^set_var_from_str\(/,/^}/' src/backend/utils/adt/numeric.c | grep -n "strt
 
 It prints `strtol` and `INT_MAX / 2` before v16, and from v16
 `PG_INT32_MAX / 2` and the underscore checks.
+
+---
+
+## I83 — `date_in`, `time_in`, `timetz_in` and the timestamp inputs read `ParseDateTime`'s fields, a word as a zone first, and v16 and v18 read less than before
+
+**Claim.** Each input splits its text by `ParseDateTime` — into at most 25
+fields within a work buffer of 129 bytes (`date`, `time`, `timetz`) or 153
+(the timestamps), a byte that is no blank, digit, letter, sign or punctuation
+refusing it — and reads the fields by `DecodeDateTime` (`date`, the
+timestamps) or `DecodeTimeOnly` (the times), then checks its own range. What
+the restoring server holds decides some texts: `DateStyle`'s field order reads
+a short number; a word is looked up as a zone abbreviation before it is read
+as a keyword — in the session zone's names from v18 and the
+`timezone_abbreviations` file, of which only the shipped `Australia` names a
+keyword, `SAT` — and, naming neither, is read by `pg_tzset` as a zone name,
+as a word with punctuation (`america/new_york`, `est5edt`) is once a month
+and day are read: a file under the zone directory, every hidden name skipped,
+or a POSIX zone spec, whose offsets run to 167 hours; and the session zone's
+offset applies where the text names none, which `TimeZone = 'FOO24'` takes
+a week from UTC. The majors differ thus: to v15 a unit word (`y`, `m`, `d`,
+`h`, `mm`, `s`) labels the number after it (`y2001m02d04`) and one with none
+after it is ignored (`2020-01-01 y`), which v16 refuses; v15 reads a point
+after the seconds with no digit; v16 adds `+infinity`; to v17 a run-together
+time after `t` is read by `atoi` whatever it holds, which v18 refuses, and
+v18 reads a timestamp whose time carries it across 2000-01-01 from a date
+before it (`1999-12-30 995959`), which v13 to v17 refuse.
+
+**Proof.** `src/backend/utils/adt/datetime.c` at each release: `ParseDateTime`
+is alike at all six; `DecodeDateTime` and `DecodeTimeOnly` read the `ptype`
+labels before v16 (upstream `5b3c5953`, "Tighten error checks in datetime
+input, and remove bogus "ISO" format"); `ParseFraction` reads a bare point from v15 and
+`DecodeNumberField` and `ParseFraction` refuse a non-digit from v18 (upstream
+`e5d64fd6545`, "Tighten parsing of datetime input");
+`DecodeTimezoneAbbrev` runs before `DecodeSpecial`, and from v18 asks
+`TimeZoneAbbrevIsKnown` first. `src/timezone/pgtz.c`'s `pg_tzset`,
+`pg_open_tzfile` and `scan_directory_ci`, and `localtime.c`'s `tzparse`.
+`src/backend/utils/adt/timestamp.c`'s `tm2timestamp` divides back to find an
+overflow to v17 and refuses a time across the epoch from a date before it;
+v18 checks the arithmetic. `src/timezone/tznames/Australia` defines `SAT`;
+no other shipped file and no abbreviation in the tzdata names a keyword.
+
+**Observed.** A differential run of 84,000 generated texts — 252,000 cases,
+each text put to every input it suits — in a `postgres:<major>-trixie`
+container at all six majors, under each `DateStyle` order with `Default`,
+`Australia` and a file naming each word no keyword names as a fixed
+abbreviation, beside a zone file `Foo/Bar`: `datetime_in::datetime_reads`
+read every case some server read and refused every case none read but those a
+zone named with punctuation decides, which no file of the run named, and a
+timestamp at its range's edge. `y2001m02d04`, `2020-01-01 y` and `12:00 m`
+are read to v15 only, `2020-01-01 t abcd-05` to v17 only, `1999-12-30 995959`
+by v18 only; `2020-01-01 mon sat` only under `Australia`; `2020-01-01 foo5`
+(a POSIX spec) at every major, and `2020-01-01 foo//bar` at none; under
+`TimeZone = 'FOO24'` v18 reads `4714-11-23 BC` as a `timestamptz`, and
+refuses a `TimeZone` of `FOO-168`. `datetime_in`'s
+`a_text_is_read_exactly_where_some_major_reads_it_under_some_setting` holds
+a sample with the majors reading each.
+
+**Scope limit.** A `timezone_abbreviations` file of the server's own making
+that names another keyword is not taken to exist: `BC` stays the era, as I61
+reads it. A `double` converted to an integer is converted as x86-64 converts
+one past its range, and `strtod` is glibc's (I81). A byte past `0x7F` is
+classed by the server's locale, so a text holding one is taken as read.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
+and server).
+
+**Relied on by:** `datetime_in::datetime_reads`, which refuses a field of the
+five types only where no major reads it under any of these settings, a reader
+in `decode` having read no value from it.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'case DTK_YEAR:\|reject consecutive unhandled units\|strspn(str, "0123456789.")\|TimeZoneAbbrevIsKnown(lowtoken' src/backend/utils/adt/datetime.c
+awk '/^tm2timestamp\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n 'pg_mul_s64_overflow\|date < -1'
+grep -n '^SAT' src/timezone/tznames/*
+```
+
+The first prints the labelled year to v15, the unit checks from v16, the
+digit check from v18 and the session zone's lookup from v18; the second
+`date < -1` to v17 and the checked product from v18; the third `Australia`'s
+two lines.
+
+---
+
+## I84 — `interval_in` reads `DecodeInterval`'s fields, then ISO 8601; v15 bounds what v13 and v14 wrap, and v17 reads less than before
+
+**Claim.** `interval_in` splits its text by `ParseDateTime` (a 256-byte work
+buffer), reads the fields right to left by `DecodeInterval`, a number taking
+the unit after it or, with none, the column's field qualifier's last field,
+and on a bad format reads the whole text by `DecodeISO8601Interval`
+(`P1Y2M3DT4H`, `P0001-02-03T04:05:06`, its numbers by `strtod`), then refuses
+a month total past `int32`. `IntervalStyle = sql_standard` changes signs and
+nothing read. v13 and v14 add each part into an `int`, wrapping, and a
+`double` into one as x86-64 converts it, so `4294968 millennium` is 704 years
+and `P-nanD` is read; v15 refuses each overflow. v17 reads `infinity`, ignores
+`at` and `on` and refuses a unit with no number before it, consecutive units
+and `ago` before the end, which v13 to v16 read (`1 day h`, `1 day  day`).
+
+**Proof.** `src/backend/utils/adt/datetime.c`'s `DecodeInterval`,
+`DecodeTimeForInterval` (`DecodeTime` before v15), `DecodeISO8601Interval`
+and `ParseISO8601Number`, and `timestamp.c`'s `interval_in` and
+`itmin2interval` (`tm2interval` before v15), at each release: v15's rework is
+upstream `e39f9904671` ("Fix overflow hazards in interval input and output
+conversions"), v17's the infinite intervals and `617f9b7d4b1` ("Tighten unit
+parsing in internal values").
+
+**Observed.** I83's differential run, its 42,000 `interval` texts put to
+`interval` and to each qualifier from `year` to `minute to second` under both
+styles: `datetime_in::interval_reads` agreed with every server on every one.
+`4294968 millennium` and `P-nanD` are read by 13 and 14 alone, `1 day h` and
+`1 day  day` by 13 to 16, `1 day at` by 17 and 18, `3000000000` from 15 and
+never as an `interval year`, `100:30` but as an `interval minute to second`.
+
+**Scope limit.** I83's on conversions and bytes past `0x7F`. The field
+qualifier is the column's typmod, which no reader here is handed (`KD98`).
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
+and server).
+
+**Relied on by:** `datetime_in::interval_reads`, which refuses an `interval`
+field only where no major reads it under any style or qualifier.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'AdjustYears(val, 1000\|tm_year += val \* 1000\|parsing_unit_val = true\|"ago" is only allowed' src/backend/utils/adt/datetime.c
+```
+
+It prints the wrapping millennium to v14, the checked one from v15, and from
+v17 the unit and `ago` checks.

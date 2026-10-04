@@ -971,8 +971,9 @@ validating it.
 A dump is read the same way whichever major wrote it. Where a newer
 PostgreSQL accepts a value an older one refused, the newer reading applies to
 every dump, since an older server could not have written the value. `oid`,
-`line`, `xid`, `xid8`, `cid` and `numeric` are the types whose input changed
-otherwise than by widening, and the table says what is done about each.
+`line`, `xid`, `xid8`, `cid`, `numeric`, the date and time types and
+`interval` are the types whose input changed otherwise than by widening, and
+the table says what is done about each.
 
 | What changed | From | What pgdt does |
 |---|---|---|
@@ -985,7 +986,11 @@ otherwise than by widening, and the table says what is done about each.
 | an `xid`, `xid8` or `cid` is refused where it is not a number in range, which 13–15 read as anything, `abc` as 0 | 16 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so never |
 | an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter, and refuses none of them; write the decimal digits |
 | a `numeric` exponent is read with no blank after its `e`, so `1e 5` is refused, and up to `1073741823` rather than short of it, so `0e1073741823` is read | 16 | Does not read either spelling, and refuses a field only where every major refuses it, so neither |
+| an `interval` part past `int32` is refused, which 13 and 14 wrap, reading `4294968 millennium` as 704 years | 15 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so reads these |
+| a date, time or timestamp no longer labels a number with a unit word, `y2001m02d04`, nor ignores one with no number after it, `2020-01-01 y` | 16 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so reads these |
 | `interval` holds `infinity` and `-infinity` | 17 | Has no Arrow value for them — see "`interval` keeps its three fields, and two kinds of value do not fit" above |
+| an `interval` unit word with no number before it, two units in a row and `ago` before the end are refused, `1 day h` | 17 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so reads these |
+| a run-together time after `t` holding a letter, `2020-01-01 t abcd-05`, is refused, and a timestamp whose time carries it from 1999 across 2000-01-01, `1999-12-30 995959`, is read | 18 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so reads both |
 
 ## When a value does not match its type
 
@@ -1030,8 +1035,10 @@ It does not check a value of `xml`, `money`, the `reg*` types or `aclitem`, of
 a type the dump does not declare, of a built-in pgdt has no reader of
 (`tsvector`, `pg_lsn`, `jsonpath`) or of an array of arrays, a `json` nested
 deeper than the restoring server's `max_stack_depth` lets it read, a date,
-time, timestamp or `interval` spelled in a way pgdt cannot read at all, which
-PostgreSQL may refuse or not (`abc` in a `date`), a value of a range
+time or timestamp whose reading the restoring server's settings decide — its
+`DateStyle`, a word its time zone abbreviations may name, a zone its zone
+files may hold, an offset its time zone may give — an `interval` refused only
+under its column's field qualifier (`3000000000` in an `interval year`), a value of a range
 type declaring its own `canonical` function, or a null element of an array,
 or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into

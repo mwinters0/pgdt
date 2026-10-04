@@ -5,6 +5,8 @@ use std::cmp::Ordering;
 use arrow::datatypes::i256;
 
 use crate::copy::{RawRow, RowSplit};
+use crate::datetime_in;
+use crate::datetime_in::DateTimeInput;
 use crate::decode;
 use crate::decode::{NumericColumn, Read, Unread};
 use crate::diagnostic::{Finding, Severity};
@@ -1459,19 +1461,31 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
             let refused = *exact || text.len() >= ENUM_LABEL_LIMIT;
             OrderKey::Int(position.ok_or(if refused { Unread::Refused } else { unparsed })? as i64)
         }
-        CompareKind::Date => OrderKey::Int(decode::date_days(text)?.into()),
-        CompareKind::Time => OrderKey::Int(decode::time_of_day_micros(text)?),
+        CompareKind::Date => {
+            OrderKey::Int(datetime_read(decode::date_days(text), DateTimeInput::Date, text)?.into())
+        }
+        CompareKind::Time => OrderKey::Int(datetime_read(
+            decode::time_of_day_micros(text),
+            DateTimeInput::Time,
+            text,
+        )?),
         // From PostgreSQL's epoch, not Arrow's: every value the server admits
         // keys, those past what `i64` counts from 1970 among them (I49).
         CompareKind::Timestamp { with_tz } => {
-            OrderKey::Int(decode::timestamp_postgres_micros(text, *with_tz)?)
+            let input =
+                if *with_tz { DateTimeInput::TimestampTz } else { DateTimeInput::Timestamp };
+            OrderKey::Int(datetime_read(
+                decode::timestamp_postgres_micros(text, *with_tz),
+                input,
+                text,
+            )?)
         }
-        CompareKind::Interval => OrderKey::Interval(interval_span(text)?),
+        CompareKind::Interval => OrderKey::Interval(interval_read(interval_span(text), text)?),
         CompareKind::IntervalFields => {
-            let (months, days, time) = decode::interval_parts(text)?;
+            let (months, days, time) = interval_read(decode::interval_parts(text), text)?;
             OrderKey::IntervalFields(months, days, time)
         }
-        CompareKind::TimeTz => timetz_key(text)?,
+        CompareKind::TimeTz => datetime_read(timetz_key(text), DateTimeInput::TimeTz, text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
         CompareKind::MacAddr { octets } => {
             macaddr_key(text, *octets).ok_or_else(|| match octets {
@@ -1507,6 +1521,24 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
             OrderKey::Text(text.trim_end_matches(' ').to_string())
         }
     })
+}
+
+/// A date, time or timestamp reader's answer, a text it reads no value from
+/// refused where no major's grammar reads it under any setting
+/// ([`datetime_in::datetime_reads`]). The readers read `*_out`'s form and
+/// little more, splitting a text otherwise than `ParseDateTime` does where it
+/// is not that form, so a refusal of theirs is put to the grammar too.
+fn datetime_read<T>(read: Read<T>, input: DateTimeInput, text: &str) -> Read<T> {
+    read.map_err(|_| {
+        if datetime_in::datetime_reads(input, text) { Unread::Unparsed } else { Unread::Refused }
+    })
+}
+
+/// [`datetime_read`] for an `interval` ([`datetime_in::interval_reads`]).
+fn interval_read<T>(read: Read<T>, text: &str) -> Read<T> {
+    read.map_err(
+        |_| if datetime_in::interval_reads(text) { Unread::Unparsed } else { Unread::Refused },
+    )
 }
 
 /// A filter literal's key, which is [`order_key`]'s — a field's — but for an
@@ -1910,10 +1942,8 @@ fn range_key(
 }
 
 /// **Whether a marked check finds PostgreSQL's input function refuses `text`
-/// as a field of a column compared by `plan`** — a date, time, timestamp or
-/// `interval` no reader here reads at all being refused by none (`KD90`):
-/// what a strict parse checks every field by
-/// ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
+/// as a field of a column compared by `plan`**: what a strict parse checks
+/// every field by ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
 /// range's bounds in order ([`checked_key`]). `json`, held as its text, is
@@ -6350,6 +6380,41 @@ mod tests {
             .collect()
     }
 
+    /// **A date, time, timestamp or `interval` field is refused exactly
+    /// where no supported major reads it** (I83, I84): text the readers do
+    /// not read is put to the grammar (`abc`, `KD90`'s case), and so is text
+    /// they refuse, split otherwise than `ParseDateTime` splits it — the time
+    /// zone `+99` in `12:34:56.789 t a/b-99:00` is part of a POSIX zone, and
+    /// `day` in `1 day  day` a unit with no count, which 13 to 16 read. Each
+    /// case's reading by the servers is `datetime_in`'s tests'.
+    #[test]
+    fn a_date_or_time_field_is_refused_only_where_no_major_reads_it() {
+        use CompareKind as K;
+        let tz = K::Timestamp { with_tz: true };
+        let cases: &[(CompareKind, &str, bool)] = &[
+            (K::Date, "abc", false),
+            (K::Date, "2020-02-30", false),
+            (K::Date, "2020-02-30x", false),
+            (K::Date, "y2001m02d04", true),
+            (K::Date, "2020-01-01 foo5", true),
+            (K::Time, "12:00 m", true),
+            (K::Time, "13:00 pm", false),
+            (K::TimeTz, "12:34:56.789 t a/b-99:00", true),
+            (K::TimeTz, "12:00:00+16", false),
+            (K::Timestamp { with_tz: false }, "294277-01-01", false),
+            (tz.clone(), "294277-01-01", true),
+            (tz, "294277-01-01 +00", false),
+            (K::Interval, "1 day  day", true),
+            (K::IntervalFields, "1 year 1 mon 1 day ! year", true),
+            (K::Interval, "1 day 1 day", false),
+            (K::IntervalFields, "abc", false),
+        ];
+        for (kind, text, read) in cases {
+            let refused = field_key(kind, text) == Err(Unread::Refused);
+            assert_eq!(refused, !read, "{kind:?} {text:?}");
+        }
+    }
+
     /// **In DataFusion's semantics a float literal is not read on
     /// PostgreSQL's terms** (`roadmap.md`, "A literal is guaranteed in
     /// `*_out`'s form and never read past `*_in`'s"): one past the range is
@@ -9189,7 +9254,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (60, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (61, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

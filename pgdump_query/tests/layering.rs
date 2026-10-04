@@ -30,6 +30,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("pgtype", 2),
     ("resolve", 2),
     ("decode", 2),
+    ("datetime_in", 2),
     ("nested", 2),
     ("unrepresentable", 2),
     ("batch", 3),

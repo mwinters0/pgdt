@@ -6,6 +6,7 @@
 pub mod batch;
 pub mod cache;
 pub mod copy;
+mod datetime_in;
 pub mod decode;
 pub mod diagnostic;
 mod error;
