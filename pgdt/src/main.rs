@@ -910,7 +910,9 @@ enum Command {
         /// Also report each `COPY` block's byte offsets and, per column that
         /// has something to say, what it became: the Arrow type it resolved
         /// to, or — for a column that came back as a string for a reason —
-        /// why. A column that is simply text says nothing. Turns the `user-defined types` count
+        /// why. A column that is simply text says nothing. Names beneath
+        /// each block what a strict parse does not check in it, which the
+        /// listing otherwise counts. Turns the `user-defined types` count
         /// into a listing of the types themselves, on a compressed dump adds
         /// the container's shape, and closes the listing, above its totals,
         /// with the statistics `parse` gathered, per table and column: over
@@ -2258,8 +2260,10 @@ async fn main() -> Result<()> {
             }
             // `map_file` reached EOF, so its censuses cover the whole file.
             // `--detail` is off, so the container line is not printed and
-            // nothing has to be read for it.
-            print_index(&run.index, None, false, false, true);
+            // nothing has to be read for it; a strict parse names what it
+            // left unchecked, any other gives the count alone.
+            let strict = matches!(postgres_invalid_values, CliParseInvalidValues::Strict);
+            print_index(&run.index, None, false, false, true, strict);
             println!();
             println!("wrote cache to {}", path.display());
         }
@@ -3150,7 +3154,7 @@ fn report(
     }
     println!("{}", completion_line(index.scanned_through, total_size));
     println!();
-    print_index(index, compression, detail, map, complete);
+    print_index(index, compression, detail, map, complete, detail);
     Ok(())
 }
 
@@ -3174,13 +3178,17 @@ fn compression_line(shape: &CompressionShape) -> String {
 /// stated. `complete` is passed straight through to [`block_resolutions`],
 /// which is where it means something, and **nothing here is qualified by how
 /// much of the file was scanned** — the coverage line says it once
-/// (see [`completion_line`]).
+/// (see [`completion_line`]). `unchecked` prints each block's `unchecked by
+/// a strict parse` lines, which every listing otherwise counts alone: `info`
+/// passes its `--detail`, `parse` whether it was strict, so what `info` shows
+/// follows its own flag and never which run built the cache.
 fn print_index(
     index: &DumpIndex,
     compression: Option<CompressionShape>,
     detail: bool,
     map: bool,
     complete: bool,
+    unchecked: bool,
 ) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata, detail);
@@ -3231,11 +3239,13 @@ fn print_index(
         if block.checked_in_full {
             println!("    checked: every value, by a strict parse");
         }
-        let unchecked = block_unchecked(index, block);
-        for line in unchecked_lines(&unchecked) {
-            println!("    unchecked by a strict parse: {line}");
+        let held = block_unchecked(index, block);
+        if unchecked {
+            for line in unchecked_lines(&held) {
+                println!("    unchecked by a strict parse: {line}");
+            }
         }
-        outside_strict += usize::from(!unchecked.is_empty());
+        outside_strict += usize::from(!held.is_empty());
         for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
             println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }
@@ -3310,9 +3320,14 @@ fn print_index(
         );
     }
     if outside_strict > 0 {
+        let where_listed = if unchecked {
+            ", each listed as `unchecked by a strict parse`"
+        } else {
+            " — `pgdt info --detail` lists it"
+        };
         println!(
-            "{outside_strict} of {} COPY block(s) hold what a strict parse does not check, each \
-             listed as `unchecked by a strict parse`",
+            "{outside_strict} of {} COPY block(s) hold what a strict parse does not \
+             check{where_listed}",
             blocks.len()
         );
     }
@@ -3320,8 +3335,7 @@ fn print_index(
 
 /// What a strict parse checks nothing of in `block`, read off the cache's
 /// preamble (`pgdump_query::strict_unchecked`): a property of the dump's
-/// declarations, so `parse` and `info` list it alike under every block,
-/// whichever mode built the cache.
+/// declarations, so the same whichever mode built the cache.
 fn block_unchecked(index: &DumpIndex, block: &pgdump_query::CopyBlock) -> StrictUnchecked {
     strict_unchecked(&block.header, index.metadata.as_ref(), block.database.as_deref())
 }

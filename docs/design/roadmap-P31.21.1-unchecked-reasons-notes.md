@@ -58,6 +58,5 @@ built-in type with no reader is outside the strict promise by scope".
 
 ## What the slices after this inherit
 
-- **31.21.2** changes where the lines print, not what they say.
 - **A built-in gaining a reader leaves `NoReader`'s list in `unread`** as well
   as gaining its arm; `NoReader` is the scope boundary the roadmap names.

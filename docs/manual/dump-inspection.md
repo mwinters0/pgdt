@@ -1192,8 +1192,9 @@ public.events (98765 rows)
   first by its `COPY` line, value and offset ([type
   handling](type-handling.md), "When a value does not match its type"). One a
   `parse --postgres-invalid-values strict` checked says so on a `checked:
-  every value, by a strict parse` line. Beneath every block, whichever mode
-  built the cache, an `unchecked by a strict parse:` line names each thing a
+  every value, by a strict parse` line. Under `--detail`, and after a
+  strict `parse`, whichever mode built the cache, an `unchecked by a strict
+  parse:` line beneath each block names each thing a
   strict `parse` does not check in it: a column, or a position within one
   (`v[]`, `v.field`), with its declared type and why — an input the restoring
   server decides, by its catalog or a type the dump does not declare, a
@@ -1201,15 +1202,17 @@ public.events (98765 rows)
   domain's `CHECK` — and
   each `CHECK` the table carries, its own or the parent's it inherits; a
   table the dump declares nowhere, as in a `--data-only` dump, gets one line
-  saying no value of it is checked. A closing line counts the blocks holding
-  any.
+  saying no value of it is checked. Every listing closes with a line
+  counting the blocks holding any, which, where the lines are not printed,
+  points at `pgdt info --detail`.
 
 Add `--detail` to also see each block's byte offsets and, per column that has
 something to say, what it became: the Arrow type it resolved to, or — for a
 column that came back as a string for a reason — why (see [type
 handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't). A column that is simply text says
-nothing and prints no line. On a compressed dump it also prints
+nothing and prints no line. It names beneath each block what a strict `parse`
+does not check in it, described above. On a compressed dump it also prints
 the container's shape, described under "`.xz` files are read directly" above.
 
 `--detail` also turns the `user-defined types` count into a listing of the

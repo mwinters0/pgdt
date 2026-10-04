@@ -1036,8 +1036,8 @@ or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into
 the partition or through its root must fall within, or a unique, primary or
 foreign key added once the data has loaded, which is when a restore checks it. What it does not
-check in your dump is named under each table of `parse`'s and `pgdt info`'s
-listing, on an `unchecked by a strict parse:` line per column — or element,
+check in your dump is named under each table of a strict `parse`'s listing
+and `pgdt info --detail`'s, on an `unchecked by a strict parse:` line per column — or element,
 field or bound within one — saying why, and per `CHECK` the table or a
 domain of its columns carries ([dump inspection](dump-inspection.md), "`info`:
 reporting what is known").

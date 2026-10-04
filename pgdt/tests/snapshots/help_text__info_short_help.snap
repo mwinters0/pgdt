@@ -22,13 +22,14 @@ Options:
       --detail                     Also report each `COPY` block's byte offsets and, per column that
                                    has something to say, what it became: the Arrow type it resolved
                                    to, or — for a column that came back as a string for a reason —
-                                   why. A column that is simply text says nothing. Turns the
-                                   `user-defined types` count into a listing of the types
-                                   themselves, on a compressed dump adds the container's shape, and
-                                   closes the listing, above its totals, with the statistics `parse`
-                                   gathered, per table and column: over how many blocks, at what
-                                   group size, and in how many groups each column keeps bounds and a
-                                   dictionary
+                                   why. A column that is simply text says nothing. Names beneath
+                                   each block what a strict parse does not check in it, which the
+                                   listing otherwise counts. Turns the `user-defined types` count
+                                   into a listing of the types themselves, on a compressed dump adds
+                                   the container's shape, and closes the listing, above its totals,
+                                   with the statistics `parse` gathered, per table and column: over
+                                   how many blocks, at what group size, and in how many groups each
+                                   column keeps bounds and a dictionary
       --map                        List every span the map holds (`docs/design/decisions.md`, "D34")
                                    — DDL objects and framing included, not just `COPY` blocks —
                                    instead of the per-table listing

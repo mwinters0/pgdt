@@ -751,13 +751,24 @@ fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
 }
 
 /// **A strict parse names what it leaves unchecked under each table, and
-/// `info` names the same**, in its listing and its export: a base type's
+/// `info --detail` names the same**, as its export does: a base type's
 /// column, a range declaring a canonical function, a domain's `CHECK`, and a
-/// table's `CHECK`, its own or inherited, each with its reason.
+/// table's `CHECK`, its own or inherited, each with its reason. Every other
+/// listing — a `default` parse's, `info`'s without `--detail` — names none,
+/// its closing count pointing at `info --detail`.
 #[test]
 fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     let (_dir, dump) = sandboxed("16/emitters/default.sql", "unchecked.sql");
     let source = dump.to_str().unwrap();
+    let counted = |listing: &str| {
+        assert!(
+            listing.contains(
+                "5 of 12 COPY block(s) hold what a strict parse does not check — `pgdt info \
+                 --detail` lists it"
+            ),
+            "{listing}"
+        );
+    };
     let unchecked = |listing: &str| -> Vec<String> {
         listing
             .lines()
@@ -765,6 +776,9 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
             .map(str::to_string)
             .collect()
     };
+    let said = run_ok(&["parse", "--source", source]);
+    assert_eq!(unchecked(&said), Vec::<String>::new(), "{said}");
+    counted(&said);
     let said = run_ok(&["parse", "--source", source, "--postgres-invalid-values", "strict"]);
     let listed = unchecked(&said);
     for expected in [
@@ -779,10 +793,16 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
         assert!(listed.iter().any(|l| l == expected), "{expected}: {said}");
     }
     assert!(
-        said.contains("5 of 12 COPY block(s) hold what a strict parse does not check"),
+        said.contains(
+            "5 of 12 COPY block(s) hold what a strict parse does not check, each listed as \
+             `unchecked by a strict parse`"
+        ),
         "{said}"
     );
     let info = run_ok(&["info", "--source", source]);
+    assert_eq!(unchecked(&info), Vec::<String>::new(), "{info}");
+    counted(&info);
+    let info = run_ok(&["info", "--source", source, "--detail"]);
     assert_eq!(unchecked(&info), listed, "{info}");
     let json = info_json(&dump);
     let child = json["resolution"]

@@ -35,12 +35,12 @@ external facts are I77 (a `CHECK`) and I76 (a domain's `NOT NULL`).
   **`DatabaseMetadata::table_checks`** walks parents as `column_not_null`
   does, skipping a parent's `NO INHERIT` one and merging a name met twice,
   which is how `--binary-upgrade`'s child re-declares its parent's.
-- **`pgdt parse` and `pgdt info` list it under every block**, whichever mode
-  built the cache, as `unchecked by a strict parse:` lines, a closing line
-  counting the blocks holding any; `--json` carries each block's
-  `unchecked` in `resolution`; `info --detail` marks a domain `CHECK`;
-  `--map` labels the `ADD CONSTRAINT … CHECK` span. The parse's long help
-  says so.
+- **A strict `parse` and `pgdt info --detail` list it under every block**,
+  whichever mode built the cache, as `unchecked by a strict parse:` lines,
+  every listing closing on a line counting the blocks holding any (31.21.2);
+  `--json` carries each block's `unchecked` in `resolution`; `info --detail`
+  marks a domain `CHECK`; `--map` labels the `ADD CONSTRAINT … CHECK` span.
+  The parse's long help says so.
 - **`CACHE_FORMAT_VERSION` is 58**: the persisted metadata and spans changed
   shape. `PERSISTED_INDEX` re-pinned; `GOLDEN_ORDER`'s digest did not move.
 - **Evidence**: `preamble.rs`'s `every_form_of_check_is_read_and_nothing_else`
@@ -69,9 +69,6 @@ external facts are I77 (a `CHECK`) and I76 (a domain's `NOT NULL`).
 
 ## What the slices after this inherit
 
-- **31.21.2** prints the per-block lines under `info --detail` and a strict
-  `parse` alone (same entry, "The strict listing's lines print where they are
-  asked for").
 - **31.22** changes no position here: `KD90` is per value.
 - **31.26** closes `KD97` by carrying the flag into `NestedPlan`; it then
   drops `Unchecked::DomainNotNullBeneath` and `domains_beneath`'s arm naming
