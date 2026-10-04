@@ -66,12 +66,22 @@ comparison oracle's (D70), which already stands in for them.
   writes it, or a `KD<k>` naming it as a known failure. No C parser: a
   branch is reached when what it appends is in some fixture.
 - **The function list is the functions whose output some pgdt reader
-  consumes**: `dumpTableSchema`, `dumpCompositeType`, `dumpEnumType`,
-  `dumpRangeType`, `dumpDomain`, `dumpBaseType`, `appendPsqlMetaConnect`,
-  `_printTocEntry`, `setup_connection`, and `pg_dumpall`'s database and
-  tablespace emitters. Their size at 18.6 bounds the register at a few
-  hundred literals: `dumpTableSchema` alone is about 1000 lines and 121
-  append calls.
+  consumes**, and the criterion binds, not an enumeration of it: a reader
+  taught a statement brings its emitter into the list. **A check holds the
+  two together** — each statement keyword the preamble and the scanner
+  recognise maps to the emitter writing it, and one mapping to no listed
+  emitter fails — because the list enumerated at this grilling drifted
+  silently as the readers grew
+  ([`../status/history/2026-10-04.md`](../status/history/2026-10-04.md),
+  "The emitter register's function list follows the readers"). The list
+  bounds the register at a few hundred literals: `dumpTableSchema` alone is
+  about 1000 lines and 121 append calls at 18.6.
+- **A buffer is a query only where it is read as one.** An append is a row
+  when some read of the buffer's `data` after it, before the buffer's next
+  reset, is not an execute call — so a function reusing one buffer for a
+  catalog query and then its output, or executing a statement when connected
+  and printing it otherwise, is listed like any other. A listed function may
+  name its first major, absent before it and a problem only from it on.
 - **The value-form half is hand-listed**: the `*_out` spellings a GUC
   `pg_dump` leaves unpinned or a typmod selects (I4), backend-side and
   small. It is what the session-setting axis below exists to reach.
