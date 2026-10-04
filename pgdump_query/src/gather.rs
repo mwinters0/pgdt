@@ -115,7 +115,8 @@ pub(crate) fn observer_for(
 /// columns a request tracks none of is observed by, and what re-reads a block
 /// the cache holds that no strict parse checked. It answers
 /// [`BlockGathered::Checked`], or [`BlockGathered::Refused`] at the first
-/// field its type's `*_in` refuses, and never declines, holding nothing.
+/// field its type's `*_in` refuses or NULL its column's `NOT NULL` refuses,
+/// and never declines, holding nothing.
 pub(crate) fn checker(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,

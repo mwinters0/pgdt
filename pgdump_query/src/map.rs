@@ -145,8 +145,8 @@ pub struct Span {
     /// text (`true`), as opposed to `toc` being inherited from an earlier
     /// entry's span (`false`) — `false` when `toc` is `None`, but for a comment
     /// block shaped like a TOC entry whose header did not parse and that a
-    /// statement closes, and `false` for a span classified `Framing`, whose
-    /// header is vetoed (`docs/design/decisions.md`, "D31"). An object
+    /// statement closes, and `false` for a statement classified `Framing`,
+    /// whose header is vetoed (`docs/design/decisions.md`, "D31"). An object
     /// census (`pgdt info`'s `object kinds:`) counts `toc_owned` spans, one
     /// per archive entry, while TOC coverage counts every attributed span
     /// (`toc.is_some()`), inherited ones included
@@ -407,7 +407,7 @@ pub enum SpanBody {
     },
     /// An `ALTER TYPE` that could change an enum's labels and that
     /// [`crate::preamble`] does not read — `RENAME VALUE`, `ADD VALUE IF NOT
-    /// EXISTS`, a label it cannot lex — naming the type it alters, or `None`
+    /// EXISTS`, a label no plain `'…'` literal spells — naming the type it alters, or `None`
     /// where it names none this grammar reads. No `pg_dump` writes one; it is
     /// recognized so [`crate::preamble::dump_metadata_from_spans`] can mark
     /// the labels it may have changed inexact.
@@ -800,9 +800,11 @@ impl Builder {
     }
 
     /// A TOC comment's own `Owner:`/`Tablespace:` fields, added to the
-    /// cross-reference sets — one of every span's two sources regardless of
-    /// its kind, `_printTocEntry()` writing those fields ahead of *every*
-    /// entry (`docs/design/decisions.md`, "D31"). The other is the statement
+    /// cross-reference sets — one of every span's two sources whatever its
+    /// kind but a statement classified `Framing`, whose header
+    /// `push_statement_span` vetoes first, `_printTocEntry()` writing those
+    /// fields ahead of *every* entry (`docs/design/decisions.md`, "D31"). The
+    /// other is the statement
     /// text, which `extract_statement_cross_refs` reads.
     fn harvest_toc_cross_refs(&mut self, toc: &Option<TocHeader>) {
         let Some(t) = toc else { return };
@@ -1479,12 +1481,14 @@ impl Builder {
         );
     }
 
-    /// Close whatever [`Mode::InsertRun`] has accumulated into a real span —
-    /// called from the non-`push_span` entry points that can interrupt a run
-    /// ([`on_copy_start`](Self::on_copy_start),
-    /// [`on_large_object_start`](Self::on_large_object_start)). A no-op if
-    /// `self.mode` is anything else.
+    /// Close whatever [`Mode::InsertRun`] has accumulated into a real span. A
+    /// no-op if `self.mode` is anything else.
     fn close_insert_run(&mut self) {
+        // deficiency: KD106 — `on_copy_start` and `on_large_object_start` call
+        // this after their own `mem::replace` has left `self.mode` `Idle`, so
+        // a run either one interrupts is dropped: its bytes extend the span
+        // before it and no `InsertRun` counts its rows. `pg_dump` ends every
+        // run with a blank line, which `step` closes it on.
         if let Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
         {

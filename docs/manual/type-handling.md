@@ -1038,7 +1038,8 @@ or comparing it, and a filter literal holding one, as PostgreSQL refuses
 both. `parse` checks
 only the values it reads anyway to gather statistics, which leaves to a query
 a column at the metadata level, an array's or a composite's elements, a
-range's bounds, a value longer than 256 bytes but a `bytea`, and every value
+range's bounds, a value longer than 256 bytes but a `bytea`, `varchar(n)` or
+`char(n)` one, and every value
 of a table whose statistics did not fit `--memory` — a query reading one still
 refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 `>` or `>=` reads the column.
@@ -1086,7 +1087,8 @@ read exactly)` after them.
 
 **`--postgres-invalid-values ignore` reads past them**, given to `parse` and to
 `query` alike, with no promise about what it reads: `parse` goes on past each,
-keeping no bounds, sum or dictionary of the stretch of its column it sits in, and `query`
+keeping no bounds or dictionary of the stretch of its column a value sits in
+and no sum of that column at all, and counting a null as the null it is, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
 sign and one below its smallest as zero, a `varchar(n)` or `char(n)` value
 past its length as the dump holds it, and a null in a `NOT NULL` column, or

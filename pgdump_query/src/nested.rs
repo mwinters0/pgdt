@@ -20,7 +20,7 @@
 //! The three container forms are *not* one quoting rule wearing three hats
 //! (I20, `docs/design/postgres-invariants.md`). They share a shape — a
 //! wrapper, a separator, a force-quote predicate and an escape convention —
-//! and disagree on every one of the last three:
+//! and, the separator being `,` in all three, disagree on the last two:
 //!
 //! | Form | Wrapper | Force-quote on | Inside quotes |
 //! |---|---|---|---|
@@ -52,7 +52,7 @@
 //! all things `*_in` accepts and `*_out` never emits — are rejected rather than
 //! guessed at. A dimension prefix `array_out` would not write (every lower
 //! bound 1, or a bound with leading zeros) is read as the bounds it states and
-//! renders as `array_out` writes them. The one deliberate leniency is that a bare `NULL` array element
+//! renders as `array_out` writes them. The other deliberate leniency is that a bare `NULL` array element
 //! is matched case-insensitively, as `array_in` does: `array_out` force-quotes
 //! any element whose text *is* `null` in any casing, so agreeing with
 //! PostgreSQL here can never misread real output.
@@ -308,8 +308,9 @@ fn scan_token<'a>(
         return Some((None, i));
     }
     // An unquoted token that *would* have been quoted is not something the
-    // matching `*_out` function wrote, so accepting it would break the one
-    // property this module promises: that decode and render are inverses.
+    // matching `*_out` function wrote, so accepting it would break the
+    // property this module promises: that render inverts decode on whatever
+    // `*_out` writes.
     if needs_quote(text, syntax) {
         return None;
     }

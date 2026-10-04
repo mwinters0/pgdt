@@ -5260,7 +5260,7 @@ both types in a `postgres:<major>-trixie` container (glibc 2.41) at all six
 majors, alike at each: `0x1.8p1`, `0x.8`, `nan(abc_1)` and `\t-1.5e3\n` are
 read; `1e`, `0x`, `0x1p`, `nan(a-b)`, `infinit`, `1_0` and `.e1` refused;
 `0x1.fffffffffffff8p1023` and `0x1p-1075` refused as out of range and
-`0x1.0000000000001p-1075` read.
+`0x1.0000000000001p-1075` read as `double precision` alone.
 
 **Scope limit.** glibc's. Another C library may convert less — a
 hexadecimal number or a tagged `nan` — or round a hexadecimal number

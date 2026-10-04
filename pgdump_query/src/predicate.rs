@@ -2488,7 +2488,9 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 /// - **[`Comparison::Decoded`] — both sides decoded per row**, for the kinds
 ///   where `*_out` is *not* injective over the values one file can hold: a
 ///   bare `numeric` (I33), an `interval` (I40), `jsonb` (I41), and
-///   `real`/`double precision`, which have two zeros. `time with time zone`
+///   `real`/`double precision`, which have two zeros. A `numeric` whose
+///   typmod `Decimal256` cannot carry shares the bare form's kind and so its
+///   comparison, `time with time zone`
 ///   and `inet`/`cidr` decode for a reason about this build instead, and
 ///   `macaddr` renders (`docs/design/decisions.md`, "D56").
 ///
@@ -2554,7 +2556,8 @@ fn equality_comparison(
         // deficiency: KD86 — the refusal is made whether or not the labels
         // were read exactly (`TypeKind::Enum`'s `exact`), so a literal naming
         // a label an unread `RENAME VALUE` or `ADD VALUE IF NOT EXISTS` gave
-        // the type is refused, where the server reads it; an ordering term
+        // the type is refused, where the server reads it; an ordering term,
+        // and any term comparing an array or composite holding the enum,
         // raises `FieldDecode` on a field naming one, having no position for
         // it. Comparing by text would answer `=` but no ordering.
         K::Enum { labels, .. } => labels.iter().find(|label| label.as_str() == text)?.clone(),

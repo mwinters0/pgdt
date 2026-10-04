@@ -1103,7 +1103,9 @@ fewer of them. Either prints one line, once per scan:
 budget could not afford, `budget` for readers it could not afford — and
 `would_hold_bytes=` is what the arrangement that was refused would have held,
 which is the read-buffer budget to raise `--memory` past. **No such line means the
-count was started as announced.**
+count was started as announced**, or that the block was left to one reader for
+its own sake: a file's tail shorter than one reader's share, or a block the
+source advises reading as one piece.
 
 **What no line means is that the count was started — not that every worker
 read at once, nor that it was the right count.** On a plain file above

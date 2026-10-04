@@ -516,7 +516,7 @@ pub enum TypeKind {
     ///
     /// `exact` says the labels are every label the type holds when its
     /// database's preamble ends, which is what makes a field naming another
-    /// one a refusal (I70). It is cleared by a label this build cannot lex
+    /// one a refusal (I70). It is cleared by a label no plain `'…'` literal spells
     /// and by an `ALTER TYPE` that could change the labels and is not read —
     /// `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, and any naming a type no
     /// definition here carries, which clears every enum's

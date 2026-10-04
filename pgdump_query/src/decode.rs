@@ -49,6 +49,10 @@ pub(crate) fn float_field<F: Float>(text: &str, invalid: PostgresInvalidValues) 
     match (float_in::<F>(text), invalid) {
         (Ok(value), _) => Some(value),
         (Err(Unread::Refused), PostgresInvalidValues::Ignore) => {
+            // deficiency: KD108 — Rust's parse reads no blank and no
+            // hexadecimal spelling, so ` 1e400` and `0x1p1024`, which
+            // `float_unread` refuses as out of range, are not rounded but
+            // unread, and a query reading one fails.
             let value = text.parse::<F>().ok()?;
             Some(if value.is_infinite() { value.largest_of_sign() } else { value })
         }
@@ -712,7 +716,7 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 }
 
 /// `YYYY-MM-DD`, its era already split off (`bc`), as days from 1970 —
-/// `None` for a day the calendar does not hold, as `ValidateDate` refuses it.
+/// [`Unread::Refused`] for a day the calendar does not hold, as `ValidateDate` refuses it.
 ///
 /// The year is three digits or more, as `pg_dump` writes four: a shorter one
 /// is read by `DateOrder` (`20-01-01` is a month 20 under `MDY`, the year 2020
@@ -810,7 +814,7 @@ const POW10: [i64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 /// time half of a `time with time zone` comparison — that type has no Arrow
 /// mapping of its own, so its *ordering* is the only path that decodes it.
 ///
-/// `None` past `time_overflows`' bounds, which `time`, `timetz` and both
+/// [`Unread::Refused`] past `time_overflows`' bounds, which `time`, `timetz` and both
 /// timestamps share: `24:00:00` is the last time of day, and `23:59:60` and
 /// `24:00:00` are both read, a timestamp's carrying into the next day.
 pub(crate) fn parse_time_of_day(s: &str) -> Read<(i64, i64)> {
@@ -983,8 +987,8 @@ const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
 /// the `int64` PostgreSQL stores it as (I49), so every value it admits fits,
 /// the three decades [`decode_timestamp_micros`] cannot count from 1970
 /// included. What its comparison orders (`crate::predicate`), where
-/// [`decode_timestamp_micros`] is what Arrow holds; `None` as that is for the
-/// infinities and for text that is not a timestamp.
+/// [`decode_timestamp_micros`] is what Arrow holds; [`Unread::Unparsed`] for
+/// the infinities, and an [`Unread`] for text that is not a timestamp.
 pub(crate) fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Read<i64> {
     let postgres = timestamp_micros_wide(s, with_tz)? - POSTGRES_EPOCH_UNIX_MICROS;
     Ok(i64::try_from(postgres).expect("PostgreSQL's range is an i64 of microseconds"))
@@ -1876,9 +1880,10 @@ fn getv4(b: &[u8], dst: &mut [u8], bits: &mut i32) -> bool {
 /// octet past eight significant digits, which glibc truncates, is left
 /// unvalued.
 // deficiency: KD85 — a run opening with a sign or a `0x` is read by glibc's
-// `%x`, which this does not model, so the text is counted read and never
-// refused, `08:00:2b:01:02:-1` and `0x0800.2b01.0203` among those the server
-// refuses (I68).
+// `%x`, which this does not model, so a text in which any layout tried meets
+// one is counted read and never refused, `08:00:2b:01:02:-1` and
+// `0x0800.2b01.0203` among those the server refuses (I68) — and so is a
+// malformed dash-separated one, `222:222` meeting its `-` where `%2x` reads.
 pub(crate) fn macaddr_unread(s: &str) -> Unread {
     // `x` is `%x`, `2` is `%2x`, anything else a byte the text must hold.
     const LAYOUTS: [&[u8]; 7] = [

@@ -313,7 +313,8 @@ pub struct StatisticsBackfill {
     /// these alone; in a column gathered only because the block held it, it
     /// is gone past and recorded as an ignoring pass records it
     /// ([`IgnoredRefusals`]), so a refusing parse fails on exactly the columns
-    /// it tracks, whichever runs gathered the block.
+    /// it tracks, whichever runs gathered the block — but a strict one, which
+    /// checks every column's fields first ([`crate::PostgresInvalidValues::Strict`]).
     pub requested: Vec<bool>,
     /// The group size gathered at: for a block re-read from its first row,
     /// the request's stated size, else [`ROW_GROUP_DEFAULT_SIZE_BYTES`]; for
@@ -612,10 +613,14 @@ impl IgnoredRefusals {
 
     /// Merge `other`'s, read over the same block from its first row as
     /// `held`'s was, either perhaps stopping at a decline: a column's first is
-    /// the dump's whichever read met it, and its count the larger, the read
-    /// covering more rows having met at least as many; a column only one
-    /// read gathered keeps that read's.
+    /// `held`'s, and its count the larger, the read covering more rows having
+    /// met at least as many; a column only one read gathered keeps that read's.
     pub fn merge(held: &mut Option<Self>, other: Option<Self>) {
+        // deficiency: KD107 — `held`'s first is the block's only where both
+        // reads met it. A read in pieces that declined can have gone past its
+        // first in the declining piece's unread tail and recorded a later one
+        // from a piece made before the decline, so a refusing parse over the
+        // cache names a later line than a restore fails at.
         for other in other.into_iter().flat_map(|other| other.columns) {
             match Self::slot(held, other.first.column) {
                 (columns, Ok(at)) => columns[at].count = columns[at].count.max(other.count),

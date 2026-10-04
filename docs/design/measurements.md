@@ -2957,7 +2957,7 @@ Each cell is wall clock, the plaintext rate it implies, and the speedup over tha
 
 **The `parse` legs run `pgdt parse` at `--jobs` N; the provider legs run `datafusion-cli-pgdump -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=N`**, the session's `target_partitions`, which the provider plans a scan's sub-streams against and DataFusion polls together. `pgdt query` is not timed: its in-order merge reads one sub-stream at a time past its first round ([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The query is `SELECT count(id), …, count(v_escaped) FROM public.perf WHERE id IS NOT NULL`, a `count` of each of the table's 16 columns: every column decoded typed and one row out, the filter keeping every row and leaving the scan's exact NULL counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, "D89"). Every provider cell answered alike, byte for byte, at every count over both files. **That binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in the `archlinux:base` image rather than `postgres:16`, whose glibc is older than the one it was linked against, so a provider cell is read against its own leg and never against a `parse` cell. Each carries the program's startup and the dump's registration, which `dynamic-filter-join`'s startup leg reads.
 
-Every row states the allowance `2550136832` — `--memory 2550136832` on a `parse` leg, `SET pgdump.memory = 2550136832` run ahead of the query in the same process on a provider leg — which leaves 2.00 GiB for read buffers, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, as is a provider scan planned at one partition, so an `.xz` leg's one-worker row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
+Every row states the allowance `2550136832` — `--memory 2550136832` on a `parse` leg, `SET pgdump.memory = 2550136832` run ahead of the query in the same process on a provider leg — which leaves 2.00 GiB for read buffers past the reserve and holds the worker count under 1.65 GiB by the margin, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, as is a provider scan planned at one partition, so an `.xz` leg's one-worker row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
 
 **A plain leg's count is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
 
@@ -3616,7 +3616,7 @@ from byte 0 to the first `COPY` header. It is the one region that never polls
 `ScanOptions::cancel` (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
 
 **koji: 63,333 bytes of 784,019,857,152** — 0.00000008 of the file. The whole
-uncancellable region is one read.
+region the flag is not polled over is one read.
 
 ```sh
 LC_ALL=C grep -m1 -b -a -E '^COPY .* FROM stdin;' /path/to/koji.dump | cut -c1-80
@@ -3644,7 +3644,7 @@ The second row is not a second measurement: it is the quadratic table's
 4000-block `parse` cell. **The pair is not a ratio worth quoting**: the full
 `parse` is priced by the map and the save throttle's gate, which the prepass
 does not touch, so the ratio moves when they do. What has to hold is that the
-uncancellable region is *milliseconds*: 31 ms here, on the most preamble-heavy
+unpolled region is *milliseconds*: 31 ms here, on the most preamble-heavy
 shape the generators can build, half of whose bytes are preamble — and 63,333
 bytes of one read on koji, against a scan of an hour.
 

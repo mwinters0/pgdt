@@ -136,8 +136,9 @@ pub struct QueryOptions {
     /// [`SchemaMode::Strings`], which reads every value as its text.
     pub unrepresentable: UnrepresentableMode,
     /// What a read does with a field its type's `*_in` refuses: fails on it,
-    /// by default, or decodes it as the decoders read it, which only a
-    /// float's past its type's range does ([`PostgresInvalidValues`]). The
+    /// by default, or reads it as the decoders do, which only a float past
+    /// its type's range, a `varchar(n)` or `char(n)` value past its length and
+    /// a NULL in a `NOT NULL` column are ([`PostgresInvalidValues`]). The
     /// typed read and every filter reading the field take it alike; a
     /// filter's literal is read as before.
     pub postgres_invalid_values: PostgresInvalidValues,
@@ -864,7 +865,8 @@ fn append_typed(
         // the column's enum does not declare, which `enum_in` refuses (I70),
         // reaches the batch: a field no default parse keyed — its column at
         // the metadata level, its block declined — is refused by no query but
-        // one whose ordering term keys it, though a strict parse refuses it
+        // one whose ordering term keys it or whose term compares an array or
+        // composite holding it, though a strict parse refuses it
         // wherever it sits. Refusing it here needs the labels and their
         // exactness, which this builder does not carry.
         ColumnBuilder::Dictionary(b) => b.append_value(text),

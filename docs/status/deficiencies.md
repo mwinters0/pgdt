@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD105 -->
-**`KD1`–`KD105` are allocated, and nothing at or below `KD105` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD108 -->
+**`KD1`–`KD108` are allocated, and nothing at or below `KD108` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -356,15 +356,16 @@ than reading as a phase nobody has sliced.
   in octal, `010` as 8, and refuse `08`. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.
 
-- **KD85** — a `macaddr` field whose octet opens with a sign or `0x`, which
-  `macaddr_in`'s `sscanf` reads by glibc's rules, is never refused, though
-  the server refuses some (`08:00:2b:01:02:-1`), so a parse keying it goes on
-  past one. **(c) unowned**; promoted by a hand-written dump holding one.
+- **KD85** — a `macaddr` field in which a layout `macaddr_in`'s `sscanf`
+  tries meets an octet opening with a sign or `0x`, read by glibc's rules,
+  is never refused, though the server refuses some (`08:00:2b:01:02:-1`, a
+  malformed dash-separated address), so a parse keying it goes on past one. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `pgdump_query/src/decode.rs`.
 
 - **KD86** — on an enum whose labels the preamble did not read exactly, a
   filter literal naming a label they lack is refused, and so is such a field
-  under an ordering filter, though the server may hold the label. **(c)
+  under an ordering filter or one comparing an array or composite holding it,
+  though the server may hold the label. **(c)
   unowned**; promoted by a hand-written dump renaming or adding a label in a
   statement this build does not read. Detail:
   `pgdump_query/src/predicate.rs`.
@@ -378,7 +379,8 @@ than reading as a phase nobody has sliced.
 - **KD88** — a query's typed read of an enum column emits a label the type
   does not declare, which `enum_in` refuses, so such a field no default
   parse keyed — its column at the metadata level, its block declined — is
-  refused only by a query ordering on the column. **(c) unowned**; a strict
+  refused only by a query ordering on the column or comparing an array or
+  composite holding it. **(c) unowned**; a strict
   parse refuses it, so promoted by a query wanted to refuse it without one.
   Detail: `pgdump_query/src/batch.rs`.
 
@@ -448,3 +450,22 @@ than reading as a phase nobody has sliced.
   block, where a restore refuses it as a corrupt or mismatched marker (I91);
   `pg_dump` ends every line with an LF. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail: `pgdump_query/src/scan.rs`.
+
+- **KD106** — an `INSERT` run that a `COPY` header or a large object's
+  `BEGIN;` follows with no blank line between them is dropped rather than
+  closed: its bytes extend the span before it and no `InsertRun` counts its
+  rows; `pg_dump` ends every run with a blank line. **(c) unowned**; promoted
+  by a hand-written dump holding one. Detail: `pgdump_query/src/map.rs`.
+
+- **KD107** — a block's recorded first refused field, under
+  `--postgres-invalid-values ignore`, can be a later one than a restore
+  fails at, where a read in pieces declined before it and another read of
+  the block is merged into it, so a refusing parse over the cache names that
+  later line. **(c) unowned**; promoted by a refusing parse naming the wrong
+  line. Detail: `pgdump_query/src/statistics.rs`.
+
+- **KD108** — under `--postgres-invalid-values ignore`, a float past its
+  type's range spelled with blanks around it or in hexadecimal is not read
+  as the parse rounds it, as a decimal one is, but fails a query decoding
+  it; `float_out` writes neither spelling. **(c) unowned**; promoted by a
+  hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.

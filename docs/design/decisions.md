@@ -644,8 +644,8 @@ pages are snapshotted with width and bare-flag assertions. Rejected: `long_help`
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go
 L1 bytes and structure (`io`, `scan`, `copy`, `lex`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
-`statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `nested`), L3 Arrow assembly
-(`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`, `summary`); `error`, `lib` and
+`statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`,
+`unrepresentable`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`, `summary`); `error`, `lib` and
 `instrument` in none; CLI and embedders above L4. `use` points down or sideways; a module gets a
 layer before it is written (`tests/layering.rs`). Deviations, moved with a `batch` rework:
 `read_table` (L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a split (D74).

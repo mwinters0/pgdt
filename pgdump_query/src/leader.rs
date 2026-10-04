@@ -411,7 +411,7 @@ pub(crate) struct Shortfall {
 /// **The one rule of its own it applies is a floor**, and it is derived rather than
 /// chosen: cutting spends a whole reader's worth of the caller's budget on
 /// each piece and charges the scheduling besides, so what is cut must be worth
-/// more than one `partition_bytes()`. The region's extent is not known here —
+/// at least one `partition_bytes()`. The region's extent is not known here —
 /// finding it *is* the work — so the bound available is what is left of the
 /// file, which the region cannot exceed: the floor leaves a file's tail
 /// shorter than one reader's charge to the serial scanner, and a small region

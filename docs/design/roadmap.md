@@ -664,8 +664,9 @@ are in [its inbox](roadmap-P33-line-bound-inbox.md).
 
 **pgdt's aim is to capture every object and property a dump declares**, not
 the subset a typed read needs today. The preamble holds columns, types,
-collations and extensions; the map's TOC enrichment and census name the
-rest without reading them ([`decisions.md`](decisions.md), "D31" and "D36").
+collations and extensions, and of a table its `INHERITS` parents, `OF` type,
+`NOT NULL`s, `CHECK`s and partition bound; the map's TOC enrichment and
+census name the rest without reading them ([`decisions.md`](decisions.md), "D31" and "D36").
 Every valid statement — table constraints, `ALTER TABLE` in each of its forms,
 indexes, `ATTACH PARTITION` — folded into one model of each object's state at
 the end of the file, so a reader that wants a property finds it held. Sketched
