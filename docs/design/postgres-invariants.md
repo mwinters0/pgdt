@@ -5347,7 +5347,11 @@ input, and remove bogus "ISO" format"); `ParseFraction` reads a bare point from 
 `src/backend/utils/adt/timestamp.c`'s `tm2timestamp` divides back to find an
 overflow to v17 and refuses a time across the epoch from a date before it;
 v18 checks the arithmetic. `src/timezone/tznames/Australia` defines `SAT`;
-no other shipped file and no abbreviation in the tzdata names a keyword.
+no other shipped file and no abbreviation in the tzdata names a keyword, and
+none will: tzdata's `theory.html` ("Time zone abbreviations") allows three to
+six characters, alphabetic ones only "in common use among English-speakers"
+and numeric (`-05`) otherwise, so its abbreviations are as closed as
+PostgreSQL's files (D55).
 
 **Observed.** A differential run of 84,000 generated texts — 252,000 cases,
 each text put to every input it suits — in a `postgres:<major>-trixie`
@@ -5365,8 +5369,10 @@ refuses a `TimeZone` of `FOO-168`. `datetime_in`'s
 `a_text_is_read_exactly_where_some_major_reads_it_under_some_setting` holds
 a sample with the majors reading each.
 
-**Scope limit.** A `timezone_abbreviations` file of the server's own making
-that names another keyword is not taken to exist: `BC` stays the era, as I61
+**Scope limit.** Zone names are taken as open and abbreviations as closed
+(D55): a word no keyword names may name a zone some tzdata holds, and a file
+of the server's own making that
+names another keyword is not taken to exist, so `BC` stays the era, as I61
 reads it. A `double` converted to an integer is converted as x86-64 converts
 one past its range, and `strtod` is glibc's (I81). A byte past `0x7F` is
 classed by the server's locale, so a text holding one is taken as read.
@@ -5384,13 +5390,18 @@ in `decode` having read no value from it.
 cd /mnt/wd12t/upstream/postgres/release-v<N>
 grep -n 'case DTK_YEAR:\|reject consecutive unhandled units\|strspn(str, "0123456789.")\|TimeZoneAbbrevIsKnown(lowtoken' src/backend/utils/adt/datetime.c
 awk '/^tm2timestamp\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n 'pg_mul_s64_overflow\|date < -1'
-grep -n '^SAT' src/timezone/tznames/*
+kw=$(awk '/^static const datetkn datetktbl\[\]/,/^};/' src/backend/utils/adt/datetime.c | grep -o '{"[a-z0-9]*"' | tr -d '{"')
+grep -ho '^[A-Za-z]\+' src/timezone/tznames/* | tr A-Z a-z | sort -u | grep -Fx -f <(echo "$kw")
+find /usr/share/zoneinfo -type f ! -path '*/posix/*' ! -path '*/right/*' -exec zdump -v {} + 2>/dev/null | awk '{print $14}' | grep -x '[A-Za-z]*' | tr A-Z a-z | sort -u | grep -Fx -f <(echo "$kw")
 ```
 
 The first prints the labelled year to v15, the unit checks from v16, the
 digit check from v18 and the session zone's lookup from v18; the second
-`date < -1` to v17 and the checked product from v18; the third `Australia`'s
-two lines.
+`date < -1` to v17 and the checked product from v18. The last two print each
+keyword a shipped abbreviation file names, `sat` alone and matching
+`datetime_in::SHADOWED_KEYWORDS`, and each the installed tzdata uses as an
+abbreviation in force, none; `zdump` rather than `tzdata.zi`, whose `%s`
+crossed with every rule letter spells `AT` where no zone ever used it.
 
 ---
 

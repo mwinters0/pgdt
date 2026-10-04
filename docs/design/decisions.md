@@ -450,7 +450,7 @@ simpler or faster, none is refused at runtime cost, and the rest are `PredicateV
 other spellings, field and literal alike; `jsonb`, its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH`
 is fixed: a Rust stack overflow aborts. A field fails a parse only where a `pg-refuses` check refuses it (`decode::Unread`). Rejected: failing on every field read as
 no value, which aborts on a shortfall a restore reads. An enum's undeclared label is refused only where the preamble read its labels exactly (I70).
-A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Rejected: the newest or any major's, refusing what an older restore reads; the dump's own major, a dump being read alike whichever wrote it.
+A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Rejected: the newest or any major's, refusing what an older restore reads; the dump's own major, a dump being read alike whichever wrote it. A server's settings are taken at their most permissive, zone names open (tzdata grows unbidden) and abbreviations closed, PostgreSQL's files by release and tzdata's by its own policy (I83). Rejected: a file of the server's own shadowing a keyword, forgoing `13:00 pm` and I61's era edge for a server nobody runs; the tzdata at hand, refusing a zone a later one names.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).

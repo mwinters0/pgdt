@@ -81,8 +81,8 @@ instrument can see").
 
 Spec: [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md).
 **A `KD<k>` of the phase's class that a round files is appended here as the
-next `31.<M>` in the same change, without asking**: the maintainer's standing
-approval, in the spec's opening note.
+next `31.<M>` in the same change, without asking** (`31.28` is spent): the
+maintainer's standing approval, in the spec's opening note.
 
 - [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
 - [x] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are — [notes](../design/roadmap-P31.2-generator-capabilities-notes.md)
@@ -113,13 +113,13 @@ approval, in the spec's opening note.
 - [x] **31.21.1** The listing's reasons split by what decides the input: the `reg*` types and `aclitem` named as read against the restoring server's catalog, a type the dump does not declare as read by the restoring server, a composite whose fields did not parse and an array shape read as its text as pgdt's reading falling short; `pg_node_tree`, `pg_ndistinct`, `pg_dependencies`, `pg_mcv_list`, the `pg_brin_*_summary` types and `gtsvector` refused at any non-NULL field, and `"char"`, `refcursor`, `xid`, `xid8` and `cid` read by a grammar refusing nothing — the three numeric ones refused only where every supported major refuses, their v16 narrowing an invariant — each leaving the listing; `NoReader` then names only a built-in type pgdt has no reader of — [notes](../design/roadmap-P31.21.1-unchecked-reasons-notes.md)
 - [x] **31.21.2** The `unchecked by a strict parse:` lines printed beneath each block by `pgdt info --detail` and after a `strict` `parse` alone, every other listing keeping the closing count, which points at `info --detail`; `--json` carries each block's `unchecked` as before — [notes](../design/roadmap-P31.21.2-unchecked-placement-notes.md)
 - [x] **31.22** The integers, `numeric`, the floats, `uuid` and `jsonb`, each read by a reader of its own, tell a field their `*_in` refuses from a spelling it reads and this build does not, each refusal marked against an invariant and refusing only what every supported major refuses, so such text no reader here reads fails a parse keying it, a `strict` one included, exactly where PostgreSQL refuses it — [notes](../design/roadmap-P31.22-reader-refusals-notes.md)
-- [x] **31.22.1** Dates, times, timestamps and `interval` do the same, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90` — [notes](../design/roadmap-P31.22.1-datetime-refusals-notes.md)
+- [x] **31.22.1** Dates, times, timestamps and `interval` do the same, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it in some column of its type, an `interval`'s field qualifiers tried together, closing `KD90` — [notes](../design/roadmap-P31.22.1-datetime-refusals-notes.md)
+- [ ] **31.22.2** An `interval` column's field qualifier carried to its comparison kind, so a strict parse refuses a field only that qualifier refuses — `3000000000` in an `interval year` — closing `KD98`
 - [ ] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91`
 - [ ] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94`
 - [ ] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95`
 - [ ] **31.26** A `NOT NULL` domain's NULL element of an array, or NULL field of a composite, refused wherever the field is read, as `array_in` and `record_in` refuse it, closing `KD97`
 - [ ] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse
-- [ ] **31.28** An `interval` column's field qualifier carried to its comparison kind, so a strict parse refuses a field only that qualifier refuses — `3000000000` in an `interval year` — closing `KD98`
 
 ## Not started
 
@@ -151,17 +151,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A keyword is read as the keyword unless a shipped abbreviation file names
-  it** (31.22.1). `DecodeTimezoneAbbrev` looks a word up in the server's
-  `timezone_abbreviations` file before the keywords, so a file of the
-  server's own naming `bc` reads `4714-11-23 BC` as AD; taking every word as
-  possibly shadowed would refuse almost nothing and undo I61's era refusals,
-  so only `Australia`'s `SAT` is (`datetime_in::SHADOWED_KEYWORDS`, I83's
-  scope limit). Reconsidering means choosing between those two, or a rule
-  for which custom files count.
-- **31.22.1 is ticked with the `interval` qualifier filed apart** as `KD98`
-  and 31.28 under the standing approval, rather than split as 31.22.2. The
-  classifier tells refused from unread; what it lacks is the column's typmod,
-  which no comparison kind carries, and carrying it reworks `pgtype`'s
-  register arms (D71). Reconsidering renumbers 31.28 as 31.22.2 and unticks
-  31.22.1.

@@ -50,9 +50,9 @@ but the classifier is a whole grammar: `datetime.c`'s input path, ported.
 
 ## Negative results and limits
 
-- **A keyword shadowed by a file of the server's own is not modelled**: it
-  would undo I61's era, `4714-11-23 BC` read as AD under a file naming `bc`,
-  which the run's first pass showed. Only `Australia`'s `SAT` is read so.
+- **A keyword shadowed by a file of the server's own is not modelled** (D55):
+  `4714-11-23 BC` reads as AD under a file naming `bc`, which the run's first
+  pass showed. Only `Australia`'s `SAT` is read so.
 - **A conversion of a `double` to an integer is x86-64's**, the least integer
   past its range or for NaN, which is what 13 and 14 read `P-nanD` by; and
   glibc's `ERANGE` on a hexadecimal subnormal is taken as not set.
@@ -62,7 +62,7 @@ but the classifier is a whole grammar: `datetime.c`'s input path, ported.
 
 ## What the slices after this inherit
 
-- **31.28** (`KD98`) owes `interval`'s field qualifier to the comparison kind:
+- **31.22.2** (`KD98`) owes `interval`'s field qualifier to the comparison kind:
   `pgtype::builtin_name` drops `year to month` as it names the type, and
   `datetime_in::INTERVAL_RANGES` is tried whole in its place. A qualifier
   changes the unit a bare number takes and reads `a:b` as minutes and seconds

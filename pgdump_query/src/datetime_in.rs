@@ -18,11 +18,13 @@
 //! - `DateStyle`'s field order, and `IntervalStyle`: every one is tried;
 //! - an `interval` column's field qualifier, which no reader here is handed:
 //!   every one is tried (`KD98`);
-//! - a word, which `DecodeTimezoneAbbrev` looks up in the server's
-//!   `timezone_abbreviations` file before the keywords, so any word may be a
-//!   fixed-offset zone abbreviation — the most permissive reading of a zone,
-//!   setting the zone and nothing else — and a word no keyword names is read
-//!   as one, `pg_tzset`'s zone name being no more permissive;
+//! - a word no keyword names, which may name a zone some tzdata holds, zone
+//!   names being open: it is read as a fixed-offset zone, the most
+//!   permissive reading of a zone, setting the zone and nothing else, which
+//!   `pg_tzset`'s zone name and an abbreviation are no more permissive than;
+//! - a keyword, which `DecodeTimezoneAbbrev` reads as a zone first where a
+//!   `timezone_abbreviations` file or, from v18, the session zone's tzdata
+//!   names it: abbreviations are closed, so only `SHADOWED_KEYWORDS` are (D55);
 //! - a zone named with punctuation (`america/new_york`, `est5edt`), which
 //!   `pg_tzset` reads from the server's zone files or as a POSIX zone spec:
 //!   such a zone exists, fixed or not;
@@ -274,7 +276,7 @@ const DATETKTBL: &[(&str, i32, i32)] = &[
 /// The keywords a `timezone_abbreviations` file PostgreSQL ships names as a
 /// zone abbreviation, which `DecodeTimezoneAbbrev` reads first: `SAT`, South
 /// Australian time in `Australia`. A file of the server's own naming another
-/// keyword is not taken to exist, the grammar's words keeping their meaning.
+/// keyword is not taken to exist (D55).
 const SHADOWED_KEYWORDS: [&[u8]; 1] = [b"sat"];
 
 /// `deltatktbl`, the units an `interval` reads, alike at every major.
@@ -347,7 +349,8 @@ const DELTATKTBL: &[(&str, i32, i32)] = &[
 /// `time_in`, `timetz_in`, `timestamp_in` or `timestamptz_in`, each a
 /// `ParseDateTime` and a `DecodeDateTime` or `DecodeTimeOnly`, then its own
 /// range check.
-// pg-refuses: I83 — every refusal here is every major's, under every setting.
+// pg-refuses: I83 — every refusal here is every major's, under every setting
+// and set of zone names, abbreviations closed (D55).
 pub(crate) fn datetime_reads(input: DateTimeInput, text: &str) -> bool {
     let b = text.as_bytes();
     if b.iter().any(|&c| c == 0 || c >= 0x80) {

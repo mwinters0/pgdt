@@ -432,5 +432,5 @@ than reading as a phase nobody has sliced.
 - **KD98** — an `interval` field refused only under its column's field
   qualifier — `3000000000` in an `interval year`, `100:30` in an `interval
   minute to second` — passes a strict parse, the qualifier reaching no
-  comparison kind. **(b) owned by P31**, 31.28. Detail:
+  comparison kind. **(b) owned by P31**, 31.22.2. Detail:
   `pgdump_query/src/datetime_in.rs`.
