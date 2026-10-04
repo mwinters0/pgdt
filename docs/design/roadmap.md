@@ -346,7 +346,8 @@ ships names it — and an `interval` where no `IntervalStyle` does.
 **Every behaviour differing between
 supported majors is in the manual with the reading chosen for it**
 ([`../manual/type-handling.md`](../manual/type-handling.md), "Where
-PostgreSQL majors differ"); walking the
+PostgreSQL majors differ"), the comparison oracle asking each row at every
+major and failing a transition no row records (D70); walking the
 invariants at a new major is what finds a new one. **The literal ceiling governs the PostgreSQL semantics only**:
 under DataFusion's a literal is DataFusion's value, compared as DataFusion
 compares the emitted column.

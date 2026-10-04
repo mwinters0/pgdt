@@ -139,10 +139,12 @@ COLLATIONS = ("C", "default")
 TYPE_CASES: list[TypeCases] = [
     TypeCases("boolean", ("false", "true", None), ("t", "yes", "maybe")),
     TypeCases("smallint", ("-32768", "0", "32767", None), ("32768",)),
+    # `0x1F` and `1_000` are v16's spellings (I80), refused before it: the
+    # manual's "Where PostgreSQL majors differ" row, asked.
     TypeCases(
         "integer",
         ("-2147483648", "0", "2147483647", None),
-        ("2147483648", " 42 ", "1e3"),
+        ("2147483648", " 42 ", "1e3", "0x1F", "1_000"),
     ),
     TypeCases(
         "bigint",
@@ -156,10 +158,14 @@ TYPE_CASES: list[TypeCases] = [
     # since well before 13, and still does through v18's `uint32in_subr` -- and
     # this build refuses the literal instead, so the wrap belongs in the file as
     # the server's answer rather than as a value pgdt claims to order.
+    #
+    # `010`, `08` and `0x1F` are v16's base 0 (I66): `010` is 10 before it and 8
+    # from it, `08` read before it and refused from it -- two of the named
+    # non-additive cells `oracle_differences.EXEMPT` lists.
     TypeCases(
         "oid",
         ("0", "2147483647", "2147483648", "4294967295", None),
-        ("-1", "4294967296", "abc"),
+        ("-1", "4294967296", "abc", "010", "08", "0x1F"),
     ),
     # IEEE has all three specials, so `real`/`double precision` reach them
     # through the column's own decoder rather than as a carried position.
@@ -192,16 +198,24 @@ TYPE_CASES: list[TypeCases] = [
     # Bare `numeric` preserves scale, so `1.5` and `1.50` are equal and both
     # writable -- one of the two types the fast path must exempt. Its
     # infinities are v14+, and on 13 they are a rejection the differ reads as
-    # additive.
+    # additive. The other inputs are v16's (I82): `0x1F`, `1_000` and
+    # `0e1073741823` read from it alone, and `1e 5` before it alone.
     TypeCases(
         "numeric",
         ("-Infinity", "-1", "0", "1.5", "1.50", "Infinity", "NaN", None),
-        ("abc",),
+        ("abc", "0x1F", "1_000", "1e 5", "0e1073741823"),
     ),
+    # A scale past the precision is v15's typmod (I51); before it the column
+    # cannot be declared, so every cell is a rejection the differ reads as
+    # additive. No input: one refused past the precision would move from the
+    # typmod's SQLSTATE to the overflow's, a non-additive cell asking nothing.
+    TypeCases("numeric(2,5)", ("-0.00099", "0", "0.00012", None)),
     TypeCases(
         "date",
         ("-infinity", "0001-01-01", "2024-01-01", "9999-12-31", "infinity", None),
-        ("2024-13-01", "0044-01-01 BC", "10000-01-01"),
+        # `y2001m02d04` labels each number with a unit word, read to v15 alone
+        # (I83).
+        ("2024-13-01", "0044-01-01 BC", "10000-01-01", "y2001m02d04"),
     ),
     TypeCases(
         "time without time zone",
@@ -224,7 +238,10 @@ TYPE_CASES: list[TypeCases] = [
             "infinity",
             None,
         ),
-        ("294277-01-01 00:00:00",),
+        # The two of v18's (I83): a run-together time after `t` holding a
+        # letter, read to v17 alone, and a time carrying a date before
+        # 2000-01-01 across it, read by v18 alone.
+        ("294277-01-01 00:00:00", "2020-01-01 t abcd-05", "1999-12-30 995959"),
     ),
     TypeCases(
         "timestamp with time zone",
@@ -251,7 +268,17 @@ TYPE_CASES: list[TypeCases] = [
             "infinity",
             None,
         ),
-        ("1.5 hours", "P1Y2M", "1 century"),
+        # The last three are the majors' (I62, I84): an hour past v14's bound,
+        # read from v15; a count past `int32`, wrapped by 13 and 14 and refused
+        # from v15; and a unit word with no number before it, read to v16.
+        (
+            "1.5 hours",
+            "P1Y2M",
+            "1 century",
+            "2147483648:00:00",
+            "4294968 millennium",
+            "1 day h",
+        ),
     ),
     TypeCases(
         "uuid",
@@ -466,6 +493,18 @@ TYPE_CASES: list[TypeCases] = [
         "int2vector",
         ("", "0", "1 2", "1 2 3", "2", "10", "-32768 32767", None),
         ("  1   2  ", "+1 01", "32768", "1,2", "1\t2", "{1,2}"),
+    ),
+    # Three types v16 narrowed from reading anything (I79): `abc` is 0 to v15
+    # and refused from v16. `xid` and `cid` have `=` alone; `xid8` orders.
+    TypeCases("xid", ("0", "42", "4294967295", None), ("abc",)),
+    TypeCases("xid8", ("0", "42", "18446744073709551615", None), ("abc",)),
+    TypeCases("cid", ("0", "42", "4294967295", None), ("abc",)),
+    # `line` has `=` alone, and v14 rebuilt its two-point arithmetic (I74):
+    # the first input is read by 13 alone, the second refused by 13 alone.
+    TypeCases(
+        "line",
+        ("{1,-1,0}", "{0,1,2}", None),
+        ("[(2,0),(3,1.7976931348623157e308)]", "[(Infinity,1),(0,2)]"),
     ),
     TypeCases("public.base_domain", ("-1", "0", "1", None)),
     # The outer domain is NOT NULL, so SQL NULL is a *rejection* here and an

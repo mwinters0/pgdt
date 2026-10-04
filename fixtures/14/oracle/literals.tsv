@@ -16,6 +16,8 @@ integer	\N	ok	\N
 integer	2147483648	E22003	\N
 integer	 42 	ok	42
 integer	1e3	E22P02	\N
+integer	0x1F	E22P02	\N
+integer	1_000	E22P02	\N
 bigint	-9223372036854775808	ok	-9223372036854775808
 bigint	0	ok	0
 bigint	9223372036854775807	ok	9223372036854775807
@@ -29,6 +31,9 @@ oid	\N	ok	\N
 oid	-1	ok	4294967295
 oid	4294967296	E22003	\N
 oid	abc	E22P02	\N
+oid	010	ok	10
+oid	08	ok	8
+oid	0x1F	E22P02	\N
 real	-Infinity	ok	-Infinity
 real	-0	ok	-0
 real	0	ok	0
@@ -75,6 +80,14 @@ numeric	Infinity	ok	Infinity
 numeric	NaN	ok	NaN
 numeric	\N	ok	\N
 numeric	abc	E22P02	\N
+numeric	0x1F	E22P02	\N
+numeric	1_000	E22P02	\N
+numeric	1e 5	ok	100000
+numeric	0e1073741823	E22003	\N
+numeric(2,5)	-0.00099	E22023	\N
+numeric(2,5)	0	E22023	\N
+numeric(2,5)	0.00012	E22023	\N
+numeric(2,5)	\N	E22023	\N
 date	-infinity	ok	-infinity
 date	0001-01-01	ok	0001-01-01
 date	2024-01-01	ok	2024-01-01
@@ -84,6 +97,7 @@ date	\N	ok	\N
 date	2024-13-01	E22008	\N
 date	0044-01-01 BC	ok	0044-01-01 BC
 date	10000-01-01	ok	10000-01-01
+date	y2001m02d04	ok	2001-02-04
 time without time zone	00:00:00	ok	00:00:00
 time without time zone	12:34:56.789012	ok	12:34:56.789012
 time without time zone	24:00:00	ok	24:00:00
@@ -101,6 +115,8 @@ timestamp without time zone	2024-01-01 00:00:00.123456	ok	2024-01-01 00:00:00.12
 timestamp without time zone	infinity	ok	infinity
 timestamp without time zone	\N	ok	\N
 timestamp without time zone	294277-01-01 00:00:00	E22008	\N
+timestamp without time zone	2020-01-01 t abcd-05	ok	2020-01-01 00:00:00
+timestamp without time zone	1999-12-30 995959	E22008	\N
 timestamp with time zone	-infinity	ok	-infinity
 timestamp with time zone	2024-01-01 00:00:00+00	ok	2024-01-01 00:00:00+00
 timestamp with time zone	2024-01-01 05:30:00+05:30	ok	2024-01-01 00:00:00+00
@@ -117,6 +133,9 @@ interval	\N	ok	\N
 interval	1.5 hours	ok	01:30:00
 interval	P1Y2M	ok	1 year 2 mons
 interval	1 century	ok	100 years
+interval	2147483648:00:00	E22015	\N
+interval	4294968 millennium	ok	704 years
+interval	1 day h	ok	1 day
 uuid	00000000-0000-0000-0000-000000000000	ok	00000000-0000-0000-0000-000000000000
 uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	ok	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	ok	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
@@ -234,6 +253,26 @@ int2vector	32768	E22003	\N
 int2vector	1,2	E22P02	\N
 int2vector	1\t2	E22P02	\N
 int2vector	{1,2}	E22P02	\N
+xid	0	ok	0
+xid	42	ok	42
+xid	4294967295	ok	4294967295
+xid	\N	ok	\N
+xid	abc	ok	0
+xid8	0	ok	0
+xid8	42	ok	42
+xid8	18446744073709551615	ok	18446744073709551615
+xid8	\N	ok	\N
+xid8	abc	ok	0
+cid	0	ok	0
+cid	42	ok	42
+cid	4294967295	ok	4294967295
+cid	\N	ok	\N
+cid	abc	ok	0
+line	{1,-1,0}	ok	{1,-1,0}
+line	{0,1,2}	ok	{0,1,2}
+line	\N	ok	\N
+line	[(2,0),(3,1.7976931348623157e308)]	E22003	\N
+line	[(Infinity,1),(0,2)]	ok	{0,-1,1}
 public.base_domain	-1	ok	-1
 public.base_domain	0	ok	0
 public.base_domain	1	ok	1

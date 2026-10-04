@@ -664,11 +664,11 @@ answer. Four things move on regeneration (`\restrict`, `now()`, `--verbose` time
 Every `ColumnResolution` variant but `MetadataNotScanned`, which no scan produces, must come from a real fixture column (I36).
 
 ### D70 "Agrees with PostgreSQL" is a generated check
-`fixtures/<major>/oracle/` commits the server's own answers, asked through two typed columns (a cast
-folds constants and derives collation), every ordered pair, refusals recorded as `E<sqlstate>`,
-nothing version-gated, text asked under `C` and `"default"` both; ICU is in one fixture and out of
-the oracle. Semantics are the newest major's, and `oracle_differences.py` checks the union rule
-(I35) by classing every cell moving between adjacent majors as additive or not (I37, I38, I42).
+`fixtures/<major>/oracle/` commits the server's own answers, asked through two typed columns (a cast folds constants and derives
+collation), every ordered pair, refusals recorded as `E<sqlstate>`, nothing version-gated, text asked under `C` and `"default"` both;
+ICU is in one fixture and out of the oracle. Semantics are the newest major's, and `oracle_differences.py` checks the union rule (I35)
+by classing every cell moving between adjacent majors as additive or not (I37, I38, I42), a non-additive one failing unless its
+literal is exempt beside the invariant narrowing it, each move a row of the manual's "Where PostgreSQL majors differ", every row asked.
 
 ### D71 Register arms are parsed out of `pgtype.rs`
 A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the finest closable unit, the join is

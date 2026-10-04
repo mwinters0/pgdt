@@ -8839,12 +8839,13 @@ mod tests {
         /// The declared types whose columns the register refuses an ordering
         /// operator on, so none of their ordering cells is asserted: `xml`, an enum with
         /// no labels, a user-defined base type with no operator class, a domain
-        /// over a type the register has no comparison for, and the two nested
-        /// shapes that are refused for reasons of their own. They are here
-        /// because the register refuses them, not because PostgreSQL orders
-        /// them: it orders the domain over `box` (by area), the nested array
-        /// and the multirange from v14, and refuses `xml` and the base type
-        /// itself (`E42883`).
+        /// over a type the register has no comparison for, the built-ins it
+        /// has no comparison for (`line`, `xid`, `xid8`, `cid`), and the two
+        /// nested shapes that are refused for reasons of their own. They are
+        /// here because the register refuses them, not because PostgreSQL
+        /// orders them: it orders the domain over `box` (by area), `xid8`, the
+        /// nested array and the multirange from v14, and refuses `xml`, the
+        /// base type itself, `line`, `xid` and `cid` (`E42883`).
         ///
         /// **`json` is not here**, and the difference is the point: this build
         /// *does* compare it, bytewise, and every cell of it is `E42883`
@@ -8853,7 +8854,7 @@ mod tests {
         ///
         /// It is asserted as an exact set, so a type that quietly stops
         /// comparing fails here rather than passing as one more skip.
-        const REFUSED: [&str; 6] = [
+        const REFUSED: [&str; 10] = [
             // I26: an array whose element is itself an array. The column
             // resolves to text, and the register agrees rather than claiming
             // an order the resolver has already declined.
@@ -8868,6 +8869,10 @@ mod tests {
             "public.mybase",
             "public.empty_enum",
             "xml",
+            "line",
+            "xid",
+            "xid8",
+            "cid",
         ];
 
         /// The cases where this build's answer is knowingly not
@@ -9197,8 +9202,21 @@ mod tests {
         /// it: one the server refuses is refused, and one it reads is either
         /// read to the same value or refused as a shortfall (D55). A literal an
         /// older major refuses and the newest reads is the newest's (I35), as
-        /// a v13 `numeric`'s `Infinity` is.
+        /// a v13 `numeric`'s `Infinity` is. One two majors read apart — a
+        /// non-additive literal row of `fixtures/oracle-differences.tsv`, each
+        /// exempt there beside its invariant — is read to the value some
+        /// major reads it to, or refused.
         fn literals_are_read_as_the_server_reads_them(declared: &[&str]) {
+            let apart: BTreeSet<(Option<String>, Option<String>)> = rows(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/oracle-differences.tsv"),
+            )
+            .into_iter()
+            .filter(|row| {
+                row[2].as_deref() == Some("literals") && row[10].as_deref() == Some("non-additive")
+            })
+            .map(|row| (row[3].clone(), row[4].clone()))
+            .collect();
+            let mut read_apart: BTreeMap<(String, String), (bool, Vec<u32>)> = BTreeMap::new();
             let newest = MAJORS[MAJORS.len() - 1];
             let newest_reads: BTreeSet<(Option<String>, Option<String>)> =
                 rows(&fixture(newest, "oracle/literals.tsv"))
@@ -9217,7 +9235,21 @@ mod tests {
                     let status = row[2].as_deref().expect("a row has a status");
                     let (got, _) =
                         answer(ty, None, &[], PredicateOp::Eq, row[3].as_deref(), literal);
-                    if status == "ok" {
+                    if apart.contains(&(row[0].clone(), row[1].clone())) {
+                        let (met, readers) =
+                            read_apart.entry((ty.to_string(), literal.to_string())).or_default();
+                        match &got {
+                            Ok(truth) if status == "ok" => {
+                                *met |= *truth == Truth::True;
+                                readers.push(major);
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                assert!(e.contains("filter value"), "{major} {ty} {literal}: {e}");
+                                *met = true;
+                            }
+                        }
+                    } else if status == "ok" {
                         // A spelling this build does not read is a shortfall,
                         // not a disagreement (D55).
                         if let Err(e) = &got {
@@ -9231,6 +9263,9 @@ mod tests {
                     }
                     asserted += 1;
                 }
+            }
+            for ((ty, literal), (met, readers)) in read_apart {
+                assert!(met, "{ty} {literal}: read to no value {readers:?} read it to");
             }
             assert!(asserted > 0, "no row of {declared:?} was read");
         }
@@ -9476,7 +9511,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (68, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (68, 18_361_034_400_210_632_537);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

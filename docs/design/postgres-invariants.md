@@ -23,9 +23,11 @@ cd scripts && uv run oracle_differences.py
 ```
 
 Every comparison the new server answers differently from its predecessor is
-named there with a verdict, and a **non-additive** one fails the run: it is a
-break in the union rule I35 records, and it has to be understood before
-anything is re-verified by hand. Re-file the differences with `--write` once it
+named there with a verdict, and a **non-additive** one fails the run unless its
+literal is exempt beside an invariant: it is a break in the union rule I35
+records, and it has to be understood before anything is re-verified by hand.
+So does a transition no row of the manual's "Where PostgreSQL majors differ"
+records. Re-file the differences with `--write` once it
 is. The prose half — re-running each entry's `Re-verify` grep — is unchanged.
 
 *Rejected: a separate "things to check when a new major lands" document.*
@@ -2074,13 +2076,16 @@ grep -n -A15 '^apply_typmod_special' src/backend/utils/adt/numeric.c
 
 ---
 
-## I35 — No two supported majors disagree about a typed comparison both accept
+## I35 — No two supported majors disagree about a typed comparison both accept, but where a named narrowing does
 
 **Claim.** Across PostgreSQL 13–18, for every case in the comparison oracle's
 table, two adjacent majors that both *accept* an input agree about it: the same
 six operators answer the same way, and an accepted literal canonicalizes to the
 same `*_out` text. Every difference between two adjacent majors is **additive**
-— the older one rejected an input the newer one accepts.
+— the older one rejected an input the newer one accepts — but a cell asking a
+literal `oracle_differences.py`'s `EXEMPT` names, each beside the invariant
+recording a major's narrowing (I62, I66, I74, I79, I82, I83, I84), where the
+manual's "Where PostgreSQL majors differ" says which reading is taken.
 
 So version-varying semantics are implemented as the *newest* semantics
 unconditionally, with no branch on the version the dump header records: an
@@ -2093,19 +2098,15 @@ and adding a case is the only answer available (`comparison_oracle.py`'s
 one per major. And the text answers are **glibc's** — the Debian (`-trixie`)
 fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
-([`decisions.md`](decisions.md), "D70"). Two non-additive differences are known
-outside the cases: `oidin`'s base, which v16 changed (I66), and
-`numeric_in`'s exponent, which v16 stopped reading by `strtol` (I82), each
-of which [`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s
-form and never read past `*_in`'s" takes as an exception to the newest's
-semantics.
+([`decisions.md`](decisions.md), "D70"). Each exempt narrowing is an exception
+[`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s form and
+never read past `*_in`'s" takes to the newest's semantics.
 
-**Proof.** Observed: `fixtures/<13…18>/oracle/` holds 2020 comparisons and 317
-literals per major as the server itself answered them, and
-`fixtures/oracle-differences.tsv` holds every cell that differs between
-adjacent majors — 533 of them, all additive. The three transitions are
-`numeric`'s infinities and the two multirange types at v14, and `interval`'s
-infinities at v17.
+**Proof.** Observed: `fixtures/<13…18>/oracle/` holds each major's answers as
+the server itself gave them, and `fixtures/oracle-differences.tsv` every cell
+that differs between adjacent majors, each additive or exempt, and each
+answering to a row of the manual's table, every row asked
+(`oracle_differences.py`'s `MANUAL_ROWS`).
 
 **Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 — the versions
 `meta.tsv` records per major.
@@ -2121,8 +2122,8 @@ infinities, "D45" for the four `*_in` transcriptions, and
 cd scripts && uv run oracle_differences.py
 ```
 
-A non-additive difference is the failure, and it is reported by case with both
-answers. Re-taking the oracles themselves is
+A non-additive difference no exemption names is the failure, and it is
+reported by case with both answers. Re-taking the oracles themselves is
 `uv run generate_fixtures.py --skip-dumps`.
 
 ---

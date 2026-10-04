@@ -167,6 +167,48 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 13	14	comparisons	numeric	\N	Infinity	\N	>=	E22P02	u	additive
 13	14	comparisons	numeric	\N	Infinity	\N	=	E22P02	u	additive
 13	14	comparisons	numeric	\N	Infinity	\N	<>	E22P02	u	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	<	E22P02	f	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	<=	E22P02	f	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	>	E22P02	t	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	>=	E22P02	t	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	=	E22P02	f	additive
+13	14	comparisons	numeric	1e 5	-Infinity	\N	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1e 5	\N	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	<	E22P02	E22003	non-additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	<=	E22P02	E22003	non-additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	>	E22P02	E22003	non-additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	>=	E22P02	E22003	non-additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	=	E22P02	E22003	non-additive
+13	14	comparisons	numeric	-Infinity	0e1073741823	\N	<>	E22P02	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	<	E42883	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	<=	E42883	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	>	E42883	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	>=	E42883	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	=	f	E22003	non-additive
+13	14	comparisons	line	[(2,0),(3,1.7976931348623157e308)]	{1,-1,0}	\N	<>	E42883	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	<	E42883	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	<=	E42883	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	>	E42883	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	>=	E42883	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	=	f	E22003	non-additive
+13	14	comparisons	line	{1,-1,0}	[(2,0),(3,1.7976931348623157e308)]	\N	<>	E42883	E22003	non-additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	<	E22003	E42883	non-additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	<=	E22003	E42883	non-additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	>	E22003	E42883	non-additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	>=	E22003	E42883	non-additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	=	E22003	f	additive
+13	14	comparisons	line	[(Infinity,1),(0,2)]	{1,-1,0}	\N	<>	E22003	E42883	non-additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	<	E22003	E42883	non-additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	<=	E22003	E42883	non-additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	>	E22003	E42883	non-additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	>=	E22003	E42883	non-additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	=	E22003	f	additive
+13	14	comparisons	line	{1,-1,0}	[(Infinity,1),(0,2)]	\N	<>	E22003	E42883	non-additive
 13	14	comparisons	int4multirange	{}	{}	\N	<	E42704	f	additive
 13	14	comparisons	int4multirange	{}	{}	\N	<=	E42704	t	additive
 13	14	comparisons	int4multirange	{}	{}	\N	>	E42704	f	additive
@@ -319,6 +361,8 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 13	14	comparisons	public.myrange_multi	\N	\N	\N	<>	E42704	u	additive
 13	14	literals	numeric	-Infinity	\N	\N	status	E22P02	ok	additive
 13	14	literals	numeric	Infinity	\N	\N	status	E22P02	ok	additive
+13	14	literals	line	[(2,0),(3,1.7976931348623157e308)]	\N	\N	status	ok	E22003	non-additive
+13	14	literals	line	[(Infinity,1),(0,2)]	\N	\N	status	E22003	ok	additive
 13	14	literals	int4multirange	{}	\N	\N	status	E42704	ok	additive
 13	14	literals	int4multirange	{[1,10)}	\N	\N	status	E42704	ok	additive
 13	14	literals	int4multirange	{[1,5),[6,10)}	\N	\N	status	E42704	ok	additive
@@ -326,6 +370,277 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 13	14	literals	public.myrange_multi	{}	\N	\N	status	E42704	ok	additive
 13	14	literals	public.myrange_multi	{[1.5,10.5)}	\N	\N	status	E42704	ok	additive
 13	14	literals	public.myrange_multi	\N	\N	\N	status	E42704	ok	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	-0.00099	\N	<>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	<	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	>=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	<	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	>=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	-0.00099	0.00012	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	-0.00099	\N	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	<=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	-0.00099	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0	\N	<>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	<	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	>=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0	0.00012	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0	\N	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	<=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	-0.00099	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	<=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	=	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	0	\N	<>	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	<	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	<=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	>=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	=	E22023	t	additive
+14	15	comparisons	numeric(2,5)	0.00012	0.00012	\N	<>	E22023	f	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	0.00012	\N	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	-0.00099	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	0.00012	\N	<>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	<	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	<=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	>	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	>=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	=	E22023	u	additive
+14	15	comparisons	numeric(2,5)	\N	\N	\N	<>	E22023	u	additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	<	E22015	E22007	non-additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	<=	E22015	E22007	non-additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	>	E22015	E22007	non-additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	>=	E22015	E22007	non-additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	=	E22015	E22007	non-additive
+14	15	comparisons	interval	2147483648:00:00	-infinity	\N	<>	E22015	E22007	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	<	E22007	E22015	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	<=	E22007	E22015	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	>	E22007	E22015	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	>=	E22007	E22015	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	=	E22007	E22015	non-additive
+14	15	comparisons	interval	4294968 millennium	-infinity	\N	<>	E22007	E22015	non-additive
+14	15	literals	numeric(2,5)	-0.00099	\N	\N	status	E22023	ok	additive
+14	15	literals	numeric(2,5)	0	\N	\N	status	E22023	ok	additive
+14	15	literals	numeric(2,5)	0.00012	\N	\N	status	E22023	ok	additive
+14	15	literals	numeric(2,5)	\N	\N	\N	status	E22023	ok	additive
+14	15	literals	interval	2147483648:00:00	\N	\N	status	E22015	ok	additive
+14	15	literals	interval	4294968 millennium	\N	\N	status	ok	E22015	non-additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	<	E22P02	f	additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	<=	E22P02	f	additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	>	E22P02	t	additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	>=	E22P02	t	additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	=	E22P02	f	additive
+15	16	comparisons	integer	0x1F	-2147483648	\N	<>	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	<	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	<=	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	>	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	>=	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	=	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	0x1F	\N	<>	E22P02	t	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	<	E22P02	f	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	<=	E22P02	f	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	>	E22P02	t	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	>=	E22P02	t	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	=	E22P02	f	additive
+15	16	comparisons	integer	1_000	-2147483648	\N	<>	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	<	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	<=	E22P02	t	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	>	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	>=	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	=	E22P02	f	additive
+15	16	comparisons	integer	-2147483648	1_000	\N	<>	E22P02	t	additive
+15	16	comparisons	oid	08	0	\N	<	f	E22P02	non-additive
+15	16	comparisons	oid	08	0	\N	<=	f	E22P02	non-additive
+15	16	comparisons	oid	08	0	\N	>	t	E22P02	non-additive
+15	16	comparisons	oid	08	0	\N	>=	t	E22P02	non-additive
+15	16	comparisons	oid	08	0	\N	=	f	E22P02	non-additive
+15	16	comparisons	oid	08	0	\N	<>	t	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	<	t	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	<=	t	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	>	f	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	>=	f	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	=	f	E22P02	non-additive
+15	16	comparisons	oid	0	08	\N	<>	t	E22P02	non-additive
+15	16	comparisons	oid	0x1F	0	\N	<	E22P02	f	additive
+15	16	comparisons	oid	0x1F	0	\N	<=	E22P02	f	additive
+15	16	comparisons	oid	0x1F	0	\N	>	E22P02	t	additive
+15	16	comparisons	oid	0x1F	0	\N	>=	E22P02	t	additive
+15	16	comparisons	oid	0x1F	0	\N	=	E22P02	f	additive
+15	16	comparisons	oid	0x1F	0	\N	<>	E22P02	t	additive
+15	16	comparisons	oid	0	0x1F	\N	<	E22P02	t	additive
+15	16	comparisons	oid	0	0x1F	\N	<=	E22P02	t	additive
+15	16	comparisons	oid	0	0x1F	\N	>	E22P02	f	additive
+15	16	comparisons	oid	0	0x1F	\N	>=	E22P02	f	additive
+15	16	comparisons	oid	0	0x1F	\N	=	E22P02	f	additive
+15	16	comparisons	oid	0	0x1F	\N	<>	E22P02	t	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	<	E22P02	f	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	<=	E22P02	f	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	>	E22P02	t	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	>=	E22P02	t	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	=	E22P02	f	additive
+15	16	comparisons	numeric	0x1F	-Infinity	\N	<>	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	<	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	<=	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	>	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	>=	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	=	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	0x1F	\N	<>	E22P02	t	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	<	E22P02	f	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	<=	E22P02	f	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	>	E22P02	t	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	>=	E22P02	t	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	=	E22P02	f	additive
+15	16	comparisons	numeric	1_000	-Infinity	\N	<>	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	<	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	<=	E22P02	t	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	>	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	>=	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	=	E22P02	f	additive
+15	16	comparisons	numeric	-Infinity	1_000	\N	<>	E22P02	t	additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	<	f	E22P02	non-additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	<=	f	E22P02	non-additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	>	t	E22P02	non-additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	>=	t	E22P02	non-additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	=	f	E22P02	non-additive
+15	16	comparisons	numeric	1e 5	-Infinity	\N	<>	t	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	<	t	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	<=	t	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	>	f	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	>=	f	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	=	f	E22P02	non-additive
+15	16	comparisons	numeric	-Infinity	1e 5	\N	<>	t	E22P02	non-additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	<	E22003	f	additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	<=	E22003	f	additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	>	E22003	t	additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	>=	E22003	t	additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	=	E22003	f	additive
+15	16	comparisons	numeric	0e1073741823	-Infinity	\N	<>	E22003	t	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	<	E22003	t	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	<=	E22003	t	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	>	E22003	f	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	>=	E22003	f	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	=	E22003	f	additive
+15	16	comparisons	numeric	-Infinity	0e1073741823	\N	<>	E22003	t	additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	<	f	E22007	non-additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	<=	f	E22007	non-additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	>	t	E22007	non-additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	>=	t	E22007	non-additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	=	f	E22007	non-additive
+15	16	comparisons	date	y2001m02d04	-infinity	\N	<>	t	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	<	t	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	<=	t	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	>	f	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	>=	f	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	=	f	E22007	non-additive
+15	16	comparisons	date	-infinity	y2001m02d04	\N	<>	t	E22007	non-additive
+15	16	comparisons	xid	abc	0	\N	<	E42883	E22P02	non-additive
+15	16	comparisons	xid	abc	0	\N	<=	E42883	E22P02	non-additive
+15	16	comparisons	xid	abc	0	\N	>	E42883	E22P02	non-additive
+15	16	comparisons	xid	abc	0	\N	>=	E42883	E22P02	non-additive
+15	16	comparisons	xid	abc	0	\N	=	t	E22P02	non-additive
+15	16	comparisons	xid	abc	0	\N	<>	f	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	<	E42883	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	<=	E42883	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	>	E42883	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	>=	E42883	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	=	t	E22P02	non-additive
+15	16	comparisons	xid	0	abc	\N	<>	f	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	<	f	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	<=	t	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	>	f	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	>=	t	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	=	t	E22P02	non-additive
+15	16	comparisons	xid8	abc	0	\N	<>	f	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	<	f	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	<=	t	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	>	f	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	>=	t	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	=	t	E22P02	non-additive
+15	16	comparisons	xid8	0	abc	\N	<>	f	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	<	E42883	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	<=	E42883	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	>	E42883	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	>=	E42883	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	=	t	E22P02	non-additive
+15	16	comparisons	cid	abc	0	\N	<>	E42883	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	<	E42883	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	<=	E42883	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	>	E42883	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	>=	E42883	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	=	t	E22P02	non-additive
+15	16	comparisons	cid	0	abc	\N	<>	E42883	E22P02	non-additive
+15	16	literals	integer	0x1F	\N	\N	status	E22P02	ok	additive
+15	16	literals	integer	1_000	\N	\N	status	E22P02	ok	additive
+15	16	literals	oid	010	\N	\N	output	10	8	non-additive
+15	16	literals	oid	08	\N	\N	status	ok	E22P02	non-additive
+15	16	literals	oid	0x1F	\N	\N	status	E22P02	ok	additive
+15	16	literals	numeric	0x1F	\N	\N	status	E22P02	ok	additive
+15	16	literals	numeric	1_000	\N	\N	status	E22P02	ok	additive
+15	16	literals	numeric	1e 5	\N	\N	status	ok	E22P02	non-additive
+15	16	literals	numeric	0e1073741823	\N	\N	status	E22003	ok	additive
+15	16	literals	date	y2001m02d04	\N	\N	status	ok	E22007	non-additive
+15	16	literals	xid	abc	\N	\N	status	ok	E22P02	non-additive
+15	16	literals	xid8	abc	\N	\N	status	ok	E22P02	non-additive
+15	16	literals	cid	abc	\N	\N	status	ok	E22P02	non-additive
 16	17	comparisons	interval	-infinity	-infinity	\N	<	E22007	f	additive
 16	17	comparisons	interval	-infinity	-infinity	\N	<=	E22007	t	additive
 16	17	comparisons	interval	-infinity	-infinity	\N	>	E22007	f	additive
@@ -530,5 +845,50 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 16	17	comparisons	interval	-infinity	1 century	\N	>=	E22007	f	additive
 16	17	comparisons	interval	-infinity	1 century	\N	=	E22007	f	additive
 16	17	comparisons	interval	-infinity	1 century	\N	<>	E22007	t	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	<	E22007	f	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	<=	E22007	f	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	>	E22007	t	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	>=	E22007	t	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	=	E22007	f	additive
+16	17	comparisons	interval	2147483648:00:00	-infinity	\N	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	2147483648:00:00	\N	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	<	E22007	E22015	non-additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	<=	E22007	E22015	non-additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	>	E22007	E22015	non-additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	>=	E22007	E22015	non-additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	=	E22007	E22015	non-additive
+16	17	comparisons	interval	-infinity	4294968 millennium	\N	<>	E22007	E22015	non-additive
 16	17	literals	interval	-infinity	\N	\N	status	E22007	ok	additive
 16	17	literals	interval	infinity	\N	\N	status	E22007	ok	additive
+16	17	literals	interval	1 day h	\N	\N	status	ok	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	<	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	<=	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	>	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	>=	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	=	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	2020-01-01 t abcd-05	-infinity	\N	<>	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	<	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	<=	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	>	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	>=	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	=	f	E22007	non-additive
+17	18	comparisons	timestamp without time zone	-infinity	2020-01-01 t abcd-05	\N	<>	t	E22007	non-additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	<	E22008	f	additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	<=	E22008	f	additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	>	E22008	t	additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	>=	E22008	t	additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	=	E22008	f	additive
+17	18	comparisons	timestamp without time zone	1999-12-30 995959	-infinity	\N	<>	E22008	t	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	<	E22008	t	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	<=	E22008	t	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	>	E22008	f	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	>=	E22008	f	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	=	E22008	f	additive
+17	18	comparisons	timestamp without time zone	-infinity	1999-12-30 995959	\N	<>	E22008	t	additive
+17	18	literals	timestamp without time zone	2020-01-01 t abcd-05	\N	\N	status	ok	E22007	non-additive
+17	18	literals	timestamp without time zone	1999-12-30 995959	\N	\N	status	E22008	ok	additive

@@ -79,4 +79,4 @@ the record beside its mark 31.13.2's
 
 ## What the wrap inherits
 
-- Every P31 slice is ticked. `M210` and `M211` stay queued, blocking nothing.
+- Every P31 slice is ticked.
