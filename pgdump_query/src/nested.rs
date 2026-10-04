@@ -58,7 +58,8 @@
 //! The decoders' separator is hardcoded to `,`. An array whose element type
 //! sets a different `typdelim` (`box`, or any C-level base type) is not decoded
 //! as an array at all — see `docs/design/decisions.md`, "D41" — though a strict
-//! parse reads a `box` array's elements to check them
+//! parse reads a `box` array's elements to check them, and splits a base
+//! type's array beneath a container at its `DELIMITER`
 //! ([`parse_array_delimited`]).
 
 use std::borrow::Cow;

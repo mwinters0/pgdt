@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict x1ClvZyAyZIGXqOqDvA389JTcTtLnNlbtjyrT8pTaa8bma3xDFNdsPRchiyqenV
+\restrict SRgprwaVC1iYsoX8uG6Vib2yvOGF24BkyQdPkSAICbZLrEoDomQCRSyv9S5V3BP
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -47,6 +47,21 @@ COPY emitters.child (id, label, born, extra) FROM stdin;
 
 
 ALTER TABLE emitters.child ENABLE TRIGGER ALL;
+
+--
+-- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE emitters.delimited DISABLE TRIGGER ALL;
+
+COPY emitters.delimited (id, v, a) FROM stdin;
+1	("{""a b"";c,d;""e;f""}")	{"a b";c}
+2	("{{x;""y z""};{"""";NULL}}")	\N
+3	\N	\N
+\.
+
+
+ALTER TABLE emitters.delimited ENABLE TRIGGER ALL;
 
 --
 -- Data for Name: domain_values; Type: TABLE DATA; Schema: emitters; Owner: postgres
@@ -192,5 +207,5 @@ ALTER TABLE emitters.unidentified ENABLE TRIGGER ALL;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict x1ClvZyAyZIGXqOqDvA389JTcTtLnNlbtjyrT8pTaa8bma3xDFNdsPRchiyqenV
+\unrestrict SRgprwaVC1iYsoX8uG6Vib2yvOGF24BkyQdPkSAICbZLrEoDomQCRSyv9S5V3BP
 

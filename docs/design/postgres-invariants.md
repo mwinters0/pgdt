@@ -1221,9 +1221,12 @@ back in three different shapes.
 element Delimiter */ delimiter = baseType->typdelim;` — alongside the same
 copy-from-base treatment given to alignment, storage, category and the output
 function. A user-defined base type may also set one (`CREATE TYPE … DELIMITER =
-';'`), and there `pg_dump` *does* emit the clause — but such a type resolves as
-`TypeKind::Base` and is refused on its own account, so the clause never has to
-be parsed.
+';'`), and there `pg_dump` *does* emit the clause: `dumpBaseType` writes
+`DELIMITER = ` and the value through `appendStringLiteralAH` wherever
+`typdelim` is not `,`, and `DefineType` takes the literal's first byte (`delimiter
+= p[0]`, in `typecmds.c`). Such a type resolves as `TypeKind::Base` and is
+refused on its own account, but an array of it beneath a composite is split at
+the clause's byte.
 
 **Scope limit.** Composites are unaffected: `record_out`
 (`src/backend/utils/adt/rowtypes.c`) writes `appendStringInfoChar(&buf, ',')`
@@ -1232,20 +1235,26 @@ multiranges likewise separate with a literal `,`; arrays are the entire
 exposure.
 
 **Verified against:** v13.23, v18.6 and master (`pg_type.dat`); v18.6
-(`typecmds.c`, `rowtypes.c`).
+(`typecmds.c`, `rowtypes.c`); v13.23 and v18.6 (`dumpBaseType`'s clause,
+`DefineType`'s first byte); and the `emitters` fixture at every routine major,
+whose `bt_varchar` declares `;` and whose `COPY` text separates its array's
+elements with it.
 
 **Relied on by:** `decisions.md`, "Type resolution and decoders" (both array refusals)
 and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
-`predicate::array_delimiter`, which splits a strict parse's `box` array at
-`;`.
+`preamble::base_type_delimiter`, `pgtype::typdelim` and
+`predicate::array_delimiter`, which split a strict parse's array of `box` at
+`;` and of a base type at its `DELIMITER`.
 
 **Re-verify:**
 
 ```sh
 grep -rn "typdelim => ';'" src/include/catalog/pg_type.dat
 grep -n 'Array element Delimiter' -A1 src/backend/commands/typecmds.c
+grep -n 'delimiter = p\[0\]' src/backend/commands/typecmds.c
+grep -n 'DELIMITER = ' -B1 -A1 src/bin/pg_dump/pg_dump.c
 grep -n "appendStringInfoChar(&buf, ',')" src/backend/utils/adt/rowtypes.c
 psql -X -q <<'SQL'
 create domain dbox as box;

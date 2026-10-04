@@ -517,8 +517,15 @@ pub enum TypeKind {
         canonical: Option<String>,
     },
     /// A C-level base type (`CREATE TYPE x (INPUT = ..., OUTPUT = ...)`) —
-    /// information-free; the dump says how the *server* parses it.
-    Base,
+    /// information-free but for `delimiter`; the dump says how the *server*
+    /// parses it.
+    ///
+    /// `delimiter` is its `typdelim`, the byte `array_in` splits an array of
+    /// it at: the first byte of its `DELIMITER` literal, as `DefineType` takes
+    /// it, and `,` where it states none, `dumpBaseType` writing the clause
+    /// wherever it is not (I22). `None` where the clause is no plain string
+    /// literal, which `pg_dump` never writes.
+    Base { delimiter: Option<u8> },
     /// `CREATE TYPE x;` with no body at all, ahead of the real definition
     /// (forward-declaration shell type) or genuinely never completed.
     Shell,
@@ -530,6 +537,12 @@ impl TypeKind {
     /// type list by hand wants.
     pub fn domain(base_type: impl Into<String>) -> Self {
         Self::Domain { base_type: base_type.into(), collation: None, not_null: false, check: false }
+    }
+
+    /// A base type declaring no `DELIMITER`, so `,` — the ordinary shape, and
+    /// the one a test or an embedder building a type list by hand wants.
+    pub fn base() -> Self {
+        Self::Base { delimiter: Some(b',') }
     }
 
     /// An enum whose labels are exactly these, in declaration order — what
@@ -1336,11 +1349,34 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
             };
             return Some(TypeDef { name, kind: TypeKind::Composite { fields } });
         }
-        return Some(TypeDef { name, kind: TypeKind::Base });
+        return Some(TypeDef { name, kind: TypeKind::Base { delimiter: None } });
     }
     // `CREATE TYPE x (INPUT = ..., OUTPUT = ...);` — the C-level base type
     // shape, with no `AS` at all.
-    Some(TypeDef { name, kind: TypeKind::Base })
+    Some(TypeDef { name, kind: TypeKind::Base { delimiter: base_type_delimiter(after) } })
+}
+
+/// The `typdelim` a base type's parameter list `body` declares: the first
+/// byte of its `DELIMITER` literal, as `DefineType` takes `p[0]` of it, and
+/// `,` where it names none (I22). `None` where the list is not closed or the
+/// value is no plain string literal — `pg_dump` writing one through
+/// `appendStringLiteralAH`, whose doubled backslash under
+/// `standard_conforming_strings = off` leaves the first byte as it was.
+fn base_type_delimiter(body: &str) -> Option<u8> {
+    if !body.starts_with('(') {
+        return None;
+    }
+    let close = matching_paren(body.as_bytes(), 0)?;
+    let Some(value) = split_top_level_commas(&body[1..close]).into_iter().find_map(|kv| {
+        let (key, value) = kv.split_once('=')?;
+        key.trim().eq_ignore_ascii_case("delimiter").then_some(value.trim())
+    }) else {
+        return Some(b',');
+    };
+    let literal = parse_string_literal(value)?;
+    // The literal alone, nothing after its closing quote.
+    (format!("'{}'", literal.replace('\'', "''")) == value)
+        .then(|| literal.bytes().next().unwrap_or(0))
 }
 
 /// Parse the body of `ALTER TYPE <name> ADD VALUE '<label>' [BEFORE|AFTER
@@ -2861,7 +2897,44 @@ mod tests {
             "    OUTPUT = mytype_out",
             ");",
         ]);
-        assert_eq!(def.kind, TypeKind::Base);
+        assert_eq!(def.kind, TypeKind::base());
+    }
+
+    /// **A base type's `DELIMITER` is the first byte of its literal**, as
+    /// `DefineType` takes it, and `,` where it states none (I22); a value
+    /// that is no plain string literal is a delimiter this build cannot read.
+    #[test]
+    fn a_base_type_s_delimiter_is_read_off_its_literal() {
+        let delimiter = |clause: &str| {
+            let def = parse_type(&[
+                "CREATE TYPE public.mytype (",
+                "    INPUT = mytype_in,",
+                "    OUTPUT = mytype_out,",
+                "    CATEGORY = 'S',",
+                clause,
+                "    ALIGNMENT = int4",
+                ");",
+            ]);
+            match def.kind {
+                TypeKind::Base { delimiter } => delimiter,
+                other => panic!("{clause}: {other:?}"),
+            }
+        };
+        for (clause, expected) in [
+            ("    DELIMITER = ';',", Some(b';')),
+            ("    delimiter = '|',", Some(b'|')),
+            ("    DELIMITER = '''',", Some(b'\'')),
+            ("    DELIMITER = '\\',", Some(b'\\')),
+            ("    DELIMITER = ';;',", Some(b';')),
+            ("    DELIMITER = '',", Some(0)),
+            ("    DELIMITER = '\u{e9}',", Some(0xc3)),
+            ("    DEFAULT = 'a, DELIMITER = x',", Some(b',')),
+            ("    DELIMITER = E';',", None),
+            ("    DELIMITER = semicolon,", None),
+            ("    DELIMITER = ';'::text,", None),
+        ] {
+            assert_eq!(delimiter(clause), expected, "{clause}");
+        }
     }
 
     #[test]

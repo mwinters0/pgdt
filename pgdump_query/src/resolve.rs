@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn unknown_opaque_and_empty_enum_outcomes() {
         let types = vec![
-            TypeDef { name: "public.gtype".to_string(), kind: TypeKind::Base },
+            TypeDef { name: "public.gtype".to_string(), kind: TypeKind::base() },
             TypeDef {
                 name: "public.mood".to_string(),
                 kind: TypeKind::Enum { labels: vec![], exact: true },

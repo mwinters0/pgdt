@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict fr2iH1yCi84nhHVp7ZlwEKGfGHKneeE7WwVbAAKLoZLirLdBN2JeUgVfmDXioIi
+\restrict 5x3jdRfoQ5OH5OmNMLCM3cNBnDkIS0POd1noYTddla9AwFp5RjLIJlmcUJt91KG
 
 SET default_transaction_read_only = off;
 
@@ -25,7 +25,7 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 
 
 
-\unrestrict fr2iH1yCi84nhHVp7ZlwEKGfGHKneeE7WwVbAAKLoZLirLdBN2JeUgVfmDXioIi
+\unrestrict 5x3jdRfoQ5OH5OmNMLCM3cNBnDkIS0POd1noYTddla9AwFp5RjLIJlmcUJt91KG
 
 --
 -- PostgreSQL database cluster dump complete

@@ -11,8 +11,8 @@ use pgdump_query::cache::CacheMode;
 use pgdump_query::preamble::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
-    DatabaseMetadata, DumpMetadata, LocalFileSource, QueryOptions, ResolvedSchema, ScanOptions,
-    StatisticsRequest, build_index, cache, map_file, table_stream,
+    DatabaseMetadata, DumpMetadata, LocalFileSource, PostgresInvalidValues, QueryOptions,
+    ResolvedSchema, ScanOptions, StatisticsRequest, build_index, cache, map_file, table_stream,
 };
 
 mod common;
@@ -253,7 +253,7 @@ async fn a_completed_base_type_leaves_one_entry_and_the_shell_does_not_win() {
         );
         assert_eq!(
             mybase[0].kind,
-            TypeKind::Base,
+            TypeKind::base(),
             "pg_dump {version}: the completion must win over the shell"
         );
 
@@ -893,6 +893,35 @@ async fn a_composite_s_dropped_attribute_is_dropped_under_binary_upgrade() {
     }
 }
 
+/// **A base type's `DELIMITER` is read off `dumpBaseType`'s clause**, and a
+/// strict parse splits its array beneath a composite there: `bt_varchar`'s
+/// `;` separates elements `array_out` quotes, which a split at `,` refuses
+/// (I22).
+#[tokio::test]
+async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..ScanOptions::default()
+    };
+    for version in VERSIONS {
+        for flag_set in ["default", "binary-upgrade"] {
+            let path = fixture(version, "emitters", flag_set);
+            let label = format!("pg_dump {version} {flag_set}");
+            let db = single_database(&path).await;
+            assert_eq!(
+                find_type(&db, "emitters.bt_varchar").kind,
+                TypeKind::Base { delimiter: Some(b';') },
+                "{label}"
+            );
+            assert_eq!(find_type(&db, "emitters.bt_char").kind, TypeKind::base(), "{label}");
+            let source = LocalFileSource::open(&path).unwrap();
+            map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+                .await
+                .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
+        }
+    }
+}
+
 /// A database whose name holds a byte outside `[A-Za-z0-9_.]` is entered by
 /// `\connect -reuse-previous=on "dbname='…'"`, and is a database of its own:
 /// listed under its name, with its version pair, holding its table and its
@@ -965,16 +994,16 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
 
 /// **What a strict parse leaves unchecked in the `emitters` schema is named
 /// per table, at every major and in both forms a dump declares it**
-/// (`strict_unchecked`; I77): each base type's column, the range declaring a
-/// canonical function, the domain declaring a `CHECK`, the parent's `CHECK`
+/// (`strict_unchecked`; I77): each base type's column and element, the range
+/// declaring a canonical function, the domain declaring a `CHECK`, the parent's `CHECK`
 /// and the child's, inherited by default and re-declared under
 /// `--binary-upgrade` — and nothing in any other table. A `--data-only` dump
 /// declares no table, so no field of any is checked.
 #[tokio::test]
 async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() {
     use pgdump_query::{Unchecked, strict_unchecked};
-    fn base<'a>(column: &'a str, declared: &str) -> (&'a str, String, Unchecked) {
-        (column, declared.to_string(), Unchecked::BaseType)
+    fn base<'a>(column: &'a str, declared: &str) -> (&'a str, &'a str, String, Unchecked) {
+        (column, "", declared.to_string(), Unchecked::BaseType)
     }
     for version in VERSIONS {
         for flag_set in ["default", "binary-upgrade", "data-only"] {
@@ -996,12 +1025,11 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
                     continue;
                 }
                 assert!(unchecked.declared, "{label}: {table}");
-                let columns: Vec<(&str, String, Unchecked)> = unchecked
+                let columns: Vec<(&str, &str, String, Unchecked)> = unchecked
                     .columns
                     .iter()
                     .map(|c| {
-                        assert_eq!(c.path, "", "{label}: {table}");
-                        (c.column.as_str(), c.declared.clone(), c.why.clone())
+                        (c.column.as_str(), c.path.as_str(), c.declared.clone(), c.why.clone())
                     })
                     .collect();
                 let checks: Vec<(Option<&str>, Option<&str>)> = unchecked
@@ -1024,6 +1052,7 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
                     "emitters.range_values" => (
                         vec![(
                             "v_canon",
+                            "",
                             "emitters.r_canon".to_string(),
                             Unchecked::RangeCanonical {
                                 function: "emitters.r_canon_canonical".into(),
@@ -1034,9 +1063,24 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
                     "emitters.domain_values" => (
                         vec![(
                             "v_positive",
+                            "",
                             "emitters.positive".to_string(),
                             Unchecked::DomainCheck,
                         )],
+                        vec![],
+                    ),
+                    // The array its composite holds is split at `bt_varchar`'s
+                    // `DELIMITER`, and its elements are a base type's.
+                    "emitters.delimited" => (
+                        vec![
+                            (
+                                "v",
+                                ".items[]",
+                                "emitters.bt_varchar".to_string(),
+                                Unchecked::BaseType,
+                            ),
+                            base("a", "emitters.bt_varchar[]"),
+                        ],
                         vec![],
                     ),
                     "emitters.parent" => (vec![], vec![(positive, None)]),

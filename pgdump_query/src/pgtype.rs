@@ -693,11 +693,13 @@ pub enum NestedCompare {
     /// server equality may not be the text's (`KD10`).
     ///
     /// `grammar` is the position's input grammar where this build reads one
-    /// for a type it orders by nothing ([`text_grammar`]).
+    /// for a type it orders by nothing ([`text_grammar`]), and `delimiter`
+    /// its type's `typdelim`, which an array of it is split at ([`typdelim`]).
     Uncomparable {
         declared: String,
         divergence: Option<ComparisonDivergence>,
         grammar: Option<TextGrammar>,
+        delimiter: Option<u8>,
     },
     /// `array_cmp`: elements first, up to the shorter array's length, then
     /// element count, dimension count, dimensions and lower bounds (I45).
@@ -1845,7 +1847,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef], visits: Visits) -> TypeOutco
             TypeOutcome::Mapped(range_struct(bound), NestedPlan::Range(plan))
         }
         // Both genuinely information-free — one diagnostic bucket for both.
-        TypeKind::Base | TypeKind::Shell => TypeOutcome::OpaqueBaseType,
+        TypeKind::Base { .. } | TypeKind::Shell => TypeOutcome::OpaqueBaseType,
     }
 }
 
@@ -1882,8 +1884,9 @@ fn range_bound(
 /// (I21) rather than a better type.*
 ///
 /// `box` is checked by name because it is a built-in with no `CREATE TYPE` of
-/// its own; a user-defined base type sets its delimiter in DDL this build does
-/// not read, so `TypeKind::Base`/`Shell` are refused wholesale. The
+/// its own; a user-defined base type is refused wholesale, `TypeKind::Base`
+/// and `Shell` alike, whatever `DELIMITER` it declares, its elements being
+/// text no reader here holds the grammar of. The
 /// array-ness test reads the terminal through [`array_element`] rather than
 /// looking for a trailing `[]`, because `CREATE DOMAIN d AS integer ARRAY` is
 /// as legal as any other spelling (I28).
@@ -1895,7 +1898,7 @@ fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
     let opaque = is_box(terminal)
         || matches!(
             find_type(terminal, types).map(|t| &t.kind),
-            Some(TypeKind::Base | TypeKind::Shell)
+            Some(TypeKind::Base { .. } | TypeKind::Shell)
         );
     if opaque {
         return TypeOutcome::OpaqueElementType;
@@ -2035,6 +2038,22 @@ pub(crate) fn domain_not_null(declared: &str, types: &[TypeDef]) -> bool {
         }
     }
     false
+}
+
+/// The `typdelim` of `declared`, through any chain of domains, a domain
+/// copying its base type's (I22): `box`'s `;`, a base type's `DELIMITER`, and
+/// otherwise `,` — `None` for a base type declaring one the preamble cannot
+/// read, and for a shell, which no array is of.
+pub(crate) fn typdelim(declared: &str, types: &[TypeDef]) -> Option<u8> {
+    let terminal = domain_terminal(declared, types);
+    if is_box(terminal) {
+        return Some(b';');
+    }
+    match find_type(split_typmod(terminal).0, types).map(|t| &t.kind) {
+        Some(TypeKind::Base { delimiter }) => *delimiter,
+        Some(TypeKind::Shell) => None,
+        _ => Some(b','),
+    }
 }
 
 /// Whether `terminal` names the built-in `box`, read as [`builtin_name`]
@@ -2300,14 +2319,14 @@ pub(crate) fn unchecked_positions(
                 }
                 // A position holding an array is an array's element, every
                 // other array being a node of its own.
-                NestedCompare::Uncomparable { divergence: None, grammar: None, declared }
-                    if array_element(domain_terminal(declared, types)).is_some() =>
-                {
+                NestedCompare::Uncomparable {
+                    divergence: None, grammar: None, declared, ..
+                } if array_element(domain_terminal(declared, types)).is_some() => {
                     Unchecked::ArrayShape
                 }
-                NestedCompare::Uncomparable { divergence: None, grammar: None, declared } => {
-                    unread(declared, types)
-                }
+                NestedCompare::Uncomparable {
+                    divergence: None, grammar: None, declared, ..
+                } => unread(declared, types),
                 _ => return,
             };
             out.push((path.to_string(), leaf.declared().to_string(), why));
@@ -2333,7 +2352,7 @@ fn unread(declared: &str, types: &[TypeDef]) -> Unchecked {
     if base.contains('.') {
         return match find_type(base, types).map(|t| &t.kind) {
             // A shell is completed only as a base type.
-            Some(TypeKind::Base | TypeKind::Shell) => Unchecked::BaseType,
+            Some(TypeKind::Base { .. } | TypeKind::Shell) => Unchecked::BaseType,
             Some(TypeKind::Range { canonical: Some(function), .. }) => {
                 Unchecked::RangeCanonical { function: function.clone() }
             }
@@ -2470,18 +2489,20 @@ fn array_comparison(
     let opaque = is_box(terminal)
         || matches!(
             find_type(terminal, types).map(|t| &t.kind),
-            Some(TypeKind::Base | TypeKind::Shell)
+            Some(TypeKind::Base { .. } | TypeKind::Shell)
         );
     let child = if opaque || array_element(terminal).is_some() {
         // No divergence: a position only this build declines makes no claim
         // about the server's `=` (I22, I26). A column of either shape resolves
         // to text with its plan refused, so never reaches this node; a
-        // composite's field of either shape does. A `box` element carries
-        // `box_in`'s grammar, which is what splits its array at `;`.
+        // composite's field of either shape does, and its array is split at
+        // its element type's `typdelim`. A `box` element carries `box_in`'s
+        // grammar.
         NestedCompare::Uncomparable {
             declared: element.to_string(),
             divergence: None,
             grammar: text_grammar(element, types).filter(|_| is_box(terminal)),
+            delimiter: typdelim(element, types),
         }
     } else {
         match nested_position(element, collation, types, collations, visits) {
@@ -2572,12 +2593,14 @@ fn nested_position(
                 declared: declared.to_string(),
                 divergence: Some(ComparisonDivergence::AsText),
                 grammar: None,
+                delimiter: typdelim(declared, types),
             }
         }
         ComparisonPlan::Refused => NestedCompare::Uncomparable {
             declared: declared.to_string(),
             divergence: None,
             grammar: text_grammar(declared, types),
+            delimiter: typdelim(declared, types),
         },
         ComparisonPlan::Compared { kind, divergence } => {
             NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
@@ -2746,7 +2769,7 @@ fn comparison_user_type(
             Some(function) => unanswerable_range(&def.name, function),
             None => range_comparison(subtype.as_deref(), None, false, types, collations, visits),
         },
-        TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
+        TypeKind::Base { .. } | TypeKind::Shell => ComparisonPlan::Refused,
     }
 }
 
@@ -3297,7 +3320,7 @@ mod tests {
     #[test]
     fn an_array_over_an_opaque_element_type_is_refused_through_any_chain_of_domains() {
         let types = [
-            ty("public.mybase", TypeKind::Base),
+            ty("public.mybase", TypeKind::base()),
             ty("public.shellonly", TypeKind::Shell),
             ty("public.box_domain", TypeKind::domain("box")),
             ty("public.box_domain2", TypeKind::domain("public.box_domain")),
@@ -3606,7 +3629,7 @@ mod tests {
 
     #[test]
     fn base_and_shell_types_are_opaque() {
-        let types = [ty("public.gtype", TypeKind::Base), ty("public.forward", TypeKind::Shell)];
+        let types = [ty("public.gtype", TypeKind::base()), ty("public.forward", TypeKind::Shell)];
         assert_eq!(resolve_declared_type("public.gtype", &types), TypeOutcome::OpaqueBaseType);
         assert_eq!(resolve_declared_type("public.forward", &types), TypeOutcome::OpaqueBaseType);
     }
@@ -4340,7 +4363,7 @@ mod tests {
                     canonical: None,
                 },
             ),
-            ty("public.gtype", TypeKind::Base),
+            ty("public.gtype", TypeKind::base()),
             ty("public.forward", TypeKind::Shell),
         ];
         let int_leaf = || NestedCompare::Leaf {
@@ -4537,7 +4560,7 @@ mod tests {
                     ]),
                 },
             ),
-            ty("public.gtype", TypeKind::Base),
+            ty("public.gtype", TypeKind::base()),
         ];
         for (declared, path, at, announces) in [
             // `json` takes the server's `=` away with its order, so the
@@ -4820,7 +4843,7 @@ mod tests {
             check,
         };
         let types = [
-            ty("public.gtype", TypeKind::Base),
+            ty("public.gtype", TypeKind::base()),
             ty(
                 "public.canon",
                 TypeKind::Range {

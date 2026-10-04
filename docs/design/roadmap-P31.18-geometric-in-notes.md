@@ -50,8 +50,8 @@ check 31.14's
   595,823 generated spellings; the harness was not kept.
 - **No geometric value has an order or a decoder here**: a filter on one is
   as before (`KD10`), and only a `strict` parse reads its grammar.
-- **An array of a user base type is still split at `,`** in a container's
-  check (`KD94`, 31.24): found while threading `box`'s delimiter.
+- **An array of a user base type in a container's check is 31.24's**
+  (`KD94`): found while threading `box`'s delimiter.
 
 ## What the slices after this inherit
 

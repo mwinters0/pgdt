@@ -274,84 +274,6 @@ CREATE TYPE "emitters"."bt_int2" (
 
 
 --
--- Name: bt_pair; Type: SHELL TYPE; Schema: emitters; Owner: -
---
-
-CREATE TYPE "emitters"."bt_pair";
-
-
---
--- Name: bt_pair_in("cstring"); Type: FUNCTION; Schema: emitters; Owner: -
---
-
-CREATE FUNCTION "emitters"."bt_pair_in"("cstring") RETURNS "emitters"."bt_pair"
-    LANGUAGE "internal" IMMUTABLE STRICT
-    AS 'point_in';
-
-
---
--- Name: bt_pair_out("emitters"."bt_pair"); Type: FUNCTION; Schema: emitters; Owner: -
---
-
-CREATE FUNCTION "emitters"."bt_pair_out"("emitters"."bt_pair") RETURNS "cstring"
-    LANGUAGE "internal" IMMUTABLE STRICT
-    AS 'point_out';
-
-
---
--- Name: bt_pair; Type: TYPE; Schema: emitters; Owner: -
---
-
-CREATE TYPE "emitters"."bt_pair" (
-    INTERNALLENGTH = 16,
-    INPUT = "emitters"."bt_pair_in",
-    OUTPUT = "emitters"."bt_pair_out",
-    SUBSCRIPT = "raw_array_subscript_handler",
-    ELEMENT = double precision,
-    ALIGNMENT = double,
-    STORAGE = plain
-);
-
-
---
--- Name: bt_text_main; Type: SHELL TYPE; Schema: emitters; Owner: -
---
-
-CREATE TYPE "emitters"."bt_text_main";
-
-
---
--- Name: bt_text_main_in("cstring"); Type: FUNCTION; Schema: emitters; Owner: -
---
-
-CREATE FUNCTION "emitters"."bt_text_main_in"("cstring") RETURNS "emitters"."bt_text_main"
-    LANGUAGE "internal" IMMUTABLE STRICT
-    AS 'textin';
-
-
---
--- Name: bt_text_main_out("emitters"."bt_text_main"); Type: FUNCTION; Schema: emitters; Owner: -
---
-
-CREATE FUNCTION "emitters"."bt_text_main_out"("emitters"."bt_text_main") RETURNS "cstring"
-    LANGUAGE "internal" IMMUTABLE STRICT
-    AS 'textout';
-
-
---
--- Name: bt_text_main; Type: TYPE; Schema: emitters; Owner: -
---
-
-CREATE TYPE "emitters"."bt_text_main" (
-    INTERNALLENGTH = variable,
-    INPUT = "emitters"."bt_text_main_in",
-    OUTPUT = "emitters"."bt_text_main_out",
-    ALIGNMENT = int4,
-    STORAGE = main
-);
-
-
---
 -- Name: bt_varchar; Type: SHELL TYPE; Schema: emitters; Owner: -
 --
 
@@ -441,6 +363,93 @@ CREATE TYPE "emitters"."bt_varchar" (
     DELIMITER = ';',
     ALIGNMENT = int4,
     STORAGE = external
+);
+
+
+--
+-- Name: bt_list; Type: TYPE; Schema: emitters; Owner: -
+--
+
+CREATE TYPE "emitters"."bt_list" AS (
+	"items" "emitters"."bt_varchar"[]
+);
+
+
+--
+-- Name: bt_pair; Type: SHELL TYPE; Schema: emitters; Owner: -
+--
+
+CREATE TYPE "emitters"."bt_pair";
+
+
+--
+-- Name: bt_pair_in("cstring"); Type: FUNCTION; Schema: emitters; Owner: -
+--
+
+CREATE FUNCTION "emitters"."bt_pair_in"("cstring") RETURNS "emitters"."bt_pair"
+    LANGUAGE "internal" IMMUTABLE STRICT
+    AS 'point_in';
+
+
+--
+-- Name: bt_pair_out("emitters"."bt_pair"); Type: FUNCTION; Schema: emitters; Owner: -
+--
+
+CREATE FUNCTION "emitters"."bt_pair_out"("emitters"."bt_pair") RETURNS "cstring"
+    LANGUAGE "internal" IMMUTABLE STRICT
+    AS 'point_out';
+
+
+--
+-- Name: bt_pair; Type: TYPE; Schema: emitters; Owner: -
+--
+
+CREATE TYPE "emitters"."bt_pair" (
+    INTERNALLENGTH = 16,
+    INPUT = "emitters"."bt_pair_in",
+    OUTPUT = "emitters"."bt_pair_out",
+    SUBSCRIPT = "raw_array_subscript_handler",
+    ELEMENT = double precision,
+    ALIGNMENT = double,
+    STORAGE = plain
+);
+
+
+--
+-- Name: bt_text_main; Type: SHELL TYPE; Schema: emitters; Owner: -
+--
+
+CREATE TYPE "emitters"."bt_text_main";
+
+
+--
+-- Name: bt_text_main_in("cstring"); Type: FUNCTION; Schema: emitters; Owner: -
+--
+
+CREATE FUNCTION "emitters"."bt_text_main_in"("cstring") RETURNS "emitters"."bt_text_main"
+    LANGUAGE "internal" IMMUTABLE STRICT
+    AS 'textin';
+
+
+--
+-- Name: bt_text_main_out("emitters"."bt_text_main"); Type: FUNCTION; Schema: emitters; Owner: -
+--
+
+CREATE FUNCTION "emitters"."bt_text_main_out"("emitters"."bt_text_main") RETURNS "cstring"
+    LANGUAGE "internal" IMMUTABLE STRICT
+    AS 'textout';
+
+
+--
+-- Name: bt_text_main; Type: TYPE; Schema: emitters; Owner: -
+--
+
+CREATE TYPE "emitters"."bt_text_main" (
+    INTERNALLENGTH = variable,
+    INPUT = "emitters"."bt_text_main_in",
+    OUTPUT = "emitters"."bt_text_main_out",
+    ALIGNMENT = int4,
+    STORAGE = main
 );
 
 
@@ -586,6 +595,17 @@ CREATE TABLE "emitters"."child" (
 )
 INHERITS ("emitters"."parent");
 ALTER TABLE ONLY "emitters"."child" ALTER COLUMN "label" SET NOT NULL;
+
+
+--
+-- Name: delimited; Type: TABLE; Schema: emitters; Owner: -
+--
+
+CREATE TABLE "emitters"."delimited" (
+    "id" integer NOT NULL,
+    "v" "emitters"."bt_list",
+    "a" "emitters"."bt_varchar"[]
+);
 
 
 --
@@ -739,6 +759,14 @@ ALTER TABLE ONLY "emitters"."unidentified" REPLICA IDENTITY NOTHING;
 
 ALTER TABLE ONLY "emitters"."base_values"
     ADD CONSTRAINT "base_values_pkey" PRIMARY KEY ("id");
+
+
+--
+-- Name: delimited delimited_pkey; Type: CONSTRAINT; Schema: emitters; Owner: -
+--
+
+ALTER TABLE ONLY "emitters"."delimited"
+    ADD CONSTRAINT "delimited_pkey" PRIMARY KEY ("id");
 
 
 --

@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict BhgNBFEGErA1tGSSZWgOleiiwkebF2TgWEcGMUyMsPxEHej74BHBhDf8NHmaRtO
+\restrict KtJ612iUeh06nAtRDIvOozARLG1e7V3KOw8epDDHIczUfhhsg7s1CLKaat3B0Qe
 
 SET default_transaction_read_only = off;
 
@@ -34,7 +34,7 @@ ALTER TABLESPACE emitters_ts SET (seq_page_cost=1.5);
 COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 
 
-\unrestrict BhgNBFEGErA1tGSSZWgOleiiwkebF2TgWEcGMUyMsPxEHej74BHBhDf8NHmaRtO
+\unrestrict KtJ612iUeh06nAtRDIvOozARLG1e7V3KOw8epDDHIczUfhhsg7s1CLKaat3B0Qe
 
 --
 -- Databases
@@ -50,7 +50,7 @@ COMMENT ON TABLESPACE emitters_ts IS 'the emitters fixture''s tablespace';
 -- PostgreSQL database dump
 --
 
-\restrict P6Vai5RDFpfkac2zyQgTZGOVP6ge7Ia5Vec2wKToIShiEMUVyuSi8cMF2MXNoJH
+\restrict MVkoThHyedChaTaNih5ywvR9WI5tpY3e8RTrgasL9R4daD8gBb2AO6cp3mmd1VU
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -71,7 +71,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict P6Vai5RDFpfkac2zyQgTZGOVP6ge7Ia5Vec2wKToIShiEMUVyuSi8cMF2MXNoJH
+\unrestrict MVkoThHyedChaTaNih5ywvR9WI5tpY3e8RTrgasL9R4daD8gBb2AO6cp3mmd1VU
 
 --
 -- Database "pgdt-emitters" dump
@@ -81,7 +81,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict 5dTcsQoCbdTu4iCFujrdiFHyJ8l0wF3gVkiHfXAFvifr05I9HlEqPifdegtFMld
+\restrict TQmNOIR8QKkxIFn91r6jANrau63mPDgose6Nz97Abp60AWxP86d2U2qghuh5QwP
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -107,10 +107,10 @@ CREATE DATABASE "pgdt-emitters" WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCA
 
 ALTER DATABASE "pgdt-emitters" OWNER TO postgres;
 
-\unrestrict 5dTcsQoCbdTu4iCFujrdiFHyJ8l0wF3gVkiHfXAFvifr05I9HlEqPifdegtFMld
+\unrestrict TQmNOIR8QKkxIFn91r6jANrau63mPDgose6Nz97Abp60AWxP86d2U2qghuh5QwP
 \encoding SQL_ASCII
 \connect -reuse-previous=on "dbname='pgdt-emitters'"
-\restrict 5dTcsQoCbdTu4iCFujrdiFHyJ8l0wF3gVkiHfXAFvifr05I9HlEqPifdegtFMld
+\restrict TQmNOIR8QKkxIFn91r6jANrau63mPDgose6Nz97Abp60AWxP86d2U2qghuh5QwP
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -163,7 +163,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 5dTcsQoCbdTu4iCFujrdiFHyJ8l0wF3gVkiHfXAFvifr05I9HlEqPifdegtFMld
+\unrestrict TQmNOIR8QKkxIFn91r6jANrau63mPDgose6Nz97Abp60AWxP86d2U2qghuh5QwP
 
 --
 -- Database "pgdt_fixture" dump
@@ -173,7 +173,7 @@ ALTER TABLE ONLY public.named
 -- PostgreSQL database dump
 --
 
-\restrict ncj0C3bp3ViLp6xkwY8JrWhXwt5ERHIHLZkOJxMugkagt5Fz4mh8giYlCs8Nm7A
+\restrict c61OLpyUOyb4H4vS8GUgdvqme7ufPExmQQb7n2QMV4L9OgSWepZXZbw8XNT0i1a
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -199,9 +199,9 @@ CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
-\unrestrict ncj0C3bp3ViLp6xkwY8JrWhXwt5ERHIHLZkOJxMugkagt5Fz4mh8giYlCs8Nm7A
+\unrestrict c61OLpyUOyb4H4vS8GUgdvqme7ufPExmQQb7n2QMV4L9OgSWepZXZbw8XNT0i1a
 \connect pgdt_fixture
-\restrict ncj0C3bp3ViLp6xkwY8JrWhXwt5ERHIHLZkOJxMugkagt5Fz4mh8giYlCs8Nm7A
+\restrict c61OLpyUOyb4H4vS8GUgdvqme7ufPExmQQb7n2QMV4L9OgSWepZXZbw8XNT0i1a
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -329,96 +329,6 @@ CREATE TYPE emitters.bt_int2 (
 ALTER TYPE emitters.bt_int2 OWNER TO postgres;
 
 --
--- Name: bt_pair; Type: SHELL TYPE; Schema: emitters; Owner: postgres
---
-
-CREATE TYPE emitters.bt_pair;
-
-
---
--- Name: bt_pair_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
---
-
-CREATE FUNCTION emitters.bt_pair_in(cstring) RETURNS emitters.bt_pair
-    LANGUAGE internal IMMUTABLE STRICT
-    AS $$point_in$$;
-
-
-ALTER FUNCTION emitters.bt_pair_in(cstring) OWNER TO postgres;
-
---
--- Name: bt_pair_out(emitters.bt_pair); Type: FUNCTION; Schema: emitters; Owner: postgres
---
-
-CREATE FUNCTION emitters.bt_pair_out(emitters.bt_pair) RETURNS cstring
-    LANGUAGE internal IMMUTABLE STRICT
-    AS $$point_out$$;
-
-
-ALTER FUNCTION emitters.bt_pair_out(emitters.bt_pair) OWNER TO postgres;
-
---
--- Name: bt_pair; Type: TYPE; Schema: emitters; Owner: postgres
---
-
-CREATE TYPE emitters.bt_pair (
-    INTERNALLENGTH = 16,
-    INPUT = emitters.bt_pair_in,
-    OUTPUT = emitters.bt_pair_out,
-    SUBSCRIPT = raw_array_subscript_handler,
-    ELEMENT = double precision,
-    ALIGNMENT = double,
-    STORAGE = plain
-);
-
-
-ALTER TYPE emitters.bt_pair OWNER TO postgres;
-
---
--- Name: bt_text_main; Type: SHELL TYPE; Schema: emitters; Owner: postgres
---
-
-CREATE TYPE emitters.bt_text_main;
-
-
---
--- Name: bt_text_main_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
---
-
-CREATE FUNCTION emitters.bt_text_main_in(cstring) RETURNS emitters.bt_text_main
-    LANGUAGE internal IMMUTABLE STRICT
-    AS $$textin$$;
-
-
-ALTER FUNCTION emitters.bt_text_main_in(cstring) OWNER TO postgres;
-
---
--- Name: bt_text_main_out(emitters.bt_text_main); Type: FUNCTION; Schema: emitters; Owner: postgres
---
-
-CREATE FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) RETURNS cstring
-    LANGUAGE internal IMMUTABLE STRICT
-    AS $$textout$$;
-
-
-ALTER FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) OWNER TO postgres;
-
---
--- Name: bt_text_main; Type: TYPE; Schema: emitters; Owner: postgres
---
-
-CREATE TYPE emitters.bt_text_main (
-    INTERNALLENGTH = variable,
-    INPUT = emitters.bt_text_main_in,
-    OUTPUT = emitters.bt_text_main_out,
-    ALIGNMENT = int4,
-    STORAGE = main
-);
-
-
-ALTER TYPE emitters.bt_text_main OWNER TO postgres;
-
---
 -- Name: bt_varchar; Type: SHELL TYPE; Schema: emitters; Owner: postgres
 --
 
@@ -526,6 +436,107 @@ CREATE TYPE emitters.bt_varchar (
 
 
 ALTER TYPE emitters.bt_varchar OWNER TO postgres;
+
+--
+-- Name: bt_list; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_list AS (
+	items emitters.bt_varchar[]
+);
+
+
+ALTER TYPE emitters.bt_list OWNER TO postgres;
+
+--
+-- Name: bt_pair; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_pair;
+
+
+--
+-- Name: bt_pair_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_pair_in(cstring) RETURNS emitters.bt_pair
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$point_in$$;
+
+
+ALTER FUNCTION emitters.bt_pair_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_pair_out(emitters.bt_pair); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_pair_out(emitters.bt_pair) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$point_out$$;
+
+
+ALTER FUNCTION emitters.bt_pair_out(emitters.bt_pair) OWNER TO postgres;
+
+--
+-- Name: bt_pair; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_pair (
+    INTERNALLENGTH = 16,
+    INPUT = emitters.bt_pair_in,
+    OUTPUT = emitters.bt_pair_out,
+    SUBSCRIPT = raw_array_subscript_handler,
+    ELEMENT = double precision,
+    ALIGNMENT = double,
+    STORAGE = plain
+);
+
+
+ALTER TYPE emitters.bt_pair OWNER TO postgres;
+
+--
+-- Name: bt_text_main; Type: SHELL TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_text_main;
+
+
+--
+-- Name: bt_text_main_in(cstring); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_text_main_in(cstring) RETURNS emitters.bt_text_main
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textin$$;
+
+
+ALTER FUNCTION emitters.bt_text_main_in(cstring) OWNER TO postgres;
+
+--
+-- Name: bt_text_main_out(emitters.bt_text_main); Type: FUNCTION; Schema: emitters; Owner: postgres
+--
+
+CREATE FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textout$$;
+
+
+ALTER FUNCTION emitters.bt_text_main_out(emitters.bt_text_main) OWNER TO postgres;
+
+--
+-- Name: bt_text_main; Type: TYPE; Schema: emitters; Owner: postgres
+--
+
+CREATE TYPE emitters.bt_text_main (
+    INTERNALLENGTH = variable,
+    INPUT = emitters.bt_text_main_in,
+    OUTPUT = emitters.bt_text_main_out,
+    ALIGNMENT = int4,
+    STORAGE = main
+);
+
+
+ALTER TYPE emitters.bt_text_main OWNER TO postgres;
 
 --
 -- Name: mood; Type: TYPE; Schema: emitters; Owner: postgres
@@ -698,6 +709,19 @@ ALTER TABLE ONLY emitters.child ALTER COLUMN label SET NOT NULL;
 
 
 ALTER TABLE emitters.child OWNER TO postgres;
+
+--
+-- Name: delimited; Type: TABLE; Schema: emitters; Owner: postgres
+--
+
+CREATE TABLE emitters.delimited (
+    id integer NOT NULL,
+    v emitters.bt_list,
+    a emitters.bt_varchar[]
+);
+
+
+ALTER TABLE emitters.delimited OWNER TO postgres;
 
 --
 -- Name: domain_values; Type: TABLE; Schema: emitters; Owner: postgres
@@ -889,6 +913,17 @@ COPY emitters.child (id, label, born, extra) FROM stdin;
 
 
 --
+-- Data for Name: delimited; Type: TABLE DATA; Schema: emitters; Owner: postgres
+--
+
+COPY emitters.delimited (id, v, a) FROM stdin;
+1	("{""a b"";c,d;""e;f""}")	{"a b";c}
+2	("{{x;""y z""};{"""";NULL}}")	\N
+3	\N	\N
+\.
+
+
+--
 -- Data for Name: domain_values; Type: TABLE DATA; Schema: emitters; Owner: postgres
 --
 
@@ -997,6 +1032,14 @@ ALTER TABLE ONLY emitters.base_values
 
 
 --
+-- Name: delimited delimited_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
+--
+
+ALTER TABLE ONLY emitters.delimited
+    ADD CONSTRAINT delimited_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: domain_values domain_values_pkey; Type: CONSTRAINT; Schema: emitters; Owner: postgres
 --
 
@@ -1061,7 +1104,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ncj0C3bp3ViLp6xkwY8JrWhXwt5ERHIHLZkOJxMugkagt5Fz4mh8giYlCs8Nm7A
+\unrestrict c61OLpyUOyb4H4vS8GUgdvqme7ufPExmQQb7n2QMV4L9OgSWepZXZbw8XNT0i1a
 
 --
 -- Database "postgres" dump
@@ -1073,7 +1116,7 @@ REFRESH MATERIALIZED VIEW emitters.tuned_totals;
 -- PostgreSQL database dump
 --
 
-\restrict 13GUM3FJXReIIAoDArwdYaAHk08m7BgZhq4pf5qMtcv8O2MHByCky860UUkPOXT
+\restrict ntlOxGMKpuiLmlGXiQJxtWTMdzh1JcEaGZsQpNbQqtmQw1awjjP2qJ3Sd2A4nlT
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -1094,7 +1137,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 13GUM3FJXReIIAoDArwdYaAHk08m7BgZhq4pf5qMtcv8O2MHByCky860UUkPOXT
+\unrestrict ntlOxGMKpuiLmlGXiQJxtWTMdzh1JcEaGZsQpNbQqtmQw1awjjP2qJ3Sd2A4nlT
 
 --
 -- PostgreSQL database cluster dump complete

@@ -2976,7 +2976,7 @@ fn type_kind_summary(kind: &TypeKind) -> String {
                 None => over,
             }
         }
-        TypeKind::Base => "base type".to_string(),
+        TypeKind::Base { .. } => "base type".to_string(),
         TypeKind::Shell => "shell type".to_string(),
     }
 }
@@ -3580,7 +3580,7 @@ fn type_kind_label(kind: &TypeKind) -> &'static str {
         TypeKind::Domain { .. } => "domain",
         TypeKind::Composite { .. } => "composite",
         TypeKind::Range { .. } => "range",
-        TypeKind::Base => "base",
+        TypeKind::Base { .. } => "base",
         TypeKind::Shell => "shell",
     }
 }
@@ -4973,7 +4973,7 @@ mod tests {
             }),
             "range over integer, canonical public.canonrange_canonical"
         );
-        assert_eq!(type_kind_summary(&TypeKind::Base), "base type");
+        assert_eq!(type_kind_summary(&TypeKind::base()), "base type");
         assert_eq!(type_kind_summary(&TypeKind::Shell), "shell type");
     }
 }

@@ -119,6 +119,21 @@ INSERT INTO emitters.base_values VALUES
     (1, 'alpha', 'a', '7', 'main text', '(1.5,2)'),
     (2, NULL, NULL, NULL, NULL, NULL);
 
+-- dumpBaseType's `DELIMITER`, as the value form it selects: `array_out`
+-- separates a `bt_varchar` array's elements with `;`, quoting one holding a
+-- blank or the delimiter, and a composite holding such an array is where a
+-- strict parse splits it (I22).
+CREATE TYPE emitters.bt_list AS (items emitters.bt_varchar[]);
+CREATE TABLE emitters.delimited (
+    id integer PRIMARY KEY,
+    v emitters.bt_list,
+    a emitters.bt_varchar[]
+);
+INSERT INTO emitters.delimited VALUES
+    (1, ROW('{"a b";c,d;"e;f"}'::emitters.bt_varchar[]), '{"a b";c}'),
+    (2, ROW('{{x;"y z"};{"";NULL}}'::emitters.bt_varchar[]), NULL),
+    (3, NULL, NULL);
+
 -- dumpRangeType: a canonical function, declared on the shell type as only a
 -- C-language one can be; a difference function; and an operator class that is
 -- not the subtype's default.

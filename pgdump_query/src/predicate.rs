@@ -2009,6 +2009,7 @@ pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
                 declared: "box".into(),
                 divergence: None,
                 grammar: Some(TextGrammar::Geometric(Geometric::Box)),
+                delimiter: Some(b';'),
             };
             checked_key(&NestedCompare::Array(Box::new(element)), text).is_ok()
         }
@@ -2018,21 +2019,18 @@ pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
     !reads
 }
 
-/// The `typdelim` an array of `element` is split at: `box`'s `;` (I22), and
-/// otherwise `,`.
-// deficiency: KD94 — a user base type's `DELIMITER`, which `dumpBaseType`
-// writes where it is not `,`, is not read by the preamble, so its array
-// beneath a container is split at `,` here, and a strict parse refuses a field
-// whose quoted element is followed by the declared delimiter, which
-// PostgreSQL reads.
-fn array_delimiter(element: &NestedCompare) -> u8 {
-    match element {
-        NestedCompare::Uncomparable {
-            grammar: Some(TextGrammar::Geometric(Geometric::Box)),
-            ..
-        } => b';',
+/// The `typdelim` an array of `element` is split at, which the plan carries
+/// off the preamble (I22) — `None` where the split is not this build's to
+/// make: a delimiter the preamble could not read, and one `array_in` reads
+/// otherwise than [`nested::parse_array_delimited`] models at some supported
+/// major, which is any byte but a printable ASCII one other than a brace, a
+/// double quote or a backslash.
+fn array_delimiter(element: &NestedCompare) -> Option<u8> {
+    let delimiter = match element {
+        NestedCompare::Uncomparable { delimiter, .. } => (*delimiter)?,
         _ => b',',
-    }
+    };
+    (delimiter.is_ascii_graphic() && !b"{}\"\\".contains(&delimiter)).then_some(delimiter)
 }
 
 /// A nested field's key, built as [`nested_key`] builds a literal's — each
@@ -2063,8 +2061,8 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
         }
         NestedCompare::Uncomparable { .. } => None,
         NestedCompare::Array(element) => {
-            let literal =
-                nested::parse_array_delimited(text, array_delimiter(element)).ok_or(refused)?;
+            let Some(delimiter) = array_delimiter(element) else { return Ok(None) };
+            let literal = nested::parse_array_delimited(text, delimiter).ok_or(refused)?;
             let mut elements = Vec::with_capacity(literal.elements.len());
             let mut keyed = true;
             for value in &literal.elements {
@@ -5867,6 +5865,53 @@ mod tests {
         }
     }
 
+    /// **A base type's array beneath a container is split at the `DELIMITER`
+    /// its `CREATE TYPE` declares** (I22), through a domain and a typmod, so a
+    /// quoted element followed by it is read, as `array_in` reads it, and one
+    /// followed by `,` refused; a delimiter the preamble could not read, or one
+    /// `array_in` reads as syntax at some major, splits nothing and refuses
+    /// nothing but the container's own grammar.
+    #[test]
+    fn a_base_type_s_array_beneath_a_container_is_split_at_its_delimiter() {
+        let base = |name: &str, delimiter| TypeDef {
+            name: name.into(),
+            kind: TypeKind::Base { delimiter },
+        };
+        let mut types = vec![
+            base("public.semi", Some(b';')),
+            base("public.pipe", Some(b'|')),
+            base("public.plain", Some(b',')),
+            base("public.unread", None),
+            base("public.backslash", Some(b'\\')),
+            TypeDef { name: "public.semid".into(), kind: TypeKind::domain("public.semi") },
+        ];
+        for (field, text, expected) in [
+            ("public.semi[]", r#"("{""a b"";c}")"#, false),
+            ("public.semi[]", r#"("{a,b;c}")"#, false),
+            ("public.semi[]", r#"("{{a;b};{c;d}}")"#, false),
+            ("public.semi[]", r#"("{{a;b};{c}}")"#, true),
+            ("public.semi[]", r#"("{""a b"",c}")"#, true),
+            ("public.semi(8)[]", r#"("{""a b"";c}")"#, false),
+            ("public.semid[]", r#"("{""a b"";c}")"#, false),
+            ("public.semid[]", r#"("{""a b"",c}")"#, true),
+            ("public.pipe[]", r#"("{""a b""|c}")"#, false),
+            ("public.plain[]", r#"("{""a b"",c}")"#, false),
+            ("public.plain[]", r#"("{""a b"";c}")"#, true),
+            ("public.unread[]", r#"("{""a b"";c}")"#, false),
+            ("public.unread[]", r#"("{""a b"",c}")"#, false),
+            ("public.unread[]", r#"("{a}""#, true),
+            ("public.backslash[]", r#"("{""a b""\\c}")"#, false),
+        ] {
+            types.retain(|t| t.name != "public.holder");
+            types.push(TypeDef {
+                name: "public.holder".into(),
+                kind: TypeKind::Composite { fields: Some(vec![ColumnDef::new("v", field)]) },
+            });
+            let plan = comparison_for("public.holder", None, &types, &[]);
+            assert_eq!(field_refused(&plan, text), expected, "{field} {text:?}");
+        }
+    }
+
     /// **A field PostgreSQL refuses is told from one this build does not
     /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
     /// `Refused`, which fails the parse keying the field, and a spelling the
@@ -9285,7 +9330,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (63, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (64, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

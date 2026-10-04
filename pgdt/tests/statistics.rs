@@ -752,7 +752,7 @@ fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
 
 /// **A strict parse names what it leaves unchecked under each table, and
 /// `info --detail` names the same**, as its export does: a base type's
-/// column, a range declaring a canonical function, a domain's `CHECK`, and a
+/// column and a composite's array of one, a range declaring a canonical function, a domain's `CHECK`, and a
 /// table's `CHECK`, its own or inherited, each with its reason. Every other
 /// listing — a `default` parse's, `info`'s without `--detail` — names none,
 /// its closing count pointing at `info --detail`.
@@ -763,7 +763,7 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     let counted = |listing: &str| {
         assert!(
             listing.contains(
-                "5 of 12 COPY block(s) hold what a strict parse does not check — `pgdt info \
+                "6 of 13 COPY block(s) hold what a strict parse does not check — `pgdt info \
                  --detail` lists it"
             ),
             "{listing}"
@@ -784,6 +784,8 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     for expected in [
         "v_int2 emitters.bt_int2: a base type, read by an input function only the restoring \
          server runs",
+        "v.items[] emitters.bt_varchar: a base type, read by an input function only the \
+         restoring server runs",
         "v_canon emitters.r_canon: a range whose canonical function, \
          emitters.r_canon_canonical, only the restoring server runs",
         "v_positive emitters.positive: the domain's CHECK, an expression",
@@ -794,7 +796,7 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
     }
     assert!(
         said.contains(
-            "5 of 12 COPY block(s) hold what a strict parse does not check, each listed as \
+            "6 of 13 COPY block(s) hold what a strict parse does not check, each listed as \
              `unchecked by a strict parse`"
         ),
         "{said}"

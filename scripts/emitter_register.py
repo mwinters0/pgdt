@@ -749,8 +749,9 @@ class ValueForm:
 
 
 #: The value forms the session-setting variants and the float option reach,
-#: and those a column's typmod selects, hand-listed (I4 names what `pg_dump`
-#: pins; everything else is a server's, or the column's).
+#: and those a column's typmod or its type's declaration selects, hand-listed
+#: (I4 names what `pg_dump` pins; everything else is a server's, or the
+#: column's).
 VALUE_FORMS: tuple[ValueForm, ...] = (
     ValueForm(
         "src/backend/utils/adt/varlena.c",
@@ -842,6 +843,13 @@ VALUE_FORMS: tuple[ValueForm, ...] = (
         "3 days 04:05:06.79",
         "types/default",
         "`interval day to second(2)`: fractional seconds rounded to the precision",
+    ),
+    ValueForm(
+        "src/backend/utils/adt/arrayfuncs.c",
+        "array_out",
+        '("{""a b"";c,d;""e;f""}")',
+        "emitters/default",
+        "a base type's `DELIMITER = ';'`: its array's elements separated by `;`, beneath a composite (I22)",
     ),
 )
 

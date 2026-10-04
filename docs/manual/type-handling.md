@@ -832,13 +832,12 @@ whether a dump has one before you write a filter.
 - **The array's element type is opaque.** `box[]`, an array of a C-level base
   or shell type, or an array of a domain over any of those. PostgreSQL lets an
   element type choose the separator its arrays are written with — `box` uses
-  `;`, not `,` — and for exactly these types the dump does not say which:
-  `box` is built in and has no `CREATE TYPE` in the file at all, and a domain
-  inherits its base type's separator while recording nothing about it. Splitting
-  such a literal on `,` would invent element boundaries that are not there, and
-  the elements it recovered would be opaque text anyway, so the whole value
-  stays one string. `pgdt info --detail` reports this as `opaque element
-  type`.
+  `;`, not `,` — and only a C-level type's `CREATE TYPE` says which, as
+  `DELIMITER`: `box` is built in and has no `CREATE TYPE` in the file at all,
+  and a domain inherits its base type's separator while recording nothing
+  about it. The elements a split recovered would be opaque text anyway, so
+  the whole value stays one string. `pgdt info --detail` reports this as
+  `opaque element type`.
 - **The array's element type is itself an array.** `CREATE DOMAIN intarr AS
   integer[]` and a column of `intarr[]` is legal, and PostgreSQL writes such a
   value one brace deep — `{"{1,2}","{3}"}`, each element an array literal in
