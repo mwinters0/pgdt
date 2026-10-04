@@ -22,7 +22,8 @@ use crate::scan::PostgresInvalidValues;
 /// Why a text is read as no value of its type, where a caller must tell the
 /// two apart: a parse fails on the first field PostgreSQL refuses, and on no
 /// other (`roadmap.md`, "A literal is guaranteed in `*_out`'s form and never
-/// read past `*_in`'s").
+/// read past `*_in`'s"). Why a reader stays narrow and a classifier answers
+/// this where it fails: `docs/design/decisions.md`, "D55".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unread {
     /// The type's `*_in` refuses it: found at a check carrying a

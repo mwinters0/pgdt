@@ -185,7 +185,10 @@ impl RowEnding {
             // line, so only this block is misread, though a field in it may
             // be refused where PostgreSQL reads it. Not refused as a
             // shortfall: that would fail the whole parse, and this match is
-            // PostgreSQL's refusals alone.
+            // PostgreSQL's refusals alone. Reading one needs rows framed by
+            // CR in the leader's resync (`leader::scan_piece`) and a query
+            // segment's (`stream::first_row_start`) too, each of which
+            // searches for an LF such a block's interior does not hold.
             (Self::Cr, _) => None,
             (block, row) if block == row => None,
             (Self::CrLf, Self::Lf) => Some(RowEndingRefusal::LiteralNewline),

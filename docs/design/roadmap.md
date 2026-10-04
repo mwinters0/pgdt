@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P31 — correctness evidence: the emitter register and value oracles | Current | [spec](roadmap-P31-correctness-evidence.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P31 — correctness evidence: the emitter register and value oracles | Complete | [spec](roadmap-P31-correctness-evidence.md); [notes](roadmap-P31-correctness-evidence-notes.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — replaces `M212`; the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — allocated by P31's grilling; the maintainer sets its order |
 | P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |

@@ -135,6 +135,8 @@ our API, CLI, or data until we reach v1.0.
     - [ ] Statistics gathered by a cold `query`.
 - Postgres Correctness
     - [x] Tests cover all major Postgres releases, v13-v18.
+    - [x] Every literal `pg_dump` can write, and every option it takes, is checked against the test
+    fixtures, and every typed value against the server's own reading of it.
     - Data types
         - [x] Almost all common base types parsed into Arrow types (see: [type
         handling](docs/manual/type-handling.md))
@@ -150,6 +152,9 @@ our API, CLI, or data until we reach v1.0.
                 - [x] `time` `24:00:00`
         - [x] Any type that we don't parse is returned as `Utf8View` (aka string) so you can parse
         it yourself.
+        - [x] A value PostgreSQL would refuse fails the parse reading it, as a restore fails;
+        `--postgres-invalid-values strict` checks every field and names what it cannot (see: [type
+        handling](docs/manual/type-handling.md#when-a-value-does-not-match-its-type))
         - [ ] Common extension types, e.g. PostGIS
     - Collation
         - [x] `C` / `POSIX`

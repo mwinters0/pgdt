@@ -181,6 +181,6 @@ no `on_copy_end`, and what it names the statement by — `FieldRefused`'s
 `line` is `COPY`'s count of a block's rows (31.12.2), which a run of
 statements has no counterpart of — is that track's to decide.
 
-**Origin.** 31.12, 2026-10-03:
-[`roadmap-P31.12-field-refusal-notes.md`](roadmap-P31.12-field-refusal-notes.md).
+**Origin.** 31.12, 2026-10-03; P31's notes are
+[`roadmap-P31-correctness-evidence-notes.md`](roadmap-P31-correctness-evidence-notes.md).
 Contingent on the raise staying at the block's close.

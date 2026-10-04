@@ -77,59 +77,14 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
-## P31 progress
-
-Spec: [`../design/roadmap-P31-correctness-evidence.md`](../design/roadmap-P31-correctness-evidence.md).
-**A `KD<k>` of the phase's class that a round files is appended here as the
-next `31.<M>` in the same change, without asking** (`31.28` is spent): the
-maintainer's standing approval, in the spec's opening note.
-
-- [x] **31.1** The emitter register's extraction into `fixtures/<major>/emitters.tsv` at every major and its join, reporting what is uncovered without gating; the notes classify every uncovered literal and option as fixture-reachable, an `I<n>`, or a suspected defect. No product code — [notes](../design/roadmap-P31.1-emitter-register-notes.md)
-- [x] **31.2** Generator capabilities: version sidecar schemas, session-setting variants by `ALTER DATABASE … SET`, the new option flag sets, and the strict known-failure table, each with the content the spec names for it; and the register's value-form half, the hand-listed spellings those variants reach, joined as 31.1's halves are — [notes](../design/roadmap-P31.2-generator-capabilities-notes.md)
-- [x] **31.3** The value oracle: its pass, `values.tsv`, the typed read asserted against it over the default and every variant, the fifth reconciliation, and D73's line — [notes](../design/roadmap-P31.3-value-oracle-notes.md)
-- [x] **31.4** Schema content reaching every remaining uncovered literal, value form and option, findings filed as `KD`s and appended here; the register a gate in `mise run check` — [notes](../design/roadmap-P31.4-register-gate-notes.md)
-- [x] **31.5** The `CREATE TABLE` grammar tells constraints from columns and tracks brackets, closing `KD69` — [notes](../design/roadmap-P31.5-table-elements-notes.md)
-- [x] **31.6** Columns declared elsewhere: a table's `INHERITS` parents and `OF` type recorded, the `--binary-upgrade` `ALTER` forms included, and a missing column resolved through them, closing `KD64` and `KD70` — [notes](../design/roadmap-P31.6-columns-declared-elsewhere-notes.md)
-- [x] **31.7** Three preamble point fixes: the `UNLOGGED` and `FOREIGN` prefixes, `ALTER TYPE … DROP ATTRIBUTE` folded, and `\connect`'s connection-string form, closing `KD65`, `KD66` and `KD68` — [notes](../design/roadmap-P31.7-preamble-point-fixes-notes.md)
-- [x] **31.8** `byteaout`'s escape form read beside its hex form, closing `KD67` — [notes](../design/roadmap-P31.8-bytea-escape-form-notes.md)
-- [x] **31.9** A built-in type written quoted under `--quote-all-identifiers` read as its bare name wherever a spelling is compared, closing `KD71` — [notes](../design/roadmap-P31.9-quoted-builtin-notes.md)
-- [x] **31.10** `float8out`'s fifteen-digit spelling past `DBL_MAX` read as no infinity the column never held, closing `KD72` — [notes](../design/roadmap-P31.10-float-past-dbl-max-notes.md)
-- [x] **31.11** A `\connect` to the database already current continues its segment, so a `--create` dump's reconnect after `DATABASE PROPERTIES` keeps its tables, closing `KD73` — [notes](../design/roadmap-P31.11-reconnect-notes.md)
-- [x] **31.15** A `numeric(p,s)` field put through `apply_typmod` as `COPY` puts it — rounded to its scale and refused past its precision — on the typed and the text-held arms alike, closing `KD81` — [notes](../design/roadmap-P31.15-numeric-typmod-notes.md)
-- [x] **31.12** A field its type's `*_in` refuses at a `pg-refuses` check fails the parse keying it at the first, naming table, column, line by its offset and value, and aborts it, as a restore under `ON_ERROR_STOP` fails, the float spelled past its type's largest finite value first and the manual's float section saying why, closing `KD75` — [notes](../design/roadmap-P31.12-field-refusal-notes.md)
-- [x] **31.12.1** A field of `boolean`, `oid`, `inet`, `cidr`, `macaddr`, `macaddr8` or `bytea` told refused from unread by its `*_in` grammar, each refusal marked against an invariant (I65–I69), so a parse keying it fails there too — [notes](../design/roadmap-P31.12.1-input-function-ports-notes.md)
-- [x] **31.12.2** A refused field named as the restore names it — `COPY` line N of its block beside its offset — the rows before it counted through `absorb`; `FieldDecode` keeps its offset, worded as `FieldRefused`'s — [notes](../design/roadmap-P31.12.2-copy-line-notes.md)
-- [x] **31.12.3** An enum field naming a label its type does not declare refused where the preamble holds the type's labels exactly, a statement that could change them and that it cannot read — `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, a label no plain `'…'` literal spells — leaving them inexact, closing `KD83` — [notes](../design/roadmap-P31.12.3-enum-label-refusal-notes.md)
-- [x] **31.13** `--postgres-invalid-values=default|ignore` on D103's four surfaces, `ignore` opting a dump's fields out of 31.12's refusal — [notes](../design/roadmap-P31.13-postgres-invalid-values-notes.md)
-- [x] **31.13.1** A block records the refused fields an ignoring parse went past — the first in full, and a count — so a `default` parse over the cache fails with the recorded refusal, saying an ignoring parse recorded it and nothing was re-read, and `info` reports them; `CACHE_FORMAT_VERSION` bumped — [notes](../design/roadmap-P31.13.1-ignored-refusals-notes.md)
-- [x] **31.13.2** A block's record of the refused fields an ignoring parse went past is per column — each column holding one keeps its first in full and its count — so a `default` parse fails exactly when it tracks such a column, quoting the first among the columns it tracks, and `info` reports them by column; `CACHE_FORMAT_VERSION` bumped — [notes](../design/roadmap-P31.13.2-per-column-refusals-notes.md)
-- [x] **31.14** `--postgres-invalid-values=strict`: the parse decodes every field, nested leaves, declined blocks and metadata-level columns included, so a clean parse is a full check, a held block no strict parse checked re-read and recorded on 31.13.1's record as checked in full; the manual says what `default` leaves to a query — [notes](../design/roadmap-P31.14-strict-notes.md)
-- [x] **31.16** `json_in`'s grammar: a `strict` parse refuses a `json` field PostgreSQL's JSON lexer refuses — [notes](../design/roadmap-P31.16-json-in-notes.md)
-- [x] **31.17** `bit_in`'s and `varbit_in`'s grammar, their typmod lengths with it: a `strict` parse refuses a `bit`, `bit(n)`, `varbit` or `varbit(n)` field PostgreSQL refuses — [notes](../design/roadmap-P31.17-bit-in-notes.md)
-- [x] **31.18** The seven geometric types' input grammars: a `strict` parse refuses a `point`, `line`, `lseg`, `box`, `path`, `polygon` or `circle` field PostgreSQL refuses — [notes](../design/roadmap-P31.18-geometric-in-notes.md)
-- [x] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it — [notes](../design/roadmap-P31.19-char-length-notes.md)
-- [x] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so — [notes](../design/roadmap-P31.20-not-null-notes.md)
-- [x] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same — [notes](../design/roadmap-P31.21-strict-unchecked-notes.md)
-- [x] **31.21.1** The listing's reasons split by what decides the input: the `reg*` types and `aclitem` named as read against the restoring server's catalog, a type the dump does not declare as read by the restoring server, a composite whose fields did not parse and an array shape read as its text as pgdt's reading falling short; `pg_node_tree`, `pg_ndistinct`, `pg_dependencies`, `pg_mcv_list`, the `pg_brin_*_summary` types and `gtsvector` refused at any non-NULL field, and `"char"`, `refcursor`, `xid`, `xid8` and `cid` read by a grammar refusing nothing — the three numeric ones refused only where every supported major refuses, their v16 narrowing an invariant — each leaving the listing; `NoReader` then names only a built-in type pgdt has no reader of — [notes](../design/roadmap-P31.21.1-unchecked-reasons-notes.md)
-- [x] **31.21.2** The `unchecked by a strict parse:` lines printed beneath each block by `pgdt info --detail` and after a `strict` `parse` alone, every other listing keeping the closing count, which points at `info --detail`; `--json` carries each block's `unchecked` as before — [notes](../design/roadmap-P31.21.2-unchecked-placement-notes.md)
-- [x] **31.22** The integers, `numeric`, the floats, `uuid` and `jsonb`, each read by a reader of its own, tell a field their `*_in` refuses from a spelling it reads and this build does not, each refusal marked against an invariant and refusing only what every supported major refuses, so such text no reader here reads fails a parse keying it, a `strict` one included, exactly where PostgreSQL refuses it — [notes](../design/roadmap-P31.22-reader-refusals-notes.md)
-- [x] **31.22.1** Dates, times, timestamps and `interval` do the same, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it in some column of its type, an `interval`'s field qualifiers tried together, closing `KD90` — [notes](../design/roadmap-P31.22.1-datetime-refusals-notes.md)
-- [x] **31.22.2** An `interval` column's field qualifier carried to its comparison kind, so a strict parse refuses a field only that qualifier refuses — `3000000000` in an `interval year` — closing `KD98` — [notes](../design/roadmap-P31.22.2-interval-qualifier-notes.md)
-- [x] **31.23** A role quoted `"PUBLIC"` and a tablespace quoted `"PG_DEFAULT"` kept in the inventory, only the pseudo-role and the default tablespace dropped, closing `KD91` — [notes](../design/roadmap-P31.23-public-role-notes.md)
-- [x] **31.24** A user base type's `DELIMITER` read from the preamble, so a `strict` parse splits its array beneath a container where PostgreSQL does and refuses no field PostgreSQL reads, closing `KD94` — [notes](../design/roadmap-P31.24-base-type-delimiter-notes.md)
-- [x] **31.25** `bit`, `bit(n)`, `bit varying`, `bit varying(n)` and a typmod-less `"bit"` column in the types fixture at every major, their spellings read through `pgtype` and their fields through a strict parse, closing `KD95` — [notes](../design/roadmap-P31.25-bit-fixture-notes.md)
-- [x] **31.26** A `NOT NULL` domain's NULL element of an array, or NULL field of a composite, refused wherever the field is read, as `array_in` and `record_in` refuse it, closing `KD97` — [notes](../design/roadmap-P31.26-not-null-beneath-notes.md)
-- [x] **31.27** A partition's parent and bound read from the preamble — `ALTER TABLE … ATTACH PARTITION … FOR VALUES …` or `DEFAULT`, and `CREATE TABLE … PARTITION OF` — the bound held as its text, and the listing naming a block loaded into a partition as checked against its bound and one loaded through its root as routed by its partitions' bounds, neither checked by a strict parse — [notes](../design/roadmap-P31.27-partition-bound-notes.md)
-- [x] **31.30** The emitter register's function list held to what the readers consume: a check mapping each statement keyword the preamble and the scanner recognise to the emitter writing it, a buffer read as a query only where an execute call reads it, a listed function's first major, every consumed emitter listed, and schema content reaching every literal that uncovers, findings filed as `KD`s and appended here — [notes](../design/roadmap-P31.30-function-list-notes.md)
-- [x] **31.28** A raw carriage return ending a line inside a quoted SQL literal kept in the statement the preamble reads, as psql keeps it whatever the file's line endings, so an enum label or `CHECK` holding one is the one the server holds, closing `KD100` — [notes](../design/roadmap-P31.28-cr-in-literal-notes.md)
-- [x] **31.29** Each `COPY` block's rows held to its first row's line ending — `\n` or `\r\n`, by the first CR no backslash escapes — as `CopyReadLine` holds them, and a row ending otherwise refused where a restore refuses it, serially and in a split block, so a dump converted to CR LF reads as its original — [notes](../design/roadmap-P31.29-row-endings-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P31 is the open phase**, its checklist above. A dump is readable over HTTP, plain and `.xz`,
+- **No phase is open**: P31 is complete, its notes in
+  [`../design/roadmap-P31-correctness-evidence-notes.md`](../design/roadmap-P31-correctness-evidence-notes.md).
+  A dump is readable over HTTP, plain and `.xz`,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -139,7 +94,7 @@ maintainer's standing approval, in the spec's opening note.
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eleven phases remain sketched — P32, P30, P29, P22, P21, P23, P26, P15, P18, P8, P24,
+  Twelve phases remain sketched — P33, P32, P30, P29, P22, P21, P23, P26, P15, P18, P8, P24,
   in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
