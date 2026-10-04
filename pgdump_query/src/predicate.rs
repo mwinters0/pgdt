@@ -130,8 +130,8 @@ impl PredicateOp {
 /// the column a comparison, whatever the operator, once when the block's schema
 /// resolves rather than per row — so a literal that
 /// is not a value of the column's type is `Error::PredicateValueDecode`
-/// before any row is read, and both sides of a `numeric(p,s)` comparison
-/// carry that column's scale. An ordering operator keeps the decoded key and
+/// before any row is read, and both sides of a `numeric(p,s)` comparison held
+/// as a decimal carry that column's scale. An ordering operator keeps the decoded key and
 /// decodes the field to match; `Eq`/`Ne` usually keep the literal rendered
 /// back into the `*_out` spelling the file holds and compare bytes
 /// ([`equality_comparison`]).
@@ -1559,8 +1559,8 @@ fn interval_read<T>(read: Read<T>, text: &str, qualifier: Option<IntervalQualifi
 /// infinity past the type's range, and a `numeric` in either: read within `numeric_in`'s bounds in
 /// PostgreSQL's, and exactly, neither rounded to the scale nor refused past
 /// the precision, the server coercing a literal with no typmod where it puts a
-/// field through the typmod (I63) — and a text of any length for the same
-/// reason. In DataFusion's semantics a literal is
+/// field through the typmod (I63) — and a text of any length and an `interval`
+/// under no field qualifier for the same reason. In DataFusion's semantics a literal is
 /// DataFusion's value, not the server's (`roadmap.md`, "A literal is
 /// guaranteed in `*_out`'s form and never read past `*_in`'s").
 fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
@@ -2023,8 +2023,8 @@ pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
 /// off the preamble (I22) — `None` where the split is not this build's to
 /// make: a delimiter the preamble could not read, and one `array_in` reads
 /// otherwise than [`nested::parse_array_delimited`] models at some supported
-/// major, which is any byte but a printable ASCII one other than a brace, a
-/// double quote or a backslash.
+/// major, which is any byte but a visible ASCII one, the space not among them,
+/// other than a brace, a double quote or a backslash.
 fn array_delimiter(element: &NestedCompare) -> Option<u8> {
     let delimiter = match element {
         NestedCompare::Uncomparable { delimiter, .. } => (*delimiter)?,
@@ -2895,7 +2895,7 @@ struct BelievedStatistics {
     /// its literal read as a key — present only where the term's semantics
     /// believes bounds in that kind ([`ComparisonPlan::bounds_read_by`]).
     /// Carried for the equality operators too, whose [`Comparison`] keeps no
-    /// kind. Boxed, as [`Comparison::Nested`] is, because every comparing
+    /// kind but where it decodes. Boxed, as [`Comparison::Nested`] is, because every comparing
     /// leaf carries it.
     bounds: Option<Box<(CompareKind, OrderKey)>>,
     /// Whether a group's dictionary answers this term: one of the four

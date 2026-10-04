@@ -374,7 +374,8 @@ typmod where the grammar does — `timestamp(3) with time zone`,
 word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
 cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
 `bpchar` at all six majors; no fixture holds a `bit` column (KD95), so
-`"bit"` rests on the source alone. `pgtype.rs`'s `builtin_name` reads both.
+`"bit"` rests on the source alone. `pgtype.rs` reads both: `builtin_name` gives
+`character` its length of 1, and `text_grammar` gives `bit` its.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
 `format_type` passes a name it does not spell as a keyword through
@@ -4041,7 +4042,8 @@ literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
 
 **Relied on by:** the `types` fixtures' `common::REFUSED_FIELDS` row, which
 holds that a data-level parse of a `pg_dump` output fails on the spelling
-`decode::float_in` refuses (I59) — no decoder reading it as a value.
+`decode::float_in` refuses (I59) — no decoder reading it as a value but under
+`ignore`.
 
 **Re-verify.**
 

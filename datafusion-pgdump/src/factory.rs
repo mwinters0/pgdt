@@ -171,7 +171,7 @@ impl ExtensionOptions for PgDumpTableOptions {
             entry(
                 "postgres_invalid_values",
                 Some(invalid.to_string()),
-                "`default`, a value PostgreSQL refuses for its column's type refused, or `ignore`, a float past its type's range read as the largest of its sign.",
+                "`default`, a value PostgreSQL refuses for its column's type refused, or `ignore`, a float past its type's range read as the largest of its sign and one below it as zero, a `varchar(n)` or `char(n)` value past its length as written, and a NULL in a `NOT NULL` column as NULL.",
             ),
             entry(
                 "strict_identity",

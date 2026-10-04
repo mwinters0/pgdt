@@ -1047,7 +1047,7 @@ fn densest_group(statistics: &BlockStatistics) -> u64 {
 
 /// A dump of two `COPY` blocks, each over a mebibyte so that the default group
 /// size cuts them: `dense`, whose rows are spread evenly over two megabytes,
-/// and `clustered`, whose rows all start in the first few kilobytes and are
+/// and `clustered`, whose rows all start in the first 64 KiB and are
 /// followed by one row a mebibyte long.
 fn dense_and_clustered(dir: &Path) -> std::path::PathBuf {
     let dump = dir.join("dense.sql");
@@ -1588,7 +1588,8 @@ fn reading(invalid: PostgresInvalidValues, jobs: usize) -> ScanOptions {
 }
 
 /// One table `public.t (a smallint, v smallint[], n numeric(10,2), r
-/// int4range, j json, b bit(3), g box[])` of `rows` clean rows, row `bad` (from 0) given `field` in
+/// int4range, j json, b bit(3), g box[], p pg_node_tree, x xid)` of `rows`
+/// clean rows, row `bad` (from 0) given `field` in
 /// column `column` (by position) where it is `Some`.
 fn strict_dump(dir: &Path, rows: usize, bad: Option<(usize, usize, &str)>) -> std::path::PathBuf {
     let dump = dir.join("strict.sql");

@@ -1,6 +1,6 @@
 //! Preamble/metadata extraction against real `pg_dump` output — the
-//! `fixture_schema_types.sql` fixtures across all three routine versions and
-//! flag sets (`docs/design/decisions.md`, "D36"). Unlike `pgdump_query/src/preamble.rs`'s unit tests (hand-written
+//! fixtures, `types`' above all, across the routine majors and flag
+//! sets (`docs/design/decisions.md`, "D36"). Unlike `pgdump_query/src/preamble.rs`'s unit tests (hand-written
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 

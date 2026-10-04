@@ -184,10 +184,10 @@ Decode is always split, extraction on any source, discovery only behind a decode
 fused. One core's rate against the device's offer decides each; readings that disagree reopen it.
 Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
-### D26 Cancellation is per chunk or leader window, honoured by the mapping passes alone
+### D26 Cancellation is per chunk or leader window, polled by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a
-partial result. The preamble scan ignores the flag, a stop there reading as the first `COPY` header and caching as
-complete. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
+partial result. The preamble scan polls no flag, a stop there reading as the first `COPY` header and caching as
+complete, and a read the signal drops fails it unbanked. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
 the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or
 one in the listing, ends it in the handler. As init (RT19) both binaries exit 128+n on every signal ending them elsewhere
 but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
@@ -266,10 +266,10 @@ one tier; a value the server refuses, a decode error, this being our front end's
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on name (I11); a composite's field
 list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect` segment is not a database (I9). L1
-stores text, never a conclusion: a declared type is its words, block comments and spacing dropped, a collation clause verbatim, `None`
+stores text, never a type's conclusion: a declared type is its words, block comments and spacing dropped, a collation clause verbatim, `None`
 collation is "no clause" (I37), and `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
 both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, and a column is found through them as it
-is looked up. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
+is looked up. Of what the DDL implies, L1 keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
 
 ## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
 ### D37 The bar: the dump alone determines the value
@@ -310,8 +310,8 @@ length bounding an acyclic one (I24), so a cycle answers `Unknown`.
 
 ### D42 `interval` is the struct; its special values are unrepresentable
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
-out-of-range parts are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are. Twelve built-in range
-names are fixed, multiranges apart (I10); a user-defined range declaring `canonical` is unanswerable (I46).
+a time part past Arrow's nanoseconds are unrepresentable values (D96, D99), as `date`'s and `numeric`'s are. The six built-in
+ranges and their six multiranges are fixed (I10); a user-defined range declaring `canonical` is unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair
 `retype_from_census` and the text mode's `read_as_text` (D100) alone change `(DataType, NestedPlan)` after
@@ -319,7 +319,7 @@ resolution, the census a parameter so no caller skips it; a run past `MAXDIM` is
 refuses a stream and degrades a listing: same output as `NotDeclared`, opposite advice.
 
 ### D44 The control's decoders allocate only where their return type does; its renderers use tables
-The measured control's decoders take no intermediate `String`, and its renderers write into one reused buffer
+The measured control's decoders take no intermediate `String`, `interval`'s aside, and its renderers write into one reused buffer
 through `DEC_PAIRS`, `uuid`'s and `bytea`'s into one pre-sized `String` each through `HEX_PAIRS` (`tests/render_allocations.rs` pins the count); `interval`'s, a decimal's and a
 float's still go through `core::fmt`. Render-back's third outcome, `FieldRender`, is an Arrow value no text form spells (I40), never rounded.
 
@@ -447,9 +447,9 @@ removing redundant work — a field decoded once a row for every leaf reading it
 ### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
 `*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in` spelling is read where free,
 simpler or faster, none is refused at runtime cost, and the rest are `PredicateValueDecode`, a shortfall, never a rule. What a kind reads past its floor (one value's
-other spellings, field and literal alike; `jsonb`, its canonical form untypeable) is on `accepted_form`. A literal finer than the scale is refused. `JSONB_MAX_DEPTH`
+other spellings, field and literal alike; `jsonb`, its canonical form untypeable) is on `accepted_form`. A literal finer than a decimal's scale is refused. `JSONB_MAX_DEPTH`
 is fixed: a Rust stack overflow aborts. A field fails a parse only where a `pg-refuses` check refuses it (`decode::Unread`). Rejected: failing on every field read as
-no value, which aborts on a shortfall a restore reads. An enum's undeclared label is refused only where the preamble read its labels exactly (I70).
+no value, which aborts on a shortfall a restore reads. A field naming an undeclared enum label is refused only where the preamble read the labels exactly or no label is that long (I70); a literal naming one, always (`KD86`).
 A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Rejected: the newest or any major's, refusing what an older restore reads; the dump's own major, a dump being read alike whichever wrote it. A server's settings are taken at their most permissive, zone names open (tzdata grows unbidden) and abbreviations closed, PostgreSQL's files by release and tzdata's by its own policy (I83). Rejected: a file of the server's own shadowing a keyword, forgoing `13:00 pm` and I61's era edge for a server nobody runs; the tzdata at hand, refusing a zone a later one names.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`

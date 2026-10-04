@@ -960,7 +960,8 @@ which is where to look for the ones no column of yours happens to use; see
 
 `CREATE DOMAIN email AS text NOT NULL` gives you a `Utf8View` column whose
 `NOT NULL` is held as a column's own is: a null in it is refused wherever it is
-read ("When a value does not match its type", below), the Arrow field staying
+read unless you say to ignore such values ("When a value does not match its
+type", below), the Arrow field staying
 nullable. Domains over domains resolve transitively, a `NOT NULL` with them.
 Constraints beyond `NOT NULL` are not enforced — we are reading a dump, not
 validating it.
@@ -1041,15 +1042,17 @@ type declaring its own `canonical` function, or a null element of an array,
 or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into
 the partition or through its root must fall within, or a unique, primary or
-foreign key added once the data has loaded, which is when a restore checks it. What it does not
-check in your dump is named under each table of a strict `parse`'s listing
+foreign key added once the data has loaded, which is when a restore checks it. What a
+column's type or declaration leaves unchecked in your dump — all of the above but a `json`'s
+depth, a server's settings, a partition's bound and a key — is named under each table of a strict `parse`'s listing
 and `pgdt info --detail`'s, on an `unchecked by a strict parse:` line per column — or element,
 field or bound within one — saying why, and per `CHECK` the table or a
 domain of its columns carries ([dump inspection](dump-inspection.md), "`info`:
 reporting what is known").
 Each table it checks is recorded in the cache as checked, and a `strict` parse
 over a cache an earlier `parse` built re-reads the tables no `strict` parse
-checked, in the same pass that fills in any statistics they lack, so the
+checked — before it reads on where the cache stops short of the end, and in the
+pass that fills in any statistics they lack where it does not — so the
 answer is the same whichever runs built the cache; a second `strict` parse
 reads nothing again. It costs reading every value, where `default` reads only
 those it gathers statistics of. `query` has no `strict`.

@@ -592,8 +592,9 @@ struct Tm {
     yday: i32,
 }
 
-/// The transaction's start, as `now` and `today` read it: within every
-/// range, so where it falls decides nothing.
+/// The transaction's start, as `now` and `today` read it: a date within every
+/// range, so its date decides nothing, and noon, the one hour both `am` and
+/// `pm` read.
 const NOW: Tm = Tm { year: 2026, mon: 6, mday: 15, hour: 12, min: 0, sec: 0, yday: 0 };
 
 /// A zone's offset as the decode leaves it: one the text fixes, or one the
@@ -2461,7 +2462,8 @@ fn interval_accepts(
 
 // ---------------------------------------------------------------------------
 // DecodeInterval and DecodeISO8601Interval before v15: `int` fields that
-// wrap, a microsecond `fsec_t`, and nothing range-checked but the months.
+// wrap, a microsecond `fsec_t`, and each token's number range-checked but no
+// sum of them but the months'.
 
 /// `struct pg_tm`'s fields an interval fills, and `fsec`.
 #[derive(Clone, Copy, Default, Debug)]
@@ -3674,8 +3676,9 @@ mod tests {
             ("-2147483648,day ago", "110000"),
             ("1-11 -2147483648 week", "110000"),
         ];
-        // The cases were put to every qualifier at once, as the union over
-        // them is what they were read by.
+        // The servers' answer is the union over the forms above; this takes
+        // it over every qualifier, a wider union these cases do not tell
+        // apart from it.
         let any_qualifier = |text| {
             std::iter::once(None)
                 .chain(IntervalQualifier::ALL.map(Some))

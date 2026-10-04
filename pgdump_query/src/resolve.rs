@@ -43,8 +43,9 @@ pub enum ColumnResolution {
     Mapped,
     /// Declared, but this build's mapping table has nothing for it.
     UnknownType,
-    /// No DDL explained this column — `--data-only`, a typed table (`CREATE
-    /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
+    /// No DDL explained this column — `--data-only`, a typed table whose type
+    /// is undeclared or read short, or `SchemaMode::Strings` (which never
+    /// looks).
     NotDeclared,
     /// The scan has not finished reading this block's database's DDL, and it
     /// has not declared this column — so nothing is yet known about it, nor

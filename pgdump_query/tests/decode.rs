@@ -8,7 +8,7 @@
 //!
 //! `decode.rs`'s own unit tests already cover the boundary values a round
 //! trip through a small fixture can't be relied on to hit (`NaN`,
-//! `±Infinity`, `infinity`/`-infinity` dates/timestamps, 38-vs-39-digit
+//! `±Infinity`, `infinity`/`-infinity` dates/timestamps, 38-digit
 //! numeric); this file instead proves those same values surface correctly —
 //! read as NULL, or refused — through the *real* pipeline — preamble parse, resolution, and
 //! decode together — using `public.t_numeric`/`t_date`/`t_timestamp`'s own

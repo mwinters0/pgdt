@@ -863,7 +863,8 @@ enum Command {
         /// range: `default` stops the scan at the first one it reads, as a
         /// restore of the dump stops there, or at one an `ignore` parse
         /// recorded in the cache; `ignore` goes on past each, keeping no
-        /// statistics of the stretch of its column it sits in and recording
+        /// bounds, sum or dictionary of the stretch of its column it sits in
+        /// and recording
         /// it, and a `query` then reads it as its own
         /// `--postgres-invalid-values` says; `strict` stops as `default` does
         /// but reads every value to find one, those `default` leaves to a
@@ -1072,8 +1073,10 @@ enum Command {
         /// range: `default` refuses a query reading one, as a restore refuses
         /// the dump there; `ignore` reads a `real` or `double precision`
         /// written past its range as the largest value of its sign, and one
-        /// written below its smallest as zero, for printing and filtering
-        /// alike, and still refuses every other. A filter's own value
+        /// written below its smallest as zero, a `varchar(n)` or `char(n)`
+        /// value past its length as written, and a NULL in a `NOT NULL`
+        /// column as NULL, for printing and filtering alike, and still
+        /// refuses every other. A filter's own value
         /// PostgreSQL refuses is refused either way.
         #[arg(long, value_name = "MODE", value_enum, default_value_t)]
         postgres_invalid_values: CliInvalidValues,
@@ -2051,8 +2054,8 @@ fn die_by(signal: i32) -> ! {
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field_into`], so output is byte-identical whether `--schema-mode`
-/// is `typed` or `strings`, but for a value its type cannot hold
-/// (`docs/design/decisions.md`, "D66").
+/// is `typed` or `strings`, but for a value its type cannot hold and an
+/// `escape` `bytea` (`docs/design/decisions.md`, "D66").
 ///
 /// **One buffer for the whole batch.** The line is assembled in a `String`
 /// that is cleared per row and keeps its capacity across the batch, so a

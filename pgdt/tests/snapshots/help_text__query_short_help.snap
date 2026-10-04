@@ -68,10 +68,11 @@ Options:
                                         restore refuses the dump there; `ignore` reads a `real` or
                                         `double precision` written past its range as the largest
                                         value of its sign, and one written below its smallest as
-                                        zero, for printing and filtering alike, and still refuses
-                                        every other. A filter's own value PostgreSQL refuses is
-                                        refused either way [default: default] [possible values:
-                                        default, ignore]
+                                        zero, a `varchar(n)` or `char(n)` value past its length as
+                                        written, and a NULL in a `NOT NULL` column as NULL, for
+                                        printing and filtering alike, and still refuses every other.
+                                        A filter's own value PostgreSQL refuses is refused either
+                                        way [default: default] [possible values: default, ignore]
       --chunk-size <BYTES>              Bytes requested per read from the dump — the same knob
                                         `parse` carries, and with the same measured answer behind
                                         its default

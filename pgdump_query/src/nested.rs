@@ -50,7 +50,9 @@
 //! scope limit; the input half below is I44). Whitespace padding around an
 //! element, an unquoted token containing a backslash escape, a nested `{}` —
 //! all things `*_in` accepts and `*_out` never emits — are rejected rather than
-//! guessed at. The one deliberate leniency is that a bare `NULL` array element
+//! guessed at. A dimension prefix `array_out` would not write (every lower
+//! bound 1, or a bound with leading zeros) is read as the bounds it states and
+//! renders as `array_out` writes them. The one deliberate leniency is that a bare `NULL` array element
 //! is matched case-insensitively, as `array_in` does: `array_out` force-quotes
 //! any element whose text *is* `null` in any casing, so agreeing with
 //! PostgreSQL here can never misread real output.
@@ -347,7 +349,8 @@ impl ArrayLiteral<'_> {
         self.dims.len()
     }
 
-    /// Whether the literal carried (and will re-render) an `[lb:ub]=` prefix.
+    /// Whether the value renders an `[lb:ub]=` prefix: some lower bound is
+    /// not 1, as `array_out` decides.
     /// Arrow lists are 0-based and have no lower bound, so a decorated value
     /// has no faithful `List` representation.
     pub fn is_decorated(&self) -> bool {
@@ -453,7 +456,8 @@ pub fn decode_array(s: &str) -> Option<ArrayLiteral<'_>> {
     let b = s.as_bytes();
     let mut i = 0;
 
-    // `[lb:ub]` per dimension, then `=`, present iff some lower bound is not 1.
+    // `[lb:ub]` per dimension, then `=`, which `array_out` writes iff some
+    // lower bound is not 1 and which is read wherever it is written.
     let mut decoration: Vec<(i32, usize)> = Vec::new();
     while b.get(i) == Some(&b'[') {
         i += 1;
@@ -1715,7 +1719,7 @@ mod tests {
         assert_eq!(array_elements("{NuLl}"), vec![None]);
         assert_eq!(array_elements("{\"null\"}"), vec![some("null")]);
         // The escape makes it a string even though the bytes still spell
-        // `NULL`, which is what `has_escapes` is for.
+        // `NULL`, which is what `escaped` is for.
         assert_eq!(array_elements(r"{N\ULL}"), vec![some("NULL")]);
         assert_eq!(render_array(&parse_array(r"{N\ULL}").unwrap()), "{\"NULL\"}");
     }
@@ -1868,9 +1872,9 @@ mod tests {
         }
     }
 
-    /// The input grammars are supersets of the output ones, so everything the
-    /// strict decoder reads the permissive parser reads identically — which
-    /// is what lets a filter compare a literal against a field at all.
+    /// The input grammars are supersets of the output ones, so everything
+    /// `*_out` writes the permissive parser reads as the strict decoder does —
+    /// which is what lets a filter compare a literal against a field at all.
     #[test]
     fn every_output_form_parses_as_itself_through_the_input_grammar() {
         for literal in [

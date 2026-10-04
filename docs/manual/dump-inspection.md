@@ -604,8 +604,8 @@ holding none — prints no such line, and `query` never prints one.
 
 **A block whose statistics will not fit the memory you allowed is skipped, not
 gathered badly, and pgdt says which.** What the statistics of one run may hold
-is what the allowance leaves once the workers and the fifth left free are paid
-for ("`--jobs` and `--memory`" below), and the line naming it is on the
+is what the allowance leaves once the workers and the margin left free are
+paid for ("`--jobs` and `--memory`" below), and the line naming it is on the
 `resolved the arrangement` line as `statistics_bytes=`. A `COPY` block that
 would pass it drops what it had gathered and gathers no more; the scan finishes
 normally and stderr carries one line for the block. Nothing else declines
@@ -680,19 +680,20 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   threads, the allocator's own retention, the program itself. What is left is
   the **read-buffer budget**, and that is the number every message below and
   every `memory_bytes=` on stderr names.
-- **The worker count is then held so that a fifth of the whole allowance stays
-  unspent**, because what kills a container is one run's peak.
+- **The worker count is then held so that a fifth of the whole allowance, plus
+  a further 256 MiB, stays unspent**, because what kills a container is one
+  run's peak.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a
   `parse` over a cache with statistics in it pays for them out of the same
-  four fifths, so a large cache means fewer workers — and where the count
+  share, so a large cache means fewer workers — and where the count
   cannot fall, a plain dump or a single worker, a smaller read-buffer budget.
   A `query` pays for them only while it maps what the cache does not yet
   reach: the rows it then reads hold none of them, so that part is sized as if
   the cache held no statistics at all.
-- **What is left under that fifth is what a gathering `parse`'s statistics may
-  hold**, the cache's own included, and a block whose statistics will not fit
+- **What is left under that margin is what a gathering `parse`'s statistics
+  may hold**, the cache's own included, and a block whose statistics will not fit
   it is skipped rather than gathered — see "`--statistics-level`: what `parse`
   records for later queries" above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
@@ -1198,12 +1199,14 @@ public.events (98765 rows)
   strict `parse` does not check in it: a column, or a position within one
   (`v[]`, `v.field`), with its declared type and why — an input the restoring
   server decides, by its catalog or a type the dump does not declare, a
-  built-in pgdt has no reader of, a declaration pgdt did not read in full, a
-  domain's `CHECK` — and
+  built-in pgdt has no reader of, a declaration pgdt did not read in full, an
+  array of arrays, an enum whose labels pgdt does not hold exactly, a column
+  declared nowhere, a domain's `CHECK`, a `NOT NULL` domain beneath an array
+  or composite — and
   each `CHECK` the table carries, its own or the parent's it inherits; a
   table the dump declares nowhere, as in a `--data-only` dump, gets one line
-  saying no value of it is checked. Every listing closes with a line
-  counting the blocks holding any, which, where the lines are not printed,
+  saying no value of it is checked. A listing where some block holds any
+  closes with a line counting them, which, where the lines are not printed,
   points at `pgdt info --detail`.
 
 Add `--detail` to also see each block's byte offsets and, per column that has

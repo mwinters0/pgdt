@@ -89,7 +89,7 @@ async fn edge_cases_dump_tiles_exactly() {
 }
 
 /// A schema-only dump (no `COPY` blocks at all) still tiles: every span is
-/// DDL/framing, and `check_tiling`'s no-`Data`-span path is exercised.
+/// DDL/framing, and `check_tiling` finds nothing amiss with no `Data` span.
 #[tokio::test]
 async fn schema_only_dump_has_no_data_spans_but_still_tiles() {
     let path = edge_cases_fixture(18, "schema-only");

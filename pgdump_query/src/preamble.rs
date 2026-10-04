@@ -89,8 +89,8 @@ pub struct DatabaseMetadata {
 
 impl DatabaseMetadata {
     /// The declaration of column `column` of table `table`: the table's own,
-    /// else its `OF` type's field, else the first parent's, in `INHERITS`
-    /// order, that declares it — each parent asked the same way, so a
+    /// else, for a typed table, its `OF` type's field alone, else the first
+    /// parent's, in `INHERITS` order, that declares it — each parent asked the same way, so a
     /// grandparent's column is found. `None` where the table is not declared
     /// here or nothing it reaches declares the column.
     ///
@@ -306,8 +306,8 @@ pub struct Extension {
 
 /// One column of a `CREATE TABLE`, as the DDL wrote it.
 ///
-/// Every field is the dump's own text, never a conclusion (see the module
-/// docs): `declared_type` is the type's words as written (`character
+/// Every text field is the dump's own text, never a conclusion (see the
+/// module docs): `declared_type` is the type's words as written (`character
 /// varying(16)`), comments and spacing dropped, and `collation` the `COLLATE` clause's reference exactly as
 /// written — `pg_catalog."C"`, schema-qualified and quoted the way `pg_dump`
 /// writes it (I37).
@@ -524,7 +524,8 @@ pub enum TypeKind {
     /// it at: the first byte of its `DELIMITER` literal, as `DefineType` takes
     /// it, and `,` where it states none, `dumpBaseType` writing the clause
     /// wherever it is not (I22). `None` where the clause is no plain string
-    /// literal, which `pg_dump` never writes.
+    /// literal, the list holding it is not closed, or the body is no shape
+    /// this grammar knows, none of which `pg_dump` writes.
     Base { delimiter: Option<u8> },
     /// `CREATE TYPE x;` with no body at all, ahead of the real definition
     /// (forward-declaration shell type) or genuinely never completed.
@@ -996,7 +997,10 @@ fn not_null_clause(rest: &str) -> Option<NotNull> {
 /// `CHECK` word stands only where gram.y's `ConstraintElem` or
 /// `ColConstraintElem` opens one (`check` being reserved, a name spelled so is
 /// quoted). Each is named by a `CONSTRAINT <name>` before it, and is `NO
-/// INHERIT` where those words follow it before the next constraint.
+/// INHERIT` where those words follow it before the next `CONSTRAINT` or
+/// `CHECK` word — a column's `NOT NULL NO INHERIT` after it being taken for
+/// its own, which `pg_dump`, writing a `CHECK` as a table constraint, never
+/// writes.
 fn check_constraints(rest: &str) -> Vec<CheckConstraint> {
     let rest = strip_block_comments(rest);
     let words = top_level_words(&rest);
@@ -1051,8 +1055,8 @@ fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
 ///
 /// A typed table's list is gram.y's `TypedTableElement`, a column's options
 /// or a table constraint, and never holds a type, so it declares no column of
-/// its own: each is its type's field ([`TableDef`]), and only a `NOT NULL`
-/// among its options is kept.
+/// its own: each is its type's field ([`TableDef`]), and only a `NOT NULL` and
+/// a `CHECK` among its options are kept.
 fn parse_create_table(rest: &str) -> Option<(String, TableDef)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let mut after = rest[consumed..].trim_start();
@@ -1150,8 +1154,8 @@ pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableRe
 /// table's list, a `TypedTableElement`, a column's options or a constraint.
 ///
 /// A column is held, and the columns a constraint makes `NOT NULL`; the rest
-/// is told apart and dropped: no reader reads another table constraint, and a
-/// `LIKE`'s columns are not followed.
+/// is told apart and dropped, a `CHECK` being read off the fragment beside it
+/// ([`check_constraints`]), and a `LIKE`'s columns are not followed.
 enum TableElement {
     Column(ColumnDef),
     /// v18's `[CONSTRAINT <name>] NOT NULL <column> [NO INHERIT]`, a `PRIMARY
@@ -2189,7 +2193,8 @@ mod tests {
 
     /// The two references `--binary-upgrade` writes after a full column list,
     /// the `SET NOT NULL` a dump before v18 writes for a column its list does
-    /// not print (I76), and nothing else an `ALTER TABLE` says: the removals,
+    /// not print (I76), an added `CHECK` (tested apart), and nothing else an
+    /// `ALTER TABLE` says: the removals,
     /// a statement holding more than the one subcommand, and every other
     /// subcommand are none of them.
     #[test]
@@ -3494,10 +3499,8 @@ mod tests {
         );
     }
 
-    /// [`extract_statement_cross_refs`]'s five recognized shapes — real
-    /// lines from `fixtures/16/objects/default.sql`, including
-    /// `objects.no_public_execute()`'s `REVOKE` and
-    /// `objects.tablespaced_table`'s `SET default_tablespace = fixture_ts;`.
+    /// [`extract_statement_cross_refs`]'s five recognized shapes, in lines
+    /// shaped as `fixtures/16/objects/default.sql`'s.
     fn refs_of(stmt: &str) -> (Vec<String>, Vec<String>) {
         let mut roles = BTreeSet::new();
         let mut tablespaces = BTreeSet::new();

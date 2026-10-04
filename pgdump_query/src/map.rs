@@ -144,7 +144,9 @@ pub struct Span {
     /// Whether *this span's own* preceding comment carried the TOC header
     /// text (`true`), as opposed to `toc` being inherited from an earlier
     /// entry's span (`false`) — `false` when `toc` is `None`, but for a comment
-    /// block shaped like a TOC entry whose header did not parse. An object
+    /// block shaped like a TOC entry whose header did not parse and that a
+    /// statement closes, and `false` for a span classified `Framing`, whose
+    /// header is vetoed (`docs/design/decisions.md`, "D31"). An object
     /// census (`pgdt info`'s `object kinds:`) counts `toc_owned` spans, one
     /// per archive entry, while TOC coverage counts every attributed span
     /// (`toc.is_some()`), inherited ones included
@@ -821,7 +823,8 @@ impl Builder {
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
     /// a TOC header — `false` for a follow-on statement inheriting
     /// [`governing_toc`](Self::governing_toc), and `true` with `toc` `None`
-    /// where that header did not parse. This is also where
+    /// where that header did not parse; a `Framing` statement's is vetoed
+    /// before it reaches here. This is also where
     /// [`governing_toc`](Self::governing_toc) updates, every span this module
     /// produces passing through here.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>, toc_owned: bool) {
@@ -905,7 +908,8 @@ impl Builder {
                     // Only reachable for a comment block with no closing
                     // non-`--` line — never observed in a well-formed
                     // `pg_dump` file, but classified the same way `step`'s own
-                    // comment-close arm would have.
+                    // comment-close arm would have, owning its header only
+                    // where it parsed.
                     let owned = toc.is_some();
                     self.push_span(
                         start,

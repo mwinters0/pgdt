@@ -43,7 +43,8 @@ use crate::{Error, Result};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyStart {
     pub header: CopyHeader,
-    /// Absolute file offset of the `C` in `COPY`.
+    /// Absolute file offset of the header line's first byte — the `C` in
+    /// `COPY`, but where spaces or tabs come before it.
     pub header_offset: u64,
     /// Absolute file offset of the first data byte, just past the header
     /// line's newline.
@@ -282,8 +283,15 @@ impl CopyScanner {
                 None if eof => (rest, rest.len()),
                 None => return Ok(None),
             };
-            // A raw CR before the newline is never data: COPY TEXT escapes an
-            // in-value carriage return as `\r`.
+            // A raw CR before the newline is stripped from every line: COPY
+            // TEXT escapes an in-value carriage return as `\r`, so in a row it
+            // is never data.
+            // deficiency: KD100 — outside a row it can be: a quoted SQL literal
+            // spanning lines keeps a raw CR ending one as its own byte, as
+            // `appendStringLiteral` writes it and psql's lexer reads it, and
+            // the line surfaced here has lost it, so a value read off such a
+            // literal — an enum's label, a `CHECK`'s text — is not the one the
+            // server holds.
             let line = line.strip_suffix(b"\r").unwrap_or(line);
 
             let line_offset = self.position();
@@ -527,10 +535,11 @@ impl ChunkCarry {
 /// (`docs/design/decisions.md`, "D9").
 pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;
 
-/// The longest line a scan accepts unless a caller says otherwise. A row is
-/// held whole before it is emitted, so this is what one row may cost in
-/// memory; a dump holding larger values states a larger limit
-/// ([`ScanOptions::max_line_bytes`]).
+/// The longest line a scan carries across a chunk boundary unless a caller
+/// says otherwise ([`ScanOptions::max_line_bytes`], which says where a line
+/// is measured). A row is held whole before it is emitted, so this and the
+/// chunk size bound what one row may cost in memory; a dump holding larger
+/// values states a larger limit.
 pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
 /// A caller's ask that a scan stop, in both the forms a reader consumes it

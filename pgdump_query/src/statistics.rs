@@ -480,7 +480,8 @@ pub enum BlockGathered {
         /// back-fill retries it only under a larger one.
         allowance: u64,
     },
-    /// **A field the observer keyed is one its type's `*_in` refuses**, so
+    /// **A field the observer read is one PostgreSQL refuses** — its type's
+    /// `*_in`, its column's `NOT NULL`, or a strict parse's check — so
     /// the pass reading the block fails there, as a restore under
     /// `ON_ERROR_STOP` fails the table's `COPY` (`roadmap.md`, "A literal is
     /// guaranteed in `*_out`'s form and never read past `*_in`'s"). The first
@@ -547,17 +548,17 @@ impl FieldRefusal {
     }
 }
 
-/// **The fields its type's `*_in` refuses that a parse told to ignore them
-/// went past in one block** ([`crate::index::CopyBlock::ignored_refusals`]),
+/// **The fields PostgreSQL refuses — by its type's `*_in` or its column's
+/// `NOT NULL` — that a parse told to ignore them went past in one block** ([`crate::index::CopyBlock::ignored_refusals`]),
 /// **per column**: each column holding one keeps its first in the block's row
 /// order, in full, and how many. A fact about the dump, not the mode that met
 /// it, so a parse under [`crate::PostgresInvalidValues::Default`] over a cache
 /// holding one fails with it exactly where it tracks the column, re-reading
 /// nothing ([`crate::Error::FieldRefusedRecorded`]).
 ///
-/// **Only the fields gathering keyed**, as a parse under
+/// **Only the fields gathering read**, as a parse under
 /// [`crate::PostgresInvalidValues::Default`] checks only those: a gathered
-/// column's scalar values, up to each observer's own stop where the block
+/// column's scalar values and its NULLs, up to each observer's own stop where the block
 /// declined — for a block read in pieces, possibly past the decline. A
 /// strict parse, which checks every field, does not read it: it re-reads the
 /// block, which no strict parse can have checked.

@@ -478,8 +478,9 @@ pub(crate) fn declared_column<'m>(
         .and_then(|db| db.declared_column(qualified, name))
 }
 
-/// A field its type's `*_in` refuses, met while keying it
-/// ([`BoundsGatherer::observe`]).
+/// A field PostgreSQL refuses — one its type's `*_in` refuses, met while
+/// keying it ([`BoundsGatherer::observe`]), or a NULL its column's `NOT NULL`
+/// refuses — or one a strict parse's check refuses.
 #[derive(Debug)]
 struct Refused;
 
@@ -1382,8 +1383,9 @@ impl ColumnGatherer {
     }
 
     /// Observe one field, answering what the column's heap grew by and
-    /// whether it went past a value its type's `*_in` refuses, or
-    /// [`Refused`] where keying it found one and [`Self::invalid`] refuses it.
+    /// whether it went past a value PostgreSQL refuses, or [`Refused`] where
+    /// keying it found one, or it is a NULL the column's `NOT NULL` refuses,
+    /// and [`Self::invalid`] refuses it.
     fn observe(&mut self, field: &[u8]) -> Result<Observed, Refused> {
         let before = self.open_heap();
         let mut ignored = false;
@@ -1642,8 +1644,8 @@ struct GroupState {
     unrepresentable: Unrepresentable,
     /// One per [`BoundsSet`], `None` for a set the column does not keep.
     bounds: [Option<GroupBounds>; 2],
-    /// The group's distinct texts in first-seen order, `None` once past a cap
-    /// or at a field that is not text;
+    /// The group's distinct texts in first-seen order, `None` once past a
+    /// cap, at a field that is not text or at one an ignoring parse went past;
     /// read only for a column keeping a dictionary.
     texts: Option<Vec<String>>,
     /// The heap `texts`' strings hold, summed as each is pushed.
@@ -1663,7 +1665,8 @@ impl GroupState {
         }
     }
 
-    /// No distinct texts for this group: a cap passed, or a field not text.
+    /// No distinct texts for this group: a cap passed, a field not text, or
+    /// one an ignoring parse went past.
     fn lose_texts(&mut self) {
         self.texts = None;
         self.text_bytes = 0;
@@ -2286,7 +2289,7 @@ impl BoundsGatherer {
     /// keyed kind's column can hold. **A value its type's `*_in` refuses is
     /// [`Refused`]**, where keying it, placing a `bytea` or holding a text to
     /// its length finds that; no other value is, one this build cannot read
-    /// losing the group's bounds alone.
+    /// losing the group's bounds and its block's order.
     fn observe(
         &mut self,
         group: &mut GroupBounds,

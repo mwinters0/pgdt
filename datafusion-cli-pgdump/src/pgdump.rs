@@ -69,9 +69,11 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     refused for one of several. :strings reads every column as its text, \
     :unrepresentable=refuse refuses at planning a query needing the values of a column holding \
     one its type cannot hold, where the default, `null`, reads such a value as NULL and `text` \
-    reads such a column as its text, :postgres-invalid-values=ignore reads a float its column \
-    holds past its type's range, which PostgreSQL refuses and the default, `default`, refuses \
-    too, as the largest value of its sign, and :strict-identity=TERMS states this dump's \
+    reads such a column as its text, :postgres-invalid-values=ignore reads what PostgreSQL \
+    refuses and the default, `default`, refuses too where it can — a float past its type's \
+    range as the largest value of its sign and one below it as zero, a `varchar(n)` or \
+    `char(n)` value past its length as written, a NULL in a `NOT NULL` column as NULL — and \
+    :strict-identity=TERMS states this dump's \
     strictness where --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \

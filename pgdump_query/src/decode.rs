@@ -33,7 +33,8 @@ pub enum Unread {
     /// some supported major — a shortfall (`docs/design/decisions.md`,
     /// "D55"). Each reader classifies what it fails on by the server's
     /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
-    /// `jsonb_unread`, and `crate::datetime_in` for the date and time types).
+    /// `crate::predicate`'s `jsonb_unread`, and `crate::datetime_in` for the
+    /// date and time types).
     Unparsed,
 }
 
@@ -1162,8 +1163,10 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
 
 /// `interval`, as Arrow's `Interval(MonthDayNano)` holds it: months, days and
 /// a **nanosecond** time part, which are exactly PostgreSQL's own three
-/// independent fields. `None` for three classes of value, each a decode
-/// failure by construction the way [`decode_date32`]'s infinities are:
+/// independent fields. `None` for a spelling outside [`interval_parts`]'s
+/// grammar, which `interval_in` may read, and for three classes of value,
+/// each a decode failure by construction the way [`decode_date32`]'s
+/// infinities are:
 ///
 /// - `infinity` and `-infinity` (v17's, I34) — every field of PostgreSQL's
 ///   struct is extremal and Arrow has no encoding for the value at all;
@@ -1189,7 +1192,7 @@ pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
 
 /// `EncodeInterval` under `INTSTYLE_POSTGRES`, the exact inverse of
 /// [`decode_interval`] (I40). Three rules carry the whole form, and none of
-/// them is `format_hms_frac`'s: a part is suppressed when its value is zero,
+/// them is `format_hms_frac_into`'s: a part is suppressed when its value is zero,
 /// its unit takes an `s` whenever the value is not exactly `1`, and a part
 /// that is positive and *follows a negative one* carries a `+`. The time tail
 /// is written when it is nonzero or when nothing else was — which is what
@@ -2360,7 +2363,7 @@ impl NumericSpelling {
 /// Quadratic in their number, which a caller bounds.
 fn radix_to_decimal(digits: &[u8], radix: u32) -> String {
     const LIMB: u64 = 1_000_000_000;
-    // As many digits a step as keep the multiplier within 32 bits.
+    // As many digits a step as keep the multiplier at most 2^32.
     let step = (32 / radix.trailing_zeros()) as usize;
     let mut limbs: Vec<u64> = vec![0];
     for chunk in digits.chunks(step) {
@@ -3055,8 +3058,8 @@ fn pair_decode(b: &[u8], at: usize) -> Option<(Point, usize)> {
     Some((Point { x, y }, i))
 }
 
-/// `path_decode` asked for its stopping point: `npts` points, each but the
-/// last's `,` optional, opened by `[` only where `open` allows it, or by a `(`
+/// `path_decode` asked for its stopping point: `npts` points, each followed
+/// by an optional `,`, the last's included, opened by `[` only where `open` allows it, or by a `(`
 /// holding them all — the first of two, or the last `(` in the text — and
 /// closed to match, the blanks after each closing bracket skipped. The first
 /// two points and where it stopped.
@@ -3733,7 +3736,7 @@ mod tests {
         }
     }
 
-    /// The literal grammar is `interval_out`'s and no wider — the same
+    /// A unit `interval_out` never writes is outside the grammar — the same
     /// refusal the ordering path makes, reached through the decoder that
     /// shares its walk.
     #[test]
@@ -3881,7 +3884,8 @@ mod tests {
         assert_eq!(unscaled.parse::<i128>().unwrap().to_string(), unscaled);
         assert_eq!(render_decimal(&unscaled, 10), text);
 
-        // 39-digit precision (Decimal256).
+        // A short value read through `i256`, the unscaled type of a precision
+        // past 38 digits (Decimal256), at scale 10.
         let text39 = "123456789.1234567890";
         let unscaled39 = decimal_unscaled_digits(text39, 10).unwrap();
         let as_i256 = i256::from_string(&unscaled39).unwrap();
@@ -4780,7 +4784,8 @@ mod tests {
 /// The straightforward `format!`/`parse` spellings of the four scalar
 /// decoders, the two hex renderers and the three date/time renderers, kept as
 /// the oracle the allocation-free forms above are checked against. Those forms
-/// are asked to be exactly this, so the corpora below are generated rather
+/// are asked to be exactly this but where a test names the difference, so the
+/// corpora below are generated rather
 /// than listed: a disagreement on an input nobody thought to write down is a
 /// test failure and not a report from the field.
 #[cfg(test)]

@@ -292,8 +292,9 @@ pub enum CompareKind {
         length: Option<u32>,
     },
     /// Arbitrary-precision decimal read straight out of the text the file
-    /// holds — a bare `numeric`, or one whose declared precision is past
-    /// `Decimal256`'s 76 digits. There is no scale to carry both sides to, so
+    /// holds — a bare `numeric`, or one whose typmod `Decimal256` cannot
+    /// carry: a precision or scale past 76 digits, a scale below -128, or a
+    /// typmod that does not read. There is no scale to carry both sides to, so
     /// the comparison normalizes rather than rescales: `1.5` and `1.50` are
     /// one value written two ways.
     ///
@@ -559,7 +560,7 @@ pub enum ComparisonDivergence {
     /// [`CompareKind::datafusion_order`] alone.
     LabelText,
     /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
-    /// a bare `numeric` or one past 76 digits, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
+    /// a bare `numeric` or one `Decimal256` cannot carry, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
     /// `jsonb` — which DataFusion compares bytewise. Equality too: a literal
     /// matches only the text the server writes, so `'12:00+00'` misses
     /// `12:00:00+00`, `'10.0.0.1/32'` misses an `inet`'s `10.0.0.1` and
@@ -1213,9 +1214,11 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
 /// Split `declared` into its base type name and typmod contents, if any
 /// (`numeric(38,10)` -> `("numeric", Some("38,10"))`), where the typmod ends
 /// the string. It says whether a name is schema-qualified; a built-in's is read
-/// by [`builtin_name`]. Only `numeric` and `float` read the typmod's *value*;
-/// every other mapping below is `Microsecond`-precision or otherwise
-/// typmod-independent. A `(` inside a quoted name is the name's (I29).
+/// by [`builtin_name`]. Only `numeric` and `float` read the typmod's *value*
+/// for their Arrow type, every other mapping below being
+/// `Microsecond`-precision or otherwise typmod-independent; a `character`'s
+/// and a `bit`'s length and an `interval`'s qualifier are read for its
+/// comparison and grammar. A `(` inside a quoted name is the name's (I29).
 pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
     let mut quoted = false;
     let open = s.bytes().position(|b| {
@@ -1383,8 +1386,8 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
 }
 
 /// A `character varying(n)`'s or `character(n)`'s length, from its typmod:
-/// `None` where it states none, and where it is no length
-/// `varchartypmodin` takes, DDL no server holds.
+/// `None` where it states none, and where it is zero or no integer, DDL no
+/// server holds.
 fn char_length(typmod: Option<&str>) -> Option<u32> {
     typmod?.trim().parse::<u32>().ok().filter(|&n| n > 0)
 }
@@ -1403,7 +1406,7 @@ fn char_length(typmod: Option<&str>) -> Option<u32> {
 /// `collation` is the column's own `COLLATE` clause, verbatim, and
 /// `collations` is what the dump's own `CREATE COLLATION` statements said
 /// about it; only the four collatable arms read either, and [`map_builtin`] —
-/// which wants the Arrow type alone — passes `None` and an empty list.
+/// whose Arrow type depends on neither — passes `None` and an empty list.
 /// `qualifier` is an `interval`'s field qualifier ([`builtin_name`]), which
 /// only that arm reads and `map_builtin` passes as `None` too.
 ///
@@ -1995,8 +1998,8 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 
 /// Walk a chain of domains to the type name it bottoms out at — the declared
 /// spelling of the first non-domain it reaches, or of `name` itself when that
-/// is not a domain. The terminal is returned as the DDL spelled it, and its
-/// two readers test it with [`is_box`].
+/// is not a domain. The terminal is returned as the DDL spelled it, and a
+/// reader asking whether it is a `box` tests it with [`is_box`].
 ///
 /// [`resolve_array`] and [`array_comparison`] test this terminal rather than
 /// the declared spelling (I22, I26; `docs/design/decisions.md`, "D41").
@@ -2064,7 +2067,8 @@ fn is_box(terminal: &str) -> bool {
 }
 
 /// The input grammar of a built-in this build holds as its text and orders by
-/// nothing ([`ComparisonPlan::Refused`]), which a strict parse reads a field
+/// nothing ([`ComparisonPlan::Refused`]), or of an enum whose labels are
+/// exactly none, which a strict parse reads a field
 /// of it by all the same: a check needs the grammar alone, where an order
 /// would need a comparison register row of its own (D40).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2168,8 +2172,8 @@ pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGram
         _ => return None,
     };
     let length = match typmod {
-        // `anybit_typmodin` takes one length of at least 1; any other typmod
-        // is DDL no server holds, read as no grammar.
+        // `anybit_typmodin` takes one length of at least 1; a zero or
+        // non-integer typmod is DDL no server holds, read as no grammar.
         Some(typmod) => Some(typmod.trim().parse::<u32>().ok().filter(|&n| n > 0)?),
         None if !varying && !base.starts_with('"') => Some(1),
         None => None,
@@ -2226,8 +2230,9 @@ pub enum Unchecked {
     NoReader,
     /// A type whose declaration this build did not read in full — a
     /// composite whose fields, or a range whose subtype, the preamble did not
-    /// parse, or a built-in read by a grammar here but for a typmod no server
-    /// holds — so it reads the field as its text.
+    /// parse, a built-in read by a grammar here but for a typmod no server
+    /// holds, or a domain whose chain never ends — so it reads the field as
+    /// its text.
     Unparsed,
     /// An array whose element type is itself an array, which this build
     /// reads as its text (`KD3`).
@@ -2279,7 +2284,8 @@ impl Unchecked {
 /// **Every position of a column declared `declared` and compared by `plan`
 /// that a strict parse checks nothing of**, as `(path, declared type there,
 /// why)`: first each a field is read at by no grammar — the column itself
-/// where `plan` refuses every comparison and `grammar` is `None`, a position
+/// where `plan` orders by nothing and `grammar` is `None`, or is
+/// unanswerable, a position
 /// of a nested `plan` holding a type it orders by nothing and has no grammar
 /// for, an enum whose labels are not exact — in walk order, then each domain
 /// at or beneath the column declaring a `CHECK`, and each `NOT NULL` domain
@@ -4749,10 +4755,6 @@ mod tests {
         ));
     }
 
-    /// Two spellings of one name are one definition, so a chain written with
-    /// both reaches its base; a cycle only case could make — a domain over
-    /// its own name spelled unquoted — is no cycle, the unquoted spelling
-    /// naming another type.
     /// **A domain's `NOT NULL` binds every domain over it, and no array of
     /// it** (I76), found in any spelling of its name; a cycle ends.
     #[test]
@@ -4950,6 +4952,10 @@ mod tests {
         }
     }
 
+    /// Two spellings of one name are one definition, so a chain written with
+    /// both reaches its base; a cycle only case could make — a domain over
+    /// its own name spelled unquoted — is no cycle, the unquoted spelling
+    /// naming another type.
     #[test]
     fn spellings_of_one_name_are_one_definition() {
         let types = [
