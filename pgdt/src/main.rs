@@ -2783,7 +2783,7 @@ fn resolution_token(r: &ColumnResolution) -> &'static str {
 fn arrow_type_label(data_type: &DataType, plan: &NestedPlan) -> String {
     match (plan, data_type) {
         (NestedPlan::Array(element), DataType::List(field)) => {
-            format!("List({})", arrow_type_label(field.data_type(), element))
+            format!("List({})", arrow_type_label(field.data_type(), &element.plan))
         }
         (NestedPlan::Record(field_plans), DataType::Struct(fields))
             if field_plans.len() == fields.len() =>
@@ -2791,7 +2791,9 @@ fn arrow_type_label(data_type: &DataType, plan: &NestedPlan) -> String {
             let rendered: Vec<String> = fields
                 .iter()
                 .zip(field_plans)
-                .map(|(f, p)| format!("{:?}: {}", f.name(), arrow_type_label(f.data_type(), p)))
+                .map(|(f, p)| {
+                    format!("{:?}: {}", f.name(), arrow_type_label(f.data_type(), &p.plan))
+                })
                 .collect();
             format!("Struct({})", rendered.join(", "))
         }
@@ -4832,10 +4834,7 @@ mod tests {
     #[test]
     fn arrays_and_composites_render_through_arrows_display() {
         assert_eq!(
-            arrow_type_label(
-                &list_of(DataType::Utf8View),
-                &NestedPlan::Array(Box::new(NestedPlan::Scalar))
-            ),
+            arrow_type_label(&list_of(DataType::Utf8View), &NestedPlan::array(NestedPlan::Scalar)),
             "List(Utf8View)"
         );
         let point = DataType::Struct(Fields::from(vec![
@@ -4843,7 +4842,7 @@ mod tests {
             Field::new("y", DataType::Utf8View, true),
         ]));
         assert_eq!(
-            arrow_type_label(&point, &NestedPlan::Record(vec![NestedPlan::Scalar; 2])),
+            arrow_type_label(&point, &NestedPlan::record(vec![NestedPlan::Scalar; 2])),
             r#"Struct("x": Int32, "y": Utf8View)"#
         );
     }
@@ -4873,7 +4872,7 @@ mod tests {
         );
         let array_of_range = arrow_type_label(
             &list_of(range_struct(DataType::Int32)),
-            &NestedPlan::Array(Box::new(NestedPlan::Range(Box::new(NestedPlan::Scalar)))),
+            &NestedPlan::array(NestedPlan::Range(Box::new(NestedPlan::Scalar))),
         );
         assert_eq!(multirange, "List(Range<Int32>)");
         assert_eq!(array_of_range, multirange);
@@ -4886,7 +4885,7 @@ mod tests {
     fn a_composite_wearing_the_range_structs_field_names_is_not_collapsed() {
         let impostor = range_struct(DataType::Int32);
         let rendered =
-            arrow_type_label(&impostor, &NestedPlan::Record(vec![NestedPlan::Scalar; 5]));
+            arrow_type_label(&impostor, &NestedPlan::record(vec![NestedPlan::Scalar; 5]));
         assert!(rendered.starts_with(r#"Struct("lower": Int32"#), "{rendered}");
         assert!(!rendered.contains("Range<"), "{rendered}");
     }

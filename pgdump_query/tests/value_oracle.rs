@@ -204,7 +204,7 @@ fn nodes(
             out.values.insert((row, path.clone()), (data_type, Some("()".to_string())));
             let record = array.as_struct();
             for ((field, child), plan) in record.fields().iter().zip(record.columns()).zip(plans) {
-                nodes(child, index, plan, row, format!("{path}.{}", field.name()), out);
+                nodes(child, index, &plan.plan, row, format!("{path}.{}", field.name()), out);
             }
         }
         NestedPlan::Range(bound) => {
@@ -234,8 +234,8 @@ fn dimensions(array: &ArrayRef, index: usize, plan: &NestedPlan) -> String {
         }
         lengths.push(element.len().to_string());
         match plan {
-            NestedPlan::Array(inner) if matches!(inner.as_ref(), NestedPlan::Array(_)) => {
-                (values, at, plan) = (element, 0, inner.as_ref());
+            NestedPlan::Array(inner) if matches!(inner.plan, NestedPlan::Array(_)) => {
+                (values, at, plan) = (element, 0, &inner.plan);
             }
             _ => break,
         }
@@ -254,10 +254,10 @@ fn flatten(
     let element = array.as_list::<i32>().value(index);
     for j in 0..element.len() {
         match plan {
-            NestedPlan::Array(inner) if matches!(inner.as_ref(), NestedPlan::Array(_)) => {
-                flatten(&element, j, inner, out);
+            NestedPlan::Array(inner) if matches!(inner.plan, NestedPlan::Array(_)) => {
+                flatten(&element, j, &inner.plan, out);
             }
-            NestedPlan::Array(inner) => out.push((element.clone(), j, inner.as_ref().clone())),
+            NestedPlan::Array(inner) => out.push((element.clone(), j, inner.plan.clone())),
             NestedPlan::Int2Vector => out.push((element.clone(), j, NestedPlan::Scalar)),
             NestedPlan::Multirange(bound) => {
                 out.push((element.clone(), j, NestedPlan::Range(bound.clone())));
@@ -438,7 +438,7 @@ fn type_at(data_type: &DataType, plan: &NestedPlan, path: &str) -> Option<DataTy
     let DataType::Struct(fields) = data_type else { return None };
     let index = fields.iter().position(|f| f.name() == name)?;
     let plan = match plan {
-        NestedPlan::Record(plans) => plans[index].clone(),
+        NestedPlan::Record(plans) => plans[index].plan.clone(),
         NestedPlan::Range(bound) if name == "lower" || name == "upper" => bound.as_ref().clone(),
         _ => NestedPlan::Scalar,
     };
@@ -451,10 +451,10 @@ fn element_of(data_type: &DataType, plan: &NestedPlan) -> Option<(DataType, Nest
     let DataType::List(field) = data_type else { return None };
     let element = field.data_type().clone();
     match plan {
-        NestedPlan::Array(inner) if matches!(inner.as_ref(), NestedPlan::Array(_)) => {
-            element_of(&element, inner)
+        NestedPlan::Array(inner) if matches!(inner.plan, NestedPlan::Array(_)) => {
+            element_of(&element, &inner.plan)
         }
-        NestedPlan::Array(inner) => Some((element, inner.as_ref().clone())),
+        NestedPlan::Array(inner) => Some((element, inner.plan.clone())),
         NestedPlan::Int2Vector => Some((element, NestedPlan::Scalar)),
         NestedPlan::Multirange(bound) => Some((element, NestedPlan::Range(bound.clone()))),
         _ => None,

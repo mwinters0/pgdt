@@ -17,7 +17,7 @@ use crate::instrument::{EvaluationPart as Part, timed};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, Geometric,
-    IntervalQualifier, NestedCompare, TextGrammar, UnanswerableReason,
+    IntervalQualifier, NestedCompare, Position, TextGrammar, UnanswerableReason,
     datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
@@ -1851,7 +1851,8 @@ fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<NestedKey>
             let mut elements = Vec::with_capacity(literal.elements.len());
             for value in &literal.elements {
                 elements.push(match value {
-                    Some(value) => Some(nested_key(element, value, side)?),
+                    Some(value) => Some(nested_key(&element.plan, value, side)?),
+                    None if position_refuses_null(element, side) => return None,
                     None => None,
                 });
             }
@@ -1900,9 +1901,10 @@ fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<NestedKey>
                 return None;
             }
             let mut out = Vec::with_capacity(plans.len());
-            for ((_, plan), value) in plans.iter().zip(fields.drain(..)) {
+            for ((_, field), value) in plans.iter().zip(fields.drain(..)) {
                 out.push(match value {
-                    Some(value) => Some(nested_key(plan, &value, side)?),
+                    Some(value) => Some(nested_key(&field.plan, &value, side)?),
+                    None if position_refuses_null(field, side) => return None,
                     None => None,
                 });
             }
@@ -1926,6 +1928,14 @@ fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<NestedKey>
             NestedKey::Multirange(canonical_multirange(members, *discrete)?)
         }
     })
+}
+
+/// Whether [`nested_key`] refuses a NULL at `position` read on `side`: a
+/// literal's always and a field's but under
+/// [`PostgresInvalidValues::Ignore`], where the position's type is a `NOT
+/// NULL` domain, as `array_in` and `record_in` refuse it (I76).
+fn position_refuses_null(position: &Position<NestedCompare>, side: Side) -> bool {
+    position.not_null && side != Side::Field(PostgresInvalidValues::Ignore)
 }
 
 /// One range value, read through its bound's plan and then put into the form
@@ -2004,13 +2014,14 @@ pub(crate) fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
         TextGrammar::Geometric(Geometric::Path) => decode::path_in(text),
         TextGrammar::Geometric(Geometric::Polygon) => decode::poly_in(text),
         TextGrammar::Geometric(Geometric::Circle) => decode::circle_in(text),
-        TextGrammar::BoxArray => {
+        TextGrammar::BoxArray { not_null } => {
             let element = NestedCompare::Uncomparable {
                 declared: "box".into(),
                 divergence: None,
                 grammar: Some(TextGrammar::Geometric(Geometric::Box)),
                 delimiter: Some(b';'),
             };
+            let element = Position { plan: element, not_null };
             checked_key(&NestedCompare::Array(Box::new(element)), text).is_ok()
         }
         TextGrammar::RefusesAll => false,
@@ -2061,16 +2072,17 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
         }
         NestedCompare::Uncomparable { .. } => None,
         NestedCompare::Array(element) => {
-            let Some(delimiter) = array_delimiter(element) else { return Ok(None) };
+            let Some(delimiter) = array_delimiter(&element.plan) else { return Ok(None) };
             let literal = nested::parse_array_delimited(text, delimiter).ok_or(refused)?;
             let mut elements = Vec::with_capacity(literal.elements.len());
             let mut keyed = true;
             for value in &literal.elements {
                 match value {
-                    Some(value) => match checked_key(element, value)? {
+                    Some(value) => match checked_key(&element.plan, value)? {
                         Some(key) => elements.push(Some(key)),
                         None => keyed = false,
                     },
+                    None if element.not_null => return Err(refused),
                     None => elements.push(None),
                 }
             }
@@ -2095,12 +2107,13 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
             let fields = nested::parse_record(text, plans.len()).ok_or(refused)?.fields;
             let mut out = Vec::with_capacity(plans.len());
             let mut keyed = true;
-            for ((_, plan), value) in plans.iter().zip(fields) {
+            for ((_, field), value) in plans.iter().zip(fields) {
                 match value {
-                    Some(value) => match checked_key(plan, &value)? {
+                    Some(value) => match checked_key(&field.plan, &value)? {
                         Some(key) => out.push(Some(key)),
                         None => keyed = false,
                     },
+                    None if field.not_null => return Err(refused),
                     None => out.push(None),
                 }
             }
@@ -2613,7 +2626,15 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
             .to_string();
     }
     let container = match plan {
+        NestedCompare::Array(element) if element.not_null => {
+            "as an array literal — `{a,b}`, `{}` — with no `NULL` element, which its element \
+             type, a `NOT NULL` domain, refuses"
+        }
         NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
+        NestedCompare::Record(fields) if fields.iter().any(|(_, field)| field.not_null) => {
+            "as a composite literal — `(a,b)`, a field left empty for NULL but where its type is \
+             a `NOT NULL` domain"
+        }
         NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
         NestedCompare::Range { .. } => {
             "as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose \
@@ -5746,6 +5767,26 @@ mod tests {
                     fields: Some(vec![ColumnDef::new("b", "box[]"), ColumnDef::new("p", "point")]),
                 },
             },
+            not_null_domain("public.nn", "integer"),
+            not_null_domain("public.nnbox", "box"),
+            not_null_domain("public.nnmoney", "money"),
+            TypeDef {
+                name: "public.nnpair".into(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("a", "public.nn"),
+                        ColumnDef::new("b", "integer"),
+                    ]),
+                },
+            },
+            TypeDef {
+                name: "public.nnrange".into(),
+                kind: TypeKind::Range {
+                    subtype: Some("public.nn".into()),
+                    multirange_type_name: None,
+                    canonical: None,
+                },
+            },
         ];
         // As `gather::field_checks` reads a column: a plan ordering nothing
         // by its declared type's grammar, where it has one.
@@ -5756,7 +5797,7 @@ mod tests {
                 _ => field_refused(&plan, text),
             }
         };
-        let cases: [(&str, &str, bool); 89] = [
+        let cases: [(&str, &str, bool); 98] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
@@ -5846,6 +5887,15 @@ mod tests {
             ("cid", "4294967296", false),
             ("xid8[]", "{1,abc}", false),
             ("xid8[]", "{1,abc", true),
+            ("public.nn[]", "{1,NULL}", true),
+            ("public.nn[]", "{{1,2},{3,NULL}}", true),
+            ("public.nn[]", "{1,2}", false),
+            ("public.nnpair", "(,2)", true),
+            ("public.nnpair", "(1,)", false),
+            ("public.nnpair[]", r#"{"(,2)"}"#, true),
+            ("public.nnpair[]", r#"{"(1,)",NULL}"#, false),
+            ("public.nnmoney[]", "{NULL}", true),
+            ("public.nnrange", "(,3)", false),
         ];
         for (declared, text, expected) in cases {
             assert_eq!(refused(declared, text), expected, "{declared} {text:?}");
@@ -5861,7 +5911,26 @@ mod tests {
             ("{(1,1),(0,0),(2,2),(1,1)}", true),
             ("{(1,1),(0,0)", true),
         ] {
-            assert_eq!(grammar_refuses(TextGrammar::BoxArray, text), expected, "{text:?}");
+            assert_eq!(
+                grammar_refuses(TextGrammar::BoxArray { not_null: false }, text),
+                expected,
+                "{text:?}"
+            );
+        }
+        assert!(refused("public.nnbox[]", "{NULL;(1,1),(0,0)}"));
+        assert!(!refused("public.nnbox[]", "{(1,1),(0,0)}"));
+    }
+
+    /// A domain over `base` declaring `NOT NULL`.
+    fn not_null_domain(name: &str, base: &str) -> TypeDef {
+        TypeDef {
+            name: name.into(),
+            kind: TypeKind::Domain {
+                base_type: base.into(),
+                collation: None,
+                not_null: true,
+                check: false,
+            },
         }
     }
 
@@ -7052,7 +7121,7 @@ mod tests {
         // positions does not: refused too, and the sentence names the
         // position and the type rather than the nesting.
         let mut inherited = one_column("json[]", DataType::Utf8View);
-        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        inherited.plans[0] = NestedPlan::array(NestedPlan::Scalar);
         let err = resolve_term(&p, 0, &inherited, 0).unwrap_err();
         let Error::UnorderedPredicateColumn { reason, .. } = &err else { panic!("{err:?}") };
         assert!(reason.contains("`[]` inside it is `json`"), "{reason}");
@@ -7080,7 +7149,7 @@ mod tests {
         opaque.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         let array = nested_column("integer[]", &[]);
         let mut inherited = one_column("json[]", DataType::Utf8View);
-        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        inherited.plans[0] = NestedPlan::array(NestedPlan::Scalar);
         for resolved in [&opaque, &array, &inherited] {
             for op in [PredicateOp::Eq, PredicateOp::IsDistinctFrom, PredicateOp::Lt] {
                 let err = arrow(&order_predicate(op, "{}"), resolved).unwrap_err();
@@ -9330,7 +9399,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (64, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (65, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored

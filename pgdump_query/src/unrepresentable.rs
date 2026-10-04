@@ -80,10 +80,14 @@ impl Leaf {
                 DataType::Decimal128(..) | DataType::Decimal256(..),
             ) => Leaf::Decimal,
             (NestedPlan::Array(child), DataType::List(item)) => {
-                Leaf::Array(Box::new(Leaf::of(item.data_type(), child)))
+                Leaf::Array(Box::new(Leaf::of(item.data_type(), &child.plan)))
             }
             (NestedPlan::Record(plans), DataType::Struct(fields)) => Leaf::Record(
-                fields.iter().zip(plans).map(|(f, plan)| Leaf::of(f.data_type(), plan)).collect(),
+                fields
+                    .iter()
+                    .zip(plans)
+                    .map(|(f, field)| Leaf::of(f.data_type(), &field.plan))
+                    .collect(),
             ),
             (NestedPlan::Range(child), range) => match bound(range) {
                 Some(bound) => Leaf::Range(Box::new(Leaf::of(&bound, child))),
@@ -619,7 +623,7 @@ mod tests {
     fn a_container_of_held_leaves_is_held() {
         let leaf = Leaf::of(
             &DataType::List(Arc::new(arrow::datatypes::Field::new("item", DataType::Int32, true))),
-            &NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+            &NestedPlan::array(NestedPlan::Scalar),
         );
         assert_eq!(leaf, Leaf::Held);
         assert!(!Counter::new(vec![leaf, Leaf::Held], calendar_end()).counts_any());

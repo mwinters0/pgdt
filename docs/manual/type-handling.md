@@ -962,7 +962,9 @@ which is where to look for the ones no column of yours happens to use; see
 `NOT NULL` is held as a column's own is: a null in it is refused wherever it is
 read unless you say to ignore such values ("When a value does not match its
 type", below), the Arrow field staying
-nullable. Domains over domains resolve transitively, a `NOT NULL` with them.
+nullable. So is a null element of an array, or null field of a composite, of
+such a domain, as PostgreSQL refuses one, though not a range's unbounded end.
+Domains over domains resolve transitively, a `NOT NULL` with them.
 Constraints beyond `NOT NULL` are not enforced — we are reading a dump, not
 validating it.
 
@@ -1017,7 +1019,10 @@ on the column, at the table (`NOT NULL <column>`, a `PRIMARY KEY (…)`, an
 `ALTER TABLE … SET NOT NULL`), through a parent the table inherits it from, or
 through a domain — and a query reading the column or filtering on it, `IS NOT
 NULL` included, fails there too; the strings schema mode, which reads no
-declaration, reads it. `parse` checks
+declaration, reads it. A null element of an array, or null field of a
+composite, whose type is a `NOT NULL` domain fails a query reading the column
+or comparing it, and a filter literal holding one, as PostgreSQL refuses
+both. `parse` checks
 only the values it reads anyway to gather statistics, which leaves to a query
 a column at the metadata level, an array's or a composite's elements, a
 range's bounds, a value longer than 256 bytes but a `bytea`, and every value
@@ -1038,8 +1043,7 @@ deeper than the restoring server's `max_stack_depth` lets it read, a date,
 time or timestamp whose reading the restoring server's settings decide — its
 `DateStyle`, a word its time zone abbreviations may name, a zone its zone
 files may hold, an offset its time zone may give — a value of a range
-type declaring its own `canonical` function, or a null element of an array,
-or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
+type declaring its own `canonical` function; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into
 the partition or through its root must fall within, or a unique, primary or
 foreign key added once the data has loaded, which is when a restore checks it. What a
@@ -1069,8 +1073,9 @@ read exactly)` after them.
 keeping no bounds, sum or dictionary of the stretch of its column it sits in, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
 sign and one below its smallest as zero, a `varchar(n)` or `char(n)` value
-past its length as the dump holds it, and a null in a `NOT NULL` column as the
-null it is, and refuses every other as before.
+past its length as the dump holds it, and a null in a `NOT NULL` column, or
+beneath it where a `NOT NULL` domain refuses one, as the null it is, and
+refuses every other as before.
 **The cache remembers what `parse` went past**: in each `COPY` block, each
 column's first such value and how many, which `pgdt info` lists under the
 block's table as one `refused by PostgreSQL:` line per column, so a later

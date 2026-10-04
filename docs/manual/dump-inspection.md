@@ -1201,8 +1201,7 @@ public.events (98765 rows)
   server decides, by its catalog or a type the dump does not declare, a
   built-in pgdt has no reader of, a declaration pgdt did not read in full, an
   array of arrays, an enum whose labels pgdt does not hold exactly, a column
-  declared nowhere, a domain's `CHECK`, a `NOT NULL` domain beneath an array
-  or composite — and
+  declared nowhere, a domain's `CHECK` — and
   each `CHECK` the table carries, its own or the parent's it inherits; a
   table the dump declares nowhere, as in a `--data-only` dump, gets one line
   saying no value of it is checked. A listing where some block holds any

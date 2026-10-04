@@ -224,7 +224,7 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
             let i = r.schema.index_of(name).unwrap();
             (r.schema.field(i).data_type().clone(), r.plans[i].clone())
         };
-        let flat = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        let flat = NestedPlan::array(NestedPlan::Scalar);
         assert_eq!(
             field(&arrays, "v_empty"),
             (list_of(DataType::Int32), flat.clone()),
@@ -251,7 +251,7 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
             Field::new("x", DataType::Int32, true),
             Field::new("y", DataType::Utf8View, true),
         ]));
-        let point_plan = NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
+        let point_plan = NestedPlan::record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
         assert_eq!(
             field(&composites, "v_point"),
             (point2d.clone(), point_plan.clone()),
@@ -259,7 +259,7 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
         );
         assert_eq!(
             field(&composites, "v_points"),
-            (list_of(point2d), NestedPlan::Array(Box::new(point_plan))),
+            (list_of(point2d), NestedPlan::array(point_plan)),
             "pg_dump {v}: public.point2d[]"
         );
         assert_eq!(
@@ -269,7 +269,7 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
                     Field::new("label", DataType::Utf8View, true),
                     Field::new("tags", list_of(DataType::Utf8View), true),
                 ])),
-                NestedPlan::Record(vec![NestedPlan::Scalar, flat.clone()])
+                NestedPlan::record(vec![NestedPlan::Scalar, flat.clone()])
             ),
             "pg_dump {v}: a composite with a text[] field"
         );
@@ -278,7 +278,7 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
         // is a real value that round-trips.
         assert_eq!(
             field(&composites, "v_empty_comp"),
-            (DataType::Struct(Fields::empty()), NestedPlan::Record(Vec::new())),
+            (DataType::Struct(Fields::empty()), NestedPlan::record([])),
             "pg_dump {v}: CREATE TYPE ... AS ()"
         );
 

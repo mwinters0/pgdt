@@ -409,11 +409,6 @@ than reading as a phase nobody has sliced.
   hand-written dump holding one. Detail:
   `pgdump_query/src/decode.rs`.
 
-- **KD97** — a NULL element of an array or a NULL field of a composite whose
-  type is a `NOT NULL` domain is read as NULL, where `COPY` refuses it (I76),
-  so a strict parse leaves it unchecked. **(b) owned by
-  P31**, 31.26. Detail: `pgdump_query/src/pgtype.rs`.
-
 - **KD99** — a `time(p)`, `timetz(p)`, `timestamp(p)`, `timestamptz(p)` or
   qualified `interval` field is read as written, not rounded or truncated by
   its typmod as PostgreSQL stores it, which no `pg_dump` writes, so a typed

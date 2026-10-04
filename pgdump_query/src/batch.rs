@@ -45,7 +45,7 @@ use crate::decode;
 use crate::index::UnrepresentableTier;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
-use crate::pgtype::{ComparisonSemantics, NestedPlan};
+use crate::pgtype::{ComparisonSemantics, NestedPlan, Position};
 use crate::scan::PostgresInvalidValues;
 // L4, imported by L3: `QueryOptions::filter` is the query's filter tree. One
 // of the two deviations `docs/design/decisions.md`, "D68" records.
@@ -423,6 +423,8 @@ struct ListParts {
     /// finishing, so the built array's type matches the schema exactly.
     field: FieldRef,
     child: Box<ColumnBuilder>,
+    /// Whether a NULL element is refused ([`Position::not_null`]).
+    not_null: bool,
     offsets: Vec<i32>,
     validity: Vec<bool>,
 }
@@ -433,6 +435,8 @@ struct ListParts {
 struct StructParts {
     fields: Fields,
     children: Vec<ColumnBuilder>,
+    /// Whether each child refuses a NULL ([`Position::not_null`]).
+    not_null: Vec<bool>,
     validity: Vec<bool>,
 }
 
@@ -474,26 +478,31 @@ fn array_depth(parts: &ListParts) -> usize {
     }
 }
 
-fn new_list_parts(data_type: &DataType, child_plan: &NestedPlan) -> ListParts {
+fn new_list_parts(data_type: &DataType, element: &Position<NestedPlan>) -> ListParts {
     let DataType::List(field) = data_type else {
         unreachable!("a NestedPlan::Array/Multirange only ever accompanies DataType::List")
     };
     ListParts {
         field: field.clone(),
-        child: Box::new(new_column_builder(field.data_type(), child_plan)),
+        child: Box::new(new_column_builder(field.data_type(), &element.plan)),
+        not_null: element.not_null,
         offsets: vec![0],
         validity: Vec::new(),
     }
 }
 
-fn new_struct_parts(data_type: &DataType, plans: &[NestedPlan]) -> StructParts {
+fn new_struct_parts(data_type: &DataType, positions: &[Position<NestedPlan>]) -> StructParts {
     let DataType::Struct(fields) = data_type else {
         unreachable!("a NestedPlan::Record/Range only ever accompanies DataType::Struct")
     };
-    assert_eq!(fields.len(), plans.len(), "a struct's plan has one entry per field");
-    let children =
-        fields.iter().zip(plans).map(|(f, plan)| new_column_builder(f.data_type(), plan)).collect();
-    StructParts { fields: fields.clone(), children, validity: Vec::new() }
+    assert_eq!(fields.len(), positions.len(), "a struct's plan has one entry per field");
+    let children = fields
+        .iter()
+        .zip(positions)
+        .map(|(f, position)| new_column_builder(f.data_type(), &position.plan))
+        .collect();
+    let not_null = positions.iter().map(|position| position.not_null).collect();
+    StructParts { fields: fields.clone(), children, not_null, validity: Vec::new() }
 }
 
 fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder {
@@ -503,11 +512,12 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
             return ColumnBuilder::Array(new_list_parts(data_type, child));
         }
         NestedPlan::Multirange(bound) => {
-            let range = NestedPlan::Range(bound.clone());
+            let range = Position::nullable(NestedPlan::Range(bound.clone()));
             return ColumnBuilder::Multirange(new_list_parts(data_type, &range));
         }
         NestedPlan::Int2Vector => {
-            return ColumnBuilder::Int2Vector(new_list_parts(data_type, &NestedPlan::Scalar));
+            let element = Position::nullable(NestedPlan::Scalar);
+            return ColumnBuilder::Int2Vector(new_list_parts(data_type, &element));
         }
         NestedPlan::Record(field_plans) => {
             return ColumnBuilder::Record(new_struct_parts(data_type, field_plans));
@@ -519,7 +529,8 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
                 NestedPlan::Scalar,
                 NestedPlan::Scalar,
                 NestedPlan::Scalar,
-            ];
+            ]
+            .map(Position::nullable);
             return ColumnBuilder::Range(new_struct_parts(data_type, &plans));
         }
     }
@@ -624,13 +635,17 @@ fn append_null(builder: &mut ColumnBuilder) {
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so [`append_typed`] attributes a failure deep
-/// inside a nested literal to the whole literal.
+/// inside a nested literal to the whole literal. `not_null` is the
+/// position's ([`Position::not_null`]): a NULL there is refused but under
+/// `ignore`, as `array_in` and `record_in` refuse it (I76).
 fn append_nested(
     builder: &mut ColumnBuilder,
     value: Option<&str>,
+    not_null: bool,
     invalid: PostgresInvalidValues,
 ) -> std::result::Result<(), ()> {
     match value {
+        None if not_null && invalid != PostgresInvalidValues::Ignore => Err(()),
         None => {
             append_null(builder);
             Ok(())
@@ -659,7 +674,8 @@ fn append_array_level(
 ) -> std::result::Result<(), ()> {
     if dims.len() == 1 {
         for _ in 0..dims[0] {
-            append_nested(&mut parts.child, elements.next().ok_or(())?.as_deref(), invalid)?;
+            let element = elements.next().ok_or(())?.as_deref();
+            append_nested(&mut parts.child, element, parts.not_null, invalid)?;
         }
     } else {
         for _ in 0..dims[0] {
@@ -682,8 +698,9 @@ fn append_range(
     let [lower, upper, lower_inclusive, upper_inclusive, empty] = &mut parts.children[..] else {
         unreachable!("a range struct always has exactly five children")
     };
-    append_nested(lower, range.lower.as_deref(), invalid)?;
-    append_nested(upper, range.upper.as_deref(), invalid)?;
+    // An infinite bound, which `range_in` hands no input function.
+    append_nested(lower, range.lower.as_deref(), false, invalid)?;
+    append_nested(upper, range.upper.as_deref(), false, invalid)?;
     for (flag, value) in [
         (lower_inclusive, range.lower_inclusive),
         (upper_inclusive, range.upper_inclusive),
@@ -787,8 +804,10 @@ fn append_typed(
             if literal.fields.len() != parts.children.len() {
                 return Err(fail());
             }
-            for (child, field) in parts.children.iter_mut().zip(&literal.fields) {
-                append_nested(child, field.as_deref(), invalid).map_err(|()| fail())?;
+            for ((child, &not_null), field) in
+                parts.children.iter_mut().zip(&parts.not_null).zip(&literal.fields)
+            {
+                append_nested(child, field.as_deref(), not_null, invalid).map_err(|()| fail())?;
             }
             parts.validity.push(true);
         }
@@ -1332,7 +1351,7 @@ pub fn render_field_into(
             // has a second dimension.
             let mut scratch = String::new();
             let mut dims = Vec::new();
-            render_array_into(column, row, child, out, &mut scratch, &mut dims)?;
+            render_array_into(column, row, &child.plan, out, &mut scratch, &mut dims)?;
             return Ok(true);
         }
         NestedPlan::Multirange(bound) => {
@@ -1375,7 +1394,7 @@ pub fn render_field_into(
                 .columns()
                 .iter()
                 .zip(field_plans)
-                .map(|(child, p)| render_field(child.as_ref(), row, p))
+                .map(|(child, p)| render_field(child.as_ref(), row, &p.plan))
                 .collect::<Result<_>>()?;
             out.push_str(&nested::render_record(&nested::RecordLiteral { fields }));
             return Ok(true);
@@ -1552,6 +1571,7 @@ fn render_list_level(
             out.push(',');
         }
         if let NestedPlan::Array(inner) = child_plan {
+            let inner = &inner.plan;
             render_list_level(values.as_ref(), i, inner, depth + 1, dims, out, scratch, leaves)?;
             continue;
         }
@@ -1639,7 +1659,7 @@ mod tests {
     }
 
     fn record(plans: &[NestedPlan]) -> NestedPlan {
-        NestedPlan::Record(plans.to_vec())
+        NestedPlan::record(plans.iter().cloned())
     }
 
     fn build(
@@ -1702,7 +1722,7 @@ mod tests {
             array,
             None,
         );
-        let plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        let plan = NestedPlan::array(NestedPlan::Scalar);
         assert!(matches!(
             render_field(&list, 0, &plan).unwrap_err(),
             Error::FieldRender { declared_type: "interval", .. }
@@ -1728,7 +1748,7 @@ mod tests {
         assert_eq!(list.value(0).len(), 3);
 
         // Neither grammar reads the other's text.
-        let array_plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        let array_plan = NestedPlan::array(NestedPlan::Scalar);
         assert!(build(&list_of(DataType::Int16), &array_plan, &[Some("1 2 3")]).is_err());
         assert!(
             build(&list_of(DataType::Int16), &NestedPlan::Int2Vector, &[Some("{1,2}")]).is_err()
@@ -1762,7 +1782,7 @@ mod tests {
     fn a_one_dimensional_list_column_round_trips_every_null_and_quoting_case() {
         let array = round_trips(
             list_of(DataType::Utf8View),
-            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+            NestedPlan::array(NestedPlan::Scalar),
             &[Some("{a,b}"), Some("{}"), Some("{NULL}"), Some(r#"{"a,b","has space"}"#), None],
         );
         let list = array.as_any().downcast_ref::<ListArray>().unwrap();
@@ -1779,7 +1799,7 @@ mod tests {
     fn a_list_of_a_decoded_scalar_type_decodes_its_elements() {
         let array = round_trips(
             list_of(DataType::Int32),
-            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+            NestedPlan::array(NestedPlan::Scalar),
             &[Some("{1,2,3}"), Some("{-1,NULL}"), None],
         );
         let list = array.as_any().downcast_ref::<ListArray>().unwrap();
@@ -1790,7 +1810,7 @@ mod tests {
 
     #[test]
     fn a_two_dimensional_value_fills_two_list_levels() {
-        let plan = NestedPlan::Array(Box::new(NestedPlan::Array(Box::new(NestedPlan::Scalar))));
+        let plan = NestedPlan::array(NestedPlan::array(NestedPlan::Scalar));
         let array = round_trips(
             list_of(list_of(DataType::Int32)),
             plan,
@@ -1806,8 +1826,8 @@ mod tests {
 
     #[test]
     fn a_value_whose_shape_does_not_fit_the_column_is_refused_rather_than_reshaped() {
-        let flat = NestedPlan::Array(Box::new(NestedPlan::Scalar));
-        let nested = NestedPlan::Array(Box::new(NestedPlan::Array(Box::new(NestedPlan::Scalar))));
+        let flat = NestedPlan::array(NestedPlan::Scalar);
+        let nested = NestedPlan::array(NestedPlan::array(NestedPlan::Scalar));
         for (data_type, plan, value) in [
             // A multi-dimensional value in a 1-D column.
             (list_of(DataType::Int32), flat.clone(), "{{1,2},{3,4}}"),
@@ -1843,6 +1863,47 @@ mod tests {
         assert_eq!(s.column(0).len(), 4);
         assert!(s.column(0).is_null(1), "`(,\"\")` has a NULL first field");
         assert!(!s.column(1).is_null(1), "and an empty-string second one");
+    }
+
+    /// **A NULL at a position whose type is a `NOT NULL` domain is refused
+    /// but under `ignore`** (I76): an array's element, at the innermost of the
+    /// census's levels, whose outer ones hold sub-arrays, and a composite's
+    /// field, `()` being a one-field composite's NULL; a NULL elsewhere in
+    /// the same value, and a range's infinite bound, are read.
+    #[test]
+    fn a_null_at_a_not_null_position_is_refused_but_under_ignore() {
+        let refusing = |plan| Position { plan, not_null: true };
+        let elements = NestedPlan::Array(Box::new(refusing(NestedPlan::Scalar)));
+        let one = DataType::Struct(Fields::from(vec![Field::new("x", DataType::Int32, true)]));
+        let first = NestedPlan::Record(vec![
+            refusing(NestedPlan::Scalar),
+            Position::nullable(NestedPlan::Scalar),
+        ]);
+        let read = |data_type: &DataType, plan: &NestedPlan, value, invalid| {
+            let mut builder = new_column_builder(data_type, plan);
+            append_typed(&mut builder, value, invalid).map_err(drop)
+        };
+        for (data_type, plan, refused, read_as_written) in [
+            (list_of(DataType::Int32), elements.clone(), "{1,NULL}", "{1,2}"),
+            (
+                list_of(list_of(DataType::Int32)),
+                NestedPlan::array(elements.clone()),
+                "{{1,2},{3,NULL}}",
+                "{{1,2},{3,4}}",
+            ),
+            (point2d(), first.clone(), "(,a)", "(1,)"),
+            (one, NestedPlan::Record(vec![refusing(NestedPlan::Scalar)]), "()", "(1)"),
+            (list_of(point2d()), NestedPlan::array(first), r#"{"(,a)"}"#, r#"{"(1,)",NULL}"#),
+        ] {
+            for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+                assert_eq!(read(&data_type, &plan, refused, invalid), Err(()), "{refused}");
+                assert_eq!(read(&data_type, &plan, read_as_written, invalid), Ok(()));
+            }
+            assert_eq!(read(&data_type, &plan, refused, PostgresInvalidValues::Ignore), Ok(()));
+        }
+        let range = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+        let infinite = read(&range_struct(DataType::Int32), &range, "(,3)", Default::default());
+        assert_eq!(infinite, Ok(()));
     }
 
     #[test]
@@ -1886,7 +1947,7 @@ mod tests {
 
         let as_array = round_trips(
             data_type.clone(),
-            NestedPlan::Array(Box::new(NestedPlan::Range(bound.clone()))),
+            NestedPlan::array(NestedPlan::Range(bound.clone())),
             &[Some(r#"{"[1,10)","[2,3)"}"#), Some("{}"), None],
         );
         let as_multirange = round_trips(
@@ -1904,7 +1965,7 @@ mod tests {
         // `public.point2d[]` — array quoting outside, record doubling inside.
         round_trips(
             list_of(point2d()),
-            NestedPlan::Array(Box::new(record(&[NestedPlan::Scalar, NestedPlan::Scalar]))),
+            NestedPlan::array(record(&[NestedPlan::Scalar, NestedPlan::Scalar])),
             &[Some(r#"{"(1,\"a,b\"\"c\")","(2,plain)"}"#), Some("{NULL,\"(3,)\"}")],
         );
 
@@ -1915,7 +1976,7 @@ mod tests {
         ]));
         round_trips(
             tagged,
-            record(&[NestedPlan::Scalar, NestedPlan::Array(Box::new(NestedPlan::Scalar))]),
+            record(&[NestedPlan::Scalar, NestedPlan::array(NestedPlan::Scalar)]),
             &[Some(r#"("a,b","{""x\\""y"",""p q"",NULL}")"#), Some("(\"\",{})")],
         );
     }
@@ -1933,7 +1994,7 @@ mod tests {
             Field::new("span", range_struct(DataType::Int32), true),
         ];
         let plans = [
-            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+            NestedPlan::array(NestedPlan::Scalar),
             record(&[NestedPlan::Scalar, NestedPlan::Scalar]),
             NestedPlan::Range(Box::new(NestedPlan::Scalar)),
         ];
@@ -2257,7 +2318,7 @@ mod prior_shape {
         for i in 0..values.len() {
             match child_plan {
                 NestedPlan::Array(inner) => {
-                    collect_array(values.as_ref(), i, inner, depth + 1, dims, elements)?;
+                    collect_array(values.as_ref(), i, &inner.plan, depth + 1, dims, elements)?;
                 }
                 _ => elements.push(
                     render_field(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned),
@@ -2387,7 +2448,7 @@ mod differential {
         assert!(rows.iter().any(Vec::is_empty), "the corpus must reach the empty array");
         let column = utf8_list(&rows);
         let child = NestedPlan::Scalar;
-        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+        agrees(&column, &NestedPlan::array(child.clone()), &child);
     }
 
     /// Two dimensions, including the all-empty shape `array_out` writes as
@@ -2402,8 +2463,8 @@ mod differential {
                     .map(|_| (0..inner_len).map(|_| element(&mut rng)).collect())
                     .collect();
                 let column = nest(utf8_list(&rows), width);
-                let child = NestedPlan::Array(Box::new(NestedPlan::Scalar));
-                agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+                let child = NestedPlan::array(NestedPlan::Scalar);
+                agrees(&column, &NestedPlan::array(child.clone()), &child);
             }
         }
     }
@@ -2416,8 +2477,8 @@ mod differential {
         let rows: Vec<Vec<Option<String>>> =
             (0..24).map(|_| (0..2).map(|_| element(&mut rng)).collect()).collect();
         let column = nest(nest(utf8_list(&rows), 3), 2);
-        let child = NestedPlan::Array(Box::new(NestedPlan::Array(Box::new(NestedPlan::Scalar))));
-        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+        let child = NestedPlan::array(NestedPlan::array(NestedPlan::Scalar));
+        agrees(&column, &NestedPlan::array(child.clone()), &child);
     }
 
     /// A nested element that is not a scalar: the composite arm builds its
@@ -2457,7 +2518,7 @@ mod differential {
             values,
             None,
         )) as ArrayRef;
-        let child = NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
-        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+        let child = NestedPlan::record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
+        agrees(&column, &NestedPlan::array(child.clone()), &child);
     }
 }

@@ -194,7 +194,7 @@ fn the_render_path_allocation_budget_per_row() {
     // left is `ListArray::value`'s slice, one `Arc` per array value, plus one
     // scratch `String` for a column whose elements need quoting — one for the
     // whole value, not one per element.
-    let array_plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+    let array_plan = NestedPlan::array(NestedPlan::Scalar);
     let mut counts = Vec::new();
     for len in [5usize, 50] {
         let (ints, texts) = array_row(len);

@@ -1199,6 +1199,140 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     }
 }
 
+/// A dump whose `public.t` holds `id` 1 to 3 and `v` the three `fields`,
+/// `v` declared `declared`, after `public.nn`, an `integer` declared `NOT
+/// NULL`, `public.over_nn` over it, a composite `public.pair` whose first
+/// field is `public.over_nn`, `public.nnpair` a `NOT NULL` domain over that,
+/// `public.nnbox` one over `box`, and a range over `public.nn`. Hand-written:
+/// no `pg_dump` writes a NULL a `NOT NULL` domain refuses.
+fn not_null_beneath_dump(dir: &Path, declared: &str, fields: [&str; 3]) -> PathBuf {
+    let dump = dir.join("not_null_beneath.sql");
+    let [a, b, c] = fields;
+    let text = format!(
+        "CREATE DOMAIN public.nn AS integer NOT NULL;\n\n\
+         CREATE DOMAIN public.over_nn AS public.nn;\n\n\
+         CREATE TYPE public.pair AS (\n\ta public.over_nn,\n\tb integer\n);\n\n\
+         CREATE DOMAIN public.nnpair AS public.pair NOT NULL;\n\n\
+         CREATE DOMAIN public.nnbox AS box NOT NULL;\n\n\
+         CREATE TYPE public.nnrange AS RANGE (\n    subtype = public.nn,\n    \
+         multirange_type_name = public.nnmultirange\n);\n\n\
+         CREATE TABLE public.t (\n    id integer,\n    v {declared}\n);\n\n\
+         COPY public.t (id, v) FROM stdin;\n1\t{a}\n2\t{b}\n3\t{c}\n\\.\n\nSELECT 1;\n"
+    );
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A NULL element of an array, or NULL field of a composite, whose type is
+/// a `NOT NULL` domain is refused wherever the field is read** (I76), as
+/// `array_in` and `record_in` hand it to `domain_in`: through a domain over
+/// one, beneath another container and as a domain over a composite. A strict
+/// parse fails naming it by its `COPY` line, at the data level and the
+/// metadata level, where a default one keys no nested column; a query
+/// reading it fails, and so does an ordering term reading it; a literal
+/// holding one is refused, as the server refuses coercing it; the strings
+/// schema mode and a query told to ignore it read it. A NULL elsewhere in
+/// such a value, a range's infinite bound over the domain and, read as its
+/// text by a query, an array of a `NOT NULL` domain over `box` are read; a
+/// strict parse refuses the last.
+#[tokio::test]
+async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let disabled = CacheMode::DISABLED;
+    let read = |path: PathBuf, options: QueryOptions| async move {
+        try_rows_in(&path, "public.t", options).await.map(|(rows, _)| rows)
+    };
+    let rows = |v: [&str; 3]| -> Vec<Vec<Option<String>>> {
+        (1..=3).zip(v).map(|(id, v)| vec![Some(id.to_string()), Some(v.to_string())]).collect()
+    };
+    let both = || Some(vec!["id".to_string(), "v".to_string()]);
+    let strict = ScanOptions {
+        postgres_invalid_values: PostgresInvalidValues::Strict,
+        ..Default::default()
+    };
+    let term = |op, value: &str| QueryOptions {
+        filter: Expr::Term(Predicate { column: "v".into(), op, value: Some(value.into()) }),
+        projection: Some(vec!["id".into()]),
+        ..Default::default()
+    };
+
+    // The declared type, its three fields, the second refused, and a literal
+    // ordering below each and one holding a NULL the server refuses.
+    for (declared, fields, below, refused_literal) in [
+        ("public.nn[]", ["{1,2}", "{3,NULL}", "{4}"], "{0}", "{NULL}"),
+        ("public.over_nn[]", ["{1,2}", "{3,NULL}", "{4}"], "{0}", "{0,NULL}"),
+        ("public.pair", ["(1,2)", "(,2)", "(3,)"], "(0,0)", "(,0)"),
+        ("public.pair[]", [r#"{"(1,2)"}"#, r#"{"(,2)"}"#, r#"{"(3,)",NULL}"#], "{}", r#"{"(,0)"}"#),
+        ("public.nnpair[]", [r#"{"(1,2)"}"#, "{NULL}", r#"{"(3,)"}"#], "{}", "{NULL}"),
+    ] {
+        let path = not_null_beneath_dump(dir.path(), declared, fields);
+        let source = LocalFileSource::open(&path).unwrap();
+        for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
+            match map_file(&source, &strict, &disabled, &request).await {
+                Err(Error::FieldRefused { table, column, line, value, .. }) => {
+                    assert_eq!(
+                        (table.as_str(), column.as_str(), line, value.as_str()),
+                        ("public.t", "v", 2, fields[1]),
+                        "{declared}"
+                    );
+                }
+                other => panic!("{declared}: expected a strict parse to refuse, got {other:?}"),
+            }
+        }
+        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA)
+            .await
+            .unwrap_or_else(|e| panic!("{declared}: a default parse refused: {e}"));
+        let projected = || QueryOptions { projection: both(), ..Default::default() };
+        match read(path.clone(), projected()).await {
+            Err(Error::FieldDecode { column, value, .. }) => {
+                assert_eq!((column.as_str(), value.as_str()), ("v", fields[1]), "{declared}");
+            }
+            other => panic!("{declared}: expected the read to refuse, got {other:?}"),
+        }
+        match read(path.clone(), term(PredicateOp::Gt, below)).await {
+            Err(Error::FieldDecode { column, value, .. }) => {
+                assert_eq!((column.as_str(), value.as_str()), ("v", fields[1]), "{declared}");
+            }
+            other => panic!("{declared}: expected the filter to refuse, got {other:?}"),
+        }
+        match read(path.clone(), term(PredicateOp::Eq, refused_literal)).await {
+            Err(Error::PredicateValueDecode { value, .. }) => {
+                assert_eq!(value, refused_literal, "{declared}");
+            }
+            other => panic!("{declared}: expected the literal to be refused, got {other:?}"),
+        }
+        let untyped = QueryOptions {
+            schema_mode: SchemaMode::Strings,
+            projection: both(),
+            ..Default::default()
+        };
+        assert_eq!(read(path.clone(), untyped).await.unwrap(), rows(fields), "{declared}");
+        let ignored =
+            QueryOptions { postgres_invalid_values: PostgresInvalidValues::Ignore, ..projected() };
+        assert_eq!(read(path, ignored).await.unwrap(), rows(fields), "{declared}: ignored");
+    }
+
+    for (declared, fields) in [
+        ("public.nn[]", ["{1,2}", "{3}", "{}"]),
+        ("public.pair", ["(1,2)", "(3,)", "(4,5)"]),
+        ("public.nnrange", ["[1,2)", "(,3)", "[4,)"]),
+        ("public.nnbox[]", ["{(1,1),(0,0)}", "{NULL}", "{(2,2),(1,1)}"]),
+    ] {
+        let path = not_null_beneath_dump(dir.path(), declared, fields);
+        let source = LocalFileSource::open(&path).unwrap();
+        let run = map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await;
+        match (declared, run) {
+            ("public.nnbox[]", Err(Error::FieldRefused { line: 2, .. })) => {}
+            ("public.nnbox[]", other) => panic!("expected `{{NULL}}` refused, got {other:?}"),
+            (_, run) => {
+                run.unwrap_or_else(|e| panic!("{declared}: a strict parse refused: {e}"));
+            }
+        }
+        let projected = QueryOptions { projection: both(), ..Default::default() };
+        assert_eq!(read(path, projected).await.unwrap(), rows(fields), "{declared}");
+    }
+}
+
 /// The line `COPY` numbers the row at `line_offset` in `text`, a restore
 /// counting from 1 at its block's first data line (`copyfrom.c`'s
 /// `CopyFromErrorCallback`): read off the file, not off the parse.

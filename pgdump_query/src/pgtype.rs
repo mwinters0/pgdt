@@ -110,11 +110,12 @@ pub enum NestedPlan {
     /// column was resolved at, and a value that disagrees is a decode
     /// failure. An array whose element type is an array (I26) is refused at
     /// resolution as [`TypeOutcome::NestedArrayElement`], so a nested `Array`
-    /// only ever comes from the shape census.
-    Array(Box<NestedPlan>),
-    /// `record_out` → `Struct<…>`, one plan per declared field, in
+    /// only ever comes from the shape census, whose outer levels hold
+    /// sub-arrays and never a NULL.
+    Array(Box<Position<NestedPlan>>),
+    /// `record_out` → `Struct<…>`, one position per declared field, in
     /// declaration order.
-    Record(Vec<NestedPlan>),
+    Record(Vec<Position<NestedPlan>>),
     /// `range_out` → the five-field range struct. The plan is the *bound*
     /// type's, shared by `lower` and `upper`; the three flags are always
     /// `Boolean`.
@@ -134,6 +135,45 @@ impl NestedPlan {
     /// container: [`Self::Scalar`], [`Self::Decimal`] or [`Self::Text`].
     pub fn is_scalar(&self) -> bool {
         matches!(self, Self::Scalar | Self::Decimal { .. } | Self::Text { .. })
+    }
+
+    /// An array of `element`, a NULL element of which is read.
+    pub fn array(element: NestedPlan) -> Self {
+        Self::Array(Box::new(Position::nullable(element)))
+    }
+
+    /// A composite of `fields`, in declaration order, a NULL field of which
+    /// is read.
+    pub fn record(fields: impl IntoIterator<Item = NestedPlan>) -> Self {
+        Self::Record(fields.into_iter().map(Position::nullable).collect())
+    }
+}
+
+/// **A position a container holds a value at, which a NULL may sit at** — an
+/// array's element or a composite's field — and whether its type refuses
+/// one there: a `NOT NULL` domain, or a domain over one
+/// ([`domain_not_null`]), whose `domain_in` `array_in` and `record_in` hand
+/// a NULL element or field (I76). A range's bound is no such position:
+/// `range_in` hands an infinite bound to no input function, so its plan is
+/// bare. `plan` is a [`NestedPlan`] or a [`NestedCompare`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Position<T> {
+    pub plan: T,
+    /// Whether a NULL here is refused, but under
+    /// [`crate::PostgresInvalidValues::Ignore`].
+    pub not_null: bool,
+}
+
+impl<T> Position<T> {
+    /// A position a NULL may sit at.
+    pub fn nullable(plan: T) -> Self {
+        Self { plan, not_null: false }
+    }
+
+    /// The position of a value declared `declared`, refusing a NULL where
+    /// that is a `NOT NULL` domain.
+    fn of(plan: T, declared: &str, types: &[TypeDef]) -> Self {
+        Self { plan, not_null: domain_not_null(declared, types) }
     }
 }
 
@@ -707,12 +747,12 @@ pub enum NestedCompare {
     /// **One node whatever the dimensionality** — an `array_out` literal
     /// carries its own shape and [`crate::nested::ArrayLiteral`] flattens it,
     /// so `integer[]` is one `Array` node at any depth.
-    Array(Box<NestedCompare>),
+    Array(Box<Position<NestedCompare>>),
     /// `record_cmp`: field-wise in declaration order, which is also the order
     /// `record_out` writes them in. The name is carried for the diagnostic
     /// path alone — `record_out` is positional (I23) and no comparison reads
     /// it.
-    Record(Vec<(String, NestedCompare)>),
+    Record(Vec<(String, Position<NestedCompare>)>),
     /// `range_cmp`: `empty` below every other value, then lower bound, then
     /// upper, with a bound settling infinity before value and value before
     /// inclusivity (I46). `bound` is the subtype's own node, so a range over
@@ -857,7 +897,7 @@ impl NestedCompare {
             Self::Array(element) => {
                 let len = path.len();
                 path.push_str("[]");
-                element.walk(path, visit);
+                element.plan.walk(path, visit);
                 path.truncate(len);
             }
             Self::Record(fields) => {
@@ -865,7 +905,7 @@ impl NestedCompare {
                     let len = path.len();
                     path.push('.');
                     path.push_str(name);
-                    field.walk(path, visit);
+                    field.plan.walk(path, visit);
                     path.truncate(len);
                 }
             }
@@ -1838,7 +1878,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef], visits: Visits) -> TypeOutco
             for field in fields {
                 let (data_type, plan) = resolve_nested(&field.declared_type, types, visits);
                 arrow_fields.push(Field::new(&field.name, data_type, true));
-                plans.push(plan);
+                plans.push(Position::of(plan, &field.declared_type, types));
             }
             TypeOutcome::Mapped(
                 DataType::Struct(Fields::from(arrow_fields)),
@@ -1912,7 +1952,10 @@ fn resolve_array(element: &str, types: &[TypeDef], visits: Visits) -> TypeOutcom
     // The element resolves through `resolve_declared_type`, so nesting
     // composes with no special case: `public.comp[]` is `List<Struct<…>>`.
     let (data_type, plan) = resolve_nested(element, types, visits);
-    TypeOutcome::Mapped(list_of(data_type), NestedPlan::Array(Box::new(plan)))
+    TypeOutcome::Mapped(
+        list_of(data_type),
+        NestedPlan::Array(Box::new(Position::of(plan, element, types))),
+    )
 }
 
 /// The element type of an array declaration, in any of the six spellings
@@ -2020,17 +2063,11 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
 
 /// Whether `declared` is a domain declaring `NOT NULL`, or a domain over one
 /// — a chain [`domain_terminal`] walks — which `domain_in` refuses a NULL
-/// under, `COPY` handing it each NULL field (I76). An array of such a domain
-/// is not one: its column holds a NULL array.
+/// under, `COPY` handing it each NULL field, and `array_in` and `record_in`
+/// each NULL element and field (I76): asked of a column's declared type and
+/// of each [`Position`]'s. An array of such a domain is not one: its column
+/// holds a NULL array.
 // pg-refuses: I76 — a domain's `NOT NULL`, which `domain_in` checks of a NULL.
-//
-// deficiency: KD97 — asked of a column's declared type alone: a NULL element
-// of an array, or field of a composite, whose type is such a domain is read
-// as NULL, where `array_in` and `record_in` hand it to `domain_in`, which
-// refuses it (I76), so a strict parse leaves it unchecked. Closing it carries the domain's `NOT NULL` into the nested
-// position's `NestedPlan`, as a `varchar(n)`'s length rides in
-// `NestedPlan::Text`, read where `batch::append_nested` appends a NULL leaf
-// and where a strict parse walks one.
 pub(crate) fn domain_not_null(declared: &str, types: &[TypeDef]) -> bool {
     let mut name = declared.trim();
     for _ in 0..=types.len() {
@@ -2082,8 +2119,10 @@ pub enum TextGrammar {
     Geometric(Geometric),
     /// An array of `box`, which `array_in` splits at `box`'s `;` (I22) and
     /// whose elements `box_in` reads: the one array a column holds that no
-    /// nested plan reads, its element type being opaque here.
-    BoxArray,
+    /// nested plan reads, its element type being opaque here. `not_null`
+    /// is its element's, a `NOT NULL` domain over `box` refusing a NULL
+    /// element ([`Position`]).
+    BoxArray { not_null: bool },
     /// A type whose input function refuses every value — the planner's and
     /// the extended statistics' internal types and `gtsvector` (I78), and an
     /// enum declaring no labels, which `enum_in` has none to read (I70) — so
@@ -2121,7 +2160,8 @@ pub(crate) fn text_grammar(declared: &str, types: &[TypeDef]) -> Option<TextGram
     let terminal = domain_terminal(declared, types);
     let (base, _) = split_typmod(terminal);
     if let Some(element) = array_element(terminal) {
-        return is_box(domain_terminal(element, types)).then_some(TextGrammar::BoxArray);
+        return is_box(domain_terminal(element, types))
+            .then(|| TextGrammar::BoxArray { not_null: domain_not_null(element, types) });
     }
     if base.contains('.') {
         // pg-refuses: I70 — an enum whose labels are exactly none.
@@ -2239,9 +2279,6 @@ pub enum Unchecked {
     /// A domain declaring a `CHECK`, an expression `domain_in` evaluates
     /// (I77).
     DomainCheck,
-    /// A `NOT NULL` domain beneath a container, whose NULL element or field
-    /// `domain_in` refuses (I76) and a strict parse reads as NULL (`KD97`).
-    DomainNotNullBeneath,
 }
 
 impl Unchecked {
@@ -2270,9 +2307,6 @@ impl Unchecked {
                     .to_string()
             }
             Self::DomainCheck => "the domain's CHECK, an expression".to_string(),
-            Self::DomainNotNullBeneath => {
-                "a NULL here, which the domain's NOT NULL refuses".to_string()
-            }
         }
     }
 }
@@ -2284,8 +2318,7 @@ impl Unchecked {
 /// unanswerable, a position
 /// of a nested `plan` holding a type it orders by nothing and has no grammar
 /// for, an enum whose labels are not exact — in walk order, then each domain
-/// at or beneath the column declaring a `CHECK`, and each `NOT NULL` domain
-/// beneath a container. A path is spelled as [`NestedCompare::uncomparable`]
+/// at or beneath the column declaring a `CHECK`. A path is spelled as [`NestedCompare::uncomparable`]
 /// spells one, `""` naming the column.
 ///
 /// `grammar` is [`column_grammar`]'s, which a strict parse reads by, so what
@@ -2382,11 +2415,10 @@ fn unread(declared: &str, types: &[TypeDef]) -> Unchecked {
     }
 }
 
-/// Each domain at or beneath `declared` declaring a `CHECK`, and each `NOT
-/// NULL` one beneath a container — at the column itself a `NOT NULL` domain
-/// is [`domain_not_null`]'s, and checked — appended to `out` with `path`,
-/// walking domains, array elements, composite fields and range bounds as
-/// [`resolve_declared_type`] walks them and spending `visits` as it does.
+/// Each domain at or beneath `declared` declaring a `CHECK`, appended to
+/// `out` with `path`, walking domains, array elements, composite fields and
+/// range bounds as [`resolve_declared_type`] walks them and spending `visits`
+/// as it does.
 fn domains_beneath(
     declared: &str,
     types: &[TypeDef],
@@ -2418,12 +2450,9 @@ fn domains_beneath(
         return;
     };
     match &def.kind {
-        TypeKind::Domain { base_type, not_null, check, .. } => {
+        TypeKind::Domain { base_type, check, .. } => {
             if *check {
                 out.push((path.clone(), def.name.clone(), Unchecked::DomainCheck));
-            }
-            if *not_null && !path.is_empty() {
-                out.push((path.clone(), def.name.clone(), Unchecked::DomainNotNullBeneath));
             }
             descend(base_type, "", path, visits, out);
         }
@@ -2512,7 +2541,7 @@ fn array_comparison(
             Err(reason) => return ComparisonPlan::Unanswerable(reason),
         }
     };
-    ComparisonPlan::Nested(NestedCompare::Array(Box::new(child)))
+    ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::of(child, element, types))))
 }
 
 /// The comparison for a range or multirange column, from its bound type and
@@ -2752,7 +2781,7 @@ fn comparison_user_type(
                             collations,
                             visits,
                         )
-                        .map(|position| (f.name.clone(), position))
+                        .map(|plan| (f.name.clone(), Position::of(plan, &f.declared_type, types)))
                     })
                     .collect();
                 match positions {
@@ -2937,7 +2966,7 @@ mod tests {
         let kind =
             |declared: &str, types: &[TypeDef]| match comparison_for(declared, None, types, &[]) {
                 ComparisonPlan::Compared { kind, .. } => kind,
-                ComparisonPlan::Nested(NestedCompare::Array(leaf)) => match *leaf {
+                ComparisonPlan::Nested(NestedCompare::Array(leaf)) => match leaf.plan {
                     NestedCompare::Leaf { kind, .. } => kind,
                     other => panic!("`{declared}`: {other:?}"),
                 },
@@ -3062,7 +3091,7 @@ mod tests {
             panic!("an array of a domain over `bit(3)` is nested");
         };
         assert!(
-            matches!(*element, NestedCompare::Uncomparable { grammar, .. } if grammar == bit(Some(3)))
+            matches!(element.plan, NestedCompare::Uncomparable { grammar, .. } if grammar == bit(Some(3)))
         );
         let ComparisonPlan::Nested(NestedCompare::Record(fields)) =
             comparison_for("public.flags", None, &types, &[])
@@ -3070,7 +3099,7 @@ mod tests {
             panic!("a composite is nested");
         };
         assert!(
-            matches!(&fields[0].1, NestedCompare::Uncomparable { grammar, .. } if *grammar == bit(Some(1)))
+            matches!(&fields[0].1.plan, NestedCompare::Uncomparable { grammar, .. } if *grammar == bit(Some(1)))
         );
     }
 
@@ -3105,10 +3134,10 @@ mod tests {
             ("polygon", geometric(Geometric::Polygon)),
             ("circle", geometric(Geometric::Circle)),
             ("public.boxes", geometric(Geometric::Box)),
-            ("box[]", Some(TextGrammar::BoxArray)),
-            ("\"box\"[][]", Some(TextGrammar::BoxArray)),
-            ("public.boxes[]", Some(TextGrammar::BoxArray)),
-            ("public.boxlist", Some(TextGrammar::BoxArray)),
+            ("box[]", Some(TextGrammar::BoxArray { not_null: false })),
+            ("\"box\"[][]", Some(TextGrammar::BoxArray { not_null: false })),
+            ("public.boxes[]", Some(TextGrammar::BoxArray { not_null: false })),
+            ("public.boxlist", Some(TextGrammar::BoxArray { not_null: false })),
             ("point(2)", None),
             ("\"Point\"", None),
             ("pg_catalog.point", None),
@@ -3118,7 +3147,7 @@ mod tests {
             assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
         }
         let element_grammar = |declared| match comparison_for(declared, None, &types, &[]) {
-            ComparisonPlan::Nested(NestedCompare::Array(element)) => match *element {
+            ComparisonPlan::Nested(NestedCompare::Array(element)) => match element.plan {
                 NestedCompare::Uncomparable { grammar, .. } => grammar,
                 other => panic!("`{declared}`'s element is {other:?}"),
             },
@@ -3133,13 +3162,13 @@ mod tests {
             panic!("a composite is nested");
         };
         assert!(matches!(
-            &fields[0].1,
-            NestedCompare::Array(element) if matches!(**element, NestedCompare::Uncomparable {
+            &fields[0].1.plan,
+            NestedCompare::Array(element) if matches!(element.plan, NestedCompare::Uncomparable {
                 grammar: Some(TextGrammar::Geometric(Geometric::Box)), ..
             })
         ));
         assert!(matches!(
-            &fields[1].1,
+            &fields[1].1.plan,
             NestedCompare::Uncomparable { grammar, .. } if *grammar == geometric(Geometric::Circle)
         ));
     }
@@ -3292,27 +3321,21 @@ mod tests {
     fn an_array_maps_to_a_list_of_its_element_type() {
         assert_eq!(
             resolve_declared_type("integer[]", &[]),
-            TypeOutcome::Mapped(
-                list_of(DataType::Int32),
-                NestedPlan::Array(Box::new(NestedPlan::Scalar))
-            )
+            TypeOutcome::Mapped(list_of(DataType::Int32), NestedPlan::array(NestedPlan::Scalar))
         );
         let types = [ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()], exact: true })];
         assert_eq!(
             resolve_declared_type("public.mood[]", &types),
             TypeOutcome::Mapped(
                 list_of(DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))),
-                NestedPlan::Array(Box::new(NestedPlan::Scalar))
+                NestedPlan::array(NestedPlan::Scalar)
             )
         );
         // A type Arrow has no representation for is `Utf8View` *in that
         // position*, exactly as it would be at top level.
         assert_eq!(
             resolve_declared_type("inet[]", &[]),
-            TypeOutcome::Mapped(
-                list_of(DataType::Utf8View),
-                NestedPlan::Array(Box::new(NestedPlan::Scalar))
-            )
+            TypeOutcome::Mapped(list_of(DataType::Utf8View), NestedPlan::array(NestedPlan::Scalar))
         );
     }
 
@@ -3379,7 +3402,7 @@ mod tests {
                 resolve_declared_type(declared, &types),
                 TypeOutcome::Mapped(
                     list_of(DataType::Int32),
-                    NestedPlan::Array(Box::new(NestedPlan::Scalar))
+                    NestedPlan::array(NestedPlan::Scalar)
                 ),
                 "{declared}"
             );
@@ -3396,10 +3419,8 @@ mod tests {
     /// this: `roadmap.md`'s "Where a fixture is impossible" carve-out.
     #[test]
     fn every_array_declaration_spelling_is_one_array_of_the_element_type() {
-        let expected = TypeOutcome::Mapped(
-            list_of(DataType::Int32),
-            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
-        );
+        let expected =
+            TypeOutcome::Mapped(list_of(DataType::Int32), NestedPlan::array(NestedPlan::Scalar));
         for declared in [
             // The six of I28's table.
             "integer[]",
@@ -3461,7 +3482,7 @@ mod tests {
                 resolve_declared_type("public.d", &types),
                 TypeOutcome::Mapped(
                     list_of(DataType::Int32),
-                    NestedPlan::Array(Box::new(NestedPlan::Scalar))
+                    NestedPlan::array(NestedPlan::Scalar)
                 ),
                 "{base}"
             );
@@ -3492,7 +3513,7 @@ mod tests {
                     Field::new("label", DataType::Utf8View, true),
                     Field::new("arr", DataType::Utf8View, true),
                 ])),
-                NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar])
+                NestedPlan::record(vec![NestedPlan::Scalar, NestedPlan::Scalar])
             )
         );
     }
@@ -3516,14 +3537,14 @@ mod tests {
                     Field::new("x", DataType::Int32, true),
                     Field::new("y", DataType::Utf8View, true),
                 ])),
-                NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar])
+                NestedPlan::record(vec![NestedPlan::Scalar, NestedPlan::Scalar])
             )
         );
         // A zero-field composite is a real type with a real value, `()`
         // (I23) — a zero-field `Struct` is well-formed Arrow.
         assert_eq!(
             resolve_declared_type("public.empty_comp", &types),
-            TypeOutcome::Mapped(DataType::Struct(Fields::empty()), NestedPlan::Record(Vec::new()))
+            TypeOutcome::Mapped(DataType::Struct(Fields::empty()), NestedPlan::record([]))
         );
         // A body the grammar could not read is *not* a short field list:
         // `record_out` is positional, so a `Struct` built from one would
@@ -3550,7 +3571,7 @@ mod tests {
             resolve_declared_type("public.point2d[]", &types),
             TypeOutcome::Mapped(
                 list_of(point),
-                NestedPlan::Array(Box::new(NestedPlan::Record(vec![NestedPlan::Scalar])))
+                NestedPlan::array(NestedPlan::record(vec![NestedPlan::Scalar]))
             )
         );
         assert_eq!(
@@ -3561,7 +3582,7 @@ mod tests {
                     list_of(DataType::Utf8View),
                     true
                 )])),
-                NestedPlan::Record(vec![NestedPlan::Array(Box::new(NestedPlan::Scalar))])
+                NestedPlan::record(vec![NestedPlan::array(NestedPlan::Scalar)])
             )
         );
     }
@@ -4259,11 +4280,13 @@ mod tests {
         // through the same recursion.
         assert_eq!(
             comparison_for("public.darr", None, &types, &[]),
-            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
-                declared: "integer".to_string(),
-                kind: CompareKind::Int { bytes: 4 },
-                divergence: None,
-            }))),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
+                NestedCompare::Leaf {
+                    declared: "integer".to_string(),
+                    kind: CompareKind::Int { bytes: 4 },
+                    divergence: None,
+                }
+            )))),
         );
         // A domain over something with no order here has none either.
         assert_eq!(comparison_for("public.dmoney", None, &types, &[]), ComparisonPlan::Refused);
@@ -4297,10 +4320,7 @@ mod tests {
         // An array over one keeps its level, its element held as text.
         assert_eq!(
             resolve_declared_type("public.b[]", &cycle),
-            TypeOutcome::Mapped(
-                list_of(DataType::Utf8View),
-                NestedPlan::Array(Box::new(NestedPlan::Scalar))
-            )
+            TypeOutcome::Mapped(list_of(DataType::Utf8View), NestedPlan::array(NestedPlan::Scalar))
         );
         assert_eq!(comparison_for("public.a", None, &cycle, &[]), ComparisonPlan::Refused);
         assert_eq!(extension_for("public.a", &cycle), None);
@@ -4373,7 +4393,9 @@ mod tests {
             kind: CompareKind::Int { bytes: 4 },
             divergence: None,
         };
-        let array_of_int = || ComparisonPlan::Nested(NestedCompare::Array(Box::new(int_leaf())));
+        let array_of_int = || {
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(int_leaf()))))
+        };
         for declared in ["integer[]", "integer ARRAY"] {
             assert_eq!(comparison_for(declared, None, &types, &[]), array_of_int(), "{declared}");
         }
@@ -4381,29 +4403,37 @@ mod tests {
         // is not collatable and the clause is about its elements (I37).
         assert_eq!(
             comparison_for("text[]", None, &types, &[]),
-            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
-                declared: "text".to_string(),
-                kind: CompareKind::Text { length: None },
-                divergence: Some(ComparisonDivergence::UnknownCollation),
-            }))),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
+                NestedCompare::Leaf {
+                    declared: "text".to_string(),
+                    kind: CompareKind::Text { length: None },
+                    divergence: Some(ComparisonDivergence::UnknownCollation),
+                }
+            )))),
         );
         assert_eq!(
             comparison_for("text[]", Some("pg_catalog.\"C\""), &types, &[]),
-            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
-                declared: "text".to_string(),
-                kind: CompareKind::Text { length: None },
-                divergence: None,
-            }))),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
+                NestedCompare::Leaf {
+                    declared: "text".to_string(),
+                    kind: CompareKind::Text { length: None },
+                    divergence: None,
+                }
+            )))),
         );
-        let point2d =
-            || ComparisonPlan::Nested(NestedCompare::Record(vec![("x".to_string(), int_leaf())]));
+        let point2d = || {
+            ComparisonPlan::Nested(NestedCompare::Record(vec![(
+                "x".to_string(),
+                Position::nullable(int_leaf()),
+            )]))
+        };
         assert_eq!(comparison_for("public.point2d", None, &types, &[]), point2d());
         // Nesting composes with no special case: an array of composites is
         // the composite's own answer one level down.
         let ComparisonPlan::Nested(record) = point2d() else { unreachable!() };
         assert_eq!(
             comparison_for("public.point2d[]", None, &types, &[]),
-            ComparisonPlan::Nested(NestedCompare::Array(Box::new(record))),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(record)))),
         );
         // A user-defined range and the companion multirange `pg_dump` writes
         // no `CREATE TYPE` for (I10) reach the same bound through two
@@ -4666,7 +4696,7 @@ mod tests {
             panic!("smallint[] maps")
         };
         assert_eq!(array_type, data_type);
-        assert_eq!(array_plan, NestedPlan::Array(Box::new(NestedPlan::Scalar)));
+        assert_eq!(array_plan, NestedPlan::array(NestedPlan::Scalar));
 
         let comparison = comparison_for("int2vector", None, &[], &[]);
         assert_eq!(comparison, ComparisonPlan::Nested(NestedCompare::Int2Vector));
@@ -4680,7 +4710,10 @@ mod tests {
         let ComparisonPlan::Nested(outer) = comparison_for("int2vector[]", None, &[], &[]) else {
             panic!("int2vector[] compares structurally")
         };
-        assert_eq!(outer, NestedCompare::Array(Box::new(NestedCompare::Int2Vector)));
+        assert_eq!(
+            outer,
+            NestedCompare::Array(Box::new(Position::nullable(NestedCompare::Int2Vector)))
+        );
     }
 
     /// A type name needing quotes resolves as an ordinary one does (I29): the
@@ -4704,10 +4737,8 @@ mod tests {
             ty(r#""s"."hand""#, TypeKind::domain("boolean")),
         ];
         let int = TypeOutcome::Mapped(DataType::Int32, NestedPlan::Scalar);
-        let int_list = TypeOutcome::Mapped(
-            list_of(DataType::Int32),
-            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
-        );
+        let int_list =
+            TypeOutcome::Mapped(list_of(DataType::Int32), NestedPlan::array(NestedPlan::Scalar));
         for (declared, outcome) in [
             (r#"s."weird[]""#, TypeOutcome::Mapped(enum_type.clone(), NestedPlan::Scalar)),
             (r#"s."my type""#, int.clone()),
@@ -4715,10 +4746,7 @@ mod tests {
             (r#"s."d[3]""#, int.clone()),
             (
                 r#"s."weird[]"[]"#,
-                TypeOutcome::Mapped(
-                    list_of(enum_type),
-                    NestedPlan::Array(Box::new(NestedPlan::Scalar)),
-                ),
+                TypeOutcome::Mapped(list_of(enum_type), NestedPlan::array(NestedPlan::Scalar)),
             ),
             (r#"s."my type"[]"#, int_list.clone()),
             (r#"s."x ARRAY"[]"#, int_list),
@@ -4777,6 +4805,89 @@ mod tests {
         assert!(!domain_not_null("public.a", &types));
     }
 
+    /// **A `NOT NULL` domain's position refuses a NULL in both plans** — an
+    /// array's element and a composite's field, through a domain over it and
+    /// beneath another container — and a range's bound, which `range_in`
+    /// hands no infinite bound, does not (I76).
+    #[test]
+    fn a_not_null_domain_beneath_a_container_marks_its_position() {
+        let not_null = |base: &str| TypeKind::Domain {
+            base_type: base.into(),
+            collation: None,
+            not_null: true,
+            check: false,
+        };
+        let types = [
+            ty("public.nn", not_null("integer")),
+            ty("public.over", TypeKind::domain("public.nn")),
+            ty("public.nnbox", not_null("box")),
+            ty("public.nncomp", not_null("public.comp")),
+            ty(
+                "public.comp",
+                TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("a", "public.over"),
+                        ColumnDef::new("b", "integer"),
+                    ]),
+                },
+            ),
+            ty(
+                "public.nnrange",
+                TypeKind::Range {
+                    subtype: Some("public.nn".into()),
+                    multirange_type_name: None,
+                    canonical: None,
+                },
+            ),
+        ];
+        let plan = |declared| match resolve_declared_type(declared, &types) {
+            TypeOutcome::Mapped(_, plan) => plan,
+            other => panic!("`{declared}` is {other:?}"),
+        };
+        let compare = |declared| match comparison_for(declared, None, &types, &[]) {
+            ComparisonPlan::Nested(tree) => tree,
+            other => panic!("`{declared}` is {other:?}"),
+        };
+        let leaf = |declared: &str| NestedCompare::Leaf {
+            declared: declared.into(),
+            kind: CompareKind::Int { bytes: 4 },
+            divergence: None,
+        };
+        fn refusing<T>(plan: T) -> Position<T> {
+            Position { plan, not_null: true }
+        }
+
+        assert_eq!(plan("public.nn[]"), NestedPlan::Array(Box::new(refusing(NestedPlan::Scalar))));
+        assert_eq!(plan("integer[]"), NestedPlan::array(NestedPlan::Scalar));
+        let comp = NestedPlan::Record(vec![
+            refusing(NestedPlan::Scalar),
+            Position::nullable(NestedPlan::Scalar),
+        ]);
+        assert_eq!(plan("public.comp"), comp);
+        assert_eq!(plan("public.nncomp[]"), NestedPlan::Array(Box::new(refusing(comp.clone()))));
+        assert_eq!(plan("public.comp[]"), NestedPlan::array(comp));
+        assert_eq!(plan("public.nnrange"), NestedPlan::Range(Box::new(NestedPlan::Scalar)));
+
+        assert_eq!(
+            compare("public.nn[]"),
+            NestedCompare::Array(Box::new(refusing(leaf("public.nn"))))
+        );
+        let comp = NestedCompare::Record(vec![
+            ("a".to_string(), refusing(leaf("public.over"))),
+            ("b".to_string(), Position::nullable(leaf("integer"))),
+        ]);
+        assert_eq!(compare("public.comp"), comp);
+        assert_eq!(compare("public.nncomp[]"), NestedCompare::Array(Box::new(refusing(comp))));
+        assert_eq!(
+            compare("public.nnrange"),
+            NestedCompare::Range { bound: Box::new(leaf("public.nn")), discrete: None }
+        );
+        assert_eq!(
+            text_grammar("public.nnbox[]", &types),
+            Some(TextGrammar::BoxArray { not_null: true })
+        );
+    }
+
     /// **A type whose input function refuses every value, or none, has a
     /// grammar saying so**: the internal types I78 names and an enum whose
     /// labels are exactly none (I70) refuse every field, and `"char"`,
@@ -4821,7 +4932,7 @@ mod tests {
             panic!("an array of `xid8` is nested");
         };
         assert!(
-            matches!(*element, NestedCompare::Uncomparable { grammar, .. } if grammar == nothing)
+            matches!(element.plan, NestedCompare::Uncomparable { grammar, .. } if grammar == nothing)
         );
     }
 
@@ -4829,9 +4940,9 @@ mod tests {
     /// with its reason** (`unchecked_positions`): a type the restoring server
     /// decides the input of, at the column or beneath it, a type no reader
     /// here reads, a range declaring a canonical function, an enum whose
-    /// labels are inexact, a domain's `CHECK` anywhere and a `NOT NULL`
-    /// domain beneath a container — and nothing for a type a strict parse
-    /// reads, `json` and a geometric type among them.
+    /// labels are inexact and a domain's `CHECK` anywhere — and nothing for
+    /// a type a strict parse reads, `json` and a geometric type among them,
+    /// nor for a `NOT NULL` domain beneath a container, whose NULL it refuses.
     #[test]
     fn what_a_strict_parse_leaves_unchecked_is_named_where_it_lies() {
         let domain = |base: &str, not_null, check| TypeKind::Domain {
@@ -4940,7 +5051,7 @@ mod tests {
             ("public.pos", vec![at("", "public.pos", Unchecked::DomainCheck)]),
             ("public.over_pos", vec![at("", "public.pos", Unchecked::DomainCheck)]),
             ("public.pos[]", vec![at("[]", "public.pos", Unchecked::DomainCheck)]),
-            ("public.nn[]", vec![at("[]", "public.nn", Unchecked::DomainNotNullBeneath)]),
+            ("public.nn[]", vec![]),
             ("public.posrange", vec![at(".bound", "public.pos", Unchecked::DomainCheck)]),
             ("public.posmulti", vec![at("[].bound", "public.pos", Unchecked::DomainCheck)]),
         ] {

@@ -362,7 +362,7 @@ fn retype_from_census(
             // census's depth adds `depth - 1` more.
             for _ in 1..depth {
                 data_type = DataType::List(Arc::new(Field::new("item", data_type, true)));
-                plan = NestedPlan::Array(Box::new(plan));
+                plan = NestedPlan::array(plan);
             }
             (resolution, (data_type, plan))
         }
@@ -753,8 +753,8 @@ mod tests {
             resolved.plans,
             [
                 NestedPlan::Scalar,
-                NestedPlan::Array(Box::new(NestedPlan::Scalar)),
-                NestedPlan::Record(vec![NestedPlan::Scalar]),
+                NestedPlan::array(NestedPlan::Scalar),
+                NestedPlan::record(vec![NestedPlan::Scalar]),
             ]
         );
         assert_eq!(resolved.plans.len(), resolved.schema.fields().len());
@@ -790,7 +790,7 @@ mod tests {
             assert_eq!(resolved.columns, [ColumnResolution::Mapped], "depth {depth}");
             let mut plan = NestedPlan::Scalar;
             for _ in 0..depth {
-                plan = NestedPlan::Array(Box::new(plan));
+                plan = NestedPlan::array(plan);
             }
             assert_eq!(resolved.plans, [plan], "depth {depth}");
         }
@@ -958,11 +958,11 @@ mod tests {
                 },
                 // Nested: compared structurally, one node per level.
                 ComparisonPlan::Nested(crate::pgtype::NestedCompare::Array(Box::new(
-                    crate::pgtype::NestedCompare::Leaf {
+                    crate::pgtype::Position::nullable(crate::pgtype::NestedCompare::Leaf {
                         declared: "integer".to_string(),
                         kind: CompareKind::Int { bytes: 4 },
                         divergence: None,
-                    },
+                    },)
                 ))),
                 // A type this build never mapped has no order here.
                 ComparisonPlan::Refused,

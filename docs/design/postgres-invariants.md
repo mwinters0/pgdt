@@ -4975,7 +4975,9 @@ constraints, and a primary key `pg_dump` adds after the data. A domain's is
 ` NOT NULL`, or from 17 ` CONSTRAINT %s NOT NULL` for a named one. `array_in`
 and `record_in` hand a NULL element or field to its type's input function, so
 a NULL element of an array, or field of a composite, of a `NOT NULL` domain is
-refused too; an array of such a domain may itself be NULL.
+refused too, beneath any container; an array of such a domain may itself be
+NULL, and `range_in` hands an infinite bound to no input function, so a range
+over such a domain may be unbounded.
 
 **Proof.** `src/backend/commands/copyfromparse.c`, `NextCopyFrom`: every field,
 NULL included, through `InputFunctionCallSafe`;
@@ -4990,14 +4992,20 @@ attribute->attnotnull` (13–17); `src/backend/parser/parse_utilcmd.c`,
 `transformColumnDefinition`, which sets `is_not_null` for `PRIMARY KEY`,
 `serial` and an identity (by `need_notnull` at 18).
 `src/backend/utils/adt/arrayfuncs.c`, `ReadArrayStr`'s input call handed
-`NULL` for a NULL element, and `rowtypes.c`, `record_in`'s for a NULL field.
+`NULL` for a NULL element, and `rowtypes.c`, `record_in`'s for a NULL field;
+`rangetypes.c`, `range_in`'s input calls under `RANGE_HAS_LBOUND` and
+`RANGE_HAS_UBOUND` alone.
 
 **Observed.** The koji replica (PG16), in a rolled-back transaction: `COPY`
 refuses `\N` into a child's column inherited from a `NOT NULL` parent column
 (the child's `attnotnull` is `t`), into a domain over a `NOT NULL` domain
 (`domain over_nn does not allow null values`), into an inline `PRIMARY KEY`, a
 `serial` and an identity column, and `{1,NULL}` into an array of the `NOT
-NULL` domain; it reads `\N` into that array column.
+NULL` domain; it reads `\N` into that array column. It refuses `(,1)` into a
+composite whose first field is the domain, `()` into a one-field composite of
+one, `{"(,1)"}` into an array of the first and `{{1,2},{3,NULL}}` into a
+two-dimensional array of the domain, and reads `(,5)` and `{(,5),[7,)}` into a
+range over the domain and its multirange.
 `fixtures/<13–17>/emitters/default.sql` holds `ALTER TABLE ONLY
 emitters.child ALTER COLUMN label SET NOT NULL;`,
 `fixtures/18/emitters/default.sql` `NOT NULL label,` and
@@ -5014,7 +5022,9 @@ subcommands), are not followed; no `pg_dump` writes the latter.
 **Relied on by:** `preamble::DatabaseMetadata::column_not_null` and
 `pgtype::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
 keying, a query reading or filtering on and a strict parse checking a column
-refuse a NULL by.
+refuse a NULL by, and through `pgtype::Position::not_null`, which a query
+reading or comparing a nested column, a filter literal and a strict parse
+refuse a NULL element or field by, and which a range's bound does not carry.
 
 **Re-verify.**
 
@@ -5024,11 +5034,14 @@ grep -n 'print_notnull\|SET NOT NULL;\|"NOT NULL %s"\|NOT NULL %s",\|" NO INHERI
 grep -n -A3 'typnotnull\[0\] ==' src/bin/pg_dump/pg_dump.c
 grep -n 'domain_check_input(value, (string == NULL)' src/backend/utils/adt/domains.c
 grep -n -A1 'InputFunctionCall[A-Za-z]*(inputproc' src/backend/utils/adt/arrayfuncs.c
+grep -n -A1 'InputFunctionCall[A-Za-z]*(&column_info->proc' src/backend/utils/adt/rowtypes.c
+grep -n -B1 'InputFunctionCall[A-Za-z]*(&cache->typioproc' src/backend/utils/adt/rangetypes.c
 grep -n 'is_not_null = true\|need_notnull = true' src/backend/parser/parse_utilcmd.c
 ```
 
 It prints `dumpTableSchema`'s not-null emissions, `dumpDomain`'s, the NULL
-`domain_in` checks, the input call `array_in` hands a NULL element, and where
+`domain_in` checks, the input calls `array_in` and `record_in` hand a NULL
+element or field, the bound tests `range_in` makes before its own, and where
 a column's definition is made `NOT NULL`.
 
 ## I77 — `COPY` evaluates a table's `CHECK`s and a domain's, which `pg_dump` writes before the data unless it holds one apart
