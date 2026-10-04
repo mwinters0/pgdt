@@ -408,7 +408,7 @@ mod oracle {
             return None;
         };
         match plan {
-            NestedPlan::Scalar | NestedPlan::Decimal { .. } => None,
+            NestedPlan::Scalar | NestedPlan::Decimal { .. } | NestedPlan::Text { .. } => None,
             NestedPlan::Array(_) => Some(|s| parse_array(s).as_ref().map(render_array)),
             NestedPlan::Record(fields) => match fields.len() {
                 0 => Some(|s| parse_record(s, 0).as_ref().map(render_record)),

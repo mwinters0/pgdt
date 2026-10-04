@@ -998,7 +998,11 @@ fail on it, `SchemaMode::Strings` gives you every column unparsed.
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
 `date`, a `numeric(10,2)` value with more than ten digits once rounded to two
 places, a `double precision`
-past its range, `maybe` in a `boolean`, `::1/08` in an `inet`. `parse` checks
+past its range, `maybe` in a `boolean`, `::1/08` in an `inet`, `abcd` in a
+`varchar(3)` or a `char(3)`. A `varchar(n)` or `char(n)` value longer than `n`
+characters only by trailing spaces is not refused, as PostgreSQL does not
+refuse it, and is read as the dump holds it, spaces and all, where a restore
+cuts it to `n` characters. `parse` checks
 only the values it reads anyway to gather statistics, which leaves to a query
 a column at the metadata level, an array's or a composite's elements, a
 range's bounds, a value longer than 256 bytes but a `bytea`, and every value
@@ -1014,8 +1018,7 @@ geometric types (`xml`, `money`, a type it has no reader for), a `json` nested
 deeper than the restoring server's `max_stack_depth` lets it read, a value
 spelled in a way pgdt cannot read for its type at all, which PostgreSQL may
 refuse or not (`abc` in an `integer`, a malformed `jsonb`), a value of a range
-type declaring its own `canonical` function, a `character varying(n)` or
-`character(n)` value longer than its column allows, or a null in a `NOT NULL`
+type declaring its own `canonical` function, or a null in a `NOT NULL`
 column; nor anything a constraint checks — a `CHECK`, or a unique, primary or
 foreign key, which a restore checks once the data has loaded.
 Each table it checks is recorded in the cache as checked, and a `strict` parse
@@ -1036,7 +1039,8 @@ read exactly)` after them.
 `query` alike, with no promise about what it reads: `parse` goes on past each,
 keeping no bounds, sum or dictionary of the stretch of its column it sits in, and `query`
 reads a `real` or `double precision` past its range as the largest value of its
-sign and one below its smallest as zero, and refuses every other as before.
+sign and one below its smallest as zero, and a `varchar(n)` or `char(n)` value
+past its length as the dump holds it, and refuses every other as before.
 **The cache remembers what `parse` went past**: in each `COPY` block, each
 column's first such value and how many, which `pgdt info` lists under the
 block's table as one `refused by PostgreSQL:` line per column, so a later

@@ -126,7 +126,7 @@ pub fn table_summary(
                 // A `character(n)`'s set is stored without the trailing
                 // blanks its comparison ignores, so its bounds are not values
                 // the column emits and no extreme can be read off them.
-                .filter(|kind| *kind != CompareKind::PaddedText);
+                .filter(|kind| !matches!(kind, CompareKind::PaddedText { .. }));
             Accumulator {
                 kind,
                 nulls: 0,

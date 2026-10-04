@@ -4878,3 +4878,59 @@ for f in single_decode pair_decode path_decode pair_count box_in line_decode lin
 The first two print the line construction and the division whose v13 forms
 differ; the third prints the grammar, to be diffed against the previous
 major's with `ereport`/`ereturn` aside.
+
+---
+
+## I75 — `varchar_input` and `bpchar_input` refuse a value past the typmod's length with anything but a blank past it
+
+**Claim.** `COPY` hands a `character varying(n)` or `character(n)` field its
+column's typmod, through an array's elements, a composite's fields and a
+domain, and `varchar_input` and `bpchar_input` refuse, `22001`, a value of
+more than `n` characters — counted in the server encoding — any of whose
+bytes past the `n`th character is not `0x20`; one longer only by such blanks
+is read, clipped to `n` characters. Neither trims anything else, a tab or a
+newline being a value byte. With no typmod any length is read. A column
+declared `character` alone is `character(1)`, and one of the type with no
+length is written `bpchar` (I8); a literal compared with such a column is
+coerced with no typmod, so no length refuses it.
+
+**Proof.** `src/backend/utils/adt/varchar.c`, `bpchar_input` and
+`varchar_input`: the `atttypmod < (int32) VARHDRSZ` test, `maxlen =
+atttypmod - VARHDRSZ`, `pg_mbcharcliplen` and the loop refusing any
+`s[j] != ' '` past the clip. The two functions are identical at every
+supported major but that v13 to v15 raise with `ereport` where v16 on use
+`ereturn`. `src/backend/parser/gram.y`, `CharacterWithoutLength`, which
+gives `char` and `character` a typmod of 1 and `varchar` none.
+
+**Observed.** The koji replica (PG16), by `pg_input_is_valid`: under both
+`character varying(3)` and `character(3)`, `abc`, `a`, the empty text,
+`abc   `, `ab    `, `ééé` and `ééé  ` are read, and `abcd`, `abc` followed by
+a tab or a newline, ` abc`, `éééé`, `éééx` and `éééé ` refused; `character`
+refuses `ab` and reads `a `; `bpchar` reads `abcdef`; `varchar(2)[]` refuses
+`{abc}` and reads `{"ab  "}`, a composite field of `varchar(2)` refuses
+`(abc)`, a domain over it refuses `abc`, and `COPY` refuses `abc` into a
+`varchar(2)` column. `format_type` names columns declared `char` and
+`varchar(2)[]` `character(1)` and `character varying(2)[]`.
+
+**Scope limit.** Characters are counted in UTF-8, the one encoding a dump is
+read in here ([`pg-dump-compatibility.md`](pg-dump-compatibility.md)); a
+dump in another server encoding counts them otherwise.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+16.15 (observed).
+
+**Relied on by:** `decode::char_typmod_refuses`, which a parse keying, a
+query decoding and a strict parse checking such a field read it by, through
+`CompareKind::Text`'s and `CompareKind::PaddedText`'s `length` and
+`NestedPlan::Text`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^(bpchar_input|varchar_input)\(/,/^}/' src/backend/utils/adt/varchar.c | grep -n "atttypmod\|pg_mbcharcliplen\|!= ' '"
+grep -n -A12 '^CharacterWithoutLength' src/backend/parser/gram.y
+```
+
+It prints, for each function, the typmod test, the clip and the blank test;
+then the grammar's default length.

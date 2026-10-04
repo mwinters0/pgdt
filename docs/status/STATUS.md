@@ -107,7 +107,7 @@ approval, in the spec's opening note.
 - [x] **31.16** `json_in`'s grammar: a `strict` parse refuses a `json` field PostgreSQL's JSON lexer refuses — [notes](../design/roadmap-P31.16-json-in-notes.md)
 - [x] **31.17** `bit_in`'s and `varbit_in`'s grammar, their typmod lengths with it: a `strict` parse refuses a `bit`, `bit(n)`, `varbit` or `varbit(n)` field PostgreSQL refuses — [notes](../design/roadmap-P31.17-bit-in-notes.md)
 - [x] **31.18** The seven geometric types' input grammars: a `strict` parse refuses a `point`, `line`, `lseg`, `box`, `path`, `polygon` or `circle` field PostgreSQL refuses — [notes](../design/roadmap-P31.18-geometric-in-notes.md)
-- [ ] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it
+- [x] **31.19** A `varchar(n)` or `char(n)` field longer than `n` characters, but for trailing spaces, refused wherever the field is read, `default` included; the manual says `default` now refuses it — [notes](../design/roadmap-P31.19-char-length-notes.md)
 - [ ] **31.20** `NOT NULL` read from the preamble — on the column, at the table, through a domain — and a `\N` in such a column refused wherever the field is read, `default` included; the manual says so
 - [ ] **31.21** A `strict` parse names what it left unchecked in this dump — each column outside the promise, with its reason, and each table carrying a `CHECK` — and `pgdt info` shows the same
 - [ ] **31.22** Every built-in type a `strict` parse reads by a reader of its own tells a field its `*_in` refuses from a spelling it reads and this build does not — the integers, `numeric`, the floats, dates, times and timestamps, `interval`, `uuid`, `jsonb` — each refusal marked against an invariant and refusing only what every supported major refuses, so text no reader here reads fails a `strict` parse exactly where PostgreSQL refuses it, closing `KD90`
@@ -144,3 +144,14 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A `varchar(n)` or `char(n)` field longer than `n` only by trailing blanks
+  is read with them, not cut to `n` as PostgreSQL stores it** (31.19,
+  `KD96`). The length refuses a field and never moves a value, so the key,
+  the bounds, the dictionary and the typed read all hold the file's text.
+  Why: a cut value is a key a `SchemaMode::Strings` term, reading the column
+  as its text, does not share, so a `varchar(n)` column's stored `Text` set
+  would stop serving one (D79), and no `pg_dump` writes such a field.
+  Reconsidering means the stored value — cut, and a short `char(n)` padded —
+  in the read, the key and the bounds, and either a `Strings` term reading
+  no bounds of such a column or a recorded fact that no field was cut.

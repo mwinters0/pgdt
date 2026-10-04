@@ -23,7 +23,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD95 -->
+rather than being deleted. <!-- deficiency-watermark: KD96 -->
 **`KD1`–`KD89` are allocated, and nothing at or below `KD89` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -420,3 +420,11 @@ than reading as a phase nobody has sliced.
   spellings a strict parse reads a bit string's length off rest on
   `format_type.c` and I73's observations, never on a real dump. **(b) owned
   by P31**, 31.25. Detail: `pgdump_query/src/pgtype.rs`.
+
+- **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
+  PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
+  keeps them, and a `char(n)` one shorter than `n` is not padded, neither of
+  which `pg_dump` writes, so a typed read emits a value the server does not
+  hold and a `varchar(n)`'s `<` and `=` answer otherwise over the first.
+  **(c) unowned**; promoted by a hand-written dump holding one. Detail:
+  `pgdump_query/src/decode.rs`.

@@ -1976,6 +1976,30 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Read<Strin
     Ok(out)
 }
 
+/// Whether a `character varying(n)` or `character(n)` field, `n` being
+/// `length`, is one `varchar_input` or `bpchar_input` refuses: longer than
+/// `length` characters, with anything but a blank, `0x20`, past them (I75).
+/// The characters are counted in UTF-8, the one encoding read here; a field
+/// no longer in bytes than `length` is read without counting, and a field it
+/// does not refuse is read as written ([`crate::pgtype::CompareKind::Text`]).
+// deficiency: KD96 — a field longer than `length` only by trailing blanks,
+// which `varchar_input` and `bpchar_input` cut to `length` characters (I75),
+// keeps them here, and a `character(n)` field shorter than `length`, which
+// `bpchar_input` pads, is not padded: a typed read emits a value the server
+// does not hold, and a `character varying(n)`'s longer one is keyed, bounded
+// and compared with its blanks, so `<` and `=` answer otherwise than the
+// server over it. No `pg_dump` writes either. Cutting it means a key no
+// `SchemaMode::Strings` term shares, which reads the column as its text
+// (D79). **(c) unowned**; promoted by a hand-written dump holding one.
+// pg-refuses: I75 — a non-blank past the typmod's length.
+pub fn char_typmod_refuses(text: &str, length: u32) -> bool {
+    let length = length as usize;
+    if text.len() <= length {
+        return false;
+    }
+    text.char_indices().nth(length).is_some_and(|(cut, _)| text[cut..].bytes().any(|b| b != b' '))
+}
+
 /// `NUMERIC_DSCALE_MAX`: the most digits `numeric_in` stores after the point,
 /// a trailing zero counting (I63).
 pub const NUMERIC_DSCALE_MAX: usize = 16383;
@@ -3911,6 +3935,36 @@ mod tests {
         for &(text, varying, length, server) in cases {
             assert_eq!(bit_in(text, varying, length), server, "{text:?} {varying} {length:?}");
         }
+    }
+
+    /// **A `character varying(n)` or `character(n)` field is refused exactly
+    /// where `varchar_input` or `bpchar_input` refuses it** (I75): past `n`
+    /// characters, counted in UTF-8, with anything but `0x20` past them —
+    /// every case put to `pg_input_is_valid` under `character varying(3)` and
+    /// `character(3)`, which agree on each, on a PostgreSQL 16 server.
+    #[test]
+    fn a_character_field_is_refused_only_past_its_length_but_for_blanks() {
+        // `(text, the server reads it)`, at a length of 3.
+        let cases: &[(&str, bool)] = &[
+            ("abc", true),
+            ("a", true),
+            ("", true),
+            ("abcd", false),
+            ("abc   ", true),
+            ("ab    ", true),
+            ("abc\t", false),
+            ("abc\n", false),
+            (" abc", false),
+            ("\u{e9}\u{e9}\u{e9}", true),
+            ("\u{e9}\u{e9}\u{e9}  ", true),
+            ("\u{e9}\u{e9}\u{e9}\u{e9}", false),
+            ("\u{e9}\u{e9}\u{e9}x", false),
+            ("\u{e9}\u{e9}\u{e9}\u{e9} ", false),
+        ];
+        for &(text, server) in cases {
+            assert_eq!(!char_typmod_refuses(text, 3), server, "{text:?}");
+        }
+        assert!(char_typmod_refuses("ab", 1) && !char_typmod_refuses("a ", 1));
     }
 
     /// **A geometric field is refused exactly where its input function

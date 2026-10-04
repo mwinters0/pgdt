@@ -927,7 +927,7 @@ mod tests {
             [
                 ComparisonPlan::Compared { kind: CompareKind::Int { bytes: 4 }, divergence: None },
                 ComparisonPlan::diverging(
-                    CompareKind::Text,
+                    CompareKind::Text { length: None },
                     crate::pgtype::ComparisonDivergence::UnknownCollation,
                 ),
                 ComparisonPlan::Compared {
@@ -975,10 +975,13 @@ mod tests {
             resolved.comparisons,
             [
                 ComparisonPlan::diverging(
-                    CompareKind::Text,
+                    CompareKind::Text { length: None },
                     ComparisonDivergence::UnknownCollation
                 ),
-                ComparisonPlan::Compared { kind: CompareKind::Text, divergence: None },
+                ComparisonPlan::Compared {
+                    kind: CompareKind::Text { length: None },
+                    divergence: None
+                },
             ]
         );
         // Both are still the same Arrow type and the same comparison — only
@@ -1009,14 +1012,14 @@ mod tests {
         assert_eq!(
             build(true).comparisons,
             [ComparisonPlan::diverging(
-                CompareKind::Text,
+                CompareKind::Text { length: None },
                 ComparisonDivergence::NonBytewiseCollation
             )]
         );
         assert_eq!(
             build(false).comparisons,
             [ComparisonPlan::diverging(
-                CompareKind::Text,
+                CompareKind::Text { length: None },
                 ComparisonDivergence::NonDeterministicCollation
             )]
         );
@@ -1035,7 +1038,7 @@ mod tests {
         assert_eq!(
             text.comparisons,
             [ComparisonPlan::diverging(
-                crate::pgtype::CompareKind::Text,
+                crate::pgtype::CompareKind::Text { length: None },
                 crate::pgtype::ComparisonDivergence::UnknownCollation,
             )]
         );

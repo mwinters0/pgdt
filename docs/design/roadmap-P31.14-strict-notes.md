@@ -67,8 +67,8 @@ the record beside its mark 31.13.2's
   declaring its own `canonical` function; no reader here decodes them. The
   manual says so. What stays outside is the roadmap's boundary, and 31.21
   names it per dump.
-- **No length past a `varchar(n)` or `char(n)` typmod, nor a null in a `NOT
-  NULL` column, is refused**, under any mode: 31.19 and 31.20.
+- **No null in a `NOT NULL` column is refused**, under any mode: 31.20. A
+  length past a `varchar(n)` or `char(n)` typmod is, since 31.19.
 - **What a strict observer holds to check — a comparison plan per column —
   is not charged to the statistics account** (D81): it is fixed per block,
   shared with the pieces and freed with the observer.

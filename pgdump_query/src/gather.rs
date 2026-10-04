@@ -61,7 +61,8 @@ use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{
-    Unread, bytea_unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits,
+    Unread, bytea_unread, char_typmod_refuses, decode_bytea, decode_bytea_escape, render_bytea,
+    typmod_unscaled_digits,
 };
 use crate::index::{Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
@@ -324,7 +325,10 @@ pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> 
     let comparison = &stored.comparisons[i];
     stored.plans[i].is_scalar()
         && comparison.dictionary_answers_in(ComparisonSemantics::Postgres)
-        && !matches!(comparison, ComparisonPlan::Compared { kind: CompareKind::PaddedText, .. })
+        && !matches!(
+            comparison,
+            ComparisonPlan::Compared { kind: CompareKind::PaddedText { .. }, .. }
+        )
 }
 
 /// Whether gathering keeps sums for a column the typed read emits as
@@ -1592,13 +1596,15 @@ enum Order {
 }
 
 /// The bytewise kinds, each by the text whose bytes order as its key does.
+/// A text's `length` is its typmod's, past which a field is refused
+/// ([`char_typmod_refuses`]) and which places none.
 #[derive(Clone, Copy)]
 enum Canonical {
     /// `text`, `varchar`, `name`, bounded bytewise in any collation: the text.
-    Text,
+    Text { length: Option<u32> },
     /// `character`: the text without its trailing blanks, which its comparison
     /// ignores — so a bound is stored unpadded.
-    PaddedText,
+    PaddedText { length: Option<u32> },
     /// `bytea`: `\x` and lowercase hex pairs, which order as the bytes do —
     /// an `escape` value's head put in that form, as much as a bound reads
     /// ([`BYTEA_ESCAPE_HEAD_BYTES`]). A value in any other spelling is not
@@ -1611,8 +1617,8 @@ impl Canonical {
     /// where this kind cannot place it.
     fn of(self, text: &str) -> Option<Cow<'_, str>> {
         match self {
-            Self::Text => Some(Cow::Borrowed(text)),
-            Self::PaddedText => Some(Cow::Borrowed(text.trim_end_matches(' '))),
+            Self::Text { .. } => Some(Cow::Borrowed(text)),
+            Self::PaddedText { .. } => Some(Cow::Borrowed(text.trim_end_matches(' '))),
             Self::Bytea => match text.strip_prefix("\\x") {
                 Some(hex) => (hex.len() % 2 == 0
                     && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
@@ -2097,8 +2103,8 @@ impl ViewOrders {
 impl BoundsGatherer {
     fn new(kind: CompareKind) -> Self {
         let order = match kind {
-            CompareKind::Text => Order::Bytewise(Canonical::Text),
-            CompareKind::PaddedText => Order::Bytewise(Canonical::PaddedText),
+            CompareKind::Text { length } => Order::Bytewise(Canonical::Text { length }),
+            CompareKind::PaddedText { length } => Order::Bytewise(Canonical::PaddedText { length }),
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),
         };
@@ -2140,9 +2146,9 @@ impl BoundsGatherer {
 
     /// Observe `text`, a value past `tier` where it is past one — which only a
     /// keyed kind's column can hold. **A value its type's `*_in` refuses is
-    /// [`Refused`]**, where keying it, or placing a `bytea`, finds that; no
-    /// other value is, one this build cannot read losing the group's bounds
-    /// alone.
+    /// [`Refused`]**, where keying it, placing a `bytea` or holding a text to
+    /// its length finds that; no other value is, one this build cannot read
+    /// losing the group's bounds alone.
     fn observe(
         &mut self,
         group: &mut GroupBounds,
@@ -2153,6 +2159,13 @@ impl BoundsGatherer {
             Order::Bytewise(canonical) => {
                 debug_assert!(tier.is_none(), "a bytewise kind's type holds every value");
                 let canonical = *canonical;
+                if let Canonical::Text { length: Some(length) }
+                | Canonical::PaddedText { length: Some(length) } = canonical
+                    && char_typmod_refuses(text, length)
+                {
+                    self.lose_value(group, None);
+                    return Err(Refused);
+                }
                 let Some(text) = canonical.of(text) else {
                     self.lose_value(group, None);
                     return match canonical {
@@ -2452,8 +2465,8 @@ fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bo
         return Some(Bounds { min: lower, max: max.head, min_exact, max_exact: true });
     }
     let upper = match canonical {
-        Canonical::Text => text_upper(&max.head, false)?,
-        Canonical::PaddedText => text_upper(&max.head, true)?,
+        Canonical::Text { .. } => text_upper(&max.head, false)?,
+        Canonical::PaddedText { .. } => text_upper(&max.head, true)?,
         Canonical::Bytea => bytea_upper(&max.head)?,
     };
     Some(Bounds { min: lower, max: upper, min_exact, max_exact: false })
@@ -2590,7 +2603,7 @@ struct DictionaryGatherer {
 impl DictionaryGatherer {
     fn new(kind: &CompareKind) -> Self {
         Self {
-            padded: matches!(kind, CompareKind::PaddedText),
+            padded: matches!(kind, CompareKind::PaddedText { .. }),
             entries: Vec::new(),
             entry_text: 0,
             interned: HashMap::new(),
@@ -2857,8 +2870,8 @@ mod tests {
     fn stored_bounds_and_order_hold_every_value_under_its_key() {
         let mut rng = Rng(0x5eed);
         let kinds = [
-            CompareKind::Text,
-            CompareKind::PaddedText,
+            CompareKind::Text { length: None },
+            CompareKind::PaddedText { length: None },
             CompareKind::Bytea,
             CompareKind::Int { bytes: 8 },
         ];
@@ -3113,8 +3126,8 @@ mod tests {
     /// each canonical form and three keyed ones, two of whose types cannot
     /// hold every value.
     const JOIN_KINDS: [CompareKind; 6] = [
-        CompareKind::Text,
-        CompareKind::PaddedText,
+        CompareKind::Text { length: None },
+        CompareKind::PaddedText { length: None },
         CompareKind::Bytea,
         CompareKind::Int { bytes: 8 },
         CompareKind::Date,
@@ -3210,7 +3223,9 @@ mod tests {
                             _ => value(rng, kind),
                         };
                         match kind {
-                            CompareKind::Text | CompareKind::PaddedText if rng.below(2) == 0 => {
+                            CompareKind::Text { .. } | CompareKind::PaddedText { .. }
+                                if rng.below(2) == 0 =>
+                            {
                                 format!("{base}{v}")
                             }
                             _ => v,

@@ -1476,11 +1476,24 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         CompareKind::Bytea => {
             OrderKey::Bytes(decode::decode_bytea(text).ok_or_else(|| decode::bytea_unread(text))?)
         }
-        CompareKind::Text => OrderKey::Text(text.to_string()),
+        // A field past its typmod's length is refused, and one within it is
+        // keyed as written. A literal is coerced with no typmod
+        // ([`literal_key`]).
+        CompareKind::Text { length } => {
+            if length.is_some_and(|length| decode::char_typmod_refuses(text, length)) {
+                return Err(Unread::Refused);
+            }
+            OrderKey::Text(text.to_string())
+        }
         // `bcTruelen` on both sides, which is what makes this the server's
         // comparison rather than one over the padding (I38). The blank is
         // ASCII `0x20` and nothing else; a tab is a value byte.
-        CompareKind::PaddedText => OrderKey::Text(text.trim_end_matches(' ').to_string()),
+        CompareKind::PaddedText { length } => {
+            if length.is_some_and(|length| decode::char_typmod_refuses(text, length)) {
+                return Err(Unread::Refused);
+            }
+            OrderKey::Text(text.trim_end_matches(' ').to_string())
+        }
     })
 }
 
@@ -1490,7 +1503,8 @@ fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
 /// infinity past the type's range, and a `numeric` in either: read within `numeric_in`'s bounds in
 /// PostgreSQL's, and exactly, neither rounded to the scale nor refused past
 /// the precision, the server coercing a literal with no typmod where it puts a
-/// field through the typmod (I63). In DataFusion's semantics a literal is
+/// field through the typmod (I63) — and a text of any length for the same
+/// reason. In DataFusion's semantics a literal is
 /// DataFusion's value, not the server's (`roadmap.md`, "A literal is
 /// guaranteed in `*_out`'s form and never read past `*_in`'s").
 fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -> Option<OrderKey> {
@@ -1514,6 +1528,10 @@ fn literal_key(kind: &CompareKind, text: &str, semantics: ComparisonSemantics) -
         }),
         (_, CompareKind::Numeric { typmod: Some(_), .. }) => special_order_key(kind, text)
             .or_else(|| Some(OrderKey::Numeric(NumericKey::parse(text)?))),
+        (_, CompareKind::Text { .. }) => order_key(&CompareKind::Text { length: None }, text),
+        (_, CompareKind::PaddedText { .. }) => {
+            order_key(&CompareKind::PaddedText { length: None }, text)
+        }
         _ => order_key(kind, text),
     }
 }
@@ -1898,8 +1916,12 @@ pub(crate) fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
         ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
             !decode::json_in(text)
         }
-        // Every text is a value of these, and keying one copies it.
-        ComparisonPlan::Compared { kind: CompareKind::Text | CompareKind::PaddedText, .. } => false,
+        // Every text within its length is a value of these, and keying one
+        // copies it.
+        ComparisonPlan::Compared {
+            kind: CompareKind::Text { length } | CompareKind::PaddedText { length },
+            ..
+        } => length.is_some_and(|length| decode::char_typmod_refuses(text, length)),
         ComparisonPlan::Compared { kind, .. } => {
             matches!(field_key(kind, text), Err(Unread::Refused))
         }
@@ -2429,7 +2451,9 @@ fn equality_comparison(
             let bound = literal_key(kind, text, semantics)?;
             return Some(Comparison::Decoded { kind: kind.clone(), bound });
         }
-        K::PaddedText => return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string())),
+        K::PaddedText { .. } => {
+            return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string()));
+        }
         // A special value is written in its own type's `*_out` spelling on
         // both sides, so it renders to itself. Only `date`, `timestamp` and
         // `numeric(p,s)` reach this arm and admit one.
@@ -2475,8 +2499,9 @@ fn equality_comparison(
             }));
         }
         // The identity: `=` on a text column is a byte comparison, with no
-        // per-row work added.
-        K::Text => text.to_string(),
+        // per-row work added. A literal past a `varchar(n)`'s length is
+        // read, the server coercing it with no typmod.
+        K::Text { .. } => text.to_string(),
     };
     Some(Comparison::Canonical(Spellings::one(rendered)))
 }
@@ -2663,7 +2688,7 @@ fn accepted_form(kind: &CompareKind) -> String {
             "as `\\x` followed by hex pairs, or as `bytea_output = escape` writes it".into()
         }
         K::Jsonb => "as a JSON document".into(),
-        K::Text | K::PaddedText => "as any text".into(),
+        K::Text { .. } | K::PaddedText { .. } => "as any text".into(),
     }
 }
 
@@ -3103,16 +3128,16 @@ pub(crate) fn resolve_term(
         // gathered for it.
         _ if ordering && arrow => (
             Comparison::Ordered {
-                kind: CompareKind::Text,
-                bound: order_key(&CompareKind::Text, text)
-                    .ok_or_else(|| refuse_literal(&CompareKind::Text))?,
+                kind: CompareKind::Text { length: None },
+                bound: order_key(&CompareKind::Text { length: None }, text)
+                    .ok_or_else(|| refuse_literal(&CompareKind::Text { length: None }))?,
             },
             Vec::new(),
             BelievedStatistics {
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
                     semantics,
-                    &CompareKind::Text,
+                    &CompareKind::Text { length: None },
                     text,
                 ),
                 dictionary: false,
@@ -3156,7 +3181,7 @@ pub(crate) fn resolve_term(
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
                     semantics,
-                    &CompareKind::Text,
+                    &CompareKind::Text { length: None },
                     text,
                 ),
                 dictionary: false,
@@ -5182,7 +5207,10 @@ mod tests {
         assert_eq!(answer, Some(Truth::True));
         assert_eq!(
             shape,
-            std::mem::discriminant(&Lookup::Decoded { kind: CompareKind::Text, keys: vec![] })
+            std::mem::discriminant(&Lookup::Decoded {
+                kind: CompareKind::Text { length: None },
+                keys: vec![]
+            })
         );
         assert_eq!(over(&numeric, &["2", "1.50", "NaN"], "NaN").0, Some(Truth::True));
         assert_eq!(over(&numeric, &["2", "1.50"], "1.51").0, Some(Truth::False));
@@ -5555,7 +5583,8 @@ mod tests {
     /// the top level or beneath a container, which `json_in`'s grammar reads
     /// (I72), and `bit` and `bit varying`, whose grammar is read in place of
     /// the order they lack, their typmod with it, through a domain too (I73),
-    /// as are the geometric types', a `box` array's split at `;` (I74, I22).
+    /// as are the geometric types', a `box` array's split at `;` (I74, I22),
+    /// and a `character varying(n)`'s or `character(n)`'s length (I75).
     #[test]
     fn a_strict_check_finds_a_refusal_anywhere_in_a_field() {
         let types = vec![
@@ -5593,6 +5622,7 @@ mod tests {
                 },
             },
             TypeDef { name: "public.ring".into(), kind: TypeKind::domain("circle") },
+            TypeDef { name: "public.short".into(), kind: TypeKind::domain("character varying(2)") },
             TypeDef {
                 name: "public.shapes".into(),
                 kind: TypeKind::Composite {
@@ -5609,11 +5639,20 @@ mod tests {
                 _ => field_refused(&plan, text),
             }
         };
-        let cases: [(&str, &str, bool); 71] = [
+        let cases: [(&str, &str, bool); 80] = [
             ("smallint", "70000", true),
             ("smallint", "7", false),
             ("smallint", " 7", false),
             ("text", "anything", false),
+            ("character varying(3)", "abcd", true),
+            ("character varying(3)", "abc   ", false),
+            ("character(3)", "abc d", true),
+            ("character(3)", "ab ", false),
+            ("character", "ab", true),
+            ("bpchar", "abcd", false),
+            ("character varying(2)[]", "{ab,abc}", true),
+            ("public.short", "abc", true),
+            ("public.short[]", "{ab}", false),
             ("money", "not money", false),
             ("public.mood", "happy", true),
             ("public.mood", "ok", false),
@@ -6585,7 +6624,7 @@ mod tests {
                 assert!(term.comparison_notes().is_empty());
                 let statistics = &term.compared.as_ref().unwrap().statistics;
                 let kind = statistics.bounds.as_deref().map(|(kind, _)| kind.clone());
-                assert_eq!(kind, Some(CompareKind::Text));
+                assert_eq!(kind, Some(CompareKind::Text { length: None }));
                 assert!(!statistics.dictionary);
                 for (value, want) in values.iter().zip(want) {
                     assert_eq!(
@@ -7258,7 +7297,7 @@ mod tests {
     }
 
     /// `=` on a `text` or `varchar` column is a byte comparison:
-    /// `CompareKind::Text` renders the literal to itself, so the commonest
+    /// `CompareKind::Text { length: None }` renders the literal to itself, so the commonest
     /// column there is carries no per-row work.
     #[test]
     fn equality_on_a_text_column_is_unchanged() {
@@ -8633,7 +8672,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (55, 2_053_851_924_444_891_289);
+        const GOLDEN_ORDER: (u32, u64) = (56, 2_053_851_924_444_891_289);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind and under each kind a set of its bounds is stored
@@ -8789,8 +8828,8 @@ mod tests {
                 CompareKind::Timestamp { .. } => "Timestamp",
                 CompareKind::Uuid => "Uuid",
                 CompareKind::Bytea => "Bytea",
-                CompareKind::Text => "Text",
-                CompareKind::PaddedText => "PaddedText",
+                CompareKind::Text { .. } => "Text",
+                CompareKind::PaddedText { .. } => "PaddedText",
                 CompareKind::Numeric { .. } => "Numeric",
                 CompareKind::Enum { .. } => "Enum",
                 CompareKind::Interval => "Interval",
@@ -9021,7 +9060,7 @@ mod tests {
         /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::datafusion_order`]
         /// leaves alone is one whose order and gathered bounds were found
         /// to be DataFusion's. And **every kind emitted as text —
-        /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text`]
+        /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text { length: None }`]
         /// there**: the walk's literals are the server's own spellings, so
         /// agreeing over them cannot show that a user's literal is compared
         /// as DataFusion compares it, and only bytewise is.
@@ -9091,7 +9130,8 @@ mod tests {
                         _ => false,
                     };
                     assert!(
-                        !emitted_as_text || kind.datafusion_order() == CompareKind::Text,
+                        !emitted_as_text
+                            || matches!(kind.datafusion_order(), CompareKind::Text { .. }),
                         "{major} {declared}: emitted as text, compared as {:?}",
                         kind.datafusion_order()
                     );

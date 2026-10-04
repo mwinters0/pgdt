@@ -360,7 +360,9 @@ impl RetainedChunks {
 /// timestamp — every other arm's default already matching, so a `finish()`ed array's type matches the schema exactly, which
 /// `RecordBatch::try_new` checks.
 enum ColumnBuilder {
-    Utf8View(StringViewBuilder),
+    /// A text, and a `character varying(n)`'s or `character(n)`'s length,
+    /// past which a field is refused ([`decode::char_typmod_refuses`]).
+    Utf8View(StringViewBuilder, Option<u32>),
     Bool(BooleanBuilder),
     Int16(Int16Builder),
     Int32(Int32Builder),
@@ -438,7 +440,7 @@ struct StructParts {
 fn builder_len(builder: &ColumnBuilder) -> usize {
     use arrow::array::ArrayBuilder;
     match builder {
-        ColumnBuilder::Utf8View(b) => b.len(),
+        ColumnBuilder::Utf8View(b, _) => b.len(),
         ColumnBuilder::Bool(b) => b.len(),
         ColumnBuilder::Int16(b) => b.len(),
         ColumnBuilder::Int32(b) => b.len(),
@@ -496,7 +498,7 @@ fn new_struct_parts(data_type: &DataType, plans: &[NestedPlan]) -> StructParts {
 
 fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder {
     match plan {
-        NestedPlan::Scalar | NestedPlan::Decimal { .. } => {}
+        NestedPlan::Scalar | NestedPlan::Decimal { .. } | NestedPlan::Text { .. } => {}
         NestedPlan::Array(child) => {
             return ColumnBuilder::Array(new_list_parts(data_type, child));
         }
@@ -528,8 +530,12 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
         NestedPlan::Decimal { precision } => *precision,
         _ => u16::from(arrow),
     };
+    let length = match plan {
+        NestedPlan::Text { length } => Some(*length),
+        _ => None,
+    };
     match data_type {
-        DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::new()),
+        DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::new(), length),
         DataType::Boolean => ColumnBuilder::Bool(BooleanBuilder::new()),
         DataType::Int16 => ColumnBuilder::Int16(Int16Builder::new()),
         DataType::Int32 => ColumnBuilder::Int32(Int32Builder::new()),
@@ -575,7 +581,7 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
 
 fn append_null(builder: &mut ColumnBuilder) {
     match builder {
-        ColumnBuilder::Utf8View(b) => b.append_null(),
+        ColumnBuilder::Utf8View(b, _) => b.append_null(),
         ColumnBuilder::Bool(b) => b.append_null(),
         ColumnBuilder::Int16(b) => b.append_null(),
         ColumnBuilder::Int32(b) => b.append_null(),
@@ -630,7 +636,10 @@ fn append_nested(
             Ok(())
         }
         Some(text) => match builder {
-            ColumnBuilder::Utf8View(b) => {
+            ColumnBuilder::Utf8View(b, length) => {
+                if text_refused(text, *length, invalid) {
+                    return Err(());
+                }
                 b.append_value(text);
                 Ok(())
             }
@@ -689,6 +698,14 @@ fn append_range(
     Ok(())
 }
 
+/// Whether a text held to `length` — a `character varying(n)`'s or
+/// `character(n)`'s — is refused, as `COPY` refuses it (I75), unless `invalid`
+/// says to read it as it is.
+fn text_refused(text: &str, length: Option<u32>, invalid: PostgresInvalidValues) -> bool {
+    invalid != PostgresInvalidValues::Ignore
+        && length.is_some_and(|length| decode::char_typmod_refuses(text, length))
+}
+
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
 /// via `crate::decode`'s per-type decoders and `crate::nested`'s literal
 /// codecs. `Err(text)` on a decode failure — the caller wraps it into
@@ -704,7 +721,7 @@ fn append_typed(
 ) -> std::result::Result<(), String> {
     let fail = || text.to_string();
     match builder {
-        ColumnBuilder::Utf8View(_) => unreachable!("caller handles Utf8View directly"),
+        ColumnBuilder::Utf8View(..) => unreachable!("caller handles Utf8View directly"),
         ColumnBuilder::Array(parts) => {
             let literal = nested::decode_array(text).ok_or_else(fail)?;
             if literal.is_decorated() {
@@ -838,7 +855,7 @@ fn append_typed(
 
 fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
     match builder {
-        ColumnBuilder::Utf8View(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Utf8View(b, _) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Bool(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Int16(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Int32(b) => Arc::new(b.finish()) as ArrayRef,
@@ -896,7 +913,12 @@ pub(crate) fn column_of(
     let mut builder = new_column_builder(data_type, plan);
     for text in values {
         match &mut builder {
-            ColumnBuilder::Utf8View(b) => b.append_value(text),
+            ColumnBuilder::Utf8View(_, length)
+                if text_refused(text, *length, PostgresInvalidValues::Default) =>
+            {
+                return Err(text.to_string());
+            }
+            ColumnBuilder::Utf8View(b, _) => b.append_value(text),
             typed => append_typed(typed, text, PostgresInvalidValues::Default)?,
         }
     }
@@ -1127,25 +1149,25 @@ impl RowBatcher {
             append_null(builder);
             return Ok(());
         }
-        match builder {
-            ColumnBuilder::Utf8View(b) => {
-                push_utf8view_field(b, col, field_offset, field_len, text, chunks)
+        let appended = match builder {
+            ColumnBuilder::Utf8View(_, length)
+                if text_refused(&text, *length, options.postgres_invalid_values) =>
+            {
+                Err(text.into_owned())
             }
-            _ => {
-                if let Err(value) = append_typed(builder, &text, options.postgres_invalid_values) {
-                    let (table, column) = (table.clone(), schema.field(col).name().clone());
-                    let declared_type = declared_types[col].clone().unwrap_or_default();
-                    return Err(Error::FieldDecode {
-                        table,
-                        column,
-                        line_offset: row_offset,
-                        declared_type,
-                        value,
-                    });
-                }
+            ColumnBuilder::Utf8View(b, _) => {
+                push_utf8view_field(b, col, field_offset, field_len, text, chunks);
+                Ok(())
             }
-        }
-        Ok(())
+            _ => append_typed(builder, &text, options.postgres_invalid_values),
+        };
+        appended.map_err(|value| Error::FieldDecode {
+            table: table.clone(),
+            column: schema.field(col).name().clone(),
+            line_offset: row_offset,
+            declared_type: declared_types[col].clone().unwrap_or_default(),
+            value,
+        })
     }
 
     /// Finish the in-flight batch. The row count is passed explicitly rather
@@ -1255,7 +1277,12 @@ pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Opti
     match &mut builder {
         // `append_typed` leaves this one to its caller, the scan's path being
         // the borrowing one.
-        ColumnBuilder::Utf8View(b) => b.append_value(text),
+        ColumnBuilder::Utf8View(_, length)
+            if text_refused(text, *length, PostgresInvalidValues::Default) =>
+        {
+            return None;
+        }
+        ColumnBuilder::Utf8View(b, _) => b.append_value(text),
         _ => append_typed(&mut builder, text, PostgresInvalidValues::Default).ok()?,
     }
     Some(finish_column(&mut builder))
@@ -1283,7 +1310,7 @@ pub fn render_field_into(
         return Ok(false);
     }
     match plan {
-        NestedPlan::Scalar | NestedPlan::Decimal { .. } => {}
+        NestedPlan::Scalar | NestedPlan::Decimal { .. } | NestedPlan::Text { .. } => {}
         NestedPlan::Array(child) => {
             // Both are empty and neither allocates until it is used: `scratch`
             // only where an element needs quoting, `dims` only where the value

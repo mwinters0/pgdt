@@ -801,6 +801,181 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     }
 }
 
+/// A dump of one table, `public.t (id integer, v <declared>)`, holding `id`
+/// 1 to 3 with `v` the dump's spelling but on row 2, which holds `field`;
+/// `public.pair` and `public.short` are a composite and a domain over a
+/// `character varying(2)`. Hand-written: no `pg_dump` writes a field past its
+/// length.
+fn char_typmod_dump(dir: &Path, declared: &str, field: &str) -> PathBuf {
+    let dump = dir.join("char_typmod.sql");
+    let text = format!(
+        "CREATE TYPE public.pair AS (\n\tx character varying(2)\n);\n\n\
+         CREATE DOMAIN public.short AS character varying(2);\n\n\
+         CREATE TABLE public.t (\n    id integer,\n    v {declared}\n);\n\n\
+         COPY public.t (id, v) FROM stdin;\n1\t\\N\n2\t{field}\n3\t\\N\n\\.\n\nSELECT 1;\n"
+    );
+    std::fs::write(&dump, text).unwrap();
+    dump
+}
+
+/// **A `character varying(n)` or `character(n)` field longer than `n`
+/// characters is refused wherever it is read, but for trailing blanks**
+/// (I75): a data-level `parse` keying it fails naming it, a query decoding it
+/// fails, an ordering filter keying it fails, and a strict parse finds it
+/// beneath an array, a composite or a domain, which a default one leaves to
+/// the query; told to ignore it, a query reads its text. A field longer only
+/// by blanks, or by none counted in characters, is read as the file holds
+/// it, and a literal of any length is read, the server coercing it with no
+/// typmod. Bare `character` is `character(1)` and `bpchar` has no length.
+#[tokio::test]
+async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let disabled = CacheMode::DISABLED;
+    let read = |path: PathBuf, options: QueryOptions| async move {
+        try_rows_in(&path, "public.t", options).await.map(|(rows, _)| rows)
+    };
+    let row2 = |v: &str| {
+        vec![
+            vec![Some("1".to_string()), None],
+            vec![Some("2".to_string()), Some(v.to_string())],
+            vec![Some("3".to_string()), None],
+        ]
+    };
+    // Every case put to `pg_input_is_valid` under its type on the koji
+    // replica (PG16), the composite's, array's and domain's included.
+    for (declared, field) in [
+        ("character varying(3)", "abc"),
+        ("character varying(3)", "ab    "),
+        ("character varying(3)", "\u{e9}\u{e9}\u{e9}  "),
+        ("character(3)", "abc  "),
+        ("character(3)", "a"),
+        ("character", "a "),
+        ("bpchar", "abcdef"),
+        ("character varying", "abcdefgh"),
+        ("character varying(2)[]", "{ab,\"a   \"}"),
+        ("public.pair", "(ab)"),
+        ("public.short", "ab "),
+    ] {
+        let path = char_typmod_dump(dir.path(), declared, field);
+        let source = LocalFileSource::open(&path).unwrap();
+        for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+            let scan = ScanOptions { postgres_invalid_values: invalid, ..ScanOptions::default() };
+            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
+                .await
+                .unwrap_or_else(|e| panic!("{declared} `{field}`: {invalid:?} refused: {e}"));
+        }
+        let rows = read(path.clone(), QueryOptions::default()).await.unwrap();
+        assert_eq!(rows, row2(field), "{declared} `{field}`");
+    }
+
+    let line_offset =
+        |path: &Path| std::fs::read_to_string(path).unwrap().find("\n2\t").unwrap() as u64 + 1;
+    for (declared, field) in [
+        ("character varying(3)", "abcd"),
+        ("character varying(3)", "abc\t"),
+        ("character varying(3)", " abc"),
+        ("character varying(3)", "\u{e9}\u{e9}\u{e9}\u{e9}"),
+        ("character(3)", "abcd"),
+        ("character(3)", "\u{e9}\u{e9}\u{e9}\u{e9} "),
+        ("character", "ab"),
+        ("public.short", "abc"),
+    ] {
+        let escaped = field.replace('\t', "\\t");
+        let path = char_typmod_dump(dir.path(), declared, &escaped);
+        let source = LocalFileSource::open(&path).unwrap();
+        match map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await
+        {
+            Err(Error::FieldRefused {
+                column,
+                declared_type,
+                line,
+                line_offset: at,
+                value,
+                ..
+            }) => {
+                assert_eq!(
+                    (column.as_str(), declared_type.as_str(), line, value.as_str()),
+                    ("v", declared, 2, field),
+                    "{declared} `{field}`"
+                );
+                assert_eq!(at, line_offset(&path), "{declared} `{field}`");
+            }
+            other => panic!("{declared} `{field}`: expected the parse to refuse it, got {other:?}"),
+        }
+        match read(path.clone(), QueryOptions::default()).await {
+            Err(Error::FieldDecode { column, value, .. }) => {
+                assert_eq!((column.as_str(), value.as_str()), ("v", field), "{declared}");
+            }
+            other => panic!("{declared} `{field}`: expected the read to refuse it, got {other:?}"),
+        }
+        let ordered = QueryOptions {
+            filter: Expr::all([Predicate {
+                column: "v".into(),
+                op: PredicateOp::Ge,
+                value: Some("a".into()),
+            }]),
+            projection: Some(vec!["id".into()]),
+            ..Default::default()
+        };
+        match read(path.clone(), ordered).await {
+            Err(Error::FieldDecode { column, .. }) => assert_eq!(column, "v", "{declared}"),
+            other => {
+                panic!("{declared} `{field}`: expected the filter to refuse it, got {other:?}")
+            }
+        }
+        let ignoring = QueryOptions {
+            postgres_invalid_values: PostgresInvalidValues::Ignore,
+            ..Default::default()
+        };
+        let rows = read(path.clone(), ignoring).await.unwrap();
+        assert_eq!(rows, row2(field), "{declared} `{field}`: read as written when ignored");
+    }
+
+    // Beneath a container a default parse keys nothing; the query and a
+    // strict parse refuse it.
+    for (declared, field) in [
+        ("character varying(2)[]", "{ab,abc}"),
+        ("public.pair", "(abc)"),
+        ("public.pair[]", "{(ab),(abc)}"),
+    ] {
+        let path = char_typmod_dump(dir.path(), declared, field);
+        let source = LocalFileSource::open(&path).unwrap();
+        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA)
+            .await
+            .unwrap_or_else(|e| panic!("{declared} `{field}`: a default parse refused: {e}"));
+        let strict = ScanOptions {
+            postgres_invalid_values: PostgresInvalidValues::Strict,
+            ..ScanOptions::default()
+        };
+        match map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await {
+            Err(Error::FieldRefused { column, line, value, .. }) => {
+                assert_eq!((column.as_str(), line, value.as_str()), ("v", 2, field), "{declared}");
+            }
+            other => {
+                panic!("{declared} `{field}`: expected a strict parse to refuse it, got {other:?}")
+            }
+        }
+        match read(path.clone(), QueryOptions::default()).await {
+            Err(Error::FieldDecode { column, .. }) => assert_eq!(column, "v", "{declared}"),
+            other => panic!("{declared} `{field}`: expected the read to refuse it, got {other:?}"),
+        }
+    }
+
+    // A literal past the length is read, in either semantics of order.
+    let path = char_typmod_dump(dir.path(), "character varying(3)", "abc");
+    for (op, ids) in [(PredicateOp::Eq, &[][..]), (PredicateOp::Lt, &["2"][..])] {
+        let filtered = QueryOptions {
+            filter: Expr::all([Predicate { column: "v".into(), op, value: Some("abcdef".into()) }]),
+            projection: Some(vec!["id".into()]),
+            ..Default::default()
+        };
+        let rows = read(path.clone(), filtered).await.unwrap();
+        let ids: Vec<Vec<Option<String>>> =
+            ids.iter().map(|id| vec![Some(id.to_string())]).collect();
+        assert_eq!(rows, ids, "{op:?}");
+    }
+}
+
 /// The line `COPY` numbers the row at `line_offset` in `text`, a restore
 /// counting from 1 at its block's first data line (`copyfrom.c`'s
 /// `CopyFromErrorCallback`): read off the file, not off the parse.
