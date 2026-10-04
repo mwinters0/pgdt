@@ -20,6 +20,8 @@ here.
   changes, and strikes the entry here — the fact is stated once.
 - **Walk the file at a new major**, as the invariants are walked: a release can
   add a difference, and a back-patch can remove one.
+- `scripts/major_differences.py` holds these, and fails a `VD<n>` cited
+  anywhere but here and a dated entry: a citation is a dependence.
 
 ---
 
@@ -40,7 +42,10 @@ upstream `4fb6aeb4f6e` ("Make floating-point "NaN / 0" return NaN instead of
 raising an error", 2020-07-20) and `fac83dbd6fe` ("Remove underflow error in
 float division with infinite divisor", 2020-11-04), neither back-patched to 13.
 
-**Observed.** Not observed; source only.
+**Observed.** On the pinned `-trixie` images, 13.23 refuses
+`1 / 'infinity'::float8`, `-1 / 'infinity'::float8` and the `real` one with
+`value out of range: underflow`, and `'NaN'::float8 / 0` and the `real` one
+with `division by zero`; 14.24 and 18.6 return `0`, `-0` and `NaN`.
 
 **Re-verify.**
 
