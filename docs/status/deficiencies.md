@@ -429,5 +429,5 @@ than reading as a phase nobody has sliced.
 - **KD100** — a raw carriage return ending a line inside a quoted SQL literal
   is dropped from the preamble line the scanner surfaces, as a `COPY` row's
   would be, so a value read off such a literal — an enum's label, a `CHECK`'s
-  text — is not the one the server holds. **(c) unowned**; promoted by a dump
-  holding one. Detail: `pgdump_query/src/scan.rs`.
+  text — is not the one the server holds. **(b) owned by P31**, 31.28.
+  Detail: `pgdump_query/src/scan.rs`.
