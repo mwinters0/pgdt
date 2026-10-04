@@ -971,8 +971,8 @@ validating it.
 A dump is read the same way whichever major wrote it. Where a newer
 PostgreSQL accepts a value an older one refused, the newer reading applies to
 every dump, since an older server could not have written the value. `oid`,
-`line`, `xid`, `xid8` and `cid` are the types whose input changed otherwise
-than by widening, and the table says what is done about each.
+`line`, `xid`, `xid8`, `cid` and `numeric` are the types whose input changed
+otherwise than by widening, and the table says what is done about each.
 
 | What changed | From | What pgdt does |
 |---|---|---|
@@ -983,7 +983,8 @@ than by widening, and the table says what is done about each.
 | an `oid` is read in hex after `0x` and in octal after a leading `0`, so `010` is 8 and `08` is refused | 16 | Reads `010` as 10 and `08` as 8, as 13–15 do, on a dump of any major, refuses only what every major refuses, and does not read a `0x` or `0b` spelling. Write an OID in decimal, as `pg_dump` does |
 | a `line` given by two points is built by other arithmetic, so `[(2,0),(3,1.7976931348623157e308)]` is refused and `[(Infinity,1),(0,2)]` read | 14 | Under `--postgres-invalid-values strict`, refuses such a `line` only where every major refuses it, so reads both |
 | an `xid`, `xid8` or `cid` is refused where it is not a number in range, which 13–15 read as anything, `abc` as 0 | 16 | Under `--postgres-invalid-values strict`, refuses such a value only where every major refuses it, so never |
-| an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter; write the decimal digits |
+| an integer or `numeric` may be written `0x1F`, `0o17`, `0b101` or `1_000` | 16 | Does not read these spellings, in a field or a filter, and refuses none of them; write the decimal digits |
+| a `numeric` exponent is read with no blank after its `e`, so `1e 5` is refused, and up to `1073741823` rather than short of it, so `0e1073741823` is read | 16 | Does not read either spelling, and refuses a field only where every major refuses it, so neither |
 | `interval` holds `infinity` and `-infinity` | 17 | Has no Arrow value for them — see "`interval` keeps its three fields, and two kinds of value do not fit" above |
 
 ## When a value does not match its type
@@ -1001,9 +1002,9 @@ fail on it, `SchemaMode::Strings` gives you every column unparsed.
 **A value PostgreSQL itself refuses fails `parse` too**, at the first one, as a
 restore of the dump fails at it: `70000` in a `smallint`, `2020-02-30` in a
 `date`, a `numeric(10,2)` value with more than ten digits once rounded to two
-places, a `double precision`
-past its range, `maybe` in a `boolean`, `::1/08` in an `inet`, `abcd` in a
-`varchar(3)` or a `char(3)`. A `varchar(n)` or `char(n)` value longer than `n`
+places, a `double precision` past its range, `12abc` in an `integer`,
+`maybe` in a `boolean`, `::1/08` in an `inet`, `abcd` in a `varchar(3)` or a
+`char(3)`. A `varchar(n)` or `char(n)` value longer than `n`
 characters only by trailing spaces is not refused, as PostgreSQL does not
 refuse it, and is read as the dump holds it, spaces and all, where a restore
 cuts it to `n` characters. **So does a null in a column declared `NOT NULL`** —
@@ -1028,9 +1029,9 @@ and the internal types whose every value is refused, such as `pg_node_tree`.
 It does not check a value of `xml`, `money`, the `reg*` types or `aclitem`, of
 a type the dump does not declare, of a built-in pgdt has no reader of
 (`tsvector`, `pg_lsn`, `jsonpath`) or of an array of arrays, a `json` nested
-deeper than the restoring server's `max_stack_depth` lets it read, a value
-spelled in a way pgdt cannot read for its type at all, which PostgreSQL may
-refuse or not (`abc` in an `integer`, a malformed `jsonb`), a value of a range
+deeper than the restoring server's `max_stack_depth` lets it read, a date,
+time, timestamp or `interval` spelled in a way pgdt cannot read at all, which
+PostgreSQL may refuse or not (`abc` in a `date`), a value of a range
 type declaring its own `canonical` function, or a null element of an array,
 or a null field of a composite, whose type is a `NOT NULL` domain; nor anything
 a constraint checks — a `CHECK`, a partition's bound, which a row loaded into

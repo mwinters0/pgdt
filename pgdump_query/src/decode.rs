@@ -29,13 +29,18 @@ pub enum Unread {
     /// `pg-refuses: I<n>` marker, so a release lifting the refusal is found
     /// by walking that invariant.
     Refused,
-    /// A spelling this build reads no value from — a shortfall the server
-    /// reads (`docs/design/decisions.md`, "D55"), or a refusal of the
-    /// server's no marked check makes, which nothing here tells apart.
-    // deficiency: KD90 — a strict parse checks a field only at a marked
-    // check, so text a reader here cannot read at all passes it, whether or
-    // not the server refuses it: `abc` in an `integer`, a malformed `jsonb`,
-    // a date's year or an interval's count past `i64`.
+    /// A spelling this build reads no value from that the server reads at
+    /// some supported major — a shortfall (`docs/design/decisions.md`,
+    /// "D55") — or, of a date, a time, a timestamp or an `interval`, a
+    /// refusal of the server's no marked check makes.
+    // deficiency: KD90 — a date, time, timestamp or interval field is refused
+    // only at a marked bound, so text its reader here cannot read at all passes
+    // a strict parse, whether or not the server refuses it: `abc` in a `date`,
+    // a date's year or an interval's count past `i64`. The other readers each
+    // classify what they fail on by the server's grammar (`int_unread`,
+    // `float_unread`, `numeric_unread`, `jsonb_unread`); these need
+    // `ParseDateTime` and `DecodeDateTime`'s, under the restoring server's
+    // `DateStyle` and zone names, which decide some spellings.
     Unparsed,
 }
 
@@ -166,8 +171,10 @@ pub fn decode_f64(s: &str) -> Option<f64> {
 /// `float8in` read it (`docs/design/decisions.md`, "D55"). Rust's parse is the
 /// grammar: every spelling `*_out` writes, and of `*_in`'s the ones it reads
 /// for free — a sign, a point with no digit on one side, an exponent in either
-/// case, `inf`, `infinity` and `nan` in any case. A blank around the number
-/// and a hexadecimal one, which glibc's `strtod` reads, are unparsed.
+/// case, `inf`, `infinity` and `nan` in any case. A blank around the number,
+/// a hexadecimal one and `nan(…)`, which glibc's `strtod` reads, are
+/// unparsed, and every other text it does not read is refused
+/// ([`float_unread`]).
 ///
 /// **A value past the type's range is refused, as the server refuses it**: a
 /// spelling in digits read as an infinity, I57's rounded largest finite value
@@ -176,7 +183,7 @@ pub fn decode_f64(s: &str) -> Option<f64> {
 /// type as `strtod` and `strtof` do (I59).
 // pg-refuses: I59 — out of range for the type: overflowed, or underflowed to zero.
 pub(crate) fn float_in<F: Float>(text: &str) -> Read<F> {
-    let value = text.parse::<F>().map_err(|_| Unread::Unparsed)?;
+    let value = text.parse::<F>().map_err(|_| float_unread::<F>(text))?;
     let out_of_range = if value.is_infinite() {
         text.bytes().any(|b| b.is_ascii_digit())
     } else {
@@ -191,8 +198,232 @@ pub(crate) fn float_in<F: Float>(text: &str) -> Read<F> {
     if out_of_range { Err(Unread::Refused) } else { Ok(value) }
 }
 
+/// Why `float4in` or `float8in` reads no value here from `text`, Rust's parse
+/// having read none: the server reads what glibc's `strtof` and `strtod` read
+/// between blanks — a decimal, a hexadecimal number, `inf`, `infinity`, and
+/// `nan` with an optional parenthesized tag of letters, digits and `_` — and
+/// refuses everything else (I81), and a number read but out of range for the
+/// type (I59). What it reads is unparsed.
+// pg-refuses: I81 — every refusal here is `float4in`'s or `float8in`'s.
+fn float_unread<F: Float>(text: &str) -> Unread {
+    let b = text.as_bytes();
+    let start = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let Some((len, token)) = strtod_token(&b[start..]) else {
+        return Unread::Refused;
+    };
+    if !b[start + len..].iter().all(|&c| is_c_space(c)) {
+        return Unread::Refused;
+    }
+    let refused = match token {
+        // Rust's parse reads every decimal `strtod` does, so this reads it.
+        StrtodToken::Decimal => {
+            matches!(float_in::<F>(&text[start..start + len]), Err(Unread::Refused))
+        }
+        StrtodToken::Word => false,
+        StrtodToken::Hex { digits, integer, exponent } => {
+            hex_float_out_of_range::<F>(&b[start..][digits], integer, exponent)
+        }
+    };
+    if refused { Unread::Refused } else { Unread::Unparsed }
+}
+
+/// Why `int2in`, `int4in` or `int8in` reads no value within `range` here from
+/// `text`, Rust's parse having read none: from v16 `pg_strtoint16`, `32` and
+/// `64` read a decimal between blanks, an underscore between its digits and a
+/// `0x`, `0o` or `0b` prefix besides — every text v13 to v15 read and more
+/// (I80) — so a text it refuses is refused at every major, as is one it reads
+/// past `range` (I60), which v13 to v15 refuse too, as syntax where it is
+/// prefixed. What it reads within `range` is unparsed.
+// pg-refuses: I80 — every refusal here is `pg_strtoint*`'s from v16.
+pub(crate) fn int_unread(text: &str, range: std::ops::RangeInclusive<i64>) -> Unread {
+    match strtoint(text.as_bytes()) {
+        Some(value) if i128::from(*range.start()) <= value && value <= i128::from(*range.end()) => {
+            Unread::Unparsed
+        }
+        _ => Unread::Refused,
+    }
+}
+
+/// `pg_strtoint64_safe`'s grammar from v16, its slow path: the value of `b`,
+/// its magnitude saturated past any width, or `None` where it refuses `b` as
+/// syntax. An underscore stands between two digits, and may follow a prefix
+/// but not open a decimal.
+fn strtoint(b: &[u8]) -> Option<i128> {
+    let mut at = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let negative = b.get(at) == Some(&b'-');
+    at += usize::from(matches!(b.get(at), Some(b'+' | b'-')));
+    let radix = match b.get(at..at + 2) {
+        Some([b'0', b'x' | b'X']) => 16,
+        Some([b'0', b'o' | b'O']) => 8,
+        Some([b'0', b'b' | b'B']) => 2,
+        _ => 10,
+    };
+    if radix != 10 {
+        at += 2;
+    }
+    let first = at;
+    let digit = |at: usize| b.get(at).and_then(|&c| char::from(c).to_digit(radix));
+    let mut magnitude: i128 = 0;
+    loop {
+        if let Some(d) = digit(at) {
+            magnitude = magnitude.saturating_mul(i128::from(radix)).saturating_add(i128::from(d));
+            at += 1;
+        } else if b.get(at) == Some(&b'_') {
+            if radix == 10 && at == first {
+                return None;
+            }
+            at += 1;
+            digit(at)?;
+        } else {
+            break;
+        }
+    }
+    if at == first || !b[at..].iter().all(|&c| is_c_space(c)) {
+        return None;
+    }
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// What [`strtod_token`] found.
+enum StrtodToken {
+    Decimal,
+    /// `inf`, `infinity` or `nan`, any tag included.
+    Word,
+    /// A hexadecimal number: where its digits and any point among them lie
+    /// in the text, how many digits precede the point, and its binary
+    /// exponent, saturated far past any type's range.
+    Hex {
+        digits: std::ops::Range<usize>,
+        integer: usize,
+        exponent: i64,
+    },
+}
+
+/// The longest prefix of `b` glibc's `strtod` converts in the C locale, and
+/// what it is: `None` where it converts none. A sign, then a word, a
+/// hexadecimal number — `0x`, hex digits with at most one point among them,
+/// at least one digit, then a `p` exponent only where a digit follows it — or
+/// a decimal one, shaped alike with an `e` exponent. `0x` with no digit after
+/// it is the decimal `0`.
+fn strtod_token(b: &[u8]) -> Option<(usize, StrtodToken)> {
+    let mut at = usize::from(matches!(b.first(), Some(b'+' | b'-')));
+    let word = |at: usize, word: &[u8]| {
+        b.get(at..at + word.len()).is_some_and(|s| s.eq_ignore_ascii_case(word))
+    };
+    if word(at, b"inf") {
+        at += 3;
+        if word(at, b"inity") {
+            at += 5;
+        }
+        return Some((at, StrtodToken::Word));
+    }
+    if word(at, b"nan") {
+        at += 3;
+        if b.get(at) == Some(&b'(') {
+            let tag =
+                b[at + 1..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+            if b.get(at + 1 + tag) == Some(&b')') {
+                at += tag + 2;
+            }
+        }
+        return Some((at, StrtodToken::Word));
+    }
+    // The digits of `radix` from `at` on.
+    let run = |at: usize, radix: u32| {
+        b.get(at..)
+            .map_or(0, |rest| rest.iter().take_while(|c| char::from(**c).is_digit(radix)).count())
+    };
+    // A `marker` exponent at `at`: its length, and its value, saturated.
+    let exponent = |at: usize, marker: u8| {
+        if !b.get(at).is_some_and(|c| c.to_ascii_lowercase() == marker) {
+            return (0, 0);
+        }
+        let signed = usize::from(matches!(b.get(at + 1), Some(b'+' | b'-')));
+        let digits = run(at + 1 + signed, 10);
+        if digits == 0 {
+            return (0, 0);
+        }
+        let magnitude = b[at + 1 + signed..at + 1 + signed + digits]
+            .iter()
+            .fold(0i64, |n, d| (n * 10 + i64::from(d - b'0')).min(1 << 40));
+        let value = if b[at + 1] == b'-' { -magnitude } else { magnitude };
+        (1 + signed + digits, value)
+    };
+    // A mantissa of `radix` digits from `at`: where its point is, and its
+    // length, the point consumed only beside a digit.
+    let mantissa = |at: usize, radix: u32| {
+        let integer = run(at, radix);
+        let fraction =
+            if b.get(at + integer) == Some(&b'.') { run(at + integer + 1, radix) } else { 0 };
+        let point = usize::from(b.get(at + integer) == Some(&b'.'));
+        (integer, fraction, if integer + fraction == 0 { 0 } else { integer + point + fraction })
+    };
+    if matches!(b.get(at..at + 2), Some([b'0', b'x' | b'X'])) {
+        let (integer, _, len) = mantissa(at + 2, 16);
+        if len > 0 {
+            let first = at + 2;
+            let (exponent_len, exponent) = exponent(first + len, b'p');
+            let digits = first..first + len;
+            return Some((
+                first + len + exponent_len,
+                StrtodToken::Hex { digits, integer, exponent },
+            ));
+        }
+    }
+    let (_, _, len) = mantissa(at, 10);
+    if len == 0 {
+        return None;
+    }
+    let (exponent_len, _) = exponent(at + len, b'e');
+    Some((at + len + exponent_len, StrtodToken::Decimal))
+}
+
+/// Whether the hexadecimal number whose digits are `digits` — a point after
+/// the first `integer` of them, where `digits` holds one — times two to
+/// `exponent` is one glibc rounds to an infinity or, not being zero, to zero
+/// in `F`, rounding to nearest, ties to even (I59).
+fn hex_float_out_of_range<F: Float>(digits: &[u8], integer: usize, exponent: i64) -> bool {
+    let nibbles: Vec<u32> = digits
+        .iter()
+        .filter(|&&c| c != b'.')
+        .map(|&c| char::from(c).to_digit(16).expect("a hex digit"))
+        .collect();
+    let Some(first) = nibbles.iter().position(|&n| n != 0) else {
+        return false;
+    };
+    // The bits from the leading one on.
+    let bit = |i: usize| {
+        let at = i + (nibbles[first].leading_zeros() as usize - 28);
+        nibbles.get(first + at / 4).is_some_and(|n| n >> (3 - at % 4) & 1 == 1)
+    };
+    let width = (nibbles.len() - first) * 4 - (nibbles[first].leading_zeros() as usize - 28);
+    // The leading one's power of two.
+    let lead =
+        4 * (integer as i64 - first as i64) - 1 - (nibbles[first].leading_zeros() as i64 - 28)
+            + exponent;
+    if lead > F::MAX_EXP {
+        return true;
+    }
+    if lead == F::MAX_EXP {
+        // Every significand bit set and the next one too rounds up past the
+        // largest finite value.
+        let bits = F::SIGNIFICAND_BITS as usize;
+        return (0..=bits).all(bit);
+    }
+    // The least subnormal's power of two: half of it rounds to zero, being a
+    // tie, and anything above half to it.
+    let least = F::MIN_SUBNORMAL_EXP;
+    lead < least - 1 || (lead == least - 1 && !(1..width).any(bit))
+}
+
 /// What [`float_in`] needs of `f32` and `f64`.
 pub(crate) trait Float: std::str::FromStr + Copy {
+    /// The significand's bits, the implicit one included.
+    const SIGNIFICAND_BITS: u32;
+    /// The power of two of the largest finite value's leading bit.
+    const MAX_EXP: i64;
+    /// The power of two of the least subnormal.
+    const MIN_SUBNORMAL_EXP: i64;
     fn is_infinite(self) -> bool;
     fn is_zero(self) -> bool;
     /// The type's largest finite value, of this value's sign.
@@ -200,6 +431,9 @@ pub(crate) trait Float: std::str::FromStr + Copy {
 }
 
 impl Float for f32 {
+    const SIGNIFICAND_BITS: u32 = f32::MANTISSA_DIGITS;
+    const MAX_EXP: i64 = f32::MAX_EXP as i64 - 1;
+    const MIN_SUBNORMAL_EXP: i64 = f32::MIN_EXP as i64 - f32::MANTISSA_DIGITS as i64;
     fn is_infinite(self) -> bool {
         f32::is_infinite(self)
     }
@@ -212,6 +446,9 @@ impl Float for f32 {
 }
 
 impl Float for f64 {
+    const SIGNIFICAND_BITS: u32 = f64::MANTISSA_DIGITS;
+    const MAX_EXP: i64 = f64::MAX_EXP as i64 - 1;
+    const MIN_SUBNORMAL_EXP: i64 = f64::MIN_EXP as i64 - f64::MANTISSA_DIGITS as i64;
     fn is_infinite(self) -> bool {
         f64::is_infinite(self)
     }
@@ -1904,25 +2141,38 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
 /// as a restore would store it, `1.005` in a `numeric(10,2)` reading as
 /// `1.01`.
 ///
-/// The grammar is [`decimal_unscaled_digits`]'s, `[-]digits[.digits]`, and
-/// what it does not read is [`Unread::Unparsed`], `NaN` among it — which
-/// bypasses the typmod and has no decimal representation; a value past the
-/// precision is [`Unread::Refused`]. `scale` is
-/// `numerictypmodin`'s whole range, -1000 to 1000, so a column held as text
-/// for a scale no Arrow decimal carries is read by this too.
-// pg-refuses: I51 — a value past the precision once rounded to the scale.
+/// The grammar is [`decimal_unscaled_digits`]'s, `[-]digits[.digits]`; a
+/// value past the precision is [`Unread::Refused`], and so is a text
+/// `numeric_in` refuses at every major ([`numeric_unread`]), any other being
+/// [`Unread::Unparsed`] — `NaN` among them, which bypasses the typmod and has
+/// no decimal representation. `scale` is `numerictypmodin`'s whole range,
+/// -1000 to 1000, so a column held as text for a scale no Arrow decimal
+/// carries is read by this too.
 pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Read<String> {
-    let (neg, s) = match s.strip_prefix('-') {
+    let (neg, rest) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s),
     };
-    let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+    let (int_part, frac_part) = rest.split_once('.').unwrap_or((rest, ""));
     if (int_part.is_empty() && frac_part.is_empty())
         || !int_part.bytes().all(|b| b.is_ascii_digit())
         || !frac_part.bytes().all(|b| b.is_ascii_digit())
     {
-        return Err(Unread::Unparsed);
+        return Err(numeric_unread(s, NumericColumn::Typmod { precision, scale }));
     }
+    typmod_round(neg, int_part, frac_part, precision, scale)
+}
+
+/// [`typmod_unscaled_digits`] once the text is split: `int_part` and
+/// `frac_part` ASCII digits, not both empty.
+// pg-refuses: I51 — a value past the precision once rounded to the scale.
+fn typmod_round(
+    neg: bool,
+    int_part: &str,
+    frac_part: &str,
+    precision: u16,
+    scale: i16,
+) -> Read<String> {
     // As in `decimal_unscaled_digits`, `int_part ++ frac_part` is indexed and
     // never materialized: the unscaled value is its first `keep` digits,
     // incremented where the first digit past the scale is 5 or more, then
@@ -1974,6 +2224,346 @@ pub fn typmod_unscaled_digits(s: &str, precision: u16, scale: i16) -> Read<Strin
     }
     out.extend(std::iter::repeat_n('0', pad));
     Ok(out)
+}
+
+/// What a `numeric` column's declaration does with a value `numeric_in` reads:
+/// keeps it within the storage format's bounds (I63), rounds it to `scale` and
+/// holds it to `precision` (I51), or a typmod this build does not read, which
+/// does one of those to a value it cannot tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumericColumn {
+    Bare,
+    Typmod { precision: u16, scale: i16 },
+    UnreadTypmod,
+}
+
+/// Why `numeric_in` reads no value of `column` here from `text`, a reader
+/// having read none: refused only where every major refuses it. From v16 it
+/// reads a non-decimal integer and an underscore between digits, and before
+/// it an exponent `strtol` reads, a blank after the `e` included, and refuses
+/// one at `PG_INT32_MAX / 2` that v16 reads, so neither grammar holds the
+/// other's every text (I82). Each value read is then held to `column`.
+pub(crate) fn numeric_unread(text: &str, column: NumericColumn) -> Unread {
+    let b = text.as_bytes();
+    let refused = |spelling: Option<NumericSpelling>| spelling.is_none_or(|s| !s.stored(column));
+    if refused(numeric_spelling_v14(b)) && refused(numeric_spelling_v16(b)) {
+        Unread::Refused
+    } else {
+        Unread::Unparsed
+    }
+}
+
+/// A text `numeric_in` reads, as it reads it.
+enum NumericSpelling {
+    NaN,
+    Infinite,
+    /// ASCII `digits`, the point after the first `point` of them — before
+    /// the first where negative, past the last where beyond — and the
+    /// display scale it stores.
+    Decimal {
+        negative: bool,
+        digits: Vec<u8>,
+        point: i64,
+        dscale: i64,
+    },
+    /// An integer of ASCII `digits` in `radix`.
+    Radix {
+        negative: bool,
+        digits: Vec<u8>,
+        radix: u32,
+    },
+}
+
+/// The most bits a value with [`NUMERIC_INTEGER_DIGITS_MAX`] digits can need,
+/// one more than `10^131072`'s width less one: it is the one width the two
+/// sides of the bound share.
+const NUMERIC_INTEGER_BITS_MAX: usize = 435_412;
+
+impl NumericSpelling {
+    /// Whether `column` stores the value: within the storage format's bounds
+    /// for a bare one (I63), within the precision once rounded to the scale
+    /// for a typmod'd one (I51), and an infinity under no typmod (I34).
+    // pg-refuses: I63 — a display scale or a weight past the storage format's.
+    fn stored(self, column: NumericColumn) -> bool {
+        match (self, column) {
+            (Self::NaN, _) | (_, NumericColumn::UnreadTypmod) => true,
+            (Self::Infinite, column) => column == NumericColumn::Bare,
+            (Self::Decimal { negative, digits, point, dscale }, column) => {
+                let Some(first) = digits.iter().position(|&d| d != b'0') else {
+                    return column != NumericColumn::Bare || dscale <= NUMERIC_DSCALE_MAX as i64;
+                };
+                let NumericColumn::Typmod { precision, scale } = column else {
+                    return dscale <= NUMERIC_DSCALE_MAX as i64
+                        && point - first as i64 <= NUMERIC_INTEGER_DIGITS_MAX as i64;
+                };
+                // The digits the scale keeps end at `cut`: none rounds to
+                // zero, or to one unit of the scale; more than the precision
+                // can only grow by rounding.
+                let cut = point + i64::from(scale);
+                if cut <= 0 {
+                    return true;
+                }
+                if cut - first as i64 > i64::from(precision) {
+                    return false;
+                }
+                // Bounded by the precision and the scale, so small.
+                let len = digits.len() as i64;
+                let zeros = |n: i64| "0".repeat(usize::try_from(n).unwrap_or(0));
+                let digits = std::str::from_utf8(&digits).expect("ASCII digits");
+                let (int, frac) = match point {
+                    _ if point <= 0 => (String::new(), format!("{}{digits}", zeros(-point))),
+                    _ if point >= len => (format!("{digits}{}", zeros(point - len)), String::new()),
+                    _ => {
+                        let (int, frac) = digits.split_at(point as usize);
+                        (int.to_string(), frac.to_string())
+                    }
+                };
+                typmod_round(negative, &int, &frac, precision, scale).is_ok()
+            }
+            (Self::Radix { negative, digits, radix }, column) => {
+                let Some(first) = digits.iter().position(|&d| d != b'0') else {
+                    return true;
+                };
+                let digits = &digits[first..];
+                let lead = char::from(digits[0]).to_digit(radix).expect("a digit of the radix");
+                let bits = (digits.len() - 1) * radix.trailing_zeros() as usize
+                    + (32 - lead.leading_zeros()) as usize;
+                let decimal = match column {
+                    NumericColumn::Bare if bits > NUMERIC_INTEGER_BITS_MAX => return false,
+                    NumericColumn::Bare if bits < NUMERIC_INTEGER_BITS_MAX => return true,
+                    NumericColumn::Bare => {
+                        return radix_to_decimal(digits, radix).len() <= NUMERIC_INTEGER_DIGITS_MAX;
+                    }
+                    // Past four bits a digit it is past the precision
+                    // whatever the scale rounds.
+                    NumericColumn::Typmod { precision, scale }
+                        if bits as i64 > 4 * (i64::from(precision) - i64::from(scale) + 1) =>
+                    {
+                        return false;
+                    }
+                    NumericColumn::Typmod { .. } => radix_to_decimal(digits, radix),
+                    NumericColumn::UnreadTypmod => unreachable!("answered above"),
+                };
+                let NumericColumn::Typmod { precision, scale } = column else {
+                    unreachable!("answered above")
+                };
+                typmod_round(negative, &decimal, "", precision, scale).is_ok()
+            }
+        }
+    }
+}
+
+/// An integer's ASCII `digits` in `radix` (2, 8 or 16), written in decimal.
+/// Quadratic in their number, which a caller bounds.
+fn radix_to_decimal(digits: &[u8], radix: u32) -> String {
+    const LIMB: u64 = 1_000_000_000;
+    // As many digits a step as keep the multiplier within 32 bits.
+    let step = (32 / radix.trailing_zeros()) as usize;
+    let mut limbs: Vec<u64> = vec![0];
+    for chunk in digits.chunks(step) {
+        let multiplier = u64::from(radix).pow(chunk.len() as u32);
+        let mut carry = chunk.iter().fold(0u64, |n, &d| {
+            n * u64::from(radix) + u64::from(char::from(d).to_digit(radix).expect("a digit"))
+        });
+        for limb in &mut limbs {
+            let value = *limb * multiplier + carry;
+            *limb = value % LIMB;
+            carry = value / LIMB;
+        }
+        while carry > 0 {
+            limbs.push(carry % LIMB);
+            carry /= LIMB;
+        }
+    }
+    let mut out = limbs.last().expect("one limb at least").to_string();
+    for limb in limbs.iter().rev().skip(1) {
+        out.push_str(&format!("{limb:09}"));
+    }
+    out
+}
+
+/// Whether `b` opens at `at` with `word`, in either case, as
+/// `pg_strncasecmp` compares.
+fn opens_with(b: &[u8], at: usize, word: &[u8]) -> bool {
+    b.get(at..at + word.len()).is_some_and(|s| s.eq_ignore_ascii_case(word))
+}
+
+/// The value `numeric_in` reads from `b` in v14 and v15, or `None` where it
+/// refuses it as syntax or as an exponent out of bounds: `set_var_from_str`
+/// reading its exponent by `strtol`. v13 reads the same texts but the
+/// infinities.
+// pg-refuses: I82 — every refusal here is `numeric_in`'s before v16.
+fn numeric_spelling_v14(b: &[u8]) -> Option<NumericSpelling> {
+    let blank = |at: usize| b.get(at..).is_some_and(|rest| rest.iter().all(|&c| is_c_space(c)));
+    let at = b.iter().take_while(|&&c| is_c_space(c)).count();
+    if opens_with(b, at, b"NaN") {
+        return blank(at + 3).then_some(NumericSpelling::NaN);
+    }
+    for word in [&b"Infinity"[..], b"+Infinity", b"-Infinity", b"inf", b"+inf", b"-inf"] {
+        if opens_with(b, at, word) {
+            return blank(at + word.len()).then_some(NumericSpelling::Infinite);
+        }
+    }
+    let negative = b.get(at) == Some(&b'-');
+    let mut at = at + usize::from(matches!(b.get(at), Some(b'+' | b'-')));
+    let (mut digits, mut integer, mut point) = (Vec::new(), 0i64, false);
+    if b.get(at) == Some(&b'.') {
+        point = true;
+        at += 1;
+    }
+    if !b.get(at).is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    while let Some(&c) = b.get(at) {
+        match c {
+            b'0'..=b'9' => {
+                digits.push(c);
+                integer += i64::from(!point);
+            }
+            b'.' if point => return None,
+            b'.' => point = true,
+            _ => break,
+        }
+        at += 1;
+    }
+    let mut dscale = digits.len() as i64 - integer;
+    let mut exponent = 0i64;
+    if matches!(b.get(at), Some(b'e' | b'E')) {
+        // `strtol`: blanks, a sign, then at least one digit.
+        let mut cp = at + 1;
+        cp += b[cp..].iter().take_while(|&&c| is_c_space(c)).count();
+        let minus = b.get(cp) == Some(&b'-');
+        cp += usize::from(matches!(b.get(cp), Some(b'+' | b'-')));
+        let run = b[cp..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if run == 0 {
+            return None;
+        }
+        let magnitude = b[cp..cp + run]
+            .iter()
+            .fold(0i64, |n, d| n.saturating_mul(10).saturating_add(i64::from(d - b'0')));
+        exponent = if minus { -magnitude } else { magnitude };
+        if exponent.abs() >= i64::from(i32::MAX / 2) {
+            return None;
+        }
+        at = cp + run;
+        dscale = (dscale - exponent).max(0);
+    }
+    blank(at).then_some(NumericSpelling::Decimal {
+        negative,
+        digits,
+        point: integer + exponent,
+        dscale,
+    })
+}
+
+/// The value `numeric_in` reads from `b` from v16, or `None` where it refuses
+/// it as syntax or as an exponent out of bounds: a non-decimal integer after
+/// `0x`, `0o` or `0b`, and an underscore between digits, the exponent's too.
+// pg-refuses: I82 — every refusal here is `numeric_in`'s from v16.
+fn numeric_spelling_v16(b: &[u8]) -> Option<NumericSpelling> {
+    let blank = |at: usize| b.get(at..).is_some_and(|rest| rest.iter().all(|&c| is_c_space(c)));
+    let start = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let negative = b.get(start) == Some(&b'-');
+    let mut at = start + usize::from(matches!(b.get(start), Some(b'+' | b'-')));
+    let digit = |at: usize| b.get(at).is_some_and(u8::is_ascii_digit);
+    if !digit(at) && b.get(at) != Some(&b'.') {
+        // `NaN` takes no sign.
+        let (end, spelling) = if opens_with(b, start, b"NaN") {
+            (start + 3, NumericSpelling::NaN)
+        } else if opens_with(b, at, b"Infinity") {
+            (at + 8, NumericSpelling::Infinite)
+        } else if opens_with(b, at, b"inf") {
+            (at + 3, NumericSpelling::Infinite)
+        } else {
+            return None;
+        };
+        return blank(end).then_some(spelling);
+    }
+    let radix = match b.get(at..at + 2) {
+        Some([b'0', b'x' | b'X']) => 16,
+        Some([b'0', b'o' | b'O']) => 8,
+        Some([b'0', b'b' | b'B']) => 2,
+        _ => 10,
+    };
+    if radix != 10 {
+        at += 2;
+        let first = at;
+        let of_radix = |at: usize| b.get(at).is_some_and(|&c| char::from(c).is_digit(radix));
+        let mut digits = Vec::new();
+        loop {
+            if of_radix(at) {
+                digits.push(b[at]);
+            } else if b.get(at) == Some(&b'_') && of_radix(at + 1) {
+                // An underscore is followed by a digit, which is read next.
+            } else if b.get(at) == Some(&b'_') {
+                return None;
+            } else {
+                break;
+            }
+            at += 1;
+        }
+        return (at > first && blank(at)).then_some(NumericSpelling::Radix {
+            negative,
+            digits,
+            radix,
+        });
+    }
+    let (mut digits, mut integer, mut point) = (Vec::new(), 0i64, false);
+    if b.get(at) == Some(&b'.') {
+        point = true;
+        at += 1;
+    }
+    if !digit(at) {
+        return None;
+    }
+    while let Some(&c) = b.get(at) {
+        match c {
+            b'0'..=b'9' => {
+                digits.push(c);
+                integer += i64::from(!point);
+            }
+            b'.' if point || b.get(at + 1) == Some(&b'_') => return None,
+            b'.' => point = true,
+            b'_' if digit(at + 1) => {}
+            b'_' => return None,
+            _ => break,
+        }
+        at += 1;
+    }
+    let mut dscale = digits.len() as i64 - integer;
+    let mut exponent = 0i64;
+    if matches!(b.get(at), Some(b'e' | b'E')) {
+        at += 1;
+        let minus = b.get(at) == Some(&b'-');
+        at += usize::from(matches!(b.get(at), Some(b'+' | b'-')));
+        if !digit(at) {
+            return None;
+        }
+        while let Some(&c) = b.get(at) {
+            match c {
+                b'0'..=b'9' => {
+                    exponent = exponent * 10 + i64::from(c - b'0');
+                    if exponent > i64::from(i32::MAX / 2) {
+                        return None;
+                    }
+                }
+                b'_' if digit(at + 1) => {}
+                b'_' => return None,
+                _ => break,
+            }
+            at += 1;
+        }
+        if minus {
+            exponent = -exponent;
+        }
+        dscale = (dscale - exponent).max(0);
+    }
+    blank(at).then_some(NumericSpelling::Decimal {
+        negative,
+        digits,
+        point: integer + exponent,
+        dscale,
+    })
 }
 
 /// Whether a `character varying(n)` or `character(n)` field, `n` being
@@ -2784,8 +3374,11 @@ mod tests {
             assert_eq!(float_in::<f32>(text), Err(Unread::Refused), "{text}");
             assert_eq!(float_in::<f32>(&format!("-{text}")), Err(Unread::Refused), "-{text}");
         }
-        for text in [" 1.5", "1.5 ", "0x1p3", "1_0", ""] {
+        for text in [" 1.5", "1.5 ", "0x1p3", "nan(1)"] {
             assert_eq!(float_in::<f64>(text), Err(Unread::Unparsed), "{text:?}");
+        }
+        for text in ["1_0", "", " 1e400", "0x1p1024"] {
+            assert_eq!(float_in::<f64>(text), Err(Unread::Refused), "{text:?}");
         }
         assert_eq!(decode_f64("1.79769313486232e+308"), None);
         assert_eq!(decode_f64("1.7976931348623157e+308"), Some(f64::MAX));
@@ -3332,7 +3925,9 @@ mod tests {
     /// refusal its "numeric field overflow" — the carry raising the weight
     /// past the precision included. Of the rest, `NaN` has no decimal, the
     /// server refuses `Infinity` under a typmod (I34), and it reads `1e5`,
-    /// which this grammar does not (`docs/design/decisions.md`, "D55").
+    /// which this grammar does not (`docs/design/decisions.md`, "D55"), and
+    /// refuses `1e8` past the precision as it refuses `.` and the empty text
+    /// ([`numeric_unread`]).
     #[test]
     fn a_field_is_put_through_its_typmod_as_copy_puts_it() {
         let zeros = |n| "0".repeat(n);
@@ -3360,10 +3955,11 @@ mod tests {
             ("0.5", 1, 0, Ok("1")),
             ("9.5", 1, 0, Err(Unread::Refused)),
             ("NaN", 10, 2, Err(Unread::Unparsed)),
-            ("Infinity", 10, 2, Err(Unread::Unparsed)),
             ("1e5", 10, 2, Err(Unread::Unparsed)),
-            (".", 10, 2, Err(Unread::Unparsed)),
-            ("", 10, 2, Err(Unread::Unparsed)),
+            ("1e8", 10, 2, Err(Unread::Refused)),
+            ("Infinity", 10, 2, Err(Unread::Refused)),
+            (".", 10, 2, Err(Unread::Refused)),
+            ("", 10, 2, Err(Unread::Refused)),
         ] {
             assert_eq!(
                 typmod_unscaled_digits(text, precision, scale).as_deref().map_err(|e| *e),

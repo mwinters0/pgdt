@@ -1343,7 +1343,8 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
 
 /// A dump of one table, `public.t (id integer, bad integer, pad text)`: `id`
 /// ascends from 1 to `rows`, and `bad` is `0` but in the rows `corrupt` picks,
-/// where it holds `nope`, text no `integer` decoder reads.
+/// where it holds `0x1F`, which PostgreSQL reads from 16 and no `integer`
+/// decoder here reads.
 fn with_undecodable(dir: &Path, rows: u32, corrupt: impl Fn(u32) -> bool) -> PathBuf {
     let dump = dir.join("undecodable.sql");
     let mut text = String::from(
@@ -1351,7 +1352,7 @@ fn with_undecodable(dir: &Path, rows: u32, corrupt: impl Fn(u32) -> bool) -> Pat
     );
     text.push_str("COPY public.t (id, bad, pad) FROM stdin;\n");
     for id in 1..=rows {
-        let bad = if corrupt(id) { "nope" } else { "0" };
+        let bad = if corrupt(id) { "0x1F" } else { "0" };
         text.push_str(&format!("{id}\t{bad}\t{}\n", "p".repeat(24)));
     }
     text.push_str("\\.\n\nSELECT 1;\n");
@@ -1364,9 +1365,9 @@ fn with_undecodable(dir: &Path, rows: u32, corrupt: impl Fn(u32) -> bool) -> Pat
 /// reads it, so every row the filter evaluates decodes it. Hand-written, since
 /// no value `pg_dump` writes fails a term where no kept row is emitted.
 ///
-/// - **In a group statistics rule out**: `nope` deep in the ids below `id >=
+/// - **In a group statistics rule out**: `0x1F` deep in the ids below `id >=
 ///   900`'s bound. Unpruned raises; pruned answers, serially and split.
-/// - **Past a sorted block's stop**: `nope` in every row past `id < 20`'s
+/// - **Past a sorted block's stop**: `0x1F` in every row past `id < 20`'s
 ///   stopping row, the block one group. Unpruned raises; pruned answers
 ///   serially, the stopping row being the last evaluated; split raises, a
 ///   later piece evaluating its own first row, past the stop.
@@ -1376,7 +1377,7 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
         |id: Expr| Expr::And(vec![Expr::Term(term("bad", PredicateOp::Ge, Some("0"))), id]);
     let raises = |attempt: Attempt, what: &str| {
         let error = attempt.outcome.err().unwrap_or_else(|| panic!("{what}: answered"));
-        assert!(error.contains("nope"), "{what}: {error}");
+        assert!(error.contains("0x1F"), "{what}: {error}");
     };
     let ids = |attempt: Attempt, what: &str| -> Vec<i32> {
         let (rows, _) = attempt.outcome.unwrap_or_else(|e| panic!("{what}: {e}"));
@@ -1404,7 +1405,7 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
         assert_eq!(ids(pruned_attempt, &what), (900..=1000).collect::<Vec<_>>(), "{what}");
     }
 
-    // Past a stop: every row after the stopping row, `20`, holds `nope`.
+    // Past a stop: every row after the stopping row, `20`, holds `0x1F`.
     let dir = tempfile::tempdir().unwrap();
     let dump = with_undecodable(dir.path(), 2000, |id| id > 20);
     let (_dir, dump, index) = gathered(&dump, pgdump_query::ROW_GROUP_DEFAULT_SIZE_BYTES).await;

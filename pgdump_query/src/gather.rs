@@ -3388,8 +3388,10 @@ mod tests {
                     .map(|v| match rng.below(40) {
                         0..=4 => None,
                         5 if !sorted && !short => Some(vec![0xff, b'a']),
+                        // Read by `int4in`, a blank around the number, and
+                        // keyed by no reader here.
                         6 if !sorted && matches!(kind, CompareKind::Int { .. }) => {
-                            Some(b"x".to_vec())
+                            Some(b" 7".to_vec())
                         }
                         // Read by `byteain`, and placed by no bound here.
                         6 if !sorted && matches!(kind, CompareKind::Bytea) => {

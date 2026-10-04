@@ -388,11 +388,10 @@ than reading as a phase nobody has sliced.
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `pgdump_query/src/preamble.rs`.
 
-- **KD90** — a strict parse refuses a field only at a marked check, so text
-  a reader cannot read at all passes it — `abc` in an `integer`, a malformed
-  `jsonb`, a year or an interval count past `i64` — though the server may
-  refuse it. **(b) owned by P31**, 31.22. Detail:
-  `pgdump_query/src/decode.rs`.
+- **KD90** — a date, time, timestamp or `interval` field its reader cannot
+  read at all passes a strict parse — `abc` in a `date`, a year or an
+  interval count past `i64` — though the server may refuse it. **(b) owned
+  by P31**, 31.22.1. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD91** — a role quoted `"PUBLIC"` or a tablespace quoted `"PG_DEFAULT"`,
   each a name a server can hold, is dropped from the inventory as the

@@ -726,11 +726,12 @@ async fn a_replay_takes_the_cut_s_verdicts_under_the_generation_it_read() {
 }
 
 /// `public.t`'s `id` from 1 to 200 beside an integer `v` that is its `id`,
-/// but text no `integer` decoder reads in the first fifty rows.
+/// but in the first fifty rows `0x1F`, which PostgreSQL reads from 16 and no
+/// `integer` decoder here reads.
 fn undecodable_head(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("undecodable.sql");
     let rows: String = (1..=200)
-        .map(|id| if id <= 50 { format!("{id}\tnope\n") } else { format!("{id}\t{id}\n") })
+        .map(|id| if id <= 50 { format!("{id}\t0x1F\n") } else { format!("{id}\t{id}\n") })
         .collect();
     std::fs::write(
         &path,

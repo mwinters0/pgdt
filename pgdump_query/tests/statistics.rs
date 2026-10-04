@@ -545,20 +545,20 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
     let dump = dir.path().join("unkeyed.sql");
     let mut text = String::from("CREATE TABLE public.t (\n    id integer\n);\n\n");
     text.push_str("COPY public.t (id) FROM stdin;\n");
-    for line in ["0000001", "0000002", "000000x", "\\N", "0003", "0000004", "0000005"] {
+    for line in ["0000001", "0000002", "0x00006", "\\N", "0003", "0000004", "0000005"] {
         text.push_str(line);
         text.push('\n');
     }
     text.push_str("\\.\n\n");
     std::fs::write(&dump, &text).unwrap();
-    // Sixteen bytes a group: the first two rows, then `x`, the NULL and `0003`,
+    // Sixteen bytes a group: the first two rows, then `0x00006`, the NULL and `0003`,
     // then the last two.
     let index = gathered(&dump, &request(StatisticsSelection::DATA, 16)).await;
     let id = statistics(block(&index, "public.t")).columns[0].as_ref().unwrap();
     let bounds = id.bounds.as_ref().unwrap();
     assert_eq!(bounds.sortedness, Sortedness::Unsorted);
     assert!(bounds.groups[0].is_some());
-    assert!(bounds.groups[1].is_none(), "the group holding `x`");
+    assert!(bounds.groups[1].is_none(), "the group holding `0x00006`");
     assert!(bounds.groups[2].is_some());
     assert_eq!(id.null_counts, vec![0, 1, 0]);
     let dictionary = id.dictionary.as_ref().unwrap();
@@ -568,7 +568,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
         .iter()
         .map(|&i| dictionary.entries[i as usize].as_str())
         .collect();
-    assert_eq!(group, vec!["000000x", "0003"]);
+    assert_eq!(group, vec!["0x00006", "0003"]);
 }
 
 /// **A column's stored groups are read only where they are one to a group**:

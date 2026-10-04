@@ -2081,10 +2081,12 @@ and adding a case is the only answer available (`comparison_oracle.py`'s
 one per major. And the text answers are **glibc's** — the Debian (`-trixie`)
 fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
-([`decisions.md`](decisions.md), "D70"). One non-additive difference is known
-outside the cases: `oidin`'s base, which v16 changed (I66), and which
-[`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s form and
-never read past `*_in`'s" takes as the exception to the newest's semantics.
+([`decisions.md`](decisions.md), "D70"). Two non-additive differences are known
+outside the cases: `oidin`'s base, which v16 changed (I66), and
+`numeric_in`'s exponent, which v16 stopped reading by `strtol` (I82), each
+of which [`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s
+form and never read past `*_in`'s" takes as an exception to the newest's
+semantics.
 
 **Proof.** Observed: `fixtures/<13…18>/oracle/` holds 2020 comparisons and 317
 literals per major as the server itself answered them, and
@@ -2725,7 +2727,8 @@ which `jsonb_in` does not enter.
 
 **Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `predicate.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
-what the input bullet says `jsonb_in` refuses — and `storage_order` —
+what the input bullet says `jsonb_in` refuses — `jsonb_unread`, which refuses
+what `json_in` refuses (I72), the grammar being one, and `storage_order` —
 [`decisions.md`](decisions.md), "D55", where
 this is the row that agrees about structure and diverges at a string.
 
@@ -3768,9 +3771,9 @@ the precision.
 v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 `maxdigits` check at all six.
 
-**Relied on by:** `decode::typmod_unscaled_digits`, which puts a field
-through its typmod, rounding half away from zero and refusing past the
-precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
+**Relied on by:** `decode::typmod_unscaled_digits` and `decode::typmod_round`,
+which put a field through its typmod, rounding half away from zero and
+refusing past the precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
 unscaled integer at the column's scale exactly, and `decode::render_decimal`,
 which takes one back to text; `pgtype::map_numeric`, which widens the precision to a
 scale past it, and `pgtype::NestedPlan::Decimal`, which carries the precision
@@ -4162,7 +4165,7 @@ range for type smallint", "integer" or "bigint" once they pass the width.
 
 **Scope limit.** The width only. What else each function reads — a blank
 around the number, an underscore between digits and a `0x`, `0o` or `0b`
-prefix from v16 — is a spelling, not a range.
+prefix from v16 — is a spelling, not a range (I80).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
@@ -4332,17 +4335,16 @@ and `numeric(100,2)`, by `numeric_in` with the typmod and by `COPY`, it reads
 `[1e131072]`, and reads `1e131071`, `10e131070`, `0.001e131074`, `1e100000`,
 `1.5e-16382`, `0e1073741823` and `-0e-16383`.
 
-**Scope limit.** The bounds of the digit form `numeric_out` writes, and of a
-JSON number. The other spellings `numeric_in` reads — a sign `+`, an
-underscore between digits and a `0x`, `0o` or `0b` integer from v16, an
-exponent outside `jsonb` — are spellings, not bounds.
+**Scope limit.** The bounds of a value `numeric_in` reads, however spelled;
+which spellings it reads is I82.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `decode::numeric_in_stores`, which `predicate.rs` applies to
 a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
-semantics, and `JsonCursor::number`, which refuses a `jsonb` number so spelled,
-field and literal alike.
+semantics, `decode::NumericSpelling::stored`, which bounds a field spelled
+otherwise, and `JsonCursor::number`, which refuses a `jsonb` number so
+spelled, field and literal alike.
 
 **Re-verify.**
 
@@ -5159,3 +5161,148 @@ sed -n '/^xidin/,/^}/p;/^xid8in/,/^}/p;/^cidin/,/^}/p' src/backend/utils/adt/xid
 It prints `charin` with no error, `refcursor`'s `textin`, and the three
 functions — passing `NULL` as the end pointer and checking nothing to v15,
 calling `uint32in_subr`/`uint64in_subr` from v16.
+
+---
+
+## I80 — `int2in`, `int4in` and `int8in` read a signed decimal between blanks, and from v16 a prefixed or underscored one
+
+**Claim.** v13 to v15 read, between runs of blanks, an optional sign and one
+or more decimal digits, and refuse every other text. From v16 they read every
+text those did, and also a `0x`, `0o` or `0b` prefix after the sign, with at
+least one digit of its radix, and an underscore between two digits — after a
+prefix too, but never opening a decimal. A value past the width is refused
+(I60), as syntax before v16 where it is prefixed.
+
+**Proof.** `pg_strtoint16`, `pg_strtoint32` (`src/backend/utils/adt/numutils.c`)
+and `scanint8` (`int8.c`, before v15) or `pg_strtoint64`: `isspace`, a sign,
+`isdigit` at least once, `isspace`, end. From v16 `pg_strtoint16_safe`,
+`32` and `64`, whose slow path reads the prefixes and underscores; v17 and
+v18 differ from v16 in how they negate alone.
+
+**Observed.** Every integer case of `predicate.rs`'s
+`a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
+each of the three types in a `postgres:<major>-trixie` container at all six
+majors: `0x1F`, `0x_1F`, `0_1` and ` -0x1_F ` are read from v16 only; `_1`,
+`1_`, `1__000`, `0x`, `0x1F_` and `0x__1` at none; `\v12` and `\f12\r` at all.
+
+**Scope limit.** `isspace` is the server's locale's; this build takes C's six
+blanks, which every locale a server runs in agrees on below `0x80`.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
+and server).
+
+**Relied on by:** `decode::int_unread`, which refuses a field of the three
+types its reader does not read where v16's grammar or the width refuses it,
+so only where every major does.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^pg_strtoint32(_safe)?\(/,/^}/' src/backend/utils/adt/numutils.c | grep -n "isspace\|'_'\|'x'\|'o'\|'b'"
+```
+
+It prints the two blank skips, and from v16 the three prefixes and the
+underscore checks.
+
+---
+
+## I81 — `float4in` and `float8in` read what glibc's `strtof` and `strtod` read between blanks
+
+**Claim.** Each skips blanks, refuses an empty remainder, and hands the rest
+to the C library; what that converts, followed by nothing but blanks, is read,
+subject to I59's range. glibc in the C numeric locale converts a sign and then
+a decimal (digits with at most one point among them, at least one digit, an
+`e` exponent only where a digit follows it), a hexadecimal number (`0x`, the
+same shape in hex digits, a `p` exponent), `inf` or `infinity`, or `nan` with
+an optional parenthesized tag of letters, digits and `_`, all in either case.
+`0x` with no digit after it converts as `0`. Every other text is refused.
+
+**Proof.** `float4in_internal` and `float8in_internal`
+(`src/backend/utils/adt/float.c`): `isspace`, the empty check, `strtof` or
+`strtod`, its own spellings of `NaN` and the infinities only where the library
+converts nothing, then `isspace` and end. The backend keeps `LC_NUMERIC` at
+`C` (`src/backend/main/main.c`), so the point is `.`. The grammar is the same
+at every major; v13 also corrects a Solaris `strtod`.
+
+**Observed.** Every float case of `predicate.rs`'s
+`a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
+both types in a `postgres:<major>-trixie` container (glibc 2.41) at all six
+majors, alike at each: `0x1.8p1`, `0x.8`, `nan(abc_1)` and `\t-1.5e3\n` are
+read; `1e`, `0x`, `0x1p`, `nan(a-b)`, `infinit`, `1_0` and `.e1` refused;
+`0x1.fffffffffffff8p1023` and `0x1p-1075` refused as out of range and
+`0x1.0000000000001p-1075` read.
+
+**Scope limit.** glibc's. Another C library may convert less — a
+hexadecimal number or a tagged `nan` — or round a hexadecimal number
+otherwise.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
+and server).
+
+**Relied on by:** `decode::float_unread`, which refuses a field or a filter
+literal of either type its reader does not read where this grammar or I59's
+range refuses it.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^float8in_internal/,/^}/' src/backend/utils/adt/float.c | grep -n 'isspace\|strtod\|endptr != .\\0.'
+```
+
+It prints the leading blank skip, the `strtod` call, the trailing skip and
+the end check.
+
+---
+
+## I82 — `numeric_in` reads a decimal with an exponent between blanks, and v16 reads an exponent otherwise than v13 to v15
+
+**Claim.** Between blanks, every major reads `NaN` in either case with no
+sign, and an optional sign, then digits with at most one point among them,
+at least one digit after an opening point, then an `e` exponent; v14 and
+later read `Infinity` and `inf` in either case after an optional sign as
+well. v13 to v15 read the exponent by `strtol`: blanks, a sign, at least one
+digit, refusing a magnitude of `INT_MAX / 2` or more. v16 reads it as a sign
+and at least one digit with no blank, an underscore between two digits,
+refusing a magnitude past `PG_INT32_MAX / 2`; and an underscore between any
+two digits of the number, never beside its point, and a `0x`, `0o` or `0b`
+integer, the underscore allowed after the prefix. So `1e 5` and `1e -5` are
+read before v16 and refused from it, and `0e1073741823` the other way: no
+major's grammar holds every other's.
+
+**Proof.** `numeric_in` and `set_var_from_str`
+(`src/backend/utils/adt/numeric.c`) at v13.23, v14.24 (the infinities) and
+v16.15 (`set_var_from_non_decimal_integer_str`, the exponent loop); v15
+differs from v14 only in a negative scale's typmod, and v17 and v18 from v16
+in nothing these functions do.
+
+**Observed.** Every `numeric` case of `predicate.rs`'s
+`a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
+`numeric_in` with no typmod, with `numeric(10,2)`'s and from v15 with
+`numeric(3,-2)`'s, in a `postgres:<major>-trixie` container at all six
+majors: `1e 5`, `1e\t5` and `1e -5` read by v13 to v15 alone; `0e1073741823`,
+`1_000.000_1`, `0x_1F` and `1e1_0` by v16 to v18 alone; `1e- 5`, `-NaN`,
+`1._5` and `1e_10` by none. Called by a cast of a literal it is handed no
+typmod, the cast applying it after, which is not how `COPY` reads a field:
+`1e-16384` as `numeric(10,2)` is refused by the cast and read by `COPY`.
+
+**Scope limit.** `isspace` is the server's locale's, as in I80.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
+and server).
+
+**Relied on by:** `decode::numeric_spelling_v14` and
+`decode::numeric_spelling_v16`, each reading one side of the change, so that
+`decode::numeric_unread` refuses a field of a `numeric` column its reader
+does not read only where both sides do.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^set_var_from_str\(/,/^}/' src/backend/utils/adt/numeric.c | grep -n "strtol\|INT_MAX / 2\|'_'"
+```
+
+It prints `strtol` and `INT_MAX / 2` before v16, and from v16
+`PG_INT32_MAX / 2` and the underscore checks.

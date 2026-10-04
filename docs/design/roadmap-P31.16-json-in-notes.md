@@ -45,10 +45,3 @@ clean `strict` parse promises what the field and its declaration decide".
 - **The comparison oracle was not extended or regenerated**: its one refused
   `json` input, `{a:1}`, is asserted at every major; the source of all six
   was read for the rest.
-
-## What the slices after this inherit
-
-- **31.22** owes `jsonb` a refusal for text `JsonCursor` cannot read
-  (`KD90`). Every text `json_in` refuses `jsonb_in` refuses too, the
-  latter's grammar being the former's plus its own refusals, so
-  `decode::json_in` answering false is a marked refusal it can use.

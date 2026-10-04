@@ -335,7 +335,8 @@ decimal, as v13–v15 read it (KD84). `line_in`'s two-point form is another:
 v14 rebuilt its arithmetic, narrowing it as well as widening it, and a
 `line` is refused only where every supported major refuses it (I74). So are
 `xidin`, `xid8in` and `cidin`, which v16 narrowed from reading anything
-(I79), so a field of one is refused nowhere.
+(I79), so a field of one is refused nowhere, and `numeric_in`, whose
+exponent v16 stopped reading by `strtol` (I82).
 **Every behaviour differing between
 supported majors is in the manual with the reading chosen for it**
 ([`../manual/type-handling.md`](../manual/type-handling.md), "Where
