@@ -634,7 +634,7 @@ One contradicting its type is `FieldDecode` naming `--schema-mode strings`, neve
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:
 a script sums its own rollup, a table spanning blocks (I2) with no merge rule but statistics' sums,
 `--detail`'s alone. Coverage is one line at the top, nothing below qualified. No `help` attributes;
-pages are snapshotted with width and bare-flag assertions. Rejected: `long_help` per flag; a rollup.
+pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value name spells its suffixes past the page, its spec line exempt from the width assertion, until one pass over CLI output (`roadmap.md`, "Future — wanted, unscheduled"). Rejected: `long_help` per flag; a rollup; that value name cut to a placeholder piecemeal.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go

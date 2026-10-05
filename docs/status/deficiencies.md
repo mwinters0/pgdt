@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD109 -->
-**`KD1`–`KD109` are allocated, and nothing at or below `KD109` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD110 -->
+**`KD1`–`KD110` are allocated, and nothing at or below `KD110` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -479,3 +479,10 @@ than reading as a phase nobody has sliced.
   `MI_TRACK_VALGRIND` build of mimalloc run under valgrind, promoted by a
   question about the shipped heap a `system` recording cannot answer. Detail:
   `pgdt/src/alloc.rs`.
+
+- **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
+  help but `--dump`'s one word to a line, `--dump`'s value name being wider
+  than the page: its own binary does, and so would any embedder not setting
+  `next_line_help`, as `pgdt sql` does. **(c) unowned**; promoted by the pass
+  over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
+  Detail: `datafusion-cli-pgdump/src/lib.rs`.

@@ -174,6 +174,11 @@ pub struct Args {
     object_store_profiling: InstrumentedObjectStoreMode,
 
     // pgdump: `--dump`.
+    // deficiency: KD110 — the value name spells every suffix and is wider than
+    // a 100-column page, so clap sets every other flag's help column past it
+    // and prints that help one word to a line, short and long pages alike,
+    // unless the command sets `next_line_help`, as `pgdt sql` does and this
+    // crate's own binary does not.
     #[clap(
         long = "dump",
         value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]",

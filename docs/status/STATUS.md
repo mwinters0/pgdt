@@ -117,14 +117,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdt sql -h` keeps `--dump`'s full value name.** Its spec,
-  `--dump <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>`,
-  is wider than the 100-column page `pgdt/tests/help_text.rs` holds every
-  other line to. 30.4 set `next_line_help` on `sql`, so the other flags still
-  render one paragraph each, and taught the width test to skip a line holding
-  only an option's spec, leaving the copy's `pgdump:` line as it was: the
-  spelling is the shell's existing surface, and the help paragraph beneath
-  already names each suffix. Reconsidering shortens the value name in
-  `datafusion-cli-pgdump/src/lib.rs` (to `[NAME=]SOURCE[:OPTION]...`, say),
-  and the SQL-shell row above that quotes it, and drops the exemption.
