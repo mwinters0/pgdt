@@ -119,18 +119,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **30.7 reads its diagnostic as two terms, where its criterion named one
-  outcome a heap.** `RESERVE_DIAGNOSTIC_LIMITS`' comment, written before the
-  sitting, says a Rust live high-water above `Billed` names the program, not
-  the allocator, and on its letter both rows read so. The notes read the live
-  high-water against Rust's share of the bill instead (`Billed` carries C's
-  decoder footprint), find both a program term and mimalloc's retention, and
-  attribute the gate's failure to the retention, because the `system` twin
-  holds the program's term and passes — the spec's own control for "failing on
-  mimalloc alone" — and neither term alone breaks the margin on these
-  readings. **The decision to make:** whether the remedy's grilling starts
-  from that reading, or from the criterion's letter, under which the remedy is
-  the charge (billing the unit) and mimalloc's part is left standing
-  ([`../design/roadmap-P30.7-diagnostic-notes.md`](../design/roadmap-P30.7-diagnostic-notes.md),
-  "The attribution").

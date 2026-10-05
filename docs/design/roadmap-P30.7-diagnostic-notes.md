@@ -74,17 +74,18 @@ already brings near `MEMORY_UNPOOLED_BOUND`.
 
 ## What the remedy's grilling inherits
 
-- **The spec's remedies, against the attribution** (the spec, "What the move
-  owes before a release"): an allocator option reaches the shipped-alone term,
-  whose mechanism is a candidate no reading has confirmed; re-setting the bound
-  covers both terms without naming either (the sitting's own re-derivation is
-  in its `tables.md`); D13 reopened answers the retention alone. **The
-  program's term is a remedy the spec did not list**: billing the unit in the
-  charge moves both builds and the flagless count, and is `KD34`'s territory
-  as much as P30's.
-- **Nothing is filed yet.** No `KD<k>` is opened and `KD34` is not rewritten:
-  where the program's term is recorded, and against which phase, is the
-  grilling's call.
+- **The retention alone.** The program's term is held on both builds, so it is
+  filed as a both-builds failure is and does not block: `KD111`, P23's
+  ([`../status/deficiencies.md`](../status/deficiencies.md)). The split and
+  why billing the unit is not P30's remedy are
+  [`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+  "30.7's sitting".
+- **The spec's remedies, against the retention**
+  ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move
+  owes before a release"): an allocator option reaches it, its mechanism a
+  candidate no reading has confirmed; re-setting the bound covers it without
+  naming it (the sitting's own re-derivation is in its `tables.md`); D13
+  reopened answers it by removing it.
 
 ## Negative results
 

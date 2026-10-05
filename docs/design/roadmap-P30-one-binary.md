@@ -131,7 +131,13 @@ reading the sweep takes, since only `reserve` carries instrument legs. Its legs
 are the failing arrangement's, at the failing block size. **The diagnostic
 attributes and stops**: the remedy — an allocator option, the bound re-set, or
 D13 reopened — is grilled once the attribution is in, never authorised ahead of
-it, so no fix is fitted to an unattributed cause. So the
+it, so no fix is fitted to an unattributed cause. **An attribution naming a
+term both builds hold beside one the shipped build holds alone is split by
+that rule**: the first is filed as a failure on both legs would be, and the
+remedy is grilled for the second alone, since a fix to the first would clear
+the gate while leaving the cause that blocks it standing
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+"30.7's sitting"). So the
 sweep draws no two-heap account of the reserve's terms; that model is P23's.
 The phase moves the allocator and shows it made nothing worse; it does not
 re-fit a constant.

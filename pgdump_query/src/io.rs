@@ -469,6 +469,19 @@ const BOUNDARIED_PARTITION_UNITS: usize = 1;
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
 ///
+/// deficiency: KD111 — from two block-decoding readers up, the process holds
+/// one unit more than this bills: Rust's live high-water, counted in front of
+/// the allocator, sits one block and a few MiB above the charge's Rust terms at
+/// every count read from two readers up, on 24 MiB blocks and on 128 MiB, and
+/// at one reader it does not (`runs/measure-20261005T193210/`, `reserve`'s
+/// instrument tables). Nothing here names the unit. The candidate is `KD20`'s
+/// duplicate decode — a worker still holding its own block while its tail read
+/// decodes its successor's into a second slot — which only a second reader can
+/// cause; no reading confirms it. Being the program's, it is on every
+/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`] has absorbed it. **(b) owned
+/// by P23**: closing it means billing the unit here, or, if it is `KD20`'s,
+/// not holding it.
+///
 /// **A budget is solved against this, never divided by it**
 /// ([`WorkerMemory::affords`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1176,6 +1189,9 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// at 128 MiB blocks from four readers the remainder above the charge overruns
 /// it while staying inside this value, where the `system` build's same legs,
 /// in the same sitting, stay inside the bound (`measurements.md`, `reserve`).
+/// The overrun is two units: one the program holds on every allocator
+/// ([`WorkerMemory`], `KD111`), and one mimalloc keeps after the program has
+/// freed it, in some reps and on the shipped build alone.
 /// P23 re-takes both readings under mimalloc on the two-heap instrument and
 /// sets both constants from them.
 pub const MEMORY_RESERVE: u64 = 384 << 20;

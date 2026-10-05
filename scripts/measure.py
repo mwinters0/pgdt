@@ -3523,6 +3523,14 @@ RESERVE_INSTRUMENT_LIMITS: tuple[str, ...] = tuple(token for token, _ in RESERVE
 #: glibc high-water carrying the excess names C. A row where none of the three
 #: exceeds what the bill and the decoder dictionaries leave is no attribution,
 #: and says so by its numbers.
+#:
+#: **The three are not exclusive**: a row can name two heaps, and a live
+#: high-water is read against the bill's Rust terms, `Billed` carrying C's
+#: decoder footprint besides. Where two hold excess, which one the gate's
+#: failure is owed to is the `system` twin's to say, not this criterion's: a
+#: term both builds hold predates the allocator and does not block, one the
+#: shipped build holds alone does (`roadmap-P30-one-binary.md`, "What the move
+#: owes before a release").
 RESERVE_DIAGNOSTIC_INPUT = "control_xz128"
 RESERVE_DIAGNOSTIC_LIMITS: tuple[str, ...] = ("1536m", "2g")
 

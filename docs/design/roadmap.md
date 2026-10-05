@@ -800,7 +800,9 @@ What it inherits:
   (`measurements.md`, `reserve`). The margin's shortfall blocks P30, which
   attributes it before any remedy is chosen (`roadmap-P30-one-binary.md`,
   "What the move owes before a release"); setting the bound under mimalloc
-  stays this phase's unless that remedy takes it.
+  stays this phase's unless that remedy takes it. Part of that overrun is not
+  the allocator's: from two readers up the program holds a unit above its
+  charge on both builds (`KD111`), which this phase bills or removes.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD110 -->
-**`KD1`–`KD110` are allocated, and nothing at or below `KD110` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD111 -->
+**`KD1`–`KD111` are allocated, and nothing at or below `KD111` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -316,11 +316,11 @@ than reading as a phase nobody has sliced.
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
   remainder of 544 MiB on a compressed `query`, every `wide-xz24` `query` leg
-  from 1 GiB up OOM-killed on that build — the platform allocator's, as are the
-  readings the reserve was chosen from. On the shipped mimalloc build `reserve`'s
-  128 MiB-block legs from four readers overrun `MEMORY_UNPOOLED_BOUND`, their
-  `system` twins inside it. **(b) owned by P23**, which re-takes them under
-  mimalloc, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
+  from 1 GiB up OOM-killed — the platform allocator's, as is the reserve's
+  choice. On mimalloc, `reserve`'s 128 MiB-block legs from four readers overrun
+  `MEMORY_UNPOOLED_BOUND` with `KD111`'s unit and one mimalloc keeps, their
+  `system` twins holding `KD111`'s alone inside it. **(b) owned by P23**, which
+  re-takes them, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its
@@ -486,3 +486,11 @@ than reading as a phase nobody has sliced.
   does. **(c) unowned**; promoted by the pass
   over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
   Detail: `datafusion-cli-pgdump/src/lib.rs`.
+
+- **KD111** — from two block-decoding readers up, the program holds one block
+  unit more than `WorkerMemory`'s charge bills, on every allocator, so a run's
+  remainder above its charge carries a term that grows with the block size
+  rather than the count — half of `MEMORY_UNPOOLED_BOUND` at 128 MiB blocks.
+  Unattributed; `KD20`'s duplicate decode is the candidate. **(b) owned by
+  P23**, which bills the unit or, if it is `KD20`'s, takes the in-flight map.
+  Detail: `pgdump_query/src/io.rs`.

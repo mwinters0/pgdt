@@ -95,10 +95,10 @@ separate numbers in separate places, so a source whose decoder retains more per
 unit than `liblzma` does gets a correct charge and an optimistic prediction, and
 the failure surfaces as a cgroup kill at a large limit rather than as an error.
 So the phase either argues the bound carries over — the term is the
-allocators' retention as far as any reading goes, which is not codec-specific,
-though on the shipped build's mimalloc the `reserve` figure's 128 MiB-block
-cells at four and five readers already overrun it where their `system` twins
-do not — or re-derives it, which needs no new sitting if the phase's own resident readings cover more
+allocators' retention and, from two block readers up, one unit the program
+holds unbilled (`KD111`), neither codec-specific, though on the shipped build's
+mimalloc the `reserve` figure's 128 MiB-block cells at four and five readers
+already overrun it where their `system` twins do not — or re-derives it, which needs no new sitting if the phase's own resident readings cover more
 than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
 would report it: its inner fault line is exactly this constant.
 
