@@ -3129,7 +3129,7 @@ Per-rep readings (peak RSS):
 - 128 MiB blocks, 16j, system: 2261.64 MiB, 2259.13 MiB, 2260.96 MiB
 - 128 MiB blocks, 24j, system: 2259.69 MiB, 2261.55 MiB, 2260.73 MiB
 
-**The gate.** Each leg is read again on the `system` build in the same sitting, the two differing by the allocator alone, and each cell is the worst surviving rep and what it left of the limit, or the kill.
+**The gate.** Each leg is read again on the `system` build in the same sitting, the two differing by the allocator alone, and each cell is the worst surviving rep and what it left of the limit, or the kill. A leg fails where it is killed, its container being the contract under test.
 
 | Leg | Shipped build | `system` | Gate |
 |---|---|---|---|
@@ -3197,7 +3197,7 @@ carries its own instead of the register's 512 MB.
 | `-m 1536m` | **1055.66 MiB** (1032.66–1060.06) · 17r, 962.6 MiB · head 31.0% · *block path* | **1226.14 MiB** (1189.11–1258.02) · 4r, 936.1 MiB · head 18.1% · *block path* |
 | `-m 2g` | **1456.75 MiB** (1453.02–1487.19) · 24r, 1368.8 MiB · head 27.4% · *block path* | **1482.36 MiB** (1458.79–1491.83) · 5r, 1202.2 MiB · head 27.2% · *block path* |
 
-**The gate.** Each leg is read again on the `system` build in the same sitting, the two differing by the allocator alone, and each cell is the worst surviving rep and what it left of the limit, or the kill.
+**The gate.** Each leg is read again on the `system` build in the same sitting, the two differing by the allocator alone, and each cell is the worst surviving rep and what it left of the limit, or the kill. A leg fails where it is killed or where its worst surviving rep leaves less than 20% of the limit, `MEMORY_MARGIN_PERCENT`, the criterion the reserve is held to.
 
 | Leg | Shipped build | `system` | Gate |
 |---|---|---|---|
@@ -3211,10 +3211,10 @@ carries its own instead of the register's 512 MB.
 | 128 MiB blocks, `-m 544m` | 31.33 MiB · head 94.2% | 29.34 MiB · head 94.6% | passes |
 | 128 MiB blocks, `-m 1g` | 543.15 MiB · head 47.0% | 541.23 MiB · head 47.1% | passes |
 | 128 MiB blocks, `-m 1088m` | 543.52 MiB · head 50.0% | 541.21 MiB · head 50.3% | passes |
-| 128 MiB blocks, `-m 1536m` | 1258.02 MiB · head 18.1% | 1090.91 MiB · head 29.0% | passes |
+| 128 MiB blocks, `-m 1536m` | **1258.02 MiB · head 18.1%**, under the 20% margin | 1090.91 MiB · head 29.0% | **fails on the shipped build alone — blocks** |
 | 128 MiB blocks, `-m 2g` | 1491.83 MiB · head 27.2% | 1356.42 MiB · head 33.8% | passes |
 
-**The gate passes**: no leg failed on the shipped build alone.
+**The gate blocks**: 1 leg(s) failed on the shipped build alone — 128 MiB blocks, `-m 1536m`. That is the allocator's, which reopens [`decisions.md`](decisions.md), "D13", and is attributed on the instrument build in a sitting of its own, never off this table.
 
 **Resident against the reader count**, least squares over the legs that took the block path, the band being the same line over the per-rep extremes — a check on the charge's shape, not what either constant is read off. **Both terms are what a leg held *outside* the block pool's retention list**: that term is `(POOL_DEPTH.max(jobs) − 1) × unit`, known before the sitting and mirror-checked against the library's own constants, and it is constant below `POOL_DEPTH` = 4 and grows by a unit a reader above — so a leg's resident rises by one unit a reader at the bottom of this axis and by two at the top, and both families straddle the bend. Subtracting it and fitting the remainder is how a known term stays out of the intercept; fitting one straight line across the kink instead reads the intercept ≈49 MiB high at 24 MiB blocks and ≈421 MiB high at 128, and the slope 31% low. Each line names the window it covers, since a leg is censored exactly when its resident ran closest to its ceiling and a fit over what survives is a fit over the legs that had room. A family covering fewer than 3 distinct reader counts publishes a **secant** instead — the slope between its two ends, with no fixed term and no residual: the remainder still has two terms, so below that the residual printed beside it is zero by construction rather than a reading, while the slope is a difference the axis measured:
 
@@ -3354,11 +3354,11 @@ Per-rep readings (peak RSS):
 Apparatus over every run in this table: CPU stall ≤2.00%, I/O stall ≤6.23%, machine ≤43% busy, steal ≤0.00%, busiest core ≥3.78 GHz, ≤72°C.
 
 **What the sitting settles.** No leg is killed anywhere in the sitting, on
-either build. **The gate table above judges a kill alone, and `reserve`'s gate
-fails a leg whose worst rep leaves less than `MEMORY_MARGIN_PERCENT`**
+either build. **The gate blocks on one leg**: it fails a leg whose worst
+surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of its allocation
 ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move owes
-before a release"), so under it the 128 MiB-block leg in `-m 1536m` fails on
-the shipped build alone and the gate blocks. Every cell of the charge table is
+before a release"), and the 128 MiB-block leg in `-m 1536m` does on the
+shipped build alone. Every cell of the charge table is
 `met` but two: the unnamed remainder runs 21.1–118.4 MiB at every arrangement
 on 24 MiB blocks and at one reader on 128 MiB blocks, and reaches 321.9 and
 289.7 MiB at four and five readers on 128 MiB blocks (`-m 1536m`, `-m 2g`) —

@@ -3329,11 +3329,12 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn("rule does not hold", above.text)
 
     def test_the_mirrored_pool_depth_and_constants_are_the_librarys_own(self):
-        # All three are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the
+        # All four are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the
         # mirror is checked here rather than trusted. The two byte constants
         # especially: they are the model's two upper bounds, so one that moved
         # in the library and not here would check the rule against a promise it
-        # no longer makes.
+        # no longer makes — and the margin is the line `reserve`'s gate fails
+        # a leg at.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
         self.assertIn(
@@ -3343,6 +3344,10 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn(
             "pub const MEMORY_UNPOOLED_BOUND: u64 = "
             f"{measure.LIBRARY_MEMORY_UNPOOLED_BOUND >> 20} << 20;",
+            src,
+        )
+        self.assertIn(
+            f"pub const MEMORY_MARGIN_PERCENT: u64 = {measure.LIBRARY_MEMORY_MARGIN_PERCENT};",
             src,
         )
         # And the margin predicts with the second rather than the first.
@@ -8423,20 +8428,72 @@ class GateLegs(unittest.TestCase):
         self.assertIn("both", measure.gate_verdict(True, True)[0])
         self.assertIn("not judged", measure.gate_verdict(None, True)[0])
 
-    def _section(self, killed: dict[str, int], twins: bool = True):
-        figure = "reserve"
+    def _section(
+        self,
+        killed: dict[str, int],
+        twins: bool = True,
+        figure: str = "reserve",
+        shipped_kib: float = 400_000.0,
+        twin_kib: float = 400_000.0,
+        limit: int = 1 << 30,
+    ):
         specs = measure._reserve_flagless_specs()[:2]
         every = [*specs, *(measure.gate_twin(s) for s in specs)] if twins else specs
         raw = {
             "readings": {s.key(figure): [1.0] * 3 for s in every},
-            "rss": {s.key(figure): [400_000.0] * (3 - killed.get(s.key(figure), 0)) for s in every},
+            "rss": {
+                s.key(figure): [shipped_kib if s in specs else twin_kib]
+                * (3 - killed.get(s.key(figure), 0))
+                for s in every
+            },
             "killed": {k: n for k, n in killed.items() if n},
             "input_sizes": {},
         }
         with tempfile.TemporaryDirectory() as tmp:
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
-            legs = [(s.label, s, 1 << 30) for s in specs]
+            legs = [(s.label, s, limit) for s in specs]
             return measure.gate_section(session, figure, legs), specs
+
+    def test_reserve_reads_the_librarys_margin_and_no_other_figure_does(self):
+        self.assertEqual(
+            measure.GATE_MARGIN_PERCENT, {"reserve": measure.LIBRARY_MEMORY_MARGIN_PERCENT}
+        )
+
+    def test_a_reserve_leg_under_the_margin_on_the_shipped_build_alone_blocks(self):
+        # 900,000 KiB of a 1 GiB limit leaves 14.2%: no rep killed, and the
+        # gate still fails it, which a kill-only reading would pass.
+        body, _ = self._section({}, shipped_kib=900_000.0)
+        self.assertIn("**The gate blocks**: 2 leg(s)", body)
+        self.assertIn("**878.91 MiB · head 14.2%**, under the 20% margin", body)
+        self.assertIn("fails on the shipped build alone", body)
+        self.assertIn("leaves less than 20% of the limit", body)
+
+    def test_a_reserve_leg_under_the_margin_on_both_builds_is_filed(self):
+        body, _ = self._section({}, shipped_kib=900_000.0, twin_kib=900_000.0)
+        self.assertIn("**The gate passes**", body)
+        self.assertIn("2 failed on both legs", body)
+
+    def test_the_margin_line_itself_passes(self):
+        # 1000 MiB, so 80% is a whole number of KiB and the comparison is
+        # exact at the line: leaving exactly the margin meets it, as
+        # `margin_allowance`'s ceiling does, and a KiB more fails.
+        limit = 1000 << 20
+        at_line = limit * (100 - measure.LIBRARY_MEMORY_MARGIN_PERCENT) // 100 // 1024
+        body, _ = self._section({}, shipped_kib=float(at_line), limit=limit)
+        self.assertIn("**The gate passes**", body)
+        body, _ = self._section({}, shipped_kib=float(at_line + 1), limit=limit)
+        self.assertIn("**The gate blocks**", body)
+
+    def test_parallel_peak_rss_fails_on_a_kill_alone(self):
+        # The same reading the reserve gate fails passes here: the container
+        # is that figure's contract, so only a kill fails a leg.
+        body, _ = self._section({}, figure="parallel-peak-rss", shipped_kib=900_000.0)
+        self.assertIn("**The gate passes**", body)
+        self.assertNotIn("margin", body)
+        self.assertIn("A leg fails where it is killed, its container", body)
+        specs = measure._reserve_flagless_specs()[:2]
+        body, _ = self._section({specs[0].key("parallel-peak-rss"): 1}, figure="parallel-peak-rss")
+        self.assertIn("**The gate blocks**: 1 leg(s)", body)
 
     def test_a_kill_on_the_shipped_build_alone_blocks(self):
         specs = measure._reserve_flagless_specs()[:2]

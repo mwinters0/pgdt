@@ -3019,6 +3019,13 @@ def stated_allowance(budget: int) -> int:
 #: to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
+#: `pgdump_query::io::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
+#: allocation the worst rep of a resolved arrangement must leave unused — the
+#: criterion `MEMORY_RESERVE` was chosen against and `reserve`'s gate reads
+#: (`GATE_MARGIN_PERCENT`). Held to the library's own by a test, like the two
+#: above.
+LIBRARY_MEMORY_MARGIN_PERCENT = 20
+
 
 def pool_bytes(unit: int, jobs: int) -> int:
     """What the block pool retains at `jobs` readers on top of the per-reader
@@ -5271,10 +5278,11 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 #: The build every **gate** reading is read on beside the shipped one.
 #:
 #: The gate is the pass/fail readings the harness takes against a memory
-#: limit: `reserve`'s flagless legs, where a kill is a censored reading
-#: (`KILL_TOLERANT`); `parallel-peak-rss`'s resident against
-#: `PARALLEL_MEMORY`, the library's own `budget + PARALLEL_HEADROOM`; and a
-#: kill anywhere else, which raises (`Session.time_run`). Each is read on this
+#: limit: `reserve`'s flagless legs against the margin, a kill being a
+#: censored reading (`KILL_TOLERANT`, `GATE_MARGIN_PERCENT`);
+#: `parallel-peak-rss`'s resident against `PARALLEL_MEMORY`, the library's own
+#: `budget + PARALLEL_HEADROOM`; and a kill anywhere else, which raises
+#: (`Session.time_run`). Each is read on this
 #: build too, at the same commit in the same sitting, so the two legs differ by
 #: the allocator alone, as the `allocator` figure's legs do for time — and the
 #: build *is* that figure's `system` leg (`ensure_allocator_binary`), never a
@@ -5297,6 +5305,22 @@ GATE_BINARY = f"alloc:{GATE_LEG}"
 #: gate twin — an instrument build or another allocator leg is not what ships.
 SHIPPED_BINARIES: tuple[str, ...] = ("pgdt", "dfcli")
 
+#: The share of its limit a gate leg's worst surviving rep must leave, by
+#: figure; a figure absent here fails a leg on a kill alone.
+#:
+#: **`reserve` reads the library's own criterion**, `MEMORY_MARGIN_PERCENT`:
+#: the container is the whole allocation, so a leg the margin fails would pass
+#: on a kill alone, the killer reading only the 100% line
+#: (`docs/design/roadmap-P30-one-binary.md`, "What the move owes before a
+#: release"). A kill is that reading's censored extreme and fails too.
+#:
+#: **`parallel-peak-rss` is absent**: its container, `budget +
+#: PARALLEL_HEADROOM`, *is* the contract under test, so surviving it is the
+#: pass and the head its cells print is context. Overrunning
+#: `MEMORY_UNPOOLED_BOUND` fails nothing either, by the same section: it is
+#: `charge_model_problem`'s finding about the bound.
+GATE_MARGIN_PERCENT: dict[str, int] = {"reserve": LIBRARY_MEMORY_MARGIN_PERCENT}
+
 
 def gate_twin(spec: RunSpec) -> RunSpec:
     """`spec` on `GATE_BINARY`: the same command, input, regime and limit.
@@ -5317,13 +5341,17 @@ def _gate_cell(
     """One leg's gate reading, and whether it failed.
 
     The cell is the worst surviving rep and what it left of `limit` — the
-    number a cgroup's killer reads — or the kill. `None` is a leg this sitting
-    did not read, which is neither a pass nor a failure: a sitting taken
-    before the gate had twins still renders, and says so."""
+    number a cgroup's killer reads — or the kill. A kill fails the leg; so,
+    where the figure carries a margin (`GATE_MARGIN_PERCENT`), does a worst
+    surviving rep leaving less of `limit` than that, equality passing as the
+    library's `margin_allowance` passes it. `None` is a leg this sitting did
+    not read, which is neither a pass nor a failure: a sitting taken before the
+    gate had twins still renders, and says so."""
     if not session.has(figure, spec):
         return "not read", None
     readings = session.rss.get(spec.key(figure), [])
     killed = session.kills(figure, spec)
+    margin = GATE_MARGIN_PERCENT.get(figure)
     worst = (
         f"{fmt_mib(max(readings))} · head {(limit - max(readings) * 1024) / limit * 100:.1f}%"
         if readings
@@ -5333,6 +5361,11 @@ def _gate_cell(
         return f"**OOM-killed**, {killed} rep(s)" + (f" · survivors' worst {worst}" if worst else ""), True
     if not readings:
         return "no reading", None
+    # Bytes against bytes, scaled by a hundred rather than divided, so the
+    # line falls exactly where the percentage does and a rounded head in the
+    # cell cannot pass or fail what the comparison would not.
+    if margin is not None and (limit - max(readings) * 1024) * 100 < limit * margin:
+        return f"**{worst}**, under the {margin}% margin", True
     return worst, False
 
 
@@ -5395,10 +5428,18 @@ def gate_section(
             + ", ".join(both)
             + " — which is not the allocator's and is filed rather than blocking."
         )
+    margin = GATE_MARGIN_PERCENT.get(figure)
+    criterion = (
+        f"A leg fails where it is killed or where its worst surviving rep leaves less than "
+        f"{margin}% of the limit, `MEMORY_MARGIN_PERCENT`, the criterion the reserve is held to"
+        if margin is not None
+        else "A leg fails where it is killed, its container being the contract under test"
+    )
     return (
         f"**The gate.** Each leg is read again on the `{GATE_LEG}` build in the same sitting, "
         "the two differing by the allocator alone, and each cell is the worst surviving rep "
-        "and what it left of the limit, or the kill.\n\n" + table + "\n\n" + summary + "\n"
+        f"and what it left of the limit, or the kill. {criterion}.\n\n"
+        + table + "\n\n" + summary + "\n"
     )
 
 #: What `pgdt --version` appends. The harness *asks the binary* rather than

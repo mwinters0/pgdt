@@ -11,14 +11,13 @@ What the phase's wrap and P23 inherit. The sitting is
 
 - **No leg was killed**, on either build, so `Session._gate_twin_of_kill`
   never ran and nothing failed on both legs to be filed as predating P30.
-- **The gate blocks, though the table this slice rendered says it passes.**
-  `_gate_cell` fails a leg on a kill alone, and for `reserve` that is the
-  wrong contract: a leg fails where its worst surviving rep leaves less than
-  `MEMORY_MARGIN_PERCENT` of its allocation (the spec, "What the move owes
-  before a release"). The 128 MiB-block leg in `-m 1536m` does, on the
-  shipped build alone ([`measurements.md`](measurements.md), `reserve`).
-  30.6.1 corrects the reading from this sitting's `raw.json`; 30.7 attributes
-  the excess.
+- **The gate blocks, though the table this slice rendered said it passed**:
+  it read a kill alone, the wrong contract for `reserve`, whose leg fails
+  where its worst surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of
+  its allocation (the spec, "What the move owes before a release"). The
+  128 MiB-block leg in `-m 1536m` does, on the shipped build alone
+  ([`measurements.md`](measurements.md), `reserve`); 30.6.1 re-rendered the
+  gate from this sitting's `raw.json`, and 30.7 attributes the excess.
 - **The charge criterion shows the same excess**: `reserve`'s 128 MiB-block
   legs at four and five readers land in the `bound` band on the shipped build
   alone, their twins having resolved the same arrangements and staying inside
