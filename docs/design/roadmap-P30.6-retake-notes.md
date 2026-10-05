@@ -18,9 +18,9 @@ sweep").
   table, a row a leg, the shipped build beside `system`, each cell the worst
   surviving rep and its headroom against that leg's limit, or the kill, and a
   verdict line under it — "The gate blocks" names every leg failing on the
-  shipped build alone. A kill anywhere else ends the sitting with an error
-  saying, ahead of the run's output, whether the same leg survived on
-  `system`.
+  shipped build alone. A kill anywhere else fails that figure, and `emit`
+  goes on to the next; the error, in the sitting's "Figures that failed",
+  says ahead of the run's output whether the same leg survived on `system`.
 - **What a result means is the spec's**
   ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move
   owes before a release"): a failure on both legs is filed (`KD34` or a new
@@ -35,4 +35,4 @@ sweep").
 
 - **No twin is swept for `parallel-scan-throughput`**: it reads no resident
   set, so its gate reading is whether a leg was killed, which the kill twin
-  reads when one is; STATUS's "Decisions worth another look" carries the call.
+  reads when one is (`Session._gate_twin_of_kill`).

@@ -108,13 +108,16 @@ memory limit:
 
 - `reserve`'s flagless legs across `RESERVE_LIMITS`, where a kill is a
   censored reading (`KILL_TOLERANT`);
-- the `parallel-*` figures' resident against `budget + PARALLEL_HEADROOM`, the
-  library's own contract;
+- `parallel-peak-rss`'s resident against `budget + PARALLEL_HEADROOM`, the
+  library's own contract — `parallel-scan-throughput` runs in the same
+  container but reads no resident set, so its gate is the kill below;
 - a kill anywhere else, which the harness raises as an apparatus failure.
 
 Each of these is read twice at the same commit, in the same sitting: on the
 shipped build and on the `system` build, so the legs differ by the allocator
-alone, as the `allocator` figure's already do for time. **A reading failing
+alone, as the `allocator` figure's already do for time. The first two sweep a
+`system` twin of every leg; a kill elsewhere is read on `system` once, when it
+happens, since a leg that survived needs no second reading to say so. **A reading failing
 on both legs predates P30** — it is filed against the reserve (`KD34`, P23's)
 or as a new `KD<k>`, and does not block the phase. **One failing on mimalloc
 alone blocks it**, and the instrument attributes it — in a diagnostic sitting

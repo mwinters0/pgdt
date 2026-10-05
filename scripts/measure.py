@@ -4457,9 +4457,11 @@ class Session:
         **Once, and only on a kill.** Everywhere outside the two figures whose
         resident is the gate, the gate's reading is whether the leg was killed,
         and a leg that was not needs no second reading to say so; reading every
-        figure twice would double the sweep to learn nothing a pass did not
-        already say. One run because the sitting is ending: the twin classifies
-        the failure, which is all a kill there is evidence of."""
+        figure twice — or `parallel-scan-throughput` alone, which shares
+        `PARALLEL_MEMORY` but reads no resident set — would lengthen the sweep
+        to learn nothing a pass did not already say. One run because the
+        figure is ending (`emit` goes on to the next): the twin classifies the
+        failure, which is all a kill there is evidence of."""
         twin = gate_twin(spec)
         head = f"\n\nIts gate twin, `{twin.label}`, run once now on the `{GATE_LEG}` build,"
         # Cleared first, so a twin that fails before its container starts —
@@ -4736,7 +4738,7 @@ class Session:
                 )
                 return 0.0
             # A kill is a gate reading wherever it lands, so the shipped
-            # build's is read on `GATE_BINARY` before the sitting dies on it.
+            # build's is read on `GATE_BINARY` before its figure fails on it.
             twin = self._gate_twin_of_kill(spec) if oom and spec.binary in SHIPPED_BINARIES else ""
             raise RuntimeError(
                 f"{spec.label} exited {proc.returncode}{why}{twin}"
