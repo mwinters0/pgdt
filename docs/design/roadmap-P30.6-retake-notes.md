@@ -9,31 +9,33 @@ What the phase's wrap and P23 inherit. The sitting is
 
 ## The gate
 
-- **It passes**: both "The gate." tables (`reserve`'s flagless legs,
-  `parallel-peak-rss`'s legs) read every leg on the shipped build and its
-  `system` twin, and no leg was killed anywhere in the sitting, so
-  `Session._gate_twin_of_kill` never ran and nothing failed on both legs to be
-  filed as predating P30.
-- **What the gate does not read is the charge criterion**, and that is where
-  the allocator shows: `reserve`'s 128 MiB-block legs at four and five readers
-  land in the `bound` band on the shipped build alone, their twins having
-  resolved the same arrangements and staying inside the bound, and the worse
-  of them leaves less than `MEMORY_MARGIN_PERCENT` of its allocation
-  ([`measurements.md`](measurements.md), `reserve`). Filed into `KD34` and
-  P23's sketch ([`roadmap.md`](roadmap.md), "P23 — Statistics coverage and
-  the resident reserve"); that it does not block P30 is under STATUS's
-  "Decisions worth another look".
+- **No leg was killed**, on either build, so `Session._gate_twin_of_kill`
+  never ran and nothing failed on both legs to be filed as predating P30.
+- **The gate blocks, though the table this slice rendered says it passes.**
+  `_gate_cell` fails a leg on a kill alone, and for `reserve` that is the
+  wrong contract: a leg fails where its worst surviving rep leaves less than
+  `MEMORY_MARGIN_PERCENT` of its allocation (the spec, "What the move owes
+  before a release"). The 128 MiB-block leg in `-m 1536m` does, on the
+  shipped build alone ([`measurements.md`](measurements.md), `reserve`).
+  30.6.1 corrects the reading from this sitting's `raw.json`; 30.7 attributes
+  the excess.
+- **The charge criterion shows the same excess**: `reserve`'s 128 MiB-block
+  legs at four and five readers land in the `bound` band on the shipped build
+  alone, their twins having resolved the same arrangements and staying inside
+  the bound. The bound's overrun is filed into `KD34` and P23's sketch
+  ([`roadmap.md`](roadmap.md), "P23 — Statistics coverage and the resident
+  reserve").
 - **The builds part by block size**, unattributed: the shipped build holds
   less than `system` on 24 MiB blocks and more on 128 MiB blocks wherever more
   than one reader runs, in `reserve` and `parallel-peak-rss` alike. Every
   instrument leg is on 24 MiB blocks, so no reading names what mimalloc keeps
-  of a 128 MiB block; P23's two-heap account is where it would be named.
+  of a 128 MiB block; 30.7's legs are at that block size.
 
 ## What the wrap inherits
 
-- 30.6 is P30's last slice, so the phase is ready to wrap: the slice notes
-  consolidated, the index row `Complete`, the README's status list ticked
-  for the one binary.
+- The phase wraps after 30.6.1, 30.7 and whatever remedy the grilling of
+  30.7's attribution admits: the slice notes consolidated, the index row
+  `Complete`, the README's status list ticked for the one binary.
 - **The cold-NVMe parallel regime's rejection no longer passes its own
   test** on this sitting's provider readings
   ([`measurements.md`](measurements.md), "Scan throughput by input shape");

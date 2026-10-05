@@ -797,8 +797,10 @@ What it inherits:
   and five readers land in the `bound` band, over `MEMORY_UNPOOLED_BOUND`,
   where their `system` twins in the same sitting do not, and the worse leaves
   less of its allocation than `MEMORY_MARGIN_PERCENT` promises
-  (`measurements.md`, `reserve`). P30 left both constants as they were, so
-  setting the bound under mimalloc is this phase's too.
+  (`measurements.md`, `reserve`). The margin's shortfall blocks P30, which
+  attributes it before any remedy is chosen (`roadmap-P30-one-binary.md`,
+  "What the move owes before a release"); setting the bound under mimalloc
+  stays this phase's unless that remedy takes it.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

@@ -14,8 +14,8 @@ rules, the line cap included, are `docs/process.md`, "The decision register".
 provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers` read in the library, so silence means concurrency.
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
-On every real device a serial plain scan is device-bound, and each partition reads a chunk-sized
-tail past itself, so splitting adds device bytes. `XzSource` answers `available_parallelism()`
+A serial plain `parse` is device-bound on every real device (a typed scan on the NVMe is not, but
+`KD57`'s merge holds its split flat), and each partition's tail past itself adds device bytes. `XzSource` answers `available_parallelism()`
 capped at its block count (`RT7`); a fetched one answers one, the errors being asymmetric. Reopens: a parallel plain scan measured on a real device (both
 parallel figures are warm-tmpfs). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 

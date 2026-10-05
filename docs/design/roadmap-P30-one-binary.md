@@ -106,8 +106,13 @@ failure judged against it could not be told apart from those commits'. The
 pass/fail readings — the gate — are those `measure.py` takes against a
 memory limit:
 
-- `reserve`'s flagless legs across `RESERVE_LIMITS`, where a kill is a
-  censored reading (`KILL_TOLERANT`);
+- `reserve`'s flagless legs across `RESERVE_LIMITS`, against the criterion
+  `MEMORY_RESERVE` must satisfy — the worst surviving rep leaves
+  `MEMORY_MARGIN_PERCENT` of its allocation — a kill being the censored
+  extreme of that reading (`KILL_TOLERANT`). The container there is the whole
+  allocation, so a kill alone would pass a leg the library's margin fails;
+  overrunning `MEMORY_UNPOOLED_BOUND` alone fails nothing, that bound being
+  what the margin predicts with and `KD34`'s;
 - `parallel-peak-rss`'s resident against `budget + PARALLEL_HEADROOM`, the
   library's own contract — `parallel-scan-throughput` runs in the same
   container but reads no resident set, so its gate is the kill below;
@@ -122,7 +127,11 @@ on both legs predates P30** — it is filed against the reserve (`KD34`, P23's)
 or as a new `KD<k>`, and does not block the phase. **One failing on mimalloc
 alone blocks it**, and the instrument attributes it — in a diagnostic sitting
 on the `introspect` build that the blocked phase gains as a slice, not a
-reading the sweep takes, since only `reserve` carries instrument legs. So the
+reading the sweep takes, since only `reserve` carries instrument legs. Its legs
+are the failing arrangement's, at the failing block size. **The diagnostic
+attributes and stops**: the remedy — an allocator option, the bound re-set, or
+D13 reopened — is grilled once the attribution is in, never authorised ahead of
+it, so no fix is fitted to an unattributed cause. So the
 sweep draws no two-heap account of the reserve's terms; that model is P23's.
 The phase moves the allocator and shows it made nothing worse; it does not
 re-fit a constant.

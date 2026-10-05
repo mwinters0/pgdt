@@ -1393,9 +1393,9 @@ falls through to the *warm* path while the cache drop fires on any name
 beginning `cold` publishes warm readings under a cold heading with nothing to
 say so.
 
-**Neither cold device is a parallel regime.** *Rejected: `cold-parallel` and
-`cold-nvme-parallel` legs of the two `parallel-*` figures, which are registered
-`warm-parallel` only.* Applying the test leg by leg answers all four without a
+**The SATA SSD is not a parallel regime.** *Rejected: `cold-parallel` legs of
+the two `parallel-*` figures, which are registered `warm-parallel` and, on the
+NVMe, nothing yet.* Applying the test leg by leg answers both devices without a
 sitting. A **compressed** leg reads `control_xz`'s 563.8 MB while it decodes,
 so its demand is that size over the decode wall in "What a second decode worker
 buys" — 35.3 MB/s at one worker rising to **386 MB/s at twenty-four**, against a
@@ -1404,10 +1404,11 @@ a cold compressed curve is the warm one plus queueing. A **plain** leg is the
 opposite: `parse` runs at 7565 MB/s warm, above every device this project owns,
 and a typed provider scan at 1111 MB/s is already above the SATA floor at one
 partition. On the NVMe the typed provider scan's warm demand is 2030 MB/s at two
-partitions, 0.81 of the 2514 MB/s floor, and 3454 MB/s at four, past it. So the test,
-applied to this sitting, admits a `cold-nvme-parallel` leg of the provider's
-typed scan at two and four partitions; the rejection above stands until that
-is decided, and no figure here times a parallel scan on a real device.
+partitions, 0.81 of the 2514 MB/s floor, and 3454 MB/s at four, past it. So the
+test admits a `cold-nvme-parallel` leg of the provider's typed plain scan, and
+the rejection holds for the SATA SSD alone; that leg is admitted as `M216`
+([`out-of-band.md`](out-of-band.md)) and is not yet registered, so no figure
+here times a parallel scan on a real device.
 
 The device question concurrency *does* raise — whether scattering reads across N
 workers costs a device its sequential advantage — is fatal on rotational media
@@ -3353,7 +3354,11 @@ Per-rep readings (peak RSS):
 Apparatus over every run in this table: CPU stall ≤2.00%, I/O stall ≤6.23%, machine ≤43% busy, steal ≤0.00%, busiest core ≥3.78 GHz, ≤72°C.
 
 **What the sitting settles.** No leg is killed anywhere in the sitting, on
-either build, and both gate tables pass. Every cell of the charge table is
+either build. **The gate table above judges a kill alone, and `reserve`'s gate
+fails a leg whose worst rep leaves less than `MEMORY_MARGIN_PERCENT`**
+([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move owes
+before a release"), so under it the 128 MiB-block leg in `-m 1536m` fails on
+the shipped build alone and the gate blocks. Every cell of the charge table is
 `met` but two: the unnamed remainder runs 21.1–118.4 MiB at every arrangement
 on 24 MiB blocks and at one reader on 128 MiB blocks, and reaches 321.9 and
 289.7 MiB at four and five readers on 128 MiB blocks (`-m 1536m`, `-m 2g`) —

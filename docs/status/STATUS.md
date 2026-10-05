@@ -86,7 +86,9 @@ Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.m
 - [x] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines — [notes](../design/roadmap-P30.3-library-split-notes.md)
 - [x] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck — [notes](../design/roadmap-P30.4-pgdt-sql-notes.md)
 - [x] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following — [notes](../design/roadmap-P30.5-one-binary-notes.md)
-- [x] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The gate passes, no leg killed on either build, and the whole figure set is folded into `measurements.md` from one sitting at `1c9fc9be` — [notes](../design/roadmap-P30.6-retake-notes.md)
+- [x] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The whole figure set is folded into `measurements.md` from one sitting at `1c9fc9be`, no leg killed on either build; the gate was judged on kills alone, the wrong contract for `reserve`, which 30.6.1 corrects — [notes](../design/roadmap-P30.6-retake-notes.md)
+- [ ] **30.6.1** The gate reads the margin: `measure.py` fails a `reserve` flagless leg whose worst surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of its allocation, `parallel-peak-rss` still failing on a kill, each pinned by a test; the `1c9fc9be` sitting re-rendered with `--render`, measuring nothing, and `reserve`'s gate table and prose re-folded into `measurements.md`
+- [ ] **30.7** The diagnostic sitting: the `introspect` build attributes what the shipped build holds above its charge at 128 MiB blocks in `-m 1536m` and `-m 2g`, the instrument legs at that block size added to `reserve`'s register entry; it attributes and stops, the remedy grilled once the reading is in (the spec, "What the move owes before a release")
 
 ## Not started
 
@@ -117,27 +119,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The reserve's mimalloc-only `bound` cells do not block P30** (30.6). The
-  sitting's gate passes, no leg killed on either build, but `reserve`'s charge
-  table puts the 128 MiB-block legs at four and five readers in the `bound`
-  band on the shipped build alone, and the worse of them leaves less of its
-  allocation than `MEMORY_MARGIN_PERCENT` promises, its `system` twin well
-  clear (`../design/measurements.md`, `reserve`). Read as not blocking because
-  the spec's gate fails on a kill, as `measure.gate_section` implements it and
-  the 2026-10-05 review affirmed, and because the spec has P30 re-fit no
-  constant, the bound being P23's (`KD34`); so 30.6 is ticked and the finding
-  filed into `KD34` and P23's sketch. Reconsidering — reading "made nothing
-  worse" as covering the margin — unticks 30.6, gives P30 the diagnostic slice
-  on the `introspect` build, and puts the bound's re-setting, or D13, ahead of
-  a release.
-- **The cold-NVMe parallel regime stays rejected though the test now admits
-  it** (30.6). `measurements.md`, "Scan throughput by input shape" rejects
-  `cold-nvme-parallel` legs by its own admission test, a leg's warm demand
-  against the device's floor; recomputed on this sitting's readings, the
-  provider's typed plain scan demands most of the NVMe's floor at two
-  partitions and more than it at four, so the test admits that leg. The
-  rejection was left standing, with the arithmetic beside it, because
-  admitting a regime is a register change (`measure.REGIMES`, new legs, a
-  longer sweep) that no slice of P30 covers. Reconsidering admits the leg —
-  a `measure.py` change and a sitting — or rewrites the test so it does not.
