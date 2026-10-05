@@ -117,18 +117,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **Which image the register runs, now that the composed `pgdt` does not
-  start in `postgres:16`.** 30.6 assumes the figure set can be swept on the
-  composed binary in the apparatus
-  [`../design/measurements.md`](../design/measurements.md), "The apparatus"
-  describes; since 30.4 a host-built `pgdt` needs `libm` at `GLIBC_2.43` and
-  `2.44`, which `measure.Config.image` (glibc 2.41) lacks, so every leg but
-  `pgdt sql`'s fails to load (`runs/30.5-register-image/readings.txt`). 30.5
-  changed no image: the provider legs stay in `Config.dfcli_image`, the rest
-  in `Config.image`. To decide: run the register in the build host's
-  `archlinux:base`, already pinned as `dfcli_image` — one image, every
-  figure's glibc and the C dependencies' `malloc` moving to the host's — or
-  build `pgdt` in a toolchain container of the register image's distribution,
-  which "The apparatus" rejects for the provider legs as a second compiler.
-  Either rewrites that paragraph and `Config.image`, and 30.6 waits on it.

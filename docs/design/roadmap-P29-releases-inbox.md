@@ -174,3 +174,27 @@ Choosing the licence is the maintainer's call. Generating the notices
 (`cargo-about` or similar) is a build step the release recipe owns.
 
 **Origin.** Filed 2026-10-01 by the session sketching P29.
+
+---
+
+## The register times a host build, run in the host's distribution's image
+
+**Fact.** Every figure times `cargo build --release -p pgdt` built on the
+measurement host and run in an image of the host's distribution
+(`archlinux:base`, glibc 2.44), the composed `pgdt` linking `libm` symbol
+versions an older glibc lacks (`runs/30.5-register-image/readings.txt`). A
+toolchain container of another distribution, or a link against an explicit
+glibc floor, was refused for the register because each compiles the C
+dependencies, mimalloc included, with a second C compiler
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md), "The
+composed `pgdt` does not start in the register's image").
+
+**Why P29 cares.** The shipped binary is the timed one
+([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "The shipped binary
+is the timed binary"), and the release is built in CI against a libc floor P29
+has yet to pick. Whatever floor and C toolchain it picks, the register's build
+follows, so that choice moves the apparatus — the image, the C compiler and
+the glibc the stamp names — and wants a sitting on the release build.
+
+**Origin.** Filed 2026-10-05 by `/dwal` on 30.5's register-image entry.
+Contingent on the release build differing from the host's.
