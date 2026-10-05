@@ -98,10 +98,27 @@ the allocator: the principle — the allocator is the binary's, never the
 library's — stands, with mimalloc the default and the reason the move was made
 replacing the "few percent" rejection.
 
-**The figure set is re-taken on the composed binary, and every existing gate is
-the bar.** A gate that passed on the platform allocator and fails on mimalloc
-blocks the phase. The phase moves the allocator and shows nothing got worse;
-it does not re-fit a constant.
+**The figure set is re-taken on the composed binary, and the gate is judged
+against a `system` leg of the same sitting.** The last sweep is far behind the
+code that will be measured, and the features landed since allocate more, so a
+reading from that sweep cannot stand as the platform allocator's pass: a
+failure judged against it could not be told apart from those commits'. The
+pass/fail readings — the gate — are those `measure.py` takes against a
+memory limit:
+
+- `reserve`'s flagless legs across `RESERVE_LIMITS`, where a kill is a
+  censored reading (`KILL_TOLERANT`);
+- the `parallel-*` figures' resident against `budget + PARALLEL_HEADROOM`, the
+  library's own contract;
+- a kill anywhere else, which the harness raises as an apparatus failure.
+
+Each of these is read twice at the same commit, in the same sitting: on the
+shipped build and on the `system` build, so the legs differ by the allocator
+alone, as the `allocator` figure's already do for time. **A reading failing
+on both legs predates P30** — it is filed against the reserve (`KD34`, P23's)
+or as a new `KD<k>`, and does not block the phase. **One failing on mimalloc
+alone blocks it**, and the instrument attributes it. The phase moves the
+allocator and shows it made nothing worse; it does not re-fit a constant.
 
 **The reserve stays P23's (`KD34`).** `MEMORY_RESERVE` was chosen from glibc
 readings (`runs/19.16-reserve-constant-20260911-2210/readings.json`), and the
@@ -159,13 +176,15 @@ discarded (RT19), the window is clap's parse alone, and
 
 ## Slicing
 
-**One re-take, at the end.** The gate is pass/fail on the shipped build, and
-if one fails the instrument rebuilt first attributes it to the allocator or to
-linking; differencing a sweep after the allocator move against one after the
-composition would be the subtraction `roadmap.md`, "Attribution is
-introspective; only the gate is blind" refuses. So the instrument lands first,
-the allocator move and the composition land with no sitting between them, and
-the sweep is the last slice, launched detached and read by a later session.
+**One sitting, at the end.** The gate is pass/fail, its `system` legs taken
+beside the shipped ones, and a failure on mimalloc alone is attributed by the
+instrument rebuilt first; differencing a sweep after the allocator move
+against one after the composition, or a sitting at HEAD before the move
+against one after it, would be the subtraction `roadmap.md`, "Attribution is
+introspective; only the gate is blind" refuses — two sittings differing by
+more than the allocator. So the instrument lands first, the allocator move and
+the composition land with no sitting between them, and the sweep is the last
+slice, launched detached and read by a later session.
 The library split is its own slice, reviewed against upstream's diff alone,
 ahead of the rework of `pgdt`'s entry point.
 

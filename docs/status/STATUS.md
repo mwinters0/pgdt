@@ -86,7 +86,7 @@ Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.m
 - [ ] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines
 - [ ] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck
 - [ ] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following
-- [ ] **30.6** The re-take: the figure set swept on the composed binary, launched detached, every existing gate the bar
+- [ ] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not
 
 ## Not started
 
