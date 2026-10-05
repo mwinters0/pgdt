@@ -797,10 +797,12 @@ What it inherits:
   and five readers land in the `bound` band, over `MEMORY_UNPOOLED_BOUND`,
   where their `system` twins in the same sitting do not, and the worse leaves
   less of its allocation than `MEMORY_MARGIN_PERCENT` promises
-  (`measurements.md`, `reserve`). The margin's shortfall blocks P30, which
-  attributes it before any remedy is chosen (`roadmap-P30-one-binary.md`,
-  "What the move owes before a release"); setting the bound under mimalloc
-  stays this phase's unless that remedy takes it. Part of that overrun is not
+  (`measurements.md`, `reserve`). The shortfall blocks nothing in P30, whose
+  gate reads a kill alone (`roadmap-P30-one-binary.md`, "What the move owes
+  before a release"), so the unit mimalloc keeps there is this phase's, as is
+  setting the bound under mimalloc; P30's diagnostic attributed it to mimalloc
+  and left its mechanism unconfirmed (`roadmap-P30.7-diagnostic-notes.md`,
+  "The attribution"). Part of that overrun is not
   the allocator's: from two readers up the program holds a unit above its
   charge on both builds (`KD111`), which this phase bills or removes.
 - **A branch already taken**: a remainder growing with the statistics volume

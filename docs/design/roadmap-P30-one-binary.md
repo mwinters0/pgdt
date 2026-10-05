@@ -106,17 +106,23 @@ failure judged against it could not be told apart from those commits'. The
 pass/fail readings — the gate — are those `measure.py` takes against a
 memory limit:
 
-- `reserve`'s flagless legs across `RESERVE_LIMITS`, against the criterion
-  `MEMORY_RESERVE` must satisfy — the worst surviving rep leaves
-  `MEMORY_MARGIN_PERCENT` of its allocation — a kill being the censored
-  extreme of that reading (`KILL_TOLERANT`). The container there is the whole
-  allocation, so a kill alone would pass a leg the library's margin fails;
-  overrunning `MEMORY_UNPOOLED_BOUND` alone fails nothing, that bound being
-  what the margin predicts with and `KD34`'s;
+- `reserve`'s flagless legs across `RESERVE_LIMITS`, which fail on a kill
+  alone (`KILL_TOLERANT`). The rule aims resident at the allocation, so these
+  legs press the binary against its limit by construction. What each leg's
+  worst surviving rep leaves of its allocation is reported beside the verdict
+  against `MEMORY_MARGIN_PERCENT` and blocks nothing: a shortfall on the
+  shipped build alone is `KD34`'s, P23's, which re-fits the reserve under
+  mimalloc, and overrunning `MEMORY_UNPOOLED_BOUND` fails nothing either;
 - `parallel-peak-rss`'s resident against `budget + PARALLEL_HEADROOM`, the
   library's own contract — `parallel-scan-throughput` runs in the same
   container but reads no resident set, so its gate is the kill below;
 - a kill anywhere else, which the harness raises as an apparatus failure.
+
+**The gate asks whether the binary is OOM-killed under the arrangements its
+figures take, not how close it comes**; no koji-scale sitting is added, these
+legs pressing the limit harder than one would
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+"P30's gate reads kills").
 
 Each of these is read twice at the same commit, in the same sitting: on the
 shipped build and on the `system` build, so the legs differ by the allocator
@@ -131,57 +137,26 @@ reading the sweep takes, since only `reserve` carries instrument legs. Its legs
 are the failing arrangement's, at the failing block size. **The diagnostic
 attributes and stops**: the remedy — an allocator option, a library change
 suiting both allocators, or D13 reopened — is grilled once the attribution is
-in, never authorised ahead of it, so no fix is fitted to an unattributed cause. **An attribution naming a
-term both builds hold beside one the shipped build holds alone is split by
-that rule**: the first is filed as a failure on both legs would be, and the
-remedy is grilled for the second alone, since a fix to the first would clear
-the gate while leaving the cause that blocks it standing
+in, never authorised ahead of it, so no fix is fitted to an unattributed
+cause. An attribution naming the allocator but no mechanism is confirmed by
+switching the candidate off with the allocator's own option before a remedy
+is fitted to it. **The library is not fitted to one allocator**: re-setting a
+bound for a term only the shipped build holds, or a change suiting mimalloc
+alone, puts the binary's allocator into the library (D13); a library change
+suiting both glibc and mimalloc is a remedy, and **ranks first**, keeping
+mimalloc on upstream's configuration and the cause gone for every embedder.
+**An allocator option, if it is the remedy, is the binary's default and the
+operator's environment still wins** (`mi_option_set_default`, as D13 refuses
+`mallopt` for overwriting `MALLOC_ARENA_MAX`). **D13 is reopened only where
+neither reaches the mechanism**, never on an option's time cost, which the
+`allocator` figure — D13's own evidence — already prices. **The remedy's
+sitting re-takes the whole figure set** at its commit, the shipped build being
+the timed one, and its gate passing is what shows the remedy
 ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-"30.7's sitting"). **An attribution naming the allocator but no mechanism is
-confirmed before the remedy is chosen**, by a sitting that runs the failing
-arrangement on the shipped and `introspect` builds with the candidate
-mechanism switched off by the allocator's own option, beside the `system`
-twins; a remedy is fitted only to a mechanism that sitting confirms, and a
-mechanism it rules out leaves the next candidate to be attributed the same
-way, not D13 reopened on a cause nobody has named. Candidates are not
-exclusive: one that removes the term in some reps and not others is confirmed
-for its share where the removal lies beyond the control's own spread, by a
-test registered before the reading, and the remainder attributed next; a
-sitting whose control could not pass that test even for a removal from every
-rep, or that killed a rep it reads, confirms and rules out nothing
-([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-"What confirms a share"). **The library is not
-fitted to one allocator**: re-setting the bound for a term only the shipped
-build holds, or a change suiting mimalloc alone, puts the binary's allocator
-into the library (D13); a library change suiting both glibc and mimalloc is
-a remedy, and **ranks first**, keeping mimalloc on upstream's configuration
-and the cause gone for every embedder. It suits both where it removes the
-term on mimalloc and leaves every gate reading and figure on `system` no
-worse; it need not help glibc.
-**A remedy is shown by two readings**, both in one sitting: the gate passes,
-and the term is gone — in every rep of every leg that held it, the gate's
-leg and any passing leg beside it, the resident the instrument leaves
-unattributed is back at the process's baseline, and each shipped leg's worst
-rep within a fraction of a unit of its `system` twin's. The gate alone can
-pass on a term that some reps miss. **An allocator option, if it is the
-remedy, is the binary's default and the operator's environment still wins**
-(`mi_option_set_default`, as D13 refuses `mallopt` for overwriting
-`MALLOC_ARENA_MAX`). **A confirmed option is the remedy where no such
-library change reaches the mechanism, not D13 reopened**: D13 moved to
-mimalloc for DataFusion's tested path, not for speed, so the option's time
-cost is what the `allocator` figure reports and is no part of P30's gate;
-D13's rewrite says the option departs from upstream's configuration, upstream
-setting none, and not from its allocator. **D13 is reopened only where
-neither reaches a confirmed mechanism**, never on an option's time cost,
-which the `allocator` figure — D13's own evidence — already prices. **The
-remedy's sitting re-takes the whole figure set** at its commit, the shipped
-build being the timed one, and the `allocator`
-figure's mimalloc leg prices the option
-([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-"The retention's remedy"). So the
-sweep draws no two-heap account of the reserve's terms; that model is P23's.
-The phase moves the allocator and shows it made nothing worse; it does not
-re-fit a constant.
+"The retention's remedy"). So the sweep draws no two-heap account of the
+reserve's terms; that model is P23's. The phase moves the allocator and shows
+the binary is killed nowhere the platform allocator is not; it does not re-fit
+a constant.
 
 **The reserve stays P23's (`KD34`).** `MEMORY_RESERVE` was chosen from glibc
 readings (`runs/19.16-reserve-constant-20260911-2210/readings.json`), and the
