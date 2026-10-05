@@ -33,7 +33,19 @@ shipped build's retention is mimalloc's `purge_delay`" in its `tables.md`.
   peak RSS less Rust's live high-water and glibc's. The constants' comments
   say why. A share is confirmed only where `fewer_held_p`, the one-sided
   Fisher exact test on the pooled counts with the option and without it, is
-  at or under `CONFIRMING_ALPHA`; gone in every rep confirms without it.
+  at or under `CONFIRMING_ALPHA`, and gone in every rep confirms only where
+  the control is dense enough for that same test to pass it.
+- **Three readings give no verdict** before any count is read: an option a
+  rep read back wrong, a kill on any leg the verdict reads, and a control
+  too sparse for the share test to pass a removal from every rep — the floor
+  is `fewer_held_p((0, read), control)`, so it moves with the reps read,
+  four of twelve at twelve a side. The killed legs include each shipped
+  leg's `system` twin, whose worst rep every shipped reading subtracts: a
+  killed twin rep would leave that worst understated and every shipped rep
+  reading more retention than it held. A sparse control gives no verdict
+  even where the option holds the term in every rep, which the spec's "rules
+  out nothing" says and the history entry's "'Ruled out' needs no test" does
+  not ([STATUS](../status/STATUS.md), "Decisions worth another look").
 - **The instrument reads the option back**: `pgdt/src/introspect.rs` reports
   `mimalloc_purge_delay` through `mi_option_get`, and the renderer gives no
   verdict where a confirming leg's rep read back anything but the value set.

@@ -5519,31 +5519,53 @@ def confirming_verdict(
     control: Sequence[int],
     option: Sequence[int],
     undelivered: Sequence[str],
+    killed: Sequence[str],
 ) -> str:
     """What one option's confirming legs say of the `candidate` it switches
     off, as a sentence (`RESERVE_CONFIRMING_OPTIONS`).
 
     `control` and `option` are `(reps holding the term, reps read)` over the
     legs without the option and with it, both builds; `undelivered` names
-    each option leg some rep of which read back another value.
+    each option leg some rep of which read back another value, and `killed`
+    each leg the verdict reads, a `system` twin included, that lost a rep to
+    the kernel.
 
     **Registered before the reading**, as the spec asks
-    (`roadmap-P30-one-binary.md`, "What the move owes before a release"):
-    gone in every rep confirms the mechanism; held in every rep rules it out,
-    the next candidate attributed; between the two, the option's share is
-    confirmed only where the removal lies beyond the control's own spread —
-    `fewer_held_p` at or under `CONFIRMING_ALPHA` — since the term is absent
-    from some reps of the control too and a rep without it is no removal on
-    its own. Anything short of the test is not confirmed, and the next
-    candidate is attributed. A sitting whose control held the term in no
-    rep, or whose option never reached mimalloc, confirms and rules out
-    nothing."""
+    (`roadmap-P30-one-binary.md`, "What the move owes before a release"). No
+    verdict where the option never reached mimalloc, where a rep it reads was
+    killed — the retention line cannot classify a killed rep, and dropping
+    one shrinks a count toward confirming — or where the control is too
+    sparse for the share test to pass even a removal from every rep: such a
+    sitting confirms and rules out nothing, an option holding the term in
+    every rep included, the sitting no longer reproducing the arrangement it
+    was to confirm. Otherwise gone in every rep confirms the mechanism; held
+    in every rep rules it out, the next candidate attributed; between the
+    two, the option's share is confirmed only where the removal lies beyond
+    the control's own spread — `fewer_held_p` at or under `CONFIRMING_ALPHA`
+    — since the term is absent from some reps of the control too and a rep
+    without it is no removal on its own. Anything short of the test is not
+    confirmed, and the next candidate is attributed."""
+    grilled = (
+        "The sitting no longer reproduces the arrangement it was to confirm, so it is "
+        "grilled before anything is sat again or attributed."
+    )
+    refused = []
     if undelivered:
-        return (
+        refused.append(
             "**No verdict: the option did not reach mimalloc** in "
             + "; ".join(undelivered)
             + ", so those legs ran the diagnostic arrangement again and read nothing of it."
         )
+    if killed:
+        refused.append(
+            "**No verdict: a rep it reads was OOM-killed** in "
+            + "; ".join(killed)
+            + ". The retention line cannot classify a killed rep, and dropping one shrinks "
+            "a count toward confirming. "
+            + grilled
+        )
+    if refused:
+        return " ".join(refused)
     held, read = option
     base_held, base_read = control
     counts = (
@@ -5552,10 +5574,13 @@ def confirming_verdict(
     )
     if not read or not base_read:
         return f"**No verdict**: {counts}, so one side has no reading."
-    if not base_held:
+    floor = fewer_held_p((0, read), control)
+    if floor > CONFIRMING_ALPHA:
         return (
-            f"**No verdict**: {counts}. The term did not show without the option, so its "
-            "absence with it confirms nothing and rules nothing out."
+            f"**No verdict: the control is too sparse to tell a removal.** {counts}: gone "
+            f"in every rep with the option would read p = {floor:.3g} against "
+            f"α = {CONFIRMING_ALPHA:g}, within the control's own spread, so this sitting "
+            "confirms and rules out nothing. " + grilled
         )
     if not held:
         return (
@@ -8839,10 +8864,15 @@ def run_reserve(session: Session) -> str:
         # Reps holding the term, and reps read, without the option and with it.
         control_count, option_count = [0, 0], [0, 0]
         undelivered: list[str] = []
+        # Every leg the verdict reads that lost a rep to the kernel, the
+        # `system` twin whose worst rep each shipped reading subtracts included.
+        killed_legs: list[str] = []
         with_token = [s for s in confirming if s.command == _flagless_shape(token)]
         for limit in RESERVE_DIAGNOSTIC_LIMITS:
             shipped = by_flagless[(RESERVE_DIAGNOSTIC_INPUT, limit)]
             twin = gate_twin(shipped)
+            if session.kills(figure, twin):
+                killed_legs.append(f"{twin.label} ({session.kills(figure, twin)} rep(s))")
             legs = [
                 (shipped, False),
                 *((s, True) for s in with_token if s.binary == "pgdt" and s.memory == limit),
@@ -8851,6 +8881,8 @@ def run_reserve(session: Session) -> str:
             ]
             for spec, with_option in legs:
                 killed = session.kills(figure, spec)
+                if killed:
+                    killed_legs.append(f"{spec.label} ({killed} rep(s))")
                 got = arrangement(spec)
                 values = (
                     instrument_retention(spec)
@@ -8890,7 +8922,9 @@ def run_reserve(session: Session) -> str:
                 )
         verdicts.append(
             f"`{variable}={value}`: "
-            + confirming_verdict(candidate, control_count, option_count, undelivered)
+            + confirming_verdict(
+                candidate, control_count, option_count, undelivered, killed_legs
+            )
         )
     confirming_text = (
         (

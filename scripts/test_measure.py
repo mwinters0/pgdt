@@ -8013,31 +8013,70 @@ class ConfirmingLegs(unittest.TestCase):
                 )
 
     def test_the_verdicts(self):
+        killed = ["a leg (1 rep(s))"]
         cases = [
-            # (control, option, undelivered) → the verdict's opening words
-            ((8, 12), (0, 12), [], "**Confirmed"),
-            ((8, 12), (12, 12), [], "**`purge_delay` is ruled out"),
-            ((8, 12), (3, 12), [], "**`purge_delay`'s share is confirmed"),
+            # (control, option, undelivered, killed) → the verdict's opening words
+            ((8, 12), (0, 12), [], [], "**Confirmed"),
+            ((8, 12), (12, 12), [], [], "**`purge_delay` is ruled out"),
+            ((8, 12), (3, 12), [], [], "**`purge_delay`'s share is confirmed"),
             # Fewer reps than the control, but within its spread: what an
             # option doing nothing reads in about two sittings of five.
-            ((8, 12), (4, 12), [], "**`purge_delay` is not confirmed for any share"),
-            ((8, 12), (7, 12), [], "**`purge_delay` is not confirmed for any share"),
+            ((8, 12), (4, 12), [], [], "**`purge_delay` is not confirmed for any share"),
+            ((8, 12), (7, 12), [], [], "**`purge_delay` is not confirmed for any share"),
             # As many reps without the term as the control has: no removal.
-            ((8, 12), (8, 12), [], "**`purge_delay` is not confirmed for any share"),
-            ((8, 12), (10, 12), [], "**`purge_delay` is not confirmed for any share"),
-            # Gone in every rep confirms, as registered, whatever the test.
-            ((2, 12), (0, 12), [], "**Confirmed"),
-            ((0, 12), (0, 12), [], "**No verdict**"),
-            ((8, 12), (0, 0), [], "**No verdict**"),
-            ((8, 12), (0, 12), ["a leg (1 rep(s))"], "**No verdict: the option did not reach"),
+            ((8, 12), (8, 12), [], [], "**`purge_delay` is not confirmed for any share"),
+            ((8, 12), (10, 12), [], [], "**`purge_delay` is not confirmed for any share"),
+            # The control's floor at twelve a side: gone in every rep passes
+            # the share test against four reps holding the term, and not
+            # against three, so a sitting reading three confirms and rules
+            # out nothing — a removal from every rep, a share, or none.
+            ((4, 12), (0, 12), [], [], "**Confirmed"),
+            ((3, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
+            ((2, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
+            ((2, 12), (1, 12), [], [], "**No verdict: the control is too sparse"),
+            ((3, 12), (12, 12), [], [], "**No verdict: the control is too sparse"),
+            ((0, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
+            ((8, 12), (0, 0), [], [], "**No verdict**"),
+            ((8, 12), (0, 12), ["a leg (1 rep(s))"], [], "**No verdict: the option did not reach"),
+            # A kill gives no verdict whatever the counts read, ruled out
+            # included: the counts are of the reps that survived.
+            ((8, 12), (0, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
+            ((8, 12), (12, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
+            ((8, 12), (3, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
         ]
-        for control, option, undelivered, opening in cases:
-            with self.subTest(control=control, option=option, undelivered=undelivered):
-                self.assertTrue(
-                    measure.confirming_verdict(
-                        "`purge_delay`", control, option, undelivered
-                    ).startswith(opening)
+        for control, option, undelivered, kills, opening in cases:
+            with self.subTest(control=control, option=option, undelivered=undelivered, kills=kills):
+                verdict = measure.confirming_verdict(
+                    "`purge_delay`", control, option, undelivered, kills
                 )
+                self.assertTrue(verdict.startswith(opening), verdict)
+                for leg in [*undelivered, *kills]:
+                    self.assertIn(leg, verdict)
+
+    def test_both_refusals_are_said(self):
+        # Each names its own disposition — a lost option is sat again once
+        # delivered, a kill is grilled — so neither hides the other.
+        verdict = measure.confirming_verdict(
+            "`purge_delay`", (8, 12), (0, 12), ["option leg (1 rep(s))"], ["killed leg (2 rep(s))"]
+        )
+        self.assertIn("did not reach mimalloc** in option leg (1 rep(s))", verdict)
+        self.assertIn("OOM-killed** in killed leg (2 rep(s))", verdict)
+        self.assertNotIn("Confirmed", verdict)
+
+    def test_the_control_s_floor_is_the_share_test_at_a_total_removal(self):
+        # One test decides it, not a second threshold: the floor moves with
+        # the option's reps read, as `fewer_held_p` does.
+        for read, base_read in [(12, 12), (6, 12), (12, 6), (3, 3)]:
+            for base_held in range(base_read + 1):
+                with self.subTest(read=read, base_read=base_read, base_held=base_held):
+                    sparse = (
+                        measure.fewer_held_p((0, read), (base_held, base_read))
+                        > measure.CONFIRMING_ALPHA
+                    )
+                    verdict = measure.confirming_verdict(
+                        "`purge_delay`", (base_held, base_read), (0, read), [], []
+                    )
+                    self.assertEqual(verdict.startswith("**No verdict"), sparse, verdict)
 
     def test_the_share_test_s_line(self):
         # 30.7's control rate at twelve reps a side: a share is confirmed at
@@ -8165,6 +8204,59 @@ class ConfirmingLegs(unittest.TestCase):
         # out would, had the term stayed; the read-back is what tells them apart.
         body = self._render(self._raw(read_back="1000"))
         self.assertIn("**No verdict: the option did not reach mimalloc**", body)
+        self.assertNotIn("**Confirmed", body)
+
+    def _kill_one_rep(self, raw, spec):
+        """`spec`'s last rep reaped by the kernel, as `time_run` files it: a
+        kill count, no resident set and no report for that rep."""
+        key = spec.key(self.FIGURE)
+        raw["killed"][key] = 1
+        raw["rss"][key] = raw["rss"][key][:-1]
+        if key in raw["instrument"]:
+            raw["instrument"][key] = raw["instrument"][key][:-1]
+        return raw
+
+    def test_a_kill_on_a_leg_the_verdict_reads_gives_no_verdict(self):
+        # The surviving reps alone would still read gone in every rep with
+        # the option, so a renderer dropping the killed rep would confirm.
+        limit = measure.RESERVE_DIAGNOSTIC_LIMITS[0]
+        shipped = next(
+            s
+            for s in measure._reserve_flagless_specs()
+            if (s.input, s.memory) == (measure.RESERVE_DIAGNOSTIC_INPUT, limit)
+        )
+        option_leg = next(
+            s
+            for s in measure._reserve_confirming_specs()
+            if s.memory == limit and s.instrument
+        )
+        for spec in (option_leg, shipped, measure.gate_twin(shipped)):
+            with self.subTest(leg=spec.label):
+                body = self._render(self._kill_one_rep(self._raw(), spec))
+                self.assertIn(
+                    f"**No verdict: a rep it reads was OOM-killed** in {spec.label} (1 rep(s))",
+                    body,
+                )
+                self.assertNotIn("**Confirmed", body)
+
+    def test_a_control_too_sparse_to_tell_a_removal_gives_no_verdict(self):
+        # Three of the control's twelve reps holding the term, one short of the
+        # floor: gone in every rep with the option is then within its spread.
+        raw = self._raw()
+        controls = [
+            s
+            for s in [*measure._reserve_flagless_specs(), *measure._reserve_diagnostic_specs()]
+            if s.input == measure.RESERVE_DIAGNOSTIC_INPUT
+            and s.memory in measure.RESERVE_DIAGNOSTIC_LIMITS
+        ]
+        self.assertEqual(len(controls), 4)
+        for i, spec in enumerate(controls):
+            key = spec.key(self.FIGURE)
+            low = min(raw["rss"][key])
+            raw["rss"][key] = [low, low, max(raw["rss"][key]) if i < 3 else low]
+        body = self._render(raw)
+        self.assertIn("**No verdict: the control is too sparse to tell a removal.**", body)
+        self.assertIn("0 of 12 rep(s) hold the term with the option, 3 of 12 without it", body)
         self.assertNotIn("**Confirmed", body)
 
 
