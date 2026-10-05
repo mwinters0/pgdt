@@ -86,7 +86,7 @@ Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.m
 - [x] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines — [notes](../design/roadmap-P30.3-library-split-notes.md)
 - [x] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck — [notes](../design/roadmap-P30.4-pgdt-sql-notes.md)
 - [x] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following — [notes](../design/roadmap-P30.5-one-binary-notes.md)
-- [ ] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not
+- [ ] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The `system` legs are built (`measure.GATE_LEG`); only the readings remain, the sweep from a commit carrying them — [notes](../design/roadmap-P30.6-retake-notes.md)
 
 ## Not started
 
@@ -117,3 +117,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **30.6: a kill outside the two resident figures is read on `system` once,
+  when it happens, not swept twice.** The spec has each gate reading read
+  "twice … in the same sitting"; `reserve`'s flagless legs and
+  `parallel-peak-rss` sweep a `system` twin of every leg, but every other
+  figure — the `parallel-scan-throughput` contract included, in the same
+  `budget + PARALLEL_HEADROOM` container and reading no resident set — gets
+  its twin only on a kill, run once before the error is raised
+  (`measure.Session._gate_twin_of_kill`). Made so because elsewhere the
+  reading is whether a leg was killed, a pass needs no second leg to say so,
+  and sweeping every figure twice doubles the sitting for nothing a pass does
+  not already state. A pair where only `system` fails counts as a pass.
+  Reconsidering means sweeping `parallel-scan-throughput` (or every figure)
+  with twins, as `gate_twin` already allows.

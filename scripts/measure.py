@@ -4260,6 +4260,11 @@ class Session:
         #: tolerates it. Read by `sweep`, which files the rep as censored
         #: instead of as a reading.
         self._last_killed = False
+        #: The run just taken's OOM-kill count, as `parse_oom_kills` read it:
+        #: `None` where `memory.events` was unreadable. Read by
+        #: `_gate_twin_of_kill`, which must say whether its twin was killed
+        #: or failed some other way.
+        self._last_oom: int | None = 0
         self.sampler = Sampler()
         #: Every reading's telemetry, in the order taken, so a sweep can be
         #: audited after the fact even where the gate let a reading through.
@@ -4433,6 +4438,46 @@ class Session:
             self.out_root
             / INSTRUMENT_DIR
             / f"{self._instrument_reports:04d}-{slug}.txt"
+        )
+
+    def build_before_sweep(self, specs: Sequence[RunSpec]) -> None:
+        """Build every binary `specs` run that this process builds, before the
+        first reading rather than lazily at the rep that first wants one: a
+        `cargo` build across this machine's cores moves the very number the
+        next rep takes (`run_allocator`)."""
+        for which in dict.fromkeys(s.binary for s in specs):
+            if which not in ("none", *SHIPPED_BINARIES):
+                self.binary_path(which)
+
+    def _gate_twin_of_kill(self, spec: RunSpec) -> str:
+        """The gate's reading of a kill outside `KILL_TOLERANT`: the same leg
+        run once now on `GATE_BINARY`, and what it did, as a sentence for the
+        error the kill raises.
+
+        **Once, and only on a kill.** Everywhere outside the two figures whose
+        resident is the gate, the gate's reading is whether the leg was killed,
+        and a leg that was not needs no second reading to say so; reading every
+        figure twice would double the sweep to learn nothing a pass did not
+        already say. One run because the sitting is ending: the twin classifies
+        the failure, which is all a kill there is evidence of."""
+        twin = gate_twin(spec)
+        head = f"\n\nIts gate twin, `{twin.label}`, run once now on the `{GATE_LEG}` build,"
+        # Cleared first, so a twin that fails before its container starts —
+        # its build, say — is not read as killed off the shipped leg's count.
+        self._last_oom = 0
+        try:
+            self.time_run(twin)
+        except Exception as err:  # the kill being raised is the error that matters
+            if self._last_oom:
+                return (
+                    f"{head} was OOM-killed too: a kill on both legs is not the allocator's, "
+                    "and is filed against the reserve (`KD34`) or as a deficiency of its own."
+                )
+            return f"{head} failed another way, so the kill is not classified: {str(err).splitlines()[0] if str(err) else type(err).__name__}"
+        rss = f" at {fmt_mib(self._last_rss)}" if self._last_rss is not None else ""
+        return (
+            f"{head} survived{rss}: a kill on the shipped build alone is the allocator's, "
+            "which reopens D13 (`docs/design/decisions.md`)."
         )
 
     def time_run(self, spec: RunSpec) -> float:
@@ -4633,6 +4678,7 @@ class Session:
         proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         mono_end, after = time.monotonic(), Counters.read()
         oom = parse_oom_kills(proc.stderr)
+        self._last_oom = oom
         if proc.returncode != 0:
             # What killed it, said in those words: an exit status of 137 is a
             # `SIGKILL`, and only the oracle says whether the reaper sent it.
@@ -4689,8 +4735,11 @@ class Session:
                     }
                 )
                 return 0.0
+            # A kill is a gate reading wherever it lands, so the shipped
+            # build's is read on `GATE_BINARY` before the sitting dies on it.
+            twin = self._gate_twin_of_kill(spec) if oom and spec.binary in SHIPPED_BINARIES else ""
             raise RuntimeError(
-                f"{spec.label} exited {proc.returncode}{why}"
+                f"{spec.label} exited {proc.returncode}{why}{twin}"
                 f"\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
             )
         seconds = parse_bash_time(proc.stderr)
@@ -5216,6 +5265,139 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
 #: rather than as `glibc`, because the crate cannot know which libc it was
 #: linked against and the measurement records the image.
 ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
+
+#: The build every **gate** reading is read on beside the shipped one.
+#:
+#: The gate is the pass/fail readings the harness takes against a memory
+#: limit: `reserve`'s flagless legs, where a kill is a censored reading
+#: (`KILL_TOLERANT`); `parallel-peak-rss`'s resident against
+#: `PARALLEL_MEMORY`, the library's own `budget + PARALLEL_HEADROOM`; and a
+#: kill anywhere else, which raises (`Session.time_run`). Each is read on this
+#: build too, at the same commit in the same sitting, so the two legs differ by
+#: the allocator alone, as the `allocator` figure's legs do for time — and the
+#: build *is* that figure's `system` leg (`ensure_allocator_binary`), never a
+#: second build of it.
+#:
+#: **What the pair decides is whose failure it is.** A reading failing on both
+#: legs is not the allocator's and is filed, against the reserve (`KD34`) or as
+#: a deficiency of its own; one failing on the shipped build alone is the
+#: allocator's, which is what reopens D13. A reading is never judged against an
+#: earlier sitting's platform-allocator figure instead: that sitting differs by
+#: every commit since, so a failure judged against it could not be told from
+#: theirs (`.claude/skills/evidence/SKILL.md`, rule 7).
+GATE_LEG = "system"
+
+#: `GATE_LEG` as a `RunSpec.binary` (`Session.binary_path`).
+GATE_BINARY = f"alloc:{GATE_LEG}"
+
+#: The `RunSpec.binary` values that run the shipped build: `pgdt`, and
+#: `pgdt sql` under the provider legs' name (`SQL_SHELL`). Only these have a
+#: gate twin — an instrument build or another allocator leg is not what ships.
+SHIPPED_BINARIES: tuple[str, ...] = ("pgdt", "dfcli")
+
+
+def gate_twin(spec: RunSpec) -> RunSpec:
+    """`spec` on `GATE_BINARY`: the same command, input, regime and limit.
+
+    It differs by `RunSpec.binary` alone, which `key` carries, so neither leg
+    can be read as a rep of the other; and since the command is the same, a
+    shape `KILL_TOLERANT` licenses is licensed on both legs alike."""
+    if spec.binary not in SHIPPED_BINARIES:
+        raise ValueError(
+            f"{spec.label}: only a leg of the shipped build has a gate twin, not {spec.binary!r}"
+        )
+    return dataclasses.replace(spec, binary=GATE_BINARY, label=f"{spec.label}, {GATE_LEG}")
+
+
+def _gate_cell(
+    session: "Session", figure: str, spec: RunSpec, limit: int
+) -> tuple[str, bool | None]:
+    """One leg's gate reading, and whether it failed.
+
+    The cell is the worst surviving rep and what it left of `limit` — the
+    number a cgroup's killer reads — or the kill. `None` is a leg this sitting
+    did not read, which is neither a pass nor a failure: a sitting taken
+    before the gate had twins still renders, and says so."""
+    if not session.has(figure, spec):
+        return "not read", None
+    readings = session.rss.get(spec.key(figure), [])
+    killed = session.kills(figure, spec)
+    worst = (
+        f"{fmt_mib(max(readings))} · head {(limit - max(readings) * 1024) / limit * 100:.1f}%"
+        if readings
+        else ""
+    )
+    if killed:
+        return f"**OOM-killed**, {killed} rep(s)" + (f" · survivors' worst {worst}" if worst else ""), True
+    if not readings:
+        return "no reading", None
+    return worst, False
+
+
+def gate_verdict(shipped: bool | None, twin: bool | None) -> tuple[str, bool]:
+    """What one pair says, and whether it blocks.
+
+    Only a failure on the shipped build alone blocks (`GATE_LEG`). A failure
+    on the `GATE_LEG` build alone does not: the shipped build held, and that
+    is the claim under test."""
+    if shipped is None or twin is None:
+        return "not judged", False
+    if shipped and twin:
+        return "fails on both — filed, does not block", False
+    if shipped:
+        return "**fails on the shipped build alone — blocks**", True
+    if twin:
+        return f"passes; the `{GATE_LEG}` leg failed", False
+    return "passes", False
+
+
+def gate_section(
+    session: "Session", figure: str, legs: Sequence[tuple[str, RunSpec, int]]
+) -> str:
+    """The gate's table for one figure: each shipped leg beside its
+    `gate_twin`, against the limit it ran under, and the verdict per pair.
+
+    `legs` is `(row label, shipped spec, limit in bytes)`. A sitting holding
+    no twin at all — every one taken before the gate had them — renders one
+    sentence instead of a column of "not read"."""
+    if not any(session.has(figure, gate_twin(spec)) for _, spec, _ in legs):
+        return (
+            f"**The gate is not judged here**: this sitting read no `{GATE_LEG}` leg beside "
+            "the shipped one, so a failure in it could not be told the allocator's from "
+            "the code's.\n"
+        )
+    rows, blocking, both = [], [], []
+    for label, spec, limit in legs:
+        shipped, shipped_failed = _gate_cell(session, figure, spec, limit)
+        twin, twin_failed = _gate_cell(session, figure, gate_twin(spec), limit)
+        verdict, blocks = gate_verdict(shipped_failed, twin_failed)
+        if blocks:
+            blocking.append(label)
+        if shipped_failed and twin_failed:
+            both.append(label)
+        rows.append([label, shipped, twin, verdict])
+    table = md_table(["Leg", "Shipped build", f"`{GATE_LEG}`", "Gate"], rows)
+    if blocking:
+        summary = (
+            f"**The gate blocks**: {len(blocking)} leg(s) failed on the shipped build alone — "
+            + ", ".join(blocking)
+            + ". That is the allocator's, which reopens "
+            '[`decisions.md`](decisions.md), "D13", and is attributed on the instrument '
+            "build in a sitting of its own, never off this table."
+        )
+    else:
+        summary = "**The gate passes**: no leg failed on the shipped build alone."
+    if both:
+        summary += (
+            f" {len(both)} failed on both legs — "
+            + ", ".join(both)
+            + " — which is not the allocator's and is filed rather than blocking."
+        )
+    return (
+        f"**The gate.** Each leg is read again on the `{GATE_LEG}` build in the same sitting, "
+        "the two differing by the allocator alone, and each cell is the worst surviving rep "
+        "and what it left of the limit, or the kill.\n\n" + table + "\n\n" + summary + "\n"
+    )
 
 #: What `pgdt --version` appends. The harness *asks the binary* rather than
 #: trusting the flags it passed: a leg mislabelled by one word gives a
@@ -7172,7 +7354,14 @@ def run_parallel_peak_rss(session: Session) -> str:
     """
     figure = "parallel-peak-rss"
     specs = _parallel_rss_specs()
-    session.sweep(figure, specs, session.cfg.reps(3))
+    # Every leg's gate twin in the same interleave, beside its leg so the pair
+    # is read under one machine state: this figure's resident against
+    # `PARALLEL_MEMORY` is a gate reading (`GATE_LEG`).
+    gate = [gate_twin(spec) for spec in specs]
+    paired = [leg for pair in zip(specs, gate) for leg in pair]
+    to_sweep = [s for s in paired if not session.has(figure, s)]
+    session.build_before_sweep(to_sweep)
+    session.sweep(figure, to_sweep, session.cfg.reps(3))
 
     by_leg: dict[str, dict[int, list[float]]] = {}
     for spec in specs:
@@ -7213,9 +7402,15 @@ def run_parallel_peak_rss(session: Session) -> str:
         + "\n".join(
             f"- {spec.label}: "
             + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
-            for spec in specs
+            for spec in (*specs, *(g for g in gate if session.has(figure, g)))
         )
-        + "\n\n**Where a leg goes flat, it is the block pool's slot ceiling that stopped "
+        + "\n\n"
+        + gate_section(
+            session,
+            figure,
+            [(spec.label, spec, PARALLEL_BUDGET + PARALLEL_HEADROOM) for spec in specs],
+        )
+        + "\n**Where a leg goes flat, it is the block pool's slot ceiling that stopped "
         "growing.** The block pool's slots are `clamp((budget - held) / unit, 1, "
         "max(POOL_DEPTH, jobs))`, where `held` is the chunk pool's own retention — "
         "`clamp(budget / chunk, 1, POOL_DEPTH) * chunk`, which is `POOL_DEPTH * chunk` "
@@ -7321,6 +7516,19 @@ def _reserve_flagless_specs() -> list[RunSpec]:
         for name, label, _ in RESERVE_FLAGLESS_INPUTS
         for token, _ in RESERVE_LIMITS
     ]
+
+
+def _reserve_gate_specs() -> list[RunSpec]:
+    """Every flagless leg's `gate_twin`: the gate's reading of the shipped
+    default's own arrangement on the platform allocator, at every limit and
+    both block sizes.
+
+    **The whole flagless axis, and nothing else of this figure**: a kill is a
+    reading on these legs alone (`KILL_TOLERANT`), and a kill on any other is
+    already read on its twin when it raises (`Session.time_run`). The twins are
+    the gate's and never this figure's fit, check or account, which are the
+    shipped build's."""
+    return [gate_twin(spec) for spec in _reserve_flagless_specs()]
 
 
 def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
@@ -7688,6 +7896,7 @@ def run_reserve(session: Session) -> str:
     figure = "reserve"
     stated = _reserve_specs()
     flagless = _reserve_flagless_specs()
+    gate = _reserve_gate_specs()
     mechanism = _reserve_mechanism_specs()
     instrument = _reserve_instrument_specs()
     steps = _reserve_step_specs()
@@ -7704,16 +7913,18 @@ def run_reserve(session: Session) -> str:
     # sitting already holds would spend a reading to overwrite one.
     note = share_readings(session, figure)
     specs = [
-        *flagless,
+        # Each flagless leg beside its gate twin, so the pair is read under
+        # one machine state.
+        *(leg for pair in zip(flagless, gate) for leg in pair),
         *instrument,
         *(spec for _, spec in mechanism),
         *steps,
         *stated,
         _RESERVE_BASELINE,
     ]
-    session.sweep(
-        figure, [s for s in specs if not session.has(figure, s)], session.cfg.reps(3)
-    )
+    to_sweep = [s for s in specs if not session.has(figure, s)]
+    session.build_before_sweep(to_sweep)
+    session.sweep(figure, to_sweep, session.cfg.reps(3))
 
     per_rep: list[str] = []
 
@@ -7808,6 +8019,15 @@ def run_reserve(session: Session) -> str:
     flagless_table = md_table(
         ["Allocation", *(label for _, label, _ in RESERVE_FLAGLESS_INPUTS)], flagless_rows
     )
+    gate_legs = [
+        (f"{label}, `-m {token}`", by_flagless[(name, token)], limit)
+        for name, label, _ in RESERVE_FLAGLESS_INPUTS
+        for token, limit in RESERVE_LIMITS
+    ]
+    gate_text = gate_section(session, figure, gate_legs)
+    for twin in gate:
+        if session.has(figure, twin):
+            rss(twin)
 
     constraints: list[str] = []
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
@@ -8532,7 +8752,9 @@ def run_reserve(session: Session) -> str:
         f"{RESERVE_FLAGLESS_INPUTS[-1][1]}. A *streaming* cell is a reading of the fallback "
         "decoder and belongs to no fit and no charge below.\n\n"
         + flagless_table
-        + "\n\n**Resident against the reader count**, least squares over the legs that took the "
+        + "\n\n"
+        + gate_text
+        + "\n**Resident against the reader count**, least squares over the legs that took the "
         "block path, the band being the same line over the per-rep extremes — a check on the "
         "charge's shape, not what either constant is read off. **Both terms are "
         "what a leg held *outside* the block pool's retention list**: that term is "
@@ -9364,6 +9586,9 @@ FIGURES: list[Figure] = [
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
+            # The gate's twins are the `system` build, which these features
+            # select (`GATE_LEG`).
+            "pgdt/Cargo.toml",
         ),
         # **The query path's sub-stream sizing does not reach this figure.** It
         # is in `stream::plan_partitions`, and every leg here is
@@ -9474,6 +9699,9 @@ FIGURES: list[Figure] = [
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
+            # The gate's twins are the `system` build, which these features
+            # select (`GATE_LEG`).
+            "pgdt/Cargo.toml",
         ),
         # Every family's inputs, deduplicated: the stated axis's two, the
         # flagless axis's two block sizes, and the baseline's — which is one of
@@ -11264,6 +11492,9 @@ class ReplaySession(Session):
 
     def sweep(self, figure: str, specs: Sequence[RunSpec], reps: int) -> None:
         """A no-op: every reading this sitting holds is already loaded."""
+
+    def build_before_sweep(self, specs: Sequence[RunSpec]) -> None:
+        """A no-op: nothing is run, so nothing is built."""
 
     def ran_in(self, figure: str, where: str) -> None:
         """A no-op: which glibc each figure ran under is the sitting's own

@@ -8306,6 +8306,186 @@ class TimeRunHandlesAKill(unittest.TestCase):
         self.assertAlmostEqual(seconds, 0.012)
         self.assertEqual(session.records[0]["oom_kill"], 0)
 
+    def _kill_then(self, spec, twin_stderr, twin_returncode):
+        """The shipped leg killed, then its gate twin's run as given; the
+        error raised, and the binaries each run asked for."""
+        session = self._session()
+        asked = []
+        session.binary_path = lambda which: asked.append(which) or Path("/dev/null")
+        procs = iter(
+            [
+                subprocess.CompletedProcess([], 137, stdout="", stderr=self.TIMED + self.EVENTS),
+                subprocess.CompletedProcess(
+                    [], twin_returncode, stdout="", stderr=twin_stderr
+                ),
+            ]
+        )
+        with unittest.mock.patch.object(measure.subprocess, "run", lambda *a, **k: next(procs)):
+            with self.assertRaises(RuntimeError) as caught:
+                session.time_run(spec)
+        return str(caught.exception), asked
+
+    def test_a_kill_outside_the_licence_is_read_on_the_gate_build_before_it_raises(self):
+        # A kill is a gate reading wherever it lands: the error has to say
+        # whether the platform allocator's build of the same leg survived.
+        text, asked = self._kill_then(
+            measure._parallel_rss_specs()[0],
+            self.TIMED + self.EVENTS.replace("oom_kill 1", "oom_kill 0"),
+            0,
+        )
+        self.assertEqual(asked, ["pgdt", measure.GATE_BINARY])
+        self.assertIn("survived at 66.63 MiB", text)
+        self.assertIn("the shipped build alone", text)
+        self.assertIn("D13", text)
+
+    def test_a_kill_on_both_legs_says_it_is_not_the_allocators(self):
+        text, _ = self._kill_then(measure._parallel_rss_specs()[0], self.TIMED + self.EVENTS, 137)
+        self.assertIn("was OOM-killed too", text)
+        self.assertIn("KD34", text)
+
+    def test_a_twin_failing_another_way_classifies_nothing(self):
+        text, _ = self._kill_then(
+            measure._parallel_rss_specs()[0],
+            self.TIMED + self.EVENTS.replace("oom_kill 1", "oom_kill 0"),
+            1,
+        )
+        self.assertIn("failed another way", text)
+        self.assertNotIn("survived", text)
+
+    def test_a_kill_of_a_build_that_does_not_ship_has_no_twin(self):
+        # The gate is the shipped build's: an instrument or another allocator
+        # leg killed raises as before, one run and no second.
+        spec = dataclasses.replace(measure._parallel_rss_specs()[0], binary="alloc:jemalloc")
+        session = self._session()
+        asked = []
+        session.binary_path = lambda which: asked.append(which) or Path("/dev/null")
+        proc = subprocess.CompletedProcess([], 137, stdout="", stderr=self.TIMED + self.EVENTS)
+        with unittest.mock.patch.object(measure.subprocess, "run", lambda *a, **k: proc):
+            with self.assertRaises(RuntimeError) as caught:
+                session.time_run(spec)
+        self.assertEqual(asked, ["alloc:jemalloc"])
+        self.assertNotIn("gate twin", str(caught.exception))
+
+
+class GateLegs(unittest.TestCase):
+    """The gate's `system` legs: every reading taken against a memory limit is
+    read on the platform allocator's build too, in the same sitting, so a
+    failure can be told the allocator's from the code's."""
+
+    def test_the_gate_build_is_an_allocator_leg_and_not_the_shipped_one(self):
+        self.assertIn(measure.GATE_LEG, measure.ALLOCATOR_LEGS)
+        self.assertNotEqual(measure.GATE_LEG, measure.ALLOCATOR_LEGS[0])
+        self.assertEqual(measure.GATE_BINARY, f"alloc:{measure.GATE_LEG}")
+
+    def test_the_gate_binary_is_the_allocator_figures_build(self):
+        cfg = measure.Config()
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        with unittest.mock.patch.object(
+            measure, "ensure_allocator_binary", lambda _c, leg, _l: Path(f"/{leg}")
+        ):
+            self.assertEqual(session.binary_path(measure.GATE_BINARY), Path(f"/{measure.GATE_LEG}"))
+
+    def test_a_twin_differs_from_its_leg_by_the_binary_alone(self):
+        for spec in (*measure._reserve_flagless_specs(), *measure._parallel_rss_specs()):
+            with self.subTest(leg=spec.label):
+                twin = measure.gate_twin(spec)
+                self.assertEqual(twin.binary, measure.GATE_BINARY)
+                self.assertEqual(
+                    dataclasses.replace(twin, binary=spec.binary, label=spec.label), spec
+                )
+                self.assertNotEqual(twin.key("f"), spec.key("f"))
+
+    def test_only_the_shipped_build_has_a_twin(self):
+        spec = measure._reserve_instrument_specs()[0]
+        with self.assertRaises(ValueError):
+            measure.gate_twin(spec)
+
+    def test_the_reserve_twins_are_the_flagless_axis_and_keep_its_licence(self):
+        twins = measure._reserve_gate_specs()
+        self.assertEqual(
+            [dataclasses.replace(t, binary="pgdt", label="") for t in twins],
+            [dataclasses.replace(s, label="") for s in measure._reserve_flagless_specs()],
+        )
+        for twin in twins:
+            with self.subTest(leg=twin.label):
+                self.assertTrue(measure.kill_tolerant(twin.command))
+
+    def test_both_gate_figures_declare_the_features_that_select_the_build(self):
+        for fid in ("reserve", "parallel-peak-rss"):
+            with self.subTest(figure=fid):
+                self.assertIn("pgdt/Cargo.toml", measure.EVERY_BY_ID[fid].depends)
+
+    def test_the_verdicts(self):
+        self.assertEqual(measure.gate_verdict(True, False)[1], True)
+        for shipped, twin in ((True, True), (False, True), (False, False), (None, False), (True, None)):
+            with self.subTest(shipped=shipped, twin=twin):
+                self.assertFalse(measure.gate_verdict(shipped, twin)[1])
+        self.assertIn("both", measure.gate_verdict(True, True)[0])
+        self.assertIn("not judged", measure.gate_verdict(None, True)[0])
+
+    def _section(self, killed: dict[str, int], twins: bool = True):
+        figure = "reserve"
+        specs = measure._reserve_flagless_specs()[:2]
+        every = [*specs, *(measure.gate_twin(s) for s in specs)] if twins else specs
+        raw = {
+            "readings": {s.key(figure): [1.0] * 3 for s in every},
+            "rss": {s.key(figure): [400_000.0] * (3 - killed.get(s.key(figure), 0)) for s in every},
+            "killed": {k: n for k, n in killed.items() if n},
+            "input_sizes": {},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            legs = [(s.label, s, 1 << 30) for s in specs]
+            return measure.gate_section(session, figure, legs), specs
+
+    def test_a_kill_on_the_shipped_build_alone_blocks(self):
+        specs = measure._reserve_flagless_specs()[:2]
+        body, _ = self._section({specs[0].key("reserve"): 3})
+        self.assertIn("**The gate blocks**: 1 leg(s)", body)
+        self.assertIn("fails on the shipped build alone", body)
+        self.assertIn("D13", body)
+
+    def test_a_kill_on_both_legs_is_filed_and_does_not_block(self):
+        specs = measure._reserve_flagless_specs()[:2]
+        twin = measure.gate_twin(specs[0])
+        body, _ = self._section({specs[0].key("reserve"): 2, twin.key("reserve"): 3})
+        self.assertIn("**The gate passes**", body)
+        self.assertIn("1 failed on both legs", body)
+        # A partly-killed leg prints its survivors' worst beside the kill.
+        self.assertIn("survivors' worst 390.62 MiB · head 61.9%", body)
+
+    def test_every_cell_is_the_worst_rep_and_its_headroom(self):
+        body, _ = self._section({})
+        self.assertIn("390.62 MiB · head 61.9%", body)
+        self.assertIn("**The gate passes**", body)
+
+    def test_a_sitting_with_no_twin_is_not_judged_rather_than_passed(self):
+        body, _ = self._section({}, twins=False)
+        self.assertIn("not judged", body)
+        self.assertNotIn("passes", body)
+
+    def test_replay_builds_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(), {"readings": {}}, Path(tmp), lambda _m: None
+            )
+            with unittest.mock.patch.object(
+                measure, "ensure_allocator_binary", side_effect=AssertionError("built")
+            ):
+                session.build_before_sweep(measure._reserve_gate_specs())
+
+    def test_a_live_session_builds_the_gate_leg_before_the_sweep(self):
+        cfg = measure.Config()
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        built = []
+        with unittest.mock.patch.object(
+            measure, "ensure_allocator_binary", lambda _c, leg, _l: built.append(leg) or Path("/x")
+        ):
+            session.build_before_sweep(
+                [*measure._reserve_flagless_specs(), *measure._reserve_gate_specs()]
+            )
+        self.assertEqual(built, [measure.GATE_LEG])
+
 
 class Arms(unittest.TestCase):
     """`--pin-cpus` and `--stage-binaries` (`M178`): an arrangement a leg is

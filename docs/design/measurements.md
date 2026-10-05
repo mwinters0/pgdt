@@ -579,6 +579,18 @@ the apparatus failing — `parallel-peak-rss` once measured 3067 MiB inside a
 3072 MiB container — and a kill outside the tolerant families ends the figure
 and says in those words that the kernel did it.
 
+**Every reading taken against a memory limit is read on the `system` build
+too, in the same sitting** (`measure.GATE_LEG`): `reserve`'s flagless legs and
+`parallel-peak-rss`'s legs each sweep a twin differing by the allocator alone,
+beside it in the interleave, and each figure prints the pair and a verdict per
+leg; a kill anywhere else runs its leg once on that build before the error is
+raised, and the error says what the twin did. A failure on both legs is not the
+allocator's and is filed; one on the shipped build alone reopens
+[`decisions.md`](decisions.md), "D13". The twin is the `allocator` figure's
+`system` leg, built before the first reading, and a reading is never judged
+against an earlier sitting's platform-allocator figure, which differs by every
+commit since (`.claude/skills/evidence/SKILL.md`, rule 7).
+
 *Rejected:* fail-fast, which throws away every leg a long sitting had already
 paid for and contradicts the tolerant family's own registration, which calls a
 kill there a reading.
