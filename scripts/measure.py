@@ -3496,8 +3496,35 @@ INSTRUMENT_TOLERANCE_PCT = 10
 #: decomposition can be read against the black-box fit leg for leg rather than
 #: at a single cell. One block size, for `RESERVE_MECHANISM_LIMIT`'s reason:
 #: whether a term scales with the unit is the black-box axis's question, and it
-#: already crosses both.
+#: already crosses both. The other block size's instrument legs are
+#: `RESERVE_DIAGNOSTIC_LIMITS`, a family of their own that enters no fit.
 RESERVE_INSTRUMENT_LIMITS: tuple[str, ...] = tuple(token for token, _ in RESERVE_LIMITS)
+
+#: The **diagnostic** instrument legs: the flagless arrangement at the block
+#: size where the shipped build holds more above its charge than the `system`
+#: build does, read on the introspection build so the process says which heap
+#: holds it. The limits are the two flagless cells at that block size whose
+#: unnamed remainder left `MEMORY_UNPOOLED_BOUND` on the shipped build alone —
+#: `1536m`, which also fails the gate's margin, and `2g` beside it — so the
+#: legs are the failing arrangement's and nothing wider.
+#:
+#: **A second family, not more limits on the first.** The counter's own line
+#: (`_fit_or_secant` over `RESERVE_INSTRUMENT_LIMITS`' legs) is a fit at
+#: `RESERVE_MECHANISM_UNIT`, and its pool subtraction and its comparison with
+#: `reader_bytes` are per unit; legs at another block size in that window would
+#: put two units' readers on one line. These are rendered beside the charge
+#: their own run was billed and checked against the shipped leg of the same
+#: input and limit, and enter no fit.
+#:
+#: **What would falsify each candidate**, read off one row against `Billed`:
+#: Rust's live high-water at or under the bill with mimalloc's committed
+#: high-water well above it names mimalloc's retention of freed blocks; a live
+#: high-water itself above the bill names the program, not the allocator; and a
+#: glibc high-water carrying the excess names C. A row where none of the three
+#: exceeds what the bill and the decoder dictionaries leave is no attribution,
+#: and says so by its numbers.
+RESERVE_DIAGNOSTIC_INPUT = "control_xz128"
+RESERVE_DIAGNOSTIC_LIMITS: tuple[str, ...] = ("1536m", "2g")
 
 #: The block size of the input the mechanism legs run over, read out of
 #: `RESERVE_FLAGLESS_INPUTS` rather than written again, so the unit the step's
@@ -7665,6 +7692,31 @@ def _reserve_instrument_specs() -> list[RunSpec]:
     ]
 
 
+def _reserve_diagnostic_specs() -> list[RunSpec]:
+    """The flagless arrangement on the introspection build at
+    `RESERVE_DIAGNOSTIC_INPUT`'s block size, one leg a limit of
+    `RESERVE_DIAGNOSTIC_LIMITS`.
+
+    The same command shape as the black-box flagless legs, differing by
+    `RunSpec.binary` alone, as `_reserve_instrument_specs`' do; the label names
+    the block size, which the 24 MiB family's leaves implicit."""
+    label = next(
+        label for name, label, _ in RESERVE_FLAGLESS_INPUTS if name == RESERVE_DIAGNOSTIC_INPUT
+    )
+    return [
+        RunSpec(
+            "introspect",
+            RESERVE_DIAGNOSTIC_INPUT,
+            _flagless_shape(),
+            "warm-parallel",
+            f"instrument, {label}, flagless in {token}",
+            memory=token,
+            instrument=True,
+        )
+        for token in RESERVE_DIAGNOSTIC_LIMITS
+    ]
+
+
 def _reserve_step_specs() -> list[RunSpec]:
     """The path step's pair, in table order: the budget that affords one
     block-decoding reader, then the one a byte below it."""
@@ -7942,6 +7994,7 @@ def run_reserve(session: Session) -> str:
     gate = _reserve_gate_specs()
     mechanism = _reserve_mechanism_specs()
     instrument = _reserve_instrument_specs()
+    diagnostic = _reserve_diagnostic_specs()
     steps = _reserve_step_specs()
     # Before the first reading, as `rss-attribution` and the `allocator` figure
     # build theirs: a leg discovered missing at rep two has already spent the
@@ -7949,7 +8002,7 @@ def run_reserve(session: Session) -> str:
     # is the one whose absence is silent — a default binary writes no report and
     # the leg fails at the rep, not at the build — so it is made and
     # interrogated here.
-    if instrument:
+    if instrument or diagnostic:
         ensure_instrument_binary(session.cfg, session.log)
     # The serial baseline, from `peak-rss` where this sitting took it, and
     # dropped from the interleave below rather than left in it — a spec the
@@ -7960,6 +8013,7 @@ def run_reserve(session: Session) -> str:
         # one machine state.
         *(leg for pair in zip(flagless, gate) for leg in pair),
         *instrument,
+        *diagnostic,
         *(spec for _, spec in mechanism),
         *steps,
         *stated,
@@ -8334,6 +8388,71 @@ def run_reserve(session: Session) -> str:
         values = [float(r[key]) for r in session.instrument_reports(figure, spec) if key in r]
         return median(values) if values else None
 
+    def reported_bytes(spec: RunSpec, key: str) -> str:
+        """A reading the report may lack, as bytes or a dash: a report
+        from before mimalloc's statistics carries none of its keys."""
+        value = reported_median(spec, key)
+        return "—" if value is None else _fmt_budget_bytes(value)
+
+    def heap_cells(spec: RunSpec) -> list[str]:
+        """One surviving leg's readings of each heap, in `two_heap_table`'s
+        column order after `Peak RSS`: none subtracted from another."""
+        return [
+            reported_bytes(spec, "live_peak_bytes"),
+            reported_bytes(spec, "mimalloc_committed_peak_bytes"),
+            reported_bytes(spec, "mimalloc_reserved_peak_bytes"),
+            reported_bytes(spec, "malloc_system_max"),
+            f"{reported_median(spec, 'malloc_heaps') or 0.0:.0f}",
+            _fmt_budget_bytes(reported_median(spec, "mallinfo_fordblks") or 0.0),
+            _fmt_budget_bytes(reported_median(spec, "mallinfo_hblkhd") or 0.0),
+        ]
+
+    def instrument_check(
+        spec: RunSpec, readings: Sequence[float], got: tuple[int, int] | None, where: str
+    ) -> str | None:
+        """The check: the same arrangement measured black-box. A term the
+        instrument names has to show up in the sum the wrapper measures, and
+        the two instruments share no mechanism — which is the independence
+        two black-box sittings agreeing with each other never have.
+
+        **The arrangement is the exact half and resident is the approximate
+        one.** Whether the instrument build resolved the same reader count and
+        budget is a yes or no, and a no means the attribution describes a run
+        the shipped build does not make. Resident cannot be held to the
+        shipped leg's own spread — this is a different binary, so its text and
+        its allocator bookkeeping are its own — so the tolerance is stated
+        rather than read off three reps of something else."""
+        black_box = by_flagless.get((spec.input, spec.memory))
+        if black_box is None or spec.command != black_box.command:
+            return None
+        theirs = session.get_rss(figure, black_box)
+        if not theirs:
+            return None
+        readers = got[0] if got else 0
+        delta = median(readings) - median(theirs)
+        off = abs(delta) / median(theirs) * 100
+        same = arrangement(black_box) == got
+        return (
+            f"- {where}: the instrument build resolved "
+            + (
+                f"the shipped build's arrangement, {readers} reader(s)"
+                if same
+                else "**a different arrangement** from the shipped build's, so what it "
+                "attributes is not the run beside it"
+            )
+            + f", and held {fmt_mib(median(readings))} against "
+            f"{fmt_mib_median_spread(theirs)} — {fmt_rss_delta(delta)}, {off:.0f}% "
+            + (
+                f"apart, inside the {INSTRUMENT_TOLERANCE_PCT}% a second build of the "
+                "same source is allowed"
+                if off <= INSTRUMENT_TOLERANCE_PCT
+                else f"apart, **outside** the {INSTRUMENT_TOLERANCE_PCT}% a second "
+                "build of the same source is allowed, so the sum the instrument "
+                "decomposes is not the sum the gate measured"
+            )
+            + "."
+        )
+
     instrument_rows, account_rows, account_points, checks = [], [], [], []
     # The same legs' readings for a two-heap report, one column a reading, each
     # headed with the heap it covers and none subtracted from another: readings
@@ -8374,25 +8493,12 @@ def run_reserve(session: Session) -> str:
                 _fmt_budget_bytes(hblkhd),
             ]
         )
-
-        def reported_bytes(key: str) -> str:
-            """A reading the report may lack, as bytes or a dash: a report
-            from before mimalloc's statistics carries none of its keys."""
-            value = reported_median(spec, key)
-            return "—" if value is None else _fmt_budget_bytes(value)
-
         two_heap_rows.append(
             [
                 spec.label,
                 f"{readers}r" if got else "—",
                 fmt_mib_median_spread(readings),
-                _fmt_budget_bytes(live_peak),
-                reported_bytes("mimalloc_committed_peak_bytes"),
-                reported_bytes("mimalloc_reserved_peak_bytes"),
-                _fmt_budget_bytes(heap_max),
-                f"{heaps:.0f}",
-                _fmt_budget_bytes(fordblks),
-                _fmt_budget_bytes(hblkhd),
+                *heap_cells(spec),
             ]
         )
         # The account, term by term. Each term is a high-water **of its own**,
@@ -8420,45 +8526,84 @@ def run_reserve(session: Session) -> str:
             account_points.append(
                 (readers, live_peak, unattributed, fordblks, spec.label, got[1])
             )
-        # The check: the same arrangement measured black-box. A term the
-        # instrument names has to show up in the sum the wrapper measures, and
-        # the two instruments share no mechanism — which is the independence
-        # two black-box sittings agreeing with each other never have.
-        #
-        # **The arrangement is the exact half and resident is the approximate
-        # one.** Whether the instrument build resolved the same reader count and
-        # budget is a yes or no, and a no means the attribution describes a run
-        # the shipped build does not make. Resident cannot be held to the
-        # shipped leg's own spread — this is a different binary, so its text and
-        # its allocator bookkeeping are its own — so the tolerance is stated
-        # rather than read off three reps of something else.
-        black_box = by_flagless.get((spec.input, spec.memory))
-        if black_box is not None and spec.command == black_box.command:
-            theirs = session.get_rss(figure, black_box)
-            if theirs:
-                delta = median(readings) - median(theirs)
-                off = abs(delta) / median(theirs) * 100
-                same = arrangement(black_box) == got
-                checks.append(
-                    f"- `-m {spec.memory}`: the instrument build resolved "
-                    + (
-                        f"the shipped build's arrangement, {readers} reader(s)"
-                        if same
-                        else "**a different arrangement** from the shipped build's, so what it "
-                        "attributes is not the run beside it"
-                    )
-                    + f", and held {fmt_mib(median(readings))} against "
-                    f"{fmt_mib_median_spread(theirs)} — {fmt_rss_delta(delta)}, {off:.0f}% "
-                    + (
-                        f"apart, inside the {INSTRUMENT_TOLERANCE_PCT}% a second build of the "
-                        "same source is allowed"
-                        if off <= INSTRUMENT_TOLERANCE_PCT
-                        else f"apart, **outside** the {INSTRUMENT_TOLERANCE_PCT}% a second "
-                        "build of the same source is allowed, so the sum the instrument "
-                        "decomposes is not the sum the gate measured"
-                    )
-                    + "."
-                )
+        # The check (`instrument_check`).
+        check = instrument_check(spec, readings, got, f"`-m {spec.memory}`")
+        if check:
+            checks.append(check)
+
+    # -- the diagnostic legs (`RESERVE_DIAGNOSTIC_LIMITS`) --------------------
+    # Each beside the charge its own run was billed, so the excess a heap
+    # carries is read off the row; in no fit and no account.
+    diagnostic_label, diagnostic_unit = next(
+        (label, unit)
+        for name, label, unit in RESERVE_FLAGLESS_INPUTS
+        if name == RESERVE_DIAGNOSTIC_INPUT
+    )
+    diagnostic_rows, diagnostic_checks = [], []
+    for spec in diagnostic:
+        readings = rss(spec)
+        killed = session.kills(figure, spec)
+        got = arrangement(spec)
+        if not readings or reported_median(spec, "live_peak_bytes") is None:
+            diagnostic_rows.append(
+                [spec.label, "—", "—", f"**OOM-killed**, {killed} rep(s)", *(["—"] * 7)]
+            )
+            continue
+        diagnostic_rows.append(
+            [
+                spec.label,
+                f"{got[0]}r" if got else "—",
+                _fmt_budget_bytes(charge_bytes(diagnostic_unit, got[0])) if got else "—",
+                fmt_mib_median_spread(readings)
+                + (f" · **{killed} rep(s) OOM-killed**" if killed else ""),
+                *heap_cells(spec),
+            ]
+        )
+        check = instrument_check(
+            spec, readings, got, f"{diagnostic_label}, `-m {spec.memory}`"
+        )
+        if check:
+            diagnostic_checks.append(check)
+    diagnostic_table = md_table(
+        [
+            "Leg",
+            "Readers",
+            "Billed — the charge for the count it resolved",
+            "Peak RSS — the process",
+            "Live high-water — Rust, what passed through `GlobalAlloc`",
+            "mimalloc committed high-water — the Rust heap",
+            "mimalloc reserved high-water — the Rust heap's address space",
+            "glibc heap high-water — C `malloc` alone",
+            "glibc arenas — C",
+            "Freed and held at exit — glibc, C",
+            "mmap-backed at exit — glibc, C",
+        ],
+        diagnostic_rows,
+    )
+    diagnostic_text = (
+        (
+            f"\n\n**What the shipped build holds above its charge at {diagnostic_label}**, "
+            "said by the process: the flagless arrangement on the introspection build at the "
+            "limits where this block size's unnamed remainder left `MEMORY_UNPOOLED_BOUND` on "
+            "the shipped build alone, in no fit and no account above. `Billed` is "
+            "`charge_bytes` for the count the leg itself resolved — every reader's block slot, "
+            "chunk buffer and decoder retention, and the pool's list — and every other column "
+            "is a reading of the heap its heading names, none subtracted from another. Rust's "
+            "live high-water at or under `Billed` with mimalloc's committed high-water above "
+            "it is mimalloc keeping what the program freed; a live high-water itself above "
+            "`Billed` is the program; glibc's carrying the excess is C. A row where none of "
+            "the three does attributes nothing, and is read so:\n\n"
+            + diagnostic_table
+            + (
+                "\n\nThe same check against the shipped leg of each:\n\n"
+                + "\n".join(diagnostic_checks)
+                if diagnostic_checks
+                else ""
+            )
+        )
+        if diagnostic
+        else ""
+    )
 
     instrument_table = md_table(
         [
@@ -8869,6 +9014,7 @@ def run_reserve(session: Session) -> str:
             if checks
             else ""
         )
+        + diagnostic_text
         + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
         + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")

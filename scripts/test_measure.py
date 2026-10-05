@@ -2961,6 +2961,7 @@ class CompressedAccount(unittest.TestCase):
         every = [
             *measure._reserve_flagless_specs(),
             *measure._reserve_instrument_specs(),
+            *measure._reserve_diagnostic_specs(),
             *(s for _, s in measure._reserve_mechanism_specs()),
             *measure._reserve_step_specs(),
             *measure._reserve_specs(),
@@ -2995,6 +2996,33 @@ class CompressedAccount(unittest.TestCase):
         # black-box delta and the introspective one describe one arrangement.
         capped = [s for s in legs if s.command == measure._flagless_shape(measure.RESERVE_CAPPED)]
         self.assertEqual([s.memory for s in capped], [measure.RESERVE_MECHANISM_LIMIT])
+
+    def test_the_diagnostic_legs_are_the_failing_arrangement_on_the_instrument_build(self):
+        # The arrangement the gate failed on the shipped build alone, and the
+        # `bound`-band cell beside it: one block size, the flagless shape, and
+        # limits the black-box axis already reads, so each has a shipped leg of
+        # the same input and limit to be checked against.
+        flagless = {(s.input, s.memory): s for s in measure._reserve_flagless_specs()}
+        legs = measure._reserve_diagnostic_specs()
+        self.assertEqual([s.memory for s in legs], list(measure.RESERVE_DIAGNOSTIC_LIMITS))
+        unit = dict((name, unit) for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS)[
+            measure.RESERVE_DIAGNOSTIC_INPUT
+        ]
+        self.assertNotEqual(unit, measure.RESERVE_MECHANISM_UNIT)
+        for spec in legs:
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.binary, "introspect")
+                self.assertTrue(spec.instrument)
+                self.assertTrue(measure.kill_tolerant(spec.command))
+                self.assertIn("128 MiB blocks", spec.label)
+                shipped = flagless[(spec.input, spec.memory)]
+                self.assertEqual(spec.command, shipped.command)
+                self.assertNotEqual(spec.key("reserve"), shipped.key("reserve"))
+        # A second family, never the counter's: its line is a fit at one unit.
+        self.assertFalse(
+            {s.key("reserve") for s in legs}
+            & {s.key("reserve") for s in measure._reserve_instrument_specs()}
+        )
 
     def test_an_instrument_leg_is_kill_tolerant_like_the_axis_it_mirrors(self):
         # It runs the arrangement the rule aims *at* the allocation, so it sits
@@ -3985,7 +4013,10 @@ class InstrumentReport(unittest.TestCase):
         # produces no report, which `_read_instrument` can only report as "one
         # of three apparatus faults" — and the pairing is the one of the three
         # that can be checked before the sitting starts.
-        for spec in measure._reserve_instrument_specs():
+        for spec in [
+            *measure._reserve_instrument_specs(),
+            *measure._reserve_diagnostic_specs(),
+        ]:
             with self.subTest(leg=spec.label):
                 self.assertEqual(spec.instrument, spec.binary == "introspect")
         for spec in [
@@ -7338,6 +7369,7 @@ class CensoredCells(unittest.TestCase):
         return {
             "flagless": measure._reserve_flagless_specs(),
             "instrument": measure._reserve_instrument_specs(),
+            "diagnostic": measure._reserve_diagnostic_specs(),
             "mechanism": [s for _, s in measure._reserve_mechanism_specs()],
             "steps": measure._reserve_step_specs(),
             "stated": measure._reserve_specs(),
@@ -7368,6 +7400,7 @@ class CensoredCells(unittest.TestCase):
         every = [
             *specs["flagless"],
             *specs["instrument"],
+            *specs["diagnostic"],
             *specs["mechanism"],
             *specs["steps"],
             *specs["stated"],
@@ -7810,6 +7843,53 @@ class CensoredCells(unittest.TestCase):
         for line in checks:
             self.assertIn("resolved", line)
             self.assertIn(f"{measure.INSTRUMENT_TOLERANCE_PCT}%", line)
+
+    def test_the_diagnostic_legs_print_the_bill_beside_each_heap_and_stay_out_of_the_fit(self):
+        # The attribution of what the shipped build holds above its charge at
+        # the failing block size: one row a diagnostic leg, its own run's bill
+        # beside every heap's reading, checked against its shipped leg — and
+        # none of it in the counter's line, which is a fit at another unit.
+        body, session = self._render()
+        section = body.split("What the shipped build holds above its charge at")[1]
+        rows = [ln for ln in section.splitlines() if ln.startswith("| instrument, 128 MiB")]
+        legs = measure._reserve_diagnostic_specs()
+        self.assertEqual(len(rows), len(legs))
+        unit = dict((name, unit) for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS)[
+            measure.RESERVE_DIAGNOSTIC_INPUT
+        ]
+        for row, spec in zip(rows, legs):
+            with self.subTest(leg=spec.label):
+                jobs = int(session.reported[spec.key(self.FIGURE)]["resolved_jobs"])
+                billed = measure._fmt_budget_bytes(measure.charge_bytes(unit, jobs))
+                self.assertEqual([c.strip() for c in row.strip("|").split("|")][2], billed)
+        checks = [ln for ln in section.splitlines() if ln.startswith("- 128 MiB blocks, `-m ")]
+        self.assertEqual(len(checks), len(legs))
+        for line in checks:
+            self.assertIn(f"{measure.INSTRUMENT_TOLERANCE_PCT}%", line)
+        fit = next(ln for ln in body.splitlines() if ln.startswith("**What the program itself"))
+        self.assertIn(
+            f"over the {len(measure._reserve_instrument_specs())} leg(s) that survived", fit
+        )
+        self.assertNotIn("128 MiB", fit)
+
+    def test_a_killed_diagnostic_leg_prints_no_reading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            spec = measure._reserve_diagnostic_specs()[0]
+            key = spec.key(self.FIGURE)
+            raw["instrument"][key] = []
+            raw["rss"][key] = []
+            raw["killed"][key] = 3
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
+            ):
+                body = measure.run_reserve(session)
+        row = next(ln for ln in body.splitlines() if ln.startswith(f"| {spec.label} |"))
+        cells = row.split(f"| {spec.label} |")[1]
+        self.assertIn("**OOM-killed**, 3 rep(s)", cells)
+        self.assertNotIn("MiB", cells)
 
     def test_a_censored_instrument_leg_prints_no_terms(self):
         # The report is written at exit, so a killed leg has none — and a
