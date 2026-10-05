@@ -33,8 +33,7 @@ shipped build's retention is mimalloc's `purge_delay`" in its `tables.md`.
   peak RSS less Rust's live high-water and glibc's. The constants' comments
   say why. A share is confirmed only where `fewer_held_p`, the one-sided
   Fisher exact test on the pooled counts with the option and without it, is
-  at or under `CONFIRMING_ALPHA`; gone in every rep confirms without it, as
-  the spec registers.
+  at or under `CONFIRMING_ALPHA`; gone in every rep confirms without it.
 - **The instrument reads the option back**: `pgdt/src/introspect.rs` reports
   `mimalloc_purge_delay` through `mi_option_get`, and the renderer gives no
   verdict where a confirming leg's rep read back anything but the value set.
@@ -57,7 +56,11 @@ gate's verdict is 30.7's. The verdict:
   remainder, which is attributed next on the cross-thread free list, on an instrument built only then
   (`MI_STAT` 1; [`roadmap-P30.7-diagnostic-notes.md`](roadmap-P30.7-diagnostic-notes.md),
   "The candidates in mimalloc's source").
-- **No verdict** gets a new sitting, once the reason it names is fixed.
+- **No verdict** on an option that did not reach mimalloc gets a new
+  sitting, once its delivery is fixed. **No verdict** on a control too sparse
+  for the share test, or on a kill, is grilled before anything is sat again
+  or attributed, the whole `tables.md` read against 30.7's: the sitting no
+  longer reproduces the arrangement it was to confirm.
 
 ## Negative results
 
