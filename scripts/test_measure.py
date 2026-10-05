@@ -2962,6 +2962,7 @@ class CompressedAccount(unittest.TestCase):
             *measure._reserve_flagless_specs(),
             *measure._reserve_instrument_specs(),
             *measure._reserve_diagnostic_specs(),
+            *measure._reserve_confirming_specs(),
             *(s for _, s in measure._reserve_mechanism_specs()),
             *measure._reserve_step_specs(),
             *measure._reserve_specs(),
@@ -4016,6 +4017,7 @@ class InstrumentReport(unittest.TestCase):
         for spec in [
             *measure._reserve_instrument_specs(),
             *measure._reserve_diagnostic_specs(),
+            *measure._reserve_confirming_specs(),
         ]:
             with self.subTest(leg=spec.label):
                 self.assertEqual(spec.instrument, spec.binary == "introspect")
@@ -7370,6 +7372,7 @@ class CensoredCells(unittest.TestCase):
             "flagless": measure._reserve_flagless_specs(),
             "instrument": measure._reserve_instrument_specs(),
             "diagnostic": measure._reserve_diagnostic_specs(),
+            "confirming": measure._reserve_confirming_specs(),
             "mechanism": [s for _, s in measure._reserve_mechanism_specs()],
             "steps": measure._reserve_step_specs(),
             "stated": measure._reserve_specs(),
@@ -7401,6 +7404,7 @@ class CensoredCells(unittest.TestCase):
             *specs["flagless"],
             *specs["instrument"],
             *specs["diagnostic"],
+            *specs["confirming"],
             *specs["mechanism"],
             *specs["steps"],
             *specs["stated"],
@@ -7421,7 +7425,13 @@ class CensoredCells(unittest.TestCase):
                 "resolved_budget": str(measure.charge_bytes(128 << 20, 1) + (1 << 20)),
             }
             if spec.instrument:
-                instrument[key] = [self._report(i)] * total_reps
+                report = self._report(i)
+                # A confirming leg's report reads its option back, as
+                # `introspect.rs` prints it.
+                for token, _, value, readback, _ in measure.RESERVE_CONFIRMING_OPTIONS:
+                    if spec.command == measure._flagless_shape(token):
+                        report[readback] = value
+                instrument[key] = [report] * total_reps
         # The killed reps' own records, exactly as `time_run`'s kill branch
         # writes them: the constraint line is rendered off `runs`, so a fixture
         # with an empty one would exercise only the nothing-was-reported branch.
@@ -7850,7 +7860,9 @@ class CensoredCells(unittest.TestCase):
         # beside every heap's reading, checked against its shipped leg — and
         # none of it in the counter's line, which is a fit at another unit.
         body, session = self._render()
-        section = body.split("What the shipped build holds above its charge at")[1]
+        section = body.split("What the shipped build holds above its charge at")[1].split(
+            "**Whether the shipped build's retention"
+        )[0]
         rows = [ln for ln in section.splitlines() if ln.startswith("| instrument, 128 MiB")]
         legs = measure._reserve_diagnostic_specs()
         self.assertEqual(len(rows), len(legs))
@@ -7932,6 +7944,185 @@ class CensoredCells(unittest.TestCase):
                 body = measure.run_reserve(session)
         self.assertNotIn("OOM-killed", body)
         self.assertEqual(session.figure_kills(self.FIGURE), {})
+
+
+class ConfirmingLegs(unittest.TestCase):
+    """The legs that switch one allocator option off at the diagnostic
+    arrangement, and the verdict registered before their reading
+    (`RESERVE_CONFIRMING_OPTIONS`)."""
+
+    FIGURE = "reserve"
+    UNIT = 128 * measure.MIB
+
+    def test_each_differs_from_a_leg_already_taken_by_the_option_alone(self):
+        # One variable apart from the diagnostic sitting's legs, or what the
+        # option removes cannot be told from what else changed.
+        legs = measure._reserve_confirming_specs()
+        self.assertEqual(
+            len(legs),
+            2 * len(measure.RESERVE_DIAGNOSTIC_LIMITS) * len(measure.RESERVE_CONFIRMING_OPTIONS),
+        )
+        counterparts = {
+            (s.binary, s.input, s.memory): s
+            for s in [*measure._reserve_flagless_specs(), *measure._reserve_diagnostic_specs()]
+        }
+        tokens = {token for token, *_ in measure.RESERVE_CONFIRMING_OPTIONS}
+        for spec in legs:
+            with self.subTest(leg=spec.label):
+                self.assertIn(spec.binary, ("pgdt", "introspect"))
+                self.assertEqual(spec.instrument, spec.binary == "introspect")
+                self.assertTrue(measure.kill_tolerant(spec.command))
+                other = counterparts[(spec.binary, spec.input, spec.memory)]
+                self.assertEqual(other.command, measure._flagless_shape())
+                self.assertIn(spec.command.removeprefix(measure.RESERVE_FLAGLESS), tokens)
+                self.assertEqual(
+                    dataclasses.replace(
+                        spec, command=other.command, label=other.label, instrument=other.instrument
+                    ),
+                    other,
+                )
+        every = [
+            *measure._reserve_flagless_specs(),
+            *measure._reserve_gate_specs(),
+            *measure._reserve_instrument_specs(),
+            *measure._reserve_diagnostic_specs(),
+            *(s for _, s in measure._reserve_mechanism_specs()),
+            *measure._reserve_step_specs(),
+            *measure._reserve_specs(),
+        ]
+        self.assertFalse(
+            {s.key(self.FIGURE) for s in legs} & {s.key(self.FIGURE) for s in every}
+        )
+
+    def test_the_option_is_set_in_front_of_the_wrapper_and_nothing_else_is(self):
+        # As the arena cap is: the wrapper starts its child with its own
+        # environment, so the assignment must precede it.
+        arenas = {token for token, _, _ in measure.RESERVE_ARENAS}
+        for token, variable, value, _, _ in measure.RESERVE_CONFIRMING_OPTIONS:
+            with self.subTest(option=token):
+                self.assertNotIn(token, arenas)
+                shape = measure._flagless_shape(token)
+                self.assertIn(shape, measure.command_shapes())
+                script = measure._script(shape)
+                self.assertIn(f"{variable}={value} {measure.PEAK_RSS} /pgdt parse", script)
+                self.assertNotIn("MALLOC_ARENA_MAX", script)
+                self.assertEqual(
+                    script.replace(f"{variable}={value} ", ""),
+                    measure._script(measure._flagless_shape()),
+                )
+
+    def test_the_verdicts(self):
+        cases = [
+            # (control, option, undelivered) → the verdict's opening words
+            ((8, 12), (0, 12), [], "**Confirmed"),
+            ((8, 12), (12, 12), [], "**`purge_delay` is ruled out"),
+            ((8, 12), (3, 12), [], "**`purge_delay`'s share is confirmed"),
+            # As many reps without the term as the control has: no removal.
+            ((8, 12), (8, 12), [], "**`purge_delay` is not confirmed for any share"),
+            ((8, 12), (10, 12), [], "**`purge_delay` is not confirmed for any share"),
+            ((0, 12), (0, 12), [], "**No verdict**"),
+            ((8, 12), (0, 0), [], "**No verdict**"),
+            ((8, 12), (0, 12), ["a leg (1 rep(s))"], "**No verdict: the option did not reach"),
+        ]
+        for control, option, undelivered, opening in cases:
+            with self.subTest(control=control, option=option, undelivered=undelivered):
+                self.assertTrue(
+                    measure.confirming_verdict(
+                        "`purge_delay`", control, option, undelivered
+                    ).startswith(opening)
+                )
+
+    def _raw(self, read_back=None):
+        """A sitting where the term shows in two reps of three on every leg
+        without the option and in none with it, each reading built so the
+        renderer's subtraction lands on a stated multiple of the unit."""
+        raw = CensoredCells()._raw(killed_reps=0)
+        twin_worst_kib = 1_100_000.0
+        live, glibc = 1000 * measure.MIB, 40 * measure.MIB
+        baseline = 30 * measure.MIB
+
+        def report(extra=None):
+            return {
+                "live_peak_bytes": str(live),
+                "malloc_system_max": str(glibc),
+                **(extra or {}),
+            }
+
+        for limit in measure.RESERVE_DIAGNOSTIC_LIMITS:
+            shipped = next(
+                s
+                for s in measure._reserve_flagless_specs()
+                if (s.input, s.memory) == (measure.RESERVE_DIAGNOSTIC_INPUT, limit)
+            )
+            raw["rss"][measure.gate_twin(shipped).key(self.FIGURE)] = [
+                twin_worst_kib - 500,
+                twin_worst_kib,
+                twin_worst_kib - 200,
+            ]
+            raw["rss"][shipped.key(self.FIGURE)] = [
+                twin_worst_kib + 1000,
+                twin_worst_kib + self.UNIT / 1024,
+                twin_worst_kib + self.UNIT / 1024,
+            ]
+            for spec in measure._reserve_confirming_specs():
+                if spec.memory != limit:
+                    continue
+                key = spec.key(self.FIGURE)
+                if spec.binary == "pgdt":
+                    raw["rss"][key] = [twin_worst_kib + 1000] * 3
+                else:
+                    rss = [(live + glibc + baseline) / 1024] * 3
+                    raw["rss"][key] = rss
+                    token = spec.command.removeprefix(measure.RESERVE_FLAGLESS)
+                    _, _, value, readback, _ = next(
+                        o for o in measure.RESERVE_CONFIRMING_OPTIONS if o[0] == token
+                    )
+                    raw["instrument"][key] = [
+                        report({readback: read_back or value}) for _ in rss
+                    ]
+            diagnostic = next(
+                s for s in measure._reserve_diagnostic_specs() if s.memory == limit
+            )
+            rss = [(live + glibc + baseline + u * self.UNIT) / 1024 for u in (0, 1, 1)]
+            raw["rss"][diagnostic.key(self.FIGURE)] = rss
+            raw["instrument"][diagnostic.key(self.FIGURE)] = [report() for _ in rss]
+        return raw
+
+    def _render(self, raw):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
+            ):
+                return measure.run_reserve(session)
+
+    def test_the_section_reads_each_rep_and_registers_its_verdict(self):
+        body = self._render(self._raw())
+        section = body.split("**Whether the shipped build's retention")[1].split(
+            "**What each mechanism moves**"
+        )[0]
+        rows = [ln for ln in section.splitlines() if ln.startswith("| ") and "MiB blocks" in ln]
+        # Each limit's four legs: shipped and instrument, without the option
+        # and with it.
+        self.assertEqual(len(rows), 4 * len(measure.RESERVE_DIAGNOSTIC_LIMITS))
+        without = [r for r in rows if "MIMALLOC_PURGE_DELAY" not in r]
+        with_option = [r for r in rows if "MIMALLOC_PURGE_DELAY" in r]
+        for row in without:
+            self.assertIn("| 2 of 3 |", row)
+        for row in with_option:
+            self.assertIn("| 0 of 3 |", row)
+        # Per rep, not a median: the instrument leg's three readings each.
+        self.assertIn("30.0 MiB, 158.0 MiB, 158.0 MiB", section)
+        self.assertIn("**Confirmed: the retention is `purge_delay`'s.**", section)
+        self.assertIn("0 of 12 rep(s) hold the term with the option, 8 of 12 without it", section)
+
+    def test_an_option_that_did_not_reach_mimalloc_gives_no_verdict(self):
+        # The variable lost on the way reads exactly as the candidate ruled
+        # out would, had the term stayed; the read-back is what tells them apart.
+        body = self._render(self._raw(read_back="1000"))
+        self.assertIn("**No verdict: the option did not reach mimalloc**", body)
+        self.assertNotIn("**Confirmed", body)
 
 
 class ChargeModelSection(unittest.TestCase):

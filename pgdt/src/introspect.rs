@@ -28,6 +28,9 @@
 //!   it first hands them out and uncounts them when it purges, so the gap
 //!   between `mimalloc_committed_peak_bytes` and `live_peak_bytes` is
 //!   mimalloc's bookkeeping and retention, each a high-water of its own.
+//!   Beside them, `mimalloc_purge_delay`: the option as mimalloc holds it,
+//!   so a variable set in front of the process is read back rather than
+//!   assumed to have arrived.
 //! * **`mallinfo_*`** — glibc's own view at exit, of what reached C `malloc`:
 //!   `arena` (arena-backed bytes obtained from the OS), `hblkhd`
 //!   (mmap-backed), `uordblks` (in use) and `fordblks` (freed, held, still
@@ -348,6 +351,7 @@ mod enabled {
     /// carries the version beside the fields; a field the document lacks
     /// prints nothing rather than a zero that reads like a reading.
     fn push_mimalloc(out: &mut String) {
+        out.push_str(&format!("mimalloc_purge_delay={}\n", purge_delay()));
         let Some(json) = mimalloc_stats_json() else {
             out.push_str("# mi_stats_get_json: mimalloc returned no document\n");
             return;
@@ -363,6 +367,21 @@ mod enabled {
             out.push('\n');
         }
         out.push_str("# end mi_stats_json\n");
+    }
+
+    /// `mi_option_purge_delay`'s index in mimalloc 3.3.2's `mi_option_e`
+    /// (`include/mimalloc.h`), counted by hand: `libmimalloc-sys` 0.1.49
+    /// declares the options either side of it and not it.
+    /// `the_purge_delay_read_back_is_purge_delay_s` holds the count.
+    const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+
+    /// How long mimalloc waits before purging a freed page, in milliseconds,
+    /// as it holds it: its default, or what `MIMALLOC_PURGE_DELAY` set at
+    /// init.
+    fn purge_delay() -> std::ffi::c_long {
+        // SAFETY: reads one option by a valid index, initialising it from the
+        // environment on first use, which mimalloc does under its own lock.
+        unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) }
     }
 
     /// `mi_stats_get_json`'s document, statistics merged over the process's
@@ -552,6 +571,18 @@ mod instrumented_tests {
             .find_map(|l| l.strip_prefix("mimalloc_committed_peak_bytes="))
             .and_then(|v| v.parse::<u64>().ok());
         assert!(committed_peak.is_some_and(|b| b > 0), "{text}");
+    }
+
+    /// The option's index is counted by hand, so its default is what proves
+    /// the count: 1000 ms is `purge_delay`'s and none of its neighbours'
+    /// (`src/options.c`). mimalloc matches the variable's name in any case.
+    #[test]
+    fn the_purge_delay_read_back_is_purge_delay_s() {
+        let want = std::env::vars()
+            .find(|(k, _)| k.eq_ignore_ascii_case("MIMALLOC_PURGE_DELAY"))
+            .map_or_else(|| "1000".to_owned(), |(_, v)| v);
+        let text = report_text();
+        assert!(text.contains(&format!("mimalloc_purge_delay={want}\n")), "{text}");
     }
 
     /// Every line that is not one of the report's own readings must be
