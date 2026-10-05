@@ -1164,15 +1164,20 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// `introspect` build, so it sizes the gap without standing in for the blind
 /// gate a constant has to pass; P23 owns both. The `reserve` figure's stated
 /// axis is a second reading: under a typed `--jobs` and `--memory` the margin
-/// lowers only the budget, and the worst rep there has held about this value
-/// above the resolved budget, over it at one sitting and under it at the two
-/// since (`measurements.md`, `reserve`). **Every one of those readings is the
-/// platform allocator's** — the choice of this value
-/// (`runs/19.16-reserve-constant-20260911-2210/readings.json`) and the
-/// attribution (`runs/20.8-reserve-attribution-20260916-1857/`) alike — and the
-/// shipped build's Rust heap is mimalloc's, C's alone glibc's
-/// (`docs/design/decisions.md`, "D13"), so none of them reads what the shipped
-/// build holds: P23 re-takes them under mimalloc on the two-heap instrument.
+/// lowers only the budget, and the worst rep there holds less than this value
+/// above the resolved budget on the shipped build, though more than the margin
+/// leaves (`measurements.md`, `reserve`). **The choice of this value and the
+/// attribution are the platform allocator's**
+/// (`runs/19.16-reserve-constant-20260911-2210/readings.json`,
+/// `runs/20.8-reserve-attribution-20260916-1857/`), and the shipped build's
+/// Rust heap is mimalloc's, C's alone glibc's (`docs/design/decisions.md`,
+/// "D13"), so neither reads what the shipped build holds. What the shipped
+/// build's flagless legs do read is [`MEMORY_UNPOOLED_BOUND`] falling short:
+/// at 128 MiB blocks from four readers the remainder above the charge overruns
+/// it while staying inside this value, where the `system` build's same legs,
+/// in the same sitting, stay inside the bound (`measurements.md`, `reserve`).
+/// P23 re-takes both readings under mimalloc on the two-heap instrument and
+/// sets both constants from them.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as
@@ -1224,7 +1229,8 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// glibc's retained free memory at exit (`fordblks`) is most of it, and no term
 /// table sums to it.
 /// `scripts/measure.py`'s `charge_model_problem` faults a cell whose remainder
-/// exceeds this, which is the finding that would move it. It is not
+/// exceeds this, which is the finding that would move it, and on the shipped
+/// build it has faulted (`KD34`, whose owner moves it). It is not
 /// [`MEMORY_RESERVE`] because the reserve is what an allowance hands back
 /// before anything is spent, where this is what the arrangement is predicted
 /// to hold on top of what it spends.

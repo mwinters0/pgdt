@@ -9325,7 +9325,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="nested-end-to-end",
-        section="A typed query over nested columns costs 6.3 µs a row more than a string one",
+        section="A typed query over nested columns costs 6.6 µs a row more than a string one",
         stage="warm",
         depends=_declare(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF, *CACHED_QUERY),
         warm_inputs=("control", "composite", "arrays"),

@@ -79,7 +79,7 @@ pub struct DatabaseMetadata {
     ///
     /// Deficiency register: `deficiency: KD14` — this is the structure a scan
     /// holds per table, and peak resident set grows with the table count while
-    /// staying flat in dump bytes, over a third of it live structure the
+    /// staying flat in dump bytes, about a fifth of it live structure the
     /// preamble alone pays (`measurements.md`, `peak-rss` and `rss-attribution`).
     /// **(c) unowned**; promoted by a dump with tens of thousands of tables,
     /// nothing in hand being one. It is also why every "resident set" claim
@@ -1914,8 +1914,8 @@ impl StatementScan {
             self.last_significant = b;
         }
         let depth = &mut self.depth;
-        // Deficiency register: `deficiency: KD9` — an `INSERT` run costs
-        // several times a `COPY` scan's per-byte CPU warm, and the device is
+        // Deficiency register: `deficiency: KD9` — an `INSERT` run costs an
+        // order of magnitude more than a `COPY` scan warm, and the device is
         // what decides whether a reader meets it (`measurements.md`,
         // `scan-throughput-warm` and `scan-throughput-nvme`). Three cuts
         // against the remainder are known. No `INSERT` statement's end

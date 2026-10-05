@@ -792,7 +792,13 @@ What it inherits:
   account is this phase's to draw. So is the fate of `reserve`'s
   `MALLOC_ARENA_MAX` mechanism leg: it was registered to read glibc's mmap
   threshold retaining block buffers, and those are mimalloc's now, the cap
-  reaching only what C allocates.
+  reaching only what C allocates. The one sitting taken on the shipped build
+  already faults the inner constant: `reserve`'s 128 MiB-block legs at four
+  and five readers land in the `bound` band, over `MEMORY_UNPOOLED_BOUND`,
+  where their `system` twins in the same sitting do not, and the worse leaves
+  less of its allocation than `MEMORY_MARGIN_PERCENT` promises
+  (`measurements.md`, `reserve`). P30 left both constants as they were, so
+  setting the bound under mimalloc is this phase's too.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its
@@ -802,12 +808,13 @@ What it inherits:
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` were re-taken at `183a50eb`, against the reserve as
-  it stands, so a settled constant re-takes them. `reserve`'s stated axis — a
+  and `statistics-pruning` were re-taken at `1c9fc9be`, on the shipped
+  mimalloc build and against the reserve as it stands, so a settled constant
+  re-takes them. `reserve`'s stated axis — a
   typed `--jobs 24` under `--memory` — is where the margin lowers only the
-  budget, and its worst rep has held about `MEMORY_RESERVE` above the
-  resolved budget, over it at one sitting and under it at the two since
-  (`measurements.md`, `reserve`; `KD34`). Both statistics
+  budget, and on the shipped build its worst rep holds less than
+  `MEMORY_RESERVE` above the resolved budget, though more than the margin
+  leaves (`measurements.md`, `reserve`; `KD34`). Both statistics
   figures' inputs are owed a change as well: bare `text` is bounded bytewise
   now, so `statistics-gathering`'s control (`v_text`, `v_long_text`,
   `v_escaped`) should grow, every retained column carrying one more

@@ -98,8 +98,8 @@ than reading as a phase nobody has sliced.
   Future item "collation-aware comparison", intent without a phase. Detail:
   `pgdump_query/src/pgtype.rs`.
 
-- **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
-  warm and most of a cold NVMe scan's time (`measurements.md`,
+- **KD9** — an `INSERT` run costs an order of magnitude more than a `COPY`
+  scan warm and most of a cold NVMe scan's time (`measurements.md`,
   `scan-throughput-warm` and `scan-throughput-nvme`), and three cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan all three are in; the cold-NVMe
@@ -191,7 +191,7 @@ than reading as a phase nobody has sliced.
   on a real device. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows several
-  kilobytes per table, over a third of it live structure the preamble alone
+  kilobytes per table, about a fifth of it live structure the preamble alone
   pays (`measurements.md`, `peak-rss` and `rss-attribution`).
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `pgdump_query/src/preamble.rs`.
@@ -315,12 +315,12 @@ than reading as a phase nobody has sliced.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
-  remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
-  leg from 1 GiB up was OOM-killed in every rep on that build. The reserve was
-  fixed before statistics existed, and every reading of it is the platform
-  allocator's where the shipped build's Rust heap is now mimalloc's. **(b)
-  owned by P23**, which re-takes them under mimalloc, sets it from them and runs
-  the blind gate an attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
+  remainder of 544 MiB on a compressed `query`, every `wide-xz24` `query` leg
+  from 1 GiB up OOM-killed on that build — the platform allocator's, as are the
+  readings the reserve was chosen from. On the shipped mimalloc build `reserve`'s
+  128 MiB-block legs from four readers overrun `MEMORY_UNPOOLED_BOUND`, their
+  `system` twins inside it. **(b) owned by P23**, which re-takes them under
+  mimalloc, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its

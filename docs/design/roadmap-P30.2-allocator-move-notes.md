@@ -2,9 +2,9 @@
 
 What the later slices inherit from making mimalloc `pgdt`'s default. The
 mechanism is `pgdt/src/alloc.rs` and `pgdt/Cargo.toml`'s `[features]`; why it
-is mimalloc is [`decisions.md`](decisions.md), "D13". Nothing was re-taken:
-every figure in [`measurements.md`](measurements.md) is still the platform
-allocator's, and the session stamp says so.
+is mimalloc is [`decisions.md`](decisions.md), "D13". Nothing was re-taken
+here; [`measurements.md`](measurements.md)'s session stamp names the sitting
+that took the figures under mimalloc.
 
 ## What 30.3 to 30.5 inherit
 
@@ -34,8 +34,8 @@ allocator's, and the session stamp says so.
   readings under the old keys, so it is replaced whole at the next re-take, as
   the `allocator` table is, whose reference column becomes `mimalloc`.
 - **The gate's `system` legs are not built here.** `ensure_allocator_binary`
-  builds a `system` binary, but nothing yet runs `reserve`'s flagless legs or
-  the `parallel-*` contract on it; that is 30.6's.
+  builds a `system` binary; running `reserve`'s flagless legs and the
+  `parallel-*` contract on it is 30.6's.
 - **A two-heap `reserve` sitting prints its readings**: one table, a column a
   reading, each headed with the memory it covers and none subtracted, beside
   the counter's own line; the one-heap account stays withheld.
@@ -55,5 +55,6 @@ allocator's, and the session stamp says so.
   Rust's own allocations is a `system` build's.
 - **The manual's `MALLOC_ARENA_MAX` advice no longer stands as measured.** Its
   saving was read with the Rust heap on glibc; on the default build the cap
-  bounds only the decoder's arenas, and what it saves there is unmeasured, which
-  `docs/manual/dump-inspection.md` now says in place of the measured claim.
+  bounds only the decoder's arenas, and what it saves there is what the
+  `reserve` figure's arena legs read on the shipped build, which
+  `docs/manual/dump-inspection.md` states.

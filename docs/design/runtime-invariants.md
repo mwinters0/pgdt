@@ -658,8 +658,9 @@ Before `glibc-2.44` the same branch reads `NARENAS_FROM_NCORES (n)`; the change
 is commit `93e6135`, "malloc: Reduce maximum arenas". `malloc/malloc.c`,
 `do_set_arena_max`, writes `mp_.arena_max` and nothing else, which is also what
 `MALLOC_ARENA_MAX` sets at startup. Observed, not proved: the `reserve` figure's
-instrument legs read the readers plus one to three arenas from 1 to 24 readers,
-under the `postgres:16` image's glibc — below its ceiling of 192 on this host.
+instrument legs, under `archlinux:base`'s glibc with only C allocating through
+it, read the readers plus one or two arenas from 1 to 17 readers and exactly 24
+at 24 readers — this host's ceiling of `max(8, ncores)`.
 
 **Scope limit.** glibc only: `jemalloc` and `mimalloc` (D13) have no such
 arenas. `ncores` is a CPU count, which a CFS quota such as `--cpus` does not
@@ -667,8 +668,8 @@ lower. Because `mallopt` and `MALLOC_ARENA_MAX` write the same field, a binary
 that calls it overrides the operator's setting unless it reads the variable
 first. How much a retained arena holds is not part of the claim.
 
-**Verified against:** glibc 2.44+r24 (Arch, the host; source read); glibc 2.41
-(`postgres:16`; observed through the instrument).
+**Verified against:** glibc 2.44+r24 (Arch, the host; source read); glibc 2.44
+(`archlinux:base`; observed through the instrument).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
 refusal, which is not mechanical because under D12's `current_thread` runtime

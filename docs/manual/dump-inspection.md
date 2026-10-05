@@ -377,9 +377,9 @@ was chosen by measurement rather than by taste: over six sizes from 64 KiB to
 16 MiB, on a SATA SSD, an NVMe drive and a RAM disk, 1 MiB was the fastest on
 the NVMe — the only real device of the three whose speed a chunk size can
 change at all — and neither size either side of it was an improvement. On the SATA SSD every size reads the same, the device being the
-whole cost. On the RAM disk, which is not storage, 4 and 8 MiB come out slightly
-ahead of 1 MiB; that is the per-chunk work rather than anything a disk
-does, and it is not what the default is chosen on.
+whole cost. On the RAM disk, which is not storage, 4 and 8 MiB read about the same as
+1 MiB and 16 MiB is slower; that is the per-chunk work rather than anything a
+disk does, and it is not what the default is chosen on.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
 64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
@@ -391,8 +391,9 @@ already holds, and a 32 MiB chunk is the same 64 MiB rather than double it.
 Past that the pool keeps a single buffer, which is the size you asked for.
 
 What it already holds does not grow with the *size* of the dump — a 3 GiB file
-costs no more than a 2 MB one, a few megabytes either way — but it does grow
-with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
+costs no more than a 2 MB one, to within a megabyte — but it does grow with
+the number of tables in it, by roughly 10 KB each across a few thousand of
+them, and by more each across the first few hundred. A dump of a few thousand
 tables is tens of megabytes resident before any chunk size is chosen.
 
 **An `.xz` source costs more than a plain one**, and by an amount the *file*
@@ -689,8 +690,8 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   the **read-buffer budget**, and that is the number every message below and
   every `memory_bytes=` on stderr names.
 - **The worker count is then held so that a fifth of the whole allowance, plus
-  a further 256 MiB, stays unspent**, because what kills a container is one
-  run's peak.
+  a further 256 MiB, is predicted to stay unspent**, because what kills a
+  container is one run's peak.
 - **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **The statistics a cache already holds are counted before the workers**: a
@@ -775,7 +776,10 @@ and a budget of 106 MiB — and the run says as much before it starts (below,
 **The fifth left free is a second thing the worker count answers to.** pgdt
 takes the largest worker count whose predicted total — the readers' own
 buffers, plus 256 MiB for everything a scan holds outside them, plus the
-statistics the cache holds — still fits in four fifths of the allowance, and reads with that many. In a 1 GiB container a
+statistics the cache holds — still fits in four fifths of the allowance, and reads with that many. The
+256 MiB is an estimate rather than a limit pgdt enforces, and a 128 MiB-block
+`.xz` read by four or five workers holds more than that outside its buffers,
+so it leaves somewhat less than a fifth free. In a 1 GiB container a
 24 MiB-block `.xz` reads with ten readers rather than the eleven the ceiling
 alone would buy. **Below about 640 MiB the fifth costs you nothing**, because
 the 384 MiB already taken off the top is the tighter of the two; above it, it
@@ -916,8 +920,8 @@ with no room to hold what they decode buys less than either number suggests.
 > retention, which the callout below is about. **Asking for more workers than
 > the budget affords adds a second part**: the pool keeps a block for each
 > worker you asked for, not only for the ones that read, and that part grows
-> with the budget — at `--jobs 24` a compressed scan holds a few megabytes more
-> than a 128 MiB budget and a few hundred more than a 512 MiB one. The number
+> with the budget — at `--jobs 24` a compressed scan holds about what a
+> 128 MiB budget names and a few hundred megabytes more than a 512 MiB one. The number
 > to raise when a compressed scan is short of memory is still
 > `--memory`, since it is what decides how many readers there are;
 > raising `--jobs` past what it affords adds workers pgdt will not use, and
@@ -935,8 +939,8 @@ with no room to hold what they decode buys less than either number suggests.
 > discovered limit alike. Where `--jobs` asks for more workers than the budget
 > affords, the pool keeps a block for each of them (above), which is the one
 > term that margin was not sized against. `MALLOC_ARENA_MAX` bounds glibc's
-> arena count, and so only the decoder's share; what capping it gives back
-> under pgdt's own allocator has not been measured, and it is no substitute
+> arena count, and so only the decoder's share; capped at 2 under pgdt's own
+> allocator it gave back a few megabytes at most, and it is no substitute
 > for sizing the cgroup above the budget.
 > Restricting the container's CPUs is a partial substitute at best:
 > it lowers the count an `.xz` file picks when you state no `--jobs`, because
