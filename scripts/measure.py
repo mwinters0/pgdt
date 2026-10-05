@@ -3573,6 +3573,15 @@ RESERVE_CONFIRMING_OPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
 #: above it (`roadmap-P30.7-diagnostic-notes.md`, "The attribution"), so half
 #: a unit is the line between holding none and holding one. It classifies a
 #: rep and is no remedy's criterion: that one is the spec's.
+#:
+#: **The two builds' zeros differ**: an instrument rep's reading carries the
+#: non-heap baseline, a shipped rep's is net of its twin's, so the line sits
+#: nearer an instrument rep without the term than a shipped one. Every 128 MiB
+#: rep of that sitting, on both builds, falls well clear of it
+#: (`runs/measure-20261005T193210/raw.json`). **The line is fixed, not taken
+#: per sitting**: a baseline measured in the sitting being classified would fit
+#: the line to the reading it classifies, and the verdict could no longer be
+#: registered before it.
 RESERVE_RETENTION_FRACTION = 0.5
 
 #: The block size of the input the mechanism legs run over, read out of

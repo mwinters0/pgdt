@@ -89,7 +89,7 @@ Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.m
 - [x] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The whole figure set is folded into `measurements.md` from one sitting at `1c9fc9be`, no leg killed on either build; the gate was judged on kills alone, the wrong contract for `reserve`, which 30.6.1 corrects — [notes](../design/roadmap-P30.6-retake-notes.md)
 - [x] **30.6.1** The gate reads the margin: `measure.py` fails a `reserve` flagless leg whose worst surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of its allocation, `parallel-peak-rss` still failing on a kill, each pinned by a test; the `1c9fc9be` sitting re-rendered with `--render`, measuring nothing, and `reserve`'s gate table and prose re-folded into `measurements.md`. The gate blocks on one leg, failing on the shipped build alone — [notes](../design/roadmap-P30.6.1-gate-margin-notes.md)
 - [x] **30.7** The diagnostic sitting: the `introspect` build attributes what the shipped build holds above its charge at 128 MiB blocks in `-m 1536m` and `-m 2g`, the instrument legs at that block size added to `reserve`'s register entry; it attributes and stops, the remedy grilled once the reading is in (the spec, "What the move owes before a release"). Read from a `--alone` sitting at `27593d2c`, not publishable: two terms, the program holding one unit more than the charge bills from two readers up on both builds, and mimalloc keeping about one more on the shipped build alone, which is what fails the margin. The gate still blocks; the remedy's grilling is next — [notes](../design/roadmap-P30.7-diagnostic-notes.md)
-- [ ] **30.8** The confirming sitting: the 128 MiB-block legs at `-m 1536m` and `-m 2g`, on the shipped and `introspect` builds with `MIMALLOC_PURGE_DELAY=0`, declared in `reserve`'s register entry beside 30.7's diagnostic legs and taken `--alone` beside their `system` twins, not publishable; the retention is `purge_delay`'s where it is gone in every rep, and `purge_delay`'s share where it is gone in some; any remainder leaves the cross-thread free list, attributed next on an instrument built only then (the spec, "What the move owes before a release"). It confirms and stops; the remedy is grilled on its reading. The instrument has landed: `RESERVE_CONFIRMING_OPTIONS`' four legs, the verdict registered per rep in `confirming_verdict`, and `introspect`'s read-back of the option. Only the readings remain, a `--alone` sitting from its commit — [notes](../design/roadmap-P30.8-confirming-notes.md)
+- [ ] **30.8** The confirming sitting: the 128 MiB-block legs at `-m 1536m` and `-m 2g`, on the shipped and `introspect` builds with `MIMALLOC_PURGE_DELAY=0`, declared in `reserve`'s register entry beside 30.7's diagnostic legs and taken `--alone` beside their `system` twins, not publishable; the retention is `purge_delay`'s where it is gone in every rep, and `purge_delay`'s share where it is gone in some reps beyond the control's spread; any remainder leaves the cross-thread free list, attributed next on an instrument built only then (the spec, "What the move owes before a release"). It confirms and stops; the remedy is grilled on its reading. The instrument has landed: `RESERVE_CONFIRMING_OPTIONS`' four legs, the verdict registered per rep in `confirming_verdict`, and `introspect`'s read-back of the option. Before the readings, `confirming_verdict` owes the spec's share test, a one-sided Fisher exact test at α = 0.05 against the control's counts in place of "fewer" ([history](history/2026-10-05.md), "What confirms a share"); then a `--alone` sitting from its commit — [notes](../design/roadmap-P30.8-confirming-notes.md)
 
 ## Not started
 
@@ -121,26 +121,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **30.8 confirms a share of the retention only where fewer reps hold the
-  term with `MIMALLOC_PURGE_DELAY=0` than without it.** The spec reads an
-  option that "removes the term in some reps and not others" as its share
-  confirmed (`../design/roadmap-P30-one-binary.md`, "What the move owes before
-  a release"). But 30.7's control legs already lacked the term in some reps,
-  two of six on the instrument build
-  (`../design/roadmap-P30.7-diagnostic-notes.md`, "The attribution"), so an
-  option that does nothing would also leave it absent from some reps. So
-  `measure.confirming_verdict` compares the two rates from the same sitting,
-  and a rate no lower than the control's reads "not confirmed for any share",
-  the cross-thread free list attributed next. Reconsidering, on the letter,
-  calls any rep without the term a confirmed share, whatever the control
-  shows; or asks for a stated margin between the rates rather than "fewer".
-- **A rep holds the term at half a unit or more** (30.8,
-  `measure.RESERVE_RETENTION_FRACTION`). On the introspection build a rep's
-  reading is peak RSS less Rust's live high-water and glibc's; on the shipped
-  build it is peak RSS less its `system` twin's worst rep. 30.7's reps fell
-  either at the process's baseline, tens of MiB, or about a unit above it
-  (`runs/measure-20261005T193210/raw.json`), so half a unit separates the two.
-  This was chosen before 30.8's reading, which is what lets the verdict be
-  registered at all. Reconsidering moves the line, for example to the
-  baseline plus a fraction of a unit, measured per sitting from a reading the
-  sitting would need to take, or changes what a shipped rep is read against.

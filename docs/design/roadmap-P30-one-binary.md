@@ -145,7 +145,10 @@ twins; a remedy is fitted only to a mechanism that sitting confirms, and a
 mechanism it rules out leaves the next candidate to be attributed the same
 way, not D13 reopened on a cause nobody has named. Candidates are not
 exclusive: one that removes the term in some reps and not others is confirmed
-for its share, and the remainder attributed next. **The library is not
+for its share where the removal lies beyond the control's own spread, by a
+test registered before the reading, and the remainder attributed next
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+"What confirms a share"). **The library is not
 fitted to one allocator**: re-setting the bound for a term only the shipped
 build holds, or a change suiting mimalloc alone, puts the binary's allocator
 into the library (D13); a library change suiting both glibc and mimalloc is
