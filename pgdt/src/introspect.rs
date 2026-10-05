@@ -3,9 +3,9 @@
 //! **Off by default and never in a shipped binary.** The whole module is
 //! behind the `introspect` Cargo feature; without it every item here is a
 //! no-op and the binary is byte-for-byte the one that ships. With it, `pgdt`
-//! installs a counting `#[global_allocator]` over `std::alloc::System` and
-//! writes, on the way out, what the program held and what glibc was holding
-//! for it.
+//! installs a counting `#[global_allocator]` over `mimalloc::MiMalloc` and
+//! writes, on the way out, what the program held, what mimalloc was holding
+//! for it, and what glibc was holding for the C code beside it.
 //!
 //! This is the introspective half of `docs/design/roadmap.md`, "Attribution is
 //! introspective; only the gate is blind". What each instrument sees, what it
@@ -21,12 +21,17 @@
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
 //!   for and had not freed, and the largest that figure ever reached, kept by
 //!   the counting allocator itself.
-//! * **`mallinfo_*`** — glibc's own view at exit: `arena` (arena-backed bytes
-//!   obtained from the OS), `hblkhd` (mmap-backed), `uordblks` (in use) and
-//!   `fordblks` (freed, held, still resident). The gap between `uordblks` and
-//!   `live_bytes` is allocator bookkeeping and what C code allocates past
-//!   the counter; the gap between `arena` and
-//!   `uordblks` is retention.
+//! * **`mimalloc_*`** — mimalloc's own statistics at exit, for the heap the
+//!   counter stands in front of: `committed` and `reserved`, each now and at
+//!   its high-water, plus the raw JSON `mi_stats_get_json` returns. On an
+//!   overcommitting kernel mimalloc counts an arena's slices as committed when
+//!   it first hands them out and uncounts them when it purges, so the gap
+//!   between `mimalloc_committed_peak_bytes` and `live_peak_bytes` is
+//!   mimalloc's bookkeeping and retention, each a high-water of its own.
+//! * **`mallinfo_*`** — glibc's own view at exit, of what reached C `malloc`:
+//!   `arena` (arena-backed bytes obtained from the OS), `hblkhd`
+//!   (mmap-backed), `uordblks` (in use) and `fordblks` (freed, held, still
+//!   resident). The gap between `arena` and `uordblks` is retention.
 //! * **`malloc_*`** — `malloc_info`'s document-level totals, plus the raw XML,
 //!   which carries **each arena's own `system type="max"`** — the one number
 //!   `mallinfo2` cannot give.
@@ -42,12 +47,15 @@
 //!   the only statistics term a query has, and the counter's live bytes and
 //!   their peak.
 //!
-//! **The two families do not cover the same memory**, so the report labels
-//! each: `live_scope` and `glibc_scope`, with the note between them. The
-//! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
-//! process, C included — `liblzma` is the active `.xz` backend, so its share
-//! of a reader's decoder working set (`xz_seek::Layout::decoder_bytes`) is
-//! invisible to one and fully present in the other. Their difference is therefore not retention.
+//! **The process has two heaps, and the families do not cover the same
+//! memory**, so the report labels each: `live_scope`, `mimalloc_scope` and
+//! `glibc_scope`, with the note between them. The counter and mimalloc see
+//! what passes through Rust's `GlobalAlloc`; glibc sees what reaches C
+//! `malloc` — `liblzma`, the active `.xz` backend, whose share of a reader's
+//! decoder working set (`xz_seek::Layout::decoder_bytes`) is there and
+//! nowhere else, `aws-lc`, and libc itself. mimalloc is linked without
+//! `override`, so C keeps the platform allocator: neither family is the whole
+//! process, and only their sum is the heap.
 //!
 //! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
 //! that variable is unset — see [`report`].
@@ -125,7 +133,8 @@ pub fn report() {
 
 #[cfg(feature = "introspect")]
 mod enabled {
-    use std::alloc::{GlobalAlloc, Layout, System};
+    use mimalloc::MiMalloc;
+    use std::alloc::{GlobalAlloc, Layout};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Bytes the program has asked for and not yet freed.
@@ -133,11 +142,12 @@ mod enabled {
     /// The largest [`LIVE`] ever reached.
     static PEAK: AtomicUsize = AtomicUsize::new(0);
 
-    /// [`System`] with a counter in front of it.
+    /// [`MiMalloc`] with a counter in front of it.
     ///
-    /// **Over `System` specifically**: the glibc statistics below describe the
-    /// allocator underneath, so counting another allocator's allocations would
-    /// point two instruments at different heaps. Hence `alloc.rs`'s guard.
+    /// **Over mimalloc specifically**: the `mimalloc_*` statistics below
+    /// describe the allocator underneath, so counting another allocator's
+    /// allocations would point two instruments at different heaps. Hence
+    /// `alloc.rs`'s guard.
     pub struct Counting;
 
     /// `Relaxed` throughout: the atomics are read only after every thread
@@ -218,11 +228,11 @@ mod enabled {
         ));
     }
 
-    // SAFETY: every method forwards to `System`, which satisfies the trait's
+    // SAFETY: every method forwards to `MiMalloc`, which satisfies the trait's
     // contract, and the counters are plain atomics that allocate nothing.
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let ptr = unsafe { System.alloc(layout) };
+            let ptr = unsafe { MiMalloc.alloc(layout) };
             if !ptr.is_null() {
                 took(layout.size());
             }
@@ -230,7 +240,7 @@ mod enabled {
         }
 
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            let ptr = unsafe { System.alloc_zeroed(layout) };
+            let ptr = unsafe { MiMalloc.alloc_zeroed(layout) };
             if !ptr.is_null() {
                 took(layout.size());
             }
@@ -239,11 +249,11 @@ mod enabled {
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             gave_back(layout.size());
-            unsafe { System.dealloc(ptr, layout) }
+            unsafe { MiMalloc.dealloc(ptr, layout) }
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            let out = unsafe { System.realloc(ptr, layout, new_size) };
+            let out = unsafe { MiMalloc.realloc(ptr, layout, new_size) };
             if !out.is_null() {
                 // Only the difference: a `realloc` that grows a block never
                 // holds both sizes at once from the program's point of view,
@@ -291,23 +301,69 @@ mod enabled {
         out.push_str(&format!("live_peak_bytes={}\n", PEAK.load(Ordering::Relaxed)));
         push_statistics(&mut out);
         out.push_str(SCOPE_NOTE);
-        out.push_str("glibc_scope=whole-process\n");
+        out.push_str("mimalloc_scope=rust-heap\n");
+        push_mimalloc(&mut out);
+        out.push_str("glibc_scope=c-malloc\n");
         push_glibc(&mut out);
         out
     }
 
-    /// What the two scopes mean, in the report itself rather than only in the
-    /// document that explains it. What it names is
+    /// What the three scopes mean, in the report itself rather than only in
+    /// the document that explains it. What it names is
     /// `xz_seek::Layout::decoder_bytes`, not `decode_footprint`: xz-seek's
     /// input chunk passes through `GlobalAlloc` (`docs/design/decisions.md`, "D15").
     const SCOPE_NOTE: &str = concat!(
-        "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
-        "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",
-        "# included: `liblzma` is the active `.xz` backend and allocates its\n",
-        "# dictionary and state (`xz_seek::Layout::decoder_bytes`) a reader,\n",
-        "# which the counter cannot see. The two are not commensurable, and\n",
-        "# their difference is not retention.\n",
+        "# `live_*` counts only what passed through Rust's `GlobalAlloc`, and\n",
+        "# `mimalloc_*` is the heap that serves it: their gap is mimalloc's\n",
+        "# bookkeeping and retention. `mallinfo_*` and `malloc_*` are glibc's\n",
+        "# view of what reached C `malloc` and nothing else: `liblzma` is the\n",
+        "# active `.xz` backend and allocates its dictionary and state\n",
+        "# (`xz_seek::Layout::decoder_bytes`) a reader there, which the counter\n",
+        "# cannot see. The process has two heaps; neither family is all of it.\n",
     );
+
+    /// The `mimalloc_*` lines, then `mi_stats_get_json`'s document verbatim.
+    ///
+    /// **Read through mimalloc's own JSON rather than its struct**, because
+    /// the struct's layout is versioned (`MI_STAT_VERSION`) and the JSON
+    /// carries the version beside the fields; a field the document lacks
+    /// prints nothing rather than a zero that reads like a reading.
+    fn push_mimalloc(out: &mut String) {
+        let Some(json) = mimalloc_stats_json() else {
+            out.push_str("# mi_stats_get_json: mimalloc returned no document\n");
+            return;
+        };
+        for (key, value) in super::mimalloc_json::readings_of(&json) {
+            out.push_str(&format!("{key}={value}\n"));
+        }
+        // Verbatim, after the keys: no line of it is `key=value`, so
+        // `measure.parse_reported` reads none of it.
+        out.push_str("# mi_stats_json\n");
+        out.push_str(&json);
+        if !json.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("# end mi_stats_json\n");
+    }
+
+    /// `mi_stats_get_json`'s document, statistics merged over the process's
+    /// heaps.
+    ///
+    /// The buffer is mimalloc's own — allocated inside the call, not through
+    /// the global allocator — so it is released with `mi_free` and never
+    /// reaches [`Counting`]'s counters.
+    fn mimalloc_stats_json() -> Option<String> {
+        // SAFETY: a zero size and a null buffer ask mimalloc to allocate the
+        // document itself, which it returns NUL-terminated or as null.
+        let buf = unsafe { libmimalloc_sys::mi_stats_get_json(0, std::ptr::null_mut()) };
+        if buf.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, NUL-terminated, and live until the `mi_free` below.
+        let text = unsafe { std::ffi::CStr::from_ptr(buf) }.to_string_lossy().into_owned();
+        unsafe { libmimalloc_sys::mi_free(buf.cast()) };
+        Some(text)
+    }
 
     #[cfg(target_env = "gnu")]
     fn push_glibc(out: &mut String) {
@@ -416,6 +472,37 @@ mod xml {
     }
 }
 
+/// The read over `mi_stats_get_json`'s document, and nothing else.
+///
+/// Compiled whenever the tests are, not only under the feature, for `xml`'s
+/// reason: a number read off the wrong field still looks like a byte count.
+#[cfg(any(feature = "introspect", test))]
+mod mimalloc_json {
+    /// The `mimalloc_*` lines' keys and values, in the order they print.
+    ///
+    /// `committed` and `reserved` are each a `{ total, peak, current }` count
+    /// in mimalloc's statistics; `total` is cumulative and is not read. A
+    /// document that does not parse, or lacks a field, yields nothing for it.
+    pub fn readings_of(json: &str) -> Vec<(String, i64)> {
+        let Ok(doc) = serde_json::from_str::<serde_json::Value>(json) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(v) = doc.get("mimalloc_version").and_then(serde_json::Value::as_i64) {
+            out.push(("mimalloc_version".to_owned(), v));
+        }
+        for stat in ["committed", "reserved"] {
+            for (field, suffix) in [("current", "bytes"), ("peak", "peak_bytes")] {
+                let value = doc.get(stat).and_then(|s| s.get(field)).and_then(|v| v.as_i64());
+                if let Some(v) = value {
+                    out.push((format!("mimalloc_{stat}_{suffix}"), v));
+                }
+            }
+        }
+        out
+    }
+}
+
 /// The report's own shape, which only the instrument build can produce.
 ///
 /// Compiled under the feature alone — `report_text` does not exist without it
@@ -426,12 +513,49 @@ mod instrumented_tests {
 
     /// The scope labels are the report's, not the reader's: a consumer
     /// differencing `live_peak_bytes` against `malloc_system_max` would
-    /// subtract a Rust-only count from a whole-process one.
+    /// subtract the Rust heap's count from C's heap, which never held it.
     #[test]
     fn every_quantity_states_which_memory_it_covers() {
         let text = report_text();
         assert!(text.contains("live_scope=rust-global-alloc\n"), "{text}");
-        assert!(text.contains("glibc_scope=whole-process\n"), "{text}");
+        assert!(text.contains("mimalloc_scope=rust-heap\n"), "{text}");
+        assert!(text.contains("glibc_scope=c-malloc\n"), "{text}");
+    }
+
+    /// mimalloc is the heap behind the counter, so it must report one: a test
+    /// process has allocated through it before this runs, and a committed
+    /// high-water of zero would be an instrument reading the wrong heap.
+    #[test]
+    fn mimalloc_reports_the_heap_the_counter_stands_in_front_of() {
+        let text = report_text();
+        let committed_peak = text
+            .lines()
+            .find_map(|l| l.strip_prefix("mimalloc_committed_peak_bytes="))
+            .and_then(|v| v.parse::<u64>().ok());
+        assert!(committed_peak.is_some_and(|b| b > 0), "{text}");
+    }
+
+    /// Every line that is not one of the report's own readings must be
+    /// invisible to `measure.parse_reported`, whose grammar is
+    /// `^[a-z_]+=\S+$`: the verbatim JSON and XML included.
+    #[test]
+    fn only_the_readings_parse_as_readings() {
+        let text = report_text();
+        let verbatim = text
+            .split("# mi_stats_json\n")
+            .nth(1)
+            .and_then(|rest| rest.split("# end mi_stats_json\n").next())
+            .expect("the report carries mimalloc's document");
+        for line in verbatim.lines() {
+            let trimmed = line.trim();
+            let key = trimmed.split_once('=').map(|(k, _)| k);
+            assert!(
+                !key.is_some_and(
+                    |k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                ),
+                "a line of mimalloc's document parses as a reading: {line}"
+            );
+        }
     }
 
     /// The note explaining the two scopes must not itself parse as a reading:
@@ -474,6 +598,39 @@ mod tests {
             totals_of(XML),
             Totals { heaps: 2, system_current: 25_440_256, system_max: 25_440_256 }
         );
+    }
+
+    /// mimalloc's document, cut to the fields the read takes and one it must
+    /// not: `total` is cumulative and differs from `peak` here on purpose.
+    const JSON: &str = concat!(
+        "{\n",
+        "  \"stat_version\": 5,\n",
+        "  \"mimalloc_version\": 316,\n",
+        "  \"reserved\": { \"total\": 9000, \"peak\": 2048, \"current\": 1024 },\n",
+        "  \"committed\": { \"total\": 7000, \"peak\": 512, \"current\": 256 },\n",
+        "  \"malloc_bins\": [\n  ]\n",
+        "}\n",
+    );
+
+    #[test]
+    fn mimalloc_s_readings_are_current_and_peak_never_total() {
+        let got = super::mimalloc_json::readings_of(JSON);
+        let want: Vec<(String, i64)> = [
+            ("mimalloc_version", 316),
+            ("mimalloc_committed_bytes", 256),
+            ("mimalloc_committed_peak_bytes", 512),
+            ("mimalloc_reserved_bytes", 1024),
+            ("mimalloc_reserved_peak_bytes", 2048),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_document_that_does_not_parse_yields_no_reading() {
+        assert!(super::mimalloc_json::readings_of("{ truncated").is_empty());
     }
 
     #[test]

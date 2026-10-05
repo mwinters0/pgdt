@@ -3814,16 +3814,22 @@ class InstrumentReport(unittest.TestCase):
     filed per rep rather than collapsed to the last one.
     """
 
-    #: A report shaped as the instrument writes one: the two scope keys, the
-    #: prose note between them, the totals, and the raw XML underneath.
+    #: A report shaped as the instrument writes one: the three scope keys, the
+    #: prose note before them, each allocator's totals, and mimalloc's JSON and
+    #: glibc's XML verbatim beneath them.
     REPORT = (
         "instrument=counting-allocator\n"
         "live_scope=rust-global-alloc\n"
         "live_bytes=76876\n"
         "live_peak_bytes=209822121\n"
-        "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n"
-        "# their difference is not retention.\n"
-        "glibc_scope=whole-process\n"
+        "# `live_*` counts only what passed through Rust's `GlobalAlloc`, and\n"
+        "# cannot see. The process has two heaps; neither family is all of it.\n"
+        "mimalloc_scope=rust-heap\n"
+        "mimalloc_committed_peak_bytes=268435456\n"
+        "# mi_stats_json\n"
+        '  "committed": { "total": 9, "peak": 268435456, "current": 1 },\n'
+        "# end mi_stats_json\n"
+        "glibc_scope=c-malloc\n"
         "mallinfo_arena=131768320\n"
         "malloc_system_max=404201472\n"
         "# malloc_info\n"
@@ -3836,10 +3842,14 @@ class InstrumentReport(unittest.TestCase):
         self.assertEqual(got["live_peak_bytes"], "209822121")
         self.assertEqual(got["malloc_system_max"], "404201472")
         # The scope labels are part of the report, not commentary on it: a
-        # consumer differencing a Rust-only count against a whole-process one
-        # is what they exist to make visible.
+        # consumer differencing one heap's count against another's is what
+        # they exist to make visible.
         self.assertEqual(got["live_scope"], "rust-global-alloc")
-        self.assertEqual(got["glibc_scope"], "whole-process")
+        self.assertEqual(got["mimalloc_scope"], "rust-heap")
+        self.assertEqual(got["glibc_scope"], "c-malloc")
+        self.assertEqual(got["mimalloc_committed_peak_bytes"], "268435456")
+        # The verbatim documents are detail, not readings.
+        self.assertNotIn("committed", got)
 
     def test_the_harnesss_own_reading_cannot_reach_it(self):
         # `maxrss_kib` is `rss_wrapper`'s, and it is a `key=value` line by this
@@ -3973,7 +3983,7 @@ class InstrumentReport(unittest.TestCase):
             self._run(session, spec, write_report=True)
             self.assertEqual(session._last_instrument["live_peak_bytes"], "209822121")
             record = session.records[0]
-            self.assertEqual(record["instrument"]["glibc_scope"], "whole-process")
+            self.assertEqual(record["instrument"]["glibc_scope"], "c-malloc")
             # The file stays, under the sitting's own directory, because the
             # `malloc_info` XML in it is per-arena detail no summary carries.
             kept = Path(tmp) / record["instrument_report"]
@@ -7537,6 +7547,33 @@ class CensoredCells(unittest.TestCase):
         self.assertTrue(
             "**The remainder has a name**" in body or "**The remainder has no name here**" in body,
             "the account ends on neither a name nor an explicit no-name",
+        )
+
+    def test_a_two_heap_report_withholds_the_one_heap_account(self):
+        # An instrument counting in front of mimalloc leaves glibc holding only
+        # what reached C `malloc`, so subtracting the counter's high-water from
+        # glibc's takes the Rust heap out of a heap that never held it. The
+        # account is withheld and says so; the counter's own line, which no
+        # allocator moves, still prints.
+        one_heap = self._report
+
+        def two_heaps(i):
+            return {
+                **one_heap(i),
+                "mimalloc_scope": "rust-heap",
+                "mimalloc_committed_peak_bytes": str((400 + 10 * i) * measure.MIB),
+                "glibc_scope": "c-malloc",
+            }
+
+        with unittest.mock.patch.object(self, "_report", two_heaps):
+            body, _ = self._render()
+        self.assertIn("**withheld**", body)
+        self.assertIn("`KD34`", body)
+        self.assertNotIn("The account, term by term", body)
+        self.assertNotIn("The remainder has", body)
+        self.assertTrue(
+            any(ln.startswith("**What the program itself") for ln in body.splitlines()),
+            "the counter's own line went with the account",
         )
 
     def test_the_check_states_the_arrangement_and_the_tolerance(self):

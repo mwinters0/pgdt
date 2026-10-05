@@ -781,7 +781,10 @@ What it inherits:
   Those readings are the platform allocator's, and P30 moves the shipped
   binary to mimalloc ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md),
   "What the move owes before a release"), so this phase re-takes them under
-  mimalloc on the rebuilt instrument.
+  mimalloc on the rebuilt instrument. Its reports carry two heaps, mimalloc's
+  for Rust and glibc's for C, and `run_reserve` withholds its one-heap account
+  from such a report rather than subtract the Rust heap from C's
+  (`scripts/measure.py`), so the two-heap account is this phase's to draw.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

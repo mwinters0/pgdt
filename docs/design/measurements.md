@@ -1088,19 +1088,25 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
 | a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics per allocation |
+| `mi_stats_get_json()` | mimalloc's `committed` and `reserved`, each now and at its **high-water**, merged over its heaps | what C allocates through libc | one call |
 | jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | glibc's behaviour — it is a different allocator | a feature flag and a build |
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
 | heaptrack — `--heaptrack-recipe` | every `malloc`, C and Rust alike, attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
 
-**Two of them are built and in the tree**, behind `pgdt`'s off-by-default
-`introspect` feature: the counting `#[global_allocator]` and glibc's
-`mallinfo2`/`malloc_info`, reported together as `key=value` lines in the file
-`PGDT_INTROSPECT_OUT` names — unset meaning no report at all, so the instrument
-writes to no stream. **They do not cover the same memory**, and the report
-labels which each is: the counter sees Rust's `GlobalAlloc` and glibc sees the
-whole process, C included, so their difference is decoder working set plus
-bookkeeping plus retention rather than retention. How to build it, what each
+**Three of them are built and in the tree**, behind `pgdt`'s off-by-default
+`introspect` feature: the counting `#[global_allocator]`, in front of mimalloc;
+mimalloc's own statistics for that heap; and glibc's `mallinfo2`/`malloc_info`
+for what reaches C `malloc` — `liblzma`, `aws-lc` and libc itself, mimalloc
+being linked without `override`. They are reported together as `key=value`
+lines in the file `PGDT_INTROSPECT_OUT` names — unset meaning no report at all,
+so the instrument writes to no stream. **The process has two heaps, and the
+report labels which each family covers**: the counter and mimalloc see Rust's
+`GlobalAlloc`, so the gap between their high-waters is mimalloc's bookkeeping
+and retention, and glibc sees C alone, so `liblzma`'s dictionaries are there
+and nowhere else; only the two allocators' sum is the heap. A report labelling
+glibc `whole-process` was taken with the counter over glibc, the Rust heap
+inside it, and is read as one heap. How to build it, what each
 line means and why `--version` refuses to let it be timed is
 [`decisions.md`](decisions.md), "D13". **The counter also attributes
 statistics**: what a thread allocates inside the library's statistics scope is
@@ -1125,7 +1131,7 @@ replay's row loop, DataFusion — which a sampling
 profile of the same run sees; `measure.py --profile-recipe` prints both, over
 one figure's legs.
 
-**The third is a tool rather than a build, and `cd scripts && uv run
+**Another is a tool rather than a build, and `cd scripts && uv run
 measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the
 harness's third such invocation, beside koji's scan and the sampling profile.
 heaptrack hooks `malloc` through `LD_PRELOAD`, so it sees C and Rust alike

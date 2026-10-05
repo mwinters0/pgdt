@@ -689,8 +689,9 @@ curl -sfL 'https://sourceware.org/git/?p=glibc.git;a=blob_plain;f=malloc/arena.c
 
 Substitute the version either command reports for `glibc-2.44`: a branch reading
 `__get_nprocs ()` is `max(8, ncores)`, one reading `NARENAS_FROM_NCORES` is
-`8 × ncores`. The arena count a scan reaches is the `Arenas` column of
-`cd scripts && uv run measure.py --figure reserve`, on the `introspect` build.
+`8 × ncores`. No built instrument reads the arena count a `system` build's
+scan reaches: the `introspect` build's `malloc_heaps` counts the arenas C's
+allocations open, its Rust heap being mimalloc's (`pgdt/src/introspect.rs`).
 
 ## RT11 — `std`'s `HashMap` allocates one table sized by its capacity, and a full map grows into a table twice the buckets
 

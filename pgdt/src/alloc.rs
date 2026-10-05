@@ -25,23 +25,25 @@ compile_error!(
 );
 
 /// `introspect` is the third `#[global_allocator]` in this crate, and it is
-/// refused beside the other two for more than the symbol collision: the
-/// instrument counts allocations in front of `System` and reads glibc's
-/// `mallinfo2`/`malloc_info` for that same heap, so beside `jemalloc` or
-/// `mimalloc` it would count one heap and report another's. See
-/// `src/introspect.rs`.
-#[cfg(all(feature = "introspect", any(feature = "jemalloc", feature = "mimalloc")))]
+/// refused beside `jemalloc` for more than the symbol collision: the
+/// instrument counts allocations in front of mimalloc and reads mimalloc's own
+/// statistics for that same heap, so beside `jemalloc` it would count one heap
+/// and report another's. Beside `mimalloc` it is the same build — the
+/// counter's heap *is* mimalloc — so that pair is accepted and the instrument
+/// is the allocator. See `src/introspect.rs`.
+#[cfg(all(feature = "introspect", feature = "jemalloc"))]
 compile_error!(
-    "`introspect` counts allocations in front of the platform allocator and reads glibc's own \
-     statistics for the same heap: it is an instrument, not a leg, and cannot be combined with \
-     `jemalloc` or `mimalloc`."
+    "`introspect` counts allocations in front of mimalloc and reads mimalloc's own statistics \
+     for the same heap: it is an instrument, not a leg, and cannot be combined with `jemalloc`."
 );
 
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(feature = "mimalloc")]
+/// Not under `introspect`, whose counting allocator is mimalloc with a counter
+/// in front of it and is installed by `src/introspect.rs` instead.
+#[cfg(all(feature = "mimalloc", not(feature = "introspect")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -58,16 +60,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(all(not(feature = "jemalloc"), not(feature = "mimalloc"), not(feature = "introspect")))]
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: system)");
 /// The instrumented build says so **beside** the allocator rather than in
-/// place of it: it is still the platform allocator, with a counter in front of
-/// it. `scripts/measure.py`'s `binary_allocator` refuses a binary whose
-/// `--version` carries this marker, keeping an instrumented build out of every
-/// timed table by construction.
-#[cfg(all(not(feature = "jemalloc"), not(feature = "mimalloc"), feature = "introspect"))]
+/// place of it: it is mimalloc, with a counter in front of it, whichever
+/// allocator feature it was also given. `scripts/measure.py`'s
+/// `binary_allocator` refuses a binary whose `--version` carries this marker,
+/// keeping an instrumented build out of every timed table by construction.
+#[cfg(all(not(feature = "jemalloc"), feature = "introspect"))]
 pub const VERSION: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (allocator: system) (instrument: counting-allocator)");
+    concat!(env!("CARGO_PKG_VERSION"), " (allocator: mimalloc) (instrument: counting-allocator)");
 #[cfg(feature = "jemalloc")]
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: jemalloc)");
-#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc"), not(feature = "introspect")))]
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: mimalloc)");
 
 #[cfg(test)]
@@ -78,12 +80,13 @@ mod tests {
     /// parse, and a default build must report `system`. `cargo test` sets no
     /// feature, so the live assertion here is the default arm; the other two
     /// are exercised by `measure.py --figure allocator`, which checks each
-    /// build's `--version` before timing it.
+    /// build's `--version` before timing it, and the instrument's by
+    /// `cargo test -p pgdt --features introspect`, which reports `mimalloc`.
     #[test]
     fn the_version_string_names_this_build_s_allocator() {
         let expected = if cfg!(feature = "jemalloc") {
             "jemalloc"
-        } else if cfg!(feature = "mimalloc") {
+        } else if cfg!(any(feature = "mimalloc", feature = "introspect")) {
             "mimalloc"
         } else {
             "system"

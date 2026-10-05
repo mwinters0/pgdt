@@ -18,13 +18,14 @@ default = []
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
 # The introspection build (`src/introspect.rs`): a counting
-# `#[global_allocator]` over `System` plus glibc's own `mallinfo2` /
-# `malloc_info` statistics, printed as `key=value` lines on the way out. It is
-# an *instrument*, not an allocator leg -- attribution asks the process, and
-# only the gate stays black-box (`docs/design/roadmap.md`, "Attribution is
-# introspective; only the gate is blind"). It never times anything, and
-# `pgdt --version` names it so the harness cannot publish a figure taken on it.
-introspect = ["dep:libc", "pgdump_query/introspect"]
+# `#[global_allocator]` over mimalloc, with mimalloc's own statistics for the
+# Rust heap and glibc's `mallinfo2` / `malloc_info` for what C allocates,
+# printed as `key=value` lines on the way out. It is an *instrument*, not an
+# allocator leg -- attribution asks the process, and only the gate stays
+# black-box (`docs/design/roadmap.md`, "Attribution is introspective; only the
+# gate is blind"). It never times anything, and `pgdt --version` names it so
+# the harness cannot publish a figure taken on it.
+introspect = ["dep:libc", "dep:mimalloc", "dep:libmimalloc-sys", "pgdump_query/introspect"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -41,7 +42,11 @@ futures = "0.3.34"
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into. Nothing in a default build links it.
 libc = { version = "0.2.189", optional = true }
-mimalloc = { version = "0.1.50", optional = true }
+# `introspect` only: `mi_stats_get_json` and `mi_free`, behind `extended`, as
+# upstream DataFusion's benchmarks read mimalloc's statistics. The version is
+# the one `mimalloc` itself links, so the two name one library.
+libmimalloc-sys = { version = "0.1.49", optional = true, default-features = false, features = ["extended"] }
+mimalloc = { version = "0.1.50", optional = true, default-features = false }
 # As its PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26").
 namespace-init = { path = "../namespace-init" }

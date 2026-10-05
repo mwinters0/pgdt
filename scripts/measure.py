@@ -1217,9 +1217,9 @@ INSTRUMENT_OUT_VAR = "PGDT_INTROSPECT_OUT"
 
 #: Where the report is mounted inside the container, and the directory under a
 #: sitting's own output that is bind-mounted there. One report per rep lands
-#: here and stays, beside `raw.json`: `live_peak_bytes` and the `mallinfo_*`
-#: fields are per-rep readings, and the `malloc_info` XML under them is the
-#: per-arena detail no summary carries.
+#: here and stays, beside `raw.json`: `live_peak_bytes`, the `mimalloc_*` and
+#: the `mallinfo_*` fields are per-rep readings, and mimalloc's JSON and the
+#: `malloc_info` XML under them are the detail no summary carries.
 INSTRUMENT_MOUNT = "/introspect"
 INSTRUMENT_DIR = "instrument"
 
@@ -1235,8 +1235,8 @@ def parse_reported(text: str) -> dict[str, str]:
 
     Lines that are not `key=value` are ignored rather than refused, so a binary
     is free to write whatever else it likes — which is what lets the
-    introspection build carry `malloc_info`'s XML and its own scope note in the
-    same file.
+    introspection build carry mimalloc's JSON, `malloc_info`'s XML and its own
+    scope note in the same file.
 
     The text is a stream's for the decode example and a **file's** for the
     introspection build (`INSTRUMENT_OUT_VAR`). The parse is the same either
@@ -4674,7 +4674,12 @@ class Session:
                     "live_scope": "rust-global-alloc",
                     "live_bytes": str(64 << 10),
                     "live_peak_bytes": str(200 * MIB + digest[2] * MIB // 255),
-                    "glibc_scope": "whole-process",
+                    "mimalloc_scope": "rust-heap",
+                    "mimalloc_committed_bytes": str(96 * MIB),
+                    "mimalloc_committed_peak_bytes": str(320 * MIB),
+                    "mimalloc_reserved_bytes": str(1024 * MIB),
+                    "mimalloc_reserved_peak_bytes": str(1024 * MIB),
+                    "glibc_scope": "c-malloc",
                     "mallinfo_arena": str(130 * MIB),
                     "mallinfo_hblkhd": "0",
                     "mallinfo_uordblks": str(66 * MIB),
@@ -5196,7 +5201,7 @@ ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
 
 #: What an *instrumented* build appends beside its allocator
 #: (`pgdt/src/introspect.rs`). Such a build takes an atomic on every allocation
-#: and prints its own live bytes and glibc's statistics: it is how an
+#: and prints its own live bytes and its allocators' statistics: it is how an
 #: attribution is taken, and it is not what any figure may be timed or measured
 #: on (`docs/design/roadmap.md`, "Attribution is introspective; only the gate
 #: is blind"). The marker rides in `--version` because that is the one place a
@@ -8377,6 +8382,66 @@ def run_reserve(session: Session) -> str:
 
     base = rss(_RESERVE_BASELINE)
     base_reserve = median(base) - (LIBRARY_DEFAULT_BUDGET / 1024)
+    # **The account above models one heap**: glibc's, holding the counter's
+    # live bytes and `liblzma`'s dictionaries alike, which is what an
+    # instrument counting in front of glibc reported. One counting in front of
+    # mimalloc reports two (`mimalloc_scope`) — the Rust heap apart, glibc's
+    # holding only what reached C `malloc` — so every subtraction above takes
+    # the counter's bytes out of a heap that never held them. Withheld rather
+    # than printed, and said in those words; the counter's own line stands,
+    # being no allocator's. The two-heap account is `KD34`'s owner's to draw.
+    two_heaps = any(
+        "mimalloc_scope" in report
+        for spec in instrument
+        for report in session.instrument_reports(figure, spec)
+    )
+    if two_heaps:
+        attribution = (
+            "**What the process says it held**, on the introspection build running the "
+            "same flagless shape as the axis above. These are this figure's instrument legs, "
+            "declared in its register entry; the build takes an atomic on every allocation and "
+            "`pgdt --version` names it, so it is never timed. **It counted in front of "
+            "mimalloc, so the process held two heaps**: the Rust heap is mimalloc's, and "
+            "glibc's holds only what reached C `malloc`. The account this figure draws — the "
+            "counter's high-water and the decoder dictionaries subtracted from glibc's — "
+            "subtracts the Rust heap from a heap that never held it, so it is **withheld** "
+            "here rather than printed; the two-heap account is `KD34`'s owner's to draw, out "
+            "of the `mimalloc_*` and `malloc_*` lines each report carries. What stands is the "
+            "counter's own line, which no allocator moves:\n\n"
+            + live_line
+        )
+    else:
+        attribution = (
+            "**What the process says it held**, on the introspection build running the "
+            "same flagless shape as the axis above. These are this figure's instrument legs, "
+            "declared in its register entry; the build takes an atomic on every allocation and "
+            "`pgdt --version` names it, so it is never timed. The "
+            "two families do not cover the same memory — the Rust column is what passed through "
+            "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "
+            "between them is decoder working set plus bookkeeping plus retention, never retention "
+            "alone:\n\n"
+            + instrument_table
+            + "\n\n**The account, term by term.** Each term is a high-water *of its own*, so the "
+            "row bounds any single instant rather than describing one, and the last column is a "
+            "residual of maxima. `liblzma` allocates through C `malloc`, so its per-reader "
+            f"dictionary — {XZ_DICT_BYTES:,} bytes, read off a stack rather than modelled — is "
+            "added back by hand: the counter cannot see it and glibc cannot separate it, and a "
+            "decomposition that subtracted the two families would charge it to retention. Two "
+            "columns can leave the range a resident term would keep, and both say the same thing: "
+            "`RSS − heap high-water` goes **negative** where the arenas' summed high-water exceeds "
+            "peak RSS, which it may, because `system max` is address space each arena obtained and "
+            "no two arenas reach their maxima at once; and `fordblks` covers **more** than the "
+            "remainder where retention at exit is larger than the gap between two maxima taken at "
+            "different instants. Neither is an error in the reading — both are what "
+            "non-simultaneity looks like, and they are why the last column is a share rather than "
+            "a subtraction anyone should carry forward:\n\n"
+            + account_table
+            + "\n\n"
+            + live_line
+            + "\n\n"
+            + verdict
+        )
+
     return (
         "**What a flagless scan resolves, and what it then holds.** Each cell is peak resident "
         "set, the worker count and budget the run itself reported, and what the *worst* rep left "
@@ -8455,34 +8520,8 @@ def run_reserve(session: Session) -> str:
         + model_table
         + "\n\n"
         + model_verdict
-        + "\n\n**What the process says it held**, on the introspection build running the "
-        "same flagless shape as the axis above. These are this figure's instrument legs, "
-        "declared in its register entry; the build takes an atomic on every allocation and "
-        "`pgdt --version` names it, so it is never timed. The "
-        "two families do not cover the same memory — the Rust column is what passed through "
-        "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "
-        "between them is decoder working set plus bookkeeping plus retention, never retention "
-        "alone:\n\n"
-        + instrument_table
-        + "\n\n**The account, term by term.** Each term is a high-water *of its own*, so the "
-        "row bounds any single instant rather than describing one, and the last column is a "
-        "residual of maxima. `liblzma` allocates through C `malloc`, so its per-reader "
-        f"dictionary — {XZ_DICT_BYTES:,} bytes, read off a stack rather than modelled — is "
-        "added back by hand: the counter cannot see it and glibc cannot separate it, and a "
-        "decomposition that subtracted the two families would charge it to retention. Two "
-        "columns can leave the range a resident term would keep, and both say the same thing: "
-        "`RSS − heap high-water` goes **negative** where the arenas' summed high-water exceeds "
-        "peak RSS, which it may, because `system max` is address space each arena obtained and "
-        "no two arenas reach their maxima at once; and `fordblks` covers **more** than the "
-        "remainder where retention at exit is larger than the gap between two maxima taken at "
-        "different instants. Neither is an error in the reading — both are what "
-        "non-simultaneity looks like, and they are why the last column is a share rather than "
-        "a subtraction anyone should carry forward:\n\n"
-        + account_table
         + "\n\n"
-        + live_line
-        + "\n\n"
-        + verdict
+        + attribution
         + (
             "\n\n**The check, which is what makes the two instruments independent**: the "
             "black-box legs measure the same arrangement through `getrusage`, sharing no "
