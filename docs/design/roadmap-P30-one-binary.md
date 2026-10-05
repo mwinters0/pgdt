@@ -117,8 +117,12 @@ shipped build and on the `system` build, so the legs differ by the allocator
 alone, as the `allocator` figure's already do for time. **A reading failing
 on both legs predates P30** — it is filed against the reserve (`KD34`, P23's)
 or as a new `KD<k>`, and does not block the phase. **One failing on mimalloc
-alone blocks it**, and the instrument attributes it. The phase moves the
-allocator and shows it made nothing worse; it does not re-fit a constant.
+alone blocks it**, and the instrument attributes it — in a diagnostic sitting
+on the `introspect` build that the blocked phase gains as a slice, not a
+reading the sweep takes, since only `reserve` carries instrument legs. So the
+sweep draws no two-heap account of the reserve's terms; that model is P23's.
+The phase moves the allocator and shows it made nothing worse; it does not
+re-fit a constant.
 
 **The reserve stays P23's (`KD34`).** `MEMORY_RESERVE` was chosen from glibc
 readings (`runs/19.16-reserve-constant-20260911-2210/readings.json`), and the

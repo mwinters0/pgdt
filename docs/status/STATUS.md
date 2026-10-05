@@ -82,7 +82,7 @@ instrument can see").
 Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.md).
 
 - [x] **30.1** The instrument on mimalloc: `introspect` counts in front of `MiMalloc` and reports mimalloc's statistics for the Rust heap beside glibc's for the C dependencies'; `introspect` brings mimalloc, the default build staying `system` — [notes](../design/roadmap-P30.1-instrument-notes.md)
-- [ ] **30.2** The allocator move: mimalloc the default, `system` and `jemalloc` the opt-in legs, `--version` and `measure.py`'s `allocator` legs following, D13, the reserve's deficiency entry and the apparatus text rewritten (the spec, "What the move owes before a release"); nothing re-taken
+- [ ] **30.2** The allocator move: mimalloc the default, `system` and `jemalloc` the opt-in legs, `--version` and `measure.py`'s `allocator` legs following, D13, the reserve's deficiency entry and the apparatus text rewritten (the spec, "What the move owes before a release"), and the `reserve` figure printing a two-heap report's readings, each column labelled with the memory it covers, where it now withholds them with the account; nothing re-taken
 - [ ] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines
 - [ ] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck
 - [ ] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following
@@ -117,16 +117,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The `reserve` figure withholds its attribution under the mimalloc
-  instrument rather than drawing a two-heap one.** `run_reserve`'s account
-  subtracts the counter's high-water from glibc's heap, which no longer holds
-  the Rust heap, so 30.1 made it print a withheld-account paragraph for any
-  report carrying `mimalloc_scope`, leaving the two-heap account to P23 as the
-  spec's `KD34` paragraph leaves the re-take. Why: the account is a model of
-  the reserve's terms, P23's to re-fit, and an unattended slice building the
-  instrument would otherwise ship an unreviewed model inside it. What
-  reconsidering changes: if 30.6's sweep should publish an attribution — the
-  spec has a failure on mimalloc alone "attributed by the instrument" — a slice
-  before 30.6 draws the account over `mimalloc_committed_peak_bytes` and
-  `malloc_system_max`, and the guard goes.
