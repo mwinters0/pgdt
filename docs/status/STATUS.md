@@ -88,7 +88,7 @@ Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.m
 - [x] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following — [notes](../design/roadmap-P30.5-one-binary-notes.md)
 - [x] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The whole figure set is folded into `measurements.md` from one sitting at `1c9fc9be`, no leg killed on either build; the gate was judged on kills alone, the wrong contract for `reserve`, which 30.6.1 corrects — [notes](../design/roadmap-P30.6-retake-notes.md)
 - [x] **30.6.1** The gate reads the margin: `measure.py` fails a `reserve` flagless leg whose worst surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of its allocation, `parallel-peak-rss` still failing on a kill, each pinned by a test; the `1c9fc9be` sitting re-rendered with `--render`, measuring nothing, and `reserve`'s gate table and prose re-folded into `measurements.md`. The gate blocks on one leg, failing on the shipped build alone — [notes](../design/roadmap-P30.6.1-gate-margin-notes.md)
-- [ ] **30.7** The diagnostic sitting: the `introspect` build attributes what the shipped build holds above its charge at 128 MiB blocks in `-m 1536m` and `-m 2g`, the instrument legs at that block size added to `reserve`'s register entry; it attributes and stops, the remedy grilled once the reading is in (the spec, "What the move owes before a release"). The legs and their table are in `measure.py`; only the readings remain, a `--alone` sitting from the commit carrying them — [notes](../design/roadmap-P30.7-diagnostic-notes.md)
+- [x] **30.7** The diagnostic sitting: the `introspect` build attributes what the shipped build holds above its charge at 128 MiB blocks in `-m 1536m` and `-m 2g`, the instrument legs at that block size added to `reserve`'s register entry; it attributes and stops, the remedy grilled once the reading is in (the spec, "What the move owes before a release"). Read from a `--alone` sitting at `27593d2c`, not publishable: two terms, the program holding one unit more than the charge bills from two readers up on both builds, and mimalloc keeping about one more on the shipped build alone, which is what fails the margin. The gate still blocks; the remedy's grilling is next — [notes](../design/roadmap-P30.7-diagnostic-notes.md)
 
 ## Not started
 
@@ -119,3 +119,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **30.7 reads its diagnostic as two terms, where its criterion named one
+  outcome a heap.** `RESERVE_DIAGNOSTIC_LIMITS`' comment, written before the
+  sitting, says a Rust live high-water above `Billed` names the program, not
+  the allocator, and on its letter both rows read so. The notes read the live
+  high-water against Rust's share of the bill instead (`Billed` carries C's
+  decoder footprint), find both a program term and mimalloc's retention, and
+  attribute the gate's failure to the retention, because the `system` twin
+  holds the program's term and passes — the spec's own control for "failing on
+  mimalloc alone" — and neither term alone breaks the margin on these
+  readings. **The decision to make:** whether the remedy's grilling starts
+  from that reading, or from the criterion's letter, under which the remedy is
+  the charge (billing the unit) and mimalloc's part is left standing
+  ([`../design/roadmap-P30.7-diagnostic-notes.md`](../design/roadmap-P30.7-diagnostic-notes.md),
+  "The attribution").
