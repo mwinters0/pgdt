@@ -23,6 +23,7 @@ import hashlib
 import inspect
 import io
 import json
+import math
 import re
 import subprocess
 import tempfile
@@ -8017,9 +8018,15 @@ class ConfirmingLegs(unittest.TestCase):
             ((8, 12), (0, 12), [], "**Confirmed"),
             ((8, 12), (12, 12), [], "**`purge_delay` is ruled out"),
             ((8, 12), (3, 12), [], "**`purge_delay`'s share is confirmed"),
+            # Fewer reps than the control, but within its spread: what an
+            # option doing nothing reads in about two sittings of five.
+            ((8, 12), (4, 12), [], "**`purge_delay` is not confirmed for any share"),
+            ((8, 12), (7, 12), [], "**`purge_delay` is not confirmed for any share"),
             # As many reps without the term as the control has: no removal.
             ((8, 12), (8, 12), [], "**`purge_delay` is not confirmed for any share"),
             ((8, 12), (10, 12), [], "**`purge_delay` is not confirmed for any share"),
+            # Gone in every rep confirms, as registered, whatever the test.
+            ((2, 12), (0, 12), [], "**Confirmed"),
             ((0, 12), (0, 12), [], "**No verdict**"),
             ((8, 12), (0, 0), [], "**No verdict**"),
             ((8, 12), (0, 12), ["a leg (1 rep(s))"], "**No verdict: the option did not reach"),
@@ -8030,6 +8037,42 @@ class ConfirmingLegs(unittest.TestCase):
                     measure.confirming_verdict(
                         "`purge_delay`", control, option, undelivered
                     ).startswith(opening)
+                )
+
+    def test_the_share_test_s_line(self):
+        # 30.7's control rate at twelve reps a side: a share is confirmed at
+        # three reps holding the term and not at four, the line the history
+        # entry registering the test states.
+        self.assertLessEqual(measure.fewer_held_p((3, 12), (8, 12)), measure.CONFIRMING_ALPHA)
+        self.assertGreater(measure.fewer_held_p((4, 12), (8, 12)), measure.CONFIRMING_ALPHA)
+
+    def test_fewer_held_p_is_the_hypergeometric_tail(self):
+        # Hand-checked tables: the p-value is the chance, both margins held,
+        # of as few holding reps among the option's or fewer.
+        cases = [
+            # (option, control) → p
+            ((0, 12), (8, 12), math.comb(16, 12) / math.comb(24, 12)),
+            ((3, 12), (8, 12), 0.04976635963309809),
+            ((4, 12), (8, 12), 0.1101733775714123),
+            ((0, 12), (2, 12), 12 * 11 / (24 * 23)),
+            # One side's every rep holding it: no removal, so every table is
+            # at least this extreme.
+            ((12, 12), (8, 12), 1.0),
+            # Equal rates sit past the middle, never under α.
+            ((6, 12), (6, 12), 0.5 + math.comb(12, 6) ** 2 / math.comb(24, 12) / 2),
+        ]
+        for option, control, p in cases:
+            with self.subTest(option=option, control=control):
+                self.assertAlmostEqual(measure.fewer_held_p(option, control), p, places=12)
+
+    def test_the_tail_sums_to_one_over_every_table(self):
+        # The hypergeometric's support, every table with these margins: the
+        # tail at the largest count possible is the whole distribution.
+        for read, base_read, holding in [(12, 12, 8), (6, 12, 10), (3, 4, 7), (5, 5, 0)]:
+            with self.subTest(read=read, base_read=base_read, holding=holding):
+                top = min(read, holding)
+                self.assertAlmostEqual(
+                    measure.fewer_held_p((top, read), (holding - top, base_read)), 1.0, places=12
                 )
 
     def _raw(self, read_back=None):

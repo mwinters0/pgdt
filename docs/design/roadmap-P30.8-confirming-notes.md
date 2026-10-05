@@ -31,7 +31,10 @@ shipped build's retention is mimalloc's `purge_delay`" in its `tables.md`.
   reaches `RESERVE_RETENTION_FRACTION` of a unit. A shipped rep's reading is
   its peak RSS less its `system` twin's worst rep; an instrument rep's is its
   peak RSS less Rust's live high-water and glibc's. The constants' comments
-  say why.
+  say why. A share is confirmed only where `fewer_held_p`, the one-sided
+  Fisher exact test on the pooled counts with the option and without it, is
+  at or under `CONFIRMING_ALPHA`; gone in every rep confirms without it, as
+  the spec registers.
 - **The instrument reads the option back**: `pgdt/src/introspect.rs` reports
   `mimalloc_purge_delay` through `mi_option_get`, and the renderer gives no
   verdict where a confirming leg's rep read back anything but the value set.
@@ -50,8 +53,8 @@ diagnostic checks still resolve the shipped arrangement, nothing is killed, the
 gate's verdict is 30.7's. The verdict:
 
 - **Confirmed** sends P30 to the remedy's grilling with `purge_delay` named.
-- **A share** and **ruled out** both leave a remainder, which is attributed
-  next on the cross-thread free list, on an instrument built only then
+- **A share**, **not confirmed for any share** and **ruled out** all leave a
+  remainder, which is attributed next on the cross-thread free list, on an instrument built only then
   (`MI_STAT` 1; [`roadmap-P30.7-diagnostic-notes.md`](roadmap-P30.7-diagnostic-notes.md),
   "The candidates in mimalloc's source").
 - **No verdict** gets a new sitting, once the reason it names is fixed.

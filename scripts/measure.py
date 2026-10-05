@@ -92,6 +92,7 @@ import dataclasses
 import functools
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -5486,6 +5487,33 @@ def gate_verdict(shipped: bool | None, twin: bool | None) -> tuple[str, bool]:
     return "passes", False
 
 
+#: The significance level of the share test in `confirming_verdict`, registered
+#: before the confirming sitting's reading (`roadmap-P30-one-binary.md`, "What
+#: the move owes before a release"). At twelve reps a side against a control
+#: holding the term in eight, it confirms a share where the option holds the
+#: term in at most three (`ConfirmingLegs.test_the_share_test_s_line`).
+CONFIRMING_ALPHA = 0.05
+
+
+def fewer_held_p(option: Sequence[int], control: Sequence[int]) -> float:
+    """The one-sided Fisher exact test's p-value that `option`'s reps hold the
+    term less often than `control`'s, each `(reps holding it, reps read)`.
+
+    Conditioned on both margins, the reps holding the term among the option's
+    are hypergeometric under the null that the option changes nothing; the
+    p-value is the chance of as few as were read or fewer. Exact, so no
+    sample size is too small for it, and pure arithmetic, so the harness
+    takes no statistics dependency for one 2×2 table."""
+    held, read = option
+    base_held, base_read = control
+    total, holding = read + base_read, held + base_held
+    lowest = max(0, read - (total - holding))
+    return sum(
+        math.comb(holding, x) * math.comb(total - holding, read - x)
+        for x in range(lowest, held + 1)
+    ) / math.comb(total, read)
+
+
 def confirming_verdict(
     candidate: str,
     control: Sequence[int],
@@ -5503,11 +5531,13 @@ def confirming_verdict(
     (`roadmap-P30-one-binary.md`, "What the move owes before a release"):
     gone in every rep confirms the mechanism; held in every rep rules it out,
     the next candidate attributed; between the two, the option's share is
-    confirmed only where **fewer** reps hold the term with the option than
-    without it, since the term is absent from some reps of the control too and
-    a rep without it is no removal on its own. A sitting whose control held
-    the term in no rep, or whose option never reached mimalloc, confirms and
-    rules out nothing."""
+    confirmed only where the removal lies beyond the control's own spread —
+    `fewer_held_p` at or under `CONFIRMING_ALPHA` — since the term is absent
+    from some reps of the control too and a rep without it is no removal on
+    its own. Anything short of the test is not confirmed, and the next
+    candidate is attributed. A sitting whose control held the term in no
+    rep, or whose option never reached mimalloc, confirms and rules out
+    nothing."""
     if undelivered:
         return (
             "**No verdict: the option did not reach mimalloc** in "
@@ -5537,15 +5567,17 @@ def confirming_verdict(
             f"**{candidate} is ruled out.** {counts}: the option removed it from no rep, "
             "so the next candidate is attributed, on an instrument built for it."
         )
-    if held * base_read < base_held * read:
+    p = fewer_held_p(option, control)
+    test = f"one-sided Fisher exact p = {p:.3g}, against α = {CONFIRMING_ALPHA:g}"
+    if p <= CONFIRMING_ALPHA:
         return (
-            f"**{candidate}'s share is confirmed.** {counts}: fewer reps hold it with the "
-            "option, and the remainder is attributed next."
+            f"**{candidate}'s share is confirmed.** {counts} ({test}): the removal lies "
+            "beyond the control's spread, and the remainder is attributed next."
         )
     return (
-        f"**{candidate} is not confirmed for any share.** {counts}: no fewer reps hold it "
-        "with the option than without, so the reps it is absent from are the spread the "
-        "control shows too, and the next candidate is attributed."
+        f"**{candidate} is not confirmed for any share.** {counts} ({test}): the reps it "
+        "is absent from lie within the spread the control shows too, and the next "
+        "candidate is attributed."
     )
 
 
