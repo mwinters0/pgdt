@@ -129,15 +129,51 @@ alone blocks it**, and the instrument attributes it — in a diagnostic sitting
 on the `introspect` build that the blocked phase gains as a slice, not a
 reading the sweep takes, since only `reserve` carries instrument legs. Its legs
 are the failing arrangement's, at the failing block size. **The diagnostic
-attributes and stops**: the remedy — an allocator option, the bound re-set, or
-D13 reopened — is grilled once the attribution is in, never authorised ahead of
-it, so no fix is fitted to an unattributed cause. **An attribution naming a
+attributes and stops**: the remedy — an allocator option, a library change
+suiting both allocators, or D13 reopened — is grilled once the attribution is
+in, never authorised ahead of it, so no fix is fitted to an unattributed cause. **An attribution naming a
 term both builds hold beside one the shipped build holds alone is split by
 that rule**: the first is filed as a failure on both legs would be, and the
 remedy is grilled for the second alone, since a fix to the first would clear
 the gate while leaving the cause that blocks it standing
 ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-"30.7's sitting"). So the
+"30.7's sitting"). **An attribution naming the allocator but no mechanism is
+confirmed before the remedy is chosen**, by a sitting that runs the failing
+arrangement on the shipped and `introspect` builds with the candidate
+mechanism switched off by the allocator's own option, beside the `system`
+twins; a remedy is fitted only to a mechanism that sitting confirms, and a
+mechanism it rules out leaves the next candidate to be attributed the same
+way, not D13 reopened on a cause nobody has named. Candidates are not
+exclusive: one that removes the term in some reps and not others is confirmed
+for its share, and the remainder attributed next. **The library is not
+fitted to one allocator**: re-setting the bound for a term only the shipped
+build holds, or a change suiting mimalloc alone, puts the binary's allocator
+into the library (D13); a library change suiting both glibc and mimalloc is
+a remedy, and **ranks first**, keeping mimalloc on upstream's configuration
+and the cause gone for every embedder. It suits both where it removes the
+term on mimalloc and leaves every gate reading and figure on `system` no
+worse; it need not help glibc.
+**A remedy is shown by two readings**, both in one sitting: the gate passes,
+and the term is gone — in every rep of every leg that held it, the gate's
+leg and any passing leg beside it, the resident the instrument leaves
+unattributed is back at the process's baseline, and each shipped leg's worst
+rep within a fraction of a unit of its `system` twin's. The gate alone can
+pass on a term that some reps miss. **An allocator option, if it is the
+remedy, is the binary's default and the operator's environment still wins**
+(`mi_option_set_default`, as D13 refuses `mallopt` for overwriting
+`MALLOC_ARENA_MAX`). **A confirmed option is the remedy where no such
+library change reaches the mechanism, not D13 reopened**: D13 moved to
+mimalloc for DataFusion's tested path, not for speed, so the option's time
+cost is what the `allocator` figure reports and is no part of P30's gate;
+D13's rewrite says the option departs from upstream's configuration, upstream
+setting none, and not from its allocator. **D13 is reopened only where
+neither reaches a confirmed mechanism**, never on an option's time cost,
+which the `allocator` figure — D13's own evidence — already prices. **The
+remedy's sitting re-takes the whole figure set** at its commit, the shipped
+build being the timed one, and the `allocator`
+figure's mimalloc leg prices the option
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+"The retention's remedy"). So the
 sweep draws no two-heap account of the reserve's terms; that model is P23's.
 The phase moves the allocator and shows it made nothing worse; it does not
 re-fit a constant.

@@ -90,8 +90,8 @@ No `#[global_allocator]` in the library; `pgdt` links mimalloc, as DataFusion's 
 `malloc` and the process has two heaps; `system`/`jemalloc` are opt-in legs, a build naming exactly one, `--version` naming it and
 an `introspect` build's marker keeping that build untimed. Rejected: the platform allocator, off the path DataFusion tests on;
 `override`, likewise; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10) but on C's arenas alone, at unpriced contention,
-overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure; a gate reading failing on mimalloc alone (P30).
-Evidence: `allocator`.
+overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure; a mimalloc-only gate failure whose confirmed
+mechanism no library change suiting both allocators and no mimalloc option reaches (P30). Evidence: `allocator`.
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content

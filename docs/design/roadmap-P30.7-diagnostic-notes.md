@@ -82,10 +82,56 @@ already brings near `MEMORY_UNPOOLED_BOUND`.
   "30.7's sitting".
 - **The spec's remedies, against the retention**
   ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move
-  owes before a release"): an allocator option reaches it, its mechanism a
-  candidate no reading has confirmed; re-setting the bound covers it without
-  naming it (the sitting's own re-derivation is in its `tables.md`); D13
-  reopened answers it by removing it.
+  owes before a release"): an allocator option, once a sitting confirms the
+  mechanism it reaches (below), a library change suiting glibc as well as
+  mimalloc, or D13 reopened, which answers it by removing it.
+
+## The candidates in mimalloc's source
+
+Read for the remedy's grilling in `libmimalloc-sys` 0.1.49, which compiles
+mimalloc 3.3.2 (`build.rs` takes `v3` unless the `v2` feature is set); paths
+are under its `c_src/mimalloc/v3/src/`. Source, not a reading.
+
+- **A 128 MiB block is an arena's huge singleton page**, not a direct mmap:
+  only an object over `arena_max_object_size` (2 GiB) goes to the OS and is
+  unmapped on free (`arena.c`, `page.c`). An arena reserves `arena_reserve`,
+  1 GiB, so four readers' blocks span two arenas (the 2050 MiB reserved
+  high-water in the 30.7 rows).
+- **Freed by its owning thread, it is retired at once and scheduled for purge**
+  (`free.c`, `page.c`, `arena.c`'s `mi_arena_schedule_purge`): committed and
+  reusable until `purge_delay` (1000 ms) expires. **There is no timer** — a
+  purge runs only from an allocator call (a page free, every 10 000th generic
+  allocation, `mi_collect`), at most once per delay/10. Purge decommits by
+  default (`purge_decommits` = 1), which on Linux is `MADV_DONTNEED`, so a
+  purge drops resident at once. `purge_delay` = 0 purges inside the free; −1
+  never purges.
+- **A second candidate: a cross-thread free.** A block freed by a thread that
+  does not own its page goes on the page's `xthread_free` list (`free.c`,
+  `mi_free_block_mt`): freed at once if the page is abandoned, otherwise held
+  until its owner collects. A full page is normally abandoned (`page.c`), and
+  a singleton page is full once allocated, so whether a block is held turns on
+  whether its owner has abandoned the page yet; not traced further.
+  `purge_delay` would not reach it. **`pgdt` frees cross-thread on every
+  path**: each read and each parse is its own `spawn_blocking` task on
+  tokio's pool, whose idle threads exit after 10 s, and a block's last `Arc`
+  drops on whichever task evicts it, replaces it (`KD20`) or ends a scan
+  holding its view (`pgdump_query/src/io.rs`, `BlockCache::slot`, `retain`,
+  `PooledBuffer`'s `Drop`; `pgdump_query/src/leader.rs`). A straddling first
+  read's chunk buffer is up to a unit, never pooled (`keeps` takes only
+  chunk-sized buffers), so it is allocated fresh on the reading task and
+  freed on the scanning one.
+- **Setting an option**: `MIMALLOC_<NAME>` from the environment, read once at
+  init; `mi_option_set` at any time, every purge reading the delay afresh
+  (`options.c`). `libmimalloc-sys` declares `mi_option_set` only under
+  `extended` and lacks v3's purge option constants; the symbol is linked
+  regardless. No compile-time default for `purge_delay` exists. Upstream
+  DataFusion sets no mimalloc option anywhere (`datafusion-cli`, `benchmarks`).
+- **What the instrument's `mi_stats_json` can say.** The release build
+  compiles `MI_STAT` 0 (`include/mimalloc/types.h`; `build.rs` defines
+  none), which keeps `purged` and `purge_calls` but not the abandonment and
+  reclaim counters: every 128 MiB rep of 30.7 reads `pages_reclaim_on_free`
+  0 and a negative `pages_abandoned` current. Purges do run — a few hundred
+  calls a rep, exit totals that say nothing of what was held at the peak.
 
 ## Negative results
 
