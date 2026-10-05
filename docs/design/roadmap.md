@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
-| P30 — one binary for distribution | Sketched; not grilled | this file, below; [inbox](roadmap-P30-one-binary-inbox.md) — ahead of P29, whose artifacts it decides |
+| P30 — one binary for distribution | Current | [spec](roadmap-P30-one-binary.md); checklist in [`STATUS.md`](../status/STATUS.md) |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -668,25 +668,10 @@ criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
 ## P30 — One binary for distribution
 
-`pgdt` carrying `datafusion-cli-pgdump`'s whole CLI, flags included, as a
-subcommand (`pgdt df` or similar), so that a release ships one binary. The
-crates stay separate, and development keeps two binaries: the DataFusion crate
-stays free of Postgres-specific behaviour, and the timed `pgdt` stays free of
-DataFusion. Sketched to corner-avoidance depth. **The expected shape is
-composition, not copying.** The DataFusion CLI's arguments and entry point
-become a library that its own binary and an opt-in `pgdt` feature both call,
-so no flag is declared twice.
-
-It reopens a recorded rejection. `datafusion-cli-pgdump/Cargo.toml` refuses a
-`pgdt sql` subcommand because it would put DataFusion into the build every
-figure times. The grilling settles how that is answered; a default-off feature
-leaves the timed build alone but ships a build no figure times. It also
-settles which allocator the one binary links, the two choosing differently
-today ([`decisions.md`](decisions.md), "D13"); how the two runtimes and
-signal setups are dispatched; whether a slim `pgdt` ships beside the full one;
-and how the composed build is kept compiling. **Scheduled ahead of P29**,
-whose artifacts it decides. The facts are in [its
-inbox](roadmap-P30-one-binary-inbox.md).
+Specified in [its spec](roadmap-P30-one-binary.md). A release ships one
+binary, `pgdt`, with the DataFusion CLI composed in as `pgdt sql`; it links
+mimalloc, and it is the binary every figure times. Scheduled ahead of P29,
+whose artifacts it decides.
 
 ## P29 — Versioned binary releases
 
@@ -700,9 +685,10 @@ wrote. **The maintainer owns the timing and the text; CI owns the bytes.**
 **No crate is published**, and every workspace member's version moves in
 lockstep, the vendored `xz-seek` keeping its own.
 
-Beyond the mechanics, the grilling settles which binaries ship and with which
-features; the Linux artifact's libc and allocator, the shipped binary being
-what every figure times; whether a macOS build ships before it can discover
+Which binary ships, with which features and allocator, is P30's
+([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)). Beyond the
+mechanics, the grilling settles the Linux artifact's libc, the shipped binary
+being what every figure times; whether a macOS build ships before it can discover
 its own memory; when the version moves and how `--version` tells a release
 from any other `--release` build; where the release doc lives, a pushed tag
 being a feed entry before any Release exists; and what licence and notices a
@@ -789,10 +775,13 @@ What it inherits:
   as the backstop for shapes the estimate gets wrong.
 - **The reserve is under-covering by a measured margin** (`KD34`). The
   2026-09-16 attribution sitting read a worst remainder of 544 MiB above charge
-  plus account, against `MEMORY_RESERVE`'s 384 MiB, and its readings are the
-  input this phase would otherwise have to re-take. No sitting re-takes them:
-  they are `runs/20.8-reserve-attribution-20260916-1857/readings.json`, named
-  again by [`../status/history/2026-09-16.md`](../status/history/2026-09-16.md).
+  plus account, against `MEMORY_RESERVE`'s 384 MiB, in
+  `runs/20.8-reserve-attribution-20260916-1857/readings.json`
+  ([`../status/history/2026-09-16.md`](../status/history/2026-09-16.md)).
+  Those readings are the platform allocator's, and P30 moves the shipped
+  binary to mimalloc ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md),
+  "What the move owes before a release"), so this phase re-takes them under
+  mimalloc on the rebuilt instrument.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

@@ -45,11 +45,12 @@ under").
 **Why P29 cares.** The usual portable Linux binary is static musl, whose own
 malloc is what the figures measured as slower. A glibc artifact needs a symbol
 floor (built against an old glibc, or targeting one explicitly), and that floor
-decides which distributions run it. Static musl with mimalloc as Rust's global
-allocator needs no floor. mimalloc was refused as `pgdt`'s default on its small
-gain, not on suitability ([`decisions.md`](decisions.md), "D13"), but on musl
-it is unmeasured, and the C dependencies still use musl's malloc. P30 decides
-the shipped binary's allocator, and this choice should follow it.
+decides which distributions run it. P30 makes mimalloc the shipped binary's
+global allocator, with no `override`
+([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)), so a static musl
+build keeps the Rust heap off musl's malloc and needs no floor. On musl it is
+unmeasured, and the C dependencies (`liblzma`, `aws-lc`) would still allocate
+through musl's malloc.
 
 **Origin.** Filed 2026-10-01 by the session sketching P29.
 
@@ -137,18 +138,23 @@ this is decided.
 
 ---
 
-## Which binaries ship is P30's to decide
+## P30 decided the one artifact and its allocator
 
-**Fact.** P30 (one binary for distribution) is sketched to compose
-`datafusion-cli-pgdump`'s CLI into `pgdt` behind an opt-in feature, so that a
-release ships one binary ([`roadmap.md`](roadmap.md), "P30 — One binary for
-distribution").
+**Fact.** A release ships one binary, `pgdt`, with the DataFusion CLI as
+`pgdt sql`. The composition is unconditional, `datafusion-cli-pgdump` becomes
+a library, and the binary links mimalloc, with no `override`, so C
+dependencies keep libc's malloc ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)).
+`pgdt --version` gains a `(datafusion: <version>)` marker after the existing
+ones. The composed binary is what every figure times. Its size is mostly
+DataFusion's `.text`, and the release profile sets no `strip`: re-check with
+`ls -l target/release/pgdt` and `size -A`.
 
-**Why P29 cares.** The artifact list, the release build's feature set, the
-allocator the shipped binary links, and the size users download all follow
-from P30's answer, which is why P30 is scheduled first.
+**Why P29 cares.** The artifact list, the build's feature set and its
+allocator are settled. Left to P29: whether the release profile strips, and
+whatever libc question mimalloc leaves (below).
 
-**Origin.** Filed 2026-10-01 by the session sketching P30.
+**Origin.** Filed 2026-10-05 by P30's grilling, replacing the 2026-10-01
+entry that deferred this to P30.
 
 ---
 
