@@ -47,7 +47,7 @@ use pgdump_query::{
 /// only by restarting; *per-table `OPTIONS`*, a read chunk being the device's
 /// and a line limit wanted by whatever reads that dump, which one `SET` covers;
 /// *a sentinel word for "discovered"*, which no DataFusion setting spells; and
-/// *a flag per setting on `datafusion-cli-pgdump`*, another line of upstream's
+/// *a flag per setting on `pgdt sql`*, another line of upstream's
 /// `main.rs` to carry, where `-c` and `--rc` already run a `SET` at startup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgDumpSettings {

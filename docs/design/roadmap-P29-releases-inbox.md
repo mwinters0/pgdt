@@ -85,11 +85,12 @@ compile against both Apple targets is the cheapest first slice.
 
 ## The binaries pull in C builds, one of them the hard one to cross-compile
 
-**Fact.** `pgdt` enables `pgdump_query/http`, and `datafusion-cli-pgdump`
-enables `datafusion-pgdump/http`. That puts `aws-lc-sys` (a cmake-driven C
-build, `pgdump_query/Cargo.toml`) into both. `xz-seek`'s default `liblzma`
-feature is a C build, and `datafusion-cli-pgdump` links `mimalloc` as its
-global allocator. `mise.toml` already pins `cmake` for the first.
+**Fact.** `pgdt` enables `pgdump_query/http`, and `datafusion-cli-pgdump`,
+which it links for `sql`, enables `datafusion-pgdump/http`. That puts
+`aws-lc-sys` (a cmake-driven C build, `pgdump_query/Cargo.toml`) into `pgdt`.
+`xz-seek`'s default `liblzma` feature is a C build, and `pgdt` links
+`mimalloc` as its global allocator. `mise.toml` already pins `cmake` for the
+first.
 
 **Why P29 cares.** The cross toolchain must build these for four targets from
 one Linux host. `aws-lc-sys` against an Apple target is the build most likely

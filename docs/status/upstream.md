@@ -30,14 +30,14 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   typed NULL alone and is not enough. Not on `branch-55` on 2026-09-30.
 - **Fixed when.** The pinned `datafusion` release contains commit `0af68188`
   or a backport of it.
-- **Workaround.** `datafusion-cli-pgdump` sets
+- **Workaround.** `datafusion-cli-pgdump`, and so `pgdt sql`, sets
   `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` false unless
   the environment states it. The library cannot: a session is its caller's,
   and a pushed filter does not say which operator made it, so an aggregate's
   cannot be told from a TopK's and declined, so an embedder is told to turn
   it off in the crate's docs (`datafusion-pgdump/src/lib.rs`), and a shell
   user what it costs to turn on in
-  [`../manual/datafusion-cli-pgdump.md`](../manual/datafusion-cli-pgdump.md),
+  [`../manual/pgdt-sql.md`](../manual/pgdt-sql.md),
   "Types". Rejected: patching DataFusion in this workspace, which fixes our
   builds and no consumer's.
 - **Watch.** `datafusion-pgdump/tests/aggregate_bounds.rs` asserts the wrong

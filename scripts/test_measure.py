@@ -789,7 +789,7 @@ class DataLevelQueries(unittest.TestCase):
 
 class DynamicFilterFigures(unittest.TestCase):
     """`dynamic-filter-join` and `dynamic-filter-topk`: the register's first
-    figures timing `datafusion-cli-pgdump`, the second timed program.
+    figures timing `pgdt sql`, DataFusion's CLI.
 
     Each way a leg can depart from what its table says is held here, because
     each produces a plausible table of something else: a run inheriting
@@ -818,15 +818,15 @@ class DynamicFilterFigures(unittest.TestCase):
             with self.subTest(query=name):
                 self.assertTrue(sql.startswith("SELECT count(*), count(p.v_text) FROM "))
 
-    def test_every_leg_runs_the_second_program_under_its_producers_flag(self):
+    def test_every_leg_runs_the_sql_shell_under_its_producers_flag(self):
         for figure, flag in measure.DYNFILTER_FLAGS.items():
             for command in measure.dynfilter_shapes(figure):
                 with self.subTest(command=command):
                     script = measure._script(command)
                     leg = command.rpartition("-")[2]
-                    self.assertIn(f"{flag}={measure.DYNFILTER_LEGS[leg]} {measure.DFCLI} ", script)
+                    self.assertIn(f"{flag}={measure.DYNFILTER_LEGS[leg]} {measure.SQL_SHELL} ", script)
                     self.assertEqual(script.count("time "), 1)
-                    self.assertEqual(script.count(f"{measure.DFCLI} "), 1)
+                    self.assertEqual(script.count(f"{measure.SQL_SHELL} "), 1)
                     for other in set(measure.DYNFILTER_FLAGS.values()) - {flag}:
                         self.assertNotIn(other, script)
 
@@ -859,8 +859,8 @@ class DynamicFilterFigures(unittest.TestCase):
         self.assertEqual(value, "true")
 
     def test_the_builder_is_untimed_and_writes_where_dump_looks(self):
-        # `--dump` reads the cache beside the dump, and `datafusion-cli-pgdump`
-        # takes no cache path; the builder gathers what the scan prunes by.
+        # `--dump` reads the cache beside the dump, and `pgdt sql` takes no
+        # cache path; the builder gathers what the scan prunes by.
         for command in self.SHAPES:
             with self.subTest(command=command):
                 builder, _, timed = measure._script(command).partition(" && ")
@@ -870,7 +870,7 @@ class DynamicFilterFigures(unittest.TestCase):
                 self.assertTrue(timed.startswith("time "))
                 self.assertIn(f"--dump {measure.DFCLI_CATALOG}=/dump.sql ", timed)
 
-    def test_every_run_of_the_second_program_states_its_partitions(self):
+    def test_every_run_of_the_sql_shell_states_its_partitions(self):
         for command in self.SHAPES:
             with self.subTest(command=command):
                 self.assertEqual(
@@ -883,7 +883,7 @@ class DynamicFilterFigures(unittest.TestCase):
     def test_a_run_inheriting_its_partitions_is_reported_though_the_builder_states_jobs(self):
         script = (
             "/pgdt parse --source /dump.sql --jobs 1 >/dev/null && "
-            f"time {measure.DFCLI} --dump b=/dump.sql -c 'SELECT 1'"
+            f"time {measure.SQL_SHELL} --dump b=/dump.sql -c 'SELECT 1'"
         )
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             self.assertEqual(sorted(measure.worker_count_problems()), sorted(
@@ -917,22 +917,16 @@ class DynamicFilterFigures(unittest.TestCase):
         topk = measure.DYNFILTER_QUERIES["topk"]["unsorted"][0]
         self.assertIn(f"ORDER BY p.{gen.COLUMNS[0][0]} ", topk)
 
-    def test_the_second_program_and_its_image_are_what_the_table_says(self):
-        # The table names `mimalloc` and the image; both are facts about the
-        # binary and the config, held here rather than trusted.
-        main = (measure.REPO / "datafusion-cli-pgdump/src/main.rs").read_text()
-        self.assertIn("static GLOBAL: MiMalloc = MiMalloc;", main)
+    def test_the_sql_shell_is_the_timed_binary_in_its_own_image(self):
+        # The table names the image, and the shell is `pgdt`'s own `sql`: the
+        # binary every other figure times, mounted where they mount it, and no
+        # second build.
         self.assertNotEqual(measure.Config().dfcli_image, measure.Config().image)
-        self.assertEqual(measure.DFCLI_RELEASE_BIN.name, measure.DFCLI.lstrip("/"))
-
-    def test_a_dry_run_builds_nothing_and_names_the_binary(self):
-        said = []
-        with unittest.mock.patch.object(measure, "_DFCLI_BUILT", False), \
-                unittest.mock.patch.object(measure, "run") as ran:
-            got = measure.ensure_dfcli_binary(measure.Config(dry_run=True), said.append)
-        self.assertEqual(got, measure.DFCLI_RELEASE_BIN)
-        ran.assert_not_called()
-        self.assertTrue(any("would build" in line for line in said), said)
+        self.assertEqual(measure.SQL_SHELL, "/pgdt sql")
+        cfg = measure.Config(dry_run=True)
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        self.assertEqual(session.binary_path("dfcli"), cfg.bin_pgdt)
+        self.assertFalse(hasattr(measure, "ensure_dfcli_binary"))
 
     def _reported(self, figure, **override):
         good = {
@@ -1346,7 +1340,7 @@ class Glibc(unittest.TestCase):
     def test_a_marker_names_its_glibc_only_where_the_stamp_does_not_speak_for_it(self):
         # A figure of the sweep run in the register's image: the stamp speaks.
         self.assertIsNone(measure.marker_glibc(True, "2.41", "2.41"))
-        # Run elsewhere — the second program's image, or the host.
+        # Run elsewhere — `pgdt sql`'s image, or the host.
         self.assertEqual(measure.marker_glibc(True, "2.41", "2.44"), "2.44")
         # A sitting of its own names its glibc beside its commit, whatever it is.
         self.assertEqual(measure.marker_glibc(False, "2.41", "2.41"), "2.41")
@@ -3909,7 +3903,7 @@ class InstrumentReport(unittest.TestCase):
         # name is right.
         source = (measure.REPO / "pgdt/src/introspect.rs").read_text()
         self.assertIn(f'pub const OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source)
-        # `datafusion-cli-pgdump`'s introspection build reads the same one.
+        # `datafusion-cli-pgdump`'s section, which `pgdt sql` writes, names it too.
         source = (measure.REPO / "datafusion-cli-pgdump/src/pgdump.rs").read_text()
         self.assertIn(
             f'const INTROSPECT_OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source
@@ -5750,7 +5744,7 @@ class ProfileRecipe(unittest.TestCase):
         )
         for record, line in recorded:
             with self.subTest(line=line):
-                # `datafusion-cli-pgdump` states its count as the figure does,
+                # `pgdt sql` states its count as the figure does,
                 # in the environment `perf` hands on.
                 self.assertTrue(
                     f"--jobs {measure.SWEEP_JOBS}" in line
@@ -5823,7 +5817,7 @@ class ProfileRecipe(unittest.TestCase):
                     self.assertEqual(lines[record - 1], f"{binary} {' '.join(built)} >/dev/null")
                     self.assertTrue(lines[record - 2].startswith("rm -f "), lines[record - 2])
 
-    def test_the_dfcli_pair_and_its_reading_run_the_timed_legs(self):
+    def test_the_sql_pair_and_its_reading_run_the_timed_legs(self):
         """The costing row's pair, and the introspection build's runs of it,
         state what `_script` times: the same environment, arguments and SQL,
         read out of the timed line rather than restated, over a cache the
@@ -5838,10 +5832,8 @@ class ProfileRecipe(unittest.TestCase):
             f"{measure.GATHER_STATISTICS} >/dev/null",
             recipe,
         )
-        profiled = str(measure.REPO / "target/profiling/datafusion-cli-pgdump")
-        introspected = str(
-            cfg.alloc_build_root / "dfcli-introspect/release/datafusion-cli-pgdump"
-        )
+        profiled = f"{measure.REPO / 'target/profiling/pgdt'} sql"
+        introspected = f"{cfg.alloc_build_root / 'dfcli-introspect/release/pgdt'} sql"
         # The default leg against the rows leg: the setting alone apart, the
         # comparison "D93" reads.
         self.assertEqual(measure.DFCLI_ACCOUNT_LEGS, ("on", measure.DYNFILTER_ROWS_LEG))
@@ -5850,7 +5842,7 @@ class ProfileRecipe(unittest.TestCase):
             with self.subTest(leg=leg):
                 timed = measure._script(f"{measure.DYNFILTER_FAMILY}{figure}-{query}-{leg}")
                 run = timed.split(" && time ", 1)[1].split(" >/tmp/result.csv", 1)[0]
-                env, _, rest = run.partition(f"{measure.DFCLI} ")
+                env, _, rest = run.partition(f"{measure.SQL_SHELL} ")
                 rest = rest.replace("=/dump.sql ", f"={dump} ")
                 self.assertIn(f"{env}{measure.PERF} record", recipe)
                 self.assertIn(f"  -- {profiled} {rest} >/dev/null", recipe)
@@ -5861,7 +5853,7 @@ class ProfileRecipe(unittest.TestCase):
                         ">/dev/null",
                         recipe,
                     )
-        self.assertIn("--features introspect", recipe)
+        self.assertIn("cargo build --release -p pgdt --features introspect", recipe)
         self.assertIn(f"--target-dir {cfg.alloc_build_root / 'dfcli-introspect'}", recipe)
         self.assertIn(f"{dump}.dtcache", recipe.splitlines()[-1])
 
@@ -6910,7 +6902,7 @@ class ParallelScanThroughputProvider(unittest.TestCase):
                 self.assertIn("--dtcache /dump.sql.dtcache ", builder)
                 self.assertTrue(
                     rest.startswith(
-                        f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.DFCLI} "
+                        f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.SQL_SHELL} "
                         f"--dump {measure.DFCLI_CATALOG}=/dump.sql "
                     ),
                     rest,
@@ -8295,9 +8287,9 @@ class Arms(unittest.TestCase):
         spec = measure.RunSpec("dfcli", "dynfilter", measure.DYNFILTER_STARTUP, "warm", "")
         argv = self._argv(session, spec)
         self.assertEqual(argv[argv.index("--cpuset-cpus") + 1], "3-5,15-17")
-        self.assertIn("/dev/shm/pgdt/bin/dfcli:/datafusion-cli-pgdump:ro", argv)
+        self.assertIn("/dev/shm/pgdt/bin/dfcli:/pgdt:ro", argv)
         script = argv[-1]
-        self.assertTrue(script.startswith(measure.TIME_FORMAT + "cat /pgdt /datafusion-cli-pgdump >/dev/null; "))
+        self.assertTrue(script.startswith(measure.TIME_FORMAT + "cat /pgdt >/dev/null; "))
         self.assertLess(script.index("cat /pgdt"), script.index("time "))
         self.assertEqual(session.placed, measure.harness_cpus(self.GROUPS))
         record = session.records[-1]

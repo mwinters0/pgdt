@@ -33,21 +33,21 @@
 //!
 //! **An embedder should turn
 //! `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` off**, as
-//! `datafusion-cli-pgdump` does: DataFusion 55.1's ungrouped-aggregate filter
+//! `pgdt sql` does: DataFusion 55.1's ungrouped-aggregate filter
 //! can lose a column's bounds, and a scan pruning under what is left then
 //! answers a `MIN` or `MAX` wrongly (`KD56`).
 // upstream: UF1
 //!
 //! **An embedder should build its session [`with_unrepresentable_guard`]**, as
-//! `datafusion-cli-pgdump` does: registering a dump registers
+//! `pgdt sql` does: registering a dump registers
 //! `pgdump_unrepresentable` and leaves planning alone, so without the guard a
 //! query DataFusion would have to evaluate the function in refuses when it
 //! does, rather than at planning (`docs/design/decisions.md`, "D101").
 //!
-//! **Three figures time it, through `datafusion-cli-pgdump`**:
+//! **Three figures time it, through `pgdt sql`**:
 //! `dynamic-filter-join`, `dynamic-filter-topk` and
-//! `parallel-scan-throughput`'s provider legs, naming that shell's
-//! allocator, which is the embedder's (`docs/design/decisions.md`, "D13").
+//! `parallel-scan-throughput`'s provider legs, under `pgdt`'s allocator, which
+//! is the embedder's (`docs/design/decisions.md`, "D13").
 //! Every other `query` figure in `docs/design/measurements.md` times `pgdt`,
 //! its text rendering included and, cold, a mapping pass, neither of which an
 //! embedder holding a cache pays.

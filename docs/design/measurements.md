@@ -91,7 +91,7 @@ Eighteen standing rules for reading anything below:
   brace-free control is **0.394 s** timed by the container's own shell. So the
   timed command is `bash -c 'time /pgdt …'`, asked for six decimals and user
   and sys beside them (`measure.TIME_FORMAT`): the register's image's bash
-  5.2 resolves 1 ms and the second program's 5.3 a microsecond. This does not license running a figure outside the
+  5.2 resolves 1 ms and `pgdt sql`'s image's 5.3 a microsecond. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
 - **A performance figure is taken with the default `glibc` build, in a glibc
@@ -129,19 +129,21 @@ Eighteen standing rules for reading anything below:
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
 
-  **The second timed program departs from the image, and its tables say so.**
-  `datafusion-cli-pgdump`, which the dynamic-filter figures and
-  `parallel-scan-throughput`'s provider legs time, allocates
-  with `datafusion-cli`'s own `mimalloc`, as `pgdt`'s default build does,
-  and built on a host whose glibc is
-  newer than the register's image's it links `libm` symbol versions that image
-  does not hold, so it runs in an image of the build host's distribution
-  (`measure.Config.dfcli_image`). Its
-  readings are therefore never differenced against a `pgdt` one; each table
-  holding one states its binary and image. *Rejected:* building it in a
-  toolchain container of the register's image's distribution, which keeps one
-  image by adding a second compiler to the apparatus, for figures in which the
-  image's `malloc` times nothing.
+  **`pgdt sql`'s legs depart from the image, and their tables say so.** The
+  dynamic-filter figures and `parallel-scan-throughput`'s provider legs time
+  `pgdt sql`, and built on a host whose glibc is newer than the register's
+  image's, DataFusion links `libm` symbol versions that image does not hold,
+  so those legs run in an image of the build host's distribution
+  (`measure.Config.dfcli_image`). Their readings are therefore never
+  differenced against one taken in the register's image; each table holding
+  one states its image. `pgdt` links DataFusion in every build, so a
+  host-built `pgdt` starts in the register's image for no command at all
+  ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md), "The
+  composed `pgdt` does not start in the register's image"). *Rejected:*
+  building it in a toolchain container of the register's image's
+  distribution, which keeps one image by adding a second compiler to the
+  apparatus, for figures in which the image's `malloc` times only what C
+  allocates.
 
   **The apparatus stops at which allocator, and does not pin how many arenas it
   keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. On the default

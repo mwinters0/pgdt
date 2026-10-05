@@ -1,8 +1,10 @@
-//! The binary as a user runs it: `--dump`, `STORED AS PGDUMP` and what reaches
-//! stderr.
+//! `pgdt sql` as a user runs it: `--dump`, `STORED AS PGDUMP` and what
+//! reaches stderr.
+
+mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
@@ -10,7 +12,7 @@ use pgdump_query::{
 };
 
 fn fixture(schema: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16").join(schema).join("default.sql")
+    common::fixture(&format!("16/{schema}/default.sql"))
 }
 
 /// `fixture` copied into `dir` beside the complete cache `pgdt parse` leaves.
@@ -22,12 +24,9 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     copy
 }
 
+/// `pgdt sql`, its rows as CSV.
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_datafusion-cli-pgdump"))
-        .args(["--format", "csv"])
-        .args(args)
-        .output()
-        .unwrap()
+    common::pgdt().args(["sql", "--format", "csv"]).args(args).output().unwrap()
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -209,9 +208,9 @@ fn the_aggregate_dynamic_filter_is_off_unless_stated() {
         value(run(&["-q", "-c", &format!("SET {KEY} = true"), "-c", &show])),
         format!("{KEY},true")
     );
-    let stated = Command::new(env!("CARGO_BIN_EXE_datafusion-cli-pgdump"))
+    let stated = common::pgdt()
         .env("DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN", "true")
-        .args(["--format", "csv", "-q", "-c", &show])
+        .args(["sql", "--format", "csv", "-q", "-c", &show])
         .output()
         .unwrap();
     assert_eq!(value(stated), format!("{KEY},true"));

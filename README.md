@@ -8,7 +8,7 @@ Available as:
     - Parse & cache your dump's metadata
     - Inspect it: tables, roles, functions, row counts, etc.
     - Execute simple queries
-- A DataFusion shell: `datafusion-cli-pgdump`
+- A DataFusion shell: `pgdt sql`
     - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
     - Export to Parquet, etc
 
@@ -55,7 +55,7 @@ going to query the data then you can speed up the parse and reduce the cache fil
 pgdt parse --source=foo.xz --statistics-level=metadata
 ```
 
-### `datafusion-cli-pgdump`
+### `pgdt sql`
 
 Use case: you want to inspect your _data_ and/or extract some portion of it.
 
@@ -64,7 +64,7 @@ Use case: you want to inspect your _data_ and/or extract some portion of it.
 pgdt parse --source=foo.xz
 
 # Then query it as catalog `foo`
-datafusion-cli-pgdump --dump foo=foo.xz
+pgdt sql --dump foo=foo.xz
 ```
 
 ```sql
@@ -90,7 +90,7 @@ INSERT INTO ...; -- Unsupported!
 ```
 
 For more, see:
-- [Our `datafusion-cli-pgdump` docs](docs/manual/datafusion-cli-pgdump.md)
+- [Our `pgdt sql` docs](docs/manual/pgdt-sql.md)
 - Upstream's [`datafusion-cli` docs](https://datafusion.apache.org/user-guide/cli/index.html)
 - The [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html)
 
@@ -121,7 +121,7 @@ our API, CLI, or data until we reach v1.0.
 - Output
     - [x] Streaming Arrow batches, with typed columns aiming for "at least as good as ADBC".
     - [x] CLI text / TSV
-    - [x] Parquet, CSV, etc via `datafusion-cli-pgdump`
+    - [x] Parquet, CSV, etc via `pgdt sql`
 - Consumers
     - [x] Rust library
     - [x] DataFusion provider + shell
@@ -184,7 +184,7 @@ our API, CLI, or data until we reach v1.0.
           updates as the scan proceeds. It skips row groups and stops reading a sorted block past
           the bound.
             - Dropping rejected rows before decoding them is opt-in (see: [scan
-            settings](docs/manual/datafusion-cli-pgdump.md#scan-settings)).
+            settings](docs/manual/pgdt-sql.md#scan-settings)).
             - [ ] Membership pruning for a join with more distinct keys than DataFusion lists (150 by
             default), several key columns, or a key column with no dictionary. These prune by the
             join's key bounds alone.
@@ -223,7 +223,7 @@ For humans:
 - [`docs/manual/`](docs/manual/) — user manual:
     - [Dump inspection](docs/manual/dump-inspection.md)
     - [Type handling](docs/manual/type-handling.md)
-    - [SQL over a dump](docs/manual/datafusion-cli-pgdump.md)
+    - [SQL over a dump](docs/manual/pgdt-sql.md)
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
 
 Mostly for LLMs:

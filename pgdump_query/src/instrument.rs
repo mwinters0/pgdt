@@ -4,8 +4,8 @@
 //!
 //! **Off by default and compiled out of every build that does not ask.** The
 //! `introspect` feature turns it on, and only a binary's own `introspect`
-//! feature does — `pgdt`'s and `datafusion-cli-pgdump`'s
-//! (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is an
+//! feature does — `pgdt`'s, which turns on `datafusion-cli-pgdump`'s for
+//! `sql` (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is an
 //! empty guard, [`timed!`] is what it wraps beside its part evaluated and
 //! dropped, [`row_evaluated!`] what it wraps and nothing more, and every function recording or reading a figure does
 //! nothing.

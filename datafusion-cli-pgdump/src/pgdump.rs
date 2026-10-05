@@ -27,7 +27,7 @@ use pgdump_query::{
 pub const DATAFUSION_VERSION: &str = datafusion_cli::DATAFUSION_CLI_VERSION;
 
 /// The environment variable naming the file the introspection build writes
-/// its report to — `pgdt`'s, so one harness variable reaches either binary.
+/// its report to — `pgdt`'s, whose `sql` writes this section into its report.
 /// Unset, nothing is written.
 #[cfg(feature = "introspect")]
 pub const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
@@ -38,9 +38,8 @@ pub const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 /// [`crate::run`] has returned, no thread then evaluating.
 ///
 /// **A section, not a file**: the report is the process's, written once by
-/// whichever binary owns it — this crate's own, alone, or `pgdt sql`'s beside
-/// the allocator's sections — since a second writer to the one file would
-/// replace the first.
+/// the binary that owns it — `pgdt sql`'s, beside the allocator's sections —
+/// since a second writer to the one file would replace the first.
 ///
 /// **An instrument, never timed**: `scripts/measure.py` times only the build
 /// its own `cargo build --release` makes, which carries no feature, and

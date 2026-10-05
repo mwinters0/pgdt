@@ -1558,7 +1558,7 @@ pub fn available_memory_in(root: &Path) -> Option<u64> {
 // dropped ([`BufferPool::release`]), and the reads after it allocate
 // `vec![0u8; len]` afresh ([`BufferPool::pick`]), the zeroing a `memset`
 // under mimalloc. The costing input's profiles find a third of the off leg's
-// user cycles there, in a `datafusion-cli-pgdump` scan
+// user cycles there, in a provider scan
 // (`docs/design/measurements.md`, "What DataFusion's dynamic filters buy a
 // query"). **(c) unowned**; promoted by a figure pricing the zeroing or a
 // phase taking up query-path memory, the fix being a depth that follows what

@@ -18,8 +18,8 @@
 // This file is `datafusion-cli/src/main.rs` from DataFusion 55.1.0, with the
 // upstream tests left out (they read upstream's test data) and every change
 // of ours marked `pgdump:`, kept as this crate's library so a caller can embed
-// the CLI: its `Args` and entry point are exported, and a binary — this
-// crate's own (`src/main.rs`), or `pgdt sql` — parses and calls it. A downstream `main` of its own is upstream's
+// the CLI: its `Args` and entry point are exported, and a binary — `pgdt sql`,
+// or an embedder's — parses and calls it. A downstream `main` of its own is upstream's
 // endorsed way to extend the CLI (`datafusion-cli/examples/cli-session-context.rs`),
 // and `src/pgdump.rs` holds everything else. At each DataFusion major, diff upstream's new `main.rs`
 // against 55.1.0's and re-apply the marked lines. The provider's tests that pin
@@ -69,7 +69,7 @@ use clap::Parser;
 use datafusion::common::config_err;
 use datafusion::config::ConfigOptions;
 use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
-// pgdump: upstream's `#[global_allocator]` is the binary's, in `src/main.rs`
+// pgdump: upstream's `#[global_allocator]` is the calling binary's
 // (`docs/design/decisions.md`, "D13").
 
 #[derive(Debug, Parser, PartialEq)]
@@ -177,8 +177,8 @@ pub struct Args {
     // deficiency: KD110 — the value name spells every suffix and is wider than
     // a 100-column page, so clap sets every other flag's help column past it
     // and prints that help one word to a line, short and long pages alike,
-    // unless the command sets `next_line_help`, as `pgdt sql` does and this
-    // crate's own binary does not.
+    // unless the command sets `next_line_help`, as `pgdt sql` does and nothing
+    // here makes an embedder's do.
     #[clap(
         long = "dump",
         value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]",

@@ -106,7 +106,7 @@ PYPROJECT = REPO / "scripts" / "pyproject.toml"
 
 #: The page that publishes the floor to a user, which names the release it
 #: holds for, so moving the pin obliges re-taking the sweep.
-MANUAL = REPO / "docs" / "manual" / "datafusion-cli-pgdump.md"
+MANUAL = REPO / "docs" / "manual" / "pgdt-sql.md"
 
 #: The register the `money` disposition cites.
 REGISTER = deficiencies.REGISTER

@@ -157,7 +157,7 @@ default sitting beside the dump. Rejected: a canonical path as a local origin, a
 
 ### D90 The DataFusion provider reads only a complete cache, never maps, and is cancelled by a drop
 `PgDump::open` believes a cache reaching the file's end whose identity checks pass, and names the `pgdt parse` that
-builds anything short; `datafusion-cli-pgdump` never parses either, a parse wanting `pgdt`'s discovery, interrupt
+builds anything short; `pgdt sql` never parses either, a parse wanting `pgdt`'s discovery, interrupt
 guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
 stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
 no partial map to keep, a dropped stream is its whole cancellation, no `ScanOptions::cancel` set (D26). Rejected:

@@ -482,7 +482,7 @@ than reading as a phase nobody has sliced.
 
 - **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
   help but `--dump`'s one word to a line, `--dump`'s value name being wider
-  than the page: its own binary does, and so would any embedder not setting
-  `next_line_help`, as `pgdt sql` does. **(c) unowned**; promoted by the pass
+  than the page, in any embedder not setting `next_line_help` as `pgdt sql`
+  does. **(c) unowned**; promoted by the pass
   over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
   Detail: `datafusion-cli-pgdump/src/lib.rs`.

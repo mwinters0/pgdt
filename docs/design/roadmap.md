@@ -1264,11 +1264,11 @@ which is what makes the difference worth minding at the moment one is found.
   spec-line skip, the reason for `next_line_help` on `pgdt`'s `Sql`, and the
   page the library's `Args` prints without it (`KD110`).
 
-- **Attach-time parse in `datafusion-cli-pgdump`.** Building a missing cache
-  from inside the DataFusion binary instead of refusing and naming `pgdt parse`.
-  It wants `pgdt`'s parse configuration — parallelism and memory discovery, the
-  interrupt guard, the status output — moved into the library first, so that
-  the two binaries parse alike (`decisions.md`, "D90").
+- **Attach-time parse in `pgdt sql`.** Building a missing cache from inside
+  the SQL shell instead of refusing and naming `pgdt parse`. It wants `pgdt`'s
+  parse configuration — parallelism and memory discovery, the interrupt guard,
+  the status output — moved into the library first, so that `parse` and `sql`
+  parse alike (`decisions.md`, "D90").
 
 - **An allocator-contention figure for a capped arena count.** Parallel `.xz` throughput under `MALLOC_ARENA_MAX=2` against uncapped — the price no figure takes, and what would reopen the in-binary cap `decisions.md`, "D13" refuses.
 

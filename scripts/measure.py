@@ -50,11 +50,10 @@ does with it.
 The harness builds it (an *example* target, so `target/release/pgdt` is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
-declares. The dynamic-filter figures time a **second program**,
-`datafusion-cli-pgdump`, with `pgdt` beside it building the cache it reads:
-it states its worker count as its session's `target_partitions`, runs in an
-image of its own because it cannot run in the register's, and allocates with
-its own `mimalloc` — each held by a test and said in its tables.
+declares. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
+with `pgdt parse` building the cache it reads first: it states its worker
+count as its session's `target_partitions` and runs in an image of its own
+— each held by a test and said in its tables.
 
 **No build of another tree is measured here.** A subtraction between two
 builds measures everything that differs between the two trees, which grows
@@ -138,9 +137,6 @@ MIB = 1024**2
 #: back: the harness may claim to have built `cfg.bin_pgdt` only when the two
 #: are the same file.
 CARGO_RELEASE_BIN = REPO / "target/release/pgdt"
-#: The path `cargo build --release -p datafusion-cli-pgdump` writes: the second
-#: timed program's, beside `pgdt` rather than over it (`ensure_dfcli_binary`).
-DFCLI_RELEASE_BIN = REPO / "target/release/datafusion-cli-pgdump"
 
 
 # --------------------------------------------------------------------------
@@ -194,14 +190,14 @@ class Config:
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
     bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
-    # **The image the second program runs in**, where it cannot run in
-    # `image`: built on this host, `datafusion-cli-pgdump` links `libm` symbol
-    # versions newer than the register's image's glibc holds, which `pgdt`
-    # does not, so its legs run in an image of the build host's own
-    # distribution instead. Its allocator is its
-    # own `mimalloc` in either (`datafusion-cli-pgdump/src/main.rs`), so the
-    # image's `malloc`, which is why `image` is part of the apparatus, times
-    # nothing there; the departure is stated in each such figure's table.
+    # **The image `pgdt sql`'s legs run in**, where it cannot run in `image`:
+    # built on this host, DataFusion links `libm` symbol versions newer than
+    # the register's image's glibc holds, so those legs run in an image of the
+    # build host's own distribution instead. `pgdt` links DataFusion in every
+    # build, so the same is true of its other commands, which still run in
+    # `image`. The Rust heap is `mimalloc`'s in either, so the image's
+    # `malloc`, which is why `image` is part of the apparatus, times only what
+    # C allocates there; the departure is stated in each such figure's table.
     # Pinned by digest as `image` is, the tag being a rolling one.
     dfcli_image: str = _env(
         "PGDT_MEASURE_DFCLI_IMAGE",
@@ -656,7 +652,7 @@ class Arm:
 #: cpuset would narrow (`runtime-invariants.md`, "RT7").
 #:
 #: **Its count is its parallelism, not every size a program reads off its
-#: CPUs.** A pinned `DFCLI` leg states one partition and its provider spawns no
+#: CPUs.** A pinned `pgdt sql` leg states one partition and its provider spawns no
 #: task, yet `#[tokio::main]`'s worker pool and DataFusion's
 #: `planning_concurrency` still follow the cpuset: one worker per CPU given, as
 #: unpinned, so fewer idle workers. That comes with the placement, and adoption
@@ -1040,7 +1036,7 @@ def spread(values: Sequence[float]) -> tuple[float, float]:
 def fmt_s(value: float) -> str:
     """Seconds, at the precision measurements.md quotes: three decimals below
     two seconds, two above -- the register's image's timer resolves to 1 ms
-    (`TIME_FORMAT`), and no table quotes the second program's microseconds."""
+    (`TIME_FORMAT`), and no table quotes `pgdt sql`'s image's microseconds."""
     return f"{value:.3f}" if abs(value) < 2 else f"{value:.2f}"
 
 
@@ -1113,7 +1109,7 @@ CPU_TIME_RE = re.compile(r"^(user|sys)\s+(\d+)m([\d.]+)s\s*$", re.MULTILINE)
 #: What every in-container script is prefixed with, outside every command
 #: shape as `OOM_ORACLE` is: bash's default report at six decimals rather than
 #: three. **Bash 5.3 honours it and 5.2 clamps it to three**, so the
-#: second program's image reads to the microsecond and the register's
+#: `pgdt sql`'s image reads to the microsecond and the register's
 #: `postgres:16` still to the millisecond; the report's shape is the default's
 #: either way, which `TIME_RE` reads.
 TIME_FORMAT = "TIMEFORMAT=$'\\nreal\\t%6lR\\nuser\\t%6lU\\nsys\\t%6lS'; "
@@ -2130,7 +2126,7 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdt" | "dfcli" | … | "none" (dd); `Session.binary_path`
+    binary: str  # "pgdt" | "dfcli" (`pgdt sql`, in its image) | … | "none" (dd); `Session.binary_path`
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -2335,7 +2331,7 @@ PARALLEL_BASELINE = 1
 #: reconciles.
 #:
 #: **The provider family's count is `target_partitions`, not `--jobs`**
-#: (`PARALLEL_SCAN`): its rows run `datafusion-cli-pgdump`, and the `--jobs`
+#: (`PARALLEL_SCAN`): its rows run `pgdt sql`, and the `--jobs`
 #: its untimed builder states is `SWEEP_JOBS` on every row.
 JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "dfcli-query-typed-jobs-")
 
@@ -2642,9 +2638,9 @@ PRUNING_LEGS = ("none", "all")
 #: for. The pruned legs bound the decode from above, each decoding the whole
 #: cache inside its wall, and the figure's prose states that bound.
 
-#: The second timed program: `datafusion-cli-pgdump`, mounted beside `/pgdt`,
-#: which builds the cache it reads (`ensure_dfcli_binary`).
-DFCLI = "/datafusion-cli-pgdump"
+#: DataFusion's CLI, as the binary the figures time carries it: `pgdt`'s
+#: `sql`, run after a `pgdt parse` that builds the cache it reads.
+SQL_SHELL = "/pgdt sql"
 #: The catalog `--dump` registers the input under: a generated dump names no
 #: database, so one is given.
 DFCLI_CATALOG = "bench"
@@ -2657,7 +2653,7 @@ DFCLI_PARTITIONS = "DATAFUSION_EXECUTION_TARGET_PARTITIONS"
 #: `dynamic-filter-join` and `dynamic-filter-topk`'s shapes,
 #: `<family><figure>-<query>-<leg>`: one untimed `pgdt parse` stating
 #: `GATHER_STATISTICS` writes the cache where `--dump` looks for it, beside
-#: the dump, and the timed `datafusion-cli-pgdump -c` runs one query under
+#: the dump, and the timed `pgdt sql -c` runs one query under
 #: one of `DYNFILTER_LEGS`. What the query returned is hashed outside the
 #: timer, so the three legs are held to one answer.
 #:
@@ -2733,7 +2729,7 @@ DYNFILTER_LEGS = {"off": "false", "on": "true", "rows": "true"}
 DYNFILTER_ROWS_LEG = "rows"
 DYNFILTER_ROWS_SQL = "SET pgdump.dynamic_filter_rows = true"
 #: **The startup leg**: the builder as every leg runs it, then
-#: `datafusion-cli-pgdump` registering the dump and answering `STARTUP_SQL`
+#: `pgdt sql` registering the dump and answering `STARTUP_SQL`
 #: under the timer, so what loading the program, its runtime and the
 #: registration cost a leg — and how much that varies — sits in each table
 #: beside the legs it is inside. Taken in each figure's own interleave rather
@@ -2743,7 +2739,7 @@ STARTUP_SQL = "SELECT 1"
 
 
 def dfcli_invocation(figure: str, name: str, leg: str, dump: str) -> tuple[list[str], list[str]]:
-    """The environment and the arguments one run of `DFCLI` over a
+    """The environment and the arguments one run of `SQL_SHELL` over a
     dynamic-filter shape states, over the dump at `dump`, its SQL last.
 
     One function for the figure (`_script`) and for the account's
@@ -2769,7 +2765,7 @@ def dfcli_shell(env: list[str], program: str, argv: list[str]) -> str:
     return f"{' '.join(env)} {program} {' '.join(words)}"
 
 
-#: What a timed run of `DFCLI` answered, read back off `/tmp/result.csv`
+#: What a timed run of `SQL_SHELL` answered, read back off `/tmp/result.csv`
 #: outside the timer as `key=value` lines `parse_reported` takes: its rows
 #: under the header, its first row's first field, and a digest of the whole.
 DFCLI_ANSWER = (
@@ -3780,7 +3776,7 @@ def _script(command: str) -> str:
         return (
             f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
-            f"time {dfcli_shell(env, DFCLI, argv)} "
+            f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             ">/tmp/result.csv && "
             "echo startup_answer=$(sed -n 2p /tmp/result.csv)"
         )
@@ -3798,7 +3794,7 @@ def _script(command: str) -> str:
         return (
             f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
-            f"time {dfcli_shell(env, DFCLI, argv)} "
+            f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             f">/tmp/result.csv && {DFCLI_ANSWER}"
         )
     if command.startswith("parse-chunk-"):
@@ -3906,7 +3902,7 @@ def _script(command: str) -> str:
             return (
                 f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
                 f"{GATHER_STATISTICS} >/dev/null && "
-                f"time {dfcli_shell(env, DFCLI, argv)} "
+                f"time {dfcli_shell(env, SQL_SHELL, argv)} "
                 f">/tmp/result.csv && {DFCLI_ANSWER}"
             )
         raise ValueError(f"unknown command shape {command!r}")
@@ -4031,20 +4027,20 @@ def worker_count_problems() -> list[str]:
     ]
 
 
-#: The partition count a run of `DFCLI` states: its session's
+#: The partition count a run of `SQL_SHELL` states: its session's
 #: `target_partitions`, from the environment in front of it.
-_DFCLI_PARTITIONS = re.compile(rf"\b{DFCLI_PARTITIONS}=(\d+) (?:\S+=\S+ )*{re.escape(DFCLI)} ")
+_DFCLI_PARTITIONS = re.compile(rf"\b{DFCLI_PARTITIONS}=(\d+) (?:\S+=\S+ )*{re.escape(SQL_SHELL)} ")
 
 
 def _dfcli_partitions(script: str) -> set[str] | None:
-    """The partition counts every run of `DFCLI` in `script` states, `set()`
+    """The partition counts every run of `SQL_SHELL` in `script` states, `set()`
     where one of them states none, or `None` for a script that runs none.
 
-    **A run of the second program is held to its own count**, because the
-    shapes that run it run `pgdt` too: the untimed builder's `--jobs` would
+    **A run of the SQL shell is held to its own count**, because the
+    shapes that run it run `pgdt parse` too: the untimed builder's `--jobs` would
     otherwise satisfy `_WORKER_COUNT` for a timed run that inherits
     DataFusion's `target_partitions`, which defaults to the core count."""
-    runs = script.count(f"{DFCLI} ")
+    runs = script.count(f"{SQL_SHELL} ")
     if not runs:
         return None
     stated = _DFCLI_PARTITIONS.findall(script)
@@ -4402,17 +4398,15 @@ class Session:
     # -- one timed run ----------------------------------------------------
 
     def image_for(self, spec: RunSpec) -> str:
-        """The image a run goes in: the second program's own where it cannot
-        run in the register's (`Config.dfcli_image`), the register's else."""
+        """The image a run goes in: `pgdt sql`'s own where it cannot run in
+        the register's (`Config.dfcli_image`), the register's else."""
         return self.cfg.dfcli_image if spec.binary == "dfcli" else self.cfg.image
 
     def binary_path(self, which: str) -> Path:
-        if which == "pgdt":
+        if which in ("pgdt", "dfcli"):
             return self.cfg.bin_pgdt
         if which == "xzdecode":
             return ensure_xz_decode_binary(self.cfg, self.log)
-        if which == "dfcli":
-            return ensure_dfcli_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         if which == "introspect":
@@ -4508,11 +4502,7 @@ class Session:
         dump = self.input_path(spec.input, spec.regime)
         image = self.image_for(spec)
         bins: list[tuple[Path, str]] = []
-        if spec.binary == "dfcli":
-            # The second program, and `pgdt` beside it to build the cache it
-            # reads, in the image it can run in.
-            bins = [(self.cfg.bin_pgdt, "/pgdt"), (self.binary_path(spec.binary), DFCLI)]
-        elif spec.binary != "none":
+        if spec.binary != "none":
             bins = [(self.binary_path(spec.binary), "/pgdt")]
         mounts = [
             f"{self.stage_binary(path) if self.arm.staged else path}:{at}:ro"
@@ -5160,32 +5150,6 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return out
 
 
-#: Whether this process has already built the second timed program, per
-#: process for `_PGDT_BUILT`'s reason.
-_DFCLI_BUILT = False
-
-
-def ensure_dfcli_binary(cfg: Config, log: Callable[[str], None]) -> Path:
-    """`datafusion-cli-pgdump`, built before its first reading rather than
-    found, once per process, for `ensure_pgdt_binary`'s reason.
-
-    **Its own package, so `target/release/pgdt` is untouched** — the reason
-    `ensure_xz_decode_binary` builds an example target. It is timed in place:
-    the path is the build's own, so nothing can stand between the build and
-    the file mounted."""
-    global _DFCLI_BUILT
-    if _DFCLI_BUILT:
-        return DFCLI_RELEASE_BIN
-    if cfg.dry_run:
-        log(f"  [dry-run] would build {DFCLI_RELEASE_BIN}")
-        _DFCLI_BUILT = True
-        return DFCLI_RELEASE_BIN
-    log(f"  building {DFCLI_RELEASE_BIN}")
-    run(["cargo", "build", "--release", "-p", "datafusion-cli-pgdump"], cwd=REPO)
-    _DFCLI_BUILT = True
-    return DFCLI_RELEASE_BIN
-
-
 #: The three legs of the `allocator` figure, each a `pgdt` feature, **the
 #: default build's first** -- `pgdt/Cargo.toml`'s `default`, which a test holds
 #: this to -- so a dry run, which asks no binary, names the reference the
@@ -5726,8 +5690,8 @@ GEN_SHAPES = (
 GEN_PRUNING = ("scripts/generate_pruning_bench.py", *GEN_PERF)
 #: The dynamic-filter input's generator, and the perf generator likewise.
 GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
-#: The second timed program: the provider it reads the dump through, and the
-#: binary around it.
+#: `pgdt sql`: the provider it reads the dump through, and DataFusion's CLI
+#: around it, the library `pgdt` calls.
 DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
 #: `statistics.rs` are the gathering; `pgtype.rs`, `resolve.rs` and
@@ -7029,7 +6993,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
         f"({_fmt_bytes(compressed)} on disk, {plain / compressed:.2f}×), so every rate is per "
         "the same bytes.\n\n"
         "**The `parse` legs run `pgdt parse` at `--jobs` N; the provider legs run "
-        f"`datafusion-cli-pgdump -c` at `{DFCLI_PARTITIONS}=N`**, the session's "
+        f"`pgdt sql -c` at `{DFCLI_PARTITIONS}=N`**, the session's "
         "`target_partitions`, which the provider plans a scan's sub-streams against and "
         "DataFusion polls together. `pgdt query` is not timed: its in-order merge reads one "
         "sub-stream at a time past its first round "
@@ -7040,10 +7004,10 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "and one row out, the filter keeping every row and leaving the scan's exact NULL "
         'counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, '
         '"D89"). Every provider cell answered alike, byte for byte, at every count over both '
-        "files. **That binary is not the register's**: `datafusion-cli`'s own `mimalloc`, in "
-        f"the `{image_name(session.cfg.dfcli_image)}` image rather than "
-        f"`{image_name(session.cfg.image)}`, whose glibc is older than the one it was linked "
-        "against, so a provider cell is read against its own leg and never against a "
+        "files. **Those legs are not in the register's image**: they run in the "
+        f"`{image_name(session.cfg.dfcli_image)}` image rather than "
+        f"`{image_name(session.cfg.image)}`, whose glibc is older than the one DataFusion was "
+        "linked against, so a provider cell is read against its own leg and never against a "
         "`parse` cell. Each carries the program's startup and the dump's registration, "
         "which `dynamic-filter-join`'s startup leg reads.\n\n"
         f"Every row states the allowance `{allowance}` — `--memory {allowance}` on a `parse` "
@@ -8985,17 +8949,16 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         table
         + f"\n\nOne file — the control's rows with `u_key` and `bucket` appended, and three "
         f"small build tables, {profile['rows']:,} rows in all — queried warm by "
-        f"`datafusion-cli-pgdump -c` at `{DFCLI_PARTITIONS}={SWEEP_JOBS}`, against a cache one "
+        f"`pgdt sql -c` at `{DFCLI_PARTITIONS}={SWEEP_JOBS}`, against a cache one "
         f"untimed `pgdt parse` stating `{GATHER_STATISTICS}` wrote in the same container, and "
         "the legs of a row answer alike, byte for byte: `Filter off` and `Filter on` differ by "
         f"the producer's flag alone, `{flag}` `false` and `true`, the on leg's filter being "
         "whatever the scan makes of it at the provider's default, and `Rows evaluated` differs "
         f"from `Filter on` by `-c '{DYNFILTER_ROWS_SQL}'` alone, run ahead of the query in the "
-        "same process. **The binary is not the register's**: `datafusion-cli`'s own "
-        "`mimalloc`, in the "
+        "same process. **The image is not the register's**: the legs run in the "
         f"`{image_name(session.cfg.dfcli_image)}` image rather than "
         f"`{image_name(session.cfg.image)}`, whose glibc "
-        "is older than the one it was linked against. Every leg's reading carries the "
+        "is older than the one DataFusion was linked against. Every leg's reading carries the "
         "program's startup — loading it, starting its runtime and registering the dump — "
         f"which a leg answering `{STARTUP_SQL}` over the same cache, taken in the same "
         f"interleave, reads as {fmt_median_spread(started)}. "
@@ -9552,6 +9515,8 @@ FIGURES: list[Figure] = [
             *NESTED,
             *DECODE,
             *DATAFUSION,
+            # `pgdt sql` is `pgdt`'s: its dispatch and allocator are the binary's.
+            *QUERY_CLI,
             *GEN_DYNFILTER,
         ),
         warm_inputs=("dynfilter",),
@@ -9572,6 +9537,8 @@ FIGURES: list[Figure] = [
             *NESTED,
             *DECODE,
             *DATAFUSION,
+            # `pgdt sql` is `pgdt`'s: its dispatch and allocator are the binary's.
+            *QUERY_CLI,
             *GEN_DYNFILTER,
         ),
         warm_inputs=("dynfilter",),
@@ -10280,7 +10247,7 @@ def drift_table(first: Path, second: Path) -> str:
 
 def _fmt_fine(value: float) -> str:
     """Seconds at the precision the arms reports read: to the microsecond,
-    which the second program's image reports (`TIME_FORMAT`)."""
+    which `pgdt sql`'s image reports (`TIME_FORMAT`)."""
     return f"{value:.6f}"
 
 
@@ -10663,7 +10630,7 @@ def marker_glibc(whole_sweep: bool, stamped: str | None, ran_under: str | None) 
     The stamp names the register image's, so a figure of the sweep whose
     program ran there names nothing — `taken at`'s convention, the datum
     present only where it differs. It differs for a program run in another
-    place (`datafusion-cli-pgdump`'s image, `cargo bench` on the host), and for
+    place (`pgdt sql`'s image, `cargo bench` on the host), and for
     every figure of a sitting of its own, whose marker already names the commit
     the stamp does not and names the glibc beside it."""
     if ran_under is None or (whole_sweep and ran_under == stamped):
@@ -11942,7 +11909,7 @@ PROFILE_SHAPES: tuple[str, ...] = (
 #: where the census inspects array shapes.
 PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 
-#: The row of a `datafusion-cli-pgdump` figure whose legs are profiled as a
+#: The row of a `pgdt sql` figure whose legs are profiled as a
 #: pair and read by the introspection build, as `(figure, query)`:
 #: `dynamic-filter-join`'s costing row, where evaluating rows rejects none.
 #: **A pair because the row is a difference**: what evaluating rows adds over
@@ -12074,7 +12041,7 @@ def profile_recipe(cfg: Config) -> str:
     A profile is about proportions, and the cgroup adds capability plumbing
     without changing them.
 
-    **`DFCLI_ACCOUNT`'s pair runs `datafusion-cli-pgdump`**, off the same
+    **`DFCLI_ACCOUNT`'s pair runs `pgdt sql`**, off the same
     profiling build, over a cache the figure's own `pgdt parse` writes beside
     the dump where `--dump` looks, each leg stating `dfcli_invocation`'s
     environment and arguments. Beside it, **the introspection build**
@@ -12085,9 +12052,9 @@ def profile_recipe(cfg: Config) -> str:
     never a figure."""
     warm = cfg.warm_dir
     binary = REPO / "target/profiling/pgdt"
-    dfcli = REPO / "target/profiling/datafusion-cli-pgdump"
+    sql = f"{binary} sql"
     introspect_target = cfg.alloc_build_root / "dfcli-introspect"
-    introspect = introspect_target / "release/datafusion-cli-pgdump"
+    introspect = f"{introspect_target / 'release/pgdt'} sql"
     cache = warm / "profile.dtcache"
     out = cfg.out_dir
     figure, query = DFCLI_ACCOUNT
@@ -12118,16 +12085,16 @@ def profile_recipe(cfg: Config) -> str:
     )
     lines += [
         'RUSTFLAGS="-C force-frame-pointers=yes" \\',
-        "  cargo build --profile profiling -p pgdt -p datafusion-cli-pgdump",
+        "  cargo build --profile profiling -p pgdt",
         "",
     ]
 
     head(
-        "The introspection build of `datafusion-cli-pgdump`, in a target",
-        "directory of its own: no timed binary is overwritten, and it is never timed.",
+        "The introspection build, whose `sql` the pair runs, in a target directory",
+        "of its own: no timed binary is overwritten, and it is never timed.",
     )
     lines += [
-        "cargo build --release -p datafusion-cli-pgdump --features introspect \\",
+        "cargo build --release -p pgdt --features introspect \\",
         f"  --target-dir {introspect_target}",
         "",
     ]
@@ -12158,7 +12125,7 @@ def profile_recipe(cfg: Config) -> str:
         ]
 
     # Every input any profile below reads, in declaration order and without
-    # repetition: the cross product's, then the `datafusion-cli-pgdump` pair's.
+    # repetition: the cross product's, then the `pgdt sql` pair's.
     staged = list(PROFILE_INPUTS)
     staged += [account_input] if account_input not in staged else []
 
@@ -12209,7 +12176,7 @@ def profile_recipe(cfg: Config) -> str:
                 "",
                 f"{' '.join(env)} {PERF} record -F {PERF_FREQ} --call-graph fp "
                 f"-o {out / (stem + '.data')} \\",
-                f"  -- {dfcli_shell([], str(dfcli), argv).lstrip()} >/dev/null",
+                f"  -- {dfcli_shell([], sql, argv).lstrip()} >/dev/null",
                 f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
                 f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
             ]
@@ -12225,7 +12192,7 @@ def profile_recipe(cfg: Config) -> str:
         for rep in range(1, DFCLI_INTROSPECT_REPS + 1):
             report = out / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"
             lines.append(
-                f"{INSTRUMENT_OUT_VAR}={report} {dfcli_shell(env, str(introspect), argv)} "
+                f"{INSTRUMENT_OUT_VAR}={report} {dfcli_shell(env, introspect, argv)} "
                 ">/dev/null"
             )
     lines.append("")
@@ -12565,7 +12532,7 @@ def cmd_check(doc: Path) -> int:
             "Command shapes inheriting a worker count — a shape that states none measures\n"
             "whatever the CLI's `--jobs` happens to default to on the day, which has already\n"
             f"moved twice. State `--jobs {SWEEP_JOBS}`, and `{DFCLI_PARTITIONS}={SWEEP_JOBS}` "
-            f"on every run of `{DFCLI.lstrip('/')}`:"
+            f"on every run of `{SQL_SHELL.lstrip('/')}`:"
         )
         for command in unpinned:
             print(f"  {command}")
@@ -12586,7 +12553,7 @@ def cmd_check(doc: Path) -> int:
             f"{len(JOBS_AXIS)} families whose axis it is, or\n`--jobs {RESERVE_JOBS}` for "
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
             "declaration, and `dd` is not a run of ours. Every run of "
-            f"`{DFCLI.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"
+            f"`{SQL_SHELL.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"
         )
     if gathering:
         print(

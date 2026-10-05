@@ -8,15 +8,16 @@ license = "Apache-2.0"
 # `datafusion-cli` with the `pg_dump` provider built in: a copy of the upstream
 # binary's private `main.rs` plus our registrations, re-copied at each
 # DataFusion major, exported as a library whose `Args` and `run` a binary
-# parses and calls -- `pgdt sql` among them. Its own crate, so an embedder of
-# `datafusion-pgdump` does not inherit `datafusion-cli`, and named to sort
-# beside it.
+# parses and calls -- `pgdt sql`, and any embedder wanting the CLI without
+# `pgdt`. A library only: the one binary is `pgdt`. Its own crate, so an
+# embedder of `datafusion-pgdump` does not inherit `datafusion-cli`, and named
+# to sort beside it.
 
 [features]
 default = []
 # The introspection build: what `pgdump_query::instrument` timed of a dynamic
-# filter's row evaluation, a section of the report the binary writes on the
-# way out to the file `PGDT_INTROSPECT_OUT` names (`src/pgdump.rs`,
+# filter's row evaluation, a section of the report the calling binary writes
+# on the way out to the file `PGDT_INTROSPECT_OUT` names (`src/pgdump.rs`,
 # `introspection_section`); `pgdt`'s `introspect` turns it on. An
 # instrument, never timed (`docs/design/roadmap.md`, "Attribution is
 # introspective; only the gate is blind").
@@ -35,10 +36,6 @@ datafusion-common = { version = "55.1.0", default-features = false }
 datafusion-pgdump = { version = "0.1.0", path = "../datafusion-pgdump", features = ["http"] }
 dirs = "6.0.0"
 env_logger = "0.11"
-# The upstream binary's allocator, declared by `src/main.rs` and never by the
-# library: the allocator is the binary's choice (`docs/design/decisions.md`,
-# "D13").
-mimalloc = { version = "0.1", default-features = false }
 # As a PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26"). Ours, not
 # upstream's.
@@ -46,10 +43,3 @@ namespace-init = { path = "../namespace-init" }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 regex = "1.12"
 tokio = { version = "1.52", features = ["macros", "rt", "rt-multi-thread", "sync"] }
-
-[dev-dependencies]
-# `tests/namespace_init.rs` runs the binary as a PID namespace's init.
-namespace-init = { path = "../namespace-init", features = ["test-support"] }
-pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
-tempfile = "3.27.0"
-tokio = { version = "1.52", features = ["macros", "rt"] }

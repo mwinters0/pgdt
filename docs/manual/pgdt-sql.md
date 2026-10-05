@@ -1,13 +1,14 @@
-# SQL over a dump: `datafusion-cli-pgdump`
+# SQL over a dump: `pgdt sql`
 
-`datafusion-cli-pgdump` is [DataFusion](https://datafusion.apache.org/)'s own
-SQL shell, `datafusion-cli` 55.1.0, with a `pg_dump` file's tables available
-to it. Everything `datafusion-cli` does, it does — the REPL, `-c`, `-f`,
-`--format`, `--memory-limit` — and it adds two ways to attach a dump.
+`pgdt sql` is [DataFusion](https://datafusion.apache.org/)'s own SQL shell,
+`datafusion-cli` 55.1.0, with a `pg_dump` file's tables available to it.
+Everything `datafusion-cli` does, it does — the REPL, `-c`, `-f`, `--format`,
+`--memory-limit` — and it adds two ways to attach a dump. `pgdt --version`
+names the DataFusion release it carries.
 
 ```sh
-pgdt parse --source koji.dump                 # once: builds koji.dump.dtcache
-datafusion-cli-pgdump --dump koji=koji.dump   # then query it
+pgdt parse --source koji.dump        # once: builds koji.dump.dtcache
+pgdt sql --dump koji=koji.dump       # then query it
 ```
 
 ```sql
@@ -21,8 +22,8 @@ parse` command that would build it. So `pgdt parse` first, once per dump; see
 [dump inspection](dump-inspection.md). The cache is looked for where `pgdt`
 writes it — beside a local dump, and in the working directory for a URL.
 
-**Run as a container's init process** — `docker run image
-datafusion-cli-pgdump …` makes it one — it exits 128 plus the number of any
+**Run as a container's init process** — `docker run image pgdt sql …`
+makes it one — it exits 128 plus the number of any
 signal that would end it elsewhere, which an init otherwise ignores, so Ctrl-C
 and `docker stop` end it. A crash's signal — `SIGSEGV`, `SIGBUS` and the like —
 still ends it as a crash; sent by hand, it is ignored. In the REPL, Ctrl-C is left to `datafusion-cli`,
@@ -31,9 +32,9 @@ which cancels the statement running rather than the session.
 ## `--dump`: a dump as catalogs
 
 ```sh
-datafusion-cli-pgdump --dump koji.dump
-datafusion-cli-pgdump --dump koji=koji.dump
-datafusion-cli-pgdump --dump koji=https://example.com/dumps/koji.dump.xz:strings
+pgdt sql --dump koji.dump
+pgdt sql --dump koji=koji.dump
+pgdt sql --dump koji=https://example.com/dumps/koji.dump.xz:strings
 ```
 
 Each database in the file becomes a **catalog**, each of its PostgreSQL
@@ -112,7 +113,7 @@ naming its table as SQL reaches it, and a line for anything amiss with the
 cache itself:
 
 ```
-$ datafusion-cli-pgdump --dump shop=types.sql
+$ pgdt sql --dump shop=types.sql
 warning: shop.public.t_base_type: column `v_mybase` (public.mybase): opaque base type — information-free in the dump; its value is the file's text, and compares as that text
 warning: shop.public.t_enum_domain: `v_mood` (public.mood) is compared by its labels' text, as DataFusion compares the emitted dictionary, where PostgreSQL orders an enum's labels as its type declares them
 warning: types.sql: 14 column(s) in 6 table(s) are each compared bytewise: the column declares no COLLATE clause, so its collation is the database's, which a plain dump does not record — this matches the server only if that collation is C or POSIX

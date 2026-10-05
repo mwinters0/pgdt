@@ -4,18 +4,19 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
-# What `pgdt` and `datafusion-cli-pgdump` do as their PID namespace's init
-# (`docs/design/decisions.md`, "D26"). A crate of its own because a signal
-# disposition is a binary's to choose: the library an embedder links installs
-# none, and a `pgdump_query` feature would put binary-only API in front of every
-# embedder (`docs/design/decisions.md`, "D13"). Never published; the two
-# binaries state their dependency on it once each, and it states `libc` and
+# What `pgdt` does as its PID namespace's init, its native commands and `sql`
+# alike (`docs/design/decisions.md`, "D26"). A crate of its own because a
+# signal disposition is a binary's to choose: the library an embedder links
+# installs none, and a `pgdump_query` feature would put binary-only API in
+# front of every embedder (`docs/design/decisions.md`, "D13"). Never
+# published; `pgdt` and `datafusion-cli-pgdump`, whose `run` installs `sql`'s
+# handlers, state their dependency on it once each, and it states `libc` and
 # `signal-hook` once for both.
 
 [features]
 default = []
 # `unshare`: running a binary as a fresh PID namespace's init and signalling
-# it from the host. Test support only, enabled by the two binaries'
+# it from the host. Test support only, enabled by `pgdt`'s
 # `[dev-dependencies]`, so a shipped binary never links it.
 test-support = []
 

@@ -289,7 +289,7 @@ pgdt query --source dump.sql --table public.t_date --unrepresentable text \
 Which columns are read as text is decided by the whole table, never by the
 rows a query reads. In the DataFusion provider such a column is a `Utf8View`
 and DataFusion compares it as text, `10000-01-01` below `9999-12-31`
-([`datafusion-cli-pgdump`](datafusion-cli-pgdump.md), "Types").
+([`pgdt sql`](pgdt-sql.md), "Types").
 `--schema-mode strings` reads every column as its text.
 
 ### Text ordering is bytewise, and your server's may not be
@@ -1106,7 +1106,7 @@ reading the dump again — a clean `parse` means the same whichever run built th
 affected: it reads each value under its own `--postgres-invalid-values`.
 The DataFusion provider takes it as `PgDumpOptions::postgres_invalid_values`,
 the shell as `:postgres-invalid-values=` and `pgdump.postgres_invalid_values`
-([`datafusion-cli-pgdump.md`](datafusion-cli-pgdump.md)). A filter's own value
+([`pgdt sql`](pgdt-sql.md)). A filter's own value
 PostgreSQL refuses has no such option: write the value you mean.
 
 ## Columns we cannot type at all

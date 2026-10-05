@@ -8,8 +8,8 @@
 //! `_exit`s `128 + n` — what a container runtime reports for the signal either
 //! way. Elsewhere nothing is installed and every disposition is the default.
 //!
-//! `pgdt` and `datafusion-cli-pgdump` both depend on it; the library an
-//! embedder links installs no handler.
+//! `pgdt` and `datafusion-cli-pgdump`, whose `run` is `pgdt sql`, both depend
+//! on it; the library an embedder links installs no handler.
 
 use std::io;
 use std::sync::Arc;

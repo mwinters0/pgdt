@@ -1015,8 +1015,8 @@ came about. The same signal *sent* to init is discarded like any other.
 namespace's init, each binary handles every signal that ends it elsewhere by
 exiting `128 + n` but a fault's, which it leaves to the forced default
 (`namespace-init/src/lib.rs`), and an interrupted `parse` exits `128 + n`
-rather than re-raising. `pgdt/tests/namespace_init.rs` and
-`datafusion-cli-pgdump/tests/namespace_init.rs` pin both under `unshare`.
+rather than re-raising. `pgdt/tests/namespace_init.rs` pins both under
+`unshare`, `sql` among the commands.
 
 **Re-verify:**
 
