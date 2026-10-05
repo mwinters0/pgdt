@@ -81,9 +81,9 @@ of `MemAvailable`, untuned (RT8), and one recommending none is not. The arms wor
 no machine is more than one of, so tests need the seam. Rejected: an env var overriding the root.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
-The library keeps `tokio` at `rt`+`sync`; the CLI runs `current_thread`, so thread count follows
-dispatched work, not CPUs (an idle reactor thread seeds allocator state). Rejected: a thread pool of
-our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
+The library keeps `tokio` at `rt`+`sync`; `pgdt`'s own commands run `current_thread`, so thread count
+follows dispatched work, not CPUs (an idle reactor thread seeds allocator state); `sql` runs DataFusion's.
+Rejected: a thread pool of our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
 
 ### D13 The allocator is the binary's choice, and it is mimalloc
 No `#[global_allocator]` in the library; `pgdt` links mimalloc, as DataFusion's CLI does, without `override`, so C keeps libc's

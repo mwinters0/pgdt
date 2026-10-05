@@ -1120,10 +1120,11 @@ counted apart, and a `parse` reports it beside the library's own account of the
 same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
 
 **One built instrument times rather than counts**: under
-`datafusion-cli-pgdump`'s own `introspect` feature, `pgdump_query::instrument`
-times each row a dynamic filter's state is evaluated on, and within it each
-leaf's locating, unescaping and keying of its field, its comparison and a
-membership's lookup, writing `evaluation_*` lines to the same file. It reads
+`datafusion-cli-pgdump`'s own `introspect` feature, which `pgdt`'s turns on,
+`pgdump_query::instrument` times each row a dynamic filter's state is evaluated
+on, and within it each leaf's locating, unescaping and keying of its field, its
+comparison and a membership's lookup, writing `evaluation_*` lines to the same
+file — after the allocator's sections, on an instrumented `pgdt sql`. It reads
 the time-stamp counter unordered against the work around it, so a span
 shorter than the pipeline is smeared across its neighbours and **only a sum
 over many spans is read**, less what the report's own calibration says a span

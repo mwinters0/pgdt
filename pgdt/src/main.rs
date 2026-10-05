@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -35,12 +36,52 @@ mod where_expr;
 #[derive(Parser)]
 #[command(
     name = "pgdt",
-    version = alloc::VERSION,
+    version = version(),
     about = "Query pg_dump plain-format files without loading them into memory"
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Invocation,
+}
+
+/// What `pgdt --version` prints: the crate version, the allocator's markers
+/// ([`alloc::MARKERS`]), and the DataFusion release `sql` is — the one place
+/// that release is stated, `sql` carrying no `--version` of its own.
+fn version() -> &'static str {
+    static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "{} {} (datafusion: {})",
+            env!("CARGO_PKG_VERSION"),
+            alloc::MARKERS,
+            datafusion_cli_pgdump::DATAFUSION_VERSION
+        )
+    });
+    &VERSION
+}
+
+/// The two kinds of command, told apart before the process is set up: each
+/// brings its own runtime, signal handlers and logging (`main`).
+#[derive(Subcommand)]
+enum Invocation {
+    #[command(flatten)]
+    Native(Command),
+    /// A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI,
+    /// with each `--dump` registered as catalogs, one per database it holds.
+    ///
+    /// It never parses: a dump is read through the complete cache `pgdt parse`
+    /// leaves, and one without is refused naming the `parse` that builds it.
+    /// `CREATE EXTERNAL TABLE … STORED AS PGDUMP` registers one table, and `SET
+    /// pgdump.*` states a session's provider settings. Every flag but `--dump`
+    /// and `--strict-identity` is DataFusion's own, as its CLI ships it —
+    /// `--memory-limit` among them, the limit on DataFusion's own memory pool,
+    /// which the dumps' scans bill against the allowance they share.
+    #[command(disable_version_flag = true, next_line_help = true, after_help = sql_release())]
+    Sql(datafusion_cli_pgdump::Args),
+}
+
+/// The DataFusion release `pgdt sql` is, under its help.
+fn sql_release() -> String {
+    format!("DataFusion CLI v{}", datafusion_cli_pgdump::DATAFUSION_VERSION)
 }
 
 /// CLI spelling of [`SchemaMode`] (`docs/design/decisions.md`, "D66").
@@ -2044,7 +2085,7 @@ impl InterruptGuard {
 fn die_by(signal: i32) -> ! {
     use std::io::Write as _;
 
-    introspect::report();
+    introspect::report(introspect::Sections::Allocator);
     let _ = std::io::stdout().flush();
     if !namespace_init() {
         let _ = signal_hook::low_level::emulate_default_handler(signal);
@@ -2109,6 +2150,31 @@ fn init_status_output() {
         .init();
 }
 
+/// **Parse first, then set up the process the chosen command needs.** Each
+/// kind wants its own runtime and tokio refuses to start one inside another,
+/// and `sql`'s handlers depend on its arguments (`datafusion_cli_pgdump::run`
+/// installs them, the REPL leaving `SIGINT` uncaught to cancel a statement).
+/// So nothing of [`commands`]' — its runtime, its init handlers, its status
+/// output — exists while `sql` runs; installed there too, the init's `_exit`
+/// on `SIGINT` would end the session a `ctrl_c` was cancelling a statement in.
+/// As init, a signal before either arm's handlers is discarded
+/// (`docs/design/runtime-invariants.md`, "RT19"), and that window is clap's
+/// parse alone.
+fn main() -> Result<ExitCode> {
+    let cli = Cli::parse();
+    match cli.command {
+        Invocation::Sql(args) => {
+            // An `introspect` build's report: the allocator's sections and
+            // the shell's own, written once `run` has returned.
+            let _instrument = introspect::at_exit(introspect::Sections::AllocatorAndEvaluation);
+            Ok(datafusion_cli_pgdump::run(args))
+        }
+        Invocation::Native(command) => commands(command).map(|()| ExitCode::SUCCESS),
+    }
+}
+
+/// `parse`, `info` and `query`.
+///
 /// **A `current_thread` runtime, not a multi-threaded one.** Every unit of
 /// work this binary dispatches is a `spawn_blocking` task
 /// (`docs/design/decisions.md`, "D12"), so the blocking pool tokio creates on
@@ -2123,18 +2189,17 @@ fn init_status_output() {
 /// `spawn_blocking` join at every piece, so the runtime is parked in
 /// `block_on` — driving the signal driver — whenever work is running.
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn commands(command: Command) -> Result<()> {
     // A default build drops this entirely; an `introspect` build writes what
     // the process held to the file `PGDT_INTROSPECT_OUT` names, on the way
     // out (`src/introspect.rs`).
-    let _instrument = introspect::at_exit();
+    let _instrument = introspect::at_exit(introspect::Sections::Allocator);
     // As its PID namespace's init alone, an exit on every signal but a fault
     // that ends `pgdt` elsewhere; `parse`'s guard takes `SIGINT` and `SIGTERM`
     // over (`docs/design/decisions.md`, "D26").
     let mut init = InitShutdown::install(&[]).context("installing the init's signal handlers")?;
     init_status_output();
-    let cli = Cli::parse();
-    match cli.command {
+    match command {
         Command::Parse {
             source: file,
             dtcache,
@@ -3710,11 +3775,15 @@ mod tests {
     fn the_bare_strict_identity_flag_binds_both_terms() {
         let cli = Cli::try_parse_from(["pgdt", "parse", "--source", "d.sql", "--strict-identity"])
             .expect("the flag takes no value");
-        let Command::Parse { identity, .. } = cli.command else { panic!("parse") };
+        let Invocation::Native(Command::Parse { identity, .. }) = cli.command else {
+            panic!("parse")
+        };
         assert_eq!(identity.resolve(), StrictIdentity::binding(true, true));
 
         let cli = Cli::try_parse_from(["pgdt", "parse", "--source", "d.sql"]).unwrap();
-        let Command::Parse { identity, .. } = cli.command else { panic!("parse") };
+        let Invocation::Native(Command::Parse { identity, .. }) = cli.command else {
+            panic!("parse")
+        };
         assert_eq!(identity.resolve(), StrictIdentity::ADVISORY);
     }
 
@@ -3772,9 +3841,15 @@ mod tests {
         ("chunk-size", FlagClass::Expert),
     ];
 
+    /// The subcommands the rule does not reach: `sql`'s flags are DataFusion's
+    /// CLI's as upstream ships it, bar two of ours taking no number
+    /// (`docs/design/roadmap.md`, "Two tunables fit pgdt to hardware: memory
+    /// and parallelism").
+    const UNCLASSIFIED_SUBCOMMANDS: &[&str] = &["sql"];
+
     /// Every `(flag, value_name)` this CLI takes a value under, over every
-    /// subcommand, deduplicated — `--chunk-size` is on two commands and is one
-    /// flag.
+    /// subcommand but [`UNCLASSIFIED_SUBCOMMANDS`], deduplicated —
+    /// `--chunk-size` is on two commands and is one flag.
     fn valued_flags() -> BTreeMap<String, String> {
         use clap::CommandFactory;
         fn walk(cmd: &clap::Command, into: &mut BTreeMap<String, String>) {
@@ -3792,7 +3867,9 @@ mod tests {
                 }
             }
             for sub in cmd.get_subcommands() {
-                walk(sub, into);
+                if !UNCLASSIFIED_SUBCOMMANDS.contains(&sub.get_name()) {
+                    walk(sub, into);
+                }
             }
         }
         let mut found = BTreeMap::new();
@@ -3852,6 +3929,32 @@ mod tests {
             BTreeSet::from(["jobs", "memory"]),
             "a third hardware knob needs the rule changed first, not this list"
         );
+    }
+
+    /// **The exemption is `sql`'s alone**: one subcommand, which exists, and
+    /// whose two flags of ours take no number — so neither a command of
+    /// `pgdt`'s own nor a knob added to `sql` escapes the rule through it.
+    #[test]
+    fn the_two_tunables_rule_skips_sql_alone() {
+        use clap::CommandFactory;
+        assert_eq!(UNCLASSIFIED_SUBCOMMANDS, ["sql"]);
+        let cli = Cli::command();
+        let sql = cli.find_subcommand("sql").expect("`pgdt sql` exists");
+        let ours: Vec<_> = sql
+            .get_arguments()
+            .filter(|arg| matches!(arg.get_long(), Some("dump" | "strict-identity")))
+            .map(|arg| {
+                let value = arg.get_value_names().and_then(|n| n.first()).map(|n| n.to_string());
+                (arg.get_long().unwrap_or_default(), value.unwrap_or_default())
+            })
+            .collect();
+        assert_eq!(ours.len(), 2, "`sql` lost one of its flags of ours: {ours:?}");
+        for (flag, value) in ours {
+            assert!(
+                !NUMERIC_VALUE_NAMES.contains(&value.as_str()),
+                "`sql --{flag}` takes a number, which the rule's exemption does not cover"
+            );
+        }
     }
 
     /// One parsed comparison term, or the message it was refused with.

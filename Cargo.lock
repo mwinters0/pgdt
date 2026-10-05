@@ -3611,6 +3611,7 @@ dependencies = [
  "arrow",
  "bytes",
  "clap",
+ "datafusion-cli-pgdump",
  "futures",
  "insta",
  "libc",

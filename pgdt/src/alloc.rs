@@ -9,7 +9,7 @@
 //! and `jemalloc` are the opt-in legs `measurements.md`, "Which allocator a figure was taken
 //! under" times against it.
 //!
-//! [`VERSION`] is why this module is readable from outside the process:
+//! [`MARKERS`] is why this module is readable from outside the process:
 //! `pgdt --version` names the allocator, so the measurement harness can *ask a
 //! binary* which one it links against instead of trusting the flags it thinks
 //! it passed.
@@ -82,37 +82,36 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/// What `pgdt --version` prints: the crate version and the allocator, in
-/// `allocator: <name>` form.
+/// What `pgdt --version` names of the allocator: `(allocator: <name>)`, and
+/// the instrument's marker where there is one. `main.rs`'s `version` puts it
+/// after the crate version and before DataFusion's.
 ///
 /// `system` rather than `glibc` in that leg's arm: it takes whatever libc it
 /// was linked against and this crate cannot tell which one. Naming the libc is
 /// the *measurement's* job (`measurements.md` records the image); naming the
 /// choice is this one's.
 ///
-/// Spelled as `#[cfg]` arms rather than a `cfg!` chain because `concat!` takes
-/// literals only. Each arm is guarded by the others' absence, so a refused
-/// combination fails on its `compile_error!` alone rather than on a second
-/// `VERSION` beside it.
+/// Spelled as `#[cfg]` arms rather than a `cfg!` chain so each is a constant.
+/// Each arm is guarded by the others' absence, so a refused combination fails
+/// on its `compile_error!` alone rather than on a second `MARKERS` beside it.
 #[cfg(all(
     feature = "mimalloc",
     not(feature = "introspect"),
     not(feature = "jemalloc"),
     not(feature = "system")
 ))]
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: mimalloc)");
+pub const MARKERS: &str = "(allocator: mimalloc)";
 /// The instrumented build says so **beside** the allocator rather than in
 /// place of it: it is mimalloc, with a counter in front of it.
 /// `scripts/measure.py`'s `binary_allocator` refuses a binary whose
 /// `--version` carries this marker, keeping an instrumented build out of every
 /// timed table by construction.
 #[cfg(all(feature = "introspect", not(feature = "jemalloc"), not(feature = "system")))]
-pub const VERSION: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (allocator: mimalloc) (instrument: counting-allocator)");
+pub const MARKERS: &str = "(allocator: mimalloc) (instrument: counting-allocator)";
 #[cfg(all(feature = "system", not(feature = "jemalloc")))]
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: system)");
+pub const MARKERS: &str = "(allocator: system)";
 #[cfg(feature = "jemalloc")]
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: jemalloc)");
+pub const MARKERS: &str = "(allocator: jemalloc)";
 /// Only to keep a refused build's error list to its `compile_error!`.
 #[cfg(not(any(
     feature = "jemalloc",
@@ -120,11 +119,11 @@ pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: jemal
     feature = "system",
     feature = "introspect"
 )))]
-pub const VERSION: &str = "";
+pub const MARKERS: &str = "";
 
 #[cfg(test)]
 mod tests {
-    use super::VERSION;
+    use super::MARKERS;
 
     /// Every arm must be readable by the harness's `(allocator: <name>)`
     /// parse, and a default build must report `mimalloc`. `cargo test` builds
@@ -142,8 +141,8 @@ mod tests {
             "mimalloc"
         };
         assert!(
-            VERSION.contains(&format!("(allocator: {expected})")),
-            "{VERSION} does not name {expected}"
+            MARKERS.contains(&format!("(allocator: {expected})")),
+            "{MARKERS} does not name {expected}"
         );
     }
 
@@ -154,9 +153,9 @@ mod tests {
     #[test]
     fn the_instrument_marker_is_present_exactly_when_the_feature_is() {
         assert_eq!(
-            VERSION.contains("(instrument: counting-allocator)"),
+            MARKERS.contains("(instrument: counting-allocator)"),
             cfg!(feature = "introspect"),
-            "{VERSION} disagrees with the `introspect` feature"
+            "{MARKERS} disagrees with the `introspect` feature"
         );
     }
 }

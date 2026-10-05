@@ -53,6 +53,8 @@ const PAGES: &[(&str, &[&str])] = &[
     ("info_long", &["info", "--help"]),
     ("query_short", &["query", "-h"]),
     ("query_long", &["query", "--help"]),
+    ("sql_short", &["sql", "-h"]),
+    ("sql_long", &["sql", "--help"]),
 ];
 
 /// Render one help page at [`WRAP_WIDTH`], with the width stated rather than
@@ -76,6 +78,12 @@ fn help_page(args: &[&str]) -> String {
 fn no_help_page_exceeds_the_wrap_width() {
     for (name, args) in PAGES {
         for line in help_page(args).lines() {
+            // An option's spec standing alone on its line is one clap never
+            // breaks, wrapping or not: `sql`'s `--dump` spells its suffixes
+            // in its value name, wider than the page.
+            if is_bare_spec(line) {
+                continue;
+            }
             // Columns, not bytes: the help text carries em dashes and curly
             // quotes, and a byte count would make this pass or fail on the
             // punctuation.
@@ -88,6 +96,18 @@ fn no_help_page_exceeds_the_wrap_width() {
             );
         }
     }
+}
+
+/// A line holding an option's spec and nothing else: indented, starting with
+/// `-`, and every word a flag or a value placeholder — `<SOURCE>`, or
+/// `[<FILE>...]` where the value is optional.
+fn is_bare_spec(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.len() < line.len()
+        && trimmed.starts_with('-')
+        && trimmed
+            .split_whitespace()
+            .all(|word| word.starts_with('-') || word.starts_with('<') || word.starts_with("[<"))
 }
 
 /// No flag renders with nothing beside it. A flag's help is its doc comment
@@ -112,9 +132,7 @@ fn no_flag_renders_without_help() {
             }
             // A spec is `-h, --help` or `--source <SOURCE>`: flags, commas and
             // one value placeholder. Anything past that is the description.
-            let described_here = trimmed
-                .split_whitespace()
-                .any(|word| !word.starts_with('-') && !word.starts_with('<'));
+            let described_here = !is_bare_spec(line);
             let described_below = lines.get(i + 1).is_some_and(|next| {
                 let next_indent = next.len() - next.trim_start().len();
                 !next.trim().is_empty() && next_indent > indent
@@ -177,4 +195,14 @@ fn query_short_help() {
 #[test]
 fn query_long_help() {
     insta::assert_snapshot!(help_page(&["query", "--help"]));
+}
+
+#[test]
+fn sql_short_help() {
+    insta::assert_snapshot!(help_page(&["sql", "-h"]));
+}
+
+#[test]
+fn sql_long_help() {
+    insta::assert_snapshot!(help_page(&["sql", "--help"]));
 }

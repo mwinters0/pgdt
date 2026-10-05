@@ -8,16 +8,16 @@ license = "Apache-2.0"
 # `datafusion-cli` with the `pg_dump` provider built in: a copy of the upstream
 # binary's private `main.rs` plus our registrations, re-copied at each
 # DataFusion major, exported as a library whose `Args` and `run` a binary
-# parses and calls. Its own crate, so an embedder of `datafusion-pgdump` does
-# not inherit `datafusion-cli`, and named to sort beside it. Rejected: a `pgdt
-# sql` subcommand, which would put DataFusion into the build every figure in
-# `docs/design/measurements.md` times.
+# parses and calls -- `pgdt sql` among them. Its own crate, so an embedder of
+# `datafusion-pgdump` does not inherit `datafusion-cli`, and named to sort
+# beside it.
 
 [features]
 default = []
 # The introspection build: what `pgdump_query::instrument` timed of a dynamic
-# filter's row evaluation, written on the way out to the file
-# `PGDT_INTROSPECT_OUT` names (`src/pgdump.rs`, `IntrospectAtExit`). An
+# filter's row evaluation, a section of the report the binary writes on the
+# way out to the file `PGDT_INTROSPECT_OUT` names (`src/pgdump.rs`,
+# `introspection_section`); `pgdt`'s `introspect` turns it on. An
 # instrument, never timed (`docs/design/roadmap.md`, "Attribution is
 # introspective; only the gate is blind").
 introspect = ["pgdump_query/introspect"]

@@ -12,5 +12,14 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() -> ExitCode {
-    datafusion_cli_pgdump::run(Args::parse())
+    let code = datafusion_cli_pgdump::run(Args::parse());
+    // The introspection build's report is the binary's too: its one section,
+    // to the file the variable names, and nothing with it unset.
+    #[cfg(feature = "introspect")]
+    if let Some(path) = std::env::var_os(datafusion_cli_pgdump::INTROSPECT_OUT_VAR)
+        && let Err(e) = std::fs::write(&path, datafusion_cli_pgdump::introspection_section())
+    {
+        eprintln!("introspect: cannot write {}: {e}", path.to_string_lossy());
+    }
+    code
 }

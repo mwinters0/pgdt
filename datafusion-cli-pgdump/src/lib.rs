@@ -18,8 +18,8 @@
 // This file is `datafusion-cli/src/main.rs` from DataFusion 55.1.0, with the
 // upstream tests left out (they read upstream's test data) and every change
 // of ours marked `pgdump:`, kept as this crate's library so a caller can embed
-// the CLI: its `Args` and entry point are exported, and the binary
-// (`src/main.rs`) parses and calls it. A downstream `main` of its own is upstream's
+// the CLI: its `Args` and entry point are exported, and a binary — this
+// crate's own (`src/main.rs`), or `pgdt sql` — parses and calls it. A downstream `main` of its own is upstream's
 // endorsed way to extend the CLI (`datafusion-cli/examples/cli-session-context.rs`),
 // and `src/pgdump.rs` holds everything else. At each DataFusion major, diff upstream's new `main.rs`
 // against 55.1.0's and re-apply the marked lines. The provider's tests that pin
@@ -27,8 +27,11 @@
 // `datafusion.` keys (`datafusion-pgdump/tests/settings.rs`), and a nested
 // column's NULL-first, unnormalized-zero order (`tests/pushdown.rs`).
 
-// pgdump: the registrations.
+// pgdump: the registrations, and what a caller composing the CLI reads of them.
 mod pgdump;
+pub use pgdump::DATAFUSION_VERSION;
+#[cfg(feature = "introspect")]
+pub use pgdump::{INTROSPECT_OUT_VAR, introspection_section};
 
 use std::collections::HashMap;
 use std::env;
@@ -213,9 +216,6 @@ impl Args {
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
 // pgdump: upstream's `main`, handed its arguments already parsed.
 pub async fn run(args: Args) -> ExitCode {
-    // pgdump: the introspection build's report, written on the way out.
-    #[cfg(feature = "introspect")]
-    let _report = pgdump::IntrospectAtExit;
     if let Err(e) = main_inner(args).await {
         println!("Error: {e}");
         return ExitCode::FAILURE;

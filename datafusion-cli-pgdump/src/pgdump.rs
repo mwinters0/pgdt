@@ -22,34 +22,35 @@ use pgdump_query::{
     SchemaMode, Severity, UnrepresentableMode,
 };
 
+/// The `datafusion-cli` release the copy in `src/lib.rs` is, for a caller
+/// naming it beside its own version.
+pub const DATAFUSION_VERSION: &str = datafusion_cli::DATAFUSION_CLI_VERSION;
+
 /// The environment variable naming the file the introspection build writes
 /// its report to — `pgdt`'s, so one harness variable reaches either binary.
 /// Unset, nothing is written.
 #[cfg(feature = "introspect")]
-const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
+pub const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 
-/// Writes the introspection build's report as `run` returns: what `pgdump_query::instrument` timed of each row a dynamic
-/// filter's state was evaluated on, as `key=value` lines, to the file
-/// `PGDT_INTROSPECT_OUT` names. Nothing with the variable unset, or on a
-/// signal's `_exit`.
+/// The introspection build's section of a report: what
+/// `pgdump_query::instrument` timed of each row a dynamic filter's state was
+/// evaluated on, as `key=value` lines under the scope they cover. Read once
+/// [`crate::run`] has returned, no thread then evaluating.
+///
+/// **A section, not a file**: the report is the process's, written once by
+/// whichever binary owns it — this crate's own, alone, or `pgdt sql`'s beside
+/// the allocator's sections — since a second writer to the one file would
+/// replace the first.
 ///
 /// **An instrument, never timed**: `scripts/measure.py` times only the build
 /// its own `cargo build --release` makes, which carries no feature, and
 /// `measure.py --profile-recipe` builds this one into a target directory of
-/// its own. Absent from that build, so `run` is upstream's `main`.
+/// its own. Absent from that build.
 #[cfg(feature = "introspect")]
-pub struct IntrospectAtExit;
-
-#[cfg(feature = "introspect")]
-impl Drop for IntrospectAtExit {
-    fn drop(&mut self) {
-        if let Some(path) = std::env::var_os(INTROSPECT_OUT_VAR) {
-            let lines = pgdump_query::instrument::evaluation_reading().lines();
-            if let Err(e) = std::fs::write(&path, lines) {
-                eprintln!("introspect: cannot write {}: {e}", path.to_string_lossy());
-            }
-        }
-    }
+pub fn introspection_section() -> String {
+    let mut out = String::from("evaluation_scope=dynamic-filter-row-evaluation\n");
+    out.push_str(&pgdump_query::instrument::evaluation_reading().lines());
+    out
 }
 
 /// As its PID namespace's init, end on every signal but a fault that ends this

@@ -20,6 +20,8 @@ Commands:
          as far as it got, with the coverage stated at the top
   query  Stream a table's rows, optionally projected to named columns and filtered by a boolean
          expression over single-column predicates
+  sql    A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI, with each `--dump`
+         registered as catalogs, one per database it holds
   help   Print this message or the help of the given subcommand(s)
 
 Options:

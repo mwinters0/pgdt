@@ -234,7 +234,12 @@ are not bent to reach it. A long dump of ordinary rows is not such a shape.
 against an allowlist classifying each as hardware, intent, input contract or
 expert override, and fails on a flag nobody has classified — so a third
 hardware knob is a decision somebody wrote down, not one that arrived quietly
-(`pgdt/src/main.rs`, `every_numeric_flag_is_classified`).
+(`pgdt/src/main.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
+sql` alone**, whose flags are the DataFusion CLI's as upstream ships it — its
+`--memory-limit` sizing DataFusion's pool, which the provider bills against its
+allowance — bar `--dump` and `--strict-identity`, ours and taking no number; a
+test pins the exemption to that one subcommand
+(`the_two_tunables_rule_skips_sql_alone`).
 
 ### A parse does all the work a later query could use
 

@@ -57,6 +57,11 @@
 //! `override`, so C keeps the platform allocator: neither family is the whole
 //! process, and only their sum is the heap.
 //!
+//! * **`evaluation_*`** — where `pgdt sql` ran: what
+//!   `datafusion_cli_pgdump::introspection_section` timed of a dynamic
+//!   filter's row evaluation, under its own `evaluation_scope`, after the
+//!   allocator's sections.
+//!
 //! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
 //! that variable is unset — see [`report`].
 //!
@@ -82,15 +87,24 @@
 #[cfg_attr(not(feature = "introspect"), allow(dead_code))]
 pub const OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 
+/// Which sections a report carries: the allocator's always, and the SQL
+/// shell's dynamic-filter timings where `pgdt sql` ran.
+#[derive(Clone, Copy)]
+pub enum Sections {
+    Allocator,
+    AllocatorAndEvaluation,
+}
+
 /// Writes the report when it goes out of scope.
 ///
-/// Held in `main`, so the report is emitted on the ordinary return **and** on
-/// an error propagated out of it, while tokio's blocking pool threads are
-/// still alive — a per-thread arena already torn down reports nothing. The
-/// interrupt path's `std::process::exit` calls [`report`] itself; a second
-/// signal's exit, and clap's own on a usage error, `--help` or `--version`,
-/// write none.
-pub struct AtExit(());
+/// Held in `commands`, so the report is emitted on the ordinary return **and**
+/// on an error propagated out of it, while tokio's blocking pool threads are
+/// still alive — a per-thread arena already torn down reports nothing. `sql`'s
+/// is held in `main` around `datafusion_cli_pgdump::run`, whose runtime is its
+/// own and is gone by then. The interrupt path's `std::process::exit` calls
+/// [`report`] itself; a second signal's exit, and clap's own on a usage error,
+/// `--help` or `--version`, write none.
+pub struct AtExit(Sections);
 
 /// Record what a mapping pass's statistics account held when it returned,
 /// with the instrument's own count read at the same moment, for [`report`]
@@ -104,13 +118,13 @@ pub fn statistics_returned(held: &pgdump_query::StatisticsHeld) {
 
 /// Arm the report. A no-op without the `introspect` feature, where [`report`]
 /// has nothing to write.
-pub fn at_exit() -> AtExit {
-    AtExit(())
+pub fn at_exit(sections: Sections) -> AtExit {
+    AtExit(sections)
 }
 
 impl Drop for AtExit {
     fn drop(&mut self) {
-        report();
+        report(self.0);
     }
 }
 
@@ -124,11 +138,11 @@ impl Drop for AtExit {
 /// A write that fails says so on stderr — an error, not the report: a silent
 /// failure is the one outcome a reader cannot tell from a build without the
 /// feature (`docs/design/decisions.md`, "D13").
-pub fn report() {
+pub fn report(sections: Sections) {
     #[cfg(feature = "introspect")]
-    {
-        enabled::write_report();
-    }
+    enabled::write_report(sections);
+    #[cfg(not(feature = "introspect"))]
+    let _ = sections;
 }
 
 #[cfg(feature = "introspect")]
@@ -272,16 +286,21 @@ mod enabled {
     #[global_allocator]
     static GLOBAL: Counting = Counting;
 
-    /// Write [`report_text`] to the file [`super::OUT_VAR`] names, or do
-    /// nothing at all where the variable is unset.
+    /// Write [`report_text`], and `sql`'s section after it where `sections`
+    /// asks, to the file [`super::OUT_VAR`] names, or do nothing at all where
+    /// the variable is unset.
     ///
     /// **The whole file is rewritten, and the last writer wins.** One process
     /// writes one report, at its own exit, so there is nothing to append to,
     /// and a run re-using a previous run's path cannot be read as that run's.
-    pub fn write_report() {
+    pub fn write_report(sections: super::Sections) {
         let Some(path) = std::env::var_os(super::OUT_VAR) else { return };
         let path = std::path::PathBuf::from(path);
-        if let Err(err) = std::fs::write(&path, report_text()) {
+        let mut text = report_text();
+        if let super::Sections::AllocatorAndEvaluation = sections {
+            text.push_str(&datafusion_cli_pgdump::introspection_section());
+        }
+        if let Err(err) = std::fs::write(&path, text) {
             // Not the report — an error saying there is none.
             eprintln!(
                 "pgdt: the introspection report could not be written to {}: {err}",

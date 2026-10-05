@@ -28,8 +28,16 @@ system = []
 # black-box (`docs/design/roadmap.md`, "Attribution is introspective; only the
 # gate is blind"). It never times anything, and `pgdt --version` names it so
 # the harness cannot publish a figure taken on it. Its allocator is mimalloc,
-# so it stands beside the default and is refused beside the other two.
-introspect = ["dep:libc", "dep:mimalloc", "dep:libmimalloc-sys", "pgdump_query/introspect"]
+# so it stands beside the default and is refused beside the other two. It
+# turns on `datafusion-cli-pgdump`'s too, whose dynamic-filter timings an
+# instrumented `pgdt sql` writes into the same report, a section of their own.
+introspect = [
+    "dep:libc",
+    "dep:mimalloc",
+    "dep:libmimalloc-sys",
+    "pgdump_query/introspect",
+    "datafusion-cli-pgdump/introspect",
+]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -42,6 +50,10 @@ arrow = { version = "59.2.0", default-features = false }
 # exception. `tests/help_text.rs` snapshots every page so the rendering is
 # reviewable at all.
 clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
+# `pgdt sql`: DataFusion's own CLI, whose copied arguments are the
+# subcommand's and whose entry point it calls. Unconditional, so the binary
+# every figure times is the one a release ships.
+datafusion-cli-pgdump = { version = "0.1.0", path = "../datafusion-cli-pgdump" }
 futures = "0.3.34"
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into. Nothing in a default build links it.
@@ -73,10 +85,13 @@ serde_json = "1.0.145"
 # and `raise` by hand, `unsafe` of this binary's own reimplementing them.
 signal-hook = { version = "0.4.4", default-features = false }
 tikv-jemallocator = { version = "0.6.0", optional = true }
-# `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and
-# dispatches every unit of work through `spawn_blocking`, so the multi-threaded
-# flavour would only buy reactor threads nothing runs on -- one per visible CPU,
-# each seeding allocator state of its own before a byte is read. See `main`, and
+# `rt`, not `rt-multi-thread`: `pgdt`'s own commands run a `current_thread`
+# runtime and dispatch every unit of work through `spawn_blocking`, so the
+# multi-threaded flavour would only buy reactor threads nothing runs on -- one
+# per visible CPU, each seeding allocator state of its own before a byte is
+# read. `sql` runs DataFusion's multi-threaded one, built inside
+# `datafusion-cli-pgdump`, which brings the feature into the build; no other
+# command starts one. See `commands` in `src/main.rs`, and
 # `docs/design/decisions.md`, "D12".
 # `net` and `time` beside them: the remote source's client needs the IO and
 # time drivers, and this binary declares them rather than inheriting them by
@@ -103,9 +118,7 @@ insta = "1.48.0"
 namespace-init = { path = "../namespace-init", features = ["test-support"] }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
 tempfile = "3.27.0"
-# `rt` here too, and not only for symmetry: every `#[tokio::test]` in this
-# crate takes the default `current_thread` flavour, and a dev-dependency
-# naming `rt-multi-thread` would unify the feature back onto the binary
-# whenever the test targets are built -- so `cargo test` would stop
-# exercising the feature set the shipped binary is compiled with.
+# `rt` here too, as the binary states it: every `#[tokio::test]` in this
+# crate takes the default `current_thread` flavour, the one `pgdt`'s own
+# commands run.
 tokio = { version = "1.53.1", features = ["rt", "macros", "net", "time"] }

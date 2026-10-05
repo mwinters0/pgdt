@@ -929,19 +929,21 @@ project calls neither.
 **Verified against:** `object_store` 0.14.2, `reqwest` 0.13.5, `hyper` 1.11.1
 (source and lockfile read; observed through the test suite).
 
-**Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdt` runs one
-`current_thread` runtime and would seed allocator state for a thread per
-visible CPU if a dependency forced the multi-threaded flavour on it.
+**Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdt`'s own
+commands run one `current_thread` runtime and would seed allocator state for a
+thread per visible CPU if a dependency forced the multi-threaded flavour on
+them.
 
 **Re-verify:**
 
 ```sh
-cargo tree -p pgdt -e features -i tokio | grep -c rt-multi-thread
+cargo tree -p pgdump_query --features http -e normal,features -i tokio | grep -c rt-multi-thread
 cargo test -p pgdt --test remote
 ```
 
-The first must print `0` for the shipped feature set; the second exercises the
-path on a `current_thread` runtime.
+The first must print `0`: the library's HTTP path, without `pgdt`, whose build
+carries the feature for `sql`'s runtime alone (`datafusion-cli-pgdump`); the
+second exercises the path on a `current_thread` runtime.
 
 ## RT18 — a `GetOptions` precondition is sent, and a 412 comes back as a terminal `Precondition`
 
