@@ -108,7 +108,7 @@ counting-allocator)` on an introspection build (`pgdt/src/alloc.rs`).
 `scripts/measure.py`'s `binary_allocator` reads the allocator back and refuses
 an instrumented binary, and the tests in `alloc.rs` and `test_measure.py`
 assert both markers. `datafusion-cli-pgdump` uses clap's bare `version`
-(`src/main.rs`, `Args`), naming its own crate version and not DataFusion's.
+(`src/lib.rs`, `Args`), naming its own crate version and not DataFusion's.
 
 **Why P29 cares.** Distinguishing a release from a development `--release`
 build adds build identity to that string: a tag, a `git describe`, or a
@@ -162,8 +162,8 @@ entry that deferred this to P30.
 ## No licence is declared for most of what a release would distribute
 
 **Fact.** The repository root has no `LICENSE` file. Of the five members only
-`datafusion-cli-pgdump` declares a licence (`Apache-2.0`, its `main.rs` being
-a copy of `datafusion-cli`'s), and `vendor/xz-seek` declares
+`datafusion-cli-pgdump` declares a licence (`Apache-2.0`, its `lib.rs` being
+a copy of `datafusion-cli`'s `main.rs`), and `vendor/xz-seek` declares
 `MIT OR Apache-2.0`. The GitHub repository is public.
 
 **Why P29 cares.** A published binary distributes the project's code under

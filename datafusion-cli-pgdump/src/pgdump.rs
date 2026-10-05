@@ -1,4 +1,4 @@
-//! What this binary adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
+//! What this crate adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
 //! and the sink printing what a registration finds to stderr. It never
 //! parses: a dump without a complete cache is refused naming the `pgdt parse`
 //! that builds one (`docs/design/decisions.md`, "D90").
@@ -28,8 +28,7 @@ use pgdump_query::{
 #[cfg(feature = "introspect")]
 const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 
-/// Writes the introspection build's report as the process returns from
-/// `main`: what `pgdump_query::instrument` timed of each row a dynamic
+/// Writes the introspection build's report as `run` returns: what `pgdump_query::instrument` timed of each row a dynamic
 /// filter's state was evaluated on, as `key=value` lines, to the file
 /// `PGDT_INTROSPECT_OUT` names. Nothing with the variable unset, or on a
 /// signal's `_exit`.
@@ -37,7 +36,7 @@ const INTROSPECT_OUT_VAR: &str = "PGDT_INTROSPECT_OUT";
 /// **An instrument, never timed**: `scripts/measure.py` times only the build
 /// its own `cargo build --release` makes, which carries no feature, and
 /// `measure.py --profile-recipe` builds this one into a target directory of
-/// its own. Absent from that build, so its `main` is upstream's.
+/// its own. Absent from that build, so `run` is upstream's `main`.
 #[cfg(feature = "introspect")]
 pub struct IntrospectAtExit;
 

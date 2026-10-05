@@ -2,12 +2,13 @@
 name = "datafusion-cli-pgdump"
 version.workspace = true
 edition.workspace = true
-# `src/main.rs` is a copy of `datafusion-cli`'s, which is Apache-2.0.
+# `src/lib.rs` is a copy of `datafusion-cli`'s `main.rs`, which is Apache-2.0.
 license = "Apache-2.0"
 
 # `datafusion-cli` with the `pg_dump` provider built in: a copy of the upstream
 # binary's private `main.rs` plus our registrations, re-copied at each
-# DataFusion major. Its own crate, so an embedder of `datafusion-pgdump` does
+# DataFusion major, exported as a library whose `Args` and `run` a binary
+# parses and calls. Its own crate, so an embedder of `datafusion-pgdump` does
 # not inherit `datafusion-cli`, and named to sort beside it. Rejected: a `pgdt
 # sql` subcommand, which would put DataFusion into the build every figure in
 # `docs/design/measurements.md` times.
@@ -34,9 +35,9 @@ datafusion-common = { version = "55.1.0", default-features = false }
 datafusion-pgdump = { version = "0.1.0", path = "../datafusion-pgdump", features = ["http"] }
 dirs = "6.0.0"
 env_logger = "0.11"
-# The upstream binary's allocator, kept with the copy: the allocator is the
-# binary's choice (`docs/design/decisions.md`, "D13"), and this binary is
-# `datafusion-cli`'s.
+# The upstream binary's allocator, declared by `src/main.rs` and never by the
+# library: the allocator is the binary's choice (`docs/design/decisions.md`,
+# "D13").
 mimalloc = { version = "0.1", default-features = false }
 # As a PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26"). Ours, not
