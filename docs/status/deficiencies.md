@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD108 -->
-**`KD1`–`KD108` are allocated, and nothing at or below `KD108` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD109 -->
+**`KD1`–`KD109` are allocated, and nothing at or below `KD109` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -470,3 +470,12 @@ than reading as a phase nobody has sliced.
   as the parse rounds it, as a decimal one is, but fails a query decoding
   it; `float_out` writes neither spelling. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD109** — no instrument attributes the shipped allocator's blocks to call
+  stacks: mimalloc is linked without `override`, so heaptrack and valgrind,
+  which hook `malloc`, see only C's allocations on the default build, and
+  Rust's are attributed only by recording a `system` build, which asks for the
+  same bytes from the same code. **(c) unowned**; the remedy is a
+  `MI_TRACK_VALGRIND` build of mimalloc run under valgrind, promoted by a
+  question about the shipped heap a `system` recording cannot answer. Detail:
+  `pgdt/src/alloc.rs`.

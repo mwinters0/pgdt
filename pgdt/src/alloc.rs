@@ -64,6 +64,20 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// Not under `introspect`, whose counting allocator is mimalloc with a counter
 /// in front of it and is installed by `src/introspect.rs` instead.
+///
+/// deficiency: KD109 — linked without `override`, so `malloc` never sees a
+/// Rust allocation, and no tool hooking it — heaptrack, or valgrind's memcheck,
+/// Massif and DHAT — can attribute this heap to call stacks. A `system`
+/// build's recording stands in, its requests being this build's. mimalloc's
+/// `MI_TRACK_VALGRIND` reports each of its blocks to valgrind by client request
+/// (`track.h`, `VALGRIND_MALLOCLIKE_BLOCK`), which is the remedy; but
+/// `libmimalloc-sys` exposes no feature for it, so the define is injected by
+/// hand, and the result is a build carrying those requests rather than the
+/// shipped one. Neither route reaches what this heap retains after a `free`:
+/// Massif's `--pages-as-heap` counts mapped pages, not resident ones, charges
+/// them to whichever allocation grew an arena, and runs the threads serially.
+/// That retention is read without stacks, by the gate's RSS and the
+/// `introspect` build's mimalloc statistics.
 #[cfg(all(feature = "mimalloc", not(feature = "introspect")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

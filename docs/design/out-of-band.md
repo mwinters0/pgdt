@@ -73,3 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M213 | | `--heaptrack-recipe` records a `system` `profiling` build in a `--target-dir` of its own under `PGDT_MEASURE_ALLOC_BUILD_ROOT`, its text, `HEAPTRACK_AXIS`'s and `measurements.md`'s heaptrack paragraph saying it sees C and Rust alike and citing `KD109` for the shipped heap, with `test_measure.py` asserting the build | | [2026-10-05](../status/history/2026-10-05.md) |
