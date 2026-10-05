@@ -924,29 +924,24 @@ with no room to hold what they decode buys less than either number suggests.
 > blocks it will keep for them.
 
 > **Under a container memory limit, leave room for the allocator as well.**
-> glibc gives each thread that allocates its own memory arena, which it keeps
-> rather than returns. pgdt runs a thread for each piece of work it has in
-> flight, so raising `--jobs` raises the arena count with it. So size a cgroup
-> at what `--memory` names rather than at the read-buffer budget: the reserve
-> and the fifth are exactly what the difference between the two is for, and
-> they are taken from a stated allowance and a discovered limit alike. Where
-> `--jobs` asks for more workers than the budget affords, the pool keeps a
-> block for each of them (above), which is the one term that margin was not
-> sized against. `MALLOC_ARENA_MAX` bounds the arena
-> count if you want to set it, and 2 is the smallest useful value. **It gives
-> real memory back on a compressed scan.** What it saves shows up where many
-> block-decoding readers run and grows with how many there are, and it is no
-> substitute for sizing the cgroup above the budget. It is a trade rather than
-> free memory: fewer arenas than readers means those readers contend for the
-> allocator, on exactly the scans where the cap saves anything. **A
-> plain file is a different matter and needs nothing**: read with `--jobs` set
-> it holds a few megabytes whether you allow two workers or twenty-four, so
-> there is nothing there for the cap to take back. How much it is worth on your
-> own compressed workload is not a number we can quote you yet.
+> pgdt's allocator, mimalloc, keeps memory for each thread that allocates and
+> holds on to some of what is freed for a while rather than returning it at
+> once; an `.xz` file's decoder allocates through the C library instead, which
+> on glibc gives each such thread an arena of its own and keeps it. pgdt runs
+> a thread for each piece of work it has in flight, so raising `--jobs` raises
+> both. So size a cgroup at what `--memory` names rather than at the
+> read-buffer budget: the reserve and the fifth are exactly what the difference
+> between the two is for, and they are taken from a stated allowance and a
+> discovered limit alike. Where `--jobs` asks for more workers than the budget
+> affords, the pool keeps a block for each of them (above), which is the one
+> term that margin was not sized against. `MALLOC_ARENA_MAX` bounds glibc's
+> arena count, and so only the decoder's share; what capping it gives back
+> under pgdt's own allocator has not been measured, and it is no substitute
+> for sizing the cgroup above the budget.
 > Restricting the container's CPUs is a partial substitute at best:
 > it lowers the count an `.xz` file picks when you state no `--jobs`, because
 > that count is read from the CPU quota — but it does nothing to a `--jobs` you
-> typed, and arena memory does not fall away in proportion to the thread count
+> typed, and per-thread memory does not fall away in proportion to the thread count
 > in any case.
 
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with

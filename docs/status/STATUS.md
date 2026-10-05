@@ -82,7 +82,7 @@ instrument can see").
 Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.md).
 
 - [x] **30.1** The instrument on mimalloc: `introspect` counts in front of `MiMalloc` and reports mimalloc's statistics for the Rust heap beside glibc's for the C dependencies'; `introspect` brings mimalloc, the default build staying `system` — [notes](../design/roadmap-P30.1-instrument-notes.md)
-- [ ] **30.2** The allocator move: mimalloc the default, `system` and `jemalloc` the opt-in legs, `--version` and `measure.py`'s `allocator` legs following, D13, the reserve's deficiency entry and the apparatus text rewritten (the spec, "What the move owes before a release"), and the `reserve` figure printing a two-heap report's readings, each column labelled with the memory it covers, where it now withholds them with the account; nothing re-taken
+- [x] **30.2** The allocator move: mimalloc the default, `system` and `jemalloc` the opt-in legs, `--version` and `measure.py`'s `allocator` legs following, D13, the reserve's deficiency entry and the apparatus text rewritten (the spec, "What the move owes before a release"), and the `reserve` figure printing a two-heap report's readings, each column labelled with the memory it covers, where it now withholds them with the account; nothing re-taken — [notes](../design/roadmap-P30.2-allocator-move-notes.md)
 - [ ] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines
 - [ ] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck
 - [ ] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following
@@ -117,3 +117,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **heaptrack stays on the default build, so it attributes C's allocations
+  alone.** Its recipe builds the default `profiling` binary, whose Rust heap is
+  mimalloc's without `override`, so a recording carries `liblzma`'s and
+  `aws-lc`'s allocations and none of Rust's (`measure.py`, "The heaptrack
+  recipe"). Made that way because the recipe's stated job is the term the
+  counter cannot see, and the 30.1 notes asked 30.2 to rewrite its text, not its
+  build. Reconsidering means building a `system` `profiling` binary in a target
+  dir of its own for the recipe: heaptrack counts what was asked for, which no
+  allocator moves, so that recording would attribute Rust's allocations to call
+  stacks again — at the cost of a second profiling build the perf recipe does
+  not share.

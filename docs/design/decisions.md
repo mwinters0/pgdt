@@ -82,15 +82,16 @@ no machine is more than one of, so tests need the seam. Rejected: an env var ove
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync`; the CLI runs `current_thread`, so thread count follows
-dispatched work, not CPUs (an idle reactor thread seeds a glibc arena). Rejected: a thread pool of
+dispatched work, not CPUs (an idle reactor thread seeds allocator state). Rejected: a thread pool of
 our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
 
-### D13 The allocator is the binary's choice
-No `#[global_allocator]` in the library; `pgdt` links the platform allocator, `jemalloc`/`mimalloc`
-are opt-in features, `--version` names which. Rejected: `mimalloc` on a few percent, making every
-table a figure of an unshipped binary; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10)
-but saving only below the count arenas already follow (D12), on `.xz` alone, at unpriced contention,
-overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure. Evidence: `allocator`.
+### D13 The allocator is the binary's choice, and it is mimalloc
+No `#[global_allocator]` in the library; `pgdt` links mimalloc, as DataFusion's CLI does, without `override`, so C keeps libc's
+`malloc` and the process has two heaps; `system`/`jemalloc` are opt-in legs, a build naming exactly one, `--version` naming it and
+an `introspect` build's marker keeping that build untimed. Rejected: the platform allocator, off the path DataFusion tests on;
+`override`, likewise; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10) but on C's arenas alone, at unpriced contention,
+overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure; a gate reading failing on mimalloc alone (P30).
+Evidence: `allocator`.
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content

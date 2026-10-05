@@ -9,14 +9,17 @@ edition.workspace = true
 # `docs/design/decisions.md`, "D13", and
 # `docs/design/measurements.md`, "Which allocator a figure was taken under".
 #
-# Both features are measured legs of one figure rather than a supported
-# matrix: `cd scripts && uv run measure.py --figure allocator` builds all
-# three and times them. Enabling both at once is a compile error, not a
+# mimalloc is the default and what ships; `system` and `jemalloc` are the
+# measured legs of one figure rather than a supported matrix: `cd scripts &&
+# uv run measure.py --figure allocator` builds the two with
+# `--no-default-features --features <leg>` and times them against it. A build
+# names exactly one allocator -- two, or none, is a compile error, not a
 # precedence rule -- see `src/alloc.rs`.
 [features]
-default = []
+default = ["mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+system = []
 # The introspection build (`src/introspect.rs`): a counting
 # `#[global_allocator]` over mimalloc, with mimalloc's own statistics for the
 # Rust heap and glibc's `mallinfo2` / `malloc_info` for what C allocates,
@@ -24,7 +27,8 @@ mimalloc = ["dep:mimalloc"]
 # allocator leg -- attribution asks the process, and only the gate stays
 # black-box (`docs/design/roadmap.md`, "Attribution is introspective; only the
 # gate is blind"). It never times anything, and `pgdt --version` names it so
-# the harness cannot publish a figure taken on it.
+# the harness cannot publish a figure taken on it. Its allocator is mimalloc,
+# so it stands beside the default and is refused beside the other two.
 introspect = ["dep:libc", "dep:mimalloc", "dep:libmimalloc-sys", "pgdump_query/introspect"]
 
 [dependencies]
@@ -46,6 +50,9 @@ libc = { version = "0.2.189", optional = true }
 # upstream DataFusion's benchmarks read mimalloc's statistics. The version is
 # the one `mimalloc` itself links, so the two name one library.
 libmimalloc-sys = { version = "0.1.49", optional = true, default-features = false, features = ["extended"] }
+# The shipped allocator. No default features, as upstream's `datafusion-cli`
+# links it: no `override`, so `liblzma` and `aws-lc` keep libc's `malloc` and
+# the process has two heaps (`docs/design/decisions.md`, "D13").
 mimalloc = { version = "0.1.50", optional = true, default-features = false }
 # As its PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26").
@@ -69,7 +76,7 @@ tikv-jemallocator = { version = "0.6.0", optional = true }
 # `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and
 # dispatches every unit of work through `spawn_blocking`, so the multi-threaded
 # flavour would only buy reactor threads nothing runs on -- one per visible CPU,
-# each seeding a glibc arena before a byte is read. See `main`, and
+# each seeding allocator state of its own before a byte is read. See `main`, and
 # `docs/design/decisions.md`, "D12".
 # `net` and `time` beside them: the remote source's client needs the IO and
 # time drivers, and this binary declares them rather than inheriting them by

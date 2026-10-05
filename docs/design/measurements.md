@@ -102,7 +102,10 @@ Eighteen standing rules for reading anything below:
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
   the figures here are `cargo build --release` (no `--target`) run under
-  `postgres:16`, whose **glibc malloc is part of the apparatus**. **Both
+  `postgres:16`, whose **glibc is part of the apparatus** — its `malloc` the
+  C dependencies', the Rust heap being mimalloc's in the default build and
+  glibc's only in the `system` leg ("Which allocator a figure was taken
+  under"). **Both
   images the harness runs are pinned by digest** (`measure.Config.image` and
   `dfcli_image`), a tag being free to move under the register
   ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
@@ -126,10 +129,11 @@ Eighteen standing rules for reading anything below:
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
 
-  **The second timed program departs from both, and its tables say so.**
+  **The second timed program departs from the image, and its tables say so.**
   `datafusion-cli-pgdump`, which the dynamic-filter figures and
   `parallel-scan-throughput`'s provider legs time, allocates
-  with `datafusion-cli`'s own `mimalloc`, and built on a host whose glibc is
+  with `datafusion-cli`'s own `mimalloc`, as `pgdt`'s default build does,
+  and built on a host whose glibc is
   newer than the register's image's it links `libm` symbol versions that image
   does not hold, so it runs in an image of the build host's distribution
   (`measure.Config.dfcli_image`). Its
@@ -140,8 +144,10 @@ Eighteen standing rules for reading anything below:
   image's `malloc` times nothing.
 
   **The apparatus stops at which allocator, and does not pin how many arenas it
-  keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. The term it would
-  control is real: a probe — not a figure — on two builds older than the
+  keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. On the default
+  build glibc's arenas hold only what C allocates, the Rust heap being
+  mimalloc's, so what follows was read on the platform allocator. The term it
+  would control is real: a probe — not a figure — on two builds older than the
   shipped one, `control_xz` at `--jobs 4 --parallel-memory 268435456` in a
   3 GB cgroup, read the uncapped leg above a `MALLOC_ARENA_MAX=2` leg in every
   one of its paired reps, by roughly 50–60 MiB
@@ -1089,10 +1095,10 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
 | a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics per allocation |
 | `mi_stats_get_json()` | mimalloc's `committed` and `reserved`, each now and at its **high-water**, merged over its heaps | what C allocates through libc | one call |
-| jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | glibc's behaviour — it is a different allocator | a feature flag and a build |
+| jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | the shipped allocator's behaviour — it is a different allocator | a feature flag and a build |
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
-| heaptrack — `--heaptrack-recipe` | every `malloc`, C and Rust alike, attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
+| heaptrack — `--heaptrack-recipe` | every `malloc` — C alone on the default build, C and Rust alike on a `system` one — attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
 
 **Three of them are built and in the tree**, behind `pgdt`'s off-by-default
 `introspect` feature: the counting `#[global_allocator]`, in front of mimalloc;
@@ -1134,9 +1140,11 @@ one figure's legs.
 **Another is a tool rather than a build, and `cd scripts && uv run
 measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the
 harness's third such invocation, beside koji's scan and the sampling profile.
-heaptrack hooks `malloc` through `LD_PRELOAD`, so it sees C and Rust alike
-where the counting allocator sees only Rust, and that is the layer that stays
-correct as more C is vendored. What it reads off directly is the term the
+heaptrack hooks `malloc` through `LD_PRELOAD`, so it sees C where the
+counting allocator sees only Rust, and that is the layer that stays correct as
+more C is vendored. **On the default build it sees C alone**: mimalloc is
+linked without `override`, so no Rust allocation reaches `malloc`, and a
+recording of Rust's allocations too is a `system` build's. What it reads off directly is the term the
 counter is structurally blind to: on a `.xz` scan the decoder's allocation
 arrives attributed through `lzma_lz_decoder_init` ← `lzma_raw_decoder` ←
 `PayloadDecoder::new` ← `BlockDecode::start_chunked` ← `XzSource::block`, at
@@ -1188,7 +1196,9 @@ names the glibc the pinned image holds):
   one reader, 105–219 MiB from two readers up on 24 MiB blocks and 140 MiB at four and five readers on 128 MiB blocks ("What a scan holds
   above the budget it was given"). It is reachable only by an instrument: it is
   invisible in peak RSS, and an allocator leg that replaces glibc removes the
-  mechanism rather than measuring it.
+  mechanism rather than measuring it. Those readings were taken with the
+  counter over glibc; on the default build the block buffers are mimalloc's,
+  and the mechanism reaches only what C allocates.
 
   Re-verify: `scripts/measure.py --profile-recipe` does not cover this one; the
   probe is eight `malloc`/`memset`/`free` cycles at the block size with
@@ -1214,13 +1224,16 @@ figure, and the instrumented build is still never the timed binary.
 
 ## Which allocator a figure was taken under
 
-**The platform allocator — glibc's `malloc` on this apparatus.** The choice is
-`pgdt`'s and never the library's, so every figure in this document is a **CLI**
-figure taken under whatever `pgdt` links against, and an embedder inherits
-whatever their own binary chose ([`decisions.md`](decisions.md), "D13"). The
-harness reads the allocator out of the binary — `pgdt --version` names it — so
-the session stamp above cannot go on saying `glibc` after the day the default
-changes.
+**`pgdt`'s default build links mimalloc; every figure published here was
+taken on the platform allocator, glibc's `malloc` on this apparatus**, which
+the session stamp names, so this table's `system` column was the shipped binary
+when it was taken and is the `system` leg at the next re-take. The
+choice is `pgdt`'s and never the library's, so every figure in this document is
+a **CLI** figure taken under whatever `pgdt` links against, and an embedder
+inherits whatever their own binary chose ([`decisions.md`](decisions.md),
+"D13"). The harness reads the allocator out of the binary — `pgdt --version`
+names it — so the session stamp cannot go on naming `system` once a sweep
+times the mimalloc default.
 
 The reference column is the shipped binary itself — never a fourth build of the
 same source, since two builds of one source can differ by ~10% from code layout
@@ -1292,14 +1305,15 @@ seven sittings have not agreed on it:
   a within-sitting ratio does not have that excuse applied to it
   automatically, and on `strings` the spreads do not admit it either.
 
-**The decision this figure exists to make: the platform allocator stays**
-([`decisions.md`](decisions.md), "D13"). A 0–2% reading does not overturn
-it, D13 having refused `mimalloc` on a few percent. But three sittings of
-seven put `mimalloc` ahead on every shape, and its `strings` cell has read
-0.96–0.99× at all seven, this one's spreads apart. What the figure supports is therefore
-"`mimalloc` beats it on extraction by a few percent, the margin D13 refused",
-not "nothing beats it by more than the instrument's own noise". The features stay in the
-manifest so a re-take costs five minutes.
+**What this figure would move is the default, and it did not move it**
+([`decisions.md`](decisions.md), "D13"): mimalloc is the default to stay on
+DataFusion's own allocator, not on a few percent. Three sittings of seven put
+`mimalloc` ahead on every shape, and its `strings` cell has read 0.96–0.99× at
+all seven, this one's spreads apart, so what the figure supports is
+"`mimalloc` beats the platform allocator on extraction by a few percent", not
+"nothing beats it by more than the instrument's own noise" — consistent with
+the move, and no reason for it. The other two stay in the manifest as legs so a
+re-take costs five minutes, and are what would move the default again.
 
 **Every leg is built by the sitting that times it.** `ensure_allocator_binary`
 memoizes per **process** rather than per machine, and builds every leg before

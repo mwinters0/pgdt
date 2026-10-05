@@ -778,13 +778,16 @@ What it inherits:
   plus account, against `MEMORY_RESERVE`'s 384 MiB, in
   `runs/20.8-reserve-attribution-20260916-1857/readings.json`
   ([`../status/history/2026-09-16.md`](../status/history/2026-09-16.md)).
-  Those readings are the platform allocator's, and P30 moves the shipped
-  binary to mimalloc ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md),
-  "What the move owes before a release"), so this phase re-takes them under
-  mimalloc on the rebuilt instrument. Its reports carry two heaps, mimalloc's
-  for Rust and glibc's for C, and `run_reserve` withholds its one-heap account
-  from such a report rather than subtract the Rust heap from C's
-  (`scripts/measure.py`), so the two-heap account is this phase's to draw.
+  Those readings are the platform allocator's, and the shipped binary links
+  mimalloc ([`decisions.md`](decisions.md), "D13"), so this phase re-takes
+  them under mimalloc on the rebuilt instrument. Its reports carry two heaps,
+  mimalloc's for Rust and glibc's for C, and `run_reserve` prints each heap's
+  readings but withholds its one-heap account from such a report rather than
+  subtract the Rust heap from C's (`scripts/measure.py`), so the two-heap
+  account is this phase's to draw. So is the fate of `reserve`'s
+  `MALLOC_ARENA_MAX` mechanism leg: it was registered to read glibc's mmap
+  threshold retaining block buffers, and those are mimalloc's now, the cap
+  reaching only what C allocates.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

@@ -930,8 +930,8 @@ project calls neither.
 (source and lockfile read; observed through the test suite).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdt` runs one
-`current_thread` runtime and would seed one glibc arena per visible CPU if a
-dependency forced the multi-threaded flavour on it.
+`current_thread` runtime and would seed allocator state for a thread per
+visible CPU if a dependency forced the multi-threaded flavour on it.
 
 **Re-verify:**
 

@@ -2387,8 +2387,8 @@ PARALLEL_BUDGET = 2 << 30
 #: **It is a constant, and that is the whole principle.** What is refused is
 #: sizing this off the `--jobs` axis, because what sits above a stated budget is
 #: nothing the library states: the terms no charge bills and the allocator's
-#: retention, glibc seeding an arena for every thread that allocates
-#: (`docs/status/history/2026-09-09.md`, "`M76`: the arena cap is not the
+#: retention, which on the platform allocator is glibc seeding an arena for
+#: every thread that allocates (`docs/status/history/2026-09-09.md`, "`M76`: the arena cap is not the
 #: runtime's") — a number picked from the allocator on the machine that took
 #: the figure rather than from anything the library asks for, and
 #: `measurements.md`'s contract is that a figure carries the command that
@@ -5186,12 +5186,14 @@ def ensure_dfcli_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return DFCLI_RELEASE_BIN
 
 
-#: The three legs of the `allocator` figure, in the order the table carries
-#: them. `system` is the feature-free build -- the platform allocator, glibc's
-#: `malloc` on the recorded apparatus -- and is spelled the way the binary
-#: spells it rather than as `glibc`, because the crate cannot know which libc
-#: it was linked against and the measurement records the image.
-ALLOCATOR_LEGS: tuple[str, ...] = ("system", "jemalloc", "mimalloc")
+#: The three legs of the `allocator` figure, each a `pgdt` feature, **the
+#: default build's first** -- `pgdt/Cargo.toml`'s `default`, which a test holds
+#: this to -- so a dry run, which asks no binary, names the reference the
+#: shipped build would. `system` is the platform allocator, glibc's `malloc`
+#: on the recorded apparatus, and is spelled the way the binary spells it
+#: rather than as `glibc`, because the crate cannot know which libc it was
+#: linked against and the measurement records the image.
+ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 
 #: What `pgdt --version` appends. The harness *asks the binary* rather than
 #: trusting the flags it passed: a leg mislabelled by one word gives a
@@ -5308,10 +5310,11 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     Three details are load-bearing and each fails by producing a table of
     something else:
 
-    * **`--no-default-features`**, so the `system` leg stays the platform
-      allocator whatever the CLI's default becomes. Without it this figure
-      stops being re-takeable the moment a leg is adopted -- which is the one
-      thing the figure exists to decide.
+    * **`--no-default-features --features <leg>`**, so a leg is the one
+      allocator it names whatever the CLI's default is: `pgdt` refuses two
+      allocator features at compile time, so without the first flag every leg
+      but the default's fails to build, and without the second the build
+      names none and is refused too.
     * **Its own target dir**, so `target/release/pgdt` -- every other figure's
       binary -- is never overwritten by a `--features` build.
     * **`--version` is read back** and must name this leg.
@@ -5328,7 +5331,6 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     out = cfg.out_dir / f"pgdt-alloc-{leg}"
     if leg in _ALLOC_BUILT:
         return out
-    features = [] if leg == "system" else ["--features", leg]
     target = cfg.alloc_build_root / leg
     if cfg.dry_run:
         # Announced once per leg, not once per rep: a real run builds on the
@@ -5344,7 +5346,7 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     run(
         [
             "cargo", "build", "--release", "-p", "pgdt",
-            "--no-default-features", *features,
+            "--no-default-features", "--features", leg,
             "--target-dir", str(target),
         ],
         cwd=REPO,
@@ -5395,8 +5397,9 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     `ensure_allocator_binary`'s three details hold here for the same reasons,
     with one difference: the features are the shipped set **plus** the
     instrument, so there is no `--no-default-features`. The CLI's default set is
-    empty today and the instrument is meant to run the arrangement the shipped
-    binary runs, so subtracting the defaults would measure a third build.
+    `mimalloc`, the heap the instrument counts in front of, and the instrument
+    is meant to run the arrangement the shipped binary runs, so subtracting the
+    defaults would measure a third build.
 
     **Its own target dir**, because a `--features` build in the default one
     overwrites `target/release/pgdt` — every other figure's binary — with a
@@ -6389,7 +6392,8 @@ _ATTRIBUTION_INPUTS: tuple[str, str] = ("blocks500", "blocks4000")
 #: The nine legs, in table order: what the table calls the leg, which binary
 #: runs it, and which command shape it is.
 #:
-#: **The two extra allocators are named, never re-specified.** What a leg's
+#: **The two allocators besides the shipped one are named, never
+#: re-specified.** What a leg's
 #: binary *is* -- `--no-default-features`, its own target dir, `--version` read
 #: back -- is the `allocator` figure's apparatus rule, so this figure calls
 #: `ensure_allocator_binary` rather than carrying a second recipe for the same
@@ -6399,14 +6403,14 @@ _ATTRIBUTION_INPUTS: tuple[str, str] = ("blocks500", "blocks4000")
 #: a cost paid per *table* from one paid per `COPY` block.
 _ATTRIBUTION_LEGS: tuple[tuple[str, str, str], ...] = (
     ("`parse` — the `peak-rss` row", "pgdt", "parse-rss"),
+    ("`parse`, system", "alloc:system", "parse-rss"),
     ("`parse`, jemalloc", "alloc:jemalloc", "parse-rss"),
-    ("`parse`, mimalloc", "alloc:mimalloc", "parse-rss"),
     ("`parse --preamble-only`", "pgdt", "parse-preamble-rss"),
     ("`info --dtcache` over the finished cache", "pgdt", "info-cache-rss"),
     ("`query` (no match), cached", "pgdt", "query-nomatch-cached-rss"),
     ("`query` (no match), `--dtcache none`", "pgdt", "query-nomatch-rss"),
+    ("`query` (no match), `--dtcache none`, system", "alloc:system", "query-nomatch-rss"),
     ("`query` (no match), `--dtcache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
-    ("`query` (no match), `--dtcache none`, mimalloc", "alloc:mimalloc", "query-nomatch-rss"),
 )
 
 
@@ -6668,8 +6672,8 @@ def _allocator_reference(cfg: Config) -> str:
     the figures that already take them, the warm throughput table's `COPY` row
     and the nested table's control rows.
 
-    Reading the name off the binary rather than assuming `system` is what makes
-    the figure survive its own answer: adopt a leg and this becomes the
+    Reading the name off the binary rather than assuming the default is what
+    makes the figure survive its own answer: adopt a leg and this becomes the
     reference, with the other two measured against it and no code change."""
     if cfg.dry_run:
         return ALLOCATOR_LEGS[0]
@@ -7318,6 +7322,9 @@ def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
     leg is inert there (`RESERVE_MECHANISM_LIMIT`). The two allocator legs are
     **dropped rather than re-aimed** — jemalloc and mimalloc do not have that
     threshold, so swapping them removes the mechanism instead of measuring it.
+    On the default build, whose Rust heap is mimalloc's, the threshold reaches
+    only what C allocates, and the rendered paragraph says so wherever the
+    instrument reports two heaps.
     What replaced them is `_reserve_instrument_specs`, which asks the process
     rather than subtracting two of them.
 
@@ -8047,6 +8054,11 @@ def run_reserve(session: Session) -> str:
         return median(values) if values else None
 
     instrument_rows, account_rows, account_points, checks = [], [], [], []
+    # The same legs' readings for a two-heap report, one column a reading, each
+    # headed with the heap it covers and none subtracted from another: readings
+    # are not a model, so the reason the account is withheld does not reach
+    # them (`docs/status/history/2026-10-05.md`).
+    two_heap_rows = []
     for spec in instrument:
         readings = rss(spec)
         killed = session.kills(figure, spec)
@@ -8059,6 +8071,9 @@ def run_reserve(session: Session) -> str:
             # neither table's arithmetic.
             instrument_rows.append(
                 [spec.label, "—", f"**OOM-killed**, {killed} rep(s)", "—", "—", "—", "—", "—"]
+            )
+            two_heap_rows.append(
+                [spec.label, "—", f"**OOM-killed**, {killed} rep(s)", *(["—"] * 7)]
             )
             continue
         readers = got[0] if got else 0
@@ -8073,6 +8088,27 @@ def run_reserve(session: Session) -> str:
                 fmt_mib_median_spread(readings),
                 _fmt_budget_bytes(heap_max),
                 _fmt_budget_bytes(live_peak),
+                f"{heaps:.0f}",
+                _fmt_budget_bytes(fordblks),
+                _fmt_budget_bytes(hblkhd),
+            ]
+        )
+
+        def reported_bytes(key: str) -> str:
+            """A reading the report may lack, as bytes or a dash: a report
+            from before mimalloc's statistics carries none of its keys."""
+            value = reported_median(spec, key)
+            return "—" if value is None else _fmt_budget_bytes(value)
+
+        two_heap_rows.append(
+            [
+                spec.label,
+                f"{readers}r" if got else "—",
+                fmt_mib_median_spread(readings),
+                _fmt_budget_bytes(live_peak),
+                reported_bytes("mimalloc_committed_peak_bytes"),
+                reported_bytes("mimalloc_reserved_peak_bytes"),
+                _fmt_budget_bytes(heap_max),
                 f"{heaps:.0f}",
                 _fmt_budget_bytes(fordblks),
                 _fmt_budget_bytes(hblkhd),
@@ -8155,6 +8191,21 @@ def run_reserve(session: Session) -> str:
             "mmap-backed at exit",
         ],
         instrument_rows,
+    )
+    two_heap_table = md_table(
+        [
+            "Leg",
+            "Readers",
+            "Peak RSS — the process",
+            "Live high-water — Rust, what passed through `GlobalAlloc`",
+            "mimalloc committed high-water — the Rust heap",
+            "mimalloc reserved high-water — the Rust heap's address space",
+            "glibc heap high-water — C `malloc` alone",
+            "glibc arenas — C",
+            "Freed and held at exit — glibc, C",
+            "mmap-backed at exit — glibc, C",
+        ],
+        two_heap_rows,
     )
     account_table = md_table(
         [
@@ -8295,7 +8346,7 @@ def run_reserve(session: Session) -> str:
             f"{min(covered) * 100:.0f}% of the account's `Unattributed` column, so what is left is neither the program's own live "
             "bytes, the decoder's dictionaries, nor allocator retention as glibc reports it. "
             "What would name it is `cd scripts && uv run measure.py --heaptrack-recipe`, which "
-            "attributes every `malloc` — C and Rust alike — to a call stack, and a `--diff` "
+            "attributes every `malloc` to a call stack — on a `system` build, C and Rust alike — and a `--diff` "
             "between two of these arrangements would name the site rather than the term."
         )
     else:
@@ -8321,7 +8372,7 @@ def run_reserve(session: Session) -> str:
 
     mech_rows = [
         [
-            "the reference — glibc, arenas uncapped",
+            "the reference — arenas uncapped",
             mech_cell(ref_readings, ref_killed),
             "—",
         ]
@@ -8405,9 +8456,14 @@ def run_reserve(session: Session) -> str:
             "glibc's holds only what reached C `malloc`. The account this figure draws — the "
             "counter's high-water and the decoder dictionaries subtracted from glibc's — "
             "subtracts the Rust heap from a heap that never held it, so it is **withheld** "
-            "here rather than printed; the two-heap account is `KD34`'s owner's to draw, out "
-            "of the `mimalloc_*` and `malloc_*` lines each report carries. What stands is the "
-            "counter's own line, which no allocator moves:\n\n"
+            "here rather than printed; the two-heap account is `KD34`'s owner's to draw. "
+            "**The readings stand**, a reading being no model: each column below is headed "
+            "with the memory it covers, and none is subtracted from another. mimalloc's "
+            "`committed` counts an arena's slices from when it first hands them out, touched "
+            "or not, so it is no resident reading, and `reserved` is address space:\n\n"
+            + two_heap_table
+            + "\n\nWhat stands of the account is the counter's own line, which no allocator "
+            "moves:\n\n"
             + live_line
         )
     else:
@@ -8536,8 +8592,16 @@ def run_reserve(session: Session) -> str:
         + ". The reference is the axis row above, not a re-take. **One leg, where three were "
         "registered**: the arena cap bounds how many arenas can hold a retained block, and "
         "at a cell whose uncapped process already runs no more arenas than the cap allows it "
-        "cannot move one — the instrument's `Arenas` column says which this cell is. The two "
-        "allocator legs are dropped rather than re-aimed "
+        "cannot move one — the instrument's `Arenas` column says which this cell is."
+        + (
+            " **On this build the cap reaches C alone**: the instrument counted in front of "
+            "mimalloc, which it is refused beside any other allocator, so the shipped build's "
+            "Rust heap — the block buffers included — is mimalloc's, and glibc's arenas hold "
+            "only what C allocates, `liblzma`'s decoder state among it."
+            if two_heaps
+            else ""
+        )
+        + " The two allocator legs are dropped rather than re-aimed "
         "because jemalloc and mimalloc do not have glibc's dynamic mmap threshold — swapping "
         "them removes the mechanism instead of measuring it. What replaced them is the "
         "instrument above, which reports the retention rather than differencing two runs:\n\n"
@@ -12192,8 +12256,11 @@ def cmd_profile() -> int:
 # `#[global_allocator]` intercepts Rust's `GlobalAlloc` and nothing else, so
 # every byte `liblzma` asks for is invisible to it and fully present in RSS
 # (`decisions.md`, "D13"). heaptrack
-# hooks `malloc`, which sees C and Rust alike and is the layer that stays
-# correct as more C is vendored.
+# hooks `malloc`, which is the layer that stays correct as more C is vendored.
+# **On the shipped build it sees C alone**: mimalloc is linked without
+# `override`, so Rust's allocations never reach `malloc`, and the counter and
+# mimalloc's own statistics are what read them; only a `system` build's
+# recording attributes Rust's allocations too.
 #
 # It is not a figure, for koji's reason and the profile's: no reps, no median,
 # no apparatus gate, no `measurements.md` marker. What it produces is a **name**
@@ -12322,8 +12389,9 @@ def heaptrack_recipe(cfg: Config) -> str:
 
     head(
         "The tool. It hooks malloc through LD_PRELOAD, so it sees liblzma's",
-        "dictionary and Rust's allocations alike -- which is the whole reason",
-        "for it: the counting global allocator sees only the second.",
+        "dictionary -- which is the whole reason for it: the counting global",
+        "allocator sees only Rust's allocations, and on this build, whose Rust",
+        "heap is mimalloc's, those never reach malloc, so it sees C alone.",
     )
     lines += [f"{HEAPTRACK} --version", ""]
 

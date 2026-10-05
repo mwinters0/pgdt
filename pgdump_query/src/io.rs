@@ -1127,7 +1127,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
 /// What [`Parallelism::within`] holds back from a memory allowance, discovered
 /// or stated, in bytes: everything the process holds that the pools' budget
-/// does not bound — the runtime's threads, glibc's per-thread arenas, the
+/// does not bound — the runtime's threads, the allocators' per-thread state, the
 /// decoder state a compressed source keeps outside its pools, and the binary
 /// itself.
 ///
@@ -1166,7 +1166,13 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// axis is a second reading: under a typed `--jobs` and `--memory` the margin
 /// lowers only the budget, and the worst rep there has held about this value
 /// above the resolved budget, over it at one sitting and under it at the two
-/// since (`measurements.md`, `reserve`).
+/// since (`measurements.md`, `reserve`). **Every one of those readings is the
+/// platform allocator's** — the choice of this value
+/// (`runs/19.16-reserve-constant-20260911-2210/readings.json`) and the
+/// attribution (`runs/20.8-reserve-attribution-20260916-1857/`) alike — and the
+/// shipped build's Rust heap is mimalloc's, C's alone glibc's
+/// (`docs/design/decisions.md`, "D13"), so none of them reads what the shipped
+/// build holds: P23 re-takes them under mimalloc on the two-heap instrument.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as
@@ -1200,7 +1206,7 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
-/// the runtime's threads, glibc's per-thread arena retention, the decoder
+/// the runtime's threads, the allocators' per-thread retention, the decoder
 /// state a compressed source keeps beyond [`BlockCache::reader_bytes`], and
 /// the binary itself. [`margin_allowance`] predicts with it, and nothing else
 /// reads it.
@@ -1214,8 +1220,9 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// *Rejected: a bound per block size*, which the margin cannot state before
 /// the file is open.
 ///
-/// **What it is, is attributed only in bulk**: glibc's retained free memory at
-/// exit (`fordblks`) is most of it, and no term table sums to it.
+/// **What it is, is attributed only in bulk**: on the platform allocator,
+/// glibc's retained free memory at exit (`fordblks`) is most of it, and no term
+/// table sums to it.
 /// `scripts/measure.py`'s `charge_model_problem` faults a cell whose remainder
 /// exceeds this, which is the finding that would move it. It is not
 /// [`MEMORY_RESERVE`] because the reserve is what an allowance hands back

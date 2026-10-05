@@ -26,6 +26,7 @@ import json
 import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -1112,12 +1113,11 @@ class Allocator(unittest.TestCase):
             measure.ensure_allocator_binary(measure.Config(), "tcmalloc", lambda _: None)
 
     def test_a_leg_builds_with_no_default_features_and_its_own_target_dir(self):
-        # Both flags are load-bearing. Without `--no-default-features` the
-        # reference leg stops being the platform allocator the day one is
-        # adopted, so the figure stops being re-takeable at the moment it
-        # matters; without its own `--target-dir` a `--features` build
-        # overwrites `target/release/pgdt` and every other figure in the same
-        # sweep is timed under the wrong allocator.
+        # Both flags are load-bearing. `pgdt` refuses two allocator features at
+        # compile time, so without `--no-default-features` every leg but the
+        # default's fails to build; without its own `--target-dir` a
+        # `--features` build overwrites `target/release/pgdt` and every other
+        # figure in the same sweep is timed under the wrong allocator.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = measure.Config(
                 out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
@@ -1145,6 +1145,50 @@ class Allocator(unittest.TestCase):
                 str(cfg.alloc_build_root / "jemalloc"),
             )
             self.assertEqual(out, cfg.out_dir / "pgdt-alloc-jemalloc")
+
+    def test_every_leg_names_its_own_feature(self):
+        # The platform allocator is a feature like the other two, not the
+        # absence of one: `pgdt` refuses a build naming no allocator, so a
+        # `system` leg built without `--features system` would not build.
+        for leg in measure.ALLOCATOR_LEGS:
+            with self.subTest(leg=leg), tempfile.TemporaryDirectory() as tmp:
+                measure._ALLOC_BUILT.clear()
+                cfg = measure.Config(
+                    out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
+                )
+                calls = []
+
+                def fake_run(argv, cwd=None, capture=False, quiet=False, leg=leg, cfg=cfg):
+                    calls.append(list(argv))
+                    built = cfg.alloc_build_root / leg / "release"
+                    built.mkdir(parents=True, exist_ok=True)
+                    (built / "pgdt").write_text("#!/bin/true\n")
+                    return ""
+
+                with unittest.mock.patch.object(measure, "run", fake_run), \
+                     unittest.mock.patch.object(measure, "binary_allocator", return_value=leg):
+                    measure.ensure_allocator_binary(cfg, leg, lambda _: None)
+                argv = calls[0]
+                self.assertIn("--no-default-features", argv)
+                self.assertEqual(argv[argv.index("--features") + 1], leg)
+
+    def test_the_first_leg_is_the_default_build_s(self):
+        # A dry run asks no binary, so it names `ALLOCATOR_LEGS[0]` as the
+        # shipped one; and `rss-attribution` runs the shipped binary beside the
+        # other two. Both are wrong the day `pgdt`'s default moves and this
+        # tuple does not.
+        manifest = tomllib.loads((measure.REPO / "pgdt" / "Cargo.toml").read_text())
+        default = manifest["features"]["default"]
+        self.assertEqual(
+            [f for f in default if f in measure.ALLOCATOR_LEGS], [measure.ALLOCATOR_LEGS[0]]
+        )
+        for leg in measure.ALLOCATOR_LEGS:
+            with self.subTest(leg=leg):
+                self.assertIn(leg, manifest["features"])
+        self.assertEqual(
+            measure._allocator_reference(measure.Config(dry_run=True)),
+            measure.ALLOCATOR_LEGS[0],
+        )
 
     def test_a_leg_whose_build_dropped_its_feature_is_refused(self):
         # The build succeeds and produces a working binary, so nothing else
@@ -1796,7 +1840,7 @@ class RssAttribution(unittest.TestCase):
         # routes an `alloc:` binary through `ensure_allocator_binary`, which is
         # where the leg is built and then interrogated.
         legs = {b.removeprefix("alloc:") for _, b, _ in measure._ATTRIBUTION_LEGS if ":" in b}
-        self.assertEqual(legs, set(measure.ALLOCATOR_LEGS) - {"system"})
+        self.assertEqual(legs, set(measure.ALLOCATOR_LEGS) - {measure.ALLOCATOR_LEGS[0]})
 
     def test_it_declares_the_two_mechanisms_only_its_own_legs_reach(self):
         # The preamble, where the per-table structure is paid, and the CLI's
@@ -7575,6 +7619,57 @@ class CensoredCells(unittest.TestCase):
             any(ln.startswith("**What the program itself") for ln in body.splitlines()),
             "the counter's own line went with the account",
         )
+
+    def test_a_two_heap_report_prints_each_heap_s_readings_and_subtracts_none(self):
+        # Readings are not a model, so withholding the account does not reach
+        # them: each leg's row carries every reading the report gives, each
+        # column headed with the memory it covers, and no column is a
+        # difference of two others.
+        one_heap = self._report
+
+        def two_heaps(i):
+            return {
+                **one_heap(i),
+                "mimalloc_scope": "rust-heap",
+                "mimalloc_committed_peak_bytes": str((400 + 10 * i) * measure.MIB),
+                "mimalloc_reserved_peak_bytes": str(1024 * measure.MIB),
+                "glibc_scope": "c-malloc",
+            }
+
+        with unittest.mock.patch.object(self, "_report", two_heaps):
+            body, _ = self._render()
+        header = next(ln for ln in body.splitlines() if "mimalloc committed high-water" in ln)
+        cells = [c.strip() for c in header.strip("|").split("|")]
+        for heading, covers in (
+            ("Live high-water", "Rust"),
+            ("mimalloc committed high-water", "the Rust heap"),
+            ("mimalloc reserved high-water", "the Rust heap's address space"),
+            ("glibc heap high-water", "C `malloc` alone"),
+            ("glibc arenas", "C"),
+            ("Freed and held at exit", "glibc, C"),
+            ("mmap-backed at exit", "glibc, C"),
+        ):
+            with self.subTest(heading=heading):
+                cell = next(c for c in cells if c.startswith(heading))
+                self.assertIn(f" — {covers}", cell)
+        self.assertNotIn("−", header)
+        rows = [
+            ln
+            for ln in body.split(header)[1].split("\n\n")[0].splitlines()
+            if ln.startswith("| instrument")
+        ]
+        self.assertEqual(len(rows), len(measure._reserve_instrument_specs()))
+        self.assertTrue(
+            any(measure._fmt_budget_bytes(400 * measure.MIB) in r for r in rows)
+            or any(measure._fmt_budget_bytes(410 * measure.MIB) in r for r in rows)
+            or any(measure._fmt_budget_bytes(420 * measure.MIB) in r for r in rows),
+            "no row carries mimalloc's committed high-water",
+        )
+        self.assertTrue(all(measure._fmt_budget_bytes(1024 * measure.MIB) in r for r in rows))
+        # The mechanism legs' cap reaches C alone on such a build, and the
+        # reference no longer claims glibc holds the Rust heap.
+        self.assertIn("On this build the cap reaches C alone", body)
+        self.assertNotIn("the reference — glibc", body)
 
     def test_the_check_states_the_arrangement_and_the_tolerance(self):
         # The exact half is whether the instrument build resolved the shipped

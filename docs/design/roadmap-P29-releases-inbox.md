@@ -33,11 +33,12 @@ repository's feed before relying on it.
 
 ## Every figure is a glibc build on the platform allocator, and musl measured slower
 
-**Fact.** Every performance figure is the default `glibc` build on the
-platform allocator, run in a glibc image; static musl measured materially
-slower on the workloads that move real bytes, and is in no recipe
+**Fact.** Every performance figure is the default `glibc` build, run in a
+glibc image, and every one published so far was taken on the platform
+allocator, which `pgdt`'s default build does not link; static musl measured
+materially slower on the workloads that move real bytes, and is in no recipe
 ([`measurements.md`](measurements.md), "The apparatus";
-[`decisions.md`](decisions.md), "D13"). `pgdt`'s `jemalloc` and `mimalloc`
+[`decisions.md`](decisions.md), "D13"). `pgdt`'s `system` and `jemalloc`
 features are measured legs, not a supported matrix
 ([`measurements.md`](measurements.md), "Which allocator a figure was taken
 under").
@@ -45,7 +46,7 @@ under").
 **Why P29 cares.** The usual portable Linux binary is static musl, whose own
 malloc is what the figures measured as slower. A glibc artifact needs a symbol
 floor (built against an old glibc, or targeting one explicitly), and that floor
-decides which distributions run it. P30 makes mimalloc the shipped binary's
+decides which distributions run it. mimalloc is the shipped binary's
 global allocator, with no `override`
 ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)), so a static musl
 build keeps the Rust heap off musl's malloc and needs no floor. On musl it is

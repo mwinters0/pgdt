@@ -317,9 +317,10 @@ than reading as a phase nobody has sliced.
   its charge and its statistics account: the attribution sitting read a worst
   remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
   leg from 1 GiB up was OOM-killed in every rep on that build. The reserve was
-  fixed before statistics existed and has not been read since. **(b) owned by
-  P23**, which sets it from those readings and runs the blind gate an
-  attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
+  fixed before statistics existed, and every reading of it is the platform
+  allocator's where the shipped build's Rust heap is now mimalloc's. **(b)
+  owned by P23**, which re-takes them under mimalloc, sets it from them and runs
+  the blind gate an attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its
