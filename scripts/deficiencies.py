@@ -159,6 +159,7 @@ CODE_ROOTS = (
     REPO / "datafusion-pgdump" / "src",
     REPO / "datafusion-cli-pgdump" / "src",
     REPO / "namespace-init" / "src",
+    REPO / "peak-rss" / "src",
 )
 
 SECTION_HEADING = "# Known deficiencies"

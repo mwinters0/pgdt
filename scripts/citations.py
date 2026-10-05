@@ -143,6 +143,7 @@ RUST_ROOTS = (
     "datafusion-pgdump",
     "datafusion-cli-pgdump",
     "namespace-init",
+    "peak-rss",
 )
 
 #: Python: sources only. Docstrings and comments, never string literals.

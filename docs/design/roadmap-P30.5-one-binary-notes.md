@@ -7,17 +7,15 @@ way to run it, and its tests are `pgdt/tests/sql.rs` and the `sql` case of
 
 ## What 30.6 inherits
 
-- **No figure can run yet.** The composed `pgdt` does not load in the
-  register's image ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-  "The composed `pgdt` does not start in the register's image"), and every
-  figure but the provider legs runs there. The sweep waits on the image the
-  maintainer picks; STATUS's "Decisions worth another look" holds the
-  question.
+- **Every figure runs in one image**, `measure.Config.image`, of the build
+  host's distribution, the composed `pgdt` loading in no older one
+  ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
+  "The composed `pgdt` does not start in the register's image"); a sweep's
+  preflight refuses a binary that does not start there.
 - **The provider legs run `/pgdt sql`, mounted where every leg mounts
-  `/pgdt`**, in `Config.dfcli_image` as before: `measure.SQL_SHELL` is the
-  program, `RunSpec.binary` `"dfcli"` now selects only that image, and
-  `Session.binary_path("dfcli")` is `cfg.bin_pgdt`, so no second build is
-  made or staged. The command names (`dfcli-dynamic-filter-…`,
+  `/pgdt`**: `measure.SQL_SHELL` is the program, `RunSpec.binary` `"dfcli"`
+  selects no image of its own, and `Session.binary_path("dfcli")` is
+  `cfg.bin_pgdt`, so no second build is made or staged. The command names (`dfcli-dynamic-filter-…`,
   `dfcli-query-typed-jobs-…`), the reading keys and the `dfcli-introspect`
   target directory keep their spelling, so a past sitting's `raw.json` still
   renders.
@@ -31,5 +29,5 @@ way to run it, and its tests are `pgdt/tests/sql.rs` and the `sql` case of
 ## Negative results
 
 - **The tables no longer say the provider legs allocate with their own
-  `mimalloc`**: they run the binary every other leg runs, so what departs is
-  the image alone, and that is what each table states.
+  `mimalloc`, or run in an image of their own**: they run the binary every
+  other leg runs, in the image every other leg runs in.

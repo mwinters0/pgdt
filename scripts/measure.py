@@ -52,8 +52,8 @@ replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
-count as its session's `target_partitions` and runs in an image of its own
-— each held by a test and said in its tables.
+count as its session's `target_partitions` — held by a test and said in its
+tables.
 
 **No build of another tree is measured here.** A subtraction between two
 builds measures everything that differs between the two trees, which grows
@@ -178,31 +178,22 @@ class Config:
     out_dir: Path = Path(_env("PGDT_MEASURE_OUT_DIR", str(REPO / "runs")))
 
     container: str = _env("PGDT_MEASURE_CONTAINER", "sudo nerdctl")
-    # **Pinned by digest**, the tag before it being for a reader only: a tag
-    # moves under the register, and what a figure names is the glibc the
-    # image answers (`glibc_of`) rather than a tag's (`measurements.md`, "The
-    # apparatus"). A digest the machine lacks is pulled by the first run.
+    # **The one image every figure runs in**, of the build host's own
+    # distribution, so the host-built `pgdt` links no symbol version it lacks
+    # (`measurements.md`, "The apparatus"); `apparatus_preflight` refuses a
+    # sweep whose binary does not start in it, and that is the only time the
+    # pin moves. **Pinned by digest**, the tag before it being for a reader
+    # only: a tag moves under the register, and what a figure names is the
+    # glibc the image answers (`glibc_of`) rather than a tag's. A digest the
+    # machine lacks is pulled by the first run.
     image: str = _env(
         "PGDT_MEASURE_IMAGE",
-        "postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5",
+        "archlinux:base@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6",
     )
     memory: str = _env("PGDT_MEASURE_MEMORY", "512m")
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
     bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
-    # **The image `pgdt sql`'s legs run in**, where it cannot run in `image`:
-    # built on this host, DataFusion links `libm` symbol versions newer than
-    # the register's image's glibc holds, so those legs run in an image of the
-    # build host's own distribution instead. `pgdt` links DataFusion in every
-    # build, so the same is true of its other commands, which still run in
-    # `image`. The Rust heap is `mimalloc`'s in either, so the image's
-    # `malloc`, which is why `image` is part of the apparatus, times only what
-    # C allocates there; the departure is stated in each such figure's table.
-    # Pinned by digest as `image` is, the tag being a rolling one.
-    dfcli_image: str = _env(
-        "PGDT_MEASURE_DFCLI_IMAGE",
-        "archlinux:base@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6",
-    )
     # The `allocator` figure's three legs. Each is a full cargo target dir, so
     # it goes on scratch rather than under `runs/`, which holds logs and small
     # binaries; the binaries themselves are copied into `runs/`. A separate
@@ -1035,8 +1026,8 @@ def spread(values: Sequence[float]) -> tuple[float, float]:
 
 def fmt_s(value: float) -> str:
     """Seconds, at the precision measurements.md quotes: three decimals below
-    two seconds, two above -- the register's image's timer resolves to 1 ms
-    (`TIME_FORMAT`), and no table quotes `pgdt sql`'s image's microseconds."""
+    two seconds, two above -- the image's timer resolves a microsecond
+    (`TIME_FORMAT`), which no table quotes."""
     return f"{value:.3f}" if abs(value) < 2 else f"{value:.2f}"
 
 
@@ -1108,10 +1099,9 @@ CPU_TIME_RE = re.compile(r"^(user|sys)\s+(\d+)m([\d.]+)s\s*$", re.MULTILINE)
 
 #: What every in-container script is prefixed with, outside every command
 #: shape as `OOM_ORACLE` is: bash's default report at six decimals rather than
-#: three. **Bash 5.3 honours it and 5.2 clamps it to three**, so the
-#: `pgdt sql`'s image reads to the microsecond and the register's
-#: `postgres:16` still to the millisecond; the report's shape is the default's
-#: either way, which `TIME_RE` reads.
+#: three. **Bash 5.3 honours it and 5.2 clamps it to three**, so an image's
+#: bash decides whether it reads to the microsecond or the millisecond; the
+#: report's shape is the default's either way, which `TIME_RE` reads.
 TIME_FORMAT = "TIMEFORMAT=$'\\nreal\\t%6lR\\nuser\\t%6lU\\nsys\\t%6lS'; "
 
 
@@ -1139,7 +1129,7 @@ def parse_bash_cpu(text: str) -> dict[str, float]:
     return {name: int(m) * 60 + float(s) for name, m, s in CPU_TIME_RE.findall(text)}
 
 
-#: What the RSS wrapper prints, on stderr, beside bash's own `real` line.
+#: What `peak-rss` prints, on stderr, beside bash's own `real` line.
 MAXRSS_RE = re.compile(r"^maxrss_kib=(\d+)$", re.MULTILINE)
 
 
@@ -1162,19 +1152,19 @@ def parse_maxrss_kib(text: str) -> int:
 #: command and outside every timer, so a run can be asked whether the kernel
 #: killed it.
 #:
-#: **The exit code cannot answer this.** `rss_wrapper`'s
-#: `exit($st == 0 ? 0 : ($st >> 8) || 1)` collapses every signal death to exit
-#: 1, so a leg killed by the OOM reaper is indistinguishable from one that
-#: failed to parse its input; and `nerdctl inspect` cannot answer it either,
-#: because `--rm` has destroyed the container by the time there is anything to
-#: ask. The container's own `memory.events` counter can, and it is read inside
-#: the container while it still exists.
+#: **The exit code cannot answer this.** `peak-rss` exits `128 + n` for a
+#: death by signal `n` and names it, but a `SIGKILL` does not say who sent it,
+#: so a leg the OOM reaper killed reads as one anything else killed; and
+#: `nerdctl inspect` cannot answer it either, because `--rm` has destroyed the
+#: container by the time there is anything to ask. The container's own
+#: `memory.events` counter can, and it is read inside the container while it
+#: still exists.
 #:
 #: **It is not part of any command shape.** `_script` builds what is measured;
 #: this is the harness asking the container what happened afterwards, which is
 #: why it is appended here rather than written into thirty branches — and why a
 #: figure's recorded shape is unchanged by it. Nothing it does is timed: the
-#: `time` builtin and the RSS wrapper both closed before `$__st` is read.
+#: `time` builtin and `peak-rss` both closed before `$__st` is read.
 OOM_ORACLE = "; __st=$?; cat /sys/fs/cgroup/memory.events >&2 || true; exit $__st"
 
 #: The `oom_kill` line of a cgroup v2 `memory.events`.
@@ -1237,7 +1227,7 @@ def parse_reported(text: str) -> dict[str, str]:
     The text is a stream's for the decode example and a **file's** for the
     introspection build (`INSTRUMENT_OUT_VAR`). The parse is the same either
     way; what the file buys is a channel with one writer, where stderr already
-    carries `rss_wrapper`'s own per-rep `maxrss_kib=<n>` by this same grammar.
+    carries `peak-rss`'s own per-rep `maxrss_kib=<n>` by this same grammar.
     """
     out: dict[str, str] = {}
     for line in text.splitlines():
@@ -1318,58 +1308,12 @@ def parse_query_notes(text: str) -> dict[str, str]:
     return out
 
 
-#: `getrusage`'s syscall number, by machine. Read from the host's own
-#: architecture because the container shares this kernel, so the two cannot
-#: disagree; an unlisted machine is an error rather than a guess, since a wrong
-#: number returns `EINVAL` for one arch and *a plausible reading of the wrong
-#: field* for another.
-GETRUSAGE_SYSCALL = {"x86_64": 98, "aarch64": 165}
-
-#: Where `ru_maxrss` sits in `struct rusage`, counted in 64-bit words: two
-#: `timeval`s (four words) come first.
-RUSAGE_MAXRSS_WORD = 4
-
-
-def rss_wrapper(machine: str) -> str:
-    """A shell prefix that runs its arguments and reports their peak RSS.
-
-    **Why a wrapper at all.** `/usr/bin/time -f %M` around `nerdctl run` reports
-    the *client's* peak, not pgdt's — it read 40–45 MB for a 2 MB input
-    (`measurements.md`, "Scan throughput by input shape"), and the timer has to
-    go inside the container anyway. Inside `postgres:16` there is no
-    `/usr/bin/time` at all, and bash's `time` reports no memory.
-
-    **Why `getrusage` rather than polling `/proc`.** `VmHWM` is the same
-    kernel-maintained high-water mark, but it is gone the instant the process
-    becomes a zombie, so a poller's last successful read is whatever it managed
-    *before* the end of the run — and a `parse` writes its cache last, which is
-    exactly where a late peak would sit. `RUSAGE_CHILDREN` is read after
-    `waitpid` and cannot miss it. koji's recipe polls `/proc/<pid>/status`
-    instead because there the process runs for an hour and is read while it is
-    still running.
-
-    **The wrapper does not contaminate the reading.** `exec` installs a fresh
-    `mm`, so the forked interpreter's own ~5.4 MiB is not in the child's
-    high-water mark: the same wrapper around `/bin/true` reports 1.9 MiB.
-    """
-    if machine not in GETRUSAGE_SYSCALL:
-        raise ValueError(
-            f"no getrusage syscall number registered for {machine!r}; "
-            f"known: {', '.join(sorted(GETRUSAGE_SYSCALL))}"
-        )
-    # `qq{}` throughout, so the whole program can sit inside the single quotes
-    # the container's shell needs and nothing has to be escaped twice.
-    prog = (
-        "my $pid = fork(); defined $pid or die qq{fork: $!}; "
-        "if ($pid == 0) { exec @ARGV or die qq{exec: $!} } "
-        "waitpid($pid, 0); my $st = $?; "
-        "my $buf = qq{\\0} x 256; "
-        f"syscall({GETRUSAGE_SYSCALL[machine]}, -1, $buf) != -1 or die qq{{getrusage: $!}}; "
-        "printf STDERR qq{maxrss_kib=%d\\n}, "
-        f"(unpack qq{{q*}}, $buf)[{RUSAGE_MAXRSS_WORD}]; "
-        "exit($st == 0 ? 0 : ($st >> 8) || 1);"
-    )
-    return f"perl -e '{prog}' --"
+#: Where `peak-rss` is mounted in every container: the resident-set
+#: instrument, a workspace crate (`peak-rss/src/main.rs` says what it reads and
+#: why), built static by `ensure_peak_rss_binary` so it needs nothing of the
+#: image. A shape that reads a resident set runs its command under it, with
+#: anything the command's environment needs assigned in front of it.
+PEAK_RSS = "/peak-rss"
 
 
 def criterion_median_ns(criterion_root: Path, full_id: str) -> float:
@@ -2126,7 +2070,7 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdt" | "dfcli" (`pgdt sql`, in its image) | … | "none" (dd); `Session.binary_path`
+    binary: str  # "pgdt" | "dfcli" (`pgdt sql`) | … | "none" (dd); `Session.binary_path`
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -3642,7 +3586,7 @@ def _script(command: str) -> str:
         # the wrapper and takes pgdt's stdout with it; the reading goes to
         # stderr, where bash's `time` report already goes.
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
             f"--dtcache /tmp/x.dtcache {j} {ns} >/dev/null"
         )
     if command == "parse-preamble":
@@ -3658,7 +3602,7 @@ def _script(command: str) -> str:
         # `peak-rss`'s own inputs cannot, since `blocks4000` gives every table
         # exactly one block and the two coincide in it.
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdt parse --preamble-only "
+            f"time {PEAK_RSS} /pgdt parse --preamble-only "
             f"--source /dump.sql --dtcache /tmp/x.dtcache {j} >/dev/null"
         )
     if command == "info-cache-rss":
@@ -3680,7 +3624,7 @@ def _script(command: str) -> str:
         # there is no default for it to inherit.
         return (
             f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null && "
-            f"time {rss_wrapper(platform.machine())} /pgdt info --dtcache /tmp/x.dtcache "
+            f"time {PEAK_RSS} /pgdt info --dtcache /tmp/x.dtcache "
             ">/dev/null"
         )
     if command in ("query-nomatch-cached-rss", "query-nomatch-rss"):
@@ -3695,7 +3639,7 @@ def _script(command: str) -> str:
         # so the un-throttled shape is reachable only through `query`.
         cache = "/tmp/x.dtcache" if command.endswith("cached-rss") else "none"
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdt query --source /dump.sql "
+            f"time {PEAK_RSS} /pgdt query --source /dump.sql "
             f"--table public.nosuchtable --dtcache {cache} {j} >/dev/null"
         )
     if command == "parse-cache-out":
@@ -3750,7 +3694,7 @@ def _script(command: str) -> str:
         if leg not in flags or suffix != "rss":
             raise ValueError(f"unknown command shape {command!r}")
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
             f"--dtcache /tmp/x.dtcache {j} {flags[leg]} >/dev/null"
         )
     if command.startswith(PRUNING_FAMILY):
@@ -3817,10 +3761,10 @@ def _script(command: str) -> str:
         # run`, so the whole leg is visible in the recorded argv the way every
         # other apparatus choice is.
         #
-        # **The assignment goes before `perl`, not before `/pgdt`.** The
-        # wrapper `exec`s its arguments, so the child inherits the environment
-        # it was started with; an assignment written on the inner command would
-        # be a further argument to `perl` and would set nothing.
+        # **The assignment goes before `peak-rss`, not before `/pgdt`.** The
+        # wrapper starts its arguments with its own environment, so the child
+        # inherits it; an assignment written on the inner command would be a
+        # further argument to `peak-rss` and would set nothing.
         token, _, budget = command.removeprefix(RESERVE_FAMILY).rpartition("-")
         arenas = {name: value for name, value, _ in RESERVE_ARENAS}
         if token not in arenas:
@@ -3829,7 +3773,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
-            f"time {arena}{rss_wrapper(platform.machine())} /pgdt parse "
+            f"time {arena}{PEAK_RSS} /pgdt parse "
             f"--source /dump.sql --dtcache /tmp/x.dtcache "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
@@ -3850,7 +3794,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names an arena setting the figure does not carry")
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
-            f"time {arena}{rss_wrapper(platform.machine())} /pgdt parse "
+            f"time {arena}{PEAK_RSS} /pgdt parse "
             f"--source /dump.sql --dtcache /tmp/x.dtcache {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
@@ -3863,7 +3807,7 @@ def _script(command: str) -> str:
         if not budget.isdigit() or int(budget) not in RESERVE_STEP_BUDGETS:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdt parse "
+            f"time {PEAK_RSS} /pgdt parse "
             f"--source /dump.sql --dtcache /tmp/x.dtcache "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
@@ -3889,7 +3833,7 @@ def _script(command: str) -> str:
             return f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
         if shape == "parse-rss":
             return (
-                f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+                f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
                 f"--dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
             )
         if shape == PARALLEL_SCAN:
@@ -4397,11 +4341,6 @@ class Session:
 
     # -- one timed run ----------------------------------------------------
 
-    def image_for(self, spec: RunSpec) -> str:
-        """The image a run goes in: `pgdt sql`'s own where it cannot run in
-        the register's (`Config.dfcli_image`), the register's else."""
-        return self.cfg.dfcli_image if spec.binary == "dfcli" else self.cfg.image
-
     def binary_path(self, which: str) -> Path:
         if which in ("pgdt", "dfcli"):
             return self.cfg.bin_pgdt
@@ -4500,10 +4439,14 @@ class Session:
         self._last_killed = False
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
-        image = self.image_for(spec)
+        script = _script(spec.command)
         bins: list[tuple[Path, str]] = []
         if spec.binary != "none":
             bins = [(self.binary_path(spec.binary), "/pgdt")]
+        # The instrument beside the program where the shape runs under it,
+        # staged with it, so neither loads inside the timer.
+        if PEAK_RSS in script.split():
+            bins.append((ensure_peak_rss_binary(self.cfg, self.log), PEAK_RSS))
         mounts = [
             f"{self.stage_binary(path) if self.arm.staged else path}:{at}:ro"
             for path, at in bins
@@ -4559,7 +4502,9 @@ class Session:
         # The report's format and a staged leg's untimed read go in front of
         # it on the same terms: outside the shape, so neither is recorded as
         # part of what was measured.
-        argv += [image, "bash", "-c", TIME_FORMAT + preread + _script(spec.command) + OOM_ORACLE]
+        argv += [
+            self.cfg.image, "bash", "-c", TIME_FORMAT + preread + script + OOM_ORACLE
+        ]
         # The harness beside a pinned leg goes to the other die, and back
         # beside an unpinned one, before anything it launches for this run.
         if self.groups:
@@ -4689,10 +4634,8 @@ class Session:
         mono_end, after = time.monotonic(), Counters.read()
         oom = parse_oom_kills(proc.stderr)
         if proc.returncode != 0:
-            # What killed it, said in those words. Before the oracle the only
-            # thing the harness could report was "exited 1", which is what a
-            # signal death and a parse error both look like once `rss_wrapper`
-            # has collapsed them.
+            # What killed it, said in those words: an exit status of 137 is a
+            # `SIGKILL`, and only the oracle says whether the reaper sent it.
             if oom is None:
                 why = (
                     " — and the container's `memory.events` was unreadable, so whether the "
@@ -4841,11 +4784,10 @@ class Session:
             self.readings.setdefault(k, [])
         # Where the figure's programs run, and so which glibc it names. A `dd`
         # floor is a reading of `dd` rather than of the program, so it names
-        # nothing: the dynamic-filter figures' floor runs in the register's
-        # image while their program runs in its own.
+        # nothing.
         for spec in specs:
             if spec.binary != "none":
-                self.ran_in(figure, self.image_for(spec))
+                self.ran_in(figure, self.cfg.image)
         for rep in range(reps):
             order = list(specs) if rep < (reps + 1) // 2 else list(reversed(specs))
             # Each leg under every arm in turn, the arm going first alternating
@@ -5107,6 +5049,122 @@ def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return cfg.bin_pgdt
 
 
+#: Whether this process has already built `peak-rss`, for `_PGDT_BUILT`'s
+#: reason: the instrument every resident figure reads through is built from the
+#: tree being measured, never found.
+_PEAK_RSS_BUILT = False
+
+
+def peak_rss_target() -> str:
+    """The Rust target `peak-rss` is built for: musl, on the host's machine."""
+    return f"{platform.machine()}-unknown-linux-musl"
+
+
+def peak_rss_path() -> Path:
+    """Where `cargo build --target` writes `peak-rss`: under `target/<target>/`,
+    a directory `target/release/pgdt` does not share."""
+    return REPO / "target" / peak_rss_target() / "release" / "peak-rss"
+
+
+def ensure_peak_rss_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """`peak-rss`, the resident-set instrument, built static before the first
+    reading and mounted at `PEAK_RSS` beside every program.
+
+    **For `<machine>-unknown-linux-musl`**, so it links nothing of the host's
+    libc or the image's and a later pin move cannot break it. Refused: the
+    gnu target with `+crt-static`, which needs the host's static glibc. A
+    `--target` build of this package alone writes under its own directory and
+    unifies no feature into the shipped binary, so `target/release/pgdt` is
+    untouched.
+
+    **A missing target is refused with the command that adds it**, rather than
+    left to `cargo`'s error about a missing `core`. Once per process, for
+    `ensure_pgdt_binary`'s reason."""
+    global _PEAK_RSS_BUILT
+    out = peak_rss_path()
+    if _PEAK_RSS_BUILT:
+        return out
+    if cfg.dry_run:
+        log(f"[dry-run] would build {out}")
+        _PEAK_RSS_BUILT = True
+        return out
+    target = peak_rss_target()
+    sysroot = Path(run(["rustc", "--print", "sysroot"], cwd=REPO, capture=True).strip())
+    if not (sysroot / "lib" / "rustlib" / target).is_dir():
+        raise RuntimeError(
+            f"the Rust target {target} is not installed, and `peak-rss` is built for it: "
+            f"`rustup target add {target}`"
+        )
+    log(f"building {out}")
+    run(["cargo", "build", "--release", "-p", "peak-rss", "--target", target], cwd=REPO)
+    _PEAK_RSS_BUILT = True
+    return out
+
+
+#: What `apparatus_preflight` quotes of a refused start: the tail of its
+#: stderr, which is where the loader names the symbol version it lacks.
+PREFLIGHT_STDERR_LINES = 3
+
+
+def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
+    """The two binaries every figure mounts, started in the pinned image before
+    the first reading, one problem line for each that does not start.
+
+    **`pgdt --version` must start there.** The image is of the build host's
+    distribution so that a host-built `pgdt` links no symbol version it lacks,
+    but the host's glibc moves at every upgrade and the pin does not. A binary
+    the image cannot load fails every leg, so it is refused here, naming the
+    pin, and the pin moves then and only then, the next stamp naming its glibc.
+    Refused: refusing on any difference between the host's glibc and the
+    image's, which would make every host upgrade an apparatus change.
+
+    **`peak-rss` around `/bin/true`** proves it starts there, and its reading
+    is the floor every resident reading stands on — the spawning side's share
+    it bounds (`peak-rss/src/main.rs`) — logged, never published."""
+    if cfg.dry_run:
+        ensure_peak_rss_binary(cfg, log)
+        return []
+    try:
+        peak = ensure_peak_rss_binary(cfg, log)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        return [f"`peak-rss` could not be built: {exc}"]
+    base = [
+        *cfg.container_argv(), "run", "--rm",
+        "-v", f"{cfg.bin_pgdt}:/pgdt:ro",
+        "-v", f"{peak}:{PEAK_RSS}:ro",
+        cfg.image,
+    ]
+
+    def start(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([*base, *argv], text=True, capture_output=True)
+
+    def tail(proc: subprocess.CompletedProcess[str]) -> str:
+        return " / ".join(proc.stderr.strip().splitlines()[-PREFLIGHT_STDERR_LINES:])
+
+    problems = []
+    pgdt = start(["/pgdt", "--version"])
+    if pgdt.returncode != 0:
+        problems.append(
+            f"{cfg.bin_pgdt} does not start in the pinned image {cfg.image} "
+            f"(exit {pgdt.returncode}: {tail(pgdt)}): the host has outrun the pin, so move "
+            "`Config.image` (PGDT_MEASURE_IMAGE) to a digest of the build host's distribution "
+            "that loads it, and the next stamp names its glibc"
+        )
+    floor = start([PEAK_RSS, "/bin/true"])
+    readings = MAXRSS_RE.findall(floor.stderr)
+    if floor.returncode != 0 or len(readings) != 1:
+        problems.append(
+            f"`peak-rss` around /bin/true does not report one reading in {cfg.image} "
+            f"(exit {floor.returncode}: {tail(floor)})"
+        )
+    else:
+        log(
+            f"peak-rss floor: {fmt_mib(int(readings[0]))} around /bin/true in the pinned "
+            "image — what a resident reading stands on, never published"
+        )
+    return problems
+
+
 #: Whether this process has already built the `xz_decode` instrument. Per
 #: process rather than per file, for the reason the allocator legs are: a
 #: binary left in `runs/` by an earlier session was built from whatever the
@@ -5248,12 +5306,6 @@ def glibc_named(places: Iterable[str], glibcs: Mapping[str, str]) -> str | None:
     place was asked, which is `--dry-run` and a sitting older than the asking."""
     versions = sorted({glibcs[p] for p in places if p in glibcs})
     return " and ".join(versions) or None
-
-
-def image_name(ref: str) -> str:
-    """An image reference without its digest, for prose: the digest is the
-    pin, and `Config` is where a reader finds it."""
-    return ref.partition("@")[0]
 
 
 #: Legs whose (absent) build a dry run has already reported. Only a dry run
@@ -5562,7 +5614,7 @@ class Figure:
     #: recorded 512 MB is not what it needs. It is an **apparatus** departure,
     #: so a figure that sets it says so in its own table: the register's one
     #: line is "3.00 GiB inputs read by a `glibc` binary in a 512 MB
-    #: `postgres:16` container", and a figure holding N decoded 24 MiB blocks
+    #: container", and a figure holding N decoded 24 MiB blocks
     #: at once cannot be one of them at 24 workers.
     memory: str | None = None
     #: Consumers that repeat this figure's numbers **without naming it** — the
@@ -5678,6 +5730,11 @@ PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
 #: staleness edge nobody declared -- and the crate now has three
 #: (`main.rs`, `where_expr.rs`, `alloc.rs`).
 QUERY_CLI = ("pgdt/src/",)
+
+#: The resident-set instrument every resident figure reads through
+#: (`PEAK_RSS`): a figure running a shape under it declares it, since a change
+#: to what it reads moves every such reading.
+RSS_INSTRUMENT = ("peak-rss/src/",)
 
 GEN_PERF = ("scripts/generate_perf_data.py",)
 GEN_BLOCKS = ("scripts/generate_block_count_bench.py",)
@@ -6923,8 +6980,8 @@ def run_parallel_scan_throughput(session: Session) -> str:
     that occupies every hardware thread being busy by construction, so what
     stands in for the gate is that a machine busy with someone else's work moves
     a leg's whole column and leaves the ratio (`CONTENTION_LIMITS`). It is also
-    why two programs in two images may share a table: no cell is read against
-    another leg's.
+    why two programs may share a table: no cell is read against another
+    leg's.
 
     **The baseline row is the serial path, not a pool of one.** `--jobs 1` is
     `Parallelism::Serial` carrying the same stated allowance as every other row,
@@ -7004,12 +7061,9 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "and one row out, the filter keeping every row and leaving the scan's exact NULL "
         'counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, '
         '"D89"). Every provider cell answered alike, byte for byte, at every count over both '
-        "files. **Those legs are not in the register's image**: they run in the "
-        f"`{image_name(session.cfg.dfcli_image)}` image rather than "
-        f"`{image_name(session.cfg.image)}`, whose glibc is older than the one DataFusion was "
-        "linked against, so a provider cell is read against its own leg and never against a "
-        "`parse` cell. Each carries the program's startup and the dump's registration, "
-        "which `dynamic-filter-join`'s startup leg reads.\n\n"
+        "files. A provider cell is read against its own leg and never against a `parse` "
+        "cell: each carries the program's startup and the dump's registration, which "
+        "`dynamic-filter-join`'s startup leg reads.\n\n"
         f"Every row states the allowance `{allowance}` — `--memory {allowance}` on a `parse` "
         f"leg, `SET pgdump.memory = {allowance}` run ahead of the query in the same process "
         f"on a provider leg — which leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in "
@@ -8955,10 +9009,7 @@ def _run_dynfilter(session: Session, figure: str, kind: str) -> str:
         f"the producer's flag alone, `{flag}` `false` and `true`, the on leg's filter being "
         "whatever the scan makes of it at the provider's default, and `Rows evaluated` differs "
         f"from `Filter on` by `-c '{DYNFILTER_ROWS_SQL}'` alone, run ahead of the query in the "
-        "same process. **The image is not the register's**: the legs run in the "
-        f"`{image_name(session.cfg.dfcli_image)}` image rather than "
-        f"`{image_name(session.cfg.image)}`, whose glibc "
-        "is older than the one DataFusion was linked against. Every leg's reading carries the "
+        "same process. Every leg's reading carries the "
         "program's startup — loading it, starting its runtime and registering the dump — "
         f"which a leg answering `{STARTUP_SQL}` over the same cache, taken in the same "
         f"interleave, reads as {fmt_median_spread(started)}. "
@@ -9139,7 +9190,7 @@ FIGURES: list[Figure] = [
         # `MAP` rather than `MAP_BUILD`: what the latter adds is `stream.rs`,
         # which `SCAN` already names, and a path declared twice is printed
         # twice by `--list`.
-        depends=(*READ, *SCAN, *MAP, *CACHE, *GEN_PERF, *GEN_BLOCKS),
+        depends=(*RSS_INSTRUMENT, *READ, *SCAN, *MAP, *CACHE, *GEN_PERF, *GEN_BLOCKS),
         warm_inputs=_RSS_ROWS,
         subtracts=tuple(
             Subtraction("peak-rss", (_RSS_PIVOT, name), "a row against the pivot")
@@ -9304,6 +9355,7 @@ FIGURES: list[Figure] = [
         section="What a parallel scan holds resident, at two block sizes",
         stage="warm-parallel",
         depends=(
+            *RSS_INSTRUMENT,
             *SCAN,
             *MAP,
             *READ,
@@ -9352,6 +9404,7 @@ FIGURES: list[Figure] = [
         # `allocator` figure carries it — three of the nine legs are its legs,
         # and that file is where they are declared.
         depends=(
+            *RSS_INSTRUMENT,
             *READ,
             *SCAN,
             *MAP,
@@ -9411,6 +9464,7 @@ FIGURES: list[Figure] = [
         # under a stated budget is decided, plus the map and the cache — a
         # per-block cost accumulates in those and would read here as reserve.
         depends=(
+            *RSS_INSTRUMENT,
             *SCAN,
             *MAP,
             *READ,
@@ -9458,6 +9512,7 @@ FIGURES: list[Figure] = [
         section="What the data level costs a parse",
         stage="warm",
         depends=(
+            *RSS_INSTRUMENT,
             *SCAN,
             *MAP,
             *READ,
@@ -10630,7 +10685,7 @@ def marker_glibc(whole_sweep: bool, stamped: str | None, ran_under: str | None) 
     The stamp names the register image's, so a figure of the sweep whose
     program ran there names nothing — `taken at`'s convention, the datum
     present only where it differs. It differs for a program run in another
-    place (`pgdt sql`'s image, `cargo bench` on the host), and for
+    place (`cargo bench` on the host), and for
     every figure of a sitting of its own, whose marker already names the commit
     the stamp does not and names the glibc beside it."""
     if ran_under is None or (whole_sweep and ran_under == stamped):
@@ -11409,6 +11464,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     stager = Stager(cfg, log)
     stager.plan(figures)
     problems = stager.preflight(figures)
+    problems += apparatus_preflight(cfg, log)
     log(
         f"tmpfs budget: {stager.budget() / GIB:.2f} GiB "
         f"({WARM_FULL_INPUTS} full-size inputs + {WARM_SLACK // MIB} MiB; largest warm set "
@@ -11775,9 +11831,9 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             "#   The container cgroup's memory.peak is the wrong instrument here — it is",
             "#   charged the page cache of a 784 GB read and reports the limit, not pgdt.",
             f"# exit status:   sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}",
-            "#   130 = SIGINT, which is what `nerdctl stop` sends: the postgres images set",
-            "#   STOPSIGNAL SIGINT, and --stop-signal on `run` is accepted and then ignored.",
-            "#   For the SIGTERM arm: sudo nerdctl kill -s SIGTERM " + name + "  (exit 143)",
+            "#   143 = SIGTERM, which is what `nerdctl stop` sends: the image sets no",
+            "#   STOPSIGNAL, and --stop-signal on `run` is accepted and then ignored.",
+            "#   For the SIGINT arm: sudo nerdctl kill -s SIGINT " + name + "  (exit 130)",
             f"# wall clock:    sudo nerdctl inspect -f "
             "'{{.State.StartedAt}} {{.State.FinishedAt}}' " + name,
             f"# the log:       runs/{name}-scan.log",
@@ -11787,7 +11843,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             "# leg 1 — cold, interrupted partway.",
             leg(f"{name}-wrap1", f"{name}-wrap.dtcache", f"{name}-wrap-scan.log"),
             f"sleep 1200 && sudo nerdctl stop -t 120 {name}-wrap1",
-            f"sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}-wrap1   # 130 (SIGINT)",
+            f"sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}-wrap1   # 143 (SIGTERM)",
             "",
             "# the interrupted cache must come back typed — both counts zero",
             f"sudo nerdctl run --rm -m {cfg.memory} --memory-swap {cfg.memory} \\",

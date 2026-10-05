@@ -529,7 +529,7 @@ class StatisticsFigures(unittest.TestCase):
             with self.subTest(leg=leg):
                 script = measure._script(f"{measure.STATISTICS_FAMILY}{leg}-rss")
                 self.assertIn(flags, script)
-                self.assertIn(measure.rss_wrapper(measure.platform.machine()), script)
+                self.assertIn(f"time {measure.PEAK_RSS} /pgdt parse", script)
 
     def test_the_two_gathering_legs_differ_by_the_level_alone(self):
         (metadata, metadata_flags), (data, data_flags) = measure.STATISTICS_LEGS
@@ -917,11 +917,12 @@ class DynamicFilterFigures(unittest.TestCase):
         topk = measure.DYNFILTER_QUERIES["topk"]["unsorted"][0]
         self.assertIn(f"ORDER BY p.{gen.COLUMNS[0][0]} ", topk)
 
-    def test_the_sql_shell_is_the_timed_binary_in_its_own_image(self):
-        # The table names the image, and the shell is `pgdt`'s own `sql`: the
-        # binary every other figure times, mounted where they mount it, and no
-        # second build.
-        self.assertNotEqual(measure.Config().dfcli_image, measure.Config().image)
+    def test_the_sql_shell_is_the_timed_binary_in_the_one_image(self):
+        # The shell is `pgdt`'s own `sql`: the binary every other figure times,
+        # mounted where they mount it, in the image they run in, and no second
+        # build.
+        self.assertFalse(hasattr(measure.Config(), "dfcli_image"))
+        self.assertFalse(hasattr(measure.Session, "image_for"))
         self.assertEqual(measure.SQL_SHELL, "/pgdt sql")
         cfg = measure.Config(dry_run=True)
         session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
@@ -1267,7 +1268,7 @@ class Allocator(unittest.TestCase):
 
 
 class Glibc(unittest.TestCase):
-    """Which glibc a figure ran under: both images pinned by digest, each place
+    """Which glibc a figure ran under: the image pinned by digest, each place
     a figure's program runs asked for its glibc, and the answer named in the
     stamp or in the figure's own marker (`measurements.md`, "The apparatus")."""
 
@@ -1275,18 +1276,12 @@ class Glibc(unittest.TestCase):
     PIN = re.compile(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}")
 
     @unittest.skipIf(
-        {"PGDT_MEASURE_IMAGE", "PGDT_MEASURE_DFCLI_IMAGE"} & set(measure.os.environ),
-        "an image is overridden in this environment",
+        "PGDT_MEASURE_IMAGE" in measure.os.environ,
+        "the image is overridden in this environment",
     )
-    def test_both_images_are_pinned_by_digest(self):
+    def test_the_image_is_pinned_by_digest(self):
         # A tag moves under the register; a digest is the image a figure ran in.
-        cfg = measure.Config()
-        self.assertRegex(cfg.image, self.PIN)
-        self.assertRegex(cfg.dfcli_image, self.PIN)
-
-    def test_prose_names_an_image_by_its_tag(self):
-        self.assertEqual(measure.image_name("postgres:16@sha256:" + "0" * 64), "postgres:16")
-        self.assertEqual(measure.image_name("archlinux:base"), "archlinux:base")
+        self.assertRegex(measure.Config().image, self.PIN)
 
     def test_an_image_is_asked_in_a_container_and_the_host_is_asked_directly(self):
         cfg = measure.Config()
@@ -1340,7 +1335,7 @@ class Glibc(unittest.TestCase):
     def test_a_marker_names_its_glibc_only_where_the_stamp_does_not_speak_for_it(self):
         # A figure of the sweep run in the register's image: the stamp speaks.
         self.assertIsNone(measure.marker_glibc(True, "2.41", "2.41"))
-        # Run elsewhere — `pgdt sql`'s image, or the host.
+        # Run elsewhere — the host.
         self.assertEqual(measure.marker_glibc(True, "2.41", "2.44"), "2.44")
         # A sitting of its own names its glibc beside its commit, whatever it is.
         self.assertEqual(measure.marker_glibc(False, "2.41", "2.41"), "2.41")
@@ -1361,7 +1356,7 @@ class Glibc(unittest.TestCase):
                               "warm", "")
         floor = measure.RunSpec("none", "dynfilter", "dd", "warm", "dd floor")
         session.sweep("dynamic-filter-topk", [leg, floor], 1)
-        self.assertEqual(session.places["dynamic-filter-topk"], {cfg.dfcli_image})
+        self.assertEqual(session.places["dynamic-filter-topk"], {cfg.image})
         # `--dry-run` asks nothing: it must not need root or a runtime.
         self.assertEqual(session.glibcs, {})
         measure.run_nested_decode_micro(session)
@@ -1687,31 +1682,96 @@ class PeakRss(unittest.TestCase):
         # `>/dev/null` on the whole command cannot swallow it.
         script = measure._script("parse-rss")
         self.assertTrue(script.rstrip().endswith(">/dev/null"))
-        self.assertIn("printf STDERR", script)
+        self.assertIn(f"time {measure.PEAK_RSS} /pgdt parse", script)
 
-    def test_the_wrapper_execs_so_its_own_footprint_is_not_the_reading(self):
-        # `exec` installs a fresh `mm`, so the forked interpreter's ~5.4 MiB is
-        # not in the child's high-water mark. Without it the table would read
-        # the wrapper.
-        self.assertIn("exec @ARGV", measure.rss_wrapper("x86_64"))
+    # What the wrapper reads, how it exits and that the reading is the child's
+    # are `peak-rss`'s own tests (`peak-rss/tests/peak_rss.rs`); what is held
+    # here is that the harness builds that crate and mounts it.
 
-    def test_the_wrapper_reads_the_children_high_water_mark(self):
-        # RUSAGE_CHILDREN (-1), read after `waitpid`. Polling `/proc` instead
-        # would miss a peak in the cache write a `parse` ends with, because the
-        # Vm* lines are gone the moment the process becomes a zombie.
-        wrapper = measure.rss_wrapper("x86_64")
-        self.assertIn("waitpid($pid, 0)", wrapper)
-        self.assertIn(f"syscall({measure.GETRUSAGE_SYSCALL['x86_64']}, -1,", wrapper)
+    def test_the_wrapper_is_the_workspace_crate(self):
+        cargo = tomllib.loads((measure.REPO / "Cargo.toml").read_text())
+        self.assertIn("peak-rss", cargo["workspace"]["members"])
+        self.assertEqual(measure.PEAK_RSS, "/peak-rss")
+        self.assertFalse(hasattr(measure, "rss_wrapper"))
+        self.assertFalse(hasattr(measure, "GETRUSAGE_SYSCALL"))
 
-    def test_the_wrapper_propagates_a_failed_run(self):
-        # Otherwise a pgdt that died would be reported as a resident set.
-        self.assertIn("exit($st == 0 ? 0 :", measure.rss_wrapper("x86_64"))
+    def test_the_wrapper_is_built_static_and_beside_the_shipped_binary(self):
+        # musl, so it links nothing of the host's libc or the image's; under
+        # its own target's directory, never `target/release/`.
+        target = f"{measure.platform.machine()}-unknown-linux-musl"
+        self.assertEqual(measure.peak_rss_target(), target)
+        self.assertEqual(
+            measure.peak_rss_path(), measure.REPO / "target" / target / "release" / "peak-rss"
+        )
+        asked = []
+        with tempfile.TemporaryDirectory() as sysroot:
+            (Path(sysroot) / "lib" / "rustlib" / target).mkdir(parents=True)
 
-    def test_an_unregistered_machine_is_an_error_not_a_guess(self):
-        # A wrong syscall number returns EINVAL on one architecture and a
-        # plausible reading of the wrong field on another.
-        with self.assertRaises(ValueError):
-            measure.rss_wrapper("s390x")
+            def fake(argv, **_kwargs):
+                asked.append(list(argv))
+                return sysroot + "\n"
+
+            with unittest.mock.patch.object(measure, "run", fake), \
+                    unittest.mock.patch.object(measure, "_PEAK_RSS_BUILT", False):
+                measure.ensure_peak_rss_binary(measure.Config(), lambda _m: None)
+                # Once a process: a second call builds nothing.
+                measure.ensure_peak_rss_binary(measure.Config(), lambda _m: None)
+        builds = [argv for argv in asked if argv[:2] == ["cargo", "build"]]
+        self.assertEqual(
+            builds, [["cargo", "build", "--release", "-p", "peak-rss", "--target", target]]
+        )
+
+    def test_a_missing_target_is_refused_with_the_command_that_adds_it(self):
+        with tempfile.TemporaryDirectory() as sysroot:
+            with unittest.mock.patch.object(measure, "run", return_value=sysroot + "\n"), \
+                    unittest.mock.patch.object(measure, "_PEAK_RSS_BUILT", False):
+                with self.assertRaises(RuntimeError) as raised:
+                    measure.ensure_peak_rss_binary(measure.Config(), lambda _m: None)
+        self.assertIn(f"rustup target add {measure.peak_rss_target()}", str(raised.exception))
+
+    def test_every_figure_running_it_declares_it(self):
+        # A change to what the instrument reads moves every reading taken
+        # through it, so `--stale` must say so of exactly those figures. What a
+        # figure runs is read off a dry run of it; rendering fake readings may
+        # fail after its sweeps, which is past what is asked here.
+        cfg = measure.Config(dry_run=True)
+        running = set()
+        for fig in measure.FIGURES:
+            session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+            session.input_path = lambda name, regime: Path("/dev/null")
+            session.figure_id = fig.id
+            commands: set[str] = set()
+            take = session.time_run
+
+            def record(spec, take=take, commands=commands):
+                commands.add(spec.command)
+                return take(spec)
+
+            session.time_run = record
+            with contextlib.suppress(Exception):
+                fig.run(session)
+            if any(measure.PEAK_RSS in measure._script(c).split() for c in commands):
+                running.add(fig.id)
+        declaring = {
+            fig.id for fig in measure.FIGURES if set(measure.RSS_INSTRUMENT) <= set(fig.depends)
+        }
+        self.assertEqual(declaring, running)
+        self.assertIn("peak-rss", running)
+
+    def test_a_resident_shape_mounts_it_and_a_timed_one_runs_without(self):
+        cfg = measure.Config(dry_run=True)
+        logged: list[str] = []
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), logged.append)
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        session.figure_id = "peak-rss"
+        session.time_run(measure.RunSpec("pgdt", "control", "parse-rss", "warm", ""))
+        session.time_run(measure.RunSpec("pgdt", "control", "parse", "warm", ""))
+        runs = [line for line in logged if " run --rm " in line]
+        self.assertEqual(len(runs), 2)
+        mount = f"{measure.PEAK_RSS}:ro"
+        self.assertIn(mount, runs[0])
+        self.assertNotIn(mount, runs[1])
 
     def test_the_reading_is_read_back_off_the_wrapper_s_own_line(self):
         self.assertEqual(measure.parse_maxrss_kib("real\t0m0.5s\nmaxrss_kib=6144\n"), 6144)
@@ -1799,7 +1859,7 @@ class RssAttribution(unittest.TestCase):
         for _, _, command in measure._ATTRIBUTION_LEGS:
             with self.subTest(command=command):
                 self.assertIn("rss", command)
-                self.assertIn("printf STDERR", measure._script(command))
+                self.assertIn(f" {measure.PEAK_RSS} /pgdt ", measure._script(command))
 
     def test_each_shape_wraps_and_times_exactly_one_command(self):
         # `parse_bash_time` and `parse_maxrss_kib` both refuse two reports, and
@@ -1809,7 +1869,7 @@ class RssAttribution(unittest.TestCase):
             with self.subTest(command=command):
                 script = measure._script(command)
                 self.assertEqual(script.count("time "), 1)
-                self.assertEqual(script.count("printf STDERR"), 1)
+                self.assertEqual(script.split().count(measure.PEAK_RSS), 1)
 
     def test_the_two_block_counts_differ_in_blocks_alone(self):
         # Both are `generate_block_count_bench.py` outputs at one seed, so a
@@ -2490,16 +2550,16 @@ class Reserve(unittest.TestCase):
                     self.assertIn(self._shape(token, budget), shapes)
 
     def test_the_arena_setting_is_the_processs_environment(self):
-        # `perl` is `exec`ed by the wrapper, so an assignment in front of it is
-        # inherited by pgdt. In front of `/pgdt` it would be a further argument
-        # to `perl` and would set nothing at all.
+        # `peak-rss` starts pgdt in its own environment, so an assignment in
+        # front of it is inherited by pgdt. In front of `/pgdt` it would be a
+        # further argument to `peak-rss` and would set nothing at all.
         for token, value, _ in measure.RESERVE_ARENAS:
             with self.subTest(arena=token):
                 script = measure._script(self._shape(token))
                 if not value:
                     self.assertNotIn("MALLOC_ARENA_MAX", script)
                     continue
-                self.assertIn(f"time MALLOC_ARENA_MAX={value} perl", script)
+                self.assertIn(f"time MALLOC_ARENA_MAX={value} {measure.PEAK_RSS} /pgdt", script)
 
     def test_one_leg_sets_nothing(self):
         # The shipped default has to survive the operator who followed no
@@ -2947,7 +3007,7 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_arena_leg_is_the_flagless_shape_with_the_cap_and_nothing_else(self):
         # One mechanism at a time: the capped leg differs from the reference by
-        # the environment the wrapper `exec`s into and by nothing on the command
+        # the environment the wrapper starts pgdt in and by nothing on the command
         # line.
         arena = next(
             label for token, _, label in measure.RESERVE_ARENAS if token == measure.RESERVE_CAPPED
@@ -2955,7 +3015,7 @@ class CompressedAccount(unittest.TestCase):
         spec = dict(measure._reserve_mechanism_specs())[arena]
         self.assertEqual(spec.binary, "pgdt")
         script = measure._script(spec.command)
-        self.assertIn("time MALLOC_ARENA_MAX=2 perl", script)
+        self.assertIn(f"time MALLOC_ARENA_MAX=2 {measure.PEAK_RSS} /pgdt", script)
         self.assertNotIn("--jobs", script)
         self.assertNotIn("--memory", script)
 
@@ -3890,7 +3950,7 @@ class InstrumentReport(unittest.TestCase):
         self.assertNotIn("committed", got)
 
     def test_the_harnesss_own_reading_cannot_reach_it(self):
-        # `maxrss_kib` is `rss_wrapper`'s, and it is a `key=value` line by this
+        # `maxrss_kib` is `peak-rss`'s, and it is a `key=value` line by this
         # same grammar. The file is why it cannot land here: one writer by
         # construction, where the bracketed stderr block it replaced was a
         # framing protocol over a stream two processes wrote to.
@@ -5773,7 +5833,7 @@ class ProfileRecipe(unittest.TestCase):
         argv, so the two cannot be one function — but a flag that moves in one
         and not the other gives a profile of something no figure measures, and
         nothing else would notice."""
-        wrapper = measure.rss_wrapper(measure.platform.machine())
+        wrapper = measure.PEAK_RSS
         for shape in measure.PROFILE_SHAPES:
             with self.subTest(shape=shape):
                 # A resident leg's wrapper is a second process a profile leaves
@@ -7083,12 +7143,84 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
                     self.assertIn(f"· {want} sub-stream", cell)
 
 
+class ApparatusPreflight(unittest.TestCase):
+    """The pinned image is the build host's distribution, and the host moves
+    on where the pin does not: before the first reading, `pgdt --version` and
+    `peak-rss` around `/bin/true` are started in it, and a sweep whose binary
+    does not start there is refused, naming the pin."""
+
+    LOADER = "/pgdt: /usr/lib/libm.so.6: version `GLIBC_2.45' not found (required by /pgdt)\n"
+
+    def _preflight(self, outcomes):
+        """`apparatus_preflight` with each container start answered in turn."""
+        started, logged = [], []
+
+        def fake_run(argv, **_kwargs):
+            started.append(list(argv))
+            code, err = outcomes[len(started) - 1]
+            return subprocess.CompletedProcess(argv, code, "", err)
+
+        with unittest.mock.patch.object(measure.subprocess, "run", fake_run), \
+                unittest.mock.patch.object(
+                    measure, "ensure_peak_rss_binary", return_value=Path("/x/peak-rss")
+                ):
+            problems = measure.apparatus_preflight(measure.Config(), logged.append)
+        return problems, started, logged
+
+    def test_both_start_in_the_pinned_image(self):
+        problems, started, logged = self._preflight([(0, ""), (0, "maxrss_kib=1024\n")])
+        self.assertEqual(problems, [])
+        cfg = measure.Config()
+        self.assertEqual([argv[-2:] for argv in started],
+                         [["/pgdt", "--version"], [measure.PEAK_RSS, "/bin/true"]])
+        for argv in started:
+            with self.subTest(argv=argv):
+                self.assertIn(cfg.image, argv)
+                self.assertIn(f"{cfg.bin_pgdt}:/pgdt:ro", argv)
+                self.assertIn(f"/x/peak-rss:{measure.PEAK_RSS}:ro", argv)
+        # The floor is logged, and it is no reading of any figure.
+        self.assertTrue(any("1.00 MiB" in line and "never published" in line for line in logged))
+
+    def test_a_binary_the_image_cannot_load_is_refused_naming_the_pin(self):
+        problems, _, _ = self._preflight([(127, self.LOADER), (0, "maxrss_kib=1024\n")])
+        self.assertEqual(len(problems), 1)
+        self.assertIn(measure.Config().image, problems[0])
+        self.assertIn("GLIBC_2.45", problems[0])
+        self.assertIn("PGDT_MEASURE_IMAGE", problems[0])
+
+    def test_a_wrapper_that_reports_nothing_is_refused(self):
+        problems, _, _ = self._preflight([(0, ""), (0, "")])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("peak-rss", problems[0])
+
+    def test_a_wrapper_that_cannot_be_built_is_a_problem_not_a_crash(self):
+        refused = RuntimeError("`rustup target add x86_64-unknown-linux-musl`")
+        with unittest.mock.patch.object(measure, "ensure_peak_rss_binary", side_effect=refused):
+            problems = measure.apparatus_preflight(measure.Config(), lambda _m: None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("rustup target add", problems[0])
+
+    def test_a_dry_run_starts_nothing(self):
+        with unittest.mock.patch.object(measure.subprocess, "run") as started:
+            problems = measure.apparatus_preflight(measure.Config(dry_run=True), lambda _m: None)
+        self.assertEqual(problems, [])
+        started.assert_not_called()
+
+    def test_the_sweep_refuses_before_its_first_reading(self):
+        # Among the problems `emit` refuses on before anything is run.
+        source = inspect.getsource(measure.emit)
+        self.assertIn("problems += apparatus_preflight(cfg, log)", source)
+        self.assertLess(
+            source.index("apparatus_preflight(cfg, log)"), source.index("Session(cfg, stager")
+        )
+
+
 class OomKillOracle(unittest.TestCase):
     """Telling an OOM kill from any other failure.
 
-    The exit code cannot: `rss_wrapper` collapses every signal death to exit 1,
-    and `--rm` has destroyed the container before `nerdctl inspect` could be
-    asked. So the oracle is the container's own `memory.events`, read inside it
+    The exit code cannot: `peak-rss` exits `128 + n` for a death by signal `n`,
+    but a `SIGKILL` does not say who sent it, and `--rm` has destroyed the
+    container before `nerdctl inspect` could be asked. So the oracle is the container's own `memory.events`, read inside it
     after the timed command — and the three things that make that sound are
     asserted here, because each fails by returning a plausible answer about
     something else.

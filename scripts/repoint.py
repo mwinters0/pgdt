@@ -87,6 +87,7 @@ CODE_ROOTS = (
     "datafusion-pgdump",
     "datafusion-cli-pgdump",
     "namespace-init",
+    "peak-rss",
 )
 
 

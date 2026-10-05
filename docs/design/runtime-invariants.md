@@ -668,7 +668,7 @@ that calls it overrides the operator's setting unless it reads the variable
 first. How much a retained arena holds is not part of the claim.
 
 **Verified against:** glibc 2.44+r24 (Arch, the host; source read); glibc 2.41
-(`postgres:16`, the figures' image; observed through the instrument).
+(`postgres:16`; observed through the instrument).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
 refusal, which is not mechanical because under D12's `current_thread` runtime

@@ -90,8 +90,8 @@ Eighteen standing rules for reading anything below:
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
   brace-free control is **0.394 s** timed by the container's own shell. So the
   timed command is `bash -c 'time /pgdt …'`, asked for six decimals and user
-  and sys beside them (`measure.TIME_FORMAT`): the register's image's bash
-  5.2 resolves 1 ms and `pgdt sql`'s image's 5.3 a microsecond. This does not license running a figure outside the
+  and sys beside them (`measure.TIME_FORMAT`), which the image's bash 5.3
+  resolves to a microsecond. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
 - **A performance figure is taken with the default `glibc` build, in a glibc
@@ -101,49 +101,54 @@ Eighteen standing rules for reading anything below:
   the two workloads that move real bytes it is a factor: the same 3.00 GiB
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
-  the figures here are `cargo build --release` (no `--target`) run under
-  `postgres:16`, whose **glibc is part of the apparatus** — its `malloc` the
-  C dependencies', the Rust heap being mimalloc's in the default build and
-  glibc's only in the `system` leg ("Which allocator a figure was taken
-  under"). **Both
-  images the harness runs are pinned by digest** (`measure.Config.image` and
-  `dfcli_image`), a tag being free to move under the register
+  the figures here are `cargo build --release` (no `--target`) run in one
+  image, `archlinux:base`, whose **glibc is part of the apparatus** — its
+  `malloc` the C dependencies', the Rust heap being mimalloc's in the default
+  build and glibc's only in the `system` leg ("Which allocator a figure was
+  taken under"). **The image is pinned by digest** (`measure.Config.image`),
+  a tag being free to move under the register
   ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
-  register's image has moved under it"), and a binary built on a newer host
-  starts in an image only while it links no newer symbol version. **Which
+  register's image has moved under it"), and a binary built on the host
+  starts in it only while it links no symbol version newer than the image's
+  glibc holds. **Which
   glibc a figure ran under is asked, not assumed**: `measure.glibc_of` runs
-  `getconf GNU_LIBC_VERSION` wherever a figure's program runs — an image, or
+  `getconf GNU_LIBC_VERSION` wherever a figure's program runs — the image, or
   the host for `nested-decode-micro`'s `cargo bench` — and refuses a place
-  answering with none. The session stamp names the register image's, and a
+  answering with none. The session stamp names the image's, and a
   figure's marker names its own wherever the stamp does not speak for it: a
-  program run in the other image or on the host, and every figure of a
+  program run on the host, and every figure of a
   sitting of its own. `--check` fails a stamp or a sitting marker naming
   none. `--stale` does not see a moved pin, `measure.py` being a declared
   path of `session-drift` alone, so what records one is the glibc the next
   stamp names.
   **musl is not measured
-  and is in no recipe.** Debian's `/bin/sh` is
-  dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
+  and is in no recipe**: `peak-rss` is built for it, but times nothing and
+  is no figure's program ("What a scan holds resident, per byte and per
+  block"). The in-container timer is `bash -c 'time …'`, named rather than
+  `sh`, which is not bash in every image.
   Which allocator the shipped binary links against, and what the two
   replacements are worth, is "Which allocator a figure was taken under" below;
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
 
-  **`pgdt sql`'s legs depart from the image, and their tables say so.** The
-  dynamic-filter figures and `parallel-scan-throughput`'s provider legs time
-  `pgdt sql`, and built on a host whose glibc is newer than the register's
-  image's, DataFusion links `libm` symbol versions that image does not hold,
-  so those legs run in an image of the build host's distribution
-  (`measure.Config.dfcli_image`). Their readings are therefore never
-  differenced against one taken in the register's image; each table holding
-  one states its image. `pgdt` links DataFusion in every build, so a
-  host-built `pgdt` starts in the register's image for no command at all
+  **The image is the build host's distribution, and moves only when the host
+  outruns it.** `pgdt` links DataFusion in every build, and with it `libm`
+  symbol versions an older distribution's glibc does not hold, so every
+  figure — `pgdt sql`'s legs and the native commands alike — runs in an
+  image of the distribution that built it, and `pgdt` is built by the host's
+  compiler for its Rust and its C alike
   ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md), "The
-  composed `pgdt` does not start in the register's image"). *Rejected:*
-  building it in a toolchain container of the register's image's
-  distribution, which keeps one image by adding a second compiler to the
-  apparatus, for figures in which the image's `malloc` times only what C
-  allocates.
+  composed `pgdt` does not start in the register's image"). The host's glibc
+  moves at every upgrade and the pin does not, so before the first reading
+  `measure.apparatus_preflight` starts `pgdt --version` in the pinned image
+  and refuses a sweep whose binary does not load, naming the pin; the pin
+  moves then, deliberately, and the next stamp names its glibc. *Rejected:*
+  a toolchain container of an older distribution, or a link against an
+  explicit glibc floor from the host, each of which compiles the C
+  dependencies, mimalloc included, with a second C compiler and picks a glibc
+  floor that is the release's to pick; and refusing on any difference between
+  the host's glibc and the image's, which would make every host upgrade an
+  apparatus change.
 
   **The apparatus stops at which allocator, and does not pin how many arenas it
   keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. On the default
@@ -462,8 +467,8 @@ back to run artifacts that `runs/` does not keep — a much larger mechanism tha
 the markers it would police. So this boundary is discipline, recorded here.
 
 **One line, in three regimes: 3.00 GiB inputs read at `--jobs 1` by a `glibc`
-binary staged on tmpfs, in a 512 MB `postgres:16` container, timed by that
-container's own `bash`.** Warm
+binary staged on tmpfs, in a 512 MB container of the pinned image, timed by
+that container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
 before every run, including before the floor; `cold-nvme` ones are that same
 discipline against a copy of the input on the NVMe. Nothing else builds or runs
@@ -547,9 +552,10 @@ own reconciliation.
 
 **A run the kernel killed is a reading in one family and an apparatus failure
 everywhere else, and the harness tells the two apart.** Neither obvious signal
-can: `rss_wrapper` collapses every signal death to exit 1, and `--rm` has
-destroyed the container before `nerdctl inspect` could be asked, so an OOM kill
-and a parse error would come back as the same sentence. The oracle is the container's
+can: `peak-rss` exits `128 + n` for a death by signal `n`, but a `SIGKILL`
+does not say who sent it, and `--rm` has destroyed the container before
+`nerdctl inspect` could be asked, so an OOM kill and any other kill would come
+back as the same sentence. The oracle is the container's
 own `/sys/fs/cgroup/memory.events` — read inside it, after the timed command and
 outside every timer, so no figure's recorded shape carries it. What that buys is
 in two halves:
@@ -1092,7 +1098,7 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 
 | Instrument | Reports | Blind to | Cost |
 |---|---|---|---|
-| `getrusage(RUSAGE_CHILDREN)` — `rss_wrapper` | peak RSS, one scalar | every term separately | a sitting per subtraction |
+| `getrusage(RUSAGE_CHILDREN)` — `peak-rss` | peak RSS, one scalar | every term separately | a sitting per subtraction |
 | `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
 | `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
 | a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | two atomics per allocation |
@@ -1175,11 +1181,11 @@ does, because there the process runs for an hour. It is unnecessary for the two
 quantities this project keeps asking for: a counting allocator maintains its
 own high-water for free, and
 `malloc_info` already prints each arena's. Neither needs a sampler thread, and
-a sampler that missed the peak is the failure mode `rss_wrapper`'s own docstring
+a sampler that missed the peak is the failure mode `peak-rss`'s own rustdoc
 describes for `/proc` polling.
 
-**Verified on the apparatus's own libc**, in `postgres:16` (the session stamp
-names the glibc the pinned image holds):
+**Verified on glibc 2.41, in `postgres:16`**, and not re-read on the pinned
+image's glibc:
 
 - `mallinfo2` **sums all arenas**, not just the main one. Its `arena` matched
   `malloc_info`'s total `system type="current"` exactly across nine heaps.
@@ -1644,14 +1650,16 @@ row of the koji section below because that section is **outside** the register,
 where no `depends` edge goes red when the read path moves.
 
 **The instrument.** `/usr/bin/time -f %M` around `nerdctl run` reports the *client's* peak — 40–45
-MB whatever the input — and `postgres:16` carries no `/usr/bin/time` at all, so
-the timed command is wrapped in a four-line `perl` that forks, `exec`s pgdt,
-waits, and reads `ru_maxrss` out of `getrusage(RUSAGE_CHILDREN)`. **`exec`
-installs a fresh `mm`**, so the interpreter's own ~5.4 MiB is not in the child's
-high-water mark: the same wrapper around `/bin/true` reports 1.9 MiB. Polling
-`VmHWM` would be the wrong instrument *here* — the `Vm*` lines are gone the
-moment the process becomes a zombie, and a `parse` writes its cache last, which
-is exactly where a late peak would sit. koji's recipe polls
+MB whatever the input — so the timed command runs under `peak-rss`, a static
+helper in the workspace that the harness builds for musl and mounts beside
+`/pgdt`: it spawns pgdt, waits, and reads `ru_maxrss` out of
+`getrusage(RUSAGE_CHILDREN)`, needing nothing of the image
+(`peak-rss/src/main.rs` says why `getrusage` and not `/proc`). **The reading
+can carry the wrapper's own share**: at `exec` the kernel folds the outgoing
+address space's high-water mark into the child's, so `measure.apparatus_preflight`
+runs it around `/bin/true` in the pinned image before every sweep and logs
+that floor, which bounds the share rather than proving it absent. koji's
+recipe polls
 `/proc/<pid>/status` instead, because there the process runs for an hour and is
 read while it is still running.
 
@@ -1740,8 +1748,8 @@ The section above measures the growth; this one attributes it.
 <!-- figure: rss-attribution — reproduce with `cd scripts && uv run measure.py --figure rss-attribution` -->
 
 **The instrument is `peak-rss`'s**, which is what lets the first row be read
-against that table: the same `getrusage` wrapper, the same `postgres:16`
-container under the same 512 MB limit, the same tmpfs-staged inputs, three reps,
+against that table: the same `getrusage` wrapper, the same image under the
+same 512 MB limit, the same tmpfs-staged inputs, three reps,
 median. What differs is that every leg is taken at **two** block counts, so each
 reading is a *slope in blocks* rather than one absolute at 4,000 with a fixed
 baseline folded into it.
@@ -1850,12 +1858,14 @@ Its legs are nine `nerdctl run`s of the form
 ```sh
 sudo nerdctl run --rm -m 512m --memory-swap 512m \
   -v <binary>:/pgdt:ro -v /dev/shm/pgdt/blocks4000.sql:/dump.sql:ro \
-  postgres:16 bash -c '<getrusage wrapper> /pgdt <command> >/dev/null'
+  -v <peak-rss>:/peak-rss:ro \
+  <image> bash -c '/peak-rss /pgdt <command> >/dev/null'
 ```
 
 where `<binary>` is `target/release/pgdt` or one of the `allocator` figure's
-legs — borrowed by name through `ensure_allocator_binary` — and the wrapper is
-`rss_wrapper`, the same one `peak-rss` is taken through. The `info` leg builds its cache inside
+legs — borrowed by name through `ensure_allocator_binary` — `<image>` is
+`measure.Config.image`, and the wrapper is the `peak-rss` helper, the same one
+the `peak-rss` figure is taken through. The `info` leg builds its cache inside
 its own container, untimed and unwrapped.
 
 ## What the read chunk size is worth
@@ -2245,7 +2255,7 @@ for i in 1 2 3 4 5; do for f in control $NESTED; do for m in strings typed; do
     -m 512m --memory-swap 512m \
     -v "$PWD/target/release/pgdt:/pgdt:ro" \
     -v "$D/$f.sql:/dump.sql:ro" \
-    postgres:16 bash -c \
+    archlinux:base bash -c \
     "/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs 1 \
        --statistics-level data --row-group-size 1048576 >/dev/null &&
      time /pgdt query --source /dump.sql --table public.perf \
