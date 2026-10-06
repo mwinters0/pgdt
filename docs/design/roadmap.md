@@ -15,10 +15,9 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P30, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
-| P30 — one binary for distribution | Complete | [spec](roadmap-P30-one-binary.md); [notes](roadmap-P30-one-binary-notes.md) |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -671,14 +670,6 @@ to corner-avoidance depth; the emitter register ([`decisions.md`](decisions.md),
 "D71") enumerates the same emitters, and is the candidate completeness
 criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
-## P30 — One binary for distribution
-
-Complete: [its spec](roadmap-P30-one-binary.md) and
-[its notes](roadmap-P30-one-binary-notes.md). A release ships one binary,
-`pgdt`, with the DataFusion CLI composed in as `pgdt sql`; it links mimalloc,
-and it is the binary every figure times ([`decisions.md`](decisions.md),
-"D13").
-
 ## P29 — Versioned binary releases
 
 Publishing the binaries as versioned GitHub Releases, starting with `v0.1.0`,
@@ -691,8 +682,8 @@ wrote. **The maintainer owns the timing and the text; CI owns the bytes.**
 **No crate is published**, and every workspace member's version moves in
 lockstep, the vendored `xz-seek` keeping its own.
 
-Which binary ships, with which features and allocator, is P30's
-([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)). Beyond the
+Which binary ships, with which features and allocator, is settled
+([`decisions.md`](decisions.md), "D13"). Beyond the
 mechanics, the grilling settles the Linux artifact's libc, the shipped binary
 being what every figure times; whether a macOS build ships before it can discover
 its own memory; when the version moves and how `--version` tells a release
@@ -798,10 +789,10 @@ What it inherits:
   and five readers land in the `bound` band, over `MEMORY_UNPOOLED_BOUND`,
   where their `system` twins in the same sitting do not, and the worse leaves
   less of its allocation than `MEMORY_MARGIN_PERCENT` promises
-  (`measurements.md`, `reserve`). The shortfall blocks nothing in P30, whose
-  gate reads a kill alone (`roadmap-P30-one-binary.md`, "What the move owes
-  before a release"), so the unit mimalloc keeps there is this phase's, as is
-  setting the bound under mimalloc; P30's diagnostic attributed it to mimalloc
+  (`measurements.md`, `reserve`). The shortfall blocks nothing, the
+  allocator's gate reading a kill alone (`measurements.md`, "The apparatus"),
+  so the unit mimalloc keeps there is this phase's, as is setting the bound
+  under mimalloc; the diagnostic sitting attributed it to mimalloc
   and left its mechanism unconfirmed (`roadmap-P23-resident-reserve-inbox.md`,
   "The unit mimalloc keeps of a 128 MiB block"). Part of that overrun is not
   the allocator's: from two readers up the program holds a unit above its

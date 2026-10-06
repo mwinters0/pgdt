@@ -2083,7 +2083,10 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdt" | "dfcli" (`pgdt sql`) | … | "none" (dd); `Session.binary_path`
+    # "pgdt" | "dfcli" (`pgdt sql`, under the name a sitting's `raw.json` from
+    # before the composition carries, so it still renders) | … | "none" (dd);
+    # `Session.binary_path`
+    binary: str
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -3585,9 +3588,9 @@ RESERVE_INSTRUMENT_LIMITS: tuple[str, ...] = tuple(token for token, _ in RESERVE
 #: high-water is read against the bill's Rust terms, `Billed` carrying C's
 #: decoder footprint besides. Where two hold excess, which one the gate's
 #: failure is owed to is the `system` twin's to say, not this criterion's: a
-#: term both builds hold predates the allocator and does not block, one the
-#: shipped build holds alone does (`roadmap-P30-one-binary.md`, "What the move
-#: owes before a release").
+#: term both builds hold predates the allocator and is filed, one the shipped
+#: build holds alone is the allocator's (`docs/design/measurements.md`, "The
+#: apparatus").
 RESERVE_DIAGNOSTIC_INPUT = "control_xz128"
 RESERVE_DIAGNOSTIC_LIMITS: tuple[str, ...] = ("1536m", "2g")
 
@@ -5476,8 +5479,7 @@ SHIPPED_BINARIES: tuple[str, ...] = ("pgdt", "dfcli")
 #: against, by figure — **reported beside the verdict and blocking nothing**.
 #: A gate leg fails on a kill alone, in every figure: the gate asks whether
 #: the binary is OOM-killed under the arrangements its figures take, not how
-#: close it comes (`docs/design/roadmap-P30-one-binary.md`, "What the move owes
-#: before a release").
+#: close it comes (`docs/design/measurements.md`, "The apparatus").
 #:
 #: **`reserve` reports the library's own criterion**, `MEMORY_MARGIN_PERCENT`:
 #: the flagless rule aims resident at the allocation, so what a leg leaves of
@@ -11885,10 +11887,17 @@ class ReplaySession(Session):
     recomputed by the same renderer that would run during a sweep.
 
     **A staged input is replaced by a sparse file of the recorded size.** Every
-    renderer asks an input for its size and never for its contents -- the size
-    is what a rate is per -- so a stand-in of the right length reproduces the
-    byte counts exactly while needing no cache, no tmpfs and no disk.
-    `test_measure.py` is what holds renderers to that.
+    renderer but three asks an input for its size and never for its contents --
+    the size is what a rate is per -- so a stand-in of the right length
+    reproduces the byte counts exactly while needing no cache, no tmpfs and no
+    disk. `test_measure.py` is what holds renderers to that.
+
+    **The three are host steps nothing here refuses**, and their cells are no
+    reading of the sitting: `run_per_block_quadratic`'s `count_saves` and
+    `run_preamble_prepass`'s header search read the sparse stand-ins, and
+    `run_nested_decode_micro` runs `cargo bench` on today's host. A re-render's
+    fold-in takes those three sections from the sitting's own
+    `tables-as-taken.md`, or from a re-take.
     """
 
     def __init__(self, cfg: Config, raw: dict, sizes_dir: Path, log: Callable[[str], None]) -> None:

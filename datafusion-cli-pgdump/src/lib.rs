@@ -220,7 +220,8 @@ impl Args {
 
 #[tokio::main]
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
-// pgdump: upstream's `main`, handed its arguments already parsed.
+// pgdump: upstream's `main`, handed its arguments already parsed, and renamed
+// pgdump: since `#[tokio::main]` refuses arguments on a function named `main`.
 pub async fn run(args: Args) -> ExitCode {
     if let Err(e) = main_inner(args).await {
         println!("Error: {e}");

@@ -46,7 +46,8 @@ struct Cli {
 
 /// What `pgdt --version` prints: the crate version, the allocator's markers
 /// ([`alloc::MARKERS`]), and the DataFusion release `sql` is, which `sql`'s
-/// help also closes on, `sql` carrying no `--version` of its own.
+/// help also closes on, `sql` carrying no `--version` of its own. Formatted
+/// once at run time: `DATAFUSION_VERSION` is a path, which `concat!` refuses.
 fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(

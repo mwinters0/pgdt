@@ -592,11 +592,19 @@ attributed on the instrument build before a remedy is chosen, and reopens
 twin is the `allocator` figure's `system` leg, built before the first reading,
 and a reading is never judged against an earlier sitting's platform-allocator
 figure, which differs by every commit since
-(`.claude/skills/evidence/SKILL.md`, rule 7).
+(`.claude/skills/evidence/SKILL.md`, rule 7). **A gate leg fails on a kill
+alone**: the gate asks whether the binary is OOM-killed under the arrangements
+its figures take, not how close it comes, so what a `reserve` leg leaves of its
+allocation is reported against `MEMORY_MARGIN_PERCENT` beside the verdict and
+blocks nothing, a shortfall being `KD34`'s. `parallel-scan-throughput` shares
+`parallel-peak-rss`'s container but reads no resident set, so it sweeps no
+twin and its gate is a kill.
 
 *Rejected:* fail-fast, which throws away every leg a long sitting had already
 paid for and contradicts the tolerant family's own registration, which calls a
-kill there a reading.
+kill there a reading; a margin verdict, and a loosened fraction of it, a
+threshold fitted to the one reading in view, precision about resident being the
+reserve's to set rather than the allocator's gate to judge.
 
 **A regime names a device, and a figure that reads the wrong one still emits a
 plausible table.** That is why the three staging areas are three directories
@@ -3385,8 +3393,7 @@ Apparatus over every run in this table: CPU stall ≤2.00%, I/O stall ≤6.23%, 
 
 **What the sitting settles.** No leg is killed anywhere in the sitting, on
 either build, so **the gate passes**: it fails a leg on a kill alone
-([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move owes
-before a release"). Every cell of the charge table is
+("The apparatus"). Every cell of the charge table is
 `met` but two: the unnamed remainder runs 21.1–118.4 MiB at every arrangement
 on 24 MiB blocks and at one reader on 128 MiB blocks, and reaches 321.9 and
 289.7 MiB at four and five readers on 128 MiB blocks (`-m 1536m`, `-m 2g`) —

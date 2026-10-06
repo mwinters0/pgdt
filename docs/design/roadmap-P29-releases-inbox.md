@@ -48,7 +48,7 @@ malloc is what the figures measured as slower. A glibc artifact needs a symbol
 floor (built against an old glibc, or targeting one explicitly), and that floor
 decides which distributions run it. mimalloc is the shipped binary's
 global allocator, with no `override`
-([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)), so a static musl
+([`decisions.md`](decisions.md), "D13"), so a static musl
 build keeps the Rust heap off musl's malloc and needs no floor. On musl it is
 unmeasured, and the C dependencies (`liblzma`, `aws-lc`) would still allocate
 through musl's malloc.
@@ -140,12 +140,12 @@ this is decided.
 
 ---
 
-## P30 decided the one artifact and its allocator
+## The one artifact and its allocator are settled
 
 **Fact.** A release ships one binary, `pgdt`, with the DataFusion CLI as
 `pgdt sql`. The composition is unconditional, `datafusion-cli-pgdump` becomes
 a library, and the binary links mimalloc, with no `override`, so C
-dependencies keep libc's malloc ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md)).
+dependencies keep libc's malloc ([`decisions.md`](decisions.md), "D13").
 `pgdt --version` gains a `(datafusion: <version>)` marker after the existing
 ones. The composed binary is what every figure times. Its size is mostly
 DataFusion's `.text`, and the release profile sets no `strip`: re-check with
@@ -155,8 +155,8 @@ DataFusion's `.text`, and the release profile sets no `strip`: re-check with
 allocator are settled. Left to P29: whether the release profile strips, and
 whatever libc question mimalloc leaves (below).
 
-**Origin.** Filed 2026-10-05 by P30's grilling, replacing the 2026-10-01
-entry that deferred this to P30.
+**Origin.** Filed 2026-10-05 by the grilling that settled the one binary,
+replacing the 2026-10-01 entry that deferred it.
 
 ---
 
@@ -190,11 +190,10 @@ dependencies, mimalloc included, with a second C compiler
 composed `pgdt` does not start in the register's image").
 
 **Why P29 cares.** The shipped binary is the timed one
-([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "The shipped binary
-is the timed binary"), and the release is built in CI against a libc floor P29
+([`decisions.md`](decisions.md), "D13"), and the release is built in CI against a libc floor P29
 has yet to pick. Whatever floor and C toolchain it picks, the register's build
 follows, so that choice moves the apparatus — the image, the C compiler and
 the glibc the stamp names — and wants a sitting on the release build.
 
-**Origin.** Filed 2026-10-05 by `/dwal` on 30.5's register-image entry.
+**Origin.** Filed 2026-10-05 by `/dwal` on the register-image entry.
 Contingent on the release build differing from the host's.

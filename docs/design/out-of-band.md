@@ -48,7 +48,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M212 are struck**, and nothing at or below `M212` is reused. That is a
+**M1–M216 are struck**, and nothing at or below `M216` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -73,7 +73,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M213 | 2026-10-06 | `--heaptrack-recipe` records a `system` `profiling` build in a `--target-dir` of its own under `PGDT_MEASURE_ALLOC_BUILD_ROOT`, its text, `HEAPTRACK_AXIS`'s and `measurements.md`'s heaptrack paragraph saying it sees C and Rust alike and citing `KD109` for the shipped heap, with `test_measure.py` asserting the build | | [2026-10-06](../status/history/2026-10-06.md) |
-| M214 | 2026-10-06 | `help_text.rs`'s width assertion skips only `sql`'s `--dump` spec line, citing `D67`, every other spec-only line on every page held to the width | | [2026-10-06](../status/history/2026-10-06.md) |
-| M215 | 2026-10-05 | Every figure runs in `archlinux:base`: `measure.Config.image` and `dfcli_image` one pinned image, the `"dfcli"` RunSpec's image switch gone, and "The apparatus"'s glibc paragraphs, `pgdt sql`'s departure and its per-table image notes rewritten to one image of the build host's distribution, and `preflight` refusing a sweep whose `pgdt --version` does not start in it, naming the pin; `rss_wrapper`'s `perl` replaced by `peak-rss`, a workspace bin crate built static for `<machine>-unknown-linux-musl` by `preflight` and mounted read-only at `/peak-rss`, exiting `128 + signo` on a signal death with a `signal=<n>` line, its crate tests and a preflight probe around `/bin/true` in the pinned image as its checks, `GETRUSAGE_SYSCALL` gone, and "The instrument", `OOM_ORACLE`'s account of the exit code and CONTRIBUTING's measuring prerequisites rewritten to it | | [2026-10-05](../status/history/2026-10-05.md) |
-| M216 | 2026-10-06 | A `cold-nvme-parallel` regime — a `measure.REGIMES` row on the NVMe staging `scan-throughput-nvme` reads, a `CONTENTION_LIMITS` row — and `parallel-scan-throughput` legs of the provider's typed plain scan at 1, 2 and 4 partitions in it, its cache prebuilt outside the timed container; the figure re-taken in a sitting of its own at `3b958b54`, `measurements.md`'s "The SATA SSD is not a parallel regime" rejecting the SATA one alone, and `D2`'s Reopens moved onto `KD57` | | [2026-10-06](../status/history/2026-10-06.md) |
