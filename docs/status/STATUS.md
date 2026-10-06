@@ -120,18 +120,3 @@ beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
 
-
-- **29.2 is ticked and P29 goes on with `reserve`'s model refuted at 128 MiB
-  blocks.** The release-image sitting puts the worst rep of each 128 MiB-block
-  flagless leg at four and five readers over `MEMORY_RESERVE` — the `rule`
-  band, an arrangement the discovery cannot keep inside its allocation — and
-  leaves `-m 1536m` short of `MEMORY_MARGIN_PERCENT`; nothing is killed on
-  either build and the `system` twins stay inside the bound
-  ([`../design/measurements.md`](../design/measurements.md), `reserve`). The
-  figure publishes, a kill alone keeping one out, and the finding is routed to
-  `KD34`, owned by P23, as the previous sitting's `bound`-band reading was:
-  29.2's row is the move and its sitting, both delivered, and the constants
-  are P23's to re-fit under mimalloc. So v0.1.0 would ship the reserve as it
-  stands. Reconsidering puts P23's reserve half, or an interim
-  `MEMORY_RESERVE`, ahead of 29.6 — reordering the roadmap index, which a
-  stand-in does not do.

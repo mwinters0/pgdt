@@ -29,8 +29,8 @@ What the sitting found, each filed beside the figure it is read off:
   flagless leg at four and five readers lands over `MEMORY_RESERVE`, the
   `rule` band, its other two reps in the `bound` band the previous stamp read,
   and the `system` twins inside the bound. The figure publishes, a kill alone
-  keeping one out; the finding is `KD34`'s, rewritten to it, and the call to
-  go on with P29 is under STATUS's "Decisions worth another look".
+  keeping one out; the finding is `KD34`'s, rewritten to it, and v0.1.0 ships
+  with the reserve as it stands ([`decisions.md`](decisions.md), "D3").
 - **The instrument legs at 128 MiB blocks read both of `KD34`'s units** — the
   program's, `KD111`, and the one mimalloc keeps — and never the worst rep's
   excess, which nothing names (`measurements.md`, "What a scan holds above the

@@ -24,7 +24,7 @@ Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `q
 process. `MEMORY_MARGIN_PERCENT` binds the resolved *count* of a source recommending a charge, and the budget only by the part of `held`
 the ceiling cannot absorb (`within_shared`). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
 per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary
-`.xz`; clearing that gate picks one number for two questions. Evidence: `reserve`, `chunk-size`.
+`.xz`; clearing that gate picks one number for two questions. Rejected: re-setting `MEMORY_RESERVE`, or taking P23's reserve half, before v0.1.0 over `reserve`'s `rule`-band worst reps at the larger block size — one unexplained rep a cell, nothing killed, a shape the manual warns of, fitted against an account `KD34`'s owner has not drawn; a release-text caveat beside the manual's. Evidence: `reserve`, `chunk-size`.
 
 ### D83 `--memory` states what the process may hold; one carving serves stated and discovered
 A read-buffer budget is a number an operator cannot size a container from, so the flag states
