@@ -22,7 +22,7 @@ reused, including a struck phase's.
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
-| P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
+| P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
 | P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
