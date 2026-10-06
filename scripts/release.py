@@ -31,6 +31,8 @@ times is `build --target x86_64-unknown-linux-gnu`'s, and each variant it times
 beside that one -- an allocator leg, the instrument, the `xz_decode` example --
 is this recipe with only its package, features or target directory changed
 (`Build`), so two binaries a figure compares differ by what the figure names.
+A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler
+and glibc, criterion's output landing in the release state's target directory.
 
 Usage:
 
@@ -38,6 +40,7 @@ Usage:
     cd scripts && uv run release.py build [--target T]    # release-build pgdt, each held to the floor
     cd scripts && uv run release.py build --no-default-features --features system --target-dir D
     cd scripts && uv run release.py suite                 # the x86-64 suite, in the image
+    cd scripts && uv run release.py bench --package pgdump_query --bench decoders --filter nested
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
     python3 scripts/release.py build --inside             # a step, already in the image
     cd scripts && uv run python -m unittest test_release
@@ -48,6 +51,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -440,6 +444,64 @@ def build_step(builds: Sequence[Build]) -> list[str]:
     return ["build", *(f"--target={b.target}" for b in builds), *builds[0].options()]
 
 
+@dataclass(frozen=True)
+class Bench:
+    """One `cargo bench` target run in the image, for the native target.
+
+    The register runs one as a figure's program (`scripts/measure.py`,
+    `NESTED_BENCH`), so it takes what a `Build` does -- the image's compiler,
+    `--locked`, the explicit `--target` -- and shares the release state's
+    target directory with the shipped build. criterion writes its estimates
+    under that directory (`criterion_root`), which is where a figure reads
+    them back on the host."""
+
+    package: str
+    bench: str
+    #: criterion's filter: which of the bench's benchmark ids run.
+    filter: str | None = None
+
+    def cargo_argv(self, *, no_run: bool = False) -> list[str]:
+        """The bench run; `no_run` builds it and names its executable on
+        stdout instead, for the floor check before it runs."""
+        argv = [
+            "cargo", "bench", "--locked", "-p", self.package,
+            "--target", NATIVE_TARGET, "--bench", self.bench,
+        ]  # fmt: skip
+        if no_run:
+            return [*argv, "--no-run", "--message-format=json-render-diagnostics"]
+        return [*argv, "--", self.filter] if self.filter is not None else argv
+
+    def criterion_root(self, target_dir: Path) -> Path:
+        """Where criterion writes under `target_dir`: `$CARGO_TARGET_DIR/criterion`,
+        which the image sets for every step (`MOUNTS`)."""
+        return target_dir / "criterion"
+
+    def step(self) -> list[str]:
+        """The `bench` step running this bench."""
+        argv = ["bench", f"--package={self.package}", f"--bench={self.bench}"]
+        return [*argv, f"--filter={self.filter}"] if self.filter is not None else argv
+
+
+def bench_executables(messages: str, bench: str) -> list[Path]:
+    """The executables `cargo bench --no-run --message-format=json` built for
+    the bench target `bench`, out of the JSON messages it printed."""
+    found = []
+    for line in messages.splitlines():
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        target = msg.get("target") or {}
+        if (
+            msg.get("reason") == "compiler-artifact"
+            and msg.get("executable")
+            and "bench" in target.get("kind", ())
+            and target.get("name") == bench
+        ):
+            found.append(Path(msg["executable"]))
+    return found
+
+
 def run_step(argv: Sequence[str]) -> None:
     print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
     subprocess.run(argv, cwd=REPO, check=True)
@@ -457,6 +519,27 @@ def step_build(builds: Sequence[Build]) -> int:
         for line in lines:
             print(f"  {line}", flush=True)
     return 1 if failed else 0
+
+
+def step_bench(bench: Bench) -> int:
+    """The bench built, its executable held to the floor, and then run."""
+    argv = bench.cargo_argv(no_run=True)
+    print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
+    built = subprocess.run(argv, cwd=REPO, check=True, capture_output=True, text=True).stdout
+    executables = bench_executables(built, bench.bench)
+    if not executables:
+        raise ReleaseError(f"cargo built no executable for the bench {bench.bench!r}")
+    failed = 0
+    for binary in executables:
+        ok, lines = check_floor(readelf_of(binary), image_floor(NATIVE_TARGET))
+        failed += not ok
+        print(f"{NATIVE_TARGET}: {binary}", flush=True)
+        for line in lines:
+            print(f"  {line}", flush=True)
+    if failed:
+        return 1
+    run_step(bench.cargo_argv())
+    return 0
 
 
 def step_suite() -> int:
@@ -492,6 +575,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="a host cargo target directory of its own, in place of the release state's",
     )  # fmt: skip
     b.add_argument("--inside", action="store_true", help="run here: this is the image")
+    r = sub.add_parser(
+        "bench", help=f"one cargo bench, run for {NATIVE_TARGET} in the image, held to the floor"
+    )
+    r.add_argument("--package", required=True, help="the package carrying the bench")
+    r.add_argument("--bench", required=True, help="the bench target")
+    r.add_argument("--filter", help="criterion's filter: which benchmark ids run")
+    r.add_argument("--inside", action="store_true", help="run here: this is the image")
     s = sub.add_parser("suite", help=f"the {NATIVE_TARGET} suite, in the image")
     s.add_argument("--inside", action="store_true", help="run here: this is the image")
     f = sub.add_parser("floor", help="hold one binary to a glibc floor")
@@ -519,13 +609,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             target = args.target_dir
             if args.inside and target is not None:
                 raise ReleaseError("--target-dir is the host's; inside, CARGO_TARGET_DIR names it")
+        bench = Bench(args.package, args.bench, args.filter) if args.cmd == "bench" else None
         if args.inside:
             check_inside()
+            if bench is not None:
+                return step_bench(bench)
             return step_suite() if args.cmd == "suite" else step_build(builds)
         tag = ensure_image(container)
         prepare_state(target=target)
         if args.cmd == "suite":
             step, git = ["suite"], git_view()
+        elif bench is not None:
+            step, git = bench.step(), None
         else:
             step, git = build_step(builds), None
         return subprocess.run(run_in_image(container, tag, step, target=target, git=git)).returncode

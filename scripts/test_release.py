@@ -8,6 +8,9 @@ and `ThisRepo` holds the committed Dockerfile, toolchain pin and suite to what
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import re
 import shutil
 import subprocess
@@ -307,6 +310,77 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(release.build_step(both)[1:3], [f"--target={t}" for t in release.TARGETS])
         with self.assertRaises(release.ReleaseError):
             release.build_step([release.Build(), release.Build(features=("system",))])
+
+    def test_a_bench_is_built_and_run_as_the_release_build_is(self):
+        bench = release.Bench("pgdump_query", "decoders", "nested")
+        argv = bench.cargo_argv()
+        self.assertEqual(argv[:2], ["cargo", "bench"])
+        self.assertIn("--locked", argv)
+        self.assertEqual(argv[argv.index("--target") + 1], release.NATIVE_TARGET)
+        # criterion's filter goes to the harness, after cargo's own flags.
+        self.assertEqual(argv[-2:], ["--", "nested"])
+        built = bench.cargo_argv(no_run=True)
+        self.assertEqual(built[: argv.index("--")], argv[: argv.index("--")])
+        self.assertIn("--no-run", built)
+        self.assertNotIn("nested", built)
+        self.assertEqual(bench.criterion_root(Path("/t")), Path("/t/criterion"))
+
+    def test_a_bench_step_round_trips_through_the_command_line(self):
+        for bench in (release.Bench("pgdump_query", "decoders", "nested"),
+                      release.Bench("pgdump_query", "whole_file")):
+            seen = []
+            with unittest.mock.patch.object(release, "check_inside"), \
+                    unittest.mock.patch.object(release, "step_bench", lambda b: seen.append(b) or 0):
+                self.assertEqual(release.main([*bench.step(), "--inside"]), 0)
+            self.assertEqual(seen, [bench])
+
+    def test_a_bench_s_executable_is_read_out_of_cargo_s_messages(self):
+        def artifact(name, kind, executable):
+            return json.dumps({
+                "reason": "compiler-artifact",
+                "target": {"name": name, "kind": [kind]},
+                "executable": executable,
+            })  # fmt: skip
+
+        messages = "\n".join([
+            artifact("pgdump_query", "lib", None),
+            artifact("decoders", "bench", "/t/x/release/deps/decoders-0a1b"),
+            artifact("whole_file", "bench", "/t/x/release/deps/whole_file-2c3d"),
+            json.dumps({"reason": "build-finished", "success": True}),
+            "not json",
+        ])  # fmt: skip
+        self.assertEqual(
+            release.bench_executables(messages, "decoders"),
+            [Path("/t/x/release/deps/decoders-0a1b")],
+        )
+        self.assertEqual(release.bench_executables(messages, "absent"), [])
+
+    def test_a_bench_past_the_floor_is_not_run(self):
+        bench = release.Bench("pgdump_query", "decoders", "nested")
+        built = json.dumps({
+            "reason": "compiler-artifact",
+            "target": {"name": "decoders", "kind": ["bench"]},
+            "executable": "/t/decoders-0a1b",
+        })  # fmt: skip
+        runs = []
+
+        def fake_run(argv, **_kwargs):
+            runs.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, stdout=built)
+
+        for floor, status, ran in (((2, 41), 0, 2), ((2, 33), 1, 1)):
+            runs.clear()
+            with unittest.mock.patch.object(release.subprocess, "run", fake_run), \
+                    unittest.mock.patch.object(
+                        release, "readelf_of", return_value=with_needs("GLIBC_2.2.5", "GLIBC_2.34")
+                    ), \
+                    unittest.mock.patch.object(release, "image_floor", return_value=floor), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(release.step_bench(bench), status)
+            self.assertEqual(len(runs), ran)
+            self.assertIn("--no-run", runs[0])
+        self.assertEqual(runs[0], bench.cargo_argv(no_run=True))
 
     def test_a_target_dir_is_the_host_s(self):
         self.assertEqual(release.main(["build", "--target-dir", "/x", "--inside"]), 2)

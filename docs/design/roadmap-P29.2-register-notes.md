@@ -2,24 +2,20 @@
 
 What the sitting and the later slices inherit from the move. The mechanism is
 `scripts/measure.py` (`register_image`, `build_in_image`, `image_target_dir`,
-`apparatus_preflight`) and `scripts/release.py` (`Build`, `build_step`,
-`run_in_image`'s `target`), whose docstrings say how each step runs; the
-readings below are `runs/29.2-register-image/` (`image.log`; `builds.log`,
-which `builds.py` there wrote by calling the harness's own build functions).
+`bench_in_image`, `apparatus_preflight`) and `scripts/release.py` (`Build`,
+`build_step`, `Bench`, `step_bench`, `run_in_image`'s `target`), whose
+docstrings say how each step runs; the readings below are
+`runs/29.2-register-image/` (`image.log`; `builds.log`, which `builds.py`
+there wrote by calling the harness's own build functions; `bench.log`, one
+`release.py bench` of the figure's group, not a figure).
 
-## What remains: the bench, then the sitting
+## What remains: the sitting
 
-**`nested-decode-micro` still runs on the host**, its `cargo bench` naming the
-host's glibc, where the spec puts every figure on the image's runtime
-([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image"). It
-moves into the image as a `release.py bench` step, criterion's output in the
-release state's target directory where `run_nested_decode_micro` reads it, and
-`measure.HOST` and `glibc_of`'s host branch go with it
+**The apparatus has landed and no figure has been taken on it.** `M219`, which
+changes `nested-decode-micro`'s allocator, lands before the sitting, which
+otherwise takes that figure on glibc's `malloc` once more
 ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "The
-register's image, reviewed"). `M219` changes the same figure's allocator; the
-two land in either order, both before the sitting.
-
-**The rest of the apparatus has landed and no figure has been taken on it.** The sitting
+register's image, reviewed"). The sitting
 is a whole sweep from a commit carrying this change — a figure is never taken
 from a tree carrying its own uncommitted apparatus — launched detached per
 `CLAUDE.md`, "Long-running processes", and handed off per
@@ -43,9 +39,18 @@ stamp. `parallel-scan-throughput`'s sitting of its own is taken with the rest.
   this tree, each build's wall clock beside it, every binary's `--version`
   read back as its leg, and the preflight passing in the image under glibc
   2.41; a later sitting's builds are incremental.
-- **Every one is held to the floor** by `release.py`'s build step: a variant
-  needing a `GLIBC_` version past 2.41 fails its build rather than its first
-  rep. Each needed 2.39 at most, `xz_decode` 2.34.
+- **`nested-decode-micro` runs in the release image itself**, not its base:
+  `cargo bench` builds and runs in one step, so the image's tag is the place
+  `glibc_of` asks, and the marker names nothing while that answers the
+  stamp's glibc. criterion writes under the release state's target directory,
+  `target/release-image/target/criterion/`, which the figure reads; the
+  host's `target/criterion/` is read by nothing now. The bench shares the
+  shipped build's target triple and directory, so a sitting compiles only
+  `pgdump_query`'s dev-dependencies and the bench beside it.
+- **Every one is held to the floor** by `release.py`'s build step, and the
+  bench's executable by its bench step before it runs: a variant needing a
+  `GLIBC_` version past 2.41 fails its build rather than its first rep. Each
+  needed 2.39 at most, `xz_decode` 2.34.
 - **The timer resolves a millisecond, not a microsecond**: trixie's bash is
   5.2, which clamps `TIMEFORMAT`'s six places to three (`measure.TIME_FORMAT`
   already said an image's bash decides it). Every table quotes three places

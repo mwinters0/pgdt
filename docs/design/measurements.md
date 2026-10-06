@@ -112,12 +112,12 @@ Eighteen standing rules for reading anything below:
   ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
   register's image has moved under it"). **Which
   glibc a figure ran under is asked, not assumed**: `measure.glibc_of` runs
-  `getconf GNU_LIBC_VERSION` wherever a figure's program runs — the image, or
-  the host for `nested-decode-micro`'s `cargo bench` — and refuses a place
-  answering with none. The session stamp names the image's, and a
-  figure's marker names its own wherever the stamp does not speak for it: a
-  program run on the host, and every figure of a
-  sitting of its own. `--check` fails a stamp or a sitting marker naming
+  `getconf GNU_LIBC_VERSION` in whichever image a figure's program runs — the
+  base, or the release image itself for `nested-decode-micro`'s `cargo bench`
+  (`measure.bench_in_image`) — and refuses an image answering with none. The
+  session stamp names the base's, and a figure's marker names its own
+  wherever the stamp does not speak for it: a program run under another
+  glibc, and every figure of a sitting of its own. `--check` fails a stamp or a sitting marker naming
   none. `--stale` does not see a moved pin, `measure.py` being a declared
   path of `session-drift` alone, so what records one is the glibc the next
   stamp names.
@@ -2022,7 +2022,9 @@ Criterion medians (ns):
 - copy control at 42 bytes: 20 ns
 
 Apparatus: this figure runs no `pgdt` and reads no file, so it carries none of
-the stall, temperature or device gates the sweep's tables do.
+the stall, temperature or device gates the sweep's tables do. It is built and
+run in the release image (`release.py bench`), on the compiler and glibc every
+other figure's binary is built with.
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
@@ -2075,7 +2077,9 @@ cd scripts && uv run measure.py --figure nested-decode-micro
 
 It reads criterion's own `estimates.json` rather than scraping the console,
 because a rounded ratio is how a table acquires a number nobody can reproduce.
-The bench alone is `cargo bench -p pgdump_query --bench decoders -- nested`.
+The bench alone is `cd scripts && uv run release.py bench --package pgdump_query
+--bench decoders --filter nested`, which runs `cargo bench` in the image and
+leaves criterion's output under `target/release-image/target/criterion/`.
 
 ## A typed query over nested columns costs 6.6 µs a row more than a string one
 

@@ -127,7 +127,9 @@ import generate_perf_data as perf
 from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
 
 # The release build, whose image builds every binary a figure runs and whose
-# base is the image every figure runs in (`register_image`, `build_in_image`).
+# base is the image every built binary runs in (`register_image`,
+# `build_in_image`), and which runs a figure's `cargo bench` itself
+# (`bench_in_image`).
 # Import-safe on the same terms.
 import release
 
@@ -145,8 +147,8 @@ REGISTER_BIN = release.Build().binary(release.STATE / "target")
 
 
 def register_image() -> str:
-    """The image every figure runs in: the release image's base, by the digest
-    `release/Dockerfile` pins (`release.pinned_base`).
+    """The image every figure's binary runs in: the release image's base, by
+    the digest `release/Dockerfile` pins (`release.pinned_base`).
 
     **One pin names the build's glibc and the runtime's**, so the binary a
     figure times runs under the glibc it was linked against, which is the
@@ -194,7 +196,7 @@ class Config:
     out_dir: Path = Path(_env("PGDT_MEASURE_OUT_DIR", str(REPO / "runs")))
 
     container: str = _env("PGDT_MEASURE_CONTAINER", "sudo nerdctl")
-    # **The one image every figure runs in**, the release image's base
+    # **The one image every figure's binary runs in**, the release image's base
     # (`register_image`), so every binary the release image builds runs under
     # the glibc it linked against (`measurements.md`, "The apparatus").
     # **Pinned by digest**, the tag before it being for a reader only: what a
@@ -4407,9 +4409,10 @@ class Session:
         #: Every reading's telemetry, in the order taken, so a sweep can be
         #: audited after the fact even where the gate let a reading through.
         self.telemetry: list[dict] = []
-        #: The places each figure's programs ran in — an image, or `HOST` —
-        #: and the glibc each place answered, which is what a figure's marker
-        #: names where the stamp does not speak for it (`marker_glibc`).
+        #: The images each figure's programs ran in — the register's, or the
+        #: release image a bench runs in — and the glibc each answered, which
+        #: is what a figure's marker names where the stamp does not speak for
+        #: it (`marker_glibc`).
         self.places: dict[str, set[str]] = {}
         self.glibcs: dict[str, str] = {}
         #: The arrangements every leg is taken under, and the one in force.
@@ -5742,27 +5745,21 @@ def binary_allocator(binary: Path) -> str:
     return match.group(1)
 
 
-#: Where a figure's program runs when it runs in no container: `cargo bench`,
-#: which is `nested-decode-micro`. Every other place is an image reference.
-HOST = "host"
-
 #: What glibc's `getconf GNU_LIBC_VERSION` prints. musl's `getconf` has no such
 #: variable and exits non-zero, which is the refusal `glibc_of` wants.
 LIBC_RE = re.compile(r"^glibc (\d+(?:\.\d+)+)$", re.MULTILINE)
 
 
 def glibc_of(cfg: Config, where: str) -> str:
-    """The glibc a program run in `where` — an image, or `HOST` — runs under,
-    asked of that place rather than assumed from a tag.
+    """The glibc a program run in the image `where` runs under, asked of that
+    image rather than assumed from a tag.
 
     The allocator's argument one layer down (`binary_allocator`): a tag moves
     under the register and says nothing about the libc it holds, so the stamp
     and a figure's marker name what the image answers. **A place answering
     with no glibc is refused**, since the apparatus is a glibc one and the
     figure would otherwise publish under a libc nothing named."""
-    argv = ["getconf", "GNU_LIBC_VERSION"]
-    if where != HOST:
-        argv = [*cfg.container_argv(), "run", "--rm", where, *argv]
+    argv = [*cfg.container_argv(), "run", "--rm", where, "getconf", "GNU_LIBC_VERSION"]
     try:
         out = run(argv, capture=True)
     except subprocess.CalledProcessError:
@@ -7055,16 +7052,37 @@ _MICRO_ROWS = (
 
 VIEW_BATCH = 1024
 
+#: `nested-decode-micro`'s program: criterion's `nested` group of
+#: `benches/decoders.rs`.
+NESTED_BENCH = release.Bench("pgdump_query", "decoders", "nested")
+
+
+def bench_in_image(session: Session, figure: str, bench: release.Bench) -> Path:
+    """`bench` run in the release image (`release.step_bench`), recorded as
+    where `figure` ran, and the directory criterion wrote its estimates to.
+
+    **A bench runs in the release image**, not in `Config.image` as a built
+    binary does: `cargo bench` builds and runs in one step, so the compiler
+    that builds it and the glibc it runs under are both the release image's,
+    itself built from the register image's digest. The image's tag is asked for
+    its glibc as any place is (`Session.ran_in`). A dry run builds no image, so
+    it names the tag the image's inputs give."""
+    cfg = session.cfg
+    container = cfg.container_argv()
+    if cfg.dry_run:
+        tag = release.image_tag(release.image_inputs())
+    else:
+        tag = release.ensure_image(container)
+    session.ran_in(figure, tag)
+    if not cfg.dry_run:
+        release.prepare_state()
+        run(release.run_in_image(container, tag, bench.step()), cwd=REPO)
+    return bench.criterion_root(release.STATE / "target")
+
 
 def run_nested_decode_micro(session: Session) -> str:
     cfg = session.cfg
-    session.ran_in("nested-decode-micro", HOST)
-    if not cfg.dry_run:
-        run(
-            ["cargo", "bench", "-p", "pgdump_query", "--bench", "decoders", "--", "nested"],
-            cwd=REPO,
-        )
-    root = REPO / "target/criterion/nested"
+    root = bench_in_image(session, "nested-decode-micro", NESTED_BENCH) / "nested"
     if cfg.dry_run:
         return "(dry run: criterion not executed)"
     view_ns = criterion_median_ns(root, "nested/text_view_x1024") / VIEW_BATCH
@@ -11356,10 +11374,10 @@ def marker_glibc(whole_sweep: bool, stamped: str | None, ran_under: str | None) 
 
     The stamp names the register image's, so a figure of the sweep whose
     program ran there names nothing — `taken at`'s convention, the datum
-    present only where it differs. It differs for a program run in another
-    place (`cargo bench` on the host), and for
-    every figure of a sitting of its own, whose marker already names the commit
-    the stamp does not and names the glibc beside it."""
+    present only where it differs. It differs for a program run in an image
+    answering another glibc, and for every figure of a sitting of its own,
+    whose marker already names the commit the stamp does not and names the
+    glibc beside it."""
     if ran_under is None or (whole_sweep and ran_under == stamped):
         return None
     return ran_under
@@ -11918,11 +11936,11 @@ class ReplaySession(Session):
     reproduces the byte counts exactly while needing no cache, no tmpfs and no
     disk. `test_measure.py` is what holds renderers to that.
 
-    **The three are host steps nothing here refuses**, and their cells are no
+    **The three are steps nothing here refuses**, and their cells are no
     reading of the sitting: `run_per_block_quadratic`'s `count_saves` and
     `run_preamble_prepass`'s header search read the sparse stand-ins, and
-    `run_nested_decode_micro` runs `cargo bench` on today's host. A re-render's
-    fold-in takes those three sections from the sitting's own
+    `run_nested_decode_micro` runs `cargo bench` in today's release image. A
+    re-render's fold-in takes those three sections from the sitting's own
     `tables-as-taken.md`, or from a re-take.
     """
 

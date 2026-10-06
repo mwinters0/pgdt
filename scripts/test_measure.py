@@ -1318,7 +1318,7 @@ class Glibc(unittest.TestCase):
         self.assertEqual(measure.Config().image, measure.release.pinned_base(dockerfile))
         self.assertNotIn("PGDT_MEASURE_IMAGE", inspect.getsource(measure))
 
-    def test_an_image_is_asked_in_a_container_and_the_host_is_asked_directly(self):
+    def test_an_image_is_asked_in_a_container_and_nothing_runs_on_the_host(self):
         cfg = measure.Config()
         asked = []
 
@@ -1328,13 +1328,13 @@ class Glibc(unittest.TestCase):
 
         with unittest.mock.patch.object(measure, "run", fake):
             self.assertEqual(measure.glibc_of(cfg, "some:image@sha256:ab"), "2.41")
-            self.assertEqual(measure.glibc_of(cfg, measure.HOST), "2.41")
         self.assertEqual(
-            asked[0],
-            [*cfg.container_argv(), "run", "--rm", "some:image@sha256:ab",
-             "getconf", "GNU_LIBC_VERSION"],
+            asked,
+            [[*cfg.container_argv(), "run", "--rm", "some:image@sha256:ab",
+              "getconf", "GNU_LIBC_VERSION"]],
         )
-        self.assertEqual(asked[1], ["getconf", "GNU_LIBC_VERSION"])
+        # No figure's program runs on the host, so there is no host place to ask.
+        self.assertFalse(hasattr(measure, "HOST"))
 
     def test_a_place_that_is_no_glibc_is_refused(self):
         # musl's `getconf` has no GNU_LIBC_VERSION and exits non-zero.
@@ -1394,8 +1394,53 @@ class Glibc(unittest.TestCase):
         self.assertEqual(session.places["dynamic-filter-topk"], {cfg.image})
         # `--dry-run` asks nothing: it must not need root or a runtime.
         self.assertEqual(session.glibcs, {})
-        measure.run_nested_decode_micro(session)
-        self.assertEqual(session.places["nested-decode-micro"], {measure.HOST})
+        with unittest.mock.patch.object(measure.release, "ensure_image") as built:
+            measure.run_nested_decode_micro(session)
+        built.assert_not_called()
+        self.assertEqual(
+            session.places["nested-decode-micro"], {measure.release.image_tag(measure.release.image_inputs())}
+        )
+
+    def test_a_bench_runs_in_the_release_image_and_is_read_where_criterion_wrote(self):
+        cfg = measure.Config()
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        order: list[str] = []
+        ran: list[list[str]] = []
+        roots: set[Path] = set()
+
+        def median(root, _full_id):
+            roots.add(root)
+            return 100.0
+
+        def asked(_cfg, where):
+            order.append(f"asked {where}")
+            return "2.41"
+
+        def fake_run(argv, **_kwargs):
+            order.append("ran")
+            ran.append(list(argv))
+            return ""
+
+        with unittest.mock.patch.object(measure.release, "ensure_image", return_value="pgdt-release:t"), \
+                unittest.mock.patch.object(measure.release, "prepare_state"), \
+                unittest.mock.patch.object(measure, "glibc_of", asked), \
+                unittest.mock.patch.object(measure, "run", fake_run), \
+                unittest.mock.patch.object(measure, "criterion_median_ns", median):
+            measure.run_nested_decode_micro(session)
+        # The image is asked its glibc before the bench runs, and is where it ran.
+        self.assertEqual(order, ["asked pgdt-release:t", "ran"])
+        self.assertEqual(session.places["nested-decode-micro"], {"pgdt-release:t"})
+        self.assertEqual(
+            ran, [measure.release.run_in_image(cfg.container_argv(), "pgdt-release:t",
+                                       measure.NESTED_BENCH.step())],
+        )  # fmt: skip
+        self.assertEqual(
+            ran[0][-5:],
+            ["bench", "--package=pgdump_query", "--bench=decoders", "--filter=nested", "--inside"],
+        )
+        # The estimates are read out of the release state, where the image's
+        # `CARGO_TARGET_DIR` puts criterion's output, never the host's `target/`.
+        self.assertEqual(roots, {measure.release.STATE / "target" / "criterion" / "nested"})
 
     def test_a_place_is_asked_once_and_before_its_first_run(self):
         cfg = measure.Config()
@@ -1415,7 +1460,7 @@ class Glibc(unittest.TestCase):
                 measure.Config(), {"readings": {}, "runs": []}, Path(tmp), lambda _m: None
             )
             with unittest.mock.patch.object(measure, "glibc_of") as asked:
-                session.ran_in("nested-decode-micro", measure.HOST)
+                session.ran_in("nested-decode-micro", "pgdt-release:0123456789abcdef")
             asked.assert_not_called()
 
     def test_the_check_wants_a_glibc_in_the_stamp_and_in_every_sitting_marker(self):
