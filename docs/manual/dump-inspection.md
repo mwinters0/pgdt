@@ -779,7 +779,7 @@ buffers, plus 256 MiB for everything a scan holds outside them, plus the
 statistics the cache holds — still fits in four fifths of the allowance, and reads with that many. The
 256 MiB is an estimate rather than a limit pgdt enforces, and a 128 MiB-block
 `.xz` read by four or five workers holds more than that outside its buffers,
-so it leaves somewhat less than a fifth free. In a 1 GiB container a
+so it can leave well under a fifth free. In a 1 GiB container a
 24 MiB-block `.xz` reads with ten readers rather than the eleven the ceiling
 alone would buy. **Below about 640 MiB the fifth costs you nothing**, because
 the 384 MiB already taken off the top is the tighter of the two; above it, it
@@ -1044,7 +1044,7 @@ asked for one, and it names its own origin the same way:
   being the same.
 - `(discovered: <file> states a limit of N byte(s))` — what this *dump* asks
   for, inside a cgroup limit less the 384 MiB reserve and the fifth of the
-  limit a flagless run leaves free; it is the smallest of the three and not the
+  limit a flagless run is held to leave free; it is the smallest of the three and not the
   ceiling itself. The cgroup file is named because a
   `memory.high` throttle and a `memory.max` kill are different things and either
   can be set on a parent cgroup you did not create.

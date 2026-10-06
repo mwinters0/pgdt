@@ -319,9 +319,9 @@ than reading as a phase nobody has sliced.
   `query`, every `wide-xz24` `query` leg from 1 GiB up killed — glibc's
   readings, as is the reserve's choice. On mimalloc, `reserve`'s 128 MiB-block
   legs from four readers overrun `MEMORY_UNPOOLED_BOUND` by `KD111`'s unit and
-  one mimalloc keeps, and in `-m 1536m` leave less than `MEMORY_MARGIN_PERCENT`,
-  their `system` twins inside both. **(b) owned by P23**, which re-takes them,
-  sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
+  one mimalloc keeps, a worst rep the reserve and, in `-m 1536m`, the margin;
+  their `system` twins hold inside all three. **(b) owned by P23**, which
+  re-takes them, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its

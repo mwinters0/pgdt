@@ -59,14 +59,15 @@ quotes a number: every figure is in
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
 && uv run measure.py --stale` names what is red and why. **Every register
-figure but `session-drift` was taken in one sitting at `1c9fc9be`, on the
-shipped mimalloc build in `archlinux:base`, with its binaries staged on
-tmpfs**, the scan figures at the metadata level and the query figures over a
-data-level cache. `session-drift` is the `da05a72` pair's, and `reserve`'s
-128 MiB-block `bound` cells are a reading `KD34` names.
-What only something other than a sweep clears: `session-drift`, which only a
-second sweep on a first's commit re-takes, and the koji section, outside the
-register and red, which only a run on the HDD clears. Red is the resting
+figure but `session-drift` was taken in one sitting at `3a34f062`, on the
+shipped mimalloc build made in the release image and run in `debian:trixie`
+under its glibc, with its binaries staged on tmpfs**, the scan figures at the
+metadata level and the query figures over a data-level cache.
+`session-drift` is the `da05a72` pair's, and `reserve`'s 128 MiB-block `rule`
+cells are a reading `KD34` names.
+What a sweep does not re-take: `session-drift`, which only a second sweep on
+a first's commit does, and the koji section, outside the register and red,
+which only a run on the HDD clears. Red is the resting
 state, and a red figure is re-taken before anything reasons from it
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
@@ -82,7 +83,7 @@ instrument can see").
 Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 
 - [x] **29.1** The image and its floor: `rust-toolchain.toml` pinning the compiler; the `debian:trixie` image, pinned by digest, cross-building both targets; a check that the binary needs no `GLIBC_` version past the image's; the x86-64 suite run in the image — [notes](../design/roadmap-P29.1-image-notes.md)
-- [ ] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — the apparatus has landed, every timed binary built in the release image and run in its base, and `nested-decode-micro`'s bench built and run in the release image itself; the sitting remains, taken from a commit carrying the apparatus and `M219` — [notes](../design/roadmap-P29.2-register-notes.md)
+- [x] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — [notes](../design/roadmap-P29.2-register-notes.md)
 - [ ] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list
 - [ ] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/`
 - [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
@@ -119,3 +120,18 @@ beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
 
+
+- **29.2 is ticked and P29 goes on with `reserve`'s model refuted at 128 MiB
+  blocks.** The release-image sitting puts the worst rep of each 128 MiB-block
+  flagless leg at four and five readers over `MEMORY_RESERVE` — the `rule`
+  band, an arrangement the discovery cannot keep inside its allocation — and
+  leaves `-m 1536m` short of `MEMORY_MARGIN_PERCENT`; nothing is killed on
+  either build and the `system` twins stay inside the bound
+  ([`../design/measurements.md`](../design/measurements.md), `reserve`). The
+  figure publishes, a kill alone keeping one out, and the finding is routed to
+  `KD34`, owned by P23, as the previous sitting's `bound`-band reading was:
+  29.2's row is the move and its sitting, both delivered, and the constants
+  are P23's to re-fit under mimalloc. So v0.1.0 would ship the reserve as it
+  stands. Reconsidering puts P23's reserve half, or an interim
+  `MEMORY_RESERVE`, ahead of 29.6 — reordering the roadmap index, which a
+  stand-in does not do.

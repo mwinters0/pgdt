@@ -1,6 +1,6 @@
 # P29.2 notes — the register moves to the image
 
-What the sitting and the later slices inherit from the move. The mechanism is
+What the move's sitting found and what the later slices inherit. The mechanism is
 `scripts/measure.py` (`register_image`, `build_in_image`, `image_target_dir`,
 `bench_in_image`, `apparatus_preflight`) and `scripts/release.py` (`Build`,
 `build_step`, `Bench`, `step_bench`, `run_in_image`'s `target`), whose
@@ -9,62 +9,50 @@ docstrings say how each step runs; the readings below are
 there wrote by calling the harness's own build functions; `bench.log`, one
 `release.py bench` of the figure's group, not a figure).
 
-## What remains: the sitting
+## The sitting
 
-**The apparatus has landed and no figure has been taken on it.** `M219` has
-given `nested-decode-micro`'s bench `pgdt`'s allocator, so the sitting takes
-that figure on mimalloc, the first of its readings not on glibc's `malloc`
-([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
-"`M219`: the benches take `pgdt`'s allocator"). The sitting
-is a whole sweep from a commit carrying this change — a figure is never taken
-from a tree carrying its own uncommitted apparatus — launched detached per
-`CLAUDE.md`, "Long-running processes", and handed off per
-`.claude/skills/gosub/handoff.md`:
+**Every figure but `session-drift` was re-taken at `3a34f062` and folded in
+whole, re-stamping `measurements.md`**: `runs/measure-20261006T193318/`
+(`tables.md`, `raw.json`, `log.txt`, the instrument reports under
+`instrument/`), launched detached from a tree carrying only the history entry
+and the STATUS line, neither a declared path. No leg was killed on either
+build, so both gates pass; `parallel-scan-throughput` came in with the rest
+and its marker carries no sitting of its own. The two sittings either side of
+the move differ in the build environment, the image, the glibc and the
+timer's resolution at once, so a cell that moved against `1c9fc9be` names
+none of them alone, and the doc's prose says so where it sets the two side by
+side.
 
-```sh
-cd scripts && uv run measure.py --all
-```
+What the sitting found, each filed beside the figure it is read off:
 
-Its tables fold into `measurements.md` whole, re-stamping it: every figure but
-`session-drift` moves from glibc 2.44 to the image's 2.41, so nothing in the
-doc may be set beside a reading of the new sitting except through its own
-stamp. `parallel-scan-throughput`'s sitting of its own is taken with the rest.
-
-## What the sitting inherits
-
-- **The first sitting builds four binaries from scratch in the image**: the
-  `system` and `jemalloc` legs and the instrument, each in its own target
-  directory under `alloc-builds/image/`, and the `xz_decode` example in the
-  release state beside the shipped build. `builds.log` is one such pass on
-  this tree, each build's wall clock beside it, every binary's `--version`
-  read back as its leg, and the preflight passing in the image under glibc
-  2.41; a later sitting's builds are incremental.
-- **`nested-decode-micro` runs in the release image itself**, not its base:
-  `cargo bench` builds and runs in one step, so the image's tag is the place
-  `glibc_of` asks, and the marker names nothing while that answers the
-  stamp's glibc. criterion writes under the release state's target directory,
-  `target/release-image/target/criterion/`, which the figure reads; the
-  host's `target/criterion/` is read by nothing now. The bench shares the
-  shipped build's target triple and directory, so a sitting compiles only
-  `pgdump_query`'s dev-dependencies and the bench beside it.
-- **Every one is held to the floor** by `release.py`'s build step, and the
-  bench's executable by its bench step before it runs: a variant needing a
-  `GLIBC_` version past 2.41 fails its build rather than its first rep. Each
-  needed 2.39 at most, `xz_decode` 2.34.
-- **The timer resolves a millisecond, not a microsecond**: trixie's bash is
-  5.2, which clamps `TIMEFORMAT`'s six places to three (`measure.TIME_FORMAT`
-  already said an image's bash decides it). Every table quotes three places
-  below two seconds, so no rendered cell loses a digit; the `--arms` reports
-  print six, the last three now zeros.
-- **glibc's arena ceiling moves with it**: 2.41 computes the limit as `8 x
-  ncores` where 2.44 computed `max(8, ncores)` (`runtime-invariants.md`,
-  "RT10"), so the `system` leg, the gate's twin and the instrument may keep
-  more arenas than the stamped sitting's did at the highest worker counts —
-  the sentence in `measurements.md`, "The apparatus" naming `8 x ncores` is
-  the one the sitting makes true. Where a `system` reading moves, this is a
-  candidate term before any other.
-- **koji's wrap leg still exits 143**: the base image sets no `STOPSIGNAL`
-  either.
+- **`reserve`'s model is refuted at 128 MiB blocks**: the worst rep of each
+  flagless leg at four and five readers lands over `MEMORY_RESERVE`, the
+  `rule` band, its other two reps in the `bound` band the previous stamp read,
+  and the `system` twins inside the bound. The figure publishes, a kill alone
+  keeping one out; the finding is `KD34`'s, rewritten to it, and the call to
+  go on with P29 is under STATUS's "Decisions worth another look".
+- **The instrument legs at 128 MiB blocks read both of `KD34`'s units** — the
+  program's, `KD111`, and the one mimalloc keeps — and never the worst rep's
+  excess, which nothing names (`measurements.md`, "What a scan holds above the
+  budget it was given").
+- **The warm `INSERT` scan's multiple reproduces** on the release image's
+  build, so the move the previous stamp left unattributed is not that
+  sitting's build environment, image or glibc (`measurements.md`, "Scan
+  throughput by input shape").
+- **glibc 2.41's arena ceiling is read**: the instrument opens more arenas at
+  twenty-four readers than 2.44's ceiling allows (`runtime-invariants.md`,
+  "RT10", where the observation is recorded).
+- **`nested-decode-micro`'s first reading on mimalloc** moves `render`, the
+  side that allocates, and starts its copy control's series afresh
+  (`measurements.md`, "Nested decode costs what it copies").
+- **Every warm `dd` floor reads faster than the previous stamp's**, a shared
+  move in the direction that disqualifies nothing, unattributed between the
+  two images (`measurements.md`, "The floor is read directionally").
+- **The `allocator` table's apparatus line carries a discarded rep**: its CPU
+  stall is a `dd` rep the contention gate threw out and re-took, since
+  `measure.apparatus_note` reads every run a figure's records hold, retakes
+  included (`log.txt`, the `allocator` stage's `DISCARDED` line). No reading in
+  the table was taken under it.
 
 ## What later slices inherit
 
@@ -75,6 +63,28 @@ stamp. `parallel-scan-throughput`'s sitting of its own is taken with the rest.
 - **The release image carries `make`**, for the `jemalloc` leg alone, under
   the spec's admission rule
   ([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image").
+- **A sitting builds four binaries in the image besides the shipped one**: the
+  `system` and `jemalloc` legs and the instrument, each in its own target
+  directory under `alloc-builds/image/`, and the `xz_decode` example in the
+  release state beside the shipped build. `builds.log` is the first such pass,
+  each binary's `--version` read back as its leg; the sitting's own were
+  incremental on those.
+- **`nested-decode-micro` runs in the release image itself**, not its base:
+  `cargo bench` builds and runs in one step, so the image's tag is the place
+  `glibc_of` asks, and the marker names nothing while that answers the
+  stamp's glibc. criterion writes under the release state's target directory,
+  `target/release-image/target/criterion/`, which the figure reads; the
+  host's `target/criterion/` is read by nothing.
+- **Every timed binary is held to the floor** by `release.py`'s build step,
+  and the bench's executable by its bench step before it runs: a variant
+  needing a `GLIBC_` version past the image's fails its build rather than its
+  first rep.
+- **The timer resolves a millisecond**: trixie's bash is 5.2, which clamps
+  `TIMEFORMAT`'s six places to three. Every table quotes three places below
+  two seconds, so no rendered cell loses a digit; the `--arms` reports print
+  six, the last three zeros.
+- **koji's wrap leg still exits 143**: the base image sets no `STOPSIGNAL`
+  either.
 
 ## Negative results
 

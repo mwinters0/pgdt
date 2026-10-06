@@ -1196,17 +1196,19 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// `runs/20.8-reserve-attribution-20260916-1857/`), and the shipped build's
 /// Rust heap is mimalloc's, C's alone glibc's (`docs/design/decisions.md`,
 /// "D13"), so neither reads what the shipped build holds. What the shipped
-/// build's flagless legs do read is [`MEMORY_UNPOOLED_BOUND`] falling short:
-/// at 128 MiB blocks from four readers the remainder above the charge overruns
-/// it while staying inside this value, where the `system` build's same legs,
-/// in the same sitting, stay inside the bound (`measurements.md`, `reserve`).
-/// The overrun is two units: one the program holds on every allocator
-/// ([`WorkerMemory`], `KD111`), and one mimalloc keeps after the program has
-/// freed it, in some reps and on the shipped build alone. In `-m 1536m` that
-/// leaves the shipped build's worst rep short of [`MEMORY_MARGIN_PERCENT`],
-/// where its `system` twin is not; nothing is killed on either build
-/// (`measurements.md`, `reserve`). P23 re-takes both readings under mimalloc
-/// on the two-heap instrument and sets both constants from them.
+/// build's flagless legs do read is both constants falling short: at 128 MiB
+/// blocks from four readers the remainder above the charge overruns
+/// [`MEMORY_UNPOOLED_BOUND`] in every rep and this value in the worst, where
+/// the `system` build's same legs, in the same sitting, stay inside the bound
+/// (`measurements.md`, `reserve`). The overrun of the bound is two units: one
+/// the program holds on every allocator ([`WorkerMemory`], `KD111`), and one
+/// mimalloc keeps after the program has freed it, on the shipped build alone;
+/// the worst rep holds nearly a third, which no instrument rep has reached and
+/// nothing names. In `-m 1536m` that leaves the shipped build's worst rep
+/// short of [`MEMORY_MARGIN_PERCENT`], where its `system` twin is not; nothing
+/// is killed on either build (`measurements.md`, `reserve`). P23 re-takes both
+/// readings under mimalloc on the two-heap instrument and sets both constants
+/// from them.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as

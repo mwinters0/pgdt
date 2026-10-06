@@ -660,7 +660,10 @@ is commit `93e6135`, "malloc: Reduce maximum arenas". `malloc/malloc.c`,
 `MALLOC_ARENA_MAX` sets at startup. Observed, not proved: the `reserve` figure's
 instrument legs, under `archlinux:base`'s glibc with only C allocating through
 it, read the readers plus one or two arenas from 1 to 17 readers and exactly 24
-at 24 readers — this host's ceiling of `max(8, ncores)`.
+at 24 readers — this host's ceiling of `max(8, ncores)`; under the register
+image's base, `debian:trixie`'s glibc 2.41, the same legs read the readers plus
+one to three at every count and 27 at 24 readers, past that ceiling and inside
+`8 × ncores`.
 
 **Scope limit.** glibc only: `jemalloc` and `mimalloc` (D13) have no such
 arenas. `ncores` is a CPU count, which a CFS quota such as `--cpus` does not
@@ -669,7 +672,9 @@ that calls it overrides the operator's setting unless it reads the variable
 first. How much a retained arena holds is not part of the claim.
 
 **Verified against:** glibc 2.44+r24 (Arch, the host; source read); glibc 2.44
-(`archlinux:base`; observed through the instrument).
+(`archlinux:base`; observed through the instrument); glibc 2.41
+(`debian:trixie`, the register's image; observed through the instrument at
+`3a34f062`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
 refusal, which is not mechanical because under D12's `current_thread` runtime

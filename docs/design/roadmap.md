@@ -779,11 +779,12 @@ What it inherits:
   account is this phase's to draw. So is the fate of `reserve`'s
   `MALLOC_ARENA_MAX` mechanism leg: it was registered to read glibc's mmap
   threshold retaining block buffers, and those are mimalloc's now, the cap
-  reaching only what C allocates. The one sitting taken on the shipped build
-  already faults the inner constant: `reserve`'s 128 MiB-block legs at four
-  and five readers land in the `bound` band, over `MEMORY_UNPOOLED_BOUND`,
-  where their `system` twins in the same sitting do not, and the worse leaves
-  less of its allocation than `MEMORY_MARGIN_PERCENT` promises
+  reaching only what C allocates. Both sittings taken on the shipped build
+  fault the inner constant: `reserve`'s 128 MiB-block legs at four and five
+  readers land over `MEMORY_UNPOOLED_BOUND`, where their `system` twins in the
+  same sitting do not, and the worse leaves less of its allocation than
+  `MEMORY_MARGIN_PERCENT` promises; the second, on the release image's build,
+  puts each leg's worst rep over `MEMORY_RESERVE` too, in the `rule` band
   (`measurements.md`, `reserve`). The shortfall blocks nothing, the
   allocator's gate reading a kill alone (`measurements.md`, "The apparatus"),
   so the unit mimalloc keeps there is this phase's, as is setting the bound
@@ -801,7 +802,7 @@ What it inherits:
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` were re-taken at `1c9fc9be`, on the shipped
+  and `statistics-pruning` were re-taken at `3a34f062`, on the shipped
   mimalloc build and against the reserve as it stands, so a settled constant
   re-takes them. `reserve`'s stated axis — a
   typed `--jobs 24` under `--memory` — is where the margin lowers only the
