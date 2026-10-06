@@ -56,7 +56,7 @@ clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 datafusion-cli-pgdump = { version = "0.1.0", path = "../datafusion-cli-pgdump" }
 futures = "0.3.34"
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
-# second one writes into. Nothing in a default build links it.
+# second one writes into. A default build does not depend on it directly.
 libc = { version = "0.2.189", optional = true }
 # `introspect` only: `mi_stats_get_json` and `mi_free`, behind `extended`, as
 # upstream DataFusion's benchmarks read mimalloc's statistics. The version is

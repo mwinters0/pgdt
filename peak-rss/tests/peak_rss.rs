@@ -71,7 +71,7 @@ fn no_command_is_a_usage_error() {
 }
 
 /// The reading is the child's peak: a child that touched `CHILD_BYTES` reads
-/// at least that much, and the wrapper's own share sits under it.
+/// at least that much.
 #[test]
 fn the_reading_is_the_childs_peak() {
     let me = std::env::current_exe().expect("the test binary's path");

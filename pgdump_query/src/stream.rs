@@ -106,7 +106,7 @@ use crate::{Error, Result};
 /// State for a `COPY` block whose table matches the query: the batcher
 /// accumulating its rows, `QueryOptions::filter` resolved against this block's
 /// own schema (a table's blocks can order its columns differently), and the database this block
-/// is attributed to (`docs/design/decisions.md`, "D49"). Each
+/// is attributed to. Each
 /// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
 /// **unprojected** column list — plus the typed comparison it makes. Shared
 /// with the block's [`PlannedBlock`], so every piece of a block evaluates one
@@ -351,7 +351,7 @@ fn query_fingerprint(
 /// then each child in order — so two trees of different shape cannot collide
 /// by carrying the same terms. Two conjunctions differing only in term order
 /// fingerprint differently; canonicalizing instead would make the stamp depend
-/// on an ordering rule of its own (`docs/design/decisions.md`, "D49").
+/// on an ordering rule of its own.
 fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
     use std::hash::Hash;
 
@@ -421,7 +421,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// the next one starts**.
 ///
 /// That is what keeps interstitial blank lines attributed to the span before
-/// them (`docs/design/decisions.md`, "D31") even across a stopping point. A previous scan
+/// them (`docs/design/decisions.md`, "D48") even across a stopping point. A previous scan
 /// that stopped on a block's `end_offset` left that block's span ending
 /// exactly there; the blank line that follows belongs to it, not to whatever
 /// the next segment happens to recognize first.
@@ -2316,7 +2316,7 @@ impl<'a> TableStream<'a> {
 /// Build the [`ResolvedSchema`] for a table-matching block — the actual batch
 /// schema a [`RowBatcher`] built from it carries (see
 /// [`TableStream::resolved_schema`]) — scoped to `database`, the block's own
-/// attribution, never a guess (`docs/design/decisions.md`, "D49"). Its
+/// attribution, never a guess. Its
 /// fields are the header's list, in the order its rows carry them, and
 /// `census` is one entry per name, taken
 /// from the union over **every block this stream will replay**, a parameter
@@ -5484,9 +5484,8 @@ impl TablePartitions {
 
     /// A fresh stream over partition `partition`, cutting batches at
     /// `max_rows` rows — the one batching knob a scheduler states only when it
-    /// runs the partition, and outside the plan it was cut under
-    /// (`docs/design/decisions.md`, "D49"). Each call starts the partition from
-    /// its beginning; a partition past [`Self::len`] is an empty stream.
+    /// runs the partition, and outside the plan it was cut under. Each call
+    /// starts the partition from its beginning; a partition past [`Self::len`] is an empty stream.
     pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
         self.sub_stream(partition, max_rows, None)
     }

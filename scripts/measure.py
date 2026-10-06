@@ -7528,7 +7528,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "`dynamic-filter-join`'s startup leg reads.\n\n"
         f"Every row states the allowance `{allowance}` — `--memory {allowance}` on a `parse` "
         f"leg, `SET pgdump.memory = {allowance}` run ahead of the query in the same process "
-        f"on a provider leg — which leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in "
+        f"on a provider leg — which caps read buffers at {_fmt_bytes(PARALLEL_BUDGET)}, in "
         f"a {PARALLEL_MEMORY} container — **not** the "
         "register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The "
         "one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` "
@@ -7681,7 +7681,7 @@ def run_parallel_peak_rss(session: Session) -> str:
     notes = (
         "\n\nEach cell is peak resident set, and the change from that leg's own one-job row. "
         f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, the allowance "
-        f"that leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in a "
+        f"that caps read buffers at {_fmt_bytes(PARALLEL_BUDGET)}, in a "
         f"{PARALLEL_MEMORY} container — an apparatus "
         "departure from the register's 512 MB, which is smaller than the budget under "
         "test. The one-job row states the same allowance — `--jobs 1` is "

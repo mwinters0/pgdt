@@ -16,12 +16,13 @@
 // under the License.
 
 // This file is `datafusion-cli/src/main.rs` from DataFusion 55.1.0, with the
-// upstream tests left out (they read upstream's test data) and every change
-// of ours marked `pgdump:`, kept as this crate's library so a caller can embed
-// the CLI: its `Args` and entry point are exported, and a binary — `pgdt sql`,
-// or an embedder's — parses and calls it. A downstream `main` of its own is upstream's
-// endorsed way to extend the CLI (`datafusion-cli/examples/cli-session-context.rs`),
-// and `src/pgdump.rs` holds everything else. At each DataFusion major, diff upstream's new `main.rs`
+// upstream tests left out (most read upstream's test data) and every change of
+// ours but rustfmt's reflowing marked `pgdump:`, kept as this crate's library
+// so a caller can embed the CLI: its `Args` and entry point are exported, and a
+// binary — `pgdt sql`, or an embedder's — parses and calls it. A downstream
+// `main` of its own is upstream's endorsed way to extend the CLI
+// (`datafusion-cli/examples/cli-session-context.rs`), and `src/pgdump.rs` holds
+// everything else. At each DataFusion major, diff upstream's new `main.rs`
 // against 55.1.0's and re-apply the marked lines. The provider's tests that pin
 // upstream behaviour fail on purpose when it moves: `RESET` reaching only
 // `datafusion.` keys (`datafusion-pgdump/tests/settings.rs`), and a nested

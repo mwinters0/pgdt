@@ -3,8 +3,9 @@
 `pgdt sql` is [DataFusion](https://datafusion.apache.org/)'s own SQL shell,
 `datafusion-cli` 55.1.0, with a `pg_dump` file's tables available to it.
 Everything `datafusion-cli` does, it does — the REPL, `-c`, `-f`, `--format`,
-`--memory-limit` — and it adds two ways to attach a dump. `pgdt --version`
-names the DataFusion release it carries.
+`--memory-limit` — and it adds two ways to attach a dump. It has no
+`--version` of its own: `pgdt --version` names the DataFusion release it
+carries.
 
 ```sh
 pgdt parse --source koji.dump        # once: builds koji.dump.dtcache

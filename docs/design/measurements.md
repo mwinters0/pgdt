@@ -1136,9 +1136,9 @@ report labels which each family covers**: the counter and mimalloc see Rust's
 and retention, and glibc sees C alone, so `liblzma`'s dictionaries are there
 and nowhere else; only the two allocators' sum is the heap. A report labelling
 glibc `whole-process` was taken with the counter over glibc, the Rust heap
-inside it, and is read as one heap. How to build it, what each
-line means and why `--version` refuses to let it be timed is
-[`decisions.md`](decisions.md), "D13". **The counter also attributes
+inside it, and is read as one heap. How to build it and what each
+line means is `pgdt/src/introspect.rs`; why a build whose `--version` names it
+is never timed is [`decisions.md`](decisions.md), "D13". **The counter also attributes
 statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
 same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
@@ -3013,7 +3013,7 @@ Each cell is wall clock, the plaintext rate it implies, and the speedup over tha
 
 **The `parse` legs run `pgdt parse` at `--jobs` N; the provider legs run `pgdt sql -c` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=N`**, the session's `target_partitions`, which the provider plans a scan's sub-streams against and DataFusion polls together. `pgdt query` is not timed: its in-order merge reads one sub-stream at a time past its first round ([`../status/deficiencies.md`](../status/deficiencies.md), `KD57`). The query is `SELECT count(id), …, count(v_escaped) FROM public.perf WHERE id IS NOT NULL`, a `count` of each of the table's 16 columns: every column decoded typed and one row out, the filter keeping every row and leaving the scan's exact NULL counts estimates, so no count is answered without the rows (`docs/design/decisions.md`, "D89"). Every provider cell answered alike, byte for byte, at every count over both files. A provider cell is read against its own leg and never against a `parse` cell: each carries the program's startup and the dump's registration, which `dynamic-filter-join`'s startup leg reads.
 
-Every row states the allowance `2550136832` — `--memory 2550136832` on a `parse` leg, `SET pgdump.memory = 2550136832` run ahead of the query in the same process on a provider leg — which leaves 2.00 GiB for read buffers, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, as is a provider scan planned at one partition, so an `.xz` leg's one-worker row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
+Every row states the allowance `2550136832` — `--memory 2550136832` on a `parse` leg, `SET pgdump.memory = 2550136832` run ahead of the query in the same process on a provider leg — which caps read buffers at 2.00 GiB, in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-worker row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying it, as is a provider scan planned at one partition, so an `.xz` leg's one-worker row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
 
 **A plain leg's count is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
 
@@ -3121,7 +3121,7 @@ attributed. Through `pgdt`, no plain scan splits by default
 | 16 | **985.69 MiB** (972.87–992.04) · +856.55 MiB | **2325.17 MiB** (2271.09–2396.85) · +1780.10 MiB |
 | 24 | **1456.24 MiB** (1446.58–1457.83) · +1327.10 MiB | **2401.54 MiB** (2398.21–2486.21) · +1856.47 MiB |
 
-Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--memory 2550136832`, the allowance that leaves 2.00 GiB for read buffers, in a 4g container — an apparatus departure from the register's 512 MB, which is smaller than the budget under test. The one-job row states the same allowance — `--jobs 1` is `Parallelism::Serial` carrying it — so every row on both legs block-decodes, the one-job row with one reader.
+Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--memory 2550136832`, the allowance that caps read buffers at 2.00 GiB, in a 4g container — an apparatus departure from the register's 512 MB, which is smaller than the budget under test. The one-job row states the same allowance — `--jobs 1` is `Parallelism::Serial` carrying it — so every row on both legs block-decodes, the one-job row with one reader.
 
 - 24 MiB blocks: `control_xz`, 563.8 MB compressed
 - 128 MiB blocks: `control_xz128`, 560.5 MB compressed
@@ -3184,7 +3184,8 @@ Apparatus over every run in this table: CPU stall ≤2.16%, I/O stall ≤8.42%, 
 ## What a scan holds above the budget it was given
 
 A flagless `pgdt` scan discovers its own memory limit, keeps
-`io::MEMORY_RESERVE` back from it and solves the remainder for a worker count
+`io::MEMORY_RESERVE` back from it and solves the remainder, held under
+`io::MEMORY_MARGIN_PERCENT`, for a worker count
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). This
 figure is what says that arithmetic survives contact with a real cgroup: it
 runs the shipped binary flagless at six allocations and two block sizes, and

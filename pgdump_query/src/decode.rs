@@ -685,7 +685,7 @@ fn split_era(s: &str) -> (&str, bool) {
 /// A date or time part as `strtoint` reads it once `ParseDateTime` has split
 /// the text at its signs: ASCII digits only, at least one. A sign is where the
 /// server starts a zone (`12:-5:00` is 12:00 at zone `-5`, `+2020-01-01`
-/// refused), so a part carrying one is refused here rather than read as a
+/// refused), so a part carrying one is not read here, rather than read as a
 /// signed number — a shortfall where the server reads it
 /// (`docs/design/decisions.md`, "D55"). Past `i64` is `None` too.
 fn unsigned_part(s: &str) -> Option<i64> {
@@ -3880,8 +3880,8 @@ mod tests {
         assert!(!text.starts_with("\\x"));
     }
 
-    /// What `byteaout` never writes is refused (`docs/design/decisions.md`,
-    /// "D55"), though `byteain` reads some of it: a printable byte in octal,
+    /// What `byteaout` never writes is not read, a shortfall where `byteain`
+    /// reads it (`docs/design/decisions.md`, "D55"): a printable byte in octal,
     /// an octal escape past a byte, one cut short, a lone backslash, a byte
     /// outside space to `~` written bare.
     #[test]

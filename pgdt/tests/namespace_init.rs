@@ -4,8 +4,9 @@
 //! `ctrl_c` answers there (`docs/design/decisions.md`, "D26";
 //! `docs/design/runtime-invariants.md`, "RT19").
 //!
-//! Each run is held at a request the oracle stalls, so the signal lands in a
-//! wait rather than racing the start-up, and the oracle's log says when.
+//! Each run is held at a request its origin stalls — the oracle's for the
+//! native commands, a listener that never answers for `sql` — so the signal
+//! lands in a wait rather than racing the start-up.
 
 mod common;
 

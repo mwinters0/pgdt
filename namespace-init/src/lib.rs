@@ -8,8 +8,9 @@
 //! `_exit`s `128 + n` — what a container runtime reports for the signal either
 //! way. Elsewhere nothing is installed and every disposition is the default.
 //!
-//! `pgdt` and `datafusion-cli-pgdump`, whose `run` is `pgdt sql`, both depend
-//! on it; the library an embedder links installs no handler.
+//! `pgdt` and `datafusion-cli-pgdump`, whose `run` is `pgdt sql` and installs
+//! them, both depend on it; `pgdump_query` and `datafusion-pgdump` install no
+//! handler.
 
 use std::io;
 use std::sync::Arc;
@@ -35,7 +36,7 @@ pub fn namespace_init() -> bool {
 ///
 /// - `SIGKILL` and `SIGSTOP`, which nothing catches;
 /// - `SIGPIPE`, which the Rust runtime ignores before `main`, so it ends
-///   neither binary anywhere;
+///   `pgdt` nowhere;
 /// - the six a fault raises, `SIGILL`, `SIGTRAP`, `SIGBUS`, `SIGFPE`,
 ///   `SIGSEGV` and `SIGSYS`: the kernel forces a fault's signal under the
 ///   default action, which ends an init too, with its core (RT19), where a

@@ -323,10 +323,10 @@ async fn create_table_span_carries_name_and_columns() {
 
 /// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles
 /// as its own `Unparsed` span, immediately adjacent to its table's span —
-/// no grouping (`docs/design/decisions.md`, "D31") — but it
-/// **inherits** `objects.widgets`' own TOC header rather than carrying
-/// `None`: the two spans are attributed to the same entry, and only the
-/// first carries the header text itself.
+/// no grouping — but it **inherits** `objects.widgets`' own TOC header rather
+/// than carrying `None` (`docs/design/decisions.md`, "D31"): the two spans
+/// are attributed to the same entry, and only the first carries the header
+/// text itself.
 #[tokio::test]
 async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
     let path = objects_fixture(18, "default");
@@ -549,7 +549,7 @@ async fn text_over_the_cap_is_truncated_and_marked() {
 /// What `Event::DollarQuoteEnd` is for: with no TOC comments, `scan.rs` emits
 /// no `Event::Line` for the line carrying a `CREATE FUNCTION`'s own closing
 /// `;`, so nothing else tells the accumulator the statement has ended
-/// (`docs/design/decisions.md`, "D31") — without it, the two functions and
+/// (`docs/design/decisions.md`, "D23") — without it, the two functions and
 /// the table after them would collapse into **one** `Unparsed` span instead
 /// of degrading to one span per object.
 #[tokio::test]
@@ -670,8 +670,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
     assert_eq!(coverage.0, 0, "tests/data/edge_cases.sql has no TOC comments at all");
 }
 
-/// The cross-reference set (`docs/design/decisions.md`,
-/// "D31") over a real fixture: `postgres` (every object's
+/// The cross-reference set over a real fixture: `postgres` (every object's
 /// owner, via both `Span::toc.owner` and the file's many `ALTER ... OWNER
 /// TO`) and `fixture_reader` (the `GRANT`/`ALTER DEFAULT PRIVILEGES`
 /// grantee) are both present; `PUBLIC` — also a real grantee in this fixture

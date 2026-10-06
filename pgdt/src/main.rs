@@ -45,8 +45,8 @@ struct Cli {
 }
 
 /// What `pgdt --version` prints: the crate version, the allocator's markers
-/// ([`alloc::MARKERS`]), and the DataFusion release `sql` is — the one place
-/// that release is stated, `sql` carrying no `--version` of its own.
+/// ([`alloc::MARKERS`]), and the DataFusion release `sql` is, which `sql`'s
+/// help also closes on, `sql` carrying no `--version` of its own.
 fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
@@ -2161,7 +2161,7 @@ fn init_status_output() {
 /// on `SIGINT` would end the session a `ctrl_c` was cancelling a statement in.
 /// As init, a signal before either arm's handlers is discarded
 /// (`docs/design/runtime-invariants.md`, "RT19"), and that window is clap's
-/// parse alone.
+/// parse and the chosen arm's setup ahead of its handlers.
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.command {
@@ -2931,8 +2931,7 @@ fn database_label(database: &Option<String>) -> &str {
 /// **The rows are already in file order and every `\connect` segment is
 /// contiguous in the file**, so a header whenever the value changes is the
 /// whole grouping rule. It is also what makes an `AmbiguousTable` error's
-/// candidate names ones this listing already showed
-/// (`docs/design/decisions.md`, "D49").
+/// candidate names ones this listing already showed.
 struct DatabaseHeadings<'a> {
     multi: bool,
     current: Option<&'a Option<String>>,
@@ -3547,8 +3546,8 @@ fn severity_label(severity: Severity) -> &'static str {
     }
 }
 
-/// Referenced-role and referenced-tablespace summary
-/// (`docs/design/decisions.md`, "D31") — an empty set prints nothing. Returns
+/// Referenced-role and referenced-tablespace summary — an empty set prints
+/// nothing. Returns
 /// whether anything was printed, so the caller knows whether to add a
 /// separating blank line.
 fn print_cross_references(index: &DumpIndex) -> bool {

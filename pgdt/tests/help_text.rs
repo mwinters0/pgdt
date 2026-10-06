@@ -1,7 +1,7 @@
 //! What `pgdt --help` and `pgdt <command> -h` actually render.
 //!
-//! A flag's help *is* its doc comment here (`docs/design/decisions.md`,
-//! "D67"), so the help pages
+//! A flag's help *is* its doc comment here, `sql`'s flags keeping upstream's
+//! `help` attributes (`docs/design/decisions.md`, "D67"), so the help pages
 //! are paragraphs of prose rather than one-line captions — and the rendering of
 //! a paragraph is invisible from the source, which is why `clap`'s `wrap_help`
 //! feature and these snapshots matter: without wrapping, a page prints single
@@ -27,9 +27,9 @@ use std::process::Command;
 mod common;
 use common::{pgdt, stderr_of, stdout_of};
 
-/// The width every page below is rendered at. `clap`'s own default
-/// `max_term_width` is also 100, so this is the width a user with no terminal
-/// — a redirected `--help`, a CI log — sees.
+/// The width every page below is rendered at. `clap` falls back to 100
+/// columns where neither a terminal nor `COLUMNS` gives one, so this is the
+/// width a user with no terminal — a redirected `--help`, a CI log — sees.
 const WRAP_WIDTH: usize = 100;
 
 /// Every help page `pgdt` prints, as `(name, args)`. Both depths of each

@@ -15,7 +15,8 @@ fn fixture(schema: &str) -> PathBuf {
     common::fixture(&format!("16/{schema}/default.sql"))
 }
 
-/// `fixture` copied into `dir` beside the complete cache `pgdt parse` leaves.
+/// `fixture` copied into `dir` beside a complete cache holding no statistics
+/// ([`map_ungathered`]).
 async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();

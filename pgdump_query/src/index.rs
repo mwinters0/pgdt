@@ -240,8 +240,7 @@ pub struct CopyBlock {
     /// governing it. `None` means the file had no `\connect` at all (a plain
     /// dump), which falls back to the single unnamed [`crate::preamble::DatabaseMetadata`].
     /// Not an ordinal into `metadata.databases`: an incremental scan's
-    /// metadata can hold one entry however many databases the file contains
-    /// (`docs/design/decisions.md`, "D49").
+    /// metadata can hold one entry however many databases the file contains.
     pub database: Option<String>,
     /// Absolute file offset of the `C` in `COPY`.
     pub header_offset: u64,
@@ -381,8 +380,7 @@ pub struct DumpIndex {
     pub metadata: Option<DumpMetadata>,
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
     /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
-    /// PRIVILEGES FOR ROLE` (`docs/design/decisions.md`,
-    /// "D31"). The pseudo-role `PUBLIC` is never included. Flat and per-file — a
+    /// PRIVILEGES FOR ROLE`. The pseudo-role `PUBLIC` is never included. Flat and per-file — a
     /// per-database view is a filter over `Span::database`. Persisted, unlike
     /// `diagnostics` (`docs/design/decisions.md`, "D34"), and
     /// complete only once `scanned_through` reaches the file's size.

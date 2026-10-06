@@ -160,11 +160,13 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
     /// caller on [`DEFAULT_MEMORY_BUDGET`], capped at the discovered allowance
-    /// where one was found. It is what keeps "no
+    /// less [`MEMORY_RESERVE`] where one was found. It is what keeps "no
     /// limit found" from meaning "serial", that constant affording no
     /// block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
-    /// **Nothing in the library reads it**, exactly as with the worker count.
+    /// **Nothing in the library budgets by it**, exactly as with the worker
+    /// count: a plan's notes read it only to say whether a larger allowance
+    /// would raise a budget.
     /// It is a [`WorkerMemory`] rather than a scalar because one source's cost
     /// is not linear in the count (`docs/design/decisions.md`, "D4").
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
@@ -911,7 +913,7 @@ impl Parallelism {
     /// **The composition is not a `min`**, which would collapse a compressed
     /// scan to serial on an unlimited host (`docs/design/decisions.md`, "D3").
     /// What distinguishes *no limit found* from *a small limit* is that the
-    /// first has no cap at all:
+    /// first takes no reserve and no margin:
     ///
     /// - a discovered limit is carved by [`Parallelism::within`], the same
     ///   arithmetic a stated allowance gets: it caps at `limit −
@@ -926,7 +928,8 @@ impl Parallelism {
     ///   condition: its predicted resident must leave
     ///   [`MEMORY_MARGIN_PERCENT`] of the limit unused ([`margin_allowance`]);
     /// - no limit found caps at half of [`available_memory`], an estimate two
-    ///   processes reading at once each see the whole of.
+    ///   processes reading at once each see the whole of, and where that
+    ///   cannot be read, not at all.
     ///
     /// **A caller with no recommendation and no limit states nothing**, which
     /// is [`Parallelism::default`] at a serial count and
@@ -967,6 +970,13 @@ impl Parallelism {
             // `MemAvailable` unreadable is the one shape with a recommendation
             // and no ceiling to hold it under — and no limit to take a margin
             // of either, the halving being the margin there.
+            // deficiency: KD113 — so the recommendation stands whole, at the
+            // count asked for, and `datafusion-pgdump`'s `ScanBudget`, holding
+            // no allowance, lets each scan discover alone, sharing nothing.
+            // The standing rule is that unstated is not unlimited
+            // (`docs/design/roadmap.md`, "A default runs as fast as the
+            // allocation permits"); the fix is a choice between
+            // `DEFAULT_MEMORY_BUDGET` here and refusing a recommendation.
             None => {
                 (Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)), None)
             }
@@ -1097,8 +1107,9 @@ impl Parallelism {
     /// place: a source recommending no cost is carved to
     /// [`DEFAULT_MEMORY_BUDGET`] at most whatever the allowance
     /// (`docs/design/decisions.md`, "D83", and `KD32`), so a budget already
-    /// there is one no allowance raises, and one below it — an allowance at
-    /// or under [`MEMORY_RESERVE`], or holdings the margin could not absorb —
+    /// there is one no allowance raises, and one below it — an allowance
+    /// under [`MEMORY_RESERVE`] plus that constant, or holdings the margin
+    /// could not absorb —
     /// is one a larger allowance does. A source recommending a cost is carved
     /// by the count its cost affords, so a larger allowance raises its budget
     /// with the count.
@@ -1213,8 +1224,8 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// **Enforced once, against [`MEMORY_UNPOOLED_BOUND`]**: the predicted
 /// resident a count is held to is `WorkerMemory::at(n)` plus that bound, not
 /// plus [`MEMORY_RESERVE`], which would subtract the margin a second time. So
-/// it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and nowhere
-/// below.
+/// it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and, but for
+/// the few hundred bytes under it its rounding down reaches, nowhere below.
 ///
 /// **It bounds the count, and the budget only by what a caller holds besides
 /// its arrangements**: [`Parallelism::fit`] keeps one worker at whatever the
@@ -1296,7 +1307,8 @@ fn margin_allowance(allowance: u64) -> u64 {
 /// other way round from the intuition.** [`Parallelism::fit`] solves the count
 /// against `cap.min(ceiling)`, so below `5 × (MEMORY_RESERVE −
 /// MEMORY_UNPOOLED_BOUND)` the *cap* binds and what is left here is at least
-/// `ceiling − cap`, strictly positive — an allowance in that band cannot starve
+/// `ceiling − cap`, positive but in the few hundred bytes under the line the
+/// ceiling's rounding reaches — an allowance in that band cannot starve
 /// statistics. At and above it the *ceiling* binds, the count is solved right up
 /// against the number this subtracts from, and statistics get only the slack one
 /// worker's step leaves: a wide host at a high `--jobs` is where every block
@@ -2139,8 +2151,8 @@ impl ByteRangeSource for LocalFileSource {
     /// worker count (`docs/design/decisions.md`, "D9").
     ///
     /// Where the leader schedules concurrent readers over this source, a
-    /// `parse` at `--jobs n` runs `n` fused workers against [`POOL_DEPTH`]
-    /// chunk slots, so above that many the extra workers block for a slot
+    /// `parse` at `--jobs n` runs `n` fused workers against at most
+    /// [`POOL_DEPTH`] chunk slots, so above that many the extra workers block for a slot
     /// rather than allocating.
     fn hint_parallelism(&self, parallelism: Parallelism) {
         self.pool.set_limits(budget_bytes(parallelism), POOL_DEPTH);

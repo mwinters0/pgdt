@@ -6,7 +6,8 @@
 //! `getrusage(RUSAGE_CHILDREN)`, which on Linux is kibibytes. A command a
 //! signal ended adds a `signal=<n>` line beside it. It exits with the
 //! command's own code, or `128 + n` for a death by signal `n`, the shell's
-//! convention — so a kill stays a kill to whatever reads the exit status. The
+//! convention — so a kill stays a kill to whatever reads the exit status —
+//! unless `getrusage` itself fails, when it exits 1 with neither line. The
 //! cgroup's `memory.events` still says whether the kill was the OOM reaper's,
 //! which no exit status can (`measure.OOM_ORACLE`). A command that cannot be
 //! started exits 127 where it was not found and 126 otherwise, writing no

@@ -270,8 +270,7 @@ impl ResolvedSchema {
 /// `database: None` matches the single unnamed database a plain (non-`\connect`)
 /// dump produces.
 ///
-/// Per-block attribution (`docs/design/decisions.md`, "D49") is what makes the
-/// exact match possible.
+/// Per-block attribution is what makes the exact match possible.
 pub(crate) fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
@@ -1084,7 +1083,7 @@ mod tests {
     /// which database's DDL mentions the table first — asserted by giving two
     /// databases different declared types for the same qualified table name.
     /// The caller knows which database applies from the matched `CopyBlock`'s
-    /// own attribution (`docs/design/decisions.md`, "D49").
+    /// own attribution.
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {
         let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);

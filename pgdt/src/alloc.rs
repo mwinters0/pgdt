@@ -45,7 +45,7 @@ compile_error!(
 );
 
 /// `introspect` is a `#[global_allocator]` of its own, and it is refused
-/// beside `system` and `jemalloc` for more than the symbol collision: the
+/// beside `system` and `jemalloc` whether or not two would collide: the
 /// instrument counts allocations in front of mimalloc and reads mimalloc's own
 /// statistics for that same heap, so beside either it would report a heap the
 /// build does not name. Beside `mimalloc` — the default — it is the same
@@ -92,8 +92,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// choice is this one's.
 ///
 /// Spelled as `#[cfg]` arms rather than a `cfg!` chain so each is a constant.
-/// Each arm is guarded by the others' absence, so a refused combination fails
-/// on its `compile_error!` alone rather than on a second `MARKERS` beside it.
+/// The arms take a precedence — `jemalloc`, `system`, `introspect`, `mimalloc`
+/// — so a refused combination never adds a second `MARKERS` to its
+/// `compile_error!`; `jemalloc` beside `mimalloc` still names two `GLOBAL`s.
 #[cfg(all(
     feature = "mimalloc",
     not(feature = "introspect"),

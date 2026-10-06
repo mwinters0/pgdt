@@ -1013,9 +1013,10 @@ came about. The same signal *sent* to init is discarded like any other.
 `debian:stable-slim`, and under `unshare -Urpf` signalled from the host).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D26" — as its
-namespace's init, each binary handles every signal that ends it elsewhere by
+namespace's init, `pgdt` handles every signal that ends it elsewhere by
 exiting `128 + n` but a fault's, which it leaves to the forced default
-(`namespace-init/src/lib.rs`), and an interrupted `parse` exits `128 + n`
+(`namespace-init/src/lib.rs`), and `SIGINT` in `sql`'s REPL, which upstream's
+`ctrl_c` answers, and an interrupted `parse` exits `128 + n`
 rather than re-raising. `pgdt/tests/namespace_init.rs` pins both under
 `unshare`, `sql` among the commands.
 

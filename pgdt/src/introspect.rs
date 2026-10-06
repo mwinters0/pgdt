@@ -15,8 +15,9 @@
 //!
 //! # What it reports
 //!
-//! A snapshot at exit, and no sampler: a quantity whose peak is reported
-//! carries its own high-water, and the rest are read as they stand at exit:
+//! A snapshot, and no sampler: a quantity whose peak is reported carries its
+//! own high-water, `statistics_*` are read as the pass returned them, and the
+//! rest as they stand at exit:
 //!
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
 //!   for and had not freed, and the largest that figure ever reached, kept by
@@ -49,7 +50,7 @@
 //!
 //! **The process has two heaps, and the families do not cover the same
 //! memory**, so the report labels each: `live_scope`, `mimalloc_scope` and
-//! `glibc_scope`, with the note between them. The counter and mimalloc see
+//! `glibc_scope`, with the note after the counter's lines. The counter and mimalloc see
 //! what passes through Rust's `GlobalAlloc`; glibc sees what reaches C
 //! `malloc` — `liblzma`, the active `.xz` backend, whose share of a reader's
 //! decoder working set (`xz_seek::Layout::decoder_bytes`) is there and
@@ -164,11 +165,10 @@ mod enabled {
     /// `alloc.rs`'s guard.
     pub struct Counting;
 
-    /// `Relaxed` throughout: the atomics are read only after every thread
-    /// that touched them has finished its work, so nothing here orders
-    /// anything else. Every value `LIVE` takes is one `fetch_add`'s result,
-    /// which that thread then hands to `fetch_max`, so `PEAK` is the
-    /// counter's high-water however allocations interleave.
+    /// `Relaxed` throughout: the counters guard no other memory, so nothing
+    /// here orders anything else. Every value `LIVE` takes is one
+    /// `fetch_add`'s result, which that thread then hands to `fetch_max`, so
+    /// `PEAK` is the counter's high-water however allocations interleave.
     fn took(bytes: usize) {
         let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
         PEAK.fetch_max(live, Ordering::Relaxed);
@@ -311,7 +311,7 @@ mod enabled {
 
     /// The whole report, as text, so the formatting is testable without a
     /// process to run. Every quantity carries its scope, and [`SCOPE_NOTE`]
-    /// sits between the two families; the note's lines carry no `=`, so
+    /// follows the counter's lines; the note's lines carry no `=`, so
     /// `measure.parse_reported` ignores them as it ignores the XML below.
     pub fn report_text() -> String {
         let mut out = String::from("instrument=counting-allocator\n");
@@ -556,7 +556,7 @@ mod instrumented_tests {
 
     /// Every line that is not one of the report's own readings must be
     /// invisible to `measure.parse_reported`, whose grammar is
-    /// `^[a-z_]+=\S+$`: the verbatim JSON and XML included.
+    /// `^[a-z_]+=\S+$`: mimalloc's verbatim JSON included.
     #[test]
     fn only_the_readings_parse_as_readings() {
         let text = report_text();

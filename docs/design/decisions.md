@@ -21,7 +21,7 @@ Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `q
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves where being wrong kills the
-process. `MEMORY_MARGIN_PERCENT` binds the resolved *count*, and the budget only by the part of `held`
+process. `MEMORY_MARGIN_PERCENT` binds the resolved *count* of a source recommending a charge, and the budget only by the part of `held`
 the ceiling cannot absorb (`within_shared`). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
 per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary
 `.xz`; clearing that gate picks one number for two questions. Evidence: `reserve`, `chunk-size`.
@@ -77,7 +77,7 @@ masked in containers and undefined over LVM/NFS. Reopens: parse CPU exceeding re
 ### D11 Limit discovery is a public primitive taking a root
 `discover_memory_limit_in` reads the least of `memory.max` and `memory.high` (RT3), walking
 ancestors to the mount point (RT5); with no limit, a source recommending a charge is capped at half
-of `MemAvailable`, untuned (RT8), and one recommending none is not. The arms worth pinning are ones
+of `MemAvailable`, untuned (RT8), uncapped where that is unreadable (`KD113`), and one recommending none is not. The arms worth pinning are ones
 no machine is more than one of, so tests need the seam. Rejected: an env var overriding the root.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
@@ -190,7 +190,7 @@ A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; 
 partial result. The preamble scan polls no flag, a stop there reading as the first `COPY` header and caching as
 complete, and a read the signal drops fails it unbanked. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
 the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or
-one in the listing, ends it in the handler. As init (RT19) both binaries exit 128+n on every signal ending them elsewhere
+one in the listing, ends it in the handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere
 but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
 on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
 
@@ -353,7 +353,7 @@ charging each sub-stream its batch span (D84).
 Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`; `target_settled`
 vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
 The token's filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
-`scan_extent`, the batching knobs and `use_statistics` stay out, no skipped group holding a resumed row.
+`scan_extent`, the batching knobs, `postgres_invalid_values` and `use_statistics` stay out, no skipped group holding a resumed row.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 The first row is past the first LF at or after `start`; the piece runs to the first LF at or after
@@ -633,7 +633,7 @@ One contradicting its type is `FieldDecode` naming `--schema-mode strings`, neve
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:
 a script sums its own rollup, a table spanning blocks (I2) with no merge rule but statistics' sums,
-`--detail`'s alone. Coverage is one line at the top, nothing below qualified. No `help` attributes;
+`--detail`'s alone. Coverage is one line at the top, nothing below qualified. No `help` attributes but `sql`'s, upstream's style;
 pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value name spells its suffixes past the page, its spec line exempt from the width assertion, until one pass over CLI output (`roadmap.md`, "Future — wanted, unscheduled"). Rejected: `long_help` per flag; a rollup; that value name cut to a placeholder piecemeal.
 
 ## Layering
@@ -670,7 +670,7 @@ A `match` cannot be enumerated at run time, so `oracle_register.py` parses `pgty
 appends in each function some reader consumes, and its long options, out of a checkout into `emitters.tsv`, extraction being generation and the join
 over committed files the check, the checkouts being machine-local. Anchors turn a rewrite into a report. An arm or a literal is the finest closable unit,
 joined by existence — an arm in the oracle's cases, a literal in fixture bytes at its own major — never by branch coverage; an exemption names what the
-check resolves (`Evidence(file, needle)`, an `I<n>`, a `KD<k>`), a fixture exposing a `KD<k>` held failing (`known_failures.rs`) until its fix deletes
+check resolves (`Evidence(file, needle)`, a consuming source line, an `I<n>`, a `KD<k>`, a compatibility row), a fixture exposing a `KD<k>` held failing (`known_failures.rs`) until its fix deletes
 the row. Rejected: a C parser; a "pgdt does not read this" exemption, the map tiling every byte; the function list enumerated once, which drifted as the
 readers grew (`READS` holds them together); a cross product of session settings, one variant each; a `DO` block testing the version in place of a sidecar file.
 

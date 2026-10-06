@@ -254,12 +254,11 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     assert_eq!(index.scanned_through, source.size().await.unwrap());
 }
 
-/// The concrete case `docs/design/decisions.md`'s
-/// "D31" names for why the cross-reference set can't stop
-/// where the map does: `objects.widgets`' own `COPY` block closes long before
-/// the file's post-data `GRANT`/`ALTER DEFAULT PRIVILEGES` section
-/// (`fixtures/16/objects/default.sql`) grants `fixture_reader` access to it.
-/// A cold query that stops at its target never reaches that section, so its
+/// Why the cross-reference set can't stop where the map does:
+/// `objects.widgets`' own `COPY` block closes long before the file's post-data
+/// `GRANT`/`ALTER DEFAULT PRIVILEGES` section
+/// (`fixtures/16/objects/default.sql`) grants `fixture_reader` access to it. A
+/// cold query that stops at its target never reaches that section, so its
 /// `roles` set is real but incomplete — `postgres` (every preceding object's
 /// owner) without `fixture_reader`. `ScanExtent::Full` is the way to the
 /// complete set, the same way it already is for `blocks()`.

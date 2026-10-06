@@ -1699,8 +1699,7 @@ pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: 
 }
 
 /// Extract every role/tablespace a complete statement (see
-/// [`statement_complete`]) references, per
-/// `docs/design/decisions.md`'s "D31" —
+/// [`statement_complete`]) references —
 /// the two sources [`crate::map::Span::toc`] alone can't cover, since none of
 /// these three statement shapes is its own TOC entry:
 ///
@@ -1808,11 +1807,9 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 }
 
 /// `\connect <name>` — a bare prefix check on a line the scanner already
-/// holds. Exposed to `crate::stream`'s live scan too
-/// (`docs/design/decisions.md`, "D49"):
+/// holds. Exposed to `crate::stream`'s live scan too:
 /// tracking which database a `CopyBlock` belongs to needs only the name a
-/// `\connect` yields, never a column type, so it isn't "reading preamble as
-/// it goes" in the sense that section rules out.
+/// `\connect` yields, never a column type.
 ///
 /// Both of `appendPsqlMetaConnect`'s forms (I55): the name as an identifier,
 /// and for a name holding a byte outside `[A-Za-z0-9_.]`, `-reuse-previous=on`

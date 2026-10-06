@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD112 -->
-**`KD1`–`KD112` are allocated, and nothing at or below `KD112` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD113 -->
+**`KD1`–`KD113` are allocated, and nothing at or below `KD113` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -501,3 +501,9 @@ than reading as a phase nobody has sliced.
   reader saturates the device the split buys nothing, and on a rotational one
   its scattered reads are unread. **(c) unowned**; promoted by a reading of the
   split cold on the HDD. Detail: `datafusion-pgdump/src/table.rs`.
+
+- **KD113** — where a host reports neither a memory limit nor `MemAvailable`,
+  a source's recommended charge stands uncapped, at the count asked for, and
+  the provider's scans share no budget, though unstated is not unlimited
+  (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
+  user. Detail: `pgdump_query/src/io.rs`.

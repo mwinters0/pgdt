@@ -802,8 +802,8 @@ impl Builder {
     /// A TOC comment's own `Owner:`/`Tablespace:` fields, added to the
     /// cross-reference sets — one of every span's two sources whatever its
     /// kind but a statement classified `Framing`, whose header
-    /// `push_statement_span` vetoes first, `_printTocEntry()` writing those
-    /// fields ahead of *every* entry (`docs/design/decisions.md`, "D31"). The
+    /// `push_statement_span` vetoes first (`docs/design/decisions.md`, "D31"),
+    /// `_printTocEntry()` writing those fields ahead of *every* entry. The
     /// other is the statement
     /// text, which `extract_statement_cross_refs` reads.
     fn harvest_toc_cross_refs(&mut self, toc: &Option<TocHeader>) {
@@ -836,8 +836,8 @@ impl Builder {
         // already taken `pending_large_objects` out of `self`.
         self.flush_large_objects();
         self.harvest_toc_cross_refs(&toc);
-        // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
-        // never crosses (`docs/design/decisions.md`, "D31"); everything else
+        // Inheritance never crosses `Framing` or `Connect`
+        // (`docs/design/decisions.md`, "D31"), nor a `VersionHeader`; everything else
         // becomes the entry a following comment-less statement inherits.
         self.governing_toc = match &body {
             SpanBody::Framing | SpanBody::Connect { .. } | SpanBody::VersionHeader { .. } => None,
@@ -1110,7 +1110,7 @@ impl Builder {
             Mode::Statement { start, buf, toc, toc_owned } => {
                 // A `--` line outside a quote closes a statement even
                 // though `buf` never reached `statement_complete`
-                // (`docs/design/decisions.md`, "D31") — the case a
+                // (`docs/design/decisions.md`, "D23") — the case a
                 // dollar-quoted body's invisible closing line creates, where
                 // nothing ever supplies the swallowed `;`. The `in_open_quote`
                 // guard is what keeps a `--`-looking continuation line that
@@ -1224,7 +1224,7 @@ impl Builder {
     /// own: `pg_dump` writes the statement's own terminating
     /// `;` on the closing line (`AS $$ … $$;`), and that line never reaches
     /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
-    /// statement (`docs/design/decisions.md`, "D31").
+    /// statement (`docs/design/decisions.md`, "D23").
     ///
     /// This is what completes every dollar-quoted statement, `pg_dump`'s
     /// included, so an entry's `ALTER … OWNER TO` after its `$$;` is a span of
@@ -1558,9 +1558,9 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper and `_selectTablespace()` writes ahead of a definition
-/// (`docs/design/decisions.md`, "D31"). Both classify as framing rather than
-/// `Unparsed` whichever producer wrote them; either way
+/// proper and `_selectTablespace()` writes ahead of a definition. Both
+/// classify as framing rather than `Unparsed` whichever producer wrote them;
+/// either way
 /// `push_statement_span`'s `extract_statement_cross_refs` call still reads
 /// the tablespace reference out of the text.
 fn looks_like_framing_statement(stmt: &str) -> bool {
