@@ -34,7 +34,9 @@ is the cheapest first slice.
 
 ## The C dependencies must build for Apple targets
 
-**Fact.** `pgdt` statically links aws-lc (`aws-lc-sys`, a cmake-driven build),
+**Fact.** `pgdt` statically links aws-lc (`aws-lc-sys`, whose 0.45 carries `cc`
+builders for both Apple targets; on Linux that builder runs and CMake never
+does, unbuilt for Apple),
 ring's BoringSSL-derived C and assembly, liblzma (`liblzma-sys`, `static`),
 zstd, mimalloc, BLAKE3's C and assembly and `psm`. On the Apple targets the
 linked crate set adds `core-foundation`, `security-framework` and `errno`

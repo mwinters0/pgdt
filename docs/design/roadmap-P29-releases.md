@@ -171,6 +171,17 @@ under the grace period above; `/release` reads Debian's release dates
 and holds the pin inside that window: refusing a codename released under six
 months ago, and a predecessor kept past twelve.
 
+**The digest pins the packages too**: apt reads the `snapshot.debian.org`
+archive the base image records, so one digest installs one package set and a
+move is the only way gcc or `libc6-dev` changes. Rejected: the live archive,
+under which the compilers and the crt objects linked into every binary move at
+each point release and security upload with the digest unchanged; and a built
+image pushed to a registry and pulled by its own digest, a second artifact to
+build and re-pin at every Rust or tool bump, as `M215` refused for the
+register's image. Snapshot's availability is the cost taken; its speed was not
+found to be one ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
+"The release image's inputs, reviewed").
+
 ## `/release`
 
 A skill run on the maintainer's machine, in this order: refuse a dirty tree or

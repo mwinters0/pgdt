@@ -118,23 +118,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The release image's apt reads the snapshot its digest was built from**
-  (`release/Dockerfile`). The spec makes the digest the pin and each move an
-  apparatus change, and packages from the live archive would move under an
-  unchanged digest at every Debian point release — gcc and its cross toolchain
-  among them — so apt reads the `snapshot.debian.org` URI the image records,
-  and a base recording none fails the build. The cost is that every image
-  build, each of 29.4's CI runs included, depends on `snapshot.debian.org`,
-  slower and less available than `deb.debian.org`. Reconsidering installs from
-  the live archive and lets the compilers move between two builds of one digest;
-  the glibc floor would not move, a point release keeping 2.41's symbol
-  versions.
-- **The image's suite tools are `mise install`'s, read from `mise.toml`**,
-  `mise` itself pinned in the Dockerfile by version and checksum, so the image
-  carries what a checkout's `mise install` does (`../design/roadmap.md`, "A
-  test may assume the tools `mise` pins"). `mise.toml` names `uv` and `cmake`
-  as `latest`, so two builds of one image tag can carry different ones; neither
-  reaches a release's bytes today, no release build running CMake
-  (`../design/roadmap-P29.1-image-notes.md`, "Negative results").
-  Reconsidering pins them exactly in `mise.toml`, which moves every checkout,
-  or takes Debian's `cmake` in the image and leaves only `uv` unpinned.
