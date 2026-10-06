@@ -180,6 +180,18 @@ impl TableProvider for PgDumpTable {
         // A table registered by hand reaches its session's budget only here.
         self.dump.bill(&budget);
         let settings = PgDumpSettings::of(state);
+        // deficiency: KD112 — the count asked for is the session's
+        // `target_partitions`, the core count where nothing states one, on any
+        // device: a plain source's recommendation of one
+        // (`docs/design/decisions.md`, "D2") is never read, so on a device one
+        // reader already saturates the split buys nothing, and on a rotational
+        // one it scatters reads the record calls fatal there
+        // (`docs/design/measurements.md`, "The SATA SSD is not a parallel
+        // regime"), unread on a plain file. **(c) unowned**; promoted by a
+        // reading of the split cold on the HDD, the fix a choice between
+        // `pgdt sql` stating the source's recommendation for a plain dump and
+        // leaving the count to the session, rotational detection being
+        // unavailable in a container ("D10").
         let draw = Arc::new(budget.draw(
             state.config().target_partitions(),
             source.default_worker_memory(),

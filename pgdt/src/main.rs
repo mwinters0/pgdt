@@ -1844,7 +1844,9 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
 /// but the first, runs interleaved across sub-streams so an in-order drain
 /// keeps each near the front (an arrangement "D51" does not weigh), or output
 /// that gives up file order. **(c) unowned**; promoted by a phase taking up
-/// `pgdt query`'s throughput. Planning one sub-stream until then is refused:
+/// `pgdt query`'s throughput, the return it weighs being a typed plain scan
+/// split on a real device (`docs/design/measurements.md`, "What a second scan
+/// worker buys, and where the plain path stops", its cold-NVMe column). Planning one sub-stream until then is refused:
 /// interleaved runs keep the N-way plan, and the first round is a small gain
 /// on a plain file.
 enum Slot {

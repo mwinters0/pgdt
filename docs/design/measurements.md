@@ -1420,8 +1420,9 @@ the NVMe's floor at four.
 
 The device question concurrency *does* raise — whether scattering reads across N
 workers costs a device its sequential advantage — is fatal on rotational media
-and immaterial at 386 MB/s on either SSD, and it is answered on the HDD by the
-koji scan below, on the same terms as everything else there.
+and immaterial at 386 MB/s on either SSD. On the HDD the koji scan below
+answers it for `.xz` alone, on the same terms as everything else there; no
+plain split has been read on it ([`../status/deficiencies.md`](../status/deficiencies.md), `KD112`).
 
 <!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
 

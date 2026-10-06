@@ -14,10 +14,10 @@ rules, the line cap included, are `docs/process.md`, "The decision register".
 provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers` read in the library, so silence means concurrency.
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
-A serial plain `parse` is device-bound on every real device (a typed scan on the NVMe is not, but
-`KD57`'s merge holds its split flat), and each partition's tail past itself adds device bytes. `XzSource` answers `available_parallelism()`
-capped at its block count (`RT7`); a fetched one answers one, the errors being asymmetric. Reopens: `KD57` closing, a typed plain
-scan split on a real device having outrun one worker (`parallel-scan-throughput`'s cold-NVMe column). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
+A serial plain `parse` is device-bound on every real device wherever a split reaches, a `COPY` block's interior, an `INSERT` run admitting none (`KD9`); `query`'s typed scan,
+which on the NVMe is not, is held flat by `KD57`'s merge; each partition's tail past itself adds device bytes. `XzSource` answers `available_parallelism()` capped at its block count
+(`RT7`); a fetched one answers one, the errors being asymmetric. Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this.
+Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `query`'s replay is extraction, `parse` and the mapping pass discovery, and one `default_workers()` per source cannot tell them apart. Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves where being wrong kills the
