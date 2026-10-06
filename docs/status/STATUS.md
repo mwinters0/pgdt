@@ -82,7 +82,7 @@ instrument can see").
 Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 
 - [x] **29.1** The image and its floor: `rust-toolchain.toml` pinning the compiler; the `debian:trixie` image, pinned by digest, cross-building both targets; a check that the binary needs no `GLIBC_` version past the image's; the x86-64 suite run in the image — [notes](../design/roadmap-P29.1-image-notes.md)
-- [ ] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — the apparatus has landed, every timed binary built in the release image and run in its base; the sitting remains, taken from a commit carrying it — [notes](../design/roadmap-P29.2-register-notes.md)
+- [ ] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — the apparatus has landed, every timed binary built in the release image and run in its base, but for `nested-decode-micro`'s bench, which still runs on the host; that move and then the sitting remain, the sitting taken from a commit carrying both — [notes](../design/roadmap-P29.2-register-notes.md)
 - [ ] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list
 - [ ] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/`
 - [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
@@ -119,19 +119,3 @@ beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
 
-- **The release image installs `make` for the register's `jemalloc` leg**
-  (`release/Dockerfile`), which no release artifact links. 29.2 builds every
-  binary a figure runs in that image (`measure.build_in_image`), so a leg
-  differs from the shipped build by its allocator alone, and
-  `tikv-jemalloc-sys` runs jemalloc's own `configure` and `make`; the image's
-  tag moved with it. Reconsidering either drops the `jemalloc` leg from the
-  `allocator` figure, or builds it in an image derived from the release one,
-  a second artifact to build and re-pin, which `M215` and the spec refused for
-  the register's runtime.
-- **`nested-decode-micro` stays a `cargo bench` on the host**
-  (`measure.run_nested_decode_micro`), its marker naming the host's glibc,
-  while every other figure moved into the release image. It times decoder
-  functions in-process, not a binary a release ships, and the spec moves "the
-  image's build" and keeps development builds on the host. Reconsidering runs
-  the bench in the release image as a `release.py` step, so the whole register
-  names one glibc and one C compiler.

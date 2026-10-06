@@ -7,9 +7,19 @@ What the sitting and the later slices inherit from the move. The mechanism is
 readings below are `runs/29.2-register-image/` (`image.log`; `builds.log`,
 which `builds.py` there wrote by calling the harness's own build functions).
 
-## What remains: the sitting
+## What remains: the bench, then the sitting
 
-**The apparatus has landed and no figure has been taken on it.** The sitting
+**`nested-decode-micro` still runs on the host**, its `cargo bench` naming the
+host's glibc, where the spec puts every figure on the image's runtime
+([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image"). It
+moves into the image as a `release.py bench` step, criterion's output in the
+release state's target directory where `run_nested_decode_micro` reads it, and
+`measure.HOST` and `glibc_of`'s host branch go with it
+([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "The
+register's image, reviewed"). `M219` changes the same figure's allocator; the
+two land in either order, both before the sitting.
+
+**The rest of the apparatus has landed and no figure has been taken on it.** The sitting
 is a whole sweep from a commit carrying this change — a figure is never taken
 from a tree carrying its own uncommitted apparatus — launched detached per
 `CLAUDE.md`, "Long-running processes", and handed off per
@@ -57,8 +67,9 @@ stamp. `parallel-scan-throughput`'s sitting of its own is taken with the rest.
   directory** (`Build`), so 29.4's workflow and 29.5's `/release` call one
   recipe the register already times. A step runs one build per target and
   refuses two builds differing otherwise.
-- **The release image carries `make`**, for the `jemalloc` leg alone; the
-  call is under STATUS's "Decisions worth another look".
+- **The release image carries `make`**, for the `jemalloc` leg alone, under
+  the spec's admission rule
+  ([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image").
 
 ## Negative results
 
@@ -68,7 +79,6 @@ stamp. `parallel-scan-throughput`'s sitting of its own is taken with the rest.
   scripts link the host's glibc, and the image's cargo could find one fresh
   and run it under 2.41. The image's legs build under `alloc-builds/image/`,
   apart from the recipes' host builds under the same root.
-- **What stays on the host is what times no shipped binary**: `peak-rss`,
-  static, links no glibc; `nested-decode-micro`'s `cargo bench` names the
-  host's glibc in its marker (STATUS's "Decisions worth another look"); and
-  the profile and heaptrack recipes, which print host builds and time nothing.
+- **What stays on the host is what times nothing**: `peak-rss`, static,
+  links no glibc; and the profile and heaptrack recipes, which print host
+  builds.

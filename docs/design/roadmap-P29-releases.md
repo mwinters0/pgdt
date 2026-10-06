@@ -182,6 +182,15 @@ register's image. Snapshot's availability is the cost taken; its speed was not
 found to be one ([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
 "The release image's inputs, reviewed").
 
+**The image carries what the release build, the suite and the register run**,
+not only what a release artifact links: the suite's `git` and `python3`, and
+the register's `make`, which the `jemalloc` allocator leg's build runs. Rejected:
+an image derived from this one for that leg alone, from the same snapshot, a
+second image and build path guarding against a build script in the shipped
+closure that looks for `make`, of which there is none
+([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "The
+register's image, reviewed").
+
 ## `/release`
 
 A skill run on the maintainer's machine, in this order: refuse a dirty tree or
