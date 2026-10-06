@@ -746,7 +746,7 @@ class Regime:
     Declaring them makes the pair the row's business.
 
     *Rejected: deriving `drops_caches` from `area`.* Today `area != "warm"`
-    gives the same four answers, so the field looks redundant. It is not: the
+    gives the same answer for every row, so the field looks redundant. It is not: the
     two are separate questions, and a figure wanting a **second** read off a
     device with the page cache left intact is a regime that declares a device
     area and no drop. Under the derivation that row cannot be written at all
@@ -777,6 +777,11 @@ REGIMES: dict[str, Regime] = {
     #: The same tmpfs staging as `warm`; what differs is the contention gate
     #: below, the reading deliberately occupying every hardware thread.
     "warm-parallel": Regime(area="warm", drops_caches=False),
+    #: The same NVMe staging and cache drop as `cold-nvme`; what differs is the
+    #: contention gate below, the reading occupying several workers by design.
+    #: Admitted by the regime test in `measurements.md`, "Scan throughput by
+    #: input shape", for the provider's typed plain scan alone.
+    "cold-nvme-parallel": Regime(area="nvme", drops_caches=True),
 }
 
 #: Stage values that name no regime, so the reconciliation does not ask them
@@ -857,9 +862,17 @@ def regime_spec(name: str) -> Regime:
 #: Falling back to `warm`'s row would have been the alternative and is refused
 #: for the reason the table above names: a regime with no row of its own gates
 #: nothing, so the choice has to be visible.
+#:
+#: **`cold-nvme-parallel` gates as `warm-parallel` does, on steal alone**, for
+#: the same reason: its legs run the provider at several partitions, so its own
+#: workers are what `cpu_busy_pct` and `psi_cpu_some_pct` would see, and
+#: `cold-nvme`'s 15% would discard a four-partition rep for being the reading.
+#: Its witness is the same too: each cell is read against its leg's
+#: one-partition row of the same sitting.
 CONTENTION_LIMITS: dict[str, dict[str, float]] = {
     "cold": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
     "cold-nvme": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
+    "cold-nvme-parallel": {"cpu_steal_pct": 2.0},
     "warm": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
     "warm-parallel": {"cpu_steal_pct": 2.0},
 }
@@ -2274,13 +2287,45 @@ PARALLEL_BASELINE = 1
 #: prefix. A family added to `_script` and not here states a count nothing
 #: reconciles.
 #:
-#: **The provider family's count is `target_partitions`, not `--jobs`**
-#: (`PARALLEL_SCAN`): its rows run `pgdt sql`, and the `--jobs`
-#: its untimed builder states is `SWEEP_JOBS` on every row.
-JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "dfcli-query-typed-jobs-")
+#: **The provider families' count is `target_partitions`, not `--jobs`**
+#: (`PARALLEL_SCAN`, `PARALLEL_SCAN_PREBUILT`): their rows run `pgdt sql`, and
+#: the `--jobs` their untimed builder states is `SWEEP_JOBS` on every row.
+JOBS_AXIS: tuple[str, ...] = (
+    "parse-jobs-",
+    "parse-rss-jobs-",
+    "dfcli-query-typed-jobs-",
+    "dfcli-query-typed-prebuilt-jobs-",
+)
 
 #: The provider family's shape, `JOBS_AXIS`' third prefix less its `-jobs-`.
 PARALLEL_SCAN = "dfcli-query-typed"
+
+#: The same query over a cache built **in a container of its own** ahead of the
+#: sweep (`Session.prebuild`), `JOBS_AXIS`' fourth prefix less its `-jobs-`:
+#: the timed container mounts that cache read-only where `--dump` looks for it
+#: and runs no builder.
+#:
+#: **A cold leg cannot build its cache in the timed container**, as
+#: `PARALLEL_SCAN` does: the regime drops the page cache before the container
+#: starts, and a builder there reads the whole dump back in before the timer,
+#: so the query would read it warm under a cold heading. Built once a sitting
+#: rather than once a rep, so each rep's drop leaves both the dump and the
+#: cache to come off the device. What stands in for the `&&` that keeps a
+#: failed builder from timing a cold map is the provider itself: `pgdt sql`
+#: refuses a dump with no complete cache beside it rather than mapping it.
+#:
+#: *Rejected: evicting the dump inside the container after the builder*, by
+#: `posix_fadvise(DONTNEED)` (`dd iflag=nocache`): it is a second eviction
+#: mechanism beside the regime's `drop_caches`, scoped to the files it names,
+#: so whatever else the builder pulled in stays warm and nothing says so.
+PARALLEL_SCAN_PREBUILT = "dfcli-query-typed-prebuilt"
+
+#: The partition counts `parallel-scan-throughput`'s cold-NVMe leg is taken at:
+#: the first three of `PARALLEL_JOBS`. **The regime test admits no more**
+#: (`measurements.md`, "Scan throughput by input shape"): the warm typed scan's
+#: demand approaches the NVMe's floor at two partitions and passes it at four,
+#: so every row above four would read the device a second time.
+PARALLEL_NVME_JOBS: tuple[int, ...] = (1, 2, 4)
 
 #: The **read-buffer budget** every row of both `parallel-*` figures runs at,
 #: stated as the `--memory` allowance that leaves it (`stated_allowance`).
@@ -2505,6 +2550,18 @@ DATA_LEVEL_BUILDER = (
 #: What the timed query states: the builder's cache, and no use of its
 #: statistics.
 DATA_LEVEL_QUERY = "--dtcache /tmp/x.dtcache --statistics none"
+
+#: Where `Session.prebuild`'s container sees the directory its cache is
+#: written to.
+PREBUILT_MOUNT = "/out"
+#: `Session.prebuild`'s whole script: `PARALLEL_SCAN`'s builder, stating what
+#: it states, writing to the mounted directory under `{name}` rather than
+#: beside the read-only dump. Untimed and run once a sitting, so it is not a
+#: command shape; `test_measure.py` holds it to the warm builder's flags.
+PREBUILT_BUILDER = (
+    f"/pgdt parse --source /dump.sql --dtcache {PREBUILT_MOUNT}/{{name}} "
+    f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null"
+)
 
 #: `statistics-gathering`'s shapes: one whole-file `parse` under the resident
 #: wrapper, at the metadata level and at the data level, `<family><leg>-rss`.
@@ -3891,6 +3948,15 @@ def _script(command: str) -> str:
                 f"time {dfcli_shell(env, SQL_SHELL, argv)} "
                 f">/tmp/result.csv && {DFCLI_ANSWER}"
             )
+        if shape == PARALLEL_SCAN_PREBUILT:
+            # The same query with no builder: `Session.prebuild` wrote the
+            # cache in its own container and `time_run` mounts it read-only
+            # beside the dump (`PARALLEL_SCAN_PREBUILT`).
+            env, argv = parallel_scan_invocation(int(jobs), "/dump.sql")
+            return (
+                f"time {dfcli_shell(env, SQL_SHELL, argv)} "
+                f">/tmp/result.csv && {DFCLI_ANSWER}"
+            )
         raise ValueError(f"unknown command shape {command!r}")
     if command.startswith("decode-"):
         # The `xz_decode` example, not `pgdt`: nothing in the library decodes
@@ -4000,16 +4066,27 @@ def worker_count_problems() -> list[str]:
     would measure an arrangement the shipped default never produces.
     `flagless_flag_problems` is the other side of that exemption — it holds
     those shapes to stating *neither* flag, so the exemption cannot become a
-    quiet pin."""
+    quiet pin.
+
+    **A shape running the SQL shell states its count as its partitions**
+    (`_dfcli_partitions`), and each `pgdt parse` beside it its own `--jobs`,
+    so one running no builder — `PARALLEL_SCAN_PREBUILT`, whose builder runs
+    outside it — needs no `--jobs` to pin it."""
+
+    def inherits(script: str) -> bool:
+        partitions = _dfcli_partitions(script)
+        if partitions is None:
+            return not _WORKER_COUNT.search(script)
+        return partitions == set() or any(
+            not _WORKER_COUNT.search(run) for run in _PARSE_RUN.findall(script)
+        )
+
     return [
         command
         for command in command_shapes()
         if command not in _NO_WORKERS
         and not command.startswith(_NO_FLAGS)
-        and (
-            not _WORKER_COUNT.search(_script(command))
-            or _dfcli_partitions(_script(command)) == set()
-        )
+        and inherits(_script(command))
     ]
 
 
@@ -4295,6 +4372,10 @@ class Session:
         #: a count where a kill happened and absent everywhere else, so a
         #: renderer asks one question rather than comparing rep counts.
         self.killed: dict[str, int] = {}
+        #: The caches `prebuild` wrote this sitting, by the input path each
+        #: was built over. `time_run` mounts only these, so a cache an earlier
+        #: sitting's binary left on the device is never read.
+        self._prebuilt: dict[Path, Path] = {}
         self._dry_reps: dict[str, int] = {}
         self._last_telemetry: dict[str, float] = {}
         self._last_rss: float | None = None
@@ -4491,6 +4572,45 @@ class Session:
             if which not in ("none", *SHIPPED_BINARIES):
                 self.binary_path(which)
 
+    def prebuild(self, specs: Sequence[RunSpec]) -> None:
+        """Build the cache every `PARALLEL_SCAN_PREBUILT` spec among `specs`
+        reads, once for each input and regime, in a container of its own and
+        outside any timer.
+
+        **Removed and built again every sitting**, beside the input on the
+        device the regime reads, because a cache is its build's: one an earlier
+        binary wrote is refused or, worse, read. The container is the figure's,
+        the builder discovering its statistics allowance from it (D85), so the
+        cache is the one `PARALLEL_SCAN`'s in-container builder writes."""
+        for spec in specs:
+            if not spec.command.startswith(f"{PARALLEL_SCAN_PREBUILT}-jobs-"):
+                continue
+            dump = self.input_path(spec.input, spec.regime)
+            if dump in self._prebuilt:
+                continue
+            cache = dump.with_name(dump.name + ".dtcache")
+            memory = self.memory or self.cfg.memory
+            argv = [
+                *self.cfg.container_argv(), "run", "--rm",
+                "-m", memory, "--memory-swap", memory,
+                "-v", f"{self.binary_path(spec.binary)}:/pgdt:ro",
+                "-v", f"{dump}:/dump.sql:ro",
+                "-v", f"{cache.parent}:{PREBUILT_MOUNT}",
+                self.cfg.image, "bash", "-c", PREBUILT_BUILDER.format(name=cache.name),
+            ]
+            if self.cfg.dry_run:
+                self.log("  [dry-run] " + " ".join(shlex.quote(a) for a in argv))
+            else:
+                cache.unlink(missing_ok=True)
+                self.log(f"  building {cache}, untimed")
+                proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if proc.returncode != 0 or not cache.exists():
+                    raise RuntimeError(
+                        f"the untimed builder of {cache} exited {proc.returncode}"
+                        f"\n{proc.stderr[-2000:]}"
+                    )
+            self._prebuilt[dump] = cache
+
     def _gate_twin_of_kill(self, spec: RunSpec) -> str:
         """The gate's reading of a kill outside `KILL_TOLERANT`: the same leg
         run once now on `GATE_BINARY`, and what it did, as a sentence for the
@@ -4541,6 +4661,13 @@ class Session:
             for path, at in bins
         ]
         mounts.append(f"{dump}:/dump.sql:ro")
+        if spec.command.startswith(f"{PARALLEL_SCAN_PREBUILT}-jobs-"):
+            # Where `--dump` looks for it, and only one this sitting built.
+            if dump not in self._prebuilt:
+                raise RuntimeError(
+                    f"{spec.label} reads a cache `Session.prebuild` did not build this sitting"
+                )
+            mounts.append(f"{self._prebuilt[dump]}:/dump.sql.dtcache:ro")
         # A staged leg reads its binaries once before the timer, inside the
         # container and off the path it will run them from.
         preread = (
@@ -4640,7 +4767,9 @@ class Session:
                 }
                 if spec.command == DYNFILTER_STARTUP:
                     self._last_stdout = {"startup_answer": "1"}
-            if spec.command.startswith(f"{PARALLEL_SCAN}-jobs-"):
+            if spec.command.startswith(
+                (f"{PARALLEL_SCAN}-jobs-", f"{PARALLEL_SCAN_PREBUILT}-jobs-")
+            ):
                 # One answer for every provider leg of the figure, which it
                 # refuses to render otherwise.
                 self._last_stdout = {
@@ -5882,7 +6011,7 @@ class Figure:
     #: of `REGIMES`, or one of `NON_REGIME_STAGES` for a figure that reads no
     #: staged input. `--stage` selects on it, and `registered_regimes` is what
     #: the harness's regime vocabulary is reconciled against, so a token here
-    #: that nothing declares is an error rather than a silent fourth regime.
+    #: that nothing declares is an error rather than a silent extra regime.
     stage: str
     #: Repo-relative paths whose change invalidates this figure. `--stale`
     #: intersects these with a diff. A figure that cannot say what invalidates
@@ -7242,7 +7371,21 @@ PARALLEL_LEGS: tuple[tuple[str, str, str], ...] = (
 PARALLEL_PLAINTEXT: dict[str, str] = {"control": "control", "control_xz": "control"}
 
 
+#: `parallel-scan-throughput`'s fifth column: the plain typed provider scan
+#: again, every rep cold off the NVMe, at `PARALLEL_NVME_JOBS`. **The one leg
+#: the regime test admits on a real device** (`measurements.md`, "Scan
+#: throughput by input shape"): a compressed leg never reaches either SSD's
+#: floor, and `parse` is past both at one worker. Its cache is built ahead of
+#: the sweep (`PARALLEL_SCAN_PREBUILT`).
+PARALLEL_NVME_LEG: tuple[str, str, str] = (
+    "control",
+    PARALLEL_SCAN_PREBUILT,
+    "Plain, typed provider scan, cold on the NVMe",
+)
+
+
 def _parallel_specs() -> list[RunSpec]:
+    inp, family, label = PARALLEL_NVME_LEG
     return [
         RunSpec(
             "dfcli" if family == PARALLEL_SCAN else "pgdt",
@@ -7253,6 +7396,9 @@ def _parallel_specs() -> list[RunSpec]:
         )
         for inp, family, label in PARALLEL_LEGS
         for jobs in PARALLEL_JOBS
+    ] + [
+        RunSpec("dfcli", inp, f"{family}-jobs-{jobs}", "cold-nvme-parallel", f"{label}, {jobs}p")
+        for jobs in PARALLEL_NVME_JOBS
     ]
 
 
@@ -7301,6 +7447,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
     """
     figure = "parallel-scan-throughput"
     specs = _parallel_specs()
+    session.prebuild(specs)
     session.sweep(figure, specs, session.cfg.reps(5))
     problems = parallel_answer_problems(
         {
@@ -7320,8 +7467,13 @@ def run_parallel_scan_throughput(session: Session) -> str:
     rows = []
     for jobs in PARALLEL_JOBS:
         cells = [str(jobs) + (" *(serial)*" if jobs == PARALLEL_BASELINE else "")]
-        for inp, family, _ in PARALLEL_LEGS:
-            values = by_leg[(inp, family)][jobs]
+        for inp, family, _ in (*PARALLEL_LEGS, PARALLEL_NVME_LEG):
+            values = by_leg[(inp, family)].get(jobs)
+            if values is None:
+                # The cold leg's rows stop where the regime test does
+                # (`PARALLEL_NVME_JOBS`).
+                cells.append("—")
+                continue
             got, base = median(values), median(by_leg[(inp, family)][PARALLEL_BASELINE])
             nbytes = file_size(
                 session.cfg,
@@ -7341,7 +7493,11 @@ def run_parallel_scan_throughput(session: Session) -> str:
             cells.append(cell)
         rows.append(cells)
     table = md_table(
-        ["`--jobs` · `target_partitions`", *(label for _, _, label in PARALLEL_LEGS)], rows
+        [
+            "`--jobs` · `target_partitions`",
+            *(label for _, _, label in (*PARALLEL_LEGS, PARALLEL_NVME_LEG)),
+        ],
+        rows,
     )
 
     plain = file_size(session.cfg, session.input_path("control", "warm-parallel"), "control")
@@ -7387,8 +7543,18 @@ def run_parallel_scan_throughput(session: Session) -> str:
         + _substream_note()
         + "Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating "
         f"`{GATHER_STATISTICS}` wrote beside the dump in the same container, where `--dump` "
-        "looks for it: its reading carries decoding that cache whole, statistics included, "
-        "and no mapping pass, and its filter rules out no row group.\n\n"
+        "looks for it — but the cold leg below — so its reading carries decoding that cache "
+        "whole, statistics included, and no mapping pass, and its filter rules out no row "
+        "group.\n\n"
+        "**The last column is the plain typed provider scan again, every rep cold off the "
+        f"NVMe** (`cold-nvme-parallel`), at {', '.join(map(str, PARALLEL_NVME_JOBS))} "
+        "partitions: the one leg the regime test admits on a real device (\"Scan throughput "
+        "by input shape\"), each row read against its own one-partition row, and the device's "
+        "floor being `scan-throughput-nvme`'s `dd`. The page cache is dropped before every "
+        "rep, and the cache it reads is written by the same untimed `parse` once a sitting, "
+        "in a container of its own, and mounted read-only beside the dump, so the dump and "
+        "the cache both come off the device inside the timer. Every other column reads "
+        "tmpfs.\n\n"
         f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no `.xz` row is "
         "budget-clamped;** a plain source stays on the library's default budget whatever is "
         'stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above '
@@ -9792,7 +9958,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="parallel-scan-throughput",
         section="What a second scan worker buys, and where the plain path stops",
-        stage="warm-parallel",
+        stage="warm-parallel+cold-nvme-parallel",
         depends=(
             *SCAN,
             *MAP,
@@ -9812,6 +9978,7 @@ FIGURES: list[Figure] = [
             *DATAFUSION,
         ),
         warm_inputs=("control", "control_xz"),
+        nvme_inputs=("control",),
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
     ),
@@ -11742,6 +11909,9 @@ class ReplaySession(Session):
 
     def build_before_sweep(self, specs: Sequence[RunSpec]) -> None:
         """A no-op: nothing is run, so nothing is built."""
+
+    def prebuild(self, specs: Sequence[RunSpec]) -> None:
+        """A no-op: no leg reads a cache, so none is built."""
 
     def ran_in(self, figure: str, where: str) -> None:
         """A no-op: which glibc each figure ran under is the sitting's own

@@ -470,8 +470,9 @@ the markers it would police. So this boundary is discipline, recorded here.
 binary staged on tmpfs, in a 512 MB container of the pinned image, timed by
 that container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
-before every run, including before the floor; `cold-nvme` ones are that same
-discipline against a copy of the input on the NVMe. Nothing else builds or runs
+before every run, including before the floor; `cold-nvme` and
+`cold-nvme-parallel` ones are that same discipline against a copy of the input
+on the NVMe. Nothing else builds or runs
 on the machine while a sweep does — a `cargo` job across 24 cores moves the
 numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
@@ -1399,8 +1400,8 @@ beginning `cold` publishes warm readings under a cold heading with nothing to
 say so.
 
 **The SATA SSD is not a parallel regime.** *Rejected: `cold-parallel` legs of
-the two `parallel-*` figures, which are registered `warm-parallel` and, on the
-NVMe, nothing yet.* Applying the test leg by leg answers both devices without a
+the two `parallel-*` figures, which are registered `warm-parallel`, and on the
+NVMe one leg of the first.* Applying the test leg by leg answers both devices without a
 sitting. A **compressed** leg reads `control_xz`'s 563.8 MB while it decodes,
 so its demand is that size over the decode wall in "What a second decode worker
 buys" — 35.3 MB/s at one worker rising to **386 MB/s at twenty-four**, against a
@@ -1411,9 +1412,10 @@ and a typed provider scan at 1111 MB/s is already above the SATA floor at one
 partition. On the NVMe the typed provider scan's warm demand is 2030 MB/s at two
 partitions, 0.81 of the 2514 MB/s floor, and 3454 MB/s at four, past it. So the
 test admits a `cold-nvme-parallel` leg of the provider's typed plain scan, and
-the rejection holds for the SATA SSD alone; that leg is admitted as `M216`
-([`out-of-band.md`](out-of-band.md)) and is not yet registered, so no figure
-here times a parallel scan on a real device.
+the rejection holds for the SATA SSD alone. That leg is
+`parallel-scan-throughput`'s last column, at one, two and four partitions
+("What a second scan worker buys, and where the plain path stops"); until a
+sitting takes it, no table here times a parallel scan on a real device.
 
 The device question concurrency *does* raise — whether scattering reads across N
 workers costs a device its sequential advantage — is fatal on rotational media

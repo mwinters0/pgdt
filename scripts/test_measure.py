@@ -313,6 +313,21 @@ class WorkerCount(unittest.TestCase):
             ),
         )
 
+    def test_a_builder_beside_the_sql_shell_states_its_own(self):
+        # The shell's count is its partitions, which does not pin the `parse`
+        # ahead of it; one running no builder needs nothing more.
+        shell = f"time {measure.DFCLI_PARTITIONS}=4 {measure.SQL_SHELL} --dump x=/dump.sql"
+        for script, inherits in (
+            (shell, False),
+            (f"/pgdt parse --source /dump.sql --jobs 1 >/dev/null && {shell}", False),
+            (f"/pgdt parse --source /dump.sql >/dev/null && {shell}", True),
+        ):
+            with self.subTest(script=script), unittest.mock.patch.object(
+                measure, "_script", lambda c: script
+            ):
+                reported = measure.worker_count_problems()
+                self.assertEqual(bool(reported), inherits)
+
     def test_check_fails_on_a_shape_that_inherits_one(self):
         with unittest.mock.patch.object(
             measure, "_script", lambda c: "time /pgdt parse --source /dump.sql"
@@ -2495,10 +2510,17 @@ class ParallelFigures(unittest.TestCase):
     def test_both_figures_read_the_parallel_gate(self):
         # `warm-parallel` gates on steal alone: a reading that occupies every
         # hardware thread is busy by construction, so `warm`'s row would discard
-        # every rep of both these figures.
-        for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
+        # every rep of both these figures. The throughput figure's cold leg
+        # reads `cold-nvme-parallel`, which gates the same way.
+        stages = {
+            "parallel-scan-throughput": ["cold-nvme-parallel", "warm-parallel"],
+            "parallel-peak-rss": ["warm-parallel"],
+        }
+        for fid, want in stages.items():
             with self.subTest(figure=fid):
-                self.assertEqual(measure.SELECTABLE_BY_ID[fid].stage, "warm-parallel")
+                self.assertEqual(sorted(measure.SELECTABLE_BY_ID[fid].stage.split("+")), want)
+                for regime in want:
+                    self.assertEqual(measure.CONTENTION_LIMITS[regime], {"cpu_steal_pct": 2.0})
 
     def test_the_declared_paths_carry_the_leader_and_the_decoder(self):
         # These are the two mechanisms `--jobs` newly reaches; a figure about
@@ -3657,7 +3679,7 @@ class PinnedWorkerCount(unittest.TestCase):
         arbitrary count and calls it an axis."""
         wanted = set(measure.JOBS_AXIS)
         for fig in measure.EVERY_FIGURE + measure.UNTAKEN:
-            if fig.stage != "warm-parallel":
+            if "warm-parallel" not in fig.stage.split("+"):
                 continue
             for spec in _figure_specs(fig.id):
                 for family in list(wanted):
@@ -7057,10 +7079,11 @@ class ParallelScanThroughputProvider(unittest.TestCase):
             measure.parallel_scan_invocation(3, "/dump.sql")
 
     def test_only_the_provider_legs_run_the_second_program(self):
+        provider = (self.FAMILY, f"{measure.PARALLEL_SCAN_PREBUILT}-jobs-")
         for spec in measure._parallel_specs():
             with self.subTest(command=spec.command):
                 self.assertEqual(
-                    spec.binary, "dfcli" if spec.command.startswith(self.FAMILY) else "pgdt"
+                    spec.binary, "dfcli" if spec.command.startswith(provider) else "pgdt"
                 )
 
     def test_one_answer_passes_and_anything_else_is_refused(self):
@@ -7102,6 +7125,139 @@ class ParallelScanThroughputProvider(unittest.TestCase):
     def test_the_figure_declares_the_provider(self):
         depends = measure.SELECTABLE_BY_ID["parallel-scan-throughput"].depends
         self.assertLessEqual(set(measure.DATAFUSION), set(depends))
+
+
+class ParallelScanThroughputColdNvme(unittest.TestCase):
+    """`parallel-scan-throughput`'s cold-NVMe leg: the plain typed provider
+    scan again, every rep cold off the NVMe, over a cache built in a container
+    of its own.
+
+    What every check here is against is a reading of the wrong thing that
+    still looks like a cold one: a builder in the timed container reading the
+    dump back into page cache after the drop, a cache an earlier sitting's
+    binary left on the device, or a leg read off tmpfs under a cold heading."""
+
+    FIGURE = "parallel-scan-throughput"
+    PREFIX = f"{measure.PARALLEL_SCAN_PREBUILT}-jobs-"
+
+    def _cold(self):
+        return [s for s in measure._parallel_specs() if s.regime == "cold-nvme-parallel"]
+
+    def _session(self, tmp):
+        logged = []
+        cfg = measure.Config(
+            dry_run=True,
+            cache_dir=Path(tmp) / "ssd",
+            nvme_dir=Path(tmp) / "nvme",
+            warm_dir=Path(tmp) / "shm",
+            warm_budget=8,
+        )
+        session = measure.Session(cfg, measure.Stager(cfg, logged.append), logged.append)
+        session.figure_id = self.FIGURE
+        return session, logged
+
+    def test_the_leg_is_the_plain_provider_scan_at_the_admitted_counts(self):
+        specs = self._cold()
+        self.assertEqual(
+            [s.command for s in specs], [f"{self.PREFIX}{n}" for n in measure.PARALLEL_NVME_JOBS]
+        )
+        self.assertEqual({(s.binary, s.input) for s in specs}, {("dfcli", "control")})
+        self.assertEqual(
+            measure.PARALLEL_NVME_JOBS,
+            measure.PARALLEL_JOBS[: len(measure.PARALLEL_NVME_JOBS)],
+        )
+        self.assertEqual(measure.PARALLEL_NVME_JOBS[-1], 4)
+        self.assertEqual(measure.FIGURES_BY_ID[self.FIGURE].nvme_inputs, ("control",))
+
+    def test_the_regime_drops_the_page_cache_and_reads_the_nvme(self):
+        self.assertEqual(
+            measure.REGIMES["cold-nvme-parallel"], measure.Regime(area="nvme", drops_caches=True)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            session, _ = self._session(tmp)
+            self.assertEqual(
+                session.input_path("control", "cold-nvme-parallel").parent,
+                session.cfg.nvme_dir,
+            )
+
+    def test_the_timed_container_runs_no_builder(self):
+        # A `parse` after the drop reads the dump back into page cache before
+        # the timer, so the query would read it warm.
+        for jobs in measure.PARALLEL_NVME_JOBS:
+            with self.subTest(jobs=jobs):
+                script = measure._script(f"{self.PREFIX}{jobs}")
+                warm = measure._script(f"{measure.PARALLEL_SCAN}-jobs-{jobs}")
+                self.assertNotIn("/pgdt parse", script)
+                self.assertEqual(script.count("time "), 1)
+                self.assertTrue(script.startswith("time "))
+                # The same timed query as the warm leg's, word for word.
+                self.assertEqual(warm.partition(" && ")[2], script)
+
+    def test_the_builder_is_the_warm_legs_but_for_where_it_writes(self):
+        warm = measure._script(f"{measure.PARALLEL_SCAN}-jobs-1").partition(" && ")[0]
+        built = measure.PREBUILT_BUILDER.format(name="dump.sql.dtcache")
+        self.assertEqual(
+            built.replace(f"{measure.PREBUILT_MOUNT}/dump.sql.dtcache", "/dump.sql.dtcache"),
+            warm,
+        )
+        self.assertNotIn("time ", built)
+        self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", built)
+        self.assertIn(measure.GATHER_STATISTICS, built)
+
+    def test_a_cache_this_sitting_did_not_build_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session, _ = self._session(tmp)
+            with self.assertRaises(RuntimeError):
+                session.time_run(self._cold()[0])
+
+    def test_the_cache_is_built_once_and_mounted_read_only_beside_the_dump(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session, logged = self._session(tmp)
+            session.prebuild(measure._parallel_specs())
+            builds = [m for m in logged if "--dtcache /out/control.sql.dtcache" in m]
+            self.assertEqual(len(builds), 1, logged)
+            self.assertNotIn("time ", builds[0])
+            dump = session.input_path("control", "cold-nvme-parallel")
+            self.assertIn(f"{dump}:/dump.sql:ro", builds[0])
+            self.assertIn(f"{dump.parent}:/out ", builds[0])
+            logged.clear()
+            session.time_run(self._cold()[0])
+            cache = dump.with_name(dump.name + ".dtcache")
+            self.assertTrue(any(f"{cache}:/dump.sql.dtcache:ro" in m for m in logged), logged)
+            self.assertTrue(any("drop_caches" in m for m in logged), logged)
+
+    def test_a_warm_leg_is_given_no_built_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session, logged = self._session(tmp)
+            session.prebuild(measure._parallel_specs())
+            warm = [s for s in measure._parallel_specs() if s.binary == "dfcli"][0]
+            logged.clear()
+            session.time_run(warm)
+            self.assertFalse(any(".dtcache:/dump.sql.dtcache" in m for m in logged), logged)
+
+    def test_the_column_stops_where_the_regime_test_does(self):
+        specs = measure._parallel_specs()
+        answer = {"result_rows": "1", "result_first": "814362", "result_digest": "ab"}
+        raw = {
+            "readings": {s.key(self.FIGURE): [1.0] * 5 for s in specs},
+            "reported": {s.key(self.FIGURE): answer for s in specs if s.binary == "dfcli"},
+            "input_sizes": {"control": 3221227790, "control_xz": 591190020},
+            "runs": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            body = measure.run_parallel_scan_throughput(session)
+        rows = [r for r in body.splitlines() if r.startswith("| ")]
+        self.assertTrue(rows[0].rstrip().endswith(f"| {measure.PARALLEL_NVME_LEG[2]} |"))
+        for row in rows[2:]:
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            jobs = int(cells[0].split()[0])
+            with self.subTest(jobs=jobs):
+                if jobs in measure.PARALLEL_NVME_JOBS:
+                    self.assertIn("MB/s", cells[-1])
+                else:
+                    self.assertEqual(cells[-1], "—")
 
 
 class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
@@ -7163,7 +7319,9 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         body = self._render()
         rows = [r for r in body.splitlines() if r.startswith("| ")]
         header = [c.strip() for c in rows[0].strip("|").split("|")]
-        typed = {i for i, c in enumerate(header) if "provider" in c}
+        # The cold leg's rows stop at four (`PARALLEL_NVME_JOBS`), below any
+        # clamp, so it is no column an annotation may land in.
+        typed = {i for i, c in enumerate(header) if "provider" in c and "cold" not in c}
         self.assertEqual(len(typed), 2, header)
         # Only the legs a budget clamp actually reaches are annotated, and
         # which those are is `QUERY_SUBSTREAM_CAP`'s to say.

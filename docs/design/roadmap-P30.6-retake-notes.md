@@ -37,7 +37,7 @@ What the phase's wrap and P23 inherit. The sitting is
 - **The cold-NVMe parallel regime's rejection no longer passes its own
   test** on this sitting's provider readings
   ([`measurements.md`](measurements.md), "Scan throughput by input shape");
-  it is left standing under STATUS's "Decisions worth another look".
+  the leg it admits is `M216` ([`out-of-band.md`](out-of-band.md)).
 
 ## Negative results
 
