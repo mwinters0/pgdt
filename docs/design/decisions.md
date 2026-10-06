@@ -16,8 +16,8 @@ provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A serial plain `parse` is device-bound on every real device (a typed scan on the NVMe is not, but
 `KD57`'s merge holds its split flat), and each partition's tail past itself adds device bytes. `XzSource` answers `available_parallelism()`
-capped at its block count (`RT7`); a fetched one answers one, the errors being asymmetric. Reopens: a parallel plain scan measured on a real device
-(`parallel-scan-throughput`'s cold-NVMe column, untaken). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
+capped at its block count (`RT7`); a fetched one answers one, the errors being asymmetric. Reopens: `KD57` closing, a typed plain
+scan split on a real device having outrun one worker (`parallel-scan-throughput`'s cold-NVMe column). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves where being wrong kills the

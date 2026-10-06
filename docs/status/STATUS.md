@@ -121,3 +121,16 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **`D2` stands though its Reopens was met** (`M216`). The cold-NVMe column
+  of `parallel-scan-throughput` reads a typed plain scan split four ways
+  outrunning one worker on a real device, held by the device's floor there
+  ([`../design/measurements.md`](../design/measurements.md), "What a second
+  scan worker buys, and where the plain path stops"). The call was that this
+  moves no recommendation: a plain source's one-worker answer reaches only
+  `pgdt`'s unstated `--jobs` (`Discovered::resolve`), where a serial `parse`
+  is already device-bound and `query` is held flat by `KD57`, and the
+  provider splits by `target_partitions` without reading it. So `D2`'s
+  Reopens was rewritten to `KD57` closing rather than the decision reopened.
+  Reconsidering means reading the column as the promotion `KD57` waits on —
+  a phase taking up `pgdt query`'s throughput, now with a measured return on
+  a real device — at whose close `D2`'s plain answer is decided again.

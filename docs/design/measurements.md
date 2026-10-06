@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-05, against commit `1c9fc9be`, under the `mimalloc` allocator and glibc 2.44. **All 24 figures below come from that sitting.**
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-05, against commit `1c9fc9be`, under the `mimalloc` allocator and glibc 2.44. **23 of the 24 figures below come from that sitting.** The other carries its own sitting commit inside its marker, and every reader of this stamp argues from that instead: `parallel-scan-throughput` (`3b958b54`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -1408,14 +1408,15 @@ buys" — 35.3 MB/s at one worker rising to **386 MB/s at twenty-four**, against
 560 MB/s SATA floor and a 2514 MB/s NVMe one. It never reaches either device, so
 a cold compressed curve is the warm one plus queueing. A **plain** leg is the
 opposite: `parse` runs at 7565 MB/s warm, above every device this project owns,
-and a typed provider scan at 1111 MB/s is already above the SATA floor at one
-partition. On the NVMe the typed provider scan's warm demand is 2030 MB/s at two
-partitions, 0.81 of the 2514 MB/s floor, and 3454 MB/s at four, past it. So the
+and a typed provider scan at 1134 MB/s is already above the SATA floor at one
+partition. On the NVMe the typed provider scan's warm demand is 2076 MB/s at two
+partitions, 0.83 of the 2514 MB/s floor, and 3573 MB/s at four, past it. So the
 test admits a `cold-nvme-parallel` leg of the provider's typed plain scan, and
 the rejection holds for the SATA SSD alone. That leg is
 `parallel-scan-throughput`'s last column, at one, two and four partitions
-("What a second scan worker buys, and where the plain path stops"); until a
-sitting takes it, no table here times a parallel scan on a real device.
+("What a second scan worker buys, and where the plain path stops"), and it
+reads what the test predicts: the split gains at two partitions and is held by
+the NVMe's floor at four.
 
 The device question concurrency *does* raise — whether scattering reads across N
 workers costs a device its sequential advantage — is fatal on rotational media
@@ -2995,17 +2996,17 @@ So a worker count read off a linear extrapolation of a one-worker rate is a
 
 ## What a second scan worker buys, and where the plain path stops
 
-<!-- figure: parallel-scan-throughput — reproduce with `cd scripts && uv run measure.py --figure parallel-scan-throughput` -->
+<!-- figure: parallel-scan-throughput — taken at `3b958b54` — under glibc 2.44 — reproduce with `cd scripts && uv run measure.py --figure parallel-scan-throughput` -->
 
-| `--jobs` · `target_partitions` | Plain, `parse` | Plain, typed provider scan | `.xz`, `parse` | `.xz`, typed provider scan |
-|---|---|---|---|---|
-| 1 *(serial)* | **0.439 s** (0.426–0.461) · ~7341 MB/s · 1.00× | **2.90 s** (2.89–2.93) · ~1111 MB/s · 1.00× | **16.32 s** (16.18–16.45) · ~197 MB/s · 1.00× | **18.37 s** (18.26–20.02) · ~175 MB/s · 1.00× |
-| 2 | **0.330 s** (0.300–0.401) · ~9759 MB/s · 1.33× | **1.587 s** (1.574–1.603) · ~2030 MB/s · 1.83× | **16.79 s** (16.71–17.39) · ~192 MB/s · 0.97× | **10.16 s** (10.12–10.42) · ~317 MB/s · 1.81× |
-| 4 | **0.368 s** (0.280–0.372) · ~8747 MB/s · 1.19× | **0.933 s** (0.921–0.940) · ~3454 MB/s · 3.11× | **9.08 s** (9.04–9.59) · ~355 MB/s · 1.80× | **5.64 s** (5.57–5.74) · ~571 MB/s · 3.25× |
-| 8 | **0.376 s** (0.367–0.383) · ~8561 MB/s · 1.17× | **0.802 s** (0.792–0.870) · ~4018 MB/s · 3.62× · 7 sub-streams | **5.26 s** (5.15–5.52) · ~612 MB/s · 3.10× | **3.20 s** (3.18–3.29) · ~1007 MB/s · 5.74× |
-| 12 | **0.378 s** (0.367–0.398) · ~8529 MB/s · 1.16× | **0.814 s** (0.803–0.828) · ~3958 MB/s · 3.56× · 7 sub-streams | **4.25 s** (4.00–4.53) · ~759 MB/s · 3.84× | **2.42 s** (2.36–2.47) · ~1330 MB/s · 7.59× |
-| 16 | **0.380 s** (0.365–0.387) · ~8470 MB/s · 1.15× | **0.823 s** (0.815–0.833) · ~3915 MB/s · 3.52× · 7 sub-streams | **3.41 s** (3.37–3.73) · ~945 MB/s · 4.79× | **2.17 s** (2.16–2.23) · ~1484 MB/s · 8.46× |
-| 24 | **0.381 s** (0.377–0.386) · ~8446 MB/s · 1.15× | **0.851 s** (0.846–0.887) · ~3783 MB/s · 3.40× · 7 sub-streams | **2.87 s** (2.82–3.21) · ~1123 MB/s · 5.69× | **2.20 s** (2.16–2.32) · ~1464 MB/s · 8.35× |
+| `--jobs` · `target_partitions` | Plain, `parse` | Plain, typed provider scan | `.xz`, `parse` | `.xz`, typed provider scan | Plain, typed provider scan, cold on the NVMe |
+|---|---|---|---|---|---|
+| 1 *(serial)* | **0.381 s** (0.369–0.433) · ~8458 MB/s · 1.00× | **2.84 s** (2.83–2.93) · ~1134 MB/s · 1.00× | **16.48 s** (16.25–17.77) · ~195 MB/s · 1.00× | **18.40 s** (18.24–18.47) · ~175 MB/s · 1.00× | **3.56 s** (3.51–3.57) · ~906 MB/s · 1.00× |
+| 2 | **0.312 s** (0.255–0.338) · ~10340 MB/s · 1.22× | **1.551 s** (1.505–1.584) · ~2076 MB/s · 1.83× | **16.90 s** (16.70–18.08) · ~191 MB/s · 0.98× | **10.15 s** (10.12–10.20) · ~317 MB/s · 1.81× | **2.12 s** (2.10–2.13) · ~1521 MB/s · 1.68× |
+| 4 | **0.308 s** (0.294–0.348) · ~10476 MB/s · 1.24× | **0.902 s** (0.896–0.956) · ~3573 MB/s · 3.15× | **9.16 s** (9.09–9.42) · ~352 MB/s · 1.80× | **5.58 s** (5.55–5.83) · ~578 MB/s · 3.30× | **1.307 s** (1.296–1.330) · ~2465 MB/s · 2.72× |
+| 8 | **0.359 s** (0.356–0.367) · ~8969 MB/s · 1.06× | **0.791 s** (0.775–0.866) · ~4074 MB/s · 3.59× · 7 sub-streams | **5.34 s** (5.23–5.40) · ~603 MB/s · 3.09× | **3.16 s** (3.14–3.18) · ~1018 MB/s · 5.82× | — |
+| 12 | **0.360 s** (0.346–0.366) · ~8950 MB/s · 1.06× | **0.800 s** (0.790–0.865) · ~4027 MB/s · 3.55× · 7 sub-streams | **4.13 s** (3.96–4.23) · ~781 MB/s · 3.99× | **2.42 s** (2.40–2.45) · ~1331 MB/s · 7.60× | — |
+| 16 | **0.359 s** (0.356–0.389) · ~8974 MB/s · 1.06× | **0.825 s** (0.810–0.862) · ~3905 MB/s · 3.45× · 7 sub-streams | **3.53 s** (3.20–3.59) · ~911 MB/s · 4.66× | **2.19 s** (2.16–2.23) · ~1474 MB/s · 8.42× | — |
+| 24 | **0.365 s** (0.358–0.375) · ~8817 MB/s · 1.04× | **0.844 s** (0.831–0.912) · ~3815 MB/s · 3.37× · 7 sub-streams | **2.82 s** (2.80–3.21) · ~1141 MB/s · 5.84× | **2.08 s** (2.03–2.16) · ~1545 MB/s · 8.83× | — |
 
 Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. Both `.xz` legs decode the same 3.00 GiB of plaintext the plain legs read directly (563.8 MB on disk, 5.45×), so every rate is per the same bytes.
 
@@ -3017,47 +3018,52 @@ Every row states the allowance `2550136832` — `--memory 2550136832` on a `pars
 
 **A provider leg's count can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` solves a scan's sub-stream count against the read-buffer budget, each sub-stream costing its read plus a batch span narrowed toward the chunk size before the count is cut (`docs/design/decisions.md`, "D4", "D84") — a budget the *harness* chose, not a ceiling the library ships. The rows at or above that count on such a leg state the count they actually planned: `7` on plain. Below that count a cell's sub-stream figure equals its row label; at or above it, every further worker asked for buys nothing more to plan.
 
-Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote beside the dump in the same container, where `--dump` looks for it: its reading carries decoding that cache whole, statistics included, and no mapping pass, and its filter rules out no row group.
+Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote beside the dump in the same container, where `--dump` looks for it — but the cold leg below — so its reading carries decoding that cache whole, statistics included, and no mapping pass, and its filter rules out no row group.
+
+**The last column is the plain typed provider scan again, every rep cold off the NVMe** (`cold-nvme-parallel`), at 1, 2, 4 partitions: the one leg the regime test admits on a real device ("Scan throughput by input shape"), each row read against its own one-partition row, and the device's floor being `scan-throughput-nvme`'s `dd`. The page cache is dropped before every rep, and the cache it reads is written by the same untimed `parse` once a sitting, in a container of its own, and mounted read-only beside the dump, so the dump and the cache both come off the device inside the timer. Every other column reads tmpfs.
 
 **`PARALLEL_BUDGET` is 2.00 GiB so that no `.xz` row is budget-clamped;** a plain source stays on the library's default budget whatever is stated (`docs/design/decisions.md`, "D83"), which is the clamp the counts above state. A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
 
 Per-rep readings (s):
-- Plain, `parse`, 1j: 0.461, 0.439, 0.431, 0.426, 0.442
-- Plain, `parse`, 2j: 0.342, 0.325, 0.330, 0.300, 0.401
-- Plain, `parse`, 4j: 0.369, 0.345, 0.280, 0.368, 0.372
-- Plain, `parse`, 8j: 0.367, 0.377, 0.383, 0.367, 0.376
-- Plain, `parse`, 12j: 0.367, 0.398, 0.378, 0.378, 0.373
-- Plain, `parse`, 16j: 0.386, 0.380, 0.387, 0.378, 0.365
-- Plain, `parse`, 24j: 0.381, 0.386, 0.379, 0.383, 0.377
-- Plain, typed provider scan, 1p: 2.89, 2.90, 2.89, 2.91, 2.93
-- Plain, typed provider scan, 2p: 1.582, 1.587, 1.603, 1.574, 1.587
-- Plain, typed provider scan, 4p: 0.940, 0.940, 0.921, 0.933, 0.929
-- Plain, typed provider scan, 8p: 0.802, 0.870, 0.814, 0.793, 0.792
-- Plain, typed provider scan, 12p: 0.821, 0.814, 0.828, 0.803, 0.808
-- Plain, typed provider scan, 16p: 0.833, 0.823, 0.815, 0.828, 0.823
-- Plain, typed provider scan, 24p: 0.849, 0.851, 0.887, 0.880, 0.846
-- `.xz`, `parse`, 1j: 16.36, 16.32, 16.18, 16.45, 16.24
-- `.xz`, `parse`, 2j: 16.79, 16.88, 16.72, 17.39, 16.71
-- `.xz`, `parse`, 4j: 9.15, 9.06, 9.08, 9.59, 9.04
-- `.xz`, `parse`, 8j: 5.26, 5.15, 5.29, 5.52, 5.26
-- `.xz`, `parse`, 12j: 4.39, 4.25, 4.20, 4.53, 4.00
-- `.xz`, `parse`, 16j: 3.37, 3.41, 3.63, 3.73, 3.39
-- `.xz`, `parse`, 24j: 2.87, 2.82, 2.82, 3.21, 2.96
-- `.xz`, typed provider scan, 1p: 18.46, 18.37, 18.30, 20.02, 18.26
-- `.xz`, typed provider scan, 2p: 10.16, 10.12, 10.12, 10.42, 10.17
-- `.xz`, typed provider scan, 4p: 5.57, 5.74, 5.58, 5.73, 5.64
-- `.xz`, typed provider scan, 8p: 3.18, 3.29, 3.19, 3.25, 3.20
-- `.xz`, typed provider scan, 12p: 2.36, 2.42, 2.36, 2.47, 2.46
-- `.xz`, typed provider scan, 16p: 2.17, 2.16, 2.16, 2.19, 2.23
-- `.xz`, typed provider scan, 24p: 2.32, 2.20, 2.20, 2.19, 2.16
+- Plain, `parse`, 1j: 0.381, 0.369, 0.433, 0.378, 0.388
+- Plain, `parse`, 2j: 0.324, 0.255, 0.312, 0.284, 0.338
+- Plain, `parse`, 4j: 0.348, 0.308, 0.294, 0.300, 0.340
+- Plain, `parse`, 8j: 0.367, 0.356, 0.359, 0.359, 0.359
+- Plain, `parse`, 12j: 0.365, 0.366, 0.357, 0.360, 0.346
+- Plain, `parse`, 16j: 0.389, 0.362, 0.359, 0.357, 0.356
+- Plain, `parse`, 24j: 0.375, 0.362, 0.372, 0.358, 0.365
+- Plain, typed provider scan, 1p: 2.83, 2.83, 2.84, 2.85, 2.93
+- Plain, typed provider scan, 2p: 1.552, 1.505, 1.543, 1.551, 1.584
+- Plain, typed provider scan, 4p: 0.896, 0.903, 0.902, 0.901, 0.956
+- Plain, typed provider scan, 8p: 0.799, 0.775, 0.791, 0.781, 0.866
+- Plain, typed provider scan, 12p: 0.836, 0.794, 0.790, 0.800, 0.865
+- Plain, typed provider scan, 16p: 0.826, 0.810, 0.825, 0.816, 0.862
+- Plain, typed provider scan, 24p: 0.834, 0.855, 0.831, 0.844, 0.912
+- `.xz`, `parse`, 1j: 17.06, 16.27, 16.48, 16.25, 17.77
+- `.xz`, `parse`, 2j: 16.90, 16.70, 16.90, 16.79, 18.08
+- `.xz`, `parse`, 4j: 9.16, 9.16, 9.09, 9.15, 9.42
+- `.xz`, `parse`, 8j: 5.23, 5.25, 5.40, 5.34, 5.37
+- `.xz`, `parse`, 12j: 3.96, 4.13, 4.22, 4.06, 4.23
+- `.xz`, `parse`, 16j: 3.31, 3.56, 3.59, 3.20, 3.53
+- `.xz`, `parse`, 24j: 2.80, 2.81, 2.82, 2.84, 3.21
+- `.xz`, typed provider scan, 1p: 18.36, 18.40, 18.47, 18.24, 18.42
+- `.xz`, typed provider scan, 2p: 10.15, 10.12, 10.20, 10.14, 10.18
+- `.xz`, typed provider scan, 4p: 5.58, 5.56, 5.60, 5.55, 5.83
+- `.xz`, typed provider scan, 8p: 3.18, 3.15, 3.14, 3.18, 3.16
+- `.xz`, typed provider scan, 12p: 2.42, 2.44, 2.42, 2.40, 2.45
+- `.xz`, typed provider scan, 16p: 2.23, 2.18, 2.19, 2.16, 2.22
+- `.xz`, typed provider scan, 24p: 2.03, 2.08, 2.04, 2.16, 2.14
+- Plain, typed provider scan, cold on the NVMe, 1p: 3.57, 3.57, 3.51, 3.56, 3.54
+- Plain, typed provider scan, cold on the NVMe, 2p: 2.13, 2.12, 2.12, 2.11, 2.10
+- Plain, typed provider scan, cold on the NVMe, 4p: 1.303, 1.296, 1.308, 1.307, 1.330
 
-Apparatus over every run in this table: CPU stall ≤2.48%, I/O stall ≤36.41%, machine ≤43% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤71°C.
+Apparatus over every run in this table: CPU stall ≤26.74%, I/O stall ≤21.95%, machine ≤41% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤72°C.
 
 **Through the provider, a typed scan's sub-streams scale with
-`target_partitions`.** Over `.xz` it reads 18.37 s at one partition and 2.17 s
-at sixteen, 8.46×, and nothing more at twenty-four, whose range overlaps
-sixteen's. Over plain it reaches 3.62× at eight, the seven sub-streams the
-budget seats there, and reads 0.814–0.851 s at every count above. The
+`target_partitions`.** Over `.xz` it reads 18.40 s at one partition, 2.19 s
+at sixteen, 8.42×, and 2.08 s at twenty-four, whose range touches sixteen's.
+Over plain it reaches 3.59× at eight, the seven sub-streams the budget seats
+there, and reads 0.800–0.844 s at every count above. The
 `pgdt query` legs this table replaced read 1.11× on plain and 1.00× on `.xz` at
 the same counts in the `183a50eb` sitting, on the platform allocator: what held them flat was
 `pgdt query`'s in-order merge, not the sub-streams
@@ -3071,7 +3077,7 @@ side by side and never subtracted.
   "`M187`: the provider legs"). No run in this sitting reports it: on a
   provider leg `raw.json`'s resolution comes from the untimed builder's
   `--jobs 1` line, one reader at every count.
-- **From four sub-streams to seven, plain gains 1.16×** (0.933 s to 0.802 s).
+- **From four sub-streams to seven, plain gains 1.14×** (0.902 s to 0.791 s).
   What keeps the step that far below the count is not attributed. Nothing
   here shows whether the seven wait on the plain source's four chunk slots, as
   `parse`'s fused workers do.
@@ -3080,12 +3086,25 @@ side by side and never subtracted.
   decode comes from a fused worker's tail read landing in its successor's
   block. A replay sub-stream's last chunk reads past its limit into its
   successor's bytes the same way (`pgdump_query/src/stream.rs`, `replay`), but
-  no reading here counts its decodes. Nothing explains why it stops gaining past sixteen.
-- **`.xz` rep 4 is slow**: the slowest of five on every `.xz` `parse` row and
-  on the provider's at one and two partitions, up to 1.65 s above its cell's
-  median (the provider at one partition, 20.02 s against 18.37 s) and 0.26–0.60 s
-  above it on `parse` from two workers up. The medians absorb it. It is
-  unattributed.
+  no reading here counts its decodes. Nothing explains why it gains so little
+  past sixteen.
+- **Rep 5 is slow**: the slowest of five on every plain provider row, 0.033–
+  0.090 s above its cell's median, and on the `.xz` `parse` rows at one, two,
+  four, twelve and twenty-four workers, up to 1.29 s above it (one worker,
+  17.77 s against 16.48 s). The medians absorb it. It is unattributed.
+
+**Cold on the NVMe, the plain typed scan split four ways is held by the
+device.** At four partitions it reads 1.307 s, within 2% of the 1.281 s
+`scan-throughput-nvme`'s `dd` takes to deliver the dump's bytes (its cache adds
+0.2% to them), and 2.72× its one-partition cell. The floor is another
+sitting's, so the 2% is approximate where the 2.72× is this table's own. Below four the
+device leaves room: 3.56 s at one partition is 0.36 of the floor's rate and
+1.68× gained at two, so on a real device a split outruns one worker. Each cold
+cell sits above its warm one, by 0.72 s at one partition, 0.57 s at two and
+0.41 s at four; 0.72 s is less than the floor's 1.28 s, so one reader overlaps
+part of its reading with its decoding, and what sets that share is not
+attributed. Through `pgdt`, no plain scan splits by default
+(`docs/design/decisions.md`, "D2").
 
 ## What a parallel scan holds resident, at two block sizes
 
