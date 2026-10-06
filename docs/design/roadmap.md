@@ -18,7 +18,8 @@ reused, including a struck phase's.
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P30, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
-| P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
+| P29 — versioned binary releases | Current | [spec](roadmap-P29-releases.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
@@ -46,7 +47,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P33`** — nothing at or below it
+centering"). **Phase numbering continues from `P34`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -672,25 +673,19 @@ criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
 ## P29 — Versioned binary releases
 
-Publishing the binaries as versioned GitHub Releases, starting with `v0.1.0`,
-sketched to corner-avoidance depth. Three pieces: a local cross-build producing
-Linux and macOS binaries for x86-64 and arm64; a `/release` skill that
-rehearses every release build, bumps the version and tags the commit, leaving
-the push to the maintainer; and a manually triggered workflow that builds the
-binaries from a pushed tag and publishes the Release with a doc the maintainer
-wrote. **The maintainer owns the timing and the text; CI owns the bytes.**
-**No crate is published**, and every workspace member's version moves in
-lockstep, the vendored `xz-seek` keeping its own.
+Publishing `pgdt` as versioned GitHub Releases, Linux only. Specified in
+[`roadmap-P29-releases.md`](roadmap-P29-releases.md).
 
-Which binary ships, with which features and allocator, is settled
-([`decisions.md`](decisions.md), "D13"). Beyond the
-mechanics, the grilling settles the Linux artifact's libc, the shipped binary
-being what every figure times; whether a macOS build ships before it can discover
-its own memory; when the version moves and how `--version` tells a release
-from any other `--release` build; where the release doc lives, a pushed tag
-being a feed entry before any Release exists; and what licence and notices a
-published binary carries. The facts each turns on are in [its
-inbox](roadmap-P29-releases-inbox.md).
+## P34 — macOS
+
+Shipping `pgdt` for macOS on x86-64 and arm64, which P29 does not. **A
+flagless run on macOS must size itself from what the host allows**, as on
+Linux ("A default runs as fast as the allocation permits"): discovery reads
+`/proc` and the cgroup tree only, so today it finds nothing there and falls to
+the fixed default. The phase owns what "available memory" means on a host with
+compressed memory and no cgroups, the `RT<n>` entries that rest on it, running
+the suite on a Mac, and the Apple build of the C dependencies. Sketched to
+corner-avoidance depth. The facts are in [its inbox](roadmap-P34-macos-inbox.md).
 
 ## P22 — The third tunable
 

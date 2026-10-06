@@ -77,12 +77,23 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
+## P29 progress
+
+Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
+
+- [ ] **29.1** The image and its floor: `rust-toolchain.toml` pinning the compiler; the `debian:trixie` image, pinned by digest, cross-building both targets; a check that the binary needs no `GLIBC_` version past the image's; the x86-64 suite run in the image
+- [ ] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in
+- [ ] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list
+- [ ] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/`
+- [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
+- [ ] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain and `.xz`, with
+- **P29 is open**, above; nothing else is. A dump is readable over HTTP, plain and `.xz`, with
   nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -92,7 +103,7 @@ instrument can see").
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eleven phases remain sketched — P33, P32, P29, P22, P21, P23, P26, P15, P18, P8, P24,
+  Eleven phases remain sketched — P33, P32, P34, P22, P21, P23, P26, P15, P18, P8, P24,
   in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
