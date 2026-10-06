@@ -4092,6 +4092,10 @@ class InstrumentReport(unittest.TestCase):
         session = measure.Session(
             cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None, out_root
         )
+        # A unit test builds no `peak-rss`: a fresh checkout has none to stage.
+        self.enterContext(
+            unittest.mock.patch.object(measure, "ensure_peak_rss_binary", return_value=Path("/dev/null"))
+        )
         session.figure_id = "reserve"
         session.input_path = lambda name, regime: Path("/dev/null")
         session.binary_path = lambda which: Path("/dev/null")
@@ -8548,6 +8552,10 @@ class TimeRunHandlesAKill(unittest.TestCase):
         cfg = measure.Config()
         with tempfile.TemporaryDirectory() as tmp:
             session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        # A unit test builds no `peak-rss`: a fresh checkout has none to stage.
+        self.enterContext(
+            unittest.mock.patch.object(measure, "ensure_peak_rss_binary", return_value=Path("/dev/null"))
+        )
         session.figure_id = "reserve"
         session.input_path = lambda name, regime: Path("/dev/null")
         session.binary_path = lambda which: Path("/dev/null")
@@ -8951,6 +8959,8 @@ class Arms(unittest.TestCase):
         with unittest.mock.patch.object(measure, "l3_groups", return_value=self.GROUPS):
             session = measure.Session(config, measure.Stager(config, lambda _m: None), lambda _m: None)
         session.figure_id = "dynamic-filter-topk"
+        # A unit test starts no container to ask the image for its glibc.
+        self.enterContext(unittest.mock.patch.object(measure, "glibc_of", return_value="2.41"))
         session.input_path = lambda name, regime: Path("/dev/null")
         session.binary_path = lambda which: Path(f"/bin/{which}")
         session.stage_binary = lambda src: Path("/dev/shm/pgdt/bin") / src.name

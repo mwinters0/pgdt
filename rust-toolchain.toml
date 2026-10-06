@@ -1,0 +1,14 @@
+# The one Rust every build uses: development, the register and the release
+# (`docs/design/roadmap-P29-releases.md`, "The compiler"). It moves only
+# through `.claude/skills/upgrade-deps/SKILL.md`, since the shipped binary is
+# the timed one only while one compiler builds both (`docs/design/decisions.md`,
+# "D13").
+#
+# The targets are the ones a checkout builds beyond its own: the release's
+# second, and the static one `peak-rss` is built for on an x86-64 host
+# (`scripts/measure.py`, `peak_rss_target`).
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]

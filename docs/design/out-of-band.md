@@ -73,3 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M217 | | `pgdump_query/tests/map_file.rs`'s `an_interrupt_inside_a_later_database_types_the_segments_it_finished` trips on what the scan banked, not on what it read, so load cannot fail it | | [`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "`M217`: an interrupt test that load can fail" |

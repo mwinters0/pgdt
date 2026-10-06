@@ -7,7 +7,8 @@ the decisions the code cannot explain are [`docs/design/decisions.md`](docs/desi
 ## Building and testing
 
 A Rust toolchain and `cargo test --workspace` are the whole story for the
-library and the CLI. `cargo nextest run --workspace`, the one `mise.toml` pins,
+library and the CLI, under the Rust release `rust-toolchain.toml` pins, which
+`rustup` installs on first use. `cargo nextest run --workspace`, the one `mise.toml` pins,
 runs the same tests a process each and several at once, and leaves the
 doctests to `cargo test --workspace --doc`. The Python-side checks under `scripts/` — the fixture
 generator, the oracles, the measurement harness — run under `uv`, from that
@@ -17,7 +18,8 @@ directory. [`CLAUDE.md`](CLAUDE.md) lists every one of them with its purpose.
 the image `scripts/measure.py` pins (`sudo nerdctl` unless
 `PGDT_MEASURE_CONTAINER` names another), and the Rust target the resident-set
 helper `peak-rss` is built static for, `rustup target add
-<machine>-unknown-linux-musl`. A sweep's preflight builds the helper and starts
+<machine>-unknown-linux-musl`, which the toolchain file already lists for an
+x86-64 host. A sweep's preflight builds the helper and starts
 it and `pgdt` in the pinned image before the first reading, refusing with the
 command to run where the target is missing.
 

@@ -1,6 +1,6 @@
 ---
 name: upgrade-deps
-description: Upgrade a dependency — DataFusion, arrow, chrono, any crate pin — checking `docs/status/upstream.md` for what the new version fixes and acting on it, and walking the invariants it moves. Use when bumping a version in a Cargo.toml or running `cargo update`.
+description: Upgrade a dependency — DataFusion, arrow, chrono, any crate pin, the Rust release `rust-toolchain.toml` pins, the release image's digest — checking `docs/status/upstream.md` for what the new version fixes and acting on it, and walking the invariants it moves. Use when bumping a version in a Cargo.toml or running `cargo update`.
 ---
 
 **Invoke the `process` skill first**: an upgrade is out-of-band work under its
@@ -16,6 +16,10 @@ applies.
    moves with DataFusion in one change (`docs/design/roadmap.md`, "Arrow
    follows DataFusion"). A DataFusion major re-applies the shell's marked lines
    to upstream's new `datafusion-cli` `main.rs`, per that file's header.
+   **The compiler and the release image move here too**, each an apparatus
+   change: `rust-toolchain.toml`'s `channel`, and `release/Dockerfile`'s
+   `FROM` digest, which pins every package the image installs
+   (`docs/design/roadmap-P29-releases.md`, "When the pin moves").
 2. **Read `docs/status/upstream.md` whole**, and test each entry naming a
    moved crate against its **Fixed when**: read the new release's source — a
    local upstream checkout where `CLAUDE.local.md` names one, else the crate

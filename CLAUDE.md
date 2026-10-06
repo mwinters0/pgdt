@@ -21,6 +21,7 @@ cargo build --release -p pgdt --features introspect --target-dir <own>  # the in
 cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
+cd scripts && uv run release.py image|build|suite   # the release image; pgdt built in it, held to its glibc; the suite there
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site
