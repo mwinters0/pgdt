@@ -92,7 +92,6 @@ import dataclasses
 import functools
 import hashlib
 import json
-import math
 import os
 import platform
 import re
@@ -3022,9 +3021,9 @@ LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 #: `pgdump_query::io::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
 #: allocation the worst rep of a resolved arrangement must leave unused — the
-#: criterion `MEMORY_RESERVE` was chosen against and `reserve`'s gate reads
-#: (`GATE_MARGIN_PERCENT`). Held to the library's own by a test, like the two
-#: above.
+#: criterion `MEMORY_RESERVE` was chosen against, which `reserve`'s gate
+#: reports and does not fail on (`REPORTED_MARGIN_PERCENT`). Held to the
+#: library's own by a test, like the two above.
 LIBRARY_MEMORY_MARGIN_PERCENT = 20
 
 
@@ -3535,56 +3534,6 @@ RESERVE_INSTRUMENT_LIMITS: tuple[str, ...] = tuple(token for token, _ in RESERVE
 RESERVE_DIAGNOSTIC_INPUT = "control_xz128"
 RESERVE_DIAGNOSTIC_LIMITS: tuple[str, ...] = ("1536m", "2g")
 
-#: The **confirming** legs' allocator options: the flagless shape's token, the
-#: variable set in front of the wrapper, its value, the instrument report's
-#: key that reads the value back, and the candidate mechanism it switches off. Each runs the diagnostic arrangement —
-#: `RESERVE_DIAGNOSTIC_INPUT` at `RESERVE_DIAGNOSTIC_LIMITS` — on the shipped
-#: and the introspection builds with that one variable set, so each differs
-#: from a leg this figure already takes by the variable alone
-#: (`_reserve_confirming_specs`).
-#:
-#: **`purge0` switches off mimalloc's `purge_delay`**, the candidate the
-#: diagnostic legs left for the shipped build's retention: with it at 0 a
-#: freed arena page is purged inside the free rather than up to a delay later
-#: (`arena.c`, `mi_arena_schedule_purge`, mimalloc 3.3.2). It is the
-#: allocator's own option, read from the environment at init, so the binaries
-#: are the ones the diagnostic legs run. The `system` build serves no
-#: allocation from mimalloc, so a `system` twin with the variable set would be
-#: a second reading of the twin this figure already takes; the confirming
-#: shipped legs are read against that one.
-#:
-#: **The read-back is the apparatus check.** A variable that never reached
-#: mimalloc leaves the legs the diagnostic ones over again, which would read
-#: as the candidate ruled out; the instrument reports the option's value as
-#: mimalloc holds it, and the renderer refuses a verdict where a rep's
-#: differs.
-RESERVE_CONFIRMING_OPTIONS: tuple[tuple[str, str, str, str, str], ...] = (
-    ("purge0", "MIMALLOC_PURGE_DELAY", "0", "mimalloc_purge_delay", "`purge_delay`"),
-)
-
-#: The share of a unit a rep's retention reading must reach for the rep to
-#: count as holding the shipped build's retention, in the confirming legs and
-#: the legs they are read against alike.
-#:
-#: **What a rep's reading is**: on the introspection build, peak RSS less
-#: Rust's live high-water and glibc's — a lower bound on what was resident and
-#: not live at the peak, the process's non-heap baseline included; on the
-#: shipped build, peak RSS less its `system` twin's worst rep. The diagnostic
-#: sitting's reps fell either at that baseline, tens of MiB, or about a unit
-#: above it (`roadmap-P30.7-diagnostic-notes.md`, "The attribution"), so half
-#: a unit is the line between holding none and holding one. It classifies a
-#: rep and is no remedy's criterion: that one is the spec's.
-#:
-#: **The two builds' zeros differ**: an instrument rep's reading carries the
-#: non-heap baseline, a shipped rep's is net of its twin's, so the line sits
-#: nearer an instrument rep without the term than a shipped one. Every 128 MiB
-#: rep of that sitting, on both builds, falls well clear of it
-#: (`runs/measure-20261005T193210/raw.json`). **The line is fixed, not taken
-#: per sitting**: a baseline measured in the sitting being classified would fit
-#: the line to the reading it classifies, and the verdict could no longer be
-#: registered before it.
-RESERVE_RETENTION_FRACTION = 0.5
-
 #: The block size of the input the mechanism legs run over, read out of
 #: `RESERVE_FLAGLESS_INPUTS` rather than written again, so the unit the step's
 #: budgets are computed from and the unit the flagless table prints cannot
@@ -3881,27 +3830,13 @@ def _script(command: str) -> str:
         # `nerdctl run` argument rather than an argv one, so it rides on the
         # `RunSpec` instead (`RunSpec.memory`) and is what two legs of this
         # family differ by.
-        #
-        # A confirming leg's allocator option is a token here too, in the same
-        # place and for the same reason as the arena setting
-        # (`RESERVE_CONFIRMING_OPTIONS`).
         token = command.removeprefix(RESERVE_FLAGLESS)
-        settings = {
-            **{
-                name: f"MALLOC_ARENA_MAX={value} " if value else ""
-                for name, value, _ in RESERVE_ARENAS
-            },
-            **{
-                name: f"{variable}={value} "
-                for name, variable, value, _, _ in RESERVE_CONFIRMING_OPTIONS
-            },
-        }
-        if token not in settings:
-            raise ValueError(
-                f"{command!r} names an arena setting or allocator option the figure does not carry"
-            )
+        arenas = {name: value for name, value, _ in RESERVE_ARENAS}
+        if token not in arenas:
+            raise ValueError(f"{command!r} names an arena setting the figure does not carry")
+        arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
-            f"time {settings[token]}{PEAK_RSS} /pgdt parse "
+            f"time {arena}{PEAK_RSS} /pgdt parse "
             f"--source /dump.sql --dtcache /tmp/x.dtcache {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
@@ -4026,7 +3961,6 @@ def command_shapes() -> tuple[str, ...]:
             for budget in RESERVE_BUDGETS
         ),
         *(f"{RESERVE_FLAGLESS}{token}" for token, _, _ in RESERVE_ARENAS),
-        *(f"{RESERVE_FLAGLESS}{token}" for token, *_ in RESERVE_CONFIRMING_OPTIONS),
         *(f"{RESERVE_STEP_FAMILY}{budget}" for budget in RESERVE_STEP_BUDGETS),
         *(f"decode-{w}" for w in DECODE_WORKERS),
         "dd",
@@ -5379,9 +5313,10 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 #: The build every **gate** reading is read on beside the shipped one.
 #:
 #: The gate is the pass/fail readings the harness takes against a memory
-#: limit: `reserve`'s flagless legs against the margin, a kill being a
-#: censored reading (`KILL_TOLERANT`, `GATE_MARGIN_PERCENT`);
-#: `parallel-peak-rss`'s resident against `PARALLEL_MEMORY`, the library's own
+#: limit, each failing on a kill alone: `reserve`'s flagless legs, a kill
+#: being a censored reading (`KILL_TOLERANT`), the margin each leaves
+#: reported beside the verdict (`REPORTED_MARGIN_PERCENT`);
+#: `parallel-peak-rss`'s legs in `PARALLEL_MEMORY`, the library's own
 #: `budget + PARALLEL_HEADROOM`; and a kill anywhere else, which raises
 #: (`Session.time_run`). Each is read on this
 #: build too, at the same commit in the same sitting, so the two legs differ by
@@ -5406,21 +5341,24 @@ GATE_BINARY = f"alloc:{GATE_LEG}"
 #: gate twin — an instrument build or another allocator leg is not what ships.
 SHIPPED_BINARIES: tuple[str, ...] = ("pgdt", "dfcli")
 
-#: The share of its limit a gate leg's worst surviving rep must leave, by
-#: figure; a figure absent here fails a leg on a kill alone.
+#: The share of its limit each gate leg's worst surviving rep is reported
+#: against, by figure — **reported beside the verdict and blocking nothing**.
+#: A gate leg fails on a kill alone, in every figure: the gate asks whether
+#: the binary is OOM-killed under the arrangements its figures take, not how
+#: close it comes (`docs/design/roadmap-P30-one-binary.md`, "What the move owes
+#: before a release").
 #:
-#: **`reserve` reads the library's own criterion**, `MEMORY_MARGIN_PERCENT`:
-#: the container is the whole allocation, so a leg the margin fails would pass
-#: on a kill alone, the killer reading only the 100% line
-#: (`docs/design/roadmap-P30-one-binary.md`, "What the move owes before a
-#: release"). A kill is that reading's censored extreme and fails too.
+#: **`reserve` reports the library's own criterion**, `MEMORY_MARGIN_PERCENT`:
+#: the flagless rule aims resident at the allocation, so what a leg leaves of
+#: it is the reading the reserve is chosen against, and a shortfall on the
+#: shipped build alone is `KD34`'s, which re-sets the reserve under the
+#: shipped allocator.
 #:
 #: **`parallel-peak-rss` is absent**: its container, `budget +
-#: PARALLEL_HEADROOM`, *is* the contract under test, so surviving it is the
-#: pass and the head its cells print is context. Overrunning
-#: `MEMORY_UNPOOLED_BOUND` fails nothing either, by the same section: it is
-#: `charge_model_problem`'s finding about the bound.
-GATE_MARGIN_PERCENT: dict[str, int] = {"reserve": LIBRARY_MEMORY_MARGIN_PERCENT}
+#: PARALLEL_HEADROOM`, *is* the contract under test, so the head its cells
+#: print is context. Overrunning `MEMORY_UNPOOLED_BOUND` fails nothing either,
+#: by the same section: it is `charge_model_problem`'s finding about the bound.
+REPORTED_MARGIN_PERCENT: dict[str, int] = {"reserve": LIBRARY_MEMORY_MARGIN_PERCENT}
 
 
 def gate_twin(spec: RunSpec) -> RunSpec:
@@ -5442,17 +5380,15 @@ def _gate_cell(
     """One leg's gate reading, and whether it failed.
 
     The cell is the worst surviving rep and what it left of `limit` — the
-    number a cgroup's killer reads — or the kill. A kill fails the leg; so,
-    where the figure carries a margin (`GATE_MARGIN_PERCENT`), does a worst
-    surviving rep leaving less of `limit` than that, equality passing as the
-    library's `margin_allowance` passes it. `None` is a leg this sitting did
-    not read, which is neither a pass nor a failure: a sitting taken before the
-    gate had twins still renders, and says so."""
+    number a cgroup's killer reads — or the kill. **A kill alone fails the
+    leg**; what the worst rep leaves of a reported margin is `_margin_short`'s
+    and decides nothing here (`REPORTED_MARGIN_PERCENT`). `None` is a leg this
+    sitting did not read, which is neither a pass nor a failure: a sitting
+    taken before the gate had twins still renders, and says so."""
     if not session.has(figure, spec):
         return "not read", None
     readings = session.rss.get(spec.key(figure), [])
     killed = session.kills(figure, spec)
-    margin = GATE_MARGIN_PERCENT.get(figure)
     worst = (
         f"{fmt_mib(max(readings))} · head {(limit - max(readings) * 1024) / limit * 100:.1f}%"
         if readings
@@ -5462,12 +5398,39 @@ def _gate_cell(
         return f"**OOM-killed**, {killed} rep(s)" + (f" · survivors' worst {worst}" if worst else ""), True
     if not readings:
         return "no reading", None
+    return worst, False
+
+
+def _margin_short(session: "Session", figure: str, spec: RunSpec, limit: int) -> bool | None:
+    """Whether this leg's worst surviving rep leaves less of `limit` than the
+    figure's reported margin (`REPORTED_MARGIN_PERCENT`), equality meeting it
+    as the library's `margin_allowance` meets it; `None` where the figure
+    reports no margin or the leg has no surviving rep. Reported, never a
+    failure: `_gate_cell` fails a leg on a kill alone."""
+    margin = REPORTED_MARGIN_PERCENT.get(figure)
+    readings = session.rss.get(spec.key(figure), []) if session.has(figure, spec) else []
+    if margin is None or not readings:
+        return None
     # Bytes against bytes, scaled by a hundred rather than divided, so the
     # line falls exactly where the percentage does and a rounded head in the
-    # cell cannot pass or fail what the comparison would not.
-    if margin is not None and (limit - max(readings) * 1024) * 100 < limit * margin:
-        return f"**{worst}**, under the {margin}% margin", True
-    return worst, False
+    # cell cannot report what the comparison would not.
+    return (limit - max(readings) * 1024) * 100 < limit * margin
+
+
+def margin_note(shipped: bool | None, twin: bool | None) -> str:
+    """One pair's reading against the reported margin, for the column beside
+    the gate's verdict (`REPORTED_MARGIN_PERCENT`)."""
+    if shipped is None and twin is None:
+        return "—"
+    if shipped and twin:
+        return "both short"
+    if shipped:
+        return "**shipped build short**"
+    if twin:
+        return f"`{GATE_LEG}` short"
+    if shipped is None or twin is None:
+        return "met where read"
+    return "met"
 
 
 def gate_verdict(shipped: bool | None, twin: bool | None) -> tuple[str, bool]:
@@ -5487,125 +5450,6 @@ def gate_verdict(shipped: bool | None, twin: bool | None) -> tuple[str, bool]:
     return "passes", False
 
 
-#: The significance level of the share test in `confirming_verdict`, registered
-#: before the confirming sitting's reading (`roadmap-P30-one-binary.md`, "What
-#: the move owes before a release"). At twelve reps a side against a control
-#: holding the term in eight, it confirms a share where the option holds the
-#: term in at most three (`ConfirmingLegs.test_the_share_test_s_line`).
-CONFIRMING_ALPHA = 0.05
-
-
-def fewer_held_p(option: Sequence[int], control: Sequence[int]) -> float:
-    """The one-sided Fisher exact test's p-value that `option`'s reps hold the
-    term less often than `control`'s, each `(reps holding it, reps read)`.
-
-    Conditioned on both margins, the reps holding the term among the option's
-    are hypergeometric under the null that the option changes nothing; the
-    p-value is the chance of as few as were read or fewer. Exact, so no
-    sample size is too small for it, and pure arithmetic, so the harness
-    takes no statistics dependency for one 2×2 table."""
-    held, read = option
-    base_held, base_read = control
-    total, holding = read + base_read, held + base_held
-    lowest = max(0, read - (total - holding))
-    return sum(
-        math.comb(holding, x) * math.comb(total - holding, read - x)
-        for x in range(lowest, held + 1)
-    ) / math.comb(total, read)
-
-
-def confirming_verdict(
-    candidate: str,
-    control: Sequence[int],
-    option: Sequence[int],
-    undelivered: Sequence[str],
-    killed: Sequence[str],
-) -> str:
-    """What one option's confirming legs say of the `candidate` it switches
-    off, as a sentence (`RESERVE_CONFIRMING_OPTIONS`).
-
-    `control` and `option` are `(reps holding the term, reps read)` over the
-    legs without the option and with it, both builds; `undelivered` names
-    each option leg some rep of which read back another value, and `killed`
-    each leg the verdict reads, a `system` twin included, that lost a rep to
-    the kernel.
-
-    **Registered before the reading**, as the spec asks
-    (`roadmap-P30-one-binary.md`, "What the move owes before a release"). No
-    verdict where the option never reached mimalloc, where a rep it reads was
-    killed — the retention line cannot classify a killed rep, and dropping
-    one shrinks a count toward confirming — or where the control is too
-    sparse for the share test to pass even a removal from every rep: such a
-    sitting confirms and rules out nothing, an option holding the term in
-    every rep included, the sitting no longer reproducing the arrangement it
-    was to confirm. Otherwise gone in every rep confirms the mechanism; held
-    in every rep rules it out, the next candidate attributed; between the
-    two, the option's share is confirmed only where the removal lies beyond
-    the control's own spread — `fewer_held_p` at or under `CONFIRMING_ALPHA`
-    — since the term is absent from some reps of the control too and a rep
-    without it is no removal on its own. Anything short of the test is not
-    confirmed, and the next candidate is attributed."""
-    grilled = (
-        "The sitting no longer reproduces the arrangement it was to confirm, so it is "
-        "grilled before anything is sat again or attributed."
-    )
-    refused = []
-    if undelivered:
-        refused.append(
-            "**No verdict: the option did not reach mimalloc** in "
-            + "; ".join(undelivered)
-            + ", so those legs ran the diagnostic arrangement again and read nothing of it."
-        )
-    if killed:
-        refused.append(
-            "**No verdict: a rep it reads was OOM-killed** in "
-            + "; ".join(killed)
-            + ". The retention line cannot classify a killed rep, and dropping one shrinks "
-            "a count toward confirming. "
-            + grilled
-        )
-    if refused:
-        return " ".join(refused)
-    held, read = option
-    base_held, base_read = control
-    counts = (
-        f"{held} of {read} rep(s) hold the term with the option, "
-        f"{base_held} of {base_read} without it"
-    )
-    if not read or not base_read:
-        return f"**No verdict**: {counts}, so one side has no reading."
-    floor = fewer_held_p((0, read), control)
-    if floor > CONFIRMING_ALPHA:
-        return (
-            f"**No verdict: the control is too sparse to tell a removal.** {counts}: gone "
-            f"in every rep with the option would read p = {floor:.3g} against "
-            f"α = {CONFIRMING_ALPHA:g}, within the control's own spread, so this sitting "
-            "confirms and rules out nothing. " + grilled
-        )
-    if not held:
-        return (
-            f"**Confirmed: the retention is {candidate}'s.** {counts}: gone in every rep "
-            "with the option. The remedy is grilled on this reading."
-        )
-    if held == read:
-        return (
-            f"**{candidate} is ruled out.** {counts}: the option removed it from no rep, "
-            "so the next candidate is attributed, on an instrument built for it."
-        )
-    p = fewer_held_p(option, control)
-    test = f"one-sided Fisher exact p = {p:.3g}, against α = {CONFIRMING_ALPHA:g}"
-    if p <= CONFIRMING_ALPHA:
-        return (
-            f"**{candidate}'s share is confirmed.** {counts} ({test}): the removal lies "
-            "beyond the control's spread, and the remainder is attributed next."
-        )
-    return (
-        f"**{candidate} is not confirmed for any share.** {counts} ({test}): the reps it "
-        "is absent from lie within the spread the control shows too, and the next "
-        "candidate is attributed."
-    )
-
-
 def gate_section(
     session: "Session", figure: str, legs: Sequence[tuple[str, RunSpec, int]]
 ) -> str:
@@ -5621,7 +5465,8 @@ def gate_section(
             "the shipped one, so a failure in it could not be told the allocator's from "
             "the code's.\n"
         )
-    rows, blocking, both = [], [], []
+    margin = REPORTED_MARGIN_PERCENT.get(figure)
+    rows, blocking, both, short = [], [], [], []
     for label, spec, limit in legs:
         shipped, shipped_failed = _gate_cell(session, figure, spec, limit)
         twin, twin_failed = _gate_cell(session, figure, gate_twin(spec), limit)
@@ -5630,8 +5475,18 @@ def gate_section(
             blocking.append(label)
         if shipped_failed and twin_failed:
             both.append(label)
-        rows.append([label, shipped, twin, verdict])
-    table = md_table(["Leg", "Shipped build", f"`{GATE_LEG}`", "Gate"], rows)
+        row = [label, shipped, twin, verdict]
+        if margin is not None:
+            shipped_short = _margin_short(session, figure, spec, limit)
+            twin_short = _margin_short(session, figure, gate_twin(spec), limit)
+            if shipped_short and not twin_short:
+                short.append(label)
+            row.append(margin_note(shipped_short, twin_short))
+        rows.append(row)
+    headings = ["Leg", "Shipped build", f"`{GATE_LEG}`", "Gate"]
+    if margin is not None:
+        headings.append(f"Against the {margin}% margin — reported, blocks nothing")
+    table = md_table(headings, rows)
     if blocking:
         summary = (
             f"**The gate blocks**: {len(blocking)} leg(s) failed on the shipped build alone — "
@@ -5648,10 +5503,16 @@ def gate_section(
             + ", ".join(both)
             + " — which is not the allocator's and is filed rather than blocking."
         )
-    margin = GATE_MARGIN_PERCENT.get(figure)
+    if short:
+        summary += (
+            f" {len(short)} leg(s) leave less than the {margin}% margin on the shipped build "
+            "alone — " + ", ".join(short) + " — which is reported and blocks nothing: the "
+            "reserve is re-set under the shipped allocator by `KD34`'s owner."
+        )
     criterion = (
-        f"A leg fails where it is killed or where its worst surviving rep leaves less than "
-        f"{margin}% of the limit, `MEMORY_MARGIN_PERCENT`, the criterion the reserve is held to"
+        "A leg fails where it is killed. The last column says whether the worst surviving "
+        f"rep leaves {margin}% of the limit, `MEMORY_MARGIN_PERCENT`, the criterion the "
+        "reserve is chosen against: reported beside the verdict, it blocks nothing"
         if margin is not None
         else "A leg fails where it is killed, its container being the contract under test"
     )
@@ -7756,10 +7617,9 @@ RESERVE_UNCAPPED = RESERVE_ARENAS[0][0]
 RESERVE_CAPPED = next(token for token, value, _ in RESERVE_ARENAS if value)
 
 
-def _flagless_shape(setting: str = "") -> str:
-    """The flagless command shape, under one arena setting or one confirming
-    leg's allocator option (`RESERVE_CONFIRMING_OPTIONS`)."""
-    return f"{RESERVE_FLAGLESS}{setting or RESERVE_UNCAPPED}"
+def _flagless_shape(arena: str = "") -> str:
+    """The flagless command shape, under one arena setting."""
+    return f"{RESERVE_FLAGLESS}{arena or RESERVE_UNCAPPED}"
 
 
 def _reserve_flagless_specs() -> list[RunSpec]:
@@ -7908,38 +7768,6 @@ def _reserve_diagnostic_specs() -> list[RunSpec]:
             instrument=True,
         )
         for token in RESERVE_DIAGNOSTIC_LIMITS
-    ]
-
-
-def _reserve_confirming_specs() -> list[RunSpec]:
-    """The diagnostic arrangement with one allocator option set, on the
-    shipped build and on the introspection build, one leg a limit of
-    `RESERVE_DIAGNOSTIC_LIMITS` (`RESERVE_CONFIRMING_OPTIONS`).
-
-    **Each differs from a leg this figure already takes by the option
-    alone**: the shipped one from the flagless leg of the same input and
-    limit, the instrument one from the diagnostic leg, the command shape
-    carrying the option, which `key` carries. Neither is a gate leg — the gate
-    reads the default a user gets, and an option is not that until it is the
-    remedy — so neither has a twin of its own; the flagless leg's is the one
-    both are read against."""
-    label = next(
-        label for name, label, _ in RESERVE_FLAGLESS_INPUTS if name == RESERVE_DIAGNOSTIC_INPUT
-    )
-    return [
-        RunSpec(
-            binary,
-            RESERVE_DIAGNOSTIC_INPUT,
-            _flagless_shape(token),
-            "warm-parallel",
-            ("instrument, " if binary == "introspect" else "")
-            + f"{label}, flagless in {limit}, `{variable}={value}`",
-            memory=limit,
-            instrument=binary == "introspect",
-        )
-        for token, variable, value, _, _ in RESERVE_CONFIRMING_OPTIONS
-        for binary in ("pgdt", "introspect")
-        for limit in RESERVE_DIAGNOSTIC_LIMITS
     ]
 
 
@@ -8221,7 +8049,6 @@ def run_reserve(session: Session) -> str:
     mechanism = _reserve_mechanism_specs()
     instrument = _reserve_instrument_specs()
     diagnostic = _reserve_diagnostic_specs()
-    confirming = _reserve_confirming_specs()
     steps = _reserve_step_specs()
     # Before the first reading, as `rss-attribution` and the `allocator` figure
     # build theirs: a leg discovered missing at rep two has already spent the
@@ -8229,7 +8056,7 @@ def run_reserve(session: Session) -> str:
     # is the one whose absence is silent — a default binary writes no report and
     # the leg fails at the rep, not at the build — so it is made and
     # interrogated here.
-    if instrument or diagnostic or confirming:
+    if instrument or diagnostic:
         ensure_instrument_binary(session.cfg, session.log)
     # The serial baseline, from `peak-rss` where this sitting took it, and
     # dropped from the interleave below rather than left in it — a spec the
@@ -8241,7 +8068,6 @@ def run_reserve(session: Session) -> str:
         *(leg for pair in zip(flagless, gate) for leg in pair),
         *instrument,
         *diagnostic,
-        *confirming,
         *(spec for _, spec in mechanism),
         *steps,
         *stated,
@@ -8250,6 +8076,10 @@ def run_reserve(session: Session) -> str:
     to_sweep = [s for s in specs if not session.has(figure, s)]
     session.build_before_sweep(to_sweep)
     session.sweep(figure, to_sweep, session.cfg.reps(3))
+    # A sweep takes every leg, so this keeps them all; a re-render of a
+    # sitting taken before the diagnostic legs existed renders without their
+    # table rather than raising on readings it never took.
+    diagnostic = [s for s in diagnostic if session.has(figure, s)]
 
     per_rep: list[str] = []
 
@@ -8833,133 +8663,6 @@ def run_reserve(session: Session) -> str:
         else ""
     )
 
-    # -- the confirming legs (`RESERVE_CONFIRMING_OPTIONS`) ------------------
-    # Per rep, never a median: the term is held in some reps and not others,
-    # and whether an option removes it in every rep is the reading.
-    retention_line = RESERVE_RETENTION_FRACTION * diagnostic_unit
-
-    def shipped_retention(spec: RunSpec, twin: RunSpec) -> list[float] | None:
-        """Each surviving rep's peak RSS less the `system` twin's worst, in
-        bytes, or `None` where the twin left no reading to subtract."""
-        theirs = session.rss.get(twin.key(figure), [])
-        if not theirs:
-            return None
-        return [(r - max(theirs)) * 1024 for r in session.get_rss(figure, spec)]
-
-    def instrument_retention(spec: RunSpec) -> list[float]:
-        """Each surviving rep's peak RSS less Rust's live high-water and
-        glibc's, in bytes, off that rep's own report: `time_run` files a rep's
-        resident set and its report together or neither."""
-        return [
-            r * 1024 - float(report["live_peak_bytes"]) - float(report["malloc_system_max"])
-            for r, report in zip(
-                session.get_rss(figure, spec), session.instrument_reports(figure, spec)
-            )
-            if "live_peak_bytes" in report and "malloc_system_max" in report
-        ]
-
-    confirming_rows: list[list[str]] = []
-    verdicts: list[str] = []
-    for token, variable, value, readback, candidate in RESERVE_CONFIRMING_OPTIONS:
-        # Reps holding the term, and reps read, without the option and with it.
-        control_count, option_count = [0, 0], [0, 0]
-        undelivered: list[str] = []
-        # Every leg the verdict reads that lost a rep to the kernel, the
-        # `system` twin whose worst rep each shipped reading subtracts included.
-        killed_legs: list[str] = []
-        with_token = [s for s in confirming if s.command == _flagless_shape(token)]
-        for limit in RESERVE_DIAGNOSTIC_LIMITS:
-            shipped = by_flagless[(RESERVE_DIAGNOSTIC_INPUT, limit)]
-            twin = gate_twin(shipped)
-            if session.kills(figure, twin):
-                killed_legs.append(f"{twin.label} ({session.kills(figure, twin)} rep(s))")
-            legs = [
-                (shipped, False),
-                *((s, True) for s in with_token if s.binary == "pgdt" and s.memory == limit),
-                *((s, False) for s in diagnostic if s.memory == limit),
-                *((s, True) for s in with_token if s.instrument and s.memory == limit),
-            ]
-            for spec, with_option in legs:
-                killed = session.kills(figure, spec)
-                if killed:
-                    killed_legs.append(f"{spec.label} ({killed} rep(s))")
-                got = arrangement(spec)
-                values = (
-                    instrument_retention(spec)
-                    if spec.instrument
-                    else shipped_retention(spec, twin)
-                )
-                held = sum(v >= retention_line for v in values or [])
-                count = option_count if with_option else control_count
-                if values:
-                    count[0] += held
-                    count[1] += len(values)
-                read_back = "—"
-                if spec.instrument and with_option:
-                    seen = [r.get(readback) for r in session.instrument_reports(figure, spec)]
-                    read_back = (
-                        ", ".join(v if v is not None else "not reported" for v in seen) or "—"
-                    )
-                    missed = sum(v != value for v in seen)
-                    if missed:
-                        undelivered.append(f"{spec.label} ({missed} rep(s))")
-                confirming_rows.append(
-                    [
-                        spec.label,
-                        f"{got[0]}r" if got else "—",
-                        (
-                            ", ".join(_fmt_budget_bytes(v) for v in values)
-                            if values
-                            else ("no twin reading" if values is None else "no surviving rep")
-                        )
-                        + (f" · **{killed} rep(s) OOM-killed**" if killed else ""),
-                        f"{held} of {len(values)}" if values else "—",
-                        "—"
-                        if spec.instrument
-                        else _gate_cell(session, figure, spec, limits[limit])[0],
-                        read_back,
-                    ]
-                )
-        verdicts.append(
-            f"`{variable}={value}`: "
-            + confirming_verdict(
-                candidate, control_count, option_count, undelivered, killed_legs
-            )
-        )
-    confirming_text = (
-        (
-            "\n\n**Whether the shipped build's retention is mimalloc's "
-            + " or ".join(c for *_, c in RESERVE_CONFIRMING_OPTIONS)
-            + f"**, at {diagnostic_label}: each diagnostic arrangement without the option and "
-            "with "
-            + ", ".join(f"`{v}={x}`" for _, v, x, _, _ in RESERVE_CONFIRMING_OPTIONS)
-            + ", on the shipped build and the introspection build, every leg in this sitting "
-            "and none in a fit, read **per rep**, the term being held in some reps and not "
-            "others. A shipped rep's reading is its peak RSS less its `system` twin's worst "
-            "rep — the option reaches no `system` allocation, so the flagless leg's twin is "
-            "the confirming leg's too; an instrument rep's is its peak RSS less Rust's live "
-            "high-water and glibc's, the process's non-heap baseline included. A rep holds the "
-            f"term where its reading reaches {RESERVE_RETENTION_FRACTION:g} of a unit, "
-            f"{_fmt_budget_bytes(int(retention_line))}. The margin column is context: an "
-            "option is no gate leg until it is the remedy.\n\n"
-            + md_table(
-                [
-                    "Leg",
-                    "Readers",
-                    "Per rep: what is left for retention",
-                    "Reps holding the term",
-                    "Worst rep, against the margin",
-                    "The option as mimalloc read it",
-                ],
-                confirming_rows,
-            )
-            + "\n\n"
-            + "\n\n".join(verdicts)
-        )
-        if confirming
-        else ""
-    )
-
     instrument_table = md_table(
         [
             "Leg",
@@ -9370,7 +9073,6 @@ def run_reserve(session: Session) -> str:
             else ""
         )
         + diagnostic_text
-        + confirming_text
         + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
         + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")

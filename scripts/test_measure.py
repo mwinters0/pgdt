@@ -23,7 +23,6 @@ import hashlib
 import inspect
 import io
 import json
-import math
 import re
 import subprocess
 import tempfile
@@ -2963,7 +2962,6 @@ class CompressedAccount(unittest.TestCase):
             *measure._reserve_flagless_specs(),
             *measure._reserve_instrument_specs(),
             *measure._reserve_diagnostic_specs(),
-            *measure._reserve_confirming_specs(),
             *(s for _, s in measure._reserve_mechanism_specs()),
             *measure._reserve_step_specs(),
             *measure._reserve_specs(),
@@ -3363,8 +3361,8 @@ class CompressedAccount(unittest.TestCase):
         # mirror is checked here rather than trusted. The two byte constants
         # especially: they are the model's two upper bounds, so one that moved
         # in the library and not here would check the rule against a promise it
-        # no longer makes — and the margin is the line `reserve`'s gate fails
-        # a leg at.
+        # no longer makes — and the margin is the line `reserve`'s gate
+        # reports each leg against.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
         self.assertIn(
@@ -4018,7 +4016,6 @@ class InstrumentReport(unittest.TestCase):
         for spec in [
             *measure._reserve_instrument_specs(),
             *measure._reserve_diagnostic_specs(),
-            *measure._reserve_confirming_specs(),
         ]:
             with self.subTest(leg=spec.label):
                 self.assertEqual(spec.instrument, spec.binary == "introspect")
@@ -7373,7 +7370,6 @@ class CensoredCells(unittest.TestCase):
             "flagless": measure._reserve_flagless_specs(),
             "instrument": measure._reserve_instrument_specs(),
             "diagnostic": measure._reserve_diagnostic_specs(),
-            "confirming": measure._reserve_confirming_specs(),
             "mechanism": [s for _, s in measure._reserve_mechanism_specs()],
             "steps": measure._reserve_step_specs(),
             "stated": measure._reserve_specs(),
@@ -7405,7 +7401,6 @@ class CensoredCells(unittest.TestCase):
             *specs["flagless"],
             *specs["instrument"],
             *specs["diagnostic"],
-            *specs["confirming"],
             *specs["mechanism"],
             *specs["steps"],
             *specs["stated"],
@@ -7426,13 +7421,7 @@ class CensoredCells(unittest.TestCase):
                 "resolved_budget": str(measure.charge_bytes(128 << 20, 1) + (1 << 20)),
             }
             if spec.instrument:
-                report = self._report(i)
-                # A confirming leg's report reads its option back, as
-                # `introspect.rs` prints it.
-                for token, _, value, readback, _ in measure.RESERVE_CONFIRMING_OPTIONS:
-                    if spec.command == measure._flagless_shape(token):
-                        report[readback] = value
-                instrument[key] = [report] * total_reps
+                instrument[key] = [self._report(i)] * total_reps
         # The killed reps' own records, exactly as `time_run`'s kill branch
         # writes them: the constraint line is rendered off `runs`, so a fixture
         # with an empty one would exercise only the nothing-was-reported branch.
@@ -7861,9 +7850,7 @@ class CensoredCells(unittest.TestCase):
         # beside every heap's reading, checked against its shipped leg — and
         # none of it in the counter's line, which is a fit at another unit.
         body, session = self._render()
-        section = body.split("What the shipped build holds above its charge at")[1].split(
-            "**Whether the shipped build's retention"
-        )[0]
+        section = body.split("What the shipped build holds above its charge at")[1]
         rows = [ln for ln in section.splitlines() if ln.startswith("| instrument, 128 MiB")]
         legs = measure._reserve_diagnostic_specs()
         self.assertEqual(len(rows), len(legs))
@@ -7884,6 +7871,23 @@ class CensoredCells(unittest.TestCase):
             f"over the {len(measure._reserve_instrument_specs())} leg(s) that survived", fit
         )
         self.assertNotIn("128 MiB", fit)
+
+    def test_a_sitting_without_the_diagnostic_legs_renders_without_their_table(self):
+        # A sitting taken before the legs existed is re-rendered, not refused.
+        raw = self._raw()
+        for spec in measure._reserve_diagnostic_specs():
+            key = spec.key(self.FIGURE)
+            for field in ("readings", "rss", "instrument", "reported"):
+                raw[field].pop(key, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
+            ):
+                body = measure.run_reserve(session)
+        self.assertNotIn("What the shipped build holds above its charge at", body)
+        self.assertIn("**What a flagless scan resolves", body)
 
     def test_a_killed_diagnostic_leg_prints_no_reading(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -7945,319 +7949,6 @@ class CensoredCells(unittest.TestCase):
                 body = measure.run_reserve(session)
         self.assertNotIn("OOM-killed", body)
         self.assertEqual(session.figure_kills(self.FIGURE), {})
-
-
-class ConfirmingLegs(unittest.TestCase):
-    """The legs that switch one allocator option off at the diagnostic
-    arrangement, and the verdict registered before their reading
-    (`RESERVE_CONFIRMING_OPTIONS`)."""
-
-    FIGURE = "reserve"
-    UNIT = 128 * measure.MIB
-
-    def test_each_differs_from_a_leg_already_taken_by_the_option_alone(self):
-        # One variable apart from the diagnostic sitting's legs, or what the
-        # option removes cannot be told from what else changed.
-        legs = measure._reserve_confirming_specs()
-        self.assertEqual(
-            len(legs),
-            2 * len(measure.RESERVE_DIAGNOSTIC_LIMITS) * len(measure.RESERVE_CONFIRMING_OPTIONS),
-        )
-        counterparts = {
-            (s.binary, s.input, s.memory): s
-            for s in [*measure._reserve_flagless_specs(), *measure._reserve_diagnostic_specs()]
-        }
-        tokens = {token for token, *_ in measure.RESERVE_CONFIRMING_OPTIONS}
-        for spec in legs:
-            with self.subTest(leg=spec.label):
-                self.assertIn(spec.binary, ("pgdt", "introspect"))
-                self.assertEqual(spec.instrument, spec.binary == "introspect")
-                self.assertTrue(measure.kill_tolerant(spec.command))
-                other = counterparts[(spec.binary, spec.input, spec.memory)]
-                self.assertEqual(other.command, measure._flagless_shape())
-                self.assertIn(spec.command.removeprefix(measure.RESERVE_FLAGLESS), tokens)
-                self.assertEqual(
-                    dataclasses.replace(
-                        spec, command=other.command, label=other.label, instrument=other.instrument
-                    ),
-                    other,
-                )
-        every = [
-            *measure._reserve_flagless_specs(),
-            *measure._reserve_gate_specs(),
-            *measure._reserve_instrument_specs(),
-            *measure._reserve_diagnostic_specs(),
-            *(s for _, s in measure._reserve_mechanism_specs()),
-            *measure._reserve_step_specs(),
-            *measure._reserve_specs(),
-        ]
-        self.assertFalse(
-            {s.key(self.FIGURE) for s in legs} & {s.key(self.FIGURE) for s in every}
-        )
-
-    def test_the_option_is_set_in_front_of_the_wrapper_and_nothing_else_is(self):
-        # As the arena cap is: the wrapper starts its child with its own
-        # environment, so the assignment must precede it.
-        arenas = {token for token, _, _ in measure.RESERVE_ARENAS}
-        for token, variable, value, _, _ in measure.RESERVE_CONFIRMING_OPTIONS:
-            with self.subTest(option=token):
-                self.assertNotIn(token, arenas)
-                shape = measure._flagless_shape(token)
-                self.assertIn(shape, measure.command_shapes())
-                script = measure._script(shape)
-                self.assertIn(f"{variable}={value} {measure.PEAK_RSS} /pgdt parse", script)
-                self.assertNotIn("MALLOC_ARENA_MAX", script)
-                self.assertEqual(
-                    script.replace(f"{variable}={value} ", ""),
-                    measure._script(measure._flagless_shape()),
-                )
-
-    def test_the_verdicts(self):
-        killed = ["a leg (1 rep(s))"]
-        cases = [
-            # (control, option, undelivered, killed) → the verdict's opening words
-            ((8, 12), (0, 12), [], [], "**Confirmed"),
-            ((8, 12), (12, 12), [], [], "**`purge_delay` is ruled out"),
-            ((8, 12), (3, 12), [], [], "**`purge_delay`'s share is confirmed"),
-            # Fewer reps than the control, but within its spread: what an
-            # option doing nothing reads in about two sittings of five.
-            ((8, 12), (4, 12), [], [], "**`purge_delay` is not confirmed for any share"),
-            ((8, 12), (7, 12), [], [], "**`purge_delay` is not confirmed for any share"),
-            # As many reps without the term as the control has: no removal.
-            ((8, 12), (8, 12), [], [], "**`purge_delay` is not confirmed for any share"),
-            ((8, 12), (10, 12), [], [], "**`purge_delay` is not confirmed for any share"),
-            # The control's floor at twelve a side: gone in every rep passes
-            # the share test against four reps holding the term, and not
-            # against three, so a sitting reading three confirms and rules
-            # out nothing — a removal from every rep, a share, or none.
-            ((4, 12), (0, 12), [], [], "**Confirmed"),
-            ((3, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
-            ((2, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
-            ((2, 12), (1, 12), [], [], "**No verdict: the control is too sparse"),
-            ((3, 12), (12, 12), [], [], "**No verdict: the control is too sparse"),
-            ((0, 12), (0, 12), [], [], "**No verdict: the control is too sparse"),
-            ((8, 12), (0, 0), [], [], "**No verdict**"),
-            ((8, 12), (0, 12), ["a leg (1 rep(s))"], [], "**No verdict: the option did not reach"),
-            # A kill gives no verdict whatever the counts read, ruled out
-            # included: the counts are of the reps that survived.
-            ((8, 12), (0, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
-            ((8, 12), (12, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
-            ((8, 12), (3, 12), [], killed, "**No verdict: a rep it reads was OOM-killed"),
-        ]
-        for control, option, undelivered, kills, opening in cases:
-            with self.subTest(control=control, option=option, undelivered=undelivered, kills=kills):
-                verdict = measure.confirming_verdict(
-                    "`purge_delay`", control, option, undelivered, kills
-                )
-                self.assertTrue(verdict.startswith(opening), verdict)
-                for leg in [*undelivered, *kills]:
-                    self.assertIn(leg, verdict)
-
-    def test_both_refusals_are_said(self):
-        # Each names its own disposition — a lost option is sat again once
-        # delivered, a kill is grilled — so neither hides the other.
-        verdict = measure.confirming_verdict(
-            "`purge_delay`", (8, 12), (0, 12), ["option leg (1 rep(s))"], ["killed leg (2 rep(s))"]
-        )
-        self.assertIn("did not reach mimalloc** in option leg (1 rep(s))", verdict)
-        self.assertIn("OOM-killed** in killed leg (2 rep(s))", verdict)
-        self.assertNotIn("Confirmed", verdict)
-
-    def test_the_control_s_floor_is_the_share_test_at_a_total_removal(self):
-        # One test decides it, not a second threshold: the floor moves with
-        # the option's reps read, as `fewer_held_p` does.
-        for read, base_read in [(12, 12), (6, 12), (12, 6), (3, 3)]:
-            for base_held in range(base_read + 1):
-                with self.subTest(read=read, base_read=base_read, base_held=base_held):
-                    sparse = (
-                        measure.fewer_held_p((0, read), (base_held, base_read))
-                        > measure.CONFIRMING_ALPHA
-                    )
-                    verdict = measure.confirming_verdict(
-                        "`purge_delay`", (base_held, base_read), (0, read), [], []
-                    )
-                    self.assertEqual(verdict.startswith("**No verdict"), sparse, verdict)
-
-    def test_the_share_test_s_line(self):
-        # 30.7's control rate at twelve reps a side: a share is confirmed at
-        # three reps holding the term and not at four, the line the history
-        # entry registering the test states.
-        self.assertLessEqual(measure.fewer_held_p((3, 12), (8, 12)), measure.CONFIRMING_ALPHA)
-        self.assertGreater(measure.fewer_held_p((4, 12), (8, 12)), measure.CONFIRMING_ALPHA)
-
-    def test_fewer_held_p_is_the_hypergeometric_tail(self):
-        # Hand-checked tables: the p-value is the chance, both margins held,
-        # of as few holding reps among the option's or fewer.
-        cases = [
-            # (option, control) → p
-            ((0, 12), (8, 12), math.comb(16, 12) / math.comb(24, 12)),
-            ((3, 12), (8, 12), 0.04976635963309809),
-            ((4, 12), (8, 12), 0.1101733775714123),
-            ((0, 12), (2, 12), 12 * 11 / (24 * 23)),
-            # One side's every rep holding it: no removal, so every table is
-            # at least this extreme.
-            ((12, 12), (8, 12), 1.0),
-            # Equal rates sit past the middle, never under α.
-            ((6, 12), (6, 12), 0.5 + math.comb(12, 6) ** 2 / math.comb(24, 12) / 2),
-        ]
-        for option, control, p in cases:
-            with self.subTest(option=option, control=control):
-                self.assertAlmostEqual(measure.fewer_held_p(option, control), p, places=12)
-
-    def test_the_tail_sums_to_one_over_every_table(self):
-        # The hypergeometric's support, every table with these margins: the
-        # tail at the largest count possible is the whole distribution.
-        for read, base_read, holding in [(12, 12, 8), (6, 12, 10), (3, 4, 7), (5, 5, 0)]:
-            with self.subTest(read=read, base_read=base_read, holding=holding):
-                top = min(read, holding)
-                self.assertAlmostEqual(
-                    measure.fewer_held_p((top, read), (holding - top, base_read)), 1.0, places=12
-                )
-
-    def _raw(self, read_back=None):
-        """A sitting where the term shows in two reps of three on every leg
-        without the option and in none with it, each reading built so the
-        renderer's subtraction lands on a stated multiple of the unit."""
-        raw = CensoredCells()._raw(killed_reps=0)
-        twin_worst_kib = 1_100_000.0
-        live, glibc = 1000 * measure.MIB, 40 * measure.MIB
-        baseline = 30 * measure.MIB
-
-        def report(extra=None):
-            return {
-                "live_peak_bytes": str(live),
-                "malloc_system_max": str(glibc),
-                **(extra or {}),
-            }
-
-        for limit in measure.RESERVE_DIAGNOSTIC_LIMITS:
-            shipped = next(
-                s
-                for s in measure._reserve_flagless_specs()
-                if (s.input, s.memory) == (measure.RESERVE_DIAGNOSTIC_INPUT, limit)
-            )
-            raw["rss"][measure.gate_twin(shipped).key(self.FIGURE)] = [
-                twin_worst_kib - 500,
-                twin_worst_kib,
-                twin_worst_kib - 200,
-            ]
-            raw["rss"][shipped.key(self.FIGURE)] = [
-                twin_worst_kib + 1000,
-                twin_worst_kib + self.UNIT / 1024,
-                twin_worst_kib + self.UNIT / 1024,
-            ]
-            for spec in measure._reserve_confirming_specs():
-                if spec.memory != limit:
-                    continue
-                key = spec.key(self.FIGURE)
-                if spec.binary == "pgdt":
-                    raw["rss"][key] = [twin_worst_kib + 1000] * 3
-                else:
-                    rss = [(live + glibc + baseline) / 1024] * 3
-                    raw["rss"][key] = rss
-                    token = spec.command.removeprefix(measure.RESERVE_FLAGLESS)
-                    _, _, value, readback, _ = next(
-                        o for o in measure.RESERVE_CONFIRMING_OPTIONS if o[0] == token
-                    )
-                    raw["instrument"][key] = [
-                        report({readback: read_back or value}) for _ in rss
-                    ]
-            diagnostic = next(
-                s for s in measure._reserve_diagnostic_specs() if s.memory == limit
-            )
-            rss = [(live + glibc + baseline + u * self.UNIT) / 1024 for u in (0, 1, 1)]
-            raw["rss"][diagnostic.key(self.FIGURE)] = rss
-            raw["instrument"][diagnostic.key(self.FIGURE)] = [report() for _ in rss]
-        return raw
-
-    def _render(self, raw):
-        with tempfile.TemporaryDirectory() as tmp:
-            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
-            session.figure_id = self.FIGURE
-            with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
-            ):
-                return measure.run_reserve(session)
-
-    def test_the_section_reads_each_rep_and_registers_its_verdict(self):
-        body = self._render(self._raw())
-        section = body.split("**Whether the shipped build's retention")[1].split(
-            "**What each mechanism moves**"
-        )[0]
-        rows = [ln for ln in section.splitlines() if ln.startswith("| ") and "MiB blocks" in ln]
-        # Each limit's four legs: shipped and instrument, without the option
-        # and with it.
-        self.assertEqual(len(rows), 4 * len(measure.RESERVE_DIAGNOSTIC_LIMITS))
-        without = [r for r in rows if "MIMALLOC_PURGE_DELAY" not in r]
-        with_option = [r for r in rows if "MIMALLOC_PURGE_DELAY" in r]
-        for row in without:
-            self.assertIn("| 2 of 3 |", row)
-        for row in with_option:
-            self.assertIn("| 0 of 3 |", row)
-        # Per rep, not a median: the instrument leg's three readings each.
-        self.assertIn("30.0 MiB, 158.0 MiB, 158.0 MiB", section)
-        self.assertIn("**Confirmed: the retention is `purge_delay`'s.**", section)
-        self.assertIn("0 of 12 rep(s) hold the term with the option, 8 of 12 without it", section)
-
-    def test_an_option_that_did_not_reach_mimalloc_gives_no_verdict(self):
-        # The variable lost on the way reads exactly as the candidate ruled
-        # out would, had the term stayed; the read-back is what tells them apart.
-        body = self._render(self._raw(read_back="1000"))
-        self.assertIn("**No verdict: the option did not reach mimalloc**", body)
-        self.assertNotIn("**Confirmed", body)
-
-    def _kill_one_rep(self, raw, spec):
-        """`spec`'s last rep reaped by the kernel, as `time_run` files it: a
-        kill count, no resident set and no report for that rep."""
-        key = spec.key(self.FIGURE)
-        raw["killed"][key] = 1
-        raw["rss"][key] = raw["rss"][key][:-1]
-        if key in raw["instrument"]:
-            raw["instrument"][key] = raw["instrument"][key][:-1]
-        return raw
-
-    def test_a_kill_on_a_leg_the_verdict_reads_gives_no_verdict(self):
-        # The surviving reps alone would still read gone in every rep with
-        # the option, so a renderer dropping the killed rep would confirm.
-        limit = measure.RESERVE_DIAGNOSTIC_LIMITS[0]
-        shipped = next(
-            s
-            for s in measure._reserve_flagless_specs()
-            if (s.input, s.memory) == (measure.RESERVE_DIAGNOSTIC_INPUT, limit)
-        )
-        option_leg = next(
-            s
-            for s in measure._reserve_confirming_specs()
-            if s.memory == limit and s.instrument
-        )
-        for spec in (option_leg, shipped, measure.gate_twin(shipped)):
-            with self.subTest(leg=spec.label):
-                body = self._render(self._kill_one_rep(self._raw(), spec))
-                self.assertIn(
-                    f"**No verdict: a rep it reads was OOM-killed** in {spec.label} (1 rep(s))",
-                    body,
-                )
-                self.assertNotIn("**Confirmed", body)
-
-    def test_a_control_too_sparse_to_tell_a_removal_gives_no_verdict(self):
-        # Three of the control's twelve reps holding the term, one short of the
-        # floor: gone in every rep with the option is then within its spread.
-        raw = self._raw()
-        controls = [
-            s
-            for s in [*measure._reserve_flagless_specs(), *measure._reserve_diagnostic_specs()]
-            if s.input == measure.RESERVE_DIAGNOSTIC_INPUT
-            and s.memory in measure.RESERVE_DIAGNOSTIC_LIMITS
-        ]
-        self.assertEqual(len(controls), 4)
-        for i, spec in enumerate(controls):
-            key = spec.key(self.FIGURE)
-            low = min(raw["rss"][key])
-            raw["rss"][key] = [low, low, max(raw["rss"][key]) if i < 3 else low]
-        body = self._render(raw)
-        self.assertIn("**No verdict: the control is too sparse to tell a removal.**", body)
-        self.assertIn("0 of 12 rep(s) hold the term with the option, 3 of 12 without it", body)
-        self.assertNotIn("**Confirmed", body)
 
 
 class ChargeModelSection(unittest.TestCase):
@@ -8860,39 +8551,63 @@ class GateLegs(unittest.TestCase):
             legs = [(s.label, s, limit) for s in specs]
             return measure.gate_section(session, figure, legs), specs
 
-    def test_reserve_reads_the_librarys_margin_and_no_other_figure_does(self):
+    def test_reserve_reports_the_librarys_margin_and_no_other_figure_does(self):
         self.assertEqual(
-            measure.GATE_MARGIN_PERCENT, {"reserve": measure.LIBRARY_MEMORY_MARGIN_PERCENT}
+            measure.REPORTED_MARGIN_PERCENT, {"reserve": measure.LIBRARY_MEMORY_MARGIN_PERCENT}
         )
 
-    def test_a_reserve_leg_under_the_margin_on_the_shipped_build_alone_blocks(self):
-        # 900,000 KiB of a 1 GiB limit leaves 14.2%: no rep killed, and the
-        # gate still fails it, which a kill-only reading would pass.
+    def test_a_reserve_leg_under_the_margin_on_the_shipped_build_alone_passes_and_says_so(self):
+        # 900,000 KiB of a 1 GiB limit leaves 14.2%: no rep killed, so the
+        # gate passes it, and the shortfall is reported beside the verdict.
         body, _ = self._section({}, shipped_kib=900_000.0)
-        self.assertIn("**The gate blocks**: 2 leg(s)", body)
-        self.assertIn("**878.91 MiB · head 14.2%**, under the 20% margin", body)
-        self.assertIn("fails on the shipped build alone", body)
-        self.assertIn("leaves less than 20% of the limit", body)
+        self.assertIn("**The gate passes**", body)
+        self.assertNotIn("blocks**", body)
+        self.assertIn("| 878.91 MiB · head 14.2% | 390.62 MiB · head 61.9% | passes |", body)
+        self.assertIn("| **shipped build short** |", body)
+        self.assertIn("2 leg(s) leave less than the 20% margin on the shipped build alone", body)
+        self.assertIn("blocks nothing", body)
+        self.assertIn("A leg fails where it is killed.", body)
 
-    def test_a_reserve_leg_under_the_margin_on_both_builds_is_filed(self):
+    def test_a_reserve_leg_under_the_margin_on_both_builds_passes_and_files_nothing(self):
         body, _ = self._section({}, shipped_kib=900_000.0, twin_kib=900_000.0)
         self.assertIn("**The gate passes**", body)
-        self.assertIn("2 failed on both legs", body)
+        self.assertNotIn("failed on both legs", body)
+        self.assertIn("| both short |", body)
+        self.assertNotIn("on the shipped build alone —", body)
 
-    def test_the_margin_line_itself_passes(self):
+    def test_the_margin_line_itself_is_met(self):
         # 1000 MiB, so 80% is a whole number of KiB and the comparison is
         # exact at the line: leaving exactly the margin meets it, as
-        # `margin_allowance`'s ceiling does, and a KiB more fails.
+        # `margin_allowance`'s ceiling does, and a KiB more is short. The gate
+        # passes either way.
         limit = 1000 << 20
         at_line = limit * (100 - measure.LIBRARY_MEMORY_MARGIN_PERCENT) // 100 // 1024
         body, _ = self._section({}, shipped_kib=float(at_line), limit=limit)
         self.assertIn("**The gate passes**", body)
+        self.assertIn("| met |", body)
         body, _ = self._section({}, shipped_kib=float(at_line + 1), limit=limit)
-        self.assertIn("**The gate blocks**", body)
+        self.assertIn("**The gate passes**", body)
+        self.assertIn("| **shipped build short** |", body)
+
+    def test_a_killed_reserve_leg_inside_the_margin_still_blocks(self):
+        # The survivors leave the margin; the kill alone fails the leg.
+        specs = measure._reserve_flagless_specs()[:2]
+        body, _ = self._section({specs[0].key("reserve"): 1})
+        self.assertIn("**The gate blocks**: 1 leg(s)", body)
+        self.assertIn("| met |", body)
+
+    def test_the_margin_notes(self):
+        self.assertEqual(measure.margin_note(None, None), "—")
+        self.assertEqual(measure.margin_note(False, False), "met")
+        self.assertEqual(measure.margin_note(False, None), "met where read")
+        self.assertEqual(measure.margin_note(True, True), "both short")
+        self.assertEqual(measure.margin_note(True, False), "**shipped build short**")
+        self.assertEqual(measure.margin_note(True, None), "**shipped build short**")
+        self.assertEqual(measure.margin_note(False, True), f"`{measure.GATE_LEG}` short")
 
     def test_parallel_peak_rss_fails_on_a_kill_alone(self):
-        # The same reading the reserve gate fails passes here: the container
-        # is that figure's contract, so only a kill fails a leg.
+        # The same reading the reserve gate reports short passes here with no
+        # margin column: the container is that figure's contract.
         body, _ = self._section({}, figure="parallel-peak-rss", shipped_kib=900_000.0)
         self.assertIn("**The gate passes**", body)
         self.assertNotIn("margin", body)

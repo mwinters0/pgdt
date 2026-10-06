@@ -1191,9 +1191,11 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// in the same sitting, stay inside the bound (`measurements.md`, `reserve`).
 /// The overrun is two units: one the program holds on every allocator
 /// ([`WorkerMemory`], `KD111`), and one mimalloc keeps after the program has
-/// freed it, in some reps and on the shipped build alone.
-/// P23 re-takes both readings under mimalloc on the two-heap instrument and
-/// sets both constants from them.
+/// freed it, in some reps and on the shipped build alone. In `-m 1536m` that
+/// leaves the shipped build's worst rep short of [`MEMORY_MARGIN_PERCENT`],
+/// where its `system` twin is not; nothing is killed on either build
+/// (`measurements.md`, `reserve`). P23 re-takes both readings under mimalloc
+/// on the two-heap instrument and sets both constants from them.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as

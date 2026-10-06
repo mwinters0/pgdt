@@ -314,13 +314,13 @@ than reading as a phase nobody has sliced.
   `datafusion-pgdump/src/dynamic_filter.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
-  its charge and its statistics account: the attribution sitting read a worst
-  remainder of 544 MiB on a compressed `query`, every `wide-xz24` `query` leg
-  from 1 GiB up OOM-killed — the platform allocator's, as is the reserve's
-  choice. On mimalloc, `reserve`'s 128 MiB-block legs from four readers overrun
-  `MEMORY_UNPOOLED_BOUND` with `KD111`'s unit and one mimalloc keeps, their
-  `system` twins holding `KD111`'s alone inside it. **(b) owned by P23**, which
-  re-takes them, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
+  its charge and its statistics account: a worst 544 MiB on a compressed
+  `query`, every `wide-xz24` `query` leg from 1 GiB up killed — glibc's
+  readings, as is the reserve's choice. On mimalloc, `reserve`'s 128 MiB-block
+  legs from four readers overrun `MEMORY_UNPOOLED_BOUND` by `KD111`'s unit and
+  one mimalloc keeps, and in `-m 1536m` leave less than `MEMORY_MARGIN_PERCENT`,
+  their `system` twins inside both. **(b) owned by P23**, which re-takes them,
+  sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its

@@ -28,8 +28,11 @@ readings are cited here by file rather than quoted.
 **The rows describe the gate's run.** Both diagnostic legs resolved the
 shipped build's arrangement (four readers, five), each inside
 `INSTRUMENT_TOLERANCE_PCT` of its shipped leg, no rep killed on any build,
-and the gate reproduces 30.6.1's verdict: 128 MiB blocks in `-m 1536m` fails
-the margin on the shipped build alone, every other leg passes.
+and the margin reads as 30.6.1's did: 128 MiB blocks in `-m 1536m` leaves less
+than it on the shipped build alone, every other leg meets it. The gate fails
+on a kill alone, so it passes
+([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md), "P30's
+gate reads kills").
 
 **Two of the criterion's three candidates carry excess, not one.**
 `RESERVE_DIAGNOSTIC_LIMITS`' comment names one heap per outcome; the rows show
@@ -57,7 +60,7 @@ is the block slot and chunk buffer a reader plus the pool's list.
   the process's non-heap baseline (a few tens of MiB, two reps of six) or that
   plus roughly one unit (four of six); the `system` twins are tight across
   reps, and each limit's worst shipped rep sits about one unit above its
-  `system` twin's worst. That difference is what fails the margin. No reading
+  `system` twin's worst. That difference is what falls short of the margin. No reading
   names the mechanism. The candidate in source is mimalloc v3's `purge_delay`
   (1000 ms by default, `c_src/mimalloc/v3/src/options.c` in
   `libmimalloc-sys` 0.1.49), a freed allocation staying committed until
@@ -66,25 +69,25 @@ is the block slot and chunk buffer a reader plus the pool's list.
 - **Not C.** glibc's high-water is within a few MiB of the decoder footprint
   the charge bills, at both limits.
 
-**Neither term alone fails the margin**, by arithmetic on these readings: the
-`system` twin holds the program's term and passes, and the worst shipped rep
-less one unit would leave more than `MEMORY_MARGIN_PERCENT`. The gate's failure
-is mimalloc's retention landing on a remainder the program's unbilled unit
-already brings near `MEMORY_UNPOOLED_BOUND`.
+**Neither term alone leaves the leg short of the margin**, by arithmetic on
+these readings: the `system` twin holds the program's term and meets it, and
+the worst shipped rep less one unit would leave more than
+`MEMORY_MARGIN_PERCENT`. The shortfall is mimalloc's retention landing on a
+remainder the program's unbilled unit already brings near
+`MEMORY_UNPOOLED_BOUND`.
 
-## What the remedy's grilling inherits
+## What P23 inherits
 
-- **The retention alone.** The program's term is held on both builds, so it is
-  filed as a both-builds failure is and does not block: `KD111`, P23's
-  ([`../status/deficiencies.md`](../status/deficiencies.md)). The split and
-  why billing the unit is not P30's remedy are
+Both terms, neither of them P30's: the gate fails on a kill alone, and nothing
+here was killed.
+
+- **The program's term**, held on both builds: `KD111`
+  ([`../status/deficiencies.md`](../status/deficiencies.md);
   [`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
-  "30.7's sitting".
-- **The spec's remedies, against the retention**
-  ([`roadmap-P30-one-binary.md`](roadmap-P30-one-binary.md), "What the move
-  owes before a release"): an allocator option, once a sitting confirms the
-  mechanism it reaches (below), a library change suiting glibc as well as
-  mimalloc, or D13 reopened, which answers it by removing it.
+  "30.7's sitting").
+- **The retention**, on the shipped build alone: `KD34`'s, which P23 re-fits
+  under mimalloc on the two-heap instrument. Its candidates are below; none is
+  confirmed by a reading.
 
 ## The candidates in mimalloc's source
 
@@ -146,6 +149,3 @@ are under its `c_src/mimalloc/v3/src/`. Source, not a reading.
   That family feeds the counter's own line, a fit at `RESERVE_MECHANISM_UNIT`
   whose pool subtraction and `reader_bytes` comparison are per unit, so a
   128 MiB leg there would put two units on one line.
-- **`--render` of a sitting taken before 30.7's legs raises on `reserve`**:
-  the renderer asks for the diagnostic legs and `get_rss` raises `KeyError` on
-  a leg the sitting never took, as it does for any leg added after a sitting.
