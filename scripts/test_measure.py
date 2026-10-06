@@ -989,6 +989,27 @@ class DynamicFilterFigures(unittest.TestCase):
         self.assertEqual(got, {"result_rows": "1", "result_first": "100", "result_digest": "a" * 64})
 
 
+def without_the_release_image(test: unittest.TestCase) -> None:
+    """Patch the release image away for one test, so a build in it is the
+    container run the test's `fake_run` sees and nothing is built or made."""
+    test.enterContext(
+        unittest.mock.patch.object(measure.release, "ensure_image", return_value="pgdt-release:t")
+    )
+    test.enterContext(unittest.mock.patch.object(measure.release, "prepare_state"))
+
+
+def leg_binary(cfg: "measure.Config", leg: str) -> Path:
+    """Where the image's build of one allocator leg lands on the host."""
+    build = measure.release.Build(features=(leg,), default_features=False)
+    return build.binary(measure.image_target_dir(cfg, leg))
+
+
+def write_leg(cfg: "measure.Config", leg: str) -> None:
+    built = leg_binary(cfg, leg)
+    built.parent.mkdir(parents=True, exist_ok=True)
+    built.write_text("#!/bin/true\n")
+
+
 class Allocator(unittest.TestCase):
     """The allocator figure: three binaries, three shapes, one table.
 
@@ -1005,6 +1026,7 @@ class Allocator(unittest.TestCase):
         # satisfy the next test's.
         measure._ALLOC_BUILT.clear()
         measure._ALLOC_ANNOUNCED.clear()
+        without_the_release_image(self)
 
     def test_the_reference_leg_is_the_shipped_binary(self):
         # Not a fourth build of the same source: two builds of one source
@@ -1125,9 +1147,11 @@ class Allocator(unittest.TestCase):
     def test_a_leg_builds_with_no_default_features_and_its_own_target_dir(self):
         # Both flags are load-bearing. `pgdt` refuses two allocator features at
         # compile time, so without `--no-default-features` every leg but the
-        # default's fails to build; without its own `--target-dir` a
-        # `--features` build overwrites `target/release/pgdt` and every other
-        # figure in the same sweep is timed under the wrong allocator.
+        # default's fails to build; without its own target dir a `--features`
+        # build overwrites the shipped binary and every other figure in the
+        # same sweep is timed under the wrong allocator. And it is built in the
+        # release image, as the shipped binary is, so the two differ by the
+        # allocator alone.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = measure.Config(
                 out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
@@ -1136,9 +1160,7 @@ class Allocator(unittest.TestCase):
 
             def fake_run(argv, cwd=None, capture=False, quiet=False):
                 calls.append(list(argv))
-                built = cfg.alloc_build_root / "jemalloc" / "release"
-                built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdt").write_text("#!/bin/true\n")
+                write_leg(cfg, "jemalloc")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -1148,12 +1170,13 @@ class Allocator(unittest.TestCase):
                 out = measure.ensure_allocator_binary(cfg, "jemalloc", lambda _: None)
             self.assertEqual(len(calls), 1)
             argv = calls[0]
+            self.assertEqual(argv[-1], "--inside")
+            self.assertIn("pgdt-release:t", argv)
             self.assertIn("--no-default-features", argv)
-            self.assertEqual(argv[argv.index("--features") + 1], "jemalloc")
-            self.assertEqual(
-                argv[argv.index("--target-dir") + 1],
-                str(cfg.alloc_build_root / "jemalloc"),
-            )
+            self.assertIn("--features=jemalloc", argv)
+            self.assertIn(f"--target={measure.release.NATIVE_TARGET}", argv)
+            target = measure.image_target_dir(cfg, "jemalloc").resolve()
+            self.assertIn(f"{target}:/state/target", argv)
             self.assertEqual(out, cfg.out_dir / "pgdt-alloc-jemalloc")
 
     def test_every_leg_names_its_own_feature(self):
@@ -1170,9 +1193,7 @@ class Allocator(unittest.TestCase):
 
                 def fake_run(argv, cwd=None, capture=False, quiet=False, leg=leg, cfg=cfg):
                     calls.append(list(argv))
-                    built = cfg.alloc_build_root / leg / "release"
-                    built.mkdir(parents=True, exist_ok=True)
-                    (built / "pgdt").write_text("#!/bin/true\n")
+                    write_leg(cfg, leg)
                     return ""
 
                 with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -1180,7 +1201,7 @@ class Allocator(unittest.TestCase):
                     measure.ensure_allocator_binary(cfg, leg, lambda _: None)
                 argv = calls[0]
                 self.assertIn("--no-default-features", argv)
-                self.assertEqual(argv[argv.index("--features") + 1], leg)
+                self.assertIn(f"--features={leg}", argv)
 
     def test_the_first_leg_is_the_default_build_s(self):
         # A dry run asks no binary, so it names `ALLOCATOR_LEGS[0]` as the
@@ -1209,9 +1230,7 @@ class Allocator(unittest.TestCase):
             )
 
             def fake_run(argv, cwd=None, capture=False, quiet=False):
-                built = cfg.alloc_build_root / "mimalloc" / "release"
-                built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdt").write_text("#!/bin/true\n")
+                write_leg(cfg, "mimalloc")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -1239,9 +1258,7 @@ class Allocator(unittest.TestCase):
 
             def fake_run(argv, cwd=None, capture=False, quiet=False):
                 calls.append(list(argv))
-                built = cfg.alloc_build_root / "jemalloc" / "release"
-                built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdt").write_text("#!/bin/true\n")
+                write_leg(cfg, "jemalloc")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -1290,13 +1307,16 @@ class Glibc(unittest.TestCase):
     DOC = measure.REPO / "docs/design/measurements.md"
     PIN = re.compile(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}")
 
-    @unittest.skipIf(
-        "PGDT_MEASURE_IMAGE" in measure.os.environ,
-        "the image is overridden in this environment",
-    )
     def test_the_image_is_pinned_by_digest(self):
         # A tag moves under the register; a digest is the image a figure ran in.
         self.assertRegex(measure.Config().image, self.PIN)
+
+    def test_the_image_is_the_release_image_s_base(self):
+        # One pin names the glibc every timed binary links against and the one
+        # it runs under, so nothing but the Dockerfile moves it.
+        dockerfile = measure.release.DOCKERFILE.read_text()
+        self.assertEqual(measure.Config().image, measure.release.pinned_base(dockerfile))
+        self.assertNotIn("PGDT_MEASURE_IMAGE", inspect.getsource(measure))
 
     def test_an_image_is_asked_in_a_container_and_the_host_is_asked_directly(self):
         cfg = measure.Config()
@@ -1446,16 +1466,21 @@ class ShippedBinary(unittest.TestCase):
     def setUp(self):
         # Module state, so one test's build would otherwise satisfy the next.
         measure._PGDT_BUILT = False
+        without_the_release_image(self)
 
     def _cfg(self, **kw):
-        return measure.Config(bin_pgdt=measure.CARGO_RELEASE_BIN, **kw)
+        return measure.Config(bin_pgdt=measure.REGISTER_BIN, **kw)
 
-    def test_the_default_binary_is_the_one_cargo_writes(self):
+    def test_the_default_binary_is_the_one_the_release_build_writes(self):
         # `ensure_pgdt_binary` compares the two to decide whether it may claim
         # to have built what it is about to time, so a `Config` default that
-        # drifted from cargo's output path would turn the build into a no-op
-        # and put the old check back with no sign of it.
-        self.assertEqual(measure.Config().bin_pgdt, measure.CARGO_RELEASE_BIN)
+        # drifted from the build's output path would turn the build into a
+        # no-op and put the old check back with no sign of it.
+        self.assertEqual(measure.Config().bin_pgdt, measure.REGISTER_BIN)
+        self.assertEqual(
+            measure.REGISTER_BIN,
+            measure.release.STATE / "target" / measure.release.NATIVE_TARGET / "release" / "pgdt",
+        )
 
     def test_the_shipped_binary_is_built_once_per_process(self):
         calls = []
@@ -1467,18 +1492,18 @@ class ShippedBinary(unittest.TestCase):
         with unittest.mock.patch.object(measure, "run", fake_run):
             out = measure.ensure_pgdt_binary(self._cfg(), lambda _: None)
             measure.ensure_pgdt_binary(self._cfg(), lambda _: None)
-        self.assertEqual(out, measure.CARGO_RELEASE_BIN)
+        self.assertEqual(out, measure.REGISTER_BIN)
         self.assertEqual(len(calls), 1)
         argv, cwd = calls[0]
+        # The release build itself, in the release image: one target, the
+        # package's default features, the release state's target directory.
         self.assertEqual(
-            argv, ["cargo", "build", "--release", "-p", "pgdt"]
+            argv[argv.index("pgdt-release:t") + 1:],
+            ["python3", "scripts/release.py", "build",
+             f"--target={measure.release.NATIVE_TARGET}", "--package=pgdt", "--inside"],
         )
+        self.assertIn(f"{(measure.release.STATE / 'target').resolve()}:/state/target", argv)
         self.assertEqual(cwd, measure.REPO)
-        # No `--target-dir` and no `--features`: this is the shipped build, and
-        # either one would make it a different binary from the one the recipes
-        # in measurements.md and CONTRIBUTING.md describe.
-        self.assertNotIn("--target-dir", argv)
-        self.assertNotIn("--features", argv)
 
     def test_an_existing_binary_is_rebuilt_anyway(self):
         # The whole point, and it is asserted as an absence: nothing on the
@@ -5677,6 +5702,15 @@ class KojiRecipe(unittest.TestCase):
     def test_the_cgroup_limit_is_part_of_the_apparatus(self):
         self.assertIn("-m 512m --memory-swap 512m", self._recipe())
 
+    def test_the_binary_is_the_register_s_in_the_register_s_image(self):
+        # The binary it mounts is the release image's build, and it runs in
+        # that image's base: a host build need not load there.
+        recipe = self._recipe()
+        self.assertIn(f"uv run release.py build --target {measure.release.NATIVE_TARGET}", recipe)
+        self.assertIn(f'-v "{measure.REGISTER_BIN}:/pgdt:ro"', recipe)
+        self.assertIn(measure.register_image(), recipe)
+        self.assertNotIn("cargo build", recipe)
+
     def test_the_cache_lands_in_the_mounted_volume(self):
         # The dump is mounted read-only, so the colocated default would land in
         # the container's ephemeral layer and die with it — an hour of scanning
@@ -7375,10 +7409,11 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
 
 
 class ApparatusPreflight(unittest.TestCase):
-    """The pinned image is the build host's distribution, and the host moves
-    on where the pin does not: before the first reading, `pgdt --version` and
-    `peak-rss` around `/bin/true` are started in it, and a sweep whose binary
-    does not start there is refused, naming the pin."""
+    """The pinned image is the release image's base, so a binary built
+    anywhere else may not load in it: before the first reading, `pgdt
+    --version` and `peak-rss` around `/bin/true` are started in it, and a
+    sweep whose binary does not start there is refused, naming the pin and
+    the build that does."""
 
     LOADER = "/pgdt: /usr/lib/libm.so.6: version `GLIBC_2.45' not found (required by /pgdt)\n"
 
@@ -7417,7 +7452,8 @@ class ApparatusPreflight(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn(measure.Config().image, problems[0])
         self.assertIn("GLIBC_2.45", problems[0])
-        self.assertIn("PGDT_MEASURE_IMAGE", problems[0])
+        self.assertIn("release image", problems[0])
+        self.assertIn("PGDT_MEASURE_BIN", problems[0])
 
     def test_a_wrapper_that_reports_nothing_is_refused(self):
         problems, _, _ = self._preflight([(0, ""), (0, "")])

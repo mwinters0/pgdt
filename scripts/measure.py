@@ -47,7 +47,7 @@ re-take them, not that nothing is told when they go wrong.
 example instead, which reaches past the library to the decoder's own bulk entry
 point -- the figure is about the decoder rather than about what the library
 does with it.
-The harness builds it (an *example* target, so `target/release/pgdt` is never
+The harness builds it (an *example* target, so the shipped binary is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
@@ -126,17 +126,33 @@ import generate_perf_data as perf
 # against. Import-safe on the same terms.
 from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
 
+# The release build, whose image builds every binary a figure runs and whose
+# base is the image every figure runs in (`register_image`, `build_in_image`).
+# Import-safe on the same terms.
+import release
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
 
 GIB = 1024**3
 MIB = 1024**2
 
-#: The only path `cargo build --release -p pgdt` writes. It is a constant
-#: rather than a literal inside `Config` because `ensure_pgdt_binary` reads it
-#: back: the harness may claim to have built `cfg.bin_pgdt` only when the two
-#: are the same file.
-CARGO_RELEASE_BIN = REPO / "target/release/pgdt"
+#: The only path the release build of `pgdt` writes, in the release image, for
+#: the host's target (`release.Build`). It is a constant rather than a literal
+#: inside `Config` because `ensure_pgdt_binary` reads it back: the harness may
+#: claim to have built `cfg.bin_pgdt` only when the two are the same file.
+REGISTER_BIN = release.Build().binary(release.STATE / "target")
+
+
+def register_image() -> str:
+    """The image every figure runs in: the release image's base, by the digest
+    `release/Dockerfile` pins (`release.pinned_base`).
+
+    **One pin names the build's glibc and the runtime's**, so the binary a
+    figure times runs under the glibc it was linked against, which is the
+    floor a release promises (`docs/design/roadmap-P29-releases.md`, "The
+    build image"). No variable moves it: a second image would be a second pin."""
+    return release.pinned_base(release.DOCKERFILE.read_text())
 
 
 # --------------------------------------------------------------------------
@@ -178,29 +194,25 @@ class Config:
     out_dir: Path = Path(_env("PGDT_MEASURE_OUT_DIR", str(REPO / "runs")))
 
     container: str = _env("PGDT_MEASURE_CONTAINER", "sudo nerdctl")
-    # **The one image every figure runs in**, of the build host's own
-    # distribution, so the host-built `pgdt` links no symbol version it lacks
-    # (`measurements.md`, "The apparatus"); `apparatus_preflight` refuses a
-    # sweep whose binary does not start in it, and that is the only time the
-    # pin moves. **Pinned by digest**, the tag before it being for a reader
-    # only: a tag moves under the register, and what a figure names is the
-    # glibc the image answers (`glibc_of`) rather than a tag's. A digest the
-    # machine lacks is pulled by the first run.
-    image: str = _env(
-        "PGDT_MEASURE_IMAGE",
-        "archlinux:base@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6",
-    )
+    # **The one image every figure runs in**, the release image's base
+    # (`register_image`), so every binary the release image builds runs under
+    # the glibc it linked against (`measurements.md`, "The apparatus").
+    # **Pinned by digest**, the tag before it being for a reader only: what a
+    # figure names is the glibc the image answers (`glibc_of`) rather than a
+    # tag's. A digest the machine lacks is pulled by the first run.
+    image: str = field(default_factory=register_image)
     memory: str = _env("PGDT_MEASURE_MEMORY", "512m")
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
-    bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
-    # The `allocator` figure's three legs. Each is a full cargo target dir, so
-    # it goes on scratch rather than under `runs/`, which holds logs and small
+    bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(REGISTER_BIN)))
+    # The `allocator` figure's three legs and the instrument, and the host
+    # builds the printed recipes make. Each is a full cargo target dir, so it
+    # goes on scratch rather than under `runs/`, which holds logs and small
     # binaries; the binaries themselves are copied into `runs/`. A separate
-    # target dir per leg is not tidiness: a `--features` build writes
-    # `target/release/pgdt`, so building a leg in the default dir would
-    # silently replace `bin_pgdt` and every other figure in the same sweep
-    # would be timed under the wrong allocator.
+    # target dir per leg is not tidiness: a `--features` build writes the
+    # shipped build's output path, so building a leg in the shipped build's
+    # dir would silently replace `bin_pgdt` and every other figure in the same
+    # sweep would be timed under the wrong allocator (`image_target_dir`).
     alloc_build_root: Path = Path(
         _env(
             "PGDT_MEASURE_ALLOC_BUILD_ROOT",
@@ -1039,8 +1051,8 @@ def spread(values: Sequence[float]) -> tuple[float, float]:
 
 def fmt_s(value: float) -> str:
     """Seconds, at the precision measurements.md quotes: three decimals below
-    two seconds, two above -- the image's timer resolves a microsecond
-    (`TIME_FORMAT`), which no table quotes."""
+    two seconds, two above -- the image's timer resolves a millisecond
+    (`TIME_FORMAT`), which is the most any table quotes."""
     return f"{value:.3f}" if abs(value) < 2 else f"{value:.2f}"
 
 
@@ -5231,7 +5243,8 @@ _PGDT_BUILT = False
 
 
 def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
-    """The shipped binary, built before the first reading rather than found.
+    """The shipped binary, built in the release image before the first
+    reading rather than found (`build_in_image`).
 
     **What this closes is a sitting that does not look lost.** The harness
     timed whatever `target/release/pgdt` happened to be and asked only that the
@@ -5255,13 +5268,13 @@ def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     would move the second one.
 
     **`PGDT_MEASURE_BIN` pointed anywhere else builds nothing.** The only path
-    that build writes is `CARGO_RELEASE_BIN`, so a harness that ran it and then
+    that build writes is `REGISTER_BIN`, so a harness that ran it and then
     timed a different file would be asserting a provenance it does not have.
     There the binary is the caller's, and its absence is `main`'s error rather
     than a build.
     """
     global _PGDT_BUILT
-    if _PGDT_BUILT or cfg.bin_pgdt != CARGO_RELEASE_BIN:
+    if _PGDT_BUILT or cfg.bin_pgdt != REGISTER_BIN:
         return cfg.bin_pgdt
     if cfg.dry_run:
         # A dry run measures nothing and must work where no binary exists, so
@@ -5269,10 +5282,39 @@ def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
         # for the same reason.
         log(f"[dry-run] would build {cfg.bin_pgdt}")
         return cfg.bin_pgdt
-    log(f"building {cfg.bin_pgdt}")
-    run(["cargo", "build", "--release", "-p", "pgdt"], cwd=REPO)
+    log(f"building {cfg.bin_pgdt} in the release image")
+    build_in_image(cfg, release.Build())
     _PGDT_BUILT = True
     return cfg.bin_pgdt
+
+
+def build_in_image(cfg: Config, build: release.Build, target_dir: Path | None = None) -> Path:
+    """`build` run in the release image, its binary held to the floor there
+    (`release.step_build`), and where that binary lands on the host.
+
+    **Every binary a figure runs in `Config.image` is built here**: the
+    shipped one, and each one timed beside it — an allocator leg, the
+    instrument, the `xz_decode` example — so two binaries a figure compares
+    differ by what it names, never by a compiler or a glibc the image supplies
+    to one of them alone. `target_dir` is a cargo target directory of the
+    build's own (`image_target_dir`), for a build writing the shipped one's
+    output path; `None` is the release state's, where that binary lives."""
+    container = cfg.container_argv()
+    tag = release.ensure_image(container)
+    release.prepare_state(target=target_dir)
+    run(
+        release.run_in_image(container, tag, release.build_step([build]), target=target_dir),
+        cwd=REPO,
+    )
+    return build.binary(target_dir if target_dir is not None else release.STATE / "target")
+
+
+def image_target_dir(cfg: Config, name: str) -> Path:
+    """The cargo target directory of one build in the image that is not the
+    shipped one: under `Config.alloc_build_root`, apart from the host builds
+    the printed recipes make there, whose build scripts link the host's glibc
+    and must never be found fresh by the image's cargo."""
+    return cfg.alloc_build_root / "image" / name
 
 
 #: Whether this process has already built `peak-rss`, for `_PGDT_BUILT`'s
@@ -5287,8 +5329,7 @@ def peak_rss_target() -> str:
 
 
 def peak_rss_path() -> Path:
-    """Where `cargo build --target` writes `peak-rss`: under `target/<target>/`,
-    a directory `target/release/pgdt` does not share."""
+    """Where `cargo build --target` writes `peak-rss`, on the host."""
     return REPO / "target" / peak_rss_target() / "release" / "peak-rss"
 
 
@@ -5298,10 +5339,10 @@ def ensure_peak_rss_binary(cfg: Config, log: Callable[[str], None]) -> Path:
 
     **For `<machine>-unknown-linux-musl`**, so it links nothing of the host's
     libc or the image's and a later pin move cannot break it. Refused: the
-    gnu target with `+crt-static`, which needs the host's static glibc. A
-    `--target` build of this package alone writes under its own directory and
-    unifies no feature into the shipped binary, so `target/release/pgdt` is
-    untouched.
+    gnu target with `+crt-static`, which needs the host's static glibc.
+    **Built on the host**, not in the release image as every timed binary is
+    (`build_in_image`): it links no glibc at all, so where it is built moves
+    nothing a reading stands on.
 
     **A missing target is refused with the command that adds it**, rather than
     left to `cargo`'s error about a missing `core`. Once per process, for
@@ -5336,13 +5377,11 @@ def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
     """The two binaries every figure mounts, started in the pinned image before
     the first reading, one problem line for each that does not start.
 
-    **`pgdt --version` must start there.** The image is of the build host's
-    distribution so that a host-built `pgdt` links no symbol version it lacks,
-    but the host's glibc moves at every upgrade and the pin does not. A binary
-    the image cannot load fails every leg, so it is refused here, naming the
-    pin, and the pin moves then and only then, the next stamp naming its glibc.
-    Refused: refusing on any difference between the host's glibc and the
-    image's, which would make every host upgrade an apparatus change.
+    **`pgdt --version` must start there.** The image is the release image's
+    base (`register_image`), so a binary the release image built links
+    against the glibc it runs under and starts by construction; what fails
+    here is a binary built anywhere else — `PGDT_MEASURE_BIN` naming a host
+    build — which would fail every leg, so it is refused before the first.
 
     **`peak-rss` around `/bin/true`** proves it starts there, and its reading
     is the floor every resident reading stands on — the spawning side's share
@@ -5372,9 +5411,9 @@ def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
     if pgdt.returncode != 0:
         problems.append(
             f"{cfg.bin_pgdt} does not start in the pinned image {cfg.image} "
-            f"(exit {pgdt.returncode}: {tail(pgdt)}): the host has outrun the pin, so move "
-            "`Config.image` (PGDT_MEASURE_IMAGE) to a digest of the build host's distribution "
-            "that loads it, and the next stamp names its glibc"
+            f"(exit {pgdt.returncode}: {tail(pgdt)}): it was not built in the release image, "
+            "whose base this is — unset PGDT_MEASURE_BIN and let the harness build it there, "
+            "or point it at a binary `release.py build` made"
         )
     floor = start([PEAK_RSS, "/bin/true"])
     readings = MAXRSS_RE.findall(floor.stderr)
@@ -5406,11 +5445,12 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     `cargo build` of a committed target, where a source edit is one no harness
     should perform.
 
-    **An example target, so `target/release/pgdt` is untouched.** Every other
+    **An example target, so the shipped binary is untouched.** Every other
     figure in a sweep is timed against that binary, and a build that replaced
     it would re-time all of them against something else — the failure the
     allocator legs' separate target directories exist to prevent, one target
-    kind along.
+    kind along. Built in the release image (`build_in_image`), as the binary
+    it is set beside is.
     """
     global _XZ_DECODE_BUILT
     out = cfg.out_dir / "pgdt-xz-decode"
@@ -5424,11 +5464,8 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
         return out
     log(f"  building the xz_decode instrument into {out}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    run(
-        ["cargo", "build", "--release", "-p", "pgdump_query", "--example", "xz_decode"],
-        cwd=REPO,
-    )
-    shutil.copyfile(REPO / "target/release/examples/xz_decode", out)
+    built = build_in_image(cfg, release.Build(package="pgdump_query", example="xz_decode"))
+    shutil.copyfile(built, out)
     out.chmod(0o755)
     _XZ_DECODE_BUILT = True
     return out
@@ -5677,7 +5714,7 @@ def binary_allocator(binary: Path) -> str:
     """Which allocator a built `pgdt` links against, read out of the binary.
 
     Not an optional nicety: the day the CLI's default feature set changes,
-    `target/release/pgdt` becomes a different binary and every apparatus line
+    the shipped binary becomes a different one and every apparatus line
     that still names the old allocator is wrong with nothing to notice. This is
     what the session stamp reports.
 
@@ -5770,9 +5807,11 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
       allocator features at compile time, so without the first flag every leg
       but the default's fails to build, and without the second the build
       names none and is refused too.
-    * **Its own target dir**, so `target/release/pgdt` -- every other figure's
-      binary -- is never overwritten by a `--features` build.
+    * **Its own target dir**, so the shipped binary -- every other figure's
+      -- is never overwritten by a `--features` build.
     * **`--version` is read back** and must name this leg.
+
+    Built in the release image (`build_in_image`), as the shipped binary is.
 
     A fourth is about *when*: the build runs once per leg per **process**, not
     once per leg per machine. `cargo` is incremental, so a leg whose source has
@@ -5786,7 +5825,7 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     out = cfg.out_dir / f"pgdt-alloc-{leg}"
     if leg in _ALLOC_BUILT:
         return out
-    target = cfg.alloc_build_root / leg
+    target = image_target_dir(cfg, leg)
     if cfg.dry_run:
         # Announced once per leg, not once per rep: a real run builds on the
         # first call and the file answers every later one, and a dry run that
@@ -5797,16 +5836,10 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
         return out
     log(f"  building the {leg} allocator leg into {target}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    target.mkdir(parents=True, exist_ok=True)
-    run(
-        [
-            "cargo", "build", "--release", "-p", "pgdt",
-            "--no-default-features", "--features", leg,
-            "--target-dir", str(target),
-        ],
-        cwd=REPO,
+    built = build_in_image(
+        cfg, release.Build(features=(leg,), default_features=False), target_dir=target
     )
-    shutil.copyfile(target / "release/pgdt", out)
+    shutil.copyfile(built, out)
     out.chmod(0o755)
     _ALLOC_BUILT.add(leg)
     got = binary_allocator(out)
@@ -5856,10 +5889,11 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     is meant to run the arrangement the shipped binary runs, so subtracting the
     defaults would measure a third build.
 
-    **Its own target dir**, because a `--features` build in the default one
-    overwrites `target/release/pgdt` — every other figure's binary — with a
+    **Its own target dir**, because a `--features` build in the shipped
+    one's overwrites the shipped binary — every other figure's — with a
     binary that takes an atomic on every allocation and that
     `binary_allocator` then refuses, which is a sitting lost to a build step.
+    Built in the release image (`build_in_image`), as the shipped binary is.
 
     **`--version` is read back**, and it must name the instrument. A leg
     declaring `RunSpec.instrument` and pointed at a build without the feature
@@ -5870,22 +5904,14 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     out = cfg.out_dir / "pgdt-introspect"
     if _INSTRUMENT_BUILT:
         return out
-    target = cfg.alloc_build_root / "introspect"
+    target = image_target_dir(cfg, "introspect")
     if cfg.dry_run:
         log(f"  [dry-run] would build the introspection instrument into {target}")
         return out
     log(f"  building the introspection instrument into {target}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    target.mkdir(parents=True, exist_ok=True)
-    run(
-        [
-            "cargo", "build", "--release", "-p", "pgdt",
-            "--features", "introspect",
-            "--target-dir", str(target),
-        ],
-        cwd=REPO,
-    )
-    shutil.copyfile(target / "release/pgdt", out)
+    built = build_in_image(cfg, release.Build(features=("introspect",)), target_dir=target)
+    shutil.copyfile(built, out)
     out.chmod(0o755)
     _INSTRUMENT_BUILT = True
     log(f"  {out.name}: {binary_instrument(out)}")
@@ -7121,7 +7147,7 @@ ALLOCATOR_SHARES: tuple[Shared, ...] = tuple(
 def _allocator_reference(cfg: Config) -> str:
     """The allocator the *shipped* binary links against, read out of it.
 
-    This figure's reference column is `target/release/pgdt` itself rather than
+    This figure's reference column is the shipped binary itself rather than
     a fourth build of the same source, for two reasons. It is the binary every
     other figure in the doc was taken with, so the ratios are ratios against
     the published numbers instead of against a build nothing else uses -- and
@@ -10947,8 +10973,8 @@ def drift_table(first: Path, second: Path) -> str:
 
 
 def _fmt_fine(value: float) -> str:
-    """Seconds at the precision the arms reports read: to the microsecond,
-    which `pgdt sql`'s image reports (`TIME_FORMAT`)."""
+    """Seconds to the microsecond, the most `TIME_FORMAT` asks for: a sitting
+    whose image's bash clamps it to the millisecond prints three zeros after."""
     return f"{value:.6f}"
 
 
@@ -12476,7 +12502,12 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             f"--jobs {jobs} {NO_STATISTICS} >> /out/{log} 2>&1'"
         )
 
-    out = ["cargo build --release -p pgdt   # default target: glibc", "mkdir -p runs", ""]
+    out = [
+        f"(cd scripts && uv run release.py build --target {release.NATIVE_TARGET})"
+        "   # the register's build, in the release image",
+        "mkdir -p runs",
+        "",
+    ]
     if not wrap:
         out += [
             leg(name, f"{name}.dtcache", f"{name}-scan.log"),
@@ -14072,7 +14103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(
             f"{cfg.bin_pgdt} is missing, and PGDT_MEASURE_BIN names a binary this harness does "
             f"not build. Point it at one that exists, or unset it and let the harness build "
-            f"{CARGO_RELEASE_BIN}."
+            f"{REGISTER_BIN}."
         )
     return emit(cfg, figures)
 

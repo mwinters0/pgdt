@@ -90,8 +90,9 @@ Eighteen standing rules for reading anything below:
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
   brace-free control is **0.426 s** timed by the container's own shell. So the
   timed command is `bash -c 'time /pgdt …'`, asked for six decimals and user
-  and sys beside them (`measure.TIME_FORMAT`), which the image's bash 5.3
-  resolves to a microsecond. This does not license running a figure outside the
+  and sys beside them (`measure.TIME_FORMAT`), which the image's bash 5.2
+  clamps to three: a reading resolves a millisecond, the precision every
+  table quotes below two seconds. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
 - **A performance figure is taken with the default `glibc` build, in a glibc
@@ -101,16 +102,15 @@ Eighteen standing rules for reading anything below:
   the two workloads that move real bytes it is a factor: the same 3.00 GiB
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
-  the figures here are `cargo build --release` (no `--target`) run in one
-  image, `archlinux:base`, whose **glibc is part of the apparatus** — its
-  `malloc` the C dependencies', the Rust heap being mimalloc's in the default
-  build and glibc's only in the `system` leg ("Which allocator a figure was
-  taken under"). **The image is pinned by digest** (`measure.Config.image`),
-  a tag being free to move under the register
+  the figures here are the release build, `release.py build` for the
+  x86-64 target, run in one image, the release image's base, whose **glibc is
+  part of the apparatus** — its `malloc` the C dependencies', the Rust heap
+  being mimalloc's in the default build and glibc's only in the `system` leg
+  ("Which allocator a figure was taken under"). **The image is pinned by
+  digest** (`measure.Config.image`), a tag being free to move under the
+  register
   ([`../status/history/2026-09-26.md`](../status/history/2026-09-26.md), "The
-  register's image has moved under it"), and a binary built on the host
-  starts in it only while it links no symbol version newer than the image's
-  glibc holds. **Which
+  register's image has moved under it"). **Which
   glibc a figure ran under is asked, not assumed**: `measure.glibc_of` runs
   `getconf GNU_LIBC_VERSION` wherever a figure's program runs — the image, or
   the host for `nested-decode-micro`'s `cargo bench` — and refuses a place
@@ -131,24 +131,19 @@ Eighteen standing rules for reading anything below:
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
 
-  **The image is the build host's distribution, and moves only when the host
-  outruns it.** `pgdt` links DataFusion in every build, and with it `libm`
-  symbol versions an older distribution's glibc does not hold, so every
-  figure — `pgdt sql`'s legs and the native commands alike — runs in an
-  image of the distribution that built it, and `pgdt` is built by the host's
-  compiler for its Rust and its C alike
-  ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md), "The
-  composed `pgdt` does not start in the register's image"). The host's glibc
-  moves at every upgrade and the pin does not, so before the first reading
-  `measure.apparatus_preflight` starts `pgdt --version` in the pinned image
-  and refuses a sweep whose binary does not load, naming the pin; the pin
-  moves then, deliberately, and the next stamp names its glibc. *Rejected:*
-  a toolchain container of an older distribution, or a link against an
-  explicit glibc floor from the host, each of which compiles the C
-  dependencies, mimalloc included, with a second C compiler and picks a glibc
-  floor that is the release's to pick; and refusing on any difference between
-  the host's glibc and the image's, which would make every host upgrade an
-  apparatus change.
+  **The register times what a release ships, under the glibc it links.**
+  Every binary a figure runs in the image — the shipped `pgdt`, each
+  `allocator` leg, the instrument and the `xz_decode` example — is built in
+  the release image (`measure.build_in_image`), so a figure's two builds
+  differ by what it names and never by a compiler or a glibc; and the image
+  they run in is that image's base by its digest (`measure.register_image`),
+  so one pin, `release/Dockerfile`'s, names the build's glibc, the floor a
+  release promises and the runtime every figure stands on
+  ([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image").
+  The pin moves only through `upgrade-deps`, and the next stamp names its
+  glibc. Before the first reading `measure.apparatus_preflight` starts `pgdt
+  --version` in the image and refuses a sweep whose binary does not load —
+  one built anywhere else, which `PGDT_MEASURE_BIN` can name.
 
   **The apparatus stops at which allocator, and does not pin how many arenas it
   keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here. On the default
@@ -478,13 +473,13 @@ numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
 
 **That binary is built by the harness, in the first second, and not looked up.**
-`target/release/pgdt` survives between sessions, so a preflight that asks only
+The built binary survives between sessions, so a preflight that asks only
 whether the file exists times whatever the last build left there while the
 session stamp names `git rev-parse HEAD` regardless — and the resulting sitting
 does not look lost: it emits a full table, a stamp naming a commit it did not
-execute, and a verdict. So `measure.py` runs `cargo build --release -p pgdt`
-once per process before anything else, which costs about a second on a tree
-that has not moved. **Building it is not patching it**: a harness that edits
+execute, and a verdict. So `measure.py` runs the release build in the release
+image (`release.py build`) once per process before anything else, which costs
+about a second on a tree that has not moved. **Building it is not patching it**: a harness that edits
 its own subject's source can produce any figure it likes, and an unpatched
 build of the tree being measured is the one binary whose provenance it knows.
 `PGDT_MEASURE_BIN` pointed anywhere else builds nothing — that is the one path
@@ -1881,8 +1876,8 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
   <image> bash -c '/peak-rss /pgdt <command> >/dev/null'
 ```
 
-where `<binary>` is `target/release/pgdt` or one of the `allocator` figure's
-legs — borrowed by name through `ensure_allocator_binary` — `<image>` is
+where `<binary>` is the shipped build (`measure.REGISTER_BIN`) or one of the
+`allocator` figure's legs — borrowed by name through `ensure_allocator_binary` — `<image>` is
 `measure.Config.image`, and the wrapper is the `peak-rss` helper, the same one
 the `peak-rss` figure is taken through. The `info` leg builds its cache inside
 its own container, untimed and unwrapped.
@@ -2264,7 +2259,9 @@ three flag settings a published figure is taken on, so the generator cannot
 drift back out of that agreement.
 
 ```sh
-cargo build --release -p pgdt          # default target: glibc
+(cd scripts && uv run release.py build --target x86_64-unknown-linux-gnu)
+B=target/release-image/target/x86_64-unknown-linux-gnu/release/pgdt
+IMAGE=$(sed -n 's/^FROM //p' release/Dockerfile)   # the register's image
 D=/dev/shm/pgdt                                     # generate from the HOST
 NESTED=composite                       # then again with NESTED=arrays
 (cd scripts &&
@@ -2274,9 +2271,9 @@ NESTED=composite                       # then again with NESTED=arrays
 for i in 1 2 3 4 5; do for f in control $NESTED; do for m in strings typed; do
   echo "### $f $m rep$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
-    -v "$PWD/target/release/pgdt:/pgdt:ro" \
+    -v "$PWD/$B:/pgdt:ro" \
     -v "$D/$f.sql:/dump.sql:ro" \
-    archlinux:base bash -c \
+    "$IMAGE" bash -c \
     "/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs 1 \
        --statistics-level data --row-group-size 1048576 >/dev/null &&
      time /pgdt query --source /dump.sql --table public.perf \
@@ -3699,7 +3696,7 @@ cd scripts && uv run measure.py --koji-recipe --wrap
 ```
 
 **The stop exercises the `SIGTERM` arm, not `SIGINT`**, and no flag on
-`nerdctl run` changes that: `archlinux:base` sets no `STOPSIGNAL`, so
+`nerdctl run` changes that: the register's image sets no `STOPSIGNAL`, so
 `nerdctl stop` sends `SIGTERM`, and `--stop-signal` is accepted and ignored
 (`--koji-recipe` says so). Exit **143**, not 130; the P9 wrap run above, in a
 `postgres` image whose `STOPSIGNAL` is `SIGINT`, exited 130. Both arms reach the

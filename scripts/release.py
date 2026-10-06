@@ -26,10 +26,17 @@ build's state under `target/release-image/` -- its cargo target directory,
 `CARGO_HOME` and `uv`'s cache and environment -- never the host build's, which
 another compiler's C and another glibc fill.
 
+**The register builds here too** (`scripts/measure.py`): the shipped binary it
+times is `build --target x86_64-unknown-linux-gnu`'s, and each variant it times
+beside that one -- an allocator leg, the instrument, the `xz_decode` example --
+is this recipe with only its package, features or target directory changed
+(`Build`), so two binaries a figure compares differ by what the figure names.
+
 Usage:
 
     cd scripts && uv run release.py image                 # build the image, unless built
     cd scripts && uv run release.py build [--target T]    # release-build pgdt, each held to the floor
+    cd scripts && uv run release.py build --no-default-features --features system --target-dir D
     cd scripts && uv run release.py suite                 # the x86-64 suite, in the image
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
     python3 scripts/release.py build --inside             # a step, already in the image
@@ -39,6 +46,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import os
 import re
@@ -186,12 +194,29 @@ def git_view(state: Path = STATE, repo: Path = REPO) -> Path | None:
     return view
 
 
+def state_dirs(state: Path = STATE, target: Path | None = None) -> dict[str, Path]:
+    """Each mount's host directory: `state`'s, the target directory replaced
+    by `target` where one is given."""
+    dirs = {name: state.resolve() / name for name in MOUNTS}
+    if target is not None:
+        dirs["target"] = target.resolve()
+    return dirs
+
+
+def prepare_state(state: Path = STATE, target: Path | None = None) -> None:
+    """Create every directory a step mounts, so the runtime does not create
+    one as root."""
+    for path in state_dirs(state, target).values():
+        path.mkdir(parents=True, exist_ok=True)
+
+
 def run_in_image(
     container: Sequence[str],
     tag: str,
     step: Sequence[str],
     *,
     state: Path = STATE,
+    target: Path | None = None,
     memory: str = MEMORY,
     uid: int | None = None,
     gid: int | None = None,
@@ -199,6 +224,11 @@ def run_in_image(
 ) -> list[str]:
     """The container run that executes `release.py <step> --inside` in the
     image, as the invoking user, the tree mounted at `WORKDIR`.
+
+    `target` replaces `state`'s cargo target directory, `CARGO_HOME` staying
+    shared: a build of other features writes the same output path, so one
+    whose binary must survive beside the release's gets a directory of its
+    own.
 
     **Seccomp is unconfined**: the suite runs `pgdt` as a user namespace's
     init (`pgdt/tests/namespace_init.rs`), which the runtime's default
@@ -216,8 +246,9 @@ def run_in_image(
     ]  # fmt: skip
     if git is not None:
         argv += ["-v", f"{git.resolve()}:{WORKDIR}/.git"]
+    dirs = state_dirs(state, target)
     for name, (at, env) in MOUNTS.items():
-        argv += ["-v", f"{state.resolve() / name}:{at}"]
+        argv += ["-v", f"{dirs[name]}:{at}"]
         for key, value in env.items():
             argv += ["-e", f"{key}={value}"]
     return [*argv, tag, "python3", "scripts/release.py", *step, "--inside"]
@@ -357,12 +388,56 @@ def target_dir() -> Path:
     return Path(os.environ.get("CARGO_TARGET_DIR", str(REPO / "target")))
 
 
-def build_argv(target: str) -> list[str]:
-    return ["cargo", "build", "--release", "--locked", "-p", "pgdt", "--target", target]
+@dataclass(frozen=True)
+class Build:
+    """One release-profile `cargo build` in the image, for one target.
+
+    `Build(target)` is a release's own: `pgdt` at its default features. Every
+    other value is a variant the register times beside it, which shares the
+    image, the compiler, `--locked` and the explicit `--target` with it, so it
+    differs from the release's binary by its package and features alone."""
+
+    target: str = NATIVE_TARGET
+    package: str = "pgdt"
+    #: An example of `package` to build in place of its binary.
+    example: str | None = None
+    features: tuple[str, ...] = ()
+    default_features: bool = True
+
+    def cargo_argv(self) -> list[str]:
+        argv = ["cargo", "build", "--release", "--locked", "-p", self.package, "--target", self.target]
+        if self.example is not None:
+            argv += ["--example", self.example]
+        if not self.default_features:
+            argv.append("--no-default-features")
+        if self.features:
+            argv += ["--features", ",".join(self.features)]
+        return argv
+
+    def binary(self, target_dir: Path) -> Path:
+        """Where the build writes its binary under `target_dir`."""
+        out = target_dir / self.target / "release"
+        return out / "examples" / self.example if self.example is not None else out / self.package
+
+    def options(self) -> list[str]:
+        """The `build` step's flags naming this build but for its target."""
+        opts = [f"--package={self.package}"]
+        if self.example is not None:
+            opts.append(f"--example={self.example}")
+        if not self.default_features:
+            opts.append("--no-default-features")
+        if self.features:
+            opts.append(f"--features={','.join(self.features)}")
+        return opts
 
 
-def release_binary(target: str) -> Path:
-    return target_dir() / target / "release" / "pgdt"
+def build_step(builds: Sequence[Build]) -> list[str]:
+    """The `build` step running `builds`, which differ by target alone."""
+    if not builds or {dataclasses.replace(b, target=NATIVE_TARGET) for b in builds} != {
+        dataclasses.replace(builds[0], target=NATIVE_TARGET)
+    }:
+        raise ReleaseError("one build step runs one build for each of its targets")
+    return ["build", *(f"--target={b.target}" for b in builds), *builds[0].options()]
 
 
 def run_step(argv: Sequence[str]) -> None:
@@ -370,14 +445,15 @@ def run_step(argv: Sequence[str]) -> None:
     subprocess.run(argv, cwd=REPO, check=True)
 
 
-def step_build(targets: Sequence[str]) -> int:
+def step_build(builds: Sequence[Build]) -> int:
+    """Each build, its binary held to the floor of the glibc its target links."""
     failed = 0
-    for target in targets:
-        run_step(build_argv(target))
-        binary = release_binary(target)
-        ok, lines = check_floor(readelf_of(binary), image_floor(target))
+    for build in builds:
+        run_step(build.cargo_argv())
+        binary = build.binary(target_dir())
+        ok, lines = check_floor(readelf_of(binary), image_floor(build.target))
         failed += not ok
-        print(f"{target}: {binary}", flush=True)
+        print(f"{build.target}: {binary}", flush=True)
         for line in lines:
             print(f"  {line}", flush=True)
     return 1 if failed else 0
@@ -407,6 +483,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--target", action="append", choices=sorted(TARGETS),
         help="one target (repeatable); every release target by default",
     )  # fmt: skip
+    b.add_argument("--package", default="pgdt", help="the package (default: pgdt)")
+    b.add_argument("--example", help="an example of the package, in place of its binary")
+    b.add_argument("--features", default="", help="comma-separated features, as cargo takes them")
+    b.add_argument("--no-default-features", action="store_true")
+    b.add_argument(
+        "--target-dir", type=Path,
+        help="a host cargo target directory of its own, in place of the release state's",
+    )  # fmt: skip
     b.add_argument("--inside", action="store_true", help="run here: this is the image")
     s = sub.add_parser("suite", help=f"the {NATIVE_TARGET} suite, in the image")
     s.add_argument("--inside", action="store_true", help="run here: this is the image")
@@ -424,18 +508,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.cmd == "image":
             print(ensure_image(container))
             return 0
-        targets = list(TARGETS) if args.cmd == "suite" or not args.target else args.target
+        builds: list[Build] = []
+        target: Path | None = None
+        if args.cmd == "build":
+            features = tuple(f for f in args.features.split(",") if f)
+            builds = [
+                Build(t, args.package, args.example, features, not args.no_default_features)
+                for t in (args.target or TARGETS)
+            ]
+            target = args.target_dir
+            if args.inside and target is not None:
+                raise ReleaseError("--target-dir is the host's; inside, CARGO_TARGET_DIR names it")
         if args.inside:
             check_inside()
-            return step_suite() if args.cmd == "suite" else step_build(targets)
+            return step_suite() if args.cmd == "suite" else step_build(builds)
         tag = ensure_image(container)
-        for name in MOUNTS:
-            (STATE / name).mkdir(parents=True, exist_ok=True)
+        prepare_state(target=target)
         if args.cmd == "suite":
             step, git = ["suite"], git_view()
         else:
-            step, git = ["build", *(f"--target={t}" for t in targets)], None
-        return subprocess.run(run_in_image(container, tag, step, git=git)).returncode
+            step, git = build_step(builds), None
+        return subprocess.run(run_in_image(container, tag, step, target=target, git=git)).returncode
     except ReleaseError as e:
         print(f"release.py: {e}", file=sys.stderr)
         return 2

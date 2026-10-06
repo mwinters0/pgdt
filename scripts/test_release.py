@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import check
@@ -200,6 +201,17 @@ class Image(unittest.TestCase):
         self.assertNotIn("/work/.git", " ".join(plain))
         self.assertIn(f"-v {Path(tmp).resolve()}/git:/work/.git", " ".join(viewed))
 
+    def test_a_target_dir_of_its_own_replaces_the_state_s_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            own = Path(tmp) / "legs" / "system"
+            argv = release.run_in_image(
+                ["docker"], "t", ["build"], state=Path(tmp) / "state", target=own
+            )
+        joined = " ".join(argv)
+        self.assertIn(f"-v {own.resolve()}:/state/target", joined)
+        self.assertNotIn(f"{(Path(tmp) / 'state').resolve()}/target:", joined)
+        self.assertIn(f"-v {(Path(tmp) / 'state').resolve()}/cargo-home:/state/cargo-home", joined)
+
     def test_the_git_view_drops_only_an_unreadable_extension(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, state = Path(tmp) / "repo", Path(tmp) / "state"
@@ -264,9 +276,40 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual([names[a] for a in release.SUITE], ["nextest", "doctest"])
 
     def test_the_build_is_locked_and_per_target(self):
-        argv = release.build_argv("aarch64-unknown-linux-gnu")
+        argv = release.Build("aarch64-unknown-linux-gnu").cargo_argv()
         self.assertIn("--locked", argv)
         self.assertEqual(argv[argv.index("--target") + 1], "aarch64-unknown-linux-gnu")
+
+    def test_a_variant_is_the_release_build_with_its_features_changed(self):
+        shipped = release.Build().cargo_argv()
+        leg = release.Build(features=("system",), default_features=False).cargo_argv()
+        self.assertEqual(leg[: len(shipped)], shipped)
+        self.assertEqual(leg[len(shipped):], ["--no-default-features", "--features", "system"])
+        example = release.Build(package="pgdump_query", example="xz_decode")
+        self.assertIn("--example", example.cargo_argv())
+        self.assertEqual(
+            example.binary(Path("/t")),
+            Path(f"/t/{release.NATIVE_TARGET}/release/examples/xz_decode"),
+        )
+        self.assertEqual(release.Build().binary(Path("/t")), Path(f"/t/{release.NATIVE_TARGET}/release/pgdt"))
+
+    def test_a_build_step_round_trips_through_the_command_line(self):
+        build = release.Build(features=("introspect",))
+        step = release.build_step([build])
+        seen = []
+        with unittest.mock.patch.object(release, "check_inside"), \
+                unittest.mock.patch.object(release, "step_build", lambda b: seen.extend(b) or 0):
+            self.assertEqual(release.main([*step, "--inside"]), 0)
+        self.assertEqual(seen, [build])
+
+    def test_one_step_runs_one_build_per_target(self):
+        both = [release.Build(t) for t in release.TARGETS]
+        self.assertEqual(release.build_step(both)[1:3], [f"--target={t}" for t in release.TARGETS])
+        with self.assertRaises(release.ReleaseError):
+            release.build_step([release.Build(), release.Build(features=("system",))])
+
+    def test_a_target_dir_is_the_host_s(self):
+        self.assertEqual(release.main(["build", "--target-dir", "/x", "--inside"]), 2)
 
     def test_help_runs(self):
         out = subprocess.run(

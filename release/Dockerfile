@@ -29,11 +29,13 @@ RUN set -eu; \
 # second target. `rustup`, `curl` and `ca-certificates` fetch the pinned Rust
 # and `mise`; `binutils`' `readelf` reads a binary's glibc needs; `xz-utils`,
 # `util-linux` (`unshare`), `procps` (`kill`), `git` and `python3` are what
-# the suite runs beside the binaries it builds.
+# the suite runs beside the binaries it builds. `make` builds jemalloc for the
+# register's `jemalloc` allocator leg (`scripts/measure.py`, `ALLOCATOR_LEGS`),
+# which is built here beside the shipped binary; no release artifact links it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         binutils ca-certificates curl gcc gcc-aarch64-linux-gnu git libc6-dev \
-        libc6-dev-arm64-cross procps python3 rustup util-linux xz-utils \
+        libc6-dev-arm64-cross make procps python3 rustup util-linux xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # **The Rust `rust-toolchain.toml` pins**, installed by reading that file as a

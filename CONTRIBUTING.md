@@ -14,14 +14,15 @@ doctests to `cargo test --workspace --doc`. The Python-side checks under `script
 generator, the oracles, the measurement harness — run under `uv`, from that
 directory. [`CLAUDE.md`](CLAUDE.md) lists every one of them with its purpose.
 
-**Taking a figure needs two things more**: a container runtime that can pull
-the image `scripts/measure.py` pins (`sudo nerdctl` unless
-`PGDT_MEASURE_CONTAINER` names another), and the Rust target the resident-set
-helper `peak-rss` is built static for, `rustup target add
-<machine>-unknown-linux-musl`, which the toolchain file already lists for an
-x86-64 host. A sweep's preflight builds the helper and starts
-it and `pgdt` in the pinned image before the first reading, refusing with the
-command to run where the target is missing.
+**Taking a figure needs two things more**: a container runtime that can build
+the release image, `release/Dockerfile`, in which the harness builds every
+binary it times, and run that image's base, which every figure runs in
+(`sudo nerdctl` unless `PGDT_MEASURE_CONTAINER` names another); and the Rust
+target the resident-set helper `peak-rss` is built static for, `rustup target
+add <machine>-unknown-linux-musl`, which the toolchain file already lists for
+an x86-64 host. A sweep's preflight builds the helper and starts it and `pgdt`
+in the pinned image before the first reading, refusing with the command to run
+where the target is missing.
 
 **One test file is opt-in**, and it is the only thing a full run leaves
 unexercised: `pgdt/tests/http_conformance.rs` reads a dump over HTTP from a
