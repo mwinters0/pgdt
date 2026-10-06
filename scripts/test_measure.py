@@ -5990,9 +5990,42 @@ class HeaptrackRecipe(unittest.TestCase):
         # in it — 3,627 against 0 on the same recording — and every Rust frame
         # is a bare name with no file behind it.
         recipe = self._recipe()
-        self.assertIn("target/profiling/pgdt", recipe)
-        self.assertNotIn("target/release/pgdt", recipe)
+        self.assertIn("/profiling/pgdt ", recipe)
+        self.assertNotIn("/release/pgdt", recipe)
         self.assertIn("--profile profiling", recipe)
+
+    def test_the_recorded_build_links_the_system_allocator(self):
+        # heaptrack counts requests at `malloc`, and the shipped build's
+        # mimalloc is linked without `override`: a recording of the default
+        # build names C's allocations and reads as though Rust made none.
+        cfg = measure.Config()
+        recipe = measure.heaptrack_recipe(cfg)
+        self.assertEqual(measure.HEAPTRACK_LEG, "system")
+        self.assertIn(measure.HEAPTRACK_LEG, measure.ALLOCATOR_LEGS)
+        self.assertIn(
+            f"--no-default-features --features {measure.HEAPTRACK_LEG}", recipe
+        )
+        self.assertIn(f"(allocator: {measure.HEAPTRACK_LEG})", recipe)
+        target = cfg.alloc_build_root / f"heaptrack-{measure.HEAPTRACK_LEG}"
+        binary = target / "profiling/pgdt"
+        self.assertIn(f"{binary} --version", recipe.splitlines())
+        recorded = [
+            ln for ln in recipe.splitlines() if ln.strip().startswith(f"{binary} parse")
+        ]
+        self.assertEqual(len(recorded), len(measure.HEAPTRACK_AXIS))
+
+    def test_the_recorded_build_has_a_target_dir_of_its_own(self):
+        # A `--features` build under `--profile profiling` in the default
+        # target dir overwrites `target/profiling/pgdt`, the binary the profile
+        # recipe records; and none of the allocator legs' or instruments' dirs
+        # may be shared either, a sweep building one while this one builds.
+        cfg = measure.Config()
+        recipe = measure.heaptrack_recipe(cfg)
+        target = cfg.alloc_build_root / f"heaptrack-{measure.HEAPTRACK_LEG}"
+        self.assertIn(f"--target-dir {target}", recipe)
+        self.assertNotIn(str(measure.REPO / "target"), recipe)
+        others = {*measure.ALLOCATOR_LEGS, "introspect", "dfcli-introspect"}
+        self.assertNotIn(target.name, others)
 
     def test_frame_pointers_are_not_asked_for(self):
         # A stated non-requirement, not an omission: heaptrack unwinds
@@ -6106,7 +6139,7 @@ class HeaptrackRecipe(unittest.TestCase):
         # the count a source recommends moves with the budget, so a recording
         # that inherited one would differ from its partner in two things.
         argv_lines = [
-            ln for ln in self._recipe().splitlines() if "target/profiling/pgdt parse" in ln
+            ln for ln in self._recipe().splitlines() if "/profiling/pgdt parse" in ln
         ]
         self.assertEqual(len(argv_lines), len(measure.HEAPTRACK_AXIS))
         for line in argv_lines:

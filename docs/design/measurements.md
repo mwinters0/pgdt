@@ -1121,7 +1121,7 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | the shipped allocator's behaviour — it is a different allocator | a feature flag and a build |
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
-| heaptrack — `--heaptrack-recipe` | every `malloc` — C alone on the default build, C and Rust alike on a `system` one — attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
+| heaptrack — `--heaptrack-recipe` | every `malloc` — C and Rust alike on the `system` build it records, C alone on the shipped one (`KD109`) — attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
 
 **Three of them are built and in the tree**, behind `pgdt`'s off-by-default
 `introspect` feature: the counting `#[global_allocator]`, in front of mimalloc;
@@ -1166,21 +1166,26 @@ measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the
 harness's third such invocation, beside koji's scan and the sampling profile.
 heaptrack hooks `malloc` through `LD_PRELOAD`, so it sees C where the
 counting allocator sees only Rust, and that is the layer that stays correct as
-more C is vendored. **On the default build it sees C alone**: mimalloc is
-linked without `override`, so no Rust allocation reaches `malloc`, and a
-recording of Rust's allocations too is a `system` build's. What it reads off directly is the term the
-counter is structurally blind to: on a `.xz` scan the decoder's allocation
+more C is vendored. **It records a `system` build, so it sees C and Rust
+alike**: the shipped build links mimalloc without `override`, so none of its
+Rust allocations reaches `malloc`, and a `system` build asks for the same bytes
+from the same code; the shipped heap's own blocks reach no call stack
+([`../status/deficiencies.md`](../status/deficiencies.md), `KD109`). What it
+reads off directly is the term the counter is structurally blind to: on a `.xz` scan the decoder's allocation
 arrives attributed through `lzma_lz_decoder_init` ← `lzma_raw_decoder` ←
 `PayloadDecoder::new` ← `BlockDecode::start_chunked` ← `XzSource::block`, at
 **8,388,608 bytes for one decoder** of an 8 MiB-dictionary file — exactly the
 dictionary term `XZ_DECODE_FOOTPRINT` models, and confirmation of the model
 rather than a correction to it.
 
-**Five of its details decide whether the report describes what it claims to**,
+**Six of its details decide whether the report describes what it claims to**,
 and every one of them fails by returning a plausible report of something else,
 so `scripts/test_measure.py` asserts them rather than leaving them to be
-remembered: the **`profiling` build**, without which a report carries no `.rs:`
-reference anywhere in it (3,627 against 0, on the same recording); **no frame
+remembered: the **`system` build**, without which the report reads as though
+Rust allocated nothing, **in a target directory of its own**, without which it
+overwrites the profile recipe's `target/profiling/pgdt`; the **`profiling`
+build**, without which a report carries no `.rs:` reference anywhere in it
+(3,627 against 0, on the same recording); **no frame
 pointers**, which heaptrack does not need because it unwinds `.eh_frame`;
 **`--record-only`**, so nothing is handed to a `heaptrack_gui` that need not be
 installed; **`--merge-backtraces=0`**, because a merged frame states the summed

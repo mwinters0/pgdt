@@ -50,9 +50,9 @@ that took the figures under mimalloc.
 
 - **heaptrack sees C's allocations alone on the default build** — `liblzma`'s
   and `aws-lc`'s, Rust frames appearing only as their callers — because
-  mimalloc is linked without `override`. The recipe still builds the default
-  `profiling` binary, and its text now says what that sees; a recording of
-  Rust's own allocations is a `system` build's.
+  mimalloc is linked without `override`. A recording of Rust's own
+  allocations is a `system` build's, which the recipe records
+  (`out-of-band.md`, `M213`).
 - **The manual's `MALLOC_ARENA_MAX` advice no longer stands as measured.** Its
   saving was read with the Rust heap on glibc; on the default build the cap
   bounds only the decoder's arenas, and what it saves there is what the

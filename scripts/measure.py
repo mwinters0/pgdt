@@ -8830,7 +8830,7 @@ def run_reserve(session: Session) -> str:
             f"{min(covered) * 100:.0f}% of the account's `Unattributed` column, so what is left is neither the program's own live "
             "bytes, the decoder's dictionaries, nor allocator retention as glibc reports it. "
             "What would name it is `cd scripts && uv run measure.py --heaptrack-recipe`, which "
-            "attributes every `malloc` to a call stack — on a `system` build, C and Rust alike — and a `--diff` "
+            "attributes every `malloc` to a call stack — C and Rust alike, on the `system` build it records — and a `--diff` "
             "between two of these arrangements would name the site rather than the term."
         )
     else:
@@ -12758,10 +12758,11 @@ def cmd_profile() -> int:
 # every byte `liblzma` asks for is invisible to it and fully present in RSS
 # (`decisions.md`, "D13"). heaptrack
 # hooks `malloc`, which is the layer that stays correct as more C is vendored.
-# **On the shipped build it sees C alone**: mimalloc is linked without
-# `override`, so Rust's allocations never reach `malloc`, and the counter and
-# mimalloc's own statistics are what read them; only a `system` build's
-# recording attributes Rust's allocations too.
+# **It records a `system` build, so it sees C and Rust alike**: the shipped
+# build links mimalloc without `override`, so none of its Rust allocations
+# reaches `malloc`, and a `system` build asks for the same bytes from the same
+# code (`HEAPTRACK_LEG`). What the shipped heap does with them reaches no call
+# stack (`KD109`).
 #
 # It is not a figure, for koji's reason and the profile's: no reps, no median,
 # no apparatus gate, no `measurements.md` marker. What it produces is a **name**
@@ -12788,6 +12789,20 @@ HEAPTRACK = _env("PGDT_HEAPTRACK", "heaptrack")
 #: report that looks half-broken rather than one that looks wrong.
 HEAPTRACK_DEMANGLE = _env("PGDT_HEAPTRACK_DEMANGLE", "c++filt")
 
+#: The allocator the recorded build links, and its target directory's name
+#: under `Config.alloc_build_root`.
+#:
+#: **`system`, because heaptrack counts requests at `malloc`**, never what an
+#: allocator kept, and the shipped build's mimalloc is linked without
+#: `override`: a recording of the default build carries `liblzma`'s and
+#: `aws-lc`'s allocations and none of Rust's, which on `HEAPTRACK_AXIS`'s pair
+#: leaves the block slot and the chunk buffer unnamed. The two builds run the
+#: same code, so a `system` recording holds every request a default one does
+#: plus Rust's. **Its own target directory**, because a `--features` build
+#: under `--profile profiling` in the default one overwrites the
+#: `target/profiling/pgdt` the profile recipe records.
+HEAPTRACK_LEG = "system"
+
 #: The two shapes recorded, and they are a **pair** rather than a survey.
 #:
 #: `reserve`'s path step: a stated budget either side of the one-reader charge
@@ -12795,8 +12810,9 @@ HEAPTRACK_DEMANGLE = _env("PGDT_HEAPTRACK_DEMANGLE", "c++filt")
 #: byte apart, so the two runs differ by whether `BlockCache::affordable` admits
 #: a block-decoding reader and by nothing else (`RESERVE_STEP_BUDGETS`). Read
 #: as a difference — `heaptrack_print --diff` — that pair names the whole block
-#: path's allocation at the `malloc` boundary, decoder included, which is the
-#: measure-change-measure loop no single recording gives.
+#: path's allocation at the `malloc` boundary, decoder included, C and Rust
+#: alike on the `HEAPTRACK_LEG` build, which is the measure-change-measure loop
+#: no single recording gives.
 #:
 #: **Why this pair and not the flagless family.** Every other `reserve` leg
 #: differs from its neighbour by a container limit, and a container is what this
@@ -12838,11 +12854,15 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
 def heaptrack_recipe(cfg: Config) -> str:
     """The whole sequence, with every path filled in.
 
-    Five things here decide whether the recording describes what it claims to,
+    Six things here decide whether the recording describes what it claims to,
     and each fails by returning a plausible report of something else.
-    `test_measure.py` asserts all five:
+    `test_measure.py` asserts all six:
 
-    * **the `profiling` binary, never `target/release/pgdt`.** heaptrack
+    * **a `HEAPTRACK_LEG` build, in a target directory of its own.** The
+      default build's Rust heap never reaches `malloc`, so its recording names
+      C's allocations and reads as though Rust made none; and the default
+      directory's `target/profiling/pgdt` is the profile recipe's binary.
+    * **the `profiling` binary, never a `release` one.** heaptrack
       resolves symbols from either, but `release` carries no line tables, so a
       report off it has no `.rs:` reference anywhere in it — 3,627 of them
       against 0, measured on the same recording — and every Rust frame is a bare
@@ -12875,7 +12895,8 @@ def heaptrack_recipe(cfg: Config) -> str:
     limit. The gate is where a cgroup belongs (`roadmap.md`, "Attribution is
     introspective; only the gate is blind"); this is the other half."""
     warm = cfg.warm_dir
-    binary = REPO / "target/profiling/pgdt"
+    target = cfg.alloc_build_root / f"heaptrack-{HEAPTRACK_LEG}"
+    binary = target / "profiling/pgdt"
     cache = warm / "heaptrack.dtcache"
     out = cfg.out_dir
     printer = f"{HEAPTRACK}_print"
@@ -12891,17 +12912,27 @@ def heaptrack_recipe(cfg: Config) -> str:
     head(
         "The tool. It hooks malloc through LD_PRELOAD, so it sees liblzma's",
         "dictionary -- which is the whole reason for it: the counting global",
-        "allocator sees only Rust's allocations, and on this build, whose Rust",
-        "heap is mimalloc's, those never reach malloc, so it sees C alone.",
+        "allocator sees only Rust's allocations. On the build below, whose Rust",
+        "heap is the system one, it sees C and Rust alike; the shipped heap is",
+        "mimalloc's, which never reaches malloc (KD109).",
     )
     lines += [f"{HEAPTRACK} --version", ""]
 
     head(
-        "The build. No RUSTFLAGS: heaptrack unwinds .eh_frame, so frame",
-        "pointers buy nothing and would fingerprint a second build. The",
-        "`profiling` profile is what buys source lines; release has none.",
+        "The build: the system allocator, so Rust's requests reach malloc, in",
+        "a target directory of its own, so the profile recipe's",
+        "target/profiling/pgdt is not overwritten; --version must say",
+        f"(allocator: {HEAPTRACK_LEG}). No RUSTFLAGS: heaptrack unwinds .eh_frame,",
+        "so frame pointers buy nothing and would fingerprint a second build.",
+        "The `profiling` profile is what buys source lines; release has none.",
     )
-    lines += ["cargo build --profile profiling -p pgdt", ""]
+    lines += [
+        "cargo build --profile profiling -p pgdt \\",
+        f"  --no-default-features --features {HEAPTRACK_LEG} \\",
+        f"  --target-dir {target}",
+        f"{binary} --version",
+        "",
+    ]
 
     staged = sorted({name for _, name in HEAPTRACK_AXIS})
     head(
