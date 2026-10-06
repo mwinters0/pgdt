@@ -124,7 +124,7 @@ our API, CLI, or data until we reach v1.0.
     - [x] Parquet, CSV, etc via `pgdt sql`
 - Consumers
     - [x] Rust library
-    - [x] DataFusion provider + shell
+    - [x] DataFusion provider + shell, in the one `pgdt` binary
     - [ ] Python
     - [ ] DuckDB
     - [ ] Trino (?)

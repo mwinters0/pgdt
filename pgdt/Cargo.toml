@@ -52,7 +52,8 @@ arrow = { version = "59.2.0", default-features = false }
 clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 # `pgdt sql`: DataFusion's own CLI, whose copied arguments are the
 # subcommand's and whose entry point it calls. Unconditional, so the binary
-# every figure times is the one a release ships.
+# every figure times is the one a release ships (`docs/design/decisions.md`,
+# "D13").
 datafusion-cli-pgdump = { version = "0.1.0", path = "../datafusion-cli-pgdump" }
 futures = "0.3.34"
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the

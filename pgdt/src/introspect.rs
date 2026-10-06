@@ -502,6 +502,12 @@ mod mimalloc_json {
     /// `committed` and `reserved` are each a `{ total, peak, current }` count
     /// in mimalloc's statistics; `total` is cumulative and is not read. A
     /// document that does not parse, or lacks a field, yields nothing for it.
+    ///
+    /// **No other field is a reading.** `libmimalloc-sys` compiles mimalloc
+    /// with `MI_STAT` 0 (`include/mimalloc/types.h`), so the size bins, the
+    /// page counters and the abandonment and reclaim counts are never updated
+    /// and read zero or nonsense; the OS-level counts, `purged` and the call
+    /// counters are kept, and are in the verbatim document.
     pub fn readings_of(json: &str) -> Vec<(String, i64)> {
         let Ok(doc) = serde_json::from_str::<serde_json::Value>(json) else {
             return Vec::new();

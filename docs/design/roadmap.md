@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
-| P30 — one binary for distribution | Current | [spec](roadmap-P30-one-binary.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P30 — one binary for distribution | Complete | [spec](roadmap-P30-one-binary.md); [notes](roadmap-P30-one-binary-notes.md) |
 | P29 — versioned binary releases | Sketched; not grilled | this file, below; [inbox](roadmap-P29-releases-inbox.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -673,10 +673,11 @@ criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 
 ## P30 — One binary for distribution
 
-Specified in [its spec](roadmap-P30-one-binary.md). A release ships one
-binary, `pgdt`, with the DataFusion CLI composed in as `pgdt sql`; it links
-mimalloc, and it is the binary every figure times. Scheduled ahead of P29,
-whose artifacts it decides.
+Complete: [its spec](roadmap-P30-one-binary.md) and
+[its notes](roadmap-P30-one-binary-notes.md). A release ships one binary,
+`pgdt`, with the DataFusion CLI composed in as `pgdt sql`; it links mimalloc,
+and it is the binary every figure times ([`decisions.md`](decisions.md),
+"D13").
 
 ## P29 — Versioned binary releases
 
@@ -801,8 +802,8 @@ What it inherits:
   gate reads a kill alone (`roadmap-P30-one-binary.md`, "What the move owes
   before a release"), so the unit mimalloc keeps there is this phase's, as is
   setting the bound under mimalloc; P30's diagnostic attributed it to mimalloc
-  and left its mechanism unconfirmed (`roadmap-P30.7-diagnostic-notes.md`,
-  "The attribution"). Part of that overrun is not
+  and left its mechanism unconfirmed (`roadmap-P23-resident-reserve-inbox.md`,
+  "The unit mimalloc keeps of a 128 MiB block"). Part of that overrun is not
   the allocator's: from two readers up the program holds a unit above its
   charge on both builds (`KD111`), which this phase bills or removes.
 - **A branch already taken**: a remainder growing with the statistics volume

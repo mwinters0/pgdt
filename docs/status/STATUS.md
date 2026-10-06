@@ -77,26 +77,14 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
-## P30 progress
-
-Spec: [`../design/roadmap-P30-one-binary.md`](../design/roadmap-P30-one-binary.md).
-
-- [x] **30.1** The instrument on mimalloc: `introspect` counts in front of `MiMalloc` and reports mimalloc's statistics for the Rust heap beside glibc's for the C dependencies'; `introspect` brings mimalloc, the default build staying `system` — [notes](../design/roadmap-P30.1-instrument-notes.md)
-- [x] **30.2** The allocator move: mimalloc the default, `system` and `jemalloc` the opt-in legs, `--version` and `measure.py`'s `allocator` legs following, D13, the reserve's deficiency entry and the apparatus text rewritten (the spec, "What the move owes before a release"), and the `reserve` figure printing a two-heap report's readings, each column labelled with the memory it covers, where it now withholds them with the account; nothing re-taken — [notes](../design/roadmap-P30.2-allocator-move-notes.md)
-- [x] **30.3** The library split: `datafusion-cli-pgdump` exports the copied `Args` and its entry point, its binary a thin caller, the upstream copy changed only by `pgdump:` lines — [notes](../design/roadmap-P30.3-library-split-notes.md)
-- [x] **30.4** `pgdt sql`: the composed `main` parsing first and setting up a runtime and signals per arm, the `(datafusion: …)` marker, one `introspect`, the two-tunables check skipping `sql` alone and its standing rule amended, help snapshots, and the `Cargo.toml` rejection struck — [notes](../design/roadmap-P30.4-pgdt-sql-notes.md)
-- [x] **30.5** One binary: `datafusion-cli-pgdump`'s bin target deleted, its tests moved to `pgdt/tests/` against `pgdt sql`, `measure.py`'s provider figures on `pgdt sql`, the manual page and the README following — [notes](../design/roadmap-P30.5-one-binary-notes.md)
-- [x] **30.6** The re-take: the gate's readings (`reserve`'s flagless legs, the `parallel-*` contract, any kill) given a `system` leg of the same sitting, then the figure set swept on the composed binary, launched detached; a failure on mimalloc alone blocks the phase, one on both legs is filed and does not. The whole figure set is folded into `measurements.md` from one sitting at `1c9fc9be`, no leg killed on either build, which passes the gate as 30.9 reads it — [notes](../design/roadmap-P30.6-retake-notes.md)
-- [x] **30.6.1** The gate reads the margin: `measure.py` fails a `reserve` flagless leg whose worst surviving rep leaves less than `MEMORY_MARGIN_PERCENT` of its allocation, `parallel-peak-rss` still failing on a kill, each pinned by a test; the `1c9fc9be` sitting re-rendered with `--render`, measuring nothing, and `reserve`'s gate table and prose re-folded into `measurements.md`. One leg is short of the margin on the shipped build alone, which since 30.9 is reported and blocks nothing — [notes](../design/roadmap-P30.6.1-gate-margin-notes.md)
-- [x] **30.7** The diagnostic sitting: the `introspect` build attributes what the shipped build holds above its charge at 128 MiB blocks in `-m 1536m` and `-m 2g`, the instrument legs at that block size added to `reserve`'s register entry; it attributes and stops, the remedy grilled once the reading is in (the spec, "What the move owes before a release"). Read from a `--alone` sitting at `27593d2c`, not publishable: two terms, the program holding one unit more than the charge bills from two readers up on both builds, and mimalloc keeping about one more on the shipped build alone, which is what leaves it short of the margin, `KD34`'s and P23's — [notes](../design/roadmap-P30.7-diagnostic-notes.md)
-- [x] **30.9** The gate reads kills: `reserve`'s flagless legs fail the gate on a kill alone, the margin each leaves reported beside the verdict and blocking nothing, pinned by tests; what 30.8 landed removed — `RESERVE_CONFIRMING_OPTIONS` and its legs, `RESERVE_RETENTION_FRACTION`, `confirming_verdict`, `fewer_held_p`, `CONFIRMING_ALPHA`, `introspect`'s `mimalloc_purge_delay` read-back (`MI_OPTION_PURGE_DELAY`, `purge_delay`), their tests and 30.8's notes; the `1c9fc9be` sitting re-rendered with `--render`, measuring nothing, and `reserve`'s gate table and "What the sitting settles" re-folded into `measurements.md`; `MEMORY_RESERVE`'s deficiency line and marker naming the shipped build's margin shortfall at 128 MiB blocks in `-m 1536m`; the 30.6.1 and 30.7 notes' claims that the gate blocks corrected ([history](history/2026-10-05.md), "P30's gate reads kills"; [history](history/2026-10-06.md), "30.8's read-back goes with it"). The gate passes — [notes](../design/roadmap-P30.9-gate-kills-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P30 is open** (above). A dump is readable over HTTP, plain and `.xz`,
+- **No phase is open**: P30 is complete, its notes in
+  [`../design/roadmap-P30-one-binary-notes.md`](../design/roadmap-P30-one-binary-notes.md).
+  A dump is readable over HTTP, plain and `.xz`,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in

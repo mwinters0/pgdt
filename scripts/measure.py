@@ -4641,7 +4641,8 @@ class Session:
         rss = f" at {fmt_mib(self._last_rss)}" if self._last_rss is not None else ""
         return (
             f"{head} survived{rss}: a kill on the shipped build alone is the allocator's, "
-            "which reopens D13 (`docs/design/decisions.md`)."
+            "attributed on the instrument build before a remedy is chosen; it reopens D13 "
+            "(`docs/design/decisions.md`) only where that entry's Reopens line says."
         )
 
     def time_run(self, spec: RunSpec) -> float:
@@ -5456,10 +5457,11 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 #: **What the pair decides is whose failure it is.** A reading failing on both
 #: legs is not the allocator's and is filed, against the reserve (`KD34`) or as
 #: a deficiency of its own; one failing on the shipped build alone is the
-#: allocator's, which is what reopens D13. A reading is never judged against an
-#: earlier sitting's platform-allocator figure instead: that sitting differs by
-#: every commit since, so a failure judged against it could not be told from
-#: theirs (`.claude/skills/evidence/SKILL.md`, rule 7).
+#: allocator's, attributed on the instrument build before a remedy is chosen,
+#: and reopens D13 only where that entry's Reopens line says. A reading is
+#: never judged against an earlier sitting's platform-allocator figure instead:
+#: that sitting differs by every commit since, so a failure judged against it
+#: could not be told from theirs (`.claude/skills/evidence/SKILL.md`, rule 7).
 GATE_LEG = "system"
 
 #: `GATE_LEG` as a `RunSpec.binary` (`Session.binary_path`).
@@ -5620,9 +5622,9 @@ def gate_section(
         summary = (
             f"**The gate blocks**: {len(blocking)} leg(s) failed on the shipped build alone — "
             + ", ".join(blocking)
-            + ". That is the allocator's, which reopens "
-            '[`decisions.md`](decisions.md), "D13", and is attributed on the instrument '
-            "build in a sitting of its own, never off this table."
+            + ". That is the allocator's, attributed on the instrument build in a sitting "
+            "of its own, never off this table, and it reopens "
+            '[`decisions.md`](decisions.md), "D13", only where its Reopens line says.'
         )
     else:
         summary = "**The gate passes**: no leg failed on the shipped build alone."

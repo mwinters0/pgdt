@@ -85,13 +85,13 @@ The library keeps `tokio` at `rt`+`sync`; `pgdt`'s own commands run `current_thr
 follows dispatched work, not CPUs (an idle reactor thread seeds allocator state); `sql` runs DataFusion's.
 Rejected: a thread pool of our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
 
-### D13 The allocator is the binary's choice, and it is mimalloc
-No `#[global_allocator]` in the library; `pgdt` links mimalloc, as DataFusion's CLI does, without `override`, so C keeps libc's
-`malloc` and the process has two heaps; `system`/`jemalloc` are opt-in legs, a build naming exactly one, `--version` naming it and
-an `introspect` build's marker keeping that build untimed. Rejected: the platform allocator, off the path DataFusion tests on;
-`override`, likewise; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10) but on C's arenas alone, at unpriced contention,
-overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure; a mimalloc-only gate failure whose confirmed
-mechanism no library change suiting both allocators and no mimalloc option reaches (P30). Evidence: `allocator`.
+### D13 The allocator is the binary's choice; the one binary composes DataFusion's CLI and links mimalloc
+No `#[global_allocator]` in the library, nor a remedy re-setting its bound for a term one allocator alone holds. `pgdt` is the one binary, composing `datafusion-cli-pgdump` as `sql`
+unconditionally, so every figure times what a release ships, and links mimalloc as that CLI does, without `override`: C keeps libc's `malloc`, and the process has two
+heaps. `system`/`jemalloc` are legs; an `introspect` build's `--version` marker keeps it untimed; a mimalloc option, if a remedy, is a default the environment overrides.
+Rejected: the platform allocator and `override`, off the path DataFusion tests on; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10) but on C's arenas alone,
+overwriting the operator's `MALLOC_ARENA_MAX`; DataFusion behind a feature (off, no figure times the download; on, a slim build nothing ships or times); two artifacts, or a
+second binary the provider figures would time. Reopens: a contention figure; a mimalloc-only gate failure whose confirmed mechanism no library change suiting both allocators (ranking first) and no mimalloc option reaches. Evidence: `allocator`.
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content
