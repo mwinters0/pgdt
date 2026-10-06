@@ -55,6 +55,14 @@ use pgdump_query::decode::{
 };
 use pgdump_query::nested::{decode_array, decode_record, render_array, render_record};
 
+/// `pgdt`'s allocator, as `pgdt` declares it (`pgdt/src/alloc.rs`): a bench
+/// target is a binary of its own, outside the library's refusal of a global
+/// allocator (`docs/design/decisions.md`, "D13"), and without this line every
+/// allocation it times would be glibc's `malloc`, which `pgdt`'s Rust heap
+/// never uses.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn bool_family(c: &mut Criterion) {
     let mut g = c.benchmark_group("bool");
     g.bench_function("decode", |b| b.iter(|| decode_bool(black_box("t"))));

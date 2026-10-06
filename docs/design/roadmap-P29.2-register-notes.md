@@ -11,11 +11,11 @@ there wrote by calling the harness's own build functions; `bench.log`, one
 
 ## What remains: the sitting
 
-**The apparatus has landed and no figure has been taken on it.** `M219`, which
-changes `nested-decode-micro`'s allocator, lands before the sitting, which
-otherwise takes that figure on glibc's `malloc` once more
-([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "The
-register's image, reviewed"). The sitting
+**The apparatus has landed and no figure has been taken on it.** `M219` has
+given `nested-decode-micro`'s bench `pgdt`'s allocator, so the sitting takes
+that figure on mimalloc, the first of its readings not on glibc's `malloc`
+([`../status/history/2026-10-06.md`](../status/history/2026-10-06.md),
+"`M219`: the benches take `pgdt`'s allocator"). The sitting
 is a whole sweep from a commit carrying this change — a figure is never taken
 from a tree carrying its own uncommitted apparatus — launched detached per
 `CLAUDE.md`, "Long-running processes", and handed off per

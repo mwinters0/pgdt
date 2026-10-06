@@ -2001,7 +2001,9 @@ because there are two questions.**
   24 ns at 601, 20 ns at 42. A nested value's *element* has no borrowed arm at
   the Arrow builder (`crate::batch::append_nested` copies whatever it is
   handed), so this isolates what the *parse* costs on top of the copy the
-  builder cannot avoid.
+  builder cannot avoid. It allocates through the bench's
+  `#[global_allocator]`, `pgdt`'s mimalloc ([`decisions.md`](decisions.md),
+  "D13").
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
   **2.98 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
@@ -2024,7 +2026,8 @@ Criterion medians (ns):
 Apparatus: this figure runs no `pgdt` and reads no file, so it carries none of
 the stall, temperature or device gates the sweep's tables do. It is built and
 run in the release image (`release.py bench`), on the compiler and glibc every
-other figure's binary is built with.
+other figure's binary is built with, and under `pgdt`'s allocator, which the
+bench declares as `pgdt` does.
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
@@ -2038,15 +2041,18 @@ puts at ~1.1 ns, so three quarters of it was criterion. And 2.98 ns is a
 table**, because its denominator is: the 601-byte copy control has read 24, 42,
 41, 24, 24, 41, 41, 40, 40, 41, 41, 41 and 24 ns over thirteen sittings, which has put that
 ratio at 122×, 226×, 94.8×, 67.6×, 67.1×, 70.5×, 71.8×, 66.2×, 63.6× and 104.1× while `decode` moved for
-reasons of its own. Read the `decode` and `render` columns, which are what the design consumes;
+reasons of its own. All thirteen allocated through glibc's `malloc`, before the
+bench declared `pgdt`'s allocator, so a reading on mimalloc starts a series of
+its own rather than adding a fourteenth. Read the `decode` and `render` columns, which are what the design consumes;
 treat `÷ copy` as the order of magnitude it establishes.
 
 **What this says.** Cost is per *element* rather than per byte — the two
 array lengths differ only in element count — and the slope is **32 ns per
 element** decoding, against the 48 ns a linear force-quote set cost and the
 77 ns an allocation per element cost before that, and **15 ns per element**
-rendering, against 27 ns. An element of an array literal is a borrowed slice of
-the field unless it actually carried an escape
+rendering, against 27 ns — those three read on glibc's `malloc`, so set beside
+a slope read on mimalloc they price the allocator as well as the code. An
+element of an array literal is a borrowed slice of the field unless it actually carried an escape
 ([`decisions.md`](decisions.md), "D45"), and the
 per-byte predicate that decides whether it *would* have been quoted is one
 indexed bit rather than a search of a byte slice. What is left in the decode
@@ -3969,7 +3975,9 @@ overhead reaches no figure.
 `criterion`, `harness = false`. A regression tripwire for per-byte CPU cost,
 not an optimization campaign. Nothing here is a figure: these quote no number in
 this document, and `cargo bench` rather than `measure.py` runs them, so the
-session stamp above says nothing about them either.
+session stamp above says nothing about them either. Both take `pgdt`'s
+allocator as their `#[global_allocator]`, so a tripwire moves with the heap the
+binary ships ([`decisions.md`](decisions.md), "D13").
 
 ```sh
 cargo bench -p pgdump_query

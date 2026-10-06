@@ -30,6 +30,14 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{LocalFileSource, QueryOptions, ScanOptions, read_table};
 
+/// `pgdt`'s allocator, as `pgdt` declares it (`pgdt/src/alloc.rs`): a bench
+/// target is a binary of its own, outside the library's refusal of a global
+/// allocator (`docs/design/decisions.md`, "D13"), and without this line every
+/// allocation it times would be glibc's `malloc`, which `pgdt`'s Rust heap
+/// never uses.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Fits page cache on any development machine
 /// (`scripts/generate_perf_data.py --help`).
 const PERF_DATA_SIZE_MB: u32 = 256;

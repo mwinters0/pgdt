@@ -3648,6 +3648,7 @@ dependencies = [
  "futures",
  "insta",
  "memchr",
+ "mimalloc",
  "object_store 0.14.2",
  "serde",
  "simdutf8",

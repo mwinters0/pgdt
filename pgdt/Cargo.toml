@@ -66,6 +66,7 @@ libmimalloc-sys = { version = "0.1.49", optional = true, default-features = fals
 # The shipped allocator. No default features, as upstream's `datafusion-cli`
 # links it: no `override`, so `liblzma` and `aws-lc` keep libc's `malloc` and
 # the process has two heaps (`docs/design/decisions.md`, "D13").
+# `pgdump_query`'s benches link it at this same requirement, which moves with it.
 mimalloc = { version = "0.1.50", optional = true, default-features = false }
 # As its PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26").

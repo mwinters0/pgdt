@@ -75,6 +75,13 @@ xz-seek = { path = "../vendor/xz-seek", features = ["serde"] }
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 insta = "1.48.0"
+# The benches' `#[global_allocator]`: `pgdt`'s shipped allocator at `pgdt`'s
+# requirement, without `override` as there, so a bench times the heap the
+# binary ships rather than glibc's `malloc`. A dev-dependency because the
+# library names no allocator (`docs/design/decisions.md`, "D13"); the two
+# requirements resolve to one version, the lockfile holding one per
+# semver-compatible range.
+mimalloc = { version = "0.1.50", default-features = false }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
 
