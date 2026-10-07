@@ -3,6 +3,10 @@
 # nextest's default: no thread cap is committed, a fixed count being wrong on
 # every other checkout, and a machine needing one sets `NEXTEST_TEST_THREADS`.
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
+# A release's `THIRD-PARTY-NOTICES`, which `scripts/release.py notices` reads
+# out of it under `release/about.toml`; pinned exactly, as the release image
+# installs it (`docs/design/roadmap-P29-releases.md`, "Licence and notices").
+"github:EmbarkStudios/cargo-about" = "0.9.2"
 # `aws-lc-sys`, under `object_store`'s `http` feature, is a C build driven by
 # cmake, so a checkout that builds this workspace declares it.
 cmake = "latest"

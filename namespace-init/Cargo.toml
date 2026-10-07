@@ -2,7 +2,8 @@
 name = "namespace-init"
 version.workspace = true
 edition.workspace = true
-publish = false
+license.workspace = true
+publish.workspace = true
 
 # What `pgdt` does as its PID namespace's init, its native commands and `sql`
 # alike (`docs/design/decisions.md`, "D26"). A crate of its own because a

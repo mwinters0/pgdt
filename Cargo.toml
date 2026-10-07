@@ -15,9 +15,17 @@ members = [
 # `scripts/vendor_xz_seek.py` re-syncs it.
 exclude = ["vendor/xz-seek"]
 
+# The one place the version lives, and what `/release` moves; every member
+# takes it, and a path dependency between members states no requirement, so a
+# bump is this line. Every member is `Apache-2.0`, the text at the root's
+# `LICENSE`, and unpublishable: a release is `pgdt`'s archives, never a crate
+# (`docs/design/roadmap-P29-releases.md`, "The version and how a build names
+# it" and "Licence and notices").
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+publish = false
 
 # The test build optimizes; debug assertions and overflow checks stay on
 # (`docs/design/decisions.md`, "D92"). Line tables only: a backtrace and a

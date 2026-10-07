@@ -34,12 +34,18 @@ is this recipe with only its package, features or target directory changed
 A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler
 and glibc, criterion's output landing in the release state's target directory.
 
+**Each archive's `THIRD-PARTY-NOTICES` is made here too** (`step_notices`):
+`cargo-about`, pinned in `mise.toml`, reads every crate's licence under
+`release/about.toml`'s allow-list, and this script cuts that reading to what
+the target's `pgdt` links and adds what `cargo-about` does not carry.
+
 Usage:
 
     cd scripts && uv run release.py image                 # build the image, unless built
     cd scripts && uv run release.py build [--target T]    # release-build pgdt, each held to the floor
     cd scripts && uv run release.py build --no-default-features --features system --target-dir D
     cd scripts && uv run release.py suite                 # the x86-64 suite, in the image
+    cd scripts && uv run release.py notices [--target T]  # each target's THIRD-PARTY-NOTICES, beside its binary
     cd scripts && uv run release.py bench --package pgdump_query --bench decoders --filter nested
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
     python3 scripts/release.py build --inside             # a step, already in the image
@@ -59,6 +65,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -542,6 +550,291 @@ def step_bench(bench: Bench) -> int:
     return 0
 
 
+# --- the notices -----------------------------------------------------------
+
+ABOUT_CONFIG = REPO / "release" / "about.toml"
+NOTICES_NAME = "THIRD-PARTY-NOTICES"
+#: The package a release ships, whose linked closure the notices cover.
+SHIPPED = "pgdt"
+#: A licence whose duty in executable form includes saying where the source
+#: is: each crate under one gets a line naming it.
+SOURCE_POINTER_LICENSES = ("MPL-2.0",)
+#: The elections a dual licence leaves to us and no crate's declared licence
+#: states, by the crate that compiles the component in.
+ELECTIONS: dict[str, str] = {
+    "zstd-sys": (
+        "zstd's C sources, which zstd-sys compiles in, are offered under "
+        "BSD-3-Clause or GPL-2.0-only; they are distributed here under "
+        "BSD-3-Clause, not GPL-2.0-only."
+    ),
+}
+
+TREE_LINE_RE = re.compile(r"^(\S+) v(\S+)")
+
+
+@dataclass(frozen=True, order=True)
+class Crate:
+    name: str
+    version: str
+
+    def __str__(self) -> str:
+        return f"{self.name} {self.version}"
+
+
+def parse_tree(text: str) -> set[Crate]:
+    """The crates in `cargo tree --prefix none -f '{p}'`'s output."""
+    found = set()
+    for line in text.splitlines():
+        if m := TREE_LINE_RE.match(line.strip()):
+            found.add(Crate(m.group(1), m.group(2)))
+    return found
+
+
+def linked_closure(target: str) -> set[Crate]:
+    """Every crate the shipped binary links for `target`: its normal
+    dependencies at its own features, a proc macro and what only it uses
+    left out, since none of their code is in the binary. `cargo-about` reads
+    the whole graph a build resolves, and this is what its output is cut to."""
+    out = subprocess.run(
+        [
+            "cargo", "tree", "--locked", "--offline", "-p", SHIPPED, "--target", target,
+            "-e", "normal,no-proc-macro", "--prefix", "none", "-f", "{p}",
+        ],
+        cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout  # fmt: skip
+    return parse_tree(out)
+
+
+def workspace_crates() -> tuple[set[Crate], str]:
+    """The workspace's members, which are ours rather than third parties',
+    and the shipped package's version."""
+    out = subprocess.run(
+        ["cargo", "metadata", "--locked", "--offline", "--no-deps", "--format-version", "1"],
+        cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout  # fmt: skip
+    meta = json.loads(out)
+    members = {Crate(p["name"], p["version"]) for p in meta["packages"]}
+    version = next(p["version"] for p in meta["packages"] if p["name"] == SHIPPED)
+    return members, version
+
+
+def about_json(target: str, config: Path = ABOUT_CONFIG) -> dict:
+    """`cargo-about`'s reading of the shipped package's graph for `target`,
+    as JSON. `--fail` makes a licence the configuration does not accept a
+    failed run rather than a warning (a clarification whose files moved is
+    still a warning: `check_clarified`), and `--offline` reads only what the
+    crates' sources carry, so one lockfile gives one reading."""
+    out = subprocess.run(
+        [
+            "cargo-about", "generate", "--fail", "--format", "json", "--locked", "--offline",
+            "-m", str(REPO / SHIPPED / "Cargo.toml"), "--target", target, "-c", str(config),
+        ],
+        cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout  # fmt: skip
+    return json.loads(out)
+
+
+@dataclass
+class Text:
+    """One licence or `NOTICE` text, the licences it was reproduced under and
+    the crates it was reproduced for."""
+
+    text: str
+    licenses: set[str] = dataclasses.field(default_factory=set)
+    crates: set[Crate] = dataclasses.field(default_factory=set)
+
+
+def licence_texts(about: dict, closure: set[Crate]) -> tuple[list[Text], dict[Crate, set[str]]]:
+    """`cargo-about`'s licence texts cut to `closure`, one entry per distinct
+    text, and the licences each crate is distributed under.
+
+    `cargo-about` keeps a text once per licence it was reproduced under, so a
+    file a clarification names under several (an attribution file) comes
+    back once for each; here it is one entry. **A crate in `closure` with no
+    text is refused**: the closure is what ships, and a crate it holds that
+    the reading missed would ship unattributed."""
+    by_text: dict[str, Text] = {}
+    licences: dict[Crate, set[str]] = {}
+    for lic in about["licenses"]:
+        users = {Crate(u["crate"]["name"], u["crate"]["version"]) for u in lic["used_by"]} & closure
+        if not users:
+            continue
+        entry = by_text.setdefault(lic["text"], Text(lic["text"]))
+        entry.licenses.add(lic["id"])
+        entry.crates |= users
+        for crate in users:
+            licences.setdefault(crate, set()).add(lic["id"])
+    missing = sorted(closure - licences.keys())
+    if missing:
+        raise ReleaseError(
+            "cargo-about gave no licence text for " + ", ".join(map(str, missing))
+            + f": each crate {SHIPPED} links must have one"
+        )
+    return sorted(by_text.values(), key=lambda t: (sorted(t.licenses), min(t.crates))), licences
+
+
+def check_clarified(config: dict, dirs: dict[Crate, Path], texts: Sequence[Text]) -> None:
+    """Refuse notices missing a file a clarification names.
+
+    `cargo-about` drops a clarification whose checksum no longer matches with
+    a warning, `--fail` or not, and falls back to the crate's declared
+    licence, which is exactly what each clarification is there to correct;
+    so every linked crate's clarified files must be among its texts. A file
+    is compared whole, so a clarification may not cut one (`start`, `end`)."""
+    for crate, root in sorted(dirs.items()):
+        clarify = config.get(crate.name, {}).get("clarify")
+        if clarify is None:
+            continue
+        held = {t.text for t in texts if crate in t.crates}
+        for file in clarify.get("files", []):
+            if "start" in file or "end" in file:
+                raise ReleaseError(f"{crate}'s clarification cuts {file['path']}; the recipe compares whole files")
+            if (root / file["path"]).read_text() not in held:
+                raise ReleaseError(
+                    f"{crate}'s {file['path']} is not in its notices: its clarification no longer "
+                    f"applies (a checksum moved at an upgrade?); re-read the file and re-clarify it "
+                    f"in {ABOUT_CONFIG.relative_to(REPO)}"
+                )
+
+
+def crate_dirs(about: dict) -> dict[Crate, Path]:
+    """Each crate's source directory, from its manifest path."""
+    return {
+        Crate(c["package"]["name"], c["package"]["version"]): Path(c["package"]["manifest_path"]).parent
+        for c in about["crates"]
+    }
+
+
+def notice_texts(dirs: dict[Crate, Path], closure: set[Crate]) -> list[Text]:
+    """Every `NOTICE` file at the root of a crate in `closure`, one entry per
+    distinct text: Apache-2.0's section 4(d) asks a redistribution to carry
+    each one's attribution notices."""
+    by_text: dict[str, Text] = {}
+    for crate in sorted(closure):
+        root = dirs.get(crate)
+        if root is None:
+            continue
+        for path in sorted(root.iterdir()):
+            if path.is_file() and path.name.upper().startswith("NOTICE"):
+                text = path.read_text(errors="replace")
+                by_text.setdefault(text, Text(text)).crates.add(crate)
+    return sorted(by_text.values(), key=lambda t: min(t.crates))
+
+
+def source_pointers(about: dict, licences: dict[Crate, set[str]]) -> list[str]:
+    """A line saying where the source is, for each crate distributed under a
+    licence asking for one."""
+    packages = {Crate(c["package"]["name"], c["package"]["version"]): c["package"] for c in about["crates"]}
+    lines = []
+    for crate in sorted(licences):
+        held = sorted(set(SOURCE_POINTER_LICENSES) & licences[crate])
+        if not held:
+            continue
+        line = f"{crate} ({', '.join(held)}): https://crates.io/crates/{crate.name}/{crate.version}"
+        if repo := packages.get(crate, {}).get("repository"):
+            line += f", repository {repo}"
+        lines.append(line)
+    return lines
+
+
+def elections(closure: set[Crate]) -> list[str]:
+    """The elections, each refused where its crate is no longer linked: a
+    stale one would be a statement about a component nobody ships."""
+    linked = {c.name for c in closure}
+    stale = sorted(set(ELECTIONS) - linked)
+    if stale:
+        raise ReleaseError(f"an election names a crate {SHIPPED} no longer links: {', '.join(stale)}")
+    return [ELECTIONS[name] for name in sorted(ELECTIONS)]
+
+
+WIDTH = 78
+RULE = "=" * WIDTH
+THIN = "-" * WIDTH
+
+
+def render_notices(
+    version: str,
+    target: str,
+    licences: dict[Crate, set[str]],
+    texts: Sequence[Text],
+    notices: Sequence[Text],
+    pointers: Sequence[str],
+    chosen: Sequence[str],
+) -> str:
+    """The `THIRD-PARTY-NOTICES` file: the components and their licences, the
+    elections, where source is owed, every licence text and every `NOTICE`."""
+
+    def heading(title: str) -> list[str]:
+        return ["", RULE, title, RULE, ""]
+
+    def para(text: str) -> list[str]:
+        return textwrap.wrap(text, WIDTH, break_on_hyphens=False) + [""]
+
+    def label(prefix: str, cs: set[Crate]) -> list[str]:
+        return textwrap.wrap(f"{prefix} {', '.join(map(str, sorted(cs)))}", WIDTH, break_on_hyphens=False)
+
+    out = [
+        f"Third-party notices for {SHIPPED} {version}, {target}",
+        "",
+        f"{SHIPPED} is licensed under the Apache License, Version 2.0; its text is",
+        "LICENSE, beside this file. It is built from the third-party components",
+        "listed below, each distributed under the licence or licences named for",
+        "it, whose texts follow. Where a component offers a choice of licences,",
+        "it is distributed under the one named for it here.",
+    ]
+    out += heading("Components")
+    out += [f"{crate}: {' AND '.join(sorted(licences[crate]))}" for crate in sorted(licences)]
+    out += heading("Elections")
+    for line in chosen or ["None."]:
+        out += para(line)
+    out += heading("Source code")
+    out += para(
+        "The source of each component below is available where its entry says, "
+        "under the licence named in it."
+    )
+    for line in pointers or ["None."]:
+        out += para(line)
+    out += heading("Licence texts")
+    for t in texts:
+        out += [THIN, *label(f"{' / '.join(sorted(t.licenses))}, for:", t.crates), THIN, "", t.text.strip("\n"), ""]
+    out += heading("NOTICE files")
+    for t in notices:
+        out += [THIN, *label("NOTICE of:", t.crates), THIN, "", t.text.strip("\n"), ""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def notices_path(target: str, target_dir: Path) -> Path:
+    """Where the notices for `target` are written: beside its release binary."""
+    return target_dir / target / "release" / NOTICES_NAME
+
+
+def step_notices(targets: Sequence[str]) -> int:
+    """Each target's `THIRD-PARTY-NOTICES`, written beside its binary.
+
+    Every package the lockfile names is fetched first: `cargo-about` reads
+    the graph through `cargo metadata`, which wants the sources of every
+    target's and every member's dependencies, not only what a build fetched.
+    Nothing else here touches the network."""
+    run_step(["cargo", "fetch", "--locked"])
+    members, version = workspace_crates()
+    for target in targets:
+        closure = linked_closure(target) - members
+        about = about_json(target)
+        texts, licences = licence_texts(about, closure)
+        dirs = {c: d for c, d in crate_dirs(about).items() if c in closure}
+        check_clarified(tomllib.loads(ABOUT_CONFIG.read_text()), dirs, texts)
+        out = render_notices(
+            version, target, licences, texts,
+            notice_texts(dirs, closure),
+            source_pointers(about, licences), elections(closure),
+        )  # fmt: skip
+        path = notices_path(target, target_dir())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(out)
+        print(f"{target}: {path} ({len(licences)} components)", flush=True)
+    return 0
+
+
 def step_suite() -> int:
     status = 0
     for argv in SUITE:
@@ -582,6 +875,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument("--bench", required=True, help="the bench target")
     r.add_argument("--filter", help="criterion's filter: which benchmark ids run")
     r.add_argument("--inside", action="store_true", help="run here: this is the image")
+    n = sub.add_parser(
+        "notices", help=f"each target's {NOTICES_NAME}, from cargo-about, under release/about.toml"
+    )
+    n.add_argument(
+        "--target", action="append", choices=sorted(TARGETS),
+        help="one target (repeatable); every release target by default",
+    )  # fmt: skip
+    n.add_argument("--inside", action="store_true", help="run here: this is the image")
     s = sub.add_parser("suite", help=f"the {NATIVE_TARGET} suite, in the image")
     s.add_argument("--inside", action="store_true", help="run here: this is the image")
     f = sub.add_parser("floor", help="hold one binary to a glibc floor")
@@ -614,6 +915,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_inside()
             if bench is not None:
                 return step_bench(bench)
+            if args.cmd == "notices":
+                return step_notices(args.target or list(TARGETS))
             return step_suite() if args.cmd == "suite" else step_build(builds)
         tag = ensure_image(container)
         prepare_state(target=target)
@@ -621,6 +924,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             step, git = ["suite"], git_view()
         elif bench is not None:
             step, git = bench.step(), None
+        elif args.cmd == "notices":
+            step, git = ["notices", *(f"--target={t}" for t in args.target or ())], None
         else:
             step, git = build_step(builds), None
         return subprocess.run(run_in_image(container, tag, step, target=target, git=git)).returncode

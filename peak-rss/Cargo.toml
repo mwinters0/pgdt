@@ -2,7 +2,8 @@
 name = "peak-rss"
 version.workspace = true
 edition.workspace = true
-publish = false
+license.workspace = true
+publish.workspace = true
 
 # The measurement harness's resident-set instrument: it runs a command and
 # reports the command's peak resident set (`src/main.rs`). A workspace member

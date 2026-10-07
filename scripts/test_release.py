@@ -19,6 +19,7 @@ import tomllib
 import unittest
 import unittest.mock
 from pathlib import Path
+from typing import Sequence
 
 import check
 import release
@@ -253,7 +254,186 @@ class Image(unittest.TestCase):
                 release.check_inside(copies, repo)
 
 
+def about(*licenses: tuple[str, str, list[tuple[str, str]]], crates: Sequence[dict] = ()) -> dict:
+    """`cargo-about`'s JSON, as much of it as the notices read: each licence
+    text with its id and the crates it was reproduced for."""
+    return {
+        "licenses": [
+            {"id": id_, "text": text, "used_by": [{"crate": {"name": n, "version": v}} for n, v in users]}
+            for id_, text, users in licenses
+        ],
+        "crates": list(crates),
+    }
+
+
+def package(name: str, version: str, manifest: str = "/x/Cargo.toml", **extra) -> dict:
+    return {"package": {"name": name, "version": version, "manifest_path": manifest, **extra}}
+
+
+C = release.Crate
+
+
+class Notices(unittest.TestCase):
+    def test_the_closure_is_read_out_of_cargo_tree(self):
+        tree = "pgdt v0.1.0 (/work/pgdt)\nserde v1.0.229\nserde v1.0.229 (*)\nzstd-sys v2.1.0+zstd.1.5.7\n\n"
+        self.assertEqual(
+            release.parse_tree(tree),
+            {C("pgdt", "0.1.0"), C("serde", "1.0.229"), C("zstd-sys", "2.1.0+zstd.1.5.7")},
+        )
+
+    def test_texts_are_cut_to_the_closure_and_kept_once_each(self):
+        reading = about(
+            ("Apache-2.0", "ATTRIBUTION", [("aws-lc-sys", "0.45.0")]),
+            ("ISC", "ATTRIBUTION", [("aws-lc-sys", "0.45.0")]),
+            ("MIT", "MIT TEXT", [("a", "1.0.0"), ("macro", "1.0.0")]),
+            ("MIT", "ONLY A MACRO", [("macro", "1.0.0")]),
+        )
+        closure = {C("aws-lc-sys", "0.45.0"), C("a", "1.0.0")}
+        texts, licences = release.licence_texts(reading, closure)
+        self.assertEqual([(t.text, t.licenses, t.crates) for t in texts], [
+            ("ATTRIBUTION", {"Apache-2.0", "ISC"}, {C("aws-lc-sys", "0.45.0")}),
+            ("MIT TEXT", {"MIT"}, {C("a", "1.0.0")}),
+        ])  # fmt: skip
+        self.assertEqual(licences, {C("aws-lc-sys", "0.45.0"): {"Apache-2.0", "ISC"}, C("a", "1.0.0"): {"MIT"}})
+
+    def test_a_linked_crate_with_no_text_is_refused(self):
+        reading = about(("MIT", "MIT TEXT", [("a", "1.0.0")]))
+        with self.assertRaisesRegex(release.ReleaseError, r"b 2\.0\.0"):
+            release.licence_texts(reading, {C("a", "1.0.0"), C("b", "2.0.0")})
+
+    def test_every_notice_at_a_linked_crate_s_root_is_kept_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dirs = {}
+            for name, files in (
+                ("arrow", {"NOTICE.txt": "ASF", "LICENSE.txt": "L"}),
+                ("arrow-array", {"NOTICE.txt": "ASF"}),
+                ("object_store", {"notice": "OBJ"}),
+                ("unlinked", {"NOTICE": "NOT SHIPPED"}),
+            ):
+                root = Path(tmp) / name
+                root.mkdir()
+                for file, text in files.items():
+                    (root / file).write_text(text)
+                dirs[C(name, "1.0.0")] = root
+            closure = {C("arrow", "1.0.0"), C("arrow-array", "1.0.0"), C("object_store", "1.0.0")}
+            got = release.notice_texts(dirs, closure)
+        self.assertEqual([(t.text, t.crates) for t in got], [
+            ("ASF", {C("arrow", "1.0.0"), C("arrow-array", "1.0.0")}),
+            ("OBJ", {C("object_store", "1.0.0")}),
+        ])  # fmt: skip
+
+    def test_a_source_pointer_names_each_crate_under_a_licence_asking_for_one(self):
+        reading = about(crates=[package("option-ext", "0.2.0", repository="https://example.org/oe")])
+        licences = {C("option-ext", "0.2.0"): {"MPL-2.0"}, C("a", "1.0.0"): {"MIT"}}
+        self.assertEqual(
+            release.source_pointers(reading, licences),
+            ["option-ext 0.2.0 (MPL-2.0): https://crates.io/crates/option-ext/0.2.0, repository https://example.org/oe"],
+        )
+
+    def test_an_election_for_a_crate_no_longer_linked_is_refused(self):
+        self.assertEqual(release.elections({C("zstd-sys", "2.1.0")}), [release.ELECTIONS["zstd-sys"]])
+        with self.assertRaisesRegex(release.ReleaseError, "zstd-sys"):
+            release.elections({C("a", "1.0.0")})
+
+    def test_the_notices_carry_every_section_inside_the_width(self):
+        texts = [release.Text("MIT TEXT", {"MIT"}, {C(f"crate-{i}", "1.0.0") for i in range(30)})]
+        notices = [release.Text("ASF NOTICE", set(), {C("arrow", "59.2.0")})]
+        out = release.render_notices(
+            "0.1.0", "x86_64-unknown-linux-gnu", {C("arrow", "59.2.0"): {"Apache-2.0", "MIT"}},
+            texts, notices, ["option-ext 0.2.0 (MPL-2.0): https://crates.io/crates/option-ext/0.2.0"],
+            [release.ELECTIONS["zstd-sys"]],
+        )  # fmt: skip
+        self.assertTrue(out.startswith("Third-party notices for pgdt 0.1.0, x86_64-unknown-linux-gnu\n"))
+        for section in ("Components", "Elections", "Source code", "Licence texts", "NOTICE files"):
+            self.assertIn(f"\n{section}\n", out)
+        self.assertIn("arrow 59.2.0: Apache-2.0 AND MIT", out)
+        self.assertIn("MIT TEXT", out)
+        self.assertIn("ASF NOTICE", out)
+        self.assertIn("BSD-3-Clause, not GPL-2.0-only", out.replace("\n", " "))
+        # Every line but a crates.io URL wraps; the texts are the crates' own.
+        long = [line for line in out.splitlines() if len(line) > release.WIDTH and "https://" not in line]
+        self.assertEqual(long, [])
+
+    def test_a_clarified_file_missing_from_the_notices_is_refused(self):
+        # `cargo-about` drops a clarification whose checksum moved with only a
+        # warning, falling back to the declared licence: the 0BSD text goes.
+        crate = C("liblzma-sys", "0.4.8")
+        config = {"liblzma-sys": {"clarify": {"files": [
+            {"path": "LICENSE-APACHE", "license": "Apache-2.0"},
+            {"path": "xz/COPYING.0BSD", "license": "0BSD"},
+        ]}}}  # fmt: skip
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "xz").mkdir()
+            (root / "LICENSE-APACHE").write_text("APACHE")
+            (root / "xz" / "COPYING.0BSD").write_text("ZERO BSD")
+            dirs = {crate: root, C("other", "1.0.0"): root}
+            whole = [release.Text("APACHE", {"Apache-2.0"}, {crate}), release.Text("ZERO BSD", {"0BSD"}, {crate})]
+            release.check_clarified(config, dirs, whole)
+            with self.assertRaisesRegex(release.ReleaseError, r"liblzma-sys 0\.4\.8's xz/COPYING\.0BSD"):
+                release.check_clarified(config, dirs, whole[:1])
+            # Another crate's copy of the text is not this crate's.
+            elsewhere = [whole[0], release.Text("ZERO BSD", {"0BSD"}, {C("other", "1.0.0")})]
+            with self.assertRaises(release.ReleaseError):
+                release.check_clarified(config, dirs, elsewhere)
+            config["liblzma-sys"]["clarify"]["files"][0]["start"] = "APA"
+            with self.assertRaisesRegex(release.ReleaseError, "whole files"):
+                release.check_clarified(config, dirs, whole)
+
+    def test_every_file_this_repo_clarifies_names_a_checksum_and_no_cut(self):
+        config = tomllib.loads(release.ABOUT_CONFIG.read_text())
+        clarified = {name: t["clarify"] for name, t in config.items() if isinstance(t, dict) and "clarify" in t}
+        self.assertEqual(sorted(clarified), ["aws-lc-sys", "liblzma-sys", "ring"])
+        for name, clarify in clarified.items():
+            for file in clarify["files"]:
+                self.assertRegex(file["checksum"], r"^[0-9a-f]{64}$", name)
+                self.assertFalse({"start", "end"} & file.keys(), name)
+
+    def test_the_notices_are_written_beside_the_binary(self):
+        self.assertEqual(
+            release.notices_path(release.NATIVE_TARGET, Path("/t")),
+            release.Build().binary(Path("/t")).parent / "THIRD-PARTY-NOTICES",
+        )
+
+    def test_a_notices_step_round_trips_through_the_command_line(self):
+        seen = []
+        with unittest.mock.patch.object(release, "check_inside"), \
+                unittest.mock.patch.object(release, "step_notices", lambda t: seen.append(t) or 0):
+            self.assertEqual(release.main(["notices", "--inside"]), 0)
+            self.assertEqual(release.main(["notices", "--target", release.NATIVE_TARGET, "--inside"]), 0)
+        self.assertEqual(seen, [list(release.TARGETS), [release.NATIVE_TARGET]])
+
+
+#: Licences whose terms reach past attribution: none may be accepted for every
+#: crate, so a second crate under one stops a release until it is read.
+COPYLEFT = re.compile(r"^(A?GPL|LGPL|MPL|EPL|CDDL|EUPL|OSL|CC-BY-SA)")
+
+
 class ThisRepo(unittest.TestCase):
+    def test_no_copyleft_licence_is_accepted_for_every_crate(self):
+        config = tomllib.loads(release.ABOUT_CONFIG.read_text())
+        self.assertEqual([lic for lic in config["accepted"] if COPYLEFT.match(lic)], [])
+        self.assertEqual(config["option-ext"]["accepted"], ["MPL-2.0"])
+
+    def test_cargo_about_is_pinned_exactly_and_installed_in_the_image(self):
+        tools = tomllib.loads((release.REPO / "mise.toml").read_text())["tools"]
+        self.assertRegex(tools["github:EmbarkStudios/cargo-about"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(release.DOCKERFILE.read_text(), r"for tool in [^;]*\bcargo-about\b")
+
+    def test_every_member_is_apache_and_unpublishable_and_the_root_carries_the_text(self):
+        root = tomllib.loads((release.REPO / "Cargo.toml").read_text())
+        self.assertEqual(root["workspace"]["package"]["license"], "Apache-2.0")
+        self.assertIs(root["workspace"]["package"]["publish"], False)
+        for member in root["workspace"]["members"]:
+            manifest = tomllib.loads((release.REPO / member / "Cargo.toml").read_text())
+            self.assertEqual(manifest["package"]["license"], {"workspace": True}, member)
+            self.assertEqual(manifest["package"]["publish"], {"workspace": True}, member)
+            for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+                for dep, spec in manifest.get(table, {}).items():
+                    if isinstance(spec, dict) and "path" in spec and dep in root["workspace"]["members"]:
+                        self.assertNotIn("version", spec, f"{member}'s {table}.{dep}")
+        self.assertIn("Apache License\n", (release.REPO / "LICENSE").read_text())
+
     def test_the_dockerfile_builds_from_one_debian_digest(self):
         base = release.pinned_base(release.DOCKERFILE.read_text())
         self.assertTrue(base.startswith("debian:trixie@sha256:"), base)

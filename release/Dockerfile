@@ -48,7 +48,7 @@ RUN cd /opt/toolchain && rustc --version && cargo --version \
     && chmod -R a+rX "$RUSTUP_HOME"
 
 # **The tools `mise.toml` pins**, installed by `mise` from that file, so the
-# suite finds what a checkout's `mise install` gives it
+# suite and the notices find what a checkout's `mise install` gives it
 # (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
 # `mise` itself is pinned here by version and checksum, and only installs:
 # each tool is linked onto `PATH`, so nothing runs through it.
@@ -64,7 +64,7 @@ RUN set -eu; \
     cd /opt/toolchain; \
     mise trust mise.toml; \
     mise install --yes; \
-    for tool in cargo-nextest cmake uv uvx; do \
+    for tool in cargo-about cargo-nextest cmake uv uvx; do \
         ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
     done; \
     rm -rf "$MISE_CACHE_DIR"; \

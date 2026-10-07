@@ -2,6 +2,8 @@
 name = "pgdump_query"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # The introspection build's library half (`src/instrument.rs`): which
 # allocations are statistics, for `pgdt`'s counting allocator to count. Enabled

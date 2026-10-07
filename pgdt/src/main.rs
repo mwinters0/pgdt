@@ -44,20 +44,55 @@ struct Cli {
     command: Invocation,
 }
 
-/// What `pgdt --version` prints: the crate version, the allocator's markers
+/// What `pgdt --version` prints: the crate version, `(unreleased)` unless
+/// this is a release's build ([`RELEASED`]), the allocator's markers
 /// ([`alloc::MARKERS`]), and the DataFusion release `sql` is, which `sql`'s
 /// help also closes on, `sql` carrying no `--version` of its own. Formatted
 /// once at run time: `DATAFUSION_VERSION` is a path, which `concat!` refuses.
 fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "{} {} (datafusion: {})",
+            "{}{} {} (datafusion: {})",
             env!("CARGO_PKG_VERSION"),
+            if RELEASED { "" } else { " (unreleased)" },
             alloc::MARKERS,
             datafusion_cli_pgdump::DATAFUSION_VERSION
         )
     });
     &VERSION
+}
+
+/// The variable the release workflow builds with, naming the version it
+/// releases (`docs/design/roadmap-P29-releases.md`, "The version and how a
+/// build names it"). Cargo rebuilds when it changes, as for any variable
+/// `option_env!` reads.
+const RELEASE_VARIABLE: Option<&str> = option_env!("PGDT_RELEASE_VERSION");
+
+/// Whether this is a release's build: the variable names this crate's own
+/// version. **One naming another fails the build**, an empty one included,
+/// so a workflow that read the version from somewhere else, or not at all,
+/// stops before it archives rather than shipping a binary that says it is
+/// unreleased.
+const RELEASED: bool = match RELEASE_VARIABLE {
+    None => false,
+    Some(v) if same_str(v, env!("CARGO_PKG_VERSION")) => true,
+    Some(_) => panic!("PGDT_RELEASE_VERSION names another version than this crate's"),
+};
+
+/// `==` on `str`, which a `const` cannot call.
+const fn same_str(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 /// The two kinds of command, told apart before the process is set up: each
@@ -3681,6 +3716,30 @@ mod tests {
     use super::*;
     use arrow::datatypes::{Field, Fields};
     use std::sync::Arc;
+
+    /// A build says it is unreleased exactly when the release variable is
+    /// absent, in the place the spec gives it: straight after the crate
+    /// version, the markers the harness reads following it unchanged.
+    #[test]
+    fn the_version_says_unreleased_unless_built_as_a_release() {
+        let crate_version = env!("CARGO_PKG_VERSION");
+        let unreleased = format!("{crate_version} (unreleased) {}", alloc::MARKERS);
+        let released = format!("{crate_version} {}", alloc::MARKERS);
+        let expected = if RELEASE_VARIABLE.is_none() { &unreleased } else { &released };
+        assert!(version().starts_with(expected.as_str()), "{}", version());
+        assert_eq!(RELEASED, RELEASE_VARIABLE.is_some());
+    }
+
+    /// The comparison the release variable is held to, which is `const` and
+    /// so hand-written.
+    #[test]
+    fn same_str_is_str_equality() {
+        for (a, b) in
+            [("0.1.0", "0.1.0"), ("0.1.0", "0.1.1"), ("0.1.0", "0.1.0 "), ("", "0.1.0"), ("", "")]
+        {
+            assert_eq!(same_str(a, b), a == b, "{a:?} against {b:?}");
+        }
+    }
 
     /// The `--strict-identity` grammar, both ways: what a selection binds, and
     /// that `advisory` and `none` are exclusive rather than overrides — naming

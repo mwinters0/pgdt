@@ -2,6 +2,8 @@
 name = "pgdt"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # The allocator is the *binary's* choice, never the library's: a
 # `#[global_allocator]` in `pgdump_query` would impose one on every embedder,
@@ -54,7 +56,7 @@ clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 # subcommand's and whose entry point it calls. Unconditional, so the binary
 # every figure times is the one a release ships (`docs/design/decisions.md`,
 # "D13").
-datafusion-cli-pgdump = { version = "0.1.0", path = "../datafusion-cli-pgdump" }
+datafusion-cli-pgdump = { path = "../datafusion-cli-pgdump" }
 futures = "0.3.34"
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into. A default build does not depend on it directly.
@@ -74,7 +76,7 @@ namespace-init = { path = "../namespace-init" }
 # `http` on: the remote source is the CLI's, and the oracle tests that judge it
 # live in this crate, so `cargo test --workspace` runs them unconditionally
 # rather than behind feature unification.
-pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
+pgdump_query = { path = "../pgdump_query", features = ["http"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 # No default features: `flag` and `low_level` are what `parse`'s handlers are
@@ -118,7 +120,7 @@ bytes = "1.12.1"
 insta = "1.48.0"
 # `tests/namespace_init.rs` runs the binary as a PID namespace's init.
 namespace-init = { path = "../namespace-init", features = ["test-support"] }
-pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
+pgdump_query = { path = "../pgdump_query", features = ["http"] }
 tempfile = "3.27.0"
 # `rt` here too, as the binary states it: every `#[tokio::test]` in this
 # crate takes the default `current_thread` flavour, the one `pgdt`'s own

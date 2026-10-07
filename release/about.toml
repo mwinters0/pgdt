@@ -1,0 +1,89 @@
+# `cargo-about`'s configuration for a release's `THIRD-PARTY-NOTICES`
+# (`docs/design/roadmap-P29-releases.md`, "Licence and notices"). Read by
+# `scripts/release.py notices`, which runs `cargo-about` with `--fail`, so a
+# crate whose licence this file does not accept stops the release.
+#
+# **The allow-list.** A licence below is accepted for every crate; one accepted
+# for a single crate is in that crate's table, so a second crate under it stops
+# the release until someone has read what it obliges. Order is preference: a
+# crate offering a choice is distributed under the first one listed here, and
+# its text is the one reproduced.
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# What a build links is the recipe's to say (`release.py`, `linked_closure`);
+# these only keep a dependency nothing ships from needing a licence accepted.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Crate tables must come last.
+
+# Its only duty in executable form is saying where its source is, which the
+# notices do for every MPL-2.0 crate.
+[option-ext]
+accepted = ["MPL-2.0"]
+
+[libbz2-rs-sys]
+accepted = ["bzip2-1.0.6"]
+
+# **The C each `-sys` crate compiles in, where the crate's own licence does not
+# cover it.** Each clarification names the files reproduced and their checksums,
+# and `release.py` (`check_clarified`) refuses notices missing any file named
+# here, so a version whose files differ fails the release rather than shipping
+# notices written for another; it is re-read and re-clarified at that upgrade.
+# Name only a file the notices reproduce: a licence the allow-list's order does
+# not elect has no text in them.
+
+# liblzma, which the crate compiles from `xz/`, is 0BSD; the crate's own code
+# is distributed under Apache-2.0, its first choice here.
+[liblzma-sys]
+accepted = ["0BSD"]
+
+[liblzma-sys.clarify]
+license = "(MIT OR Apache-2.0) AND 0BSD"
+
+[[liblzma-sys.clarify.files]]
+path = "LICENSE-APACHE"
+license = "Apache-2.0"
+checksum = "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+
+[[liblzma-sys.clarify.files]]
+path = "xz/COPYING.0BSD"
+license = "0BSD"
+checksum = "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1"
+
+# `ring`'s own licence files, rather than the ISC headers the scan finds in
+# its sources, and fiat-crypto's MIT, which its declared licence omits.
+[ring.clarify]
+license = "Apache-2.0 AND ISC AND MIT"
+
+[[ring.clarify.files]]
+path = "LICENSE-other-bits"
+license = "ISC"
+checksum = "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
+
+[[ring.clarify.files]]
+path = "LICENSE-BoringSSL"
+license = "Apache-2.0"
+checksum = "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"
+
+[[ring.clarify.files]]
+path = "third_party/fiat/LICENSE"
+license = "MIT"
+checksum = "9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f"
+
+# AWS-LC's `LICENSE` is its attribution file: every component compiled in, its
+# copyright and licence, Amazon's election of Jitter Entropy under
+# BSD-3-Clause, and the full texts. Reproduced whole, once.
+[aws-lc-sys.clarify]
+license = "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+
+[[aws-lc-sys.clarify.files]]
+path = "LICENSE"
+checksum = "728536b4160e051f86d7c9c388f704866b3d512cd7df97ac3516c65279523c4e"

@@ -84,7 +84,7 @@ Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 
 - [x] **29.1** The image and its floor: `rust-toolchain.toml` pinning the compiler; the `debian:trixie` image, pinned by digest, cross-building both targets; a check that the binary needs no `GLIBC_` version past the image's; the x86-64 suite run in the image — [notes](../design/roadmap-P29.1-image-notes.md)
 - [x] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — [notes](../design/roadmap-P29.2-register-notes.md)
-- [ ] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list
+- [x] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list — [notes](../design/roadmap-P29.3-licence-notes.md)
 - [ ] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/`
 - [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
 - [ ] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture
@@ -118,5 +118,28 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The release variable names the version, and a mismatch fails the build**
+  (29.3). The spec says only that the workflow "sets one environment
+  variable"; `pgdt/src/main.rs` (`RELEASED`) reads `PGDT_RELEASE_VERSION`
+  and drops `(unreleased)` only when it equals the workspace version, any
+  other value, an empty one included, being a compile error. Why: a variable
+  left set in a shell, or a workflow expression that came out empty, then
+  stops a build instead of marking one released, and the smoke run's
+  "no `(unreleased)`" catches a release built without it. The cost is that
+  29.4's workflow must read the version from the manifest. Reconsidering means
+  presence alone marks a release, which deletes `same_str` and the panic arm.
+- **The notices are rendered by `release.py` from `cargo-about`'s JSON, not
+  by a `cargo-about` template** (29.3). The spec says the file is "produced
+  by `cargo-about`"; it decides each crate's licence, elects among a choice by
+  `release/about.toml`'s order, harvests the texts and refuses an unlisted
+  licence, and `release.py` cuts that reading to the linked closure, adds
+  every `NOTICE`, the zstd election and the MPL-2.0 source line, and refuses a
+  clarification that silently stopped applying; the cut, the `NOTICE` files
+  and the guard are what a handlebars template over its data cannot do
+  (`../design/roadmap-P29.3-licence-notes.md`, "Negative results").
+  Reconsidering means a template rendering what `cargo-about`
+  alone reads, which reproduces the proc macros' licences, no `NOTICE` file,
+  and liblzma's 0BSD text only while its checksum holds.
 
 
