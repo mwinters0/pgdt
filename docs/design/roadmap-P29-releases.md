@@ -201,15 +201,20 @@ register's image, reviewed").
 ## `/release`
 
 A skill run on the maintainer's machine, in this order: refuse a dirty tree or
-a failing `mise run check`; rehearse in the image — both targets' release
-builds, the x86-64 suite, the notices under their allow-list, the archives;
-ask the maintainer which kind of release this is and bump the version by the
-rule above; commit; then **stop**, printing what is left to the maintainer:
+a failing `mise run check`; ask the maintainer which kind of release this is,
+bump the version by the rule above and commit; rehearse that commit in the
+image — both targets' release builds, the x86-64 suite, the notices under their
+allow-list, the archives; then **stop**, printing what is left to the maintainer:
 `git push`, `gh workflow run release-build -f ref=<sha>`, and, once the draft
 exists, `git tag -a v<x.y.z> <sha>` and `git push origin v<x.y.z>`. Everything
 that leaves the machine is the maintainer's, the workflow dispatch included,
-since a draft is visible to anyone with access to the repository. arm64 is
-rehearsed as a build only: this host runs no arm64 code.
+since a draft is visible to anyone with access to the repository. The commit
+comes before the rehearsal because the rehearsal reads the manifest's version
+and the commit's time, so it builds the bytes the dispatched SHA will; an
+unpushed commit is as reversible as an edit
+([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.5's
+unattended call, reviewed"). arm64 is rehearsed as a build only: this host runs
+no arm64 code.
 
 ## The artifacts
 

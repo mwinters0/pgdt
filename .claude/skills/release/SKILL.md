@@ -1,6 +1,6 @@
 ---
 name: release
-description: Prepare a `pgdt` release on the maintainer's machine — check the tree and the Debian pin, bump the version, rehearse what the release workflows run, commit, and stop with the commands the maintainer runs. Use when the user invokes /release, or asks to cut, prepare or rehearse a release.
+description: Prepare a `pgdt` release on the maintainer's machine — check the tree and the Debian pin, bump the version and commit, rehearse what the release workflows run, and stop with the commands the maintainer runs. Use when the user invokes /release, or asks to cut, prepare or rehearse a release.
 ---
 
 A release is cut in three hands: **this skill makes one commit and a
@@ -38,15 +38,17 @@ otherwise; read it from the remote, a local tag proving nothing, and a
   `0.(N+1).0`), the patch only for a release whose changes are all fixes** —
   say which commits are not fixes if the maintainer picks the patch.
 
-## 3. Bump
+## 3. Bump and commit
 
 Skip when `V` is cut as it stands. Otherwise edit that one `version = "…"` line,
 then `cargo check --workspace` to move `Cargo.lock`'s member entries. `git diff`
 must show those two files and nothing else; anything more is a mistake to
-revert, not a release.
+revert, not a release. Then `git add Cargo.toml Cargo.lock` and commit as
+`Release v<V>`.
 
-The rehearsal comes after the bump, so what it builds and names is the commit's
-own tree.
+The rehearsal comes after the commit, since it reads the manifest's version and
+the commit's time, so it builds what the SHA step 5 prints will build
+(`docs/design/roadmap-P29-releases.md`, "`/release`").
 
 ## 4. Rehearse
 
@@ -60,7 +62,7 @@ logging under `runs/`, never waited on. Launch it and stop here.
 
 ```sh
 V=<the version>; mkdir -p runs/release-v$V
-ID=$( (git rev-parse HEAD; git diff HEAD) | sha256sum | cut -c1-16 )
+ID=$(git rev-parse HEAD)
 setsid bash -c "set -euo pipefail
 rm -rf dist
 (cd scripts && uv run release.py image && uv run release.py build --release \
@@ -73,16 +75,18 @@ echo REHEARSAL OK $ID" > runs/release-v$V/rehearsal.log 2>&1 < /dev/null &
 ```
 
 Print the log's path and that `/release` picks up from it. **On a later run,
-with `V` and `ID` computed as above on the same tree, step 4 is done if
+with `V` and `ID` computed as above, step 4 is done if
 `runs/release-v<V>/rehearsal.log` ends with `REHEARSAL OK <ID>`**; a log
-without it, or for another tree, is a failure to read or a rehearsal to
-launch again. A failed rehearsal after a bump leaves the bump in the tree:
-`git checkout -- Cargo.toml Cargo.lock` undoes it.
+without it, or for another commit, is a failure to read or a rehearsal to
+launch again. **A failed rehearsal keeps the `Release v<V>` commit**: the next
+run finds `V` unreleased, skips step 3 and rehearses `HEAD` again, so a fix
+lands as a commit after it and is what step 5 names. Only to abandon the
+release, with that commit still at `HEAD` and unpushed, `git reset --keep
+HEAD~1` undoes it.
 
-## 5. Commit and stop
+## 5. Stop
 
-If step 3 bumped: `git add Cargo.toml Cargo.lock` and commit as `Release
-v<V>`. Then `SHA=$(git rev-parse HEAD)` and print, for the maintainer to run:
+`SHA=$(git rev-parse HEAD)` and print, for the maintainer to run:
 
 ```sh
 git push origin main

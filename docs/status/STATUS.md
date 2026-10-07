@@ -118,13 +118,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`/release` bumps the version before it rehearses**, where the spec's
-  "`/release`" lists the rehearsal first and the bump after the question. The
-  rehearsal builds `--release` and names its archives from the manifest's
-  version, so one run before the bump rehearses the previous version's names
-  and leaves the commit's own tree unbuilt; the bump touches only the version
-  line and the lockfile, and a failed rehearsal leaves it to
-  `git checkout -- Cargo.toml Cargo.lock`. Reconsidering it restores the spec's
-  order and rehearses a tree one edit short of the commit. The spec is
-  untouched.

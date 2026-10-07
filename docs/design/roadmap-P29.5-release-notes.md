@@ -9,7 +9,7 @@ runs). Nothing below was run against a real release.
 
 - **`/release` has never run.** Its rehearsal is the workflows' own commands in
   one detached job (`runs/release-v<V>/rehearsal.log`, ending `REHEARSAL OK
-  <tree id>`), and its duration is unmeasured; the commands it joins each ran
+  <commit>`), run after the release commit, and its duration is unmeasured; the commands it joins each ran
   in 29.4, the join did not.
 - **`v0.1.0` is the unreleased-version path**: the manifest already says
   `0.1.0` and no tag exists, so `/release` cuts it as it stands, makes no
