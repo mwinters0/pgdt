@@ -118,27 +118,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The workflows run `release.py`'s host wrappers, not `container:` jobs.** The
-  spec says "a container job", and a `container:` job pulls its image from a
-  registry, which the same spec refuses for the register's image (a second
-  artifact to build and re-pin). So each job builds the image from
-  `release/Dockerfile` on its runner and runs each step as a developer's
-  machine does (`PGDT_RELEASE_CONTAINER=docker`), the same commands under the
-  same limits. Reconsidering means a pushed image and the pin it adds, and the
-  spec's wording amended either way.
-- **The arm64 suite is nextest alone.** The spec says the arm64 suite runs on
-  `ubuntu-24.04-arm`; the round's suite is nextest then the doctests, and a
-  doctest is compiled where it runs, so an archive built on x86-64 holds none.
-  The x86-64 job runs them, and architecture-dependent code in a doctest is the
-  gap. Reconsidering means a second full workspace build on the arm runner for
-  doctests only.
-- **The archives are attested in the `draft` job, after every build, suite and
-  smoke run has passed**, over the archives the build jobs uploaded, from the
-  same run and commit. The spec says the attestation is made "when it is
-  built"; made in the build job, an archive whose suite then failed would hold
-  an attestation and ship nowhere. Reconsidering means attesting per build job
-  and accepting those orphans.
-
-
-

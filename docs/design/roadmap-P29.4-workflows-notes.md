@@ -63,8 +63,9 @@ blocks the same version's next dispatch at `preflight`, and is deleted by hand.
   install` fetches every tool in `mise.toml` for arm64, `cmake` and `uv`
   included, which this host cannot confirm.
 - **The arm64 suite is nextest alone**: a doctest is compiled where it runs, so
-  no archive holds one, and the x86-64 job's doctests are the only ones a
-  release runs.
+  no archive holds one. No workspace library holds a doctest today, so nothing
+  is lost, and the x86-64 job's `SUITE` still compiles the workspace once more
+  for a doctest check the round drops (`M220`).
 - **Attestation and the arm runner both want a public repository** (or a plan
   that provides them).
 

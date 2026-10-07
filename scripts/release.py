@@ -5,10 +5,11 @@ suite run there.
 `docs/design/roadmap-P29-releases.md`, "The build image", is what this
 implements: one image, `release/Dockerfile`, pinned by digest, builds every
 release artifact, and the glibc it links against is the floor a release
-promises. Each step is an argv run in that image, so a rehearsal here and a CI
-container job run the same commands: on the host a step is wrapped in a
-container run, and `--inside` runs it as it stands, which is what the image
-itself does.
+promises. Each step is an argv run in that image, so a rehearsal here and CI
+run the same commands: on the host a step is wrapped in a container run (CI's
+runner is such a host, `PGDT_RELEASE_CONTAINER=docker`; a `container:` job
+takes an image reference and the image is never pushed), and `--inside` runs
+it as it stands, which is what the image itself does.
 
 **The image is tagged by its inputs** -- the Dockerfile and the two files it
 copies, `rust-toolchain.toml` and `mise.toml` -- so a changed pin builds a new

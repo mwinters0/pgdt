@@ -149,7 +149,11 @@ jobs:
       - run: python3 scripts/release.py suite --archived
 
   # Only a build that passed everything is drafted. The archives are attested
-  # here, from the commit, before any tag exists.
+  # here, from the commit, before any tag exists: a failed suite leaves no
+  # attestation for an archive that ships nowhere, and the signing permissions
+  # sit in the one job that runs no dependency code, the build jobs running
+  # every build script. The attestation names this job's run as its builder,
+  # the bytes being the build jobs' artifacts of the same run and commit.
   draft:
     needs: [x86-64-release, x86-64-suite, arm64]
     runs-on: ubuntu-24.04

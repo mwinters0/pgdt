@@ -137,8 +137,9 @@ dependencies, and Debian's arm64 cross toolchain (`gcc-aarch64-linux-gnu`,
 `libc6-dev-arm64-cross`) for the second target. The floor holds by
 construction — the link is against the image's own glibc — so "follows Debian
 stable" is one pin, moved inside the grace period above. The same image runs locally
-under the container runtime and in CI as a container job, so a rehearsal and
-the release run the same commands.
+under the container runtime and in CI through the same `release.py` steps
+under the runner's own, so a rehearsal and the release run the same commands
+([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.4's unattended calls, reviewed").
 
 Rejected: `cargo zigbuild --target …-gnu.2.41`, which compiles every C
 dependency, mimalloc included, with zig's clang, keeps the floor as a suffix
@@ -162,7 +163,8 @@ release's in that string alone.
 cross-built in the image. The x86-64 suite runs in the image; the arm64 suite
 is cross-built as a nextest archive and run on GitHub's `ubuntu-24.04-arm`
 runner in the arm64 variant of the same pinned image, so arm64 code runs its
-tests somewhere. Each archived `pgdt` then passes a smoke run on its own
+tests somewhere; it is nextest alone, a doctest being compiled where it runs
+([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.4's unattended calls, reviewed"). Each archived `pgdt` then passes a smoke run on its own
 architecture — `--version` carrying no `(unreleased)`, a `parse` and a `query`
 of a committed fixture. Only then is the draft created. The suite runs
 development-profile test binaries, so it tests the source per architecture; the
@@ -220,8 +222,8 @@ Cargo's default, so a user's panic backtrace names its functions. They are
 
 **Verification needs no key we hold.** Beside the archives, a `SHA256SUMS`;
 each archive carries a GitHub artifact attestation (`actions/attest`,
-Sigstore-signed) made when it is built — from a commit before the tag exists,
-so it is checked with `gh attestation verify <file> -R mwinters0/pgdt
+Sigstore-signed) made once every build, suite and smoke run has passed, from
+that run's commit before the tag exists ([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.4's unattended calls, reviewed"), so it is checked with `gh attestation verify <file> -R mwinters0/pgdt
 --source-digest <sha>`, not by tag; and the repository has **immutable
 releases** on, so publishing locks the tag and its assets and GitHub adds a
 release attestation `gh release verify-asset` checks. A mistake in a published
