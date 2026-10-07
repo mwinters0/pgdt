@@ -29,10 +29,6 @@ docstrings say how each step runs; the readings below are
 - **The suite's container needs `--security-opt seccomp=unconfined`**:
   `pgdt/tests/namespace_init.rs` unshares a user namespace, which the default
   profile refuses (all three failed without it); `run_in_image` passes it.
-- **One load-dependent failure in two full runs of the suite**:
-  `map_file`'s `an_interrupt_inside_a_later_database_types_the_segments_it_finished`
-  failed once under the whole suite and passed 60 times alone, in the image.
-  `M217` owns it; until it lands a release-build run can fail on it.
 
 ## Negative results
 

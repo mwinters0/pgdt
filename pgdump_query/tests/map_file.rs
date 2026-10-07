@@ -1099,19 +1099,27 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 /// `dump` must hold at least two `COPY`-carrying databases, `second` naming
 /// the later one; the scan is cut at the end of that database's first block,
 /// so the boundary has been crossed exactly twice when the cache is banked.
+///
+/// **The flag trips on the read delivering that block's terminating LF**, one
+/// byte before its end: the block's own close is then the check point that
+/// hears it, and an interrupt there splices and banks the block whatever the
+/// save throttle says (`docs/design/decisions.md`, "D62", "D63"). Tripping at
+/// the end instead leaves the next chunk's check point to hear it, which banks
+/// the last *spliced* watermark — this block only where the throttle was due
+/// at its close, a clock a loaded machine moves.
 async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let source = LocalFileSource::open(dump).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(dump));
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let trip = eager
+    let end = eager
         .blocks()
         .find(|b| b.database.as_deref() == Some(second))
         .unwrap_or_else(|| panic!("{label}: {second} has blocks"))
         .end_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
+    let tripping = CancelsPast { inner: &source, trip: end - 1, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
@@ -1119,6 +1127,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
     assert!(run.interrupted, "{label}");
+    assert_eq!(run.index.scanned_through, end, "{label}: the interrupt banked its own block");
 
     // Every database that banked a block has that database's own DDL — not
     // merely *some* DDL, which is what an index carrying only database 1's
