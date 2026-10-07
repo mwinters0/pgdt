@@ -1,16 +1,19 @@
 [tools]
+# Every tool is pinned exactly: the release image installs this file
+# (`release/Dockerfile`), and under `latest` a rehearsal and a CI run of one
+# commit could check under different versions. `scripts/test_release.py`
+# asserts both.
+#
 # `cargo nextest run` runs the suite (`CLAUDE.md`, "Commands"), one test a CPU,
 # nextest's default: no thread cap is committed, a fixed count being wrong on
 # every other checkout, and a machine needing one sets `NEXTEST_TEST_THREADS`.
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 # A release's `THIRD-PARTY-NOTICES`, which `scripts/release.py notices` reads
-# out of it under `release/about.toml`; pinned exactly, as the release image
-# installs it (`docs/design/roadmap-P29-releases.md`, "Licence and notices").
+# out of it under `release/about.toml`
+# (`docs/design/roadmap-P29-releases.md`, "Licence and notices").
 "github:EmbarkStudios/cargo-about" = "0.9.2"
-# `aws-lc-sys`, under `object_store`'s `http` feature, is a C build driven by
-# cmake, so a checkout that builds this workspace declares it.
-cmake = "latest"
-uv = "latest"
+# `mise run check` and the suite's generator and harness tests.
+uv = "0.12.17"
 
 # Every per-round check once, logged under `runs/check/`; `--verify` reuses a
 # passing run of the same tree. `scripts/check.py` says what it runs and why.

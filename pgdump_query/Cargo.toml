@@ -43,8 +43,9 @@ futures = "0.3.34"
 memchr = "2.8.3"
 # `http` only, and `default-features = false` to leave out the `fs` backend:
 # what is wanted is one `HttpStore` over ranged GETs. The `http` feature
-# resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build needing
-# `cmake` — which `mise.toml` pins.
+# resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its
+# `cc` builder; nothing installs CMake, so a version falling back to it fails
+# the build by name.
 object_store = { version = "0.14.2", optional = true, default-features = false, features = [
     "http",
 ] }

@@ -60,8 +60,8 @@ blocks the same version's next dispatch at `preflight`, and is deleted by hand.
   is unmeasured.
 - **The arm64 image is an untested build**: the Dockerfile picks `mise`'s
   checksum and the cross toolchain by `dpkg --print-architecture`, and `mise
-  install` fetches every tool in `mise.toml` for arm64, `cmake` and `uv`
-  included, which this host cannot confirm.
+  install` fetches every tool in `mise.toml` for arm64, which this host
+  cannot confirm.
 - **The arm64 suite is nextest alone**: a doctest is compiled where it runs, so
   no archive holds one. No workspace library holds a doctest today, so nothing
   is lost, and the x86-64 job's `SUITE` still compiles the workspace once more

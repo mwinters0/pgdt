@@ -19,13 +19,15 @@ FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b0
 # the digest's day had rather than whatever the archive serves today. A base
 # image recording no snapshot fails the build instead of reading the live
 # archive. The snapshot's `Release` files have expired by design, hence
-# `Check-Valid-Until=false`.
+# `Check-Valid-Until=false`; what reading it costs over the live archive is
+# transient unavailability, which `Acquire::Retries` absorbs.
 RUN set -eu; \
     f=/etc/apt/sources.list.d/debian.sources; \
     sed -i 's|^# \(http://snapshot\.debian\.org/archive/[a-z-]*/[0-9]*T[0-9]*Z\)$|URIs: \1|; /^URIs: http:\/\/deb\.debian\.org/d' "$f"; \
     test "$(grep -c '^URIs: http://snapshot\.debian\.org/' "$f")" -eq 2; \
     ! grep -q '^URIs: http://deb\.debian\.org' "$f"; \
-    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99snapshot
+    printf '%s\n' 'Acquire::Check-Valid-Until "false";' 'Acquire::Retries "5";' \
+        > /etc/apt/apt.conf.d/99snapshot
 
 # Debian's gcc for the C dependencies. `rustup`, `curl` and `ca-certificates`
 # fetch the pinned Rust and `mise`; `binutils`' `readelf` reads a binary's
@@ -83,7 +85,7 @@ RUN set -eu; \
     cd /opt/toolchain; \
     mise trust mise.toml; \
     mise install --yes; \
-    for tool in cargo-about cargo-nextest cmake uv uvx; do \
+    for tool in cargo-about cargo-nextest uv uvx; do \
         ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
     done; \
     rm -rf "$MISE_CACHE_DIR"; \

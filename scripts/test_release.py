@@ -425,10 +425,15 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual([lic for lic in config["accepted"] if COPYLEFT.match(lic)], [])
         self.assertEqual(config["option-ext"]["accepted"], ["MPL-2.0"])
 
-    def test_cargo_about_is_pinned_exactly_and_installed_in_the_image(self):
+    def test_every_mise_tool_is_pinned_exactly_and_is_what_the_image_links(self):
         tools = tomllib.loads((release.REPO / "mise.toml").read_text())["tools"]
-        self.assertRegex(tools["github:EmbarkStudios/cargo-about"], r"^\d+\.\d+\.\d+$")
-        self.assertRegex(release.DOCKERFILE.read_text(), r"for tool in [^;]*\bcargo-about\b")
+        for tool, version in tools.items():
+            self.assertRegex(version, r"^\d+\.\d+\.\d+$", tool)
+        linked = re.search(r"for tool in ([^;]*);", release.DOCKERFILE.read_text())
+        self.assertIsNotNone(linked)
+        # A tool's binary is its name's last segment; `uv` ships `uvx` beside it.
+        binaries = {re.split(r"[:/]", tool)[-1] for tool in tools}
+        self.assertEqual(set(linked.group(1).split()), binaries | {"uvx"})
 
     def test_every_member_is_apache_and_unpublishable_and_the_root_carries_the_text(self):
         root = tomllib.loads((release.REPO / "Cargo.toml").read_text())

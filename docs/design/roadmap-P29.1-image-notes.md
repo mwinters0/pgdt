@@ -44,8 +44,7 @@ docstrings say how each step runs; the readings below are
   of `.git` without it over the original for the suite, which asks git about
   this repository's history.
 - **No release build runs CMake**: `aws-lc-sys` builds without it on both
-  targets (no `CMakeCache.txt` under either), so the `cmake` `mise.toml`
-  installs reaches no release's bytes.
+  targets (no `CMakeCache.txt` under either), and nothing installs it.
 - **Three `test_measure` classes reached the host** — a built `peak-rss`, and
   `sudo nerdctl` to ask the register image's glibc — and failed on a fresh
   target dir; they now patch both. Nothing else in the suite read host state.
