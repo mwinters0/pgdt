@@ -69,6 +69,18 @@ each turns on the tests that need it. An object under the compressed one that
 is not `.xz`, holds another dump, or has only one stream or one block fails by
 name like everything else here.
 
+## Cutting a release
+
+`/release` (`.claude/skills/release/SKILL.md`) prepares one on the maintainer's
+machine and stops before anything leaves it; the push, the `release-build`
+dispatch and the annotated tag are the maintainer's own. It needs what taking a
+figure does — a container runtime that can build the release image — and
+network access: `scripts/debian_window.py` fetches Debian's release days to
+check the image's pin is inside the window a release allows, and `gh`,
+authenticated for the repository, dispatches the build and watches for the
+draft. A release is verified from outside as a user does it
+([installing](docs/manual/installing.md), "Verify").
+
 ## Profiling
 
 **Detached debug symbols for libc are a requirement, not a nicety.** Without

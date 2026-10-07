@@ -86,7 +86,7 @@ Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 - [x] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — [notes](../design/roadmap-P29.2-register-notes.md)
 - [x] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list — [notes](../design/roadmap-P29.3-licence-notes.md)
 - [x] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/` — [notes](../design/roadmap-P29.4-workflows-notes.md)
-- [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
+- [x] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING — [notes](../design/roadmap-P29.5-release-notes.md)
 - [ ] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture
 
 ## Not started
@@ -118,3 +118,13 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`/release` bumps the version before it rehearses**, where the spec's
+  "`/release`" lists the rehearsal first and the bump after the question. The
+  rehearsal builds `--release` and names its archives from the manifest's
+  version, so one run before the bump rehearses the previous version's names
+  and leaves the commit's own tree unbuilt; the bump touches only the version
+  line and the lockfile, and a failed rehearsal leaves it to
+  `git checkout -- Cargo.toml Cargo.lock`. Reconsidering it restores the spec's
+  order and rehearses a tree one edit short of the commit. The spec is
+  untouched.

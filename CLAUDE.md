@@ -23,6 +23,7 @@ cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--ren
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
 cd scripts && uv run release.py image|build|bench|suite|suite-archive|notices   # the release image; pgdt built in it, held to its glibc; a bench, the suite, the notices there
 python3 scripts/release_ci.py preflight|archive|smoke|checksums|draft|publish   # what the two release workflows run beside release.py
+python3 scripts/debian_window.py      # the image's Debian pin against the window a release allows; `/release`'s step
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site

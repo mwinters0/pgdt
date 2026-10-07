@@ -28,6 +28,11 @@ I want last week's data from it as Parquet.
 2. Extract it to Parquet: 20 minutes
 
 
+## Install
+Linux binaries for x86-64 and arm64 (glibc 2.41 or newer) are on the
+[releases page](https://github.com/mwinters0/pgdt/releases), each with a checksum and a
+verifiable build attestation.  See: [installing](docs/manual/installing.md).
+
 ## Quickstart
 
 ### `pgdt`
@@ -221,6 +226,7 @@ simply properties of our design).
 ## Documentation
 For humans:
 - [`docs/manual/`](docs/manual/) — user manual:
+    - [Installing and verifying](docs/manual/installing.md)
     - [Dump inspection](docs/manual/dump-inspection.md)
     - [Type handling](docs/manual/type-handling.md)
     - [SQL over a dump](docs/manual/pgdt-sql.md)
