@@ -83,7 +83,7 @@ import textwrap
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import check
 
@@ -109,11 +109,9 @@ CROSS_TARGET = "aarch64-unknown-linux-gnu"
 #: the workspace version (`pgdt/src/main.rs`, `RELEASED`).
 RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
 
-#: The round's own suite (`check.py`'s `CHECKS`), so the image runs what a
-#: round does: nextest, then the doctests.
-SUITE: tuple[tuple[str, ...], ...] = tuple(
-    c.argv for c in check.CHECKS if c.name in ("nextest", "doctest")
-)
+#: The round's nextest run (`check.py`'s `CHECKS`), which the suite and the
+#: archived suite both take.
+NEXTEST: tuple[str, ...] = next(c.argv for c in check.CHECKS if c.name == "nextest")
 
 CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
 #: The container's memory limit: a whole-workspace test build links dozens of
@@ -883,22 +881,32 @@ def suite_archive_argv(archive: Path) -> list[str]:
     ]  # fmt: skip
 
 
+def suite(
+    repo: Path = REPO, load: Callable[[Path], list[check.Package]] = check.workspace
+) -> list[tuple[str, ...]]:
+    """The round's own suite, as a run without `--affected` runs it
+    (`check.every_check`): nextest, then the doctests of the libraries
+    holding one, or none. Read when the suite runs, `cargo metadata` being
+    the image's to run."""
+    return [c.argv for c in check.every_check(repo, load) if c.name in ("nextest", "doctest")]
+
+
 def archived_suite_argv(archive: Path) -> list[str]:
-    """The round's nextest run (`SUITE`'s first command) over an archive,
-    its sources remapped to the checkout at `WORKDIR`. The doctests are
-    left out: rustdoc compiles them where it runs, so no archive holds one."""
+    """The round's nextest run (`NEXTEST`) over an archive, its sources
+    remapped to the checkout at `WORKDIR`. The doctests are left out: rustdoc
+    compiles them where it runs, so no archive holds one, and
+    `test_release_ci` fails when a workspace library first holds one."""
     head = ("cargo", "nextest", "run")
-    nextest = SUITE[0]
-    if nextest[: len(head)] != head:
-        raise ReleaseError(f"the round's first suite command is not a nextest run: {nextest}")
-    rest = [a for a in nextest[len(head):] if a != "--workspace"]
+    if NEXTEST[: len(head)] != head:
+        raise ReleaseError(f"the round's nextest check is not a nextest run: {NEXTEST}")
+    rest = [a for a in NEXTEST[len(head):] if a != "--workspace"]
     return [*head, "--archive-file", str(archive), "--workspace-remap", WORKDIR, *rest]
 
 
 def step_suite(archived: bool = False) -> int:
     """The suite: the round's own, or, `archived`, the cross target's archived
     tests, which an image on that target's architecture runs."""
-    argvs = [archived_suite_argv(suite_archive_path(target_dir()))] if archived else SUITE
+    argvs = [archived_suite_argv(suite_archive_path(target_dir()))] if archived else suite()
     status = 0
     for argv in argvs:
         print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)

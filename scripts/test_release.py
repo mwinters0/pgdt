@@ -469,9 +469,18 @@ class ThisRepo(unittest.TestCase):
             if target != release.NATIVE_TARGET:
                 self.assertIn(target, tc["targets"])
 
-    def test_the_suite_is_the_rounds(self):
+    def test_the_suite_is_the_rounds_its_doctests_run_only_for_a_library_holding_one(self):
+        lib = [check.Package("base", "base", frozenset(), (check.Target("base", "lib", ("lib.rs",)),))]
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "lib.rs").write_text("/// A function.\npub fn f() {}\n")
+            self.assertEqual(release.suite(Path(tmp), lambda _: lib), [release.NEXTEST])
+            Path(tmp, "lib.rs").write_text("/// ```\n/// assert!(true);\n/// ```\npub fn f() {}\n")
+            self.assertEqual(
+                release.suite(Path(tmp), lambda _: lib),
+                [release.NEXTEST, check.doctest_check(["base"]).argv],
+            )
         names = {c.argv: c.name for c in check.CHECKS}
-        self.assertEqual([names[a] for a in release.SUITE], ["nextest", "doctest"])
+        self.assertEqual(names[release.NEXTEST], "nextest")
 
     def test_the_build_is_locked_and_per_target(self):
         argv = release.Build("aarch64-unknown-linux-gnu").cargo_argv()

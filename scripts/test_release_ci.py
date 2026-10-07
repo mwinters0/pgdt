@@ -24,6 +24,7 @@ import unittest.mock
 from pathlib import Path
 from typing import Any
 
+import check
 import release
 import release_ci
 from release import ReleaseError
@@ -590,6 +591,20 @@ class Workflows(unittest.TestCase):
         arm = "\n".join(jobs_of("release-build.yml")["arm64"])
         self.assertIn("suite --archived", arm)
         self.assertIn(f"smoke --target={release.CROSS_TARGET}", arm)
+
+    def test_no_workspace_library_holds_a_doctest_the_arm64_suite_would_skip(self):
+        """The arm64 suite is nextest alone, a doctest being compiled where it
+        runs (`docs/design/roadmap-P29-releases.md`, "The build image"), which
+        loses nothing while no library holds one. The first one decides
+        whether arm64 runs it, here rather than found later."""
+        docs = check.doctest_packages(release.REPO, check.workspace(release.REPO))
+        self.assertEqual(
+            docs, set(),
+            f"{', '.join(sorted(docs))} now holds a doctest, which the x86-64 suite runs and the "
+            "arm64 suite does not: it is nextest alone, a doctest being compiled where it runs "
+            "(docs/design/roadmap-P29-releases.md, \"The build image\"). Decide whether the "
+            "arm64 job runs the doctests, then amend that decision and this test.",
+        )  # fmt: skip
 
     def test_the_artifacts_the_jobs_pass_on_are_the_paths_the_scripts_use(self):
         text = "\n".join(lines_of("release-build.yml"))

@@ -64,8 +64,8 @@ blocks the same version's next dispatch at `preflight`, and is deleted by hand.
   cannot confirm.
 - **The arm64 suite is nextest alone**: a doctest is compiled where it runs, so
   no archive holds one. No workspace library holds a doctest today, so nothing
-  is lost, and the x86-64 job's `SUITE` still compiles the workspace once more
-  for a doctest check the round drops (`M220`).
+  is lost; the x86-64 suite runs the doctests as the round does, and
+  `test_release_ci` fails when a library first holds one (`M220`).
 - **Attestation and the arm runner both want a public repository** (or a plan
   that provides them).
 
