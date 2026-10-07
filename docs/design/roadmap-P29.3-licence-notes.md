@@ -26,11 +26,11 @@ comments say how each piece works.
 
 ## What 29.5 inherits
 
-- **The notices are checked only where they are made.** `mise run check` does
-  not run `cargo-about`, so a dependency upgrade that brings an unlisted
-  licence, or moves a file `release/about.toml` clarifies, fails `/release`'s
-  rehearsal rather than the round that made it. The failure names the crate and
-  the file to re-read.
+- **The notices are checked where they are made and at an upgrade, never by
+  `mise run check`.** The `upgrade-deps` skill runs `release.py notices` after
+  any `Cargo.lock` change, so an unlisted licence or a moved clarified file
+  fails the upgrade; `/release`'s rehearsal runs it again. The failure names the
+  crate and the file to re-read.
 
 ## Readings
 

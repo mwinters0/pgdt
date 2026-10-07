@@ -32,7 +32,10 @@ applies.
    every **Watch** test, and each one the shell's header names — fails on
    purpose when upstream moves. Read each failure against the register and the
    invariants before touching it, and never edit one to pass without acting on
-   what it caught.
+   what it caught. **A `Cargo.lock` change also runs `cd scripts && uv run
+   release.py notices`**: a licence the allow-list lacks, or a file
+   `release/about.toml` clarifies having moved, fails here rather than at a
+   release; re-read the crate's files and amend that config in this change.
 5. **Act on each verdict.** A fix that shipped: carry out **When it lands**,
    strike the entry, and confirm `upstream.py` is green. A fix that did not:
    rewrite the entry's **Upstream** field to that day's state. A new defect

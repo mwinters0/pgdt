@@ -56,7 +56,12 @@ from a pushed *commit* into a **draft** Release. The maintainer then pushes an
 **annotated tag** on that commit whose message is the release text; a second
 workflow, triggered by the tag push, checks the draft was built from the tag's
 commit, takes the tag message as the Release body, and publishes it. A tag with
-no matching draft fails that workflow loudly.
+no matching draft fails that workflow loudly. **A draft is matched by name**:
+the build creates it as `v<manifest version>`, and the publish workflow finds it
+by the pushed tag's name and then checks its commit, so a tag naming another
+version finds nothing and the tag, the draft and the archives carry one string
+([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.3's
+unattended calls, reviewed").
 
 Why: a pushed tag is a `releases.atom` entry at once, carrying the annotated
 tag's message, under the entry id a Release on that tag later takes (observed

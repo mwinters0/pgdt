@@ -119,27 +119,5 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The release variable names the version, and a mismatch fails the build**
-  (29.3). The spec says only that the workflow "sets one environment
-  variable"; `pgdt/src/main.rs` (`RELEASED`) reads `PGDT_RELEASE_VERSION`
-  and drops `(unreleased)` only when it equals the workspace version, any
-  other value, an empty one included, being a compile error. Why: a variable
-  left set in a shell, or a workflow expression that came out empty, then
-  stops a build instead of marking one released, and the smoke run's
-  "no `(unreleased)`" catches a release built without it. The cost is that
-  29.4's workflow must read the version from the manifest. Reconsidering means
-  presence alone marks a release, which deletes `same_str` and the panic arm.
-- **The notices are rendered by `release.py` from `cargo-about`'s JSON, not
-  by a `cargo-about` template** (29.3). The spec says the file is "produced
-  by `cargo-about`"; it decides each crate's licence, elects among a choice by
-  `release/about.toml`'s order, harvests the texts and refuses an unlisted
-  licence, and `release.py` cuts that reading to the linked closure, adds
-  every `NOTICE`, the zstd election and the MPL-2.0 source line, and refuses a
-  clarification that silently stopped applying; the cut, the `NOTICE` files
-  and the guard are what a handlebars template over its data cannot do
-  (`../design/roadmap-P29.3-licence-notes.md`, "Negative results").
-  Reconsidering means a template rendering what `cargo-about`
-  alone reads, which reproduces the proc macros' licences, no `NOTICE` file,
-  and liblzma's 0BSD text only while its checksum holds.
 
 

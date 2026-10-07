@@ -72,7 +72,11 @@ const RELEASE_VARIABLE: Option<&str> = option_env!("PGDT_RELEASE_VERSION");
 /// version. **One naming another fails the build**, an empty one included,
 /// so a workflow that read the version from somewhere else, or not at all,
 /// stops before it archives rather than shipping a binary that says it is
-/// unreleased.
+/// unreleased. The value is compared, never printed: what it guards is an
+/// empty read in CI, which the smoke run's "no `(unreleased)`" would pass, and
+/// the workflow reads the manifest's version anyway to name its archives.
+/// Rejected: presence alone, marking that empty read a release; the check in
+/// `release.py`, which a direct `cargo build` bypasses.
 const RELEASED: bool = match RELEASE_VARIABLE {
     None => false,
     Some(v) if same_str(v, env!("CARGO_PKG_VERSION")) => true,

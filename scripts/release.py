@@ -814,7 +814,12 @@ def step_notices(targets: Sequence[str]) -> int:
     Every package the lockfile names is fetched first: `cargo-about` reads
     the graph through `cargo metadata`, which wants the sources of every
     target's and every member's dependencies, not only what a build fetched.
-    Nothing else here touches the network."""
+    Nothing else here touches the network.
+
+    Rendered here from `cargo-about`'s JSON, which decides the licences and
+    harvests the texts. Rejected: a `cargo-about` template, which can only
+    render what it read, proc macros included, no `NOTICE` file, and a
+    clarification whose checksum moved silently dropped."""
     run_step(["cargo", "fetch", "--locked"])
     members, version = workspace_crates()
     for target in targets:
