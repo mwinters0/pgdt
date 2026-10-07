@@ -85,7 +85,7 @@ Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 - [x] **29.1** The image and its floor: `rust-toolchain.toml` pinning the compiler; the `debian:trixie` image, pinned by digest, cross-building both targets; a check that the binary needs no `GLIBC_` version past the image's; the x86-64 suite run in the image — [notes](../design/roadmap-P29.1-image-notes.md)
 - [x] **29.2** The register moves to the image: `measure.py` builds `pgdt` in the image and runs it in `debian:trixie` at the same pin, its preflight and stamp following; a sitting re-taking every figure, launched detached and folded in — [notes](../design/roadmap-P29.2-register-notes.md)
 - [x] **29.3** Licence, manifests and identity: the root `LICENSE`, every member `Apache-2.0` and `publish = false`, the path dependencies' `version =` requirements dropped, `--version`'s `(unreleased)` marker off the publishing workflow's variable, and `cargo-about`'s notices under a licence allow-list — [notes](../design/roadmap-P29.3-licence-notes.md)
-- [ ] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/`
+- [x] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/` — [notes](../design/roadmap-P29.4-workflows-notes.md)
 - [ ] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING
 - [ ] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture
 
@@ -118,6 +118,27 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The workflows run `release.py`'s host wrappers, not `container:` jobs.** The
+  spec says "a container job", and a `container:` job pulls its image from a
+  registry, which the same spec refuses for the register's image (a second
+  artifact to build and re-pin). So each job builds the image from
+  `release/Dockerfile` on its runner and runs each step as a developer's
+  machine does (`PGDT_RELEASE_CONTAINER=docker`), the same commands under the
+  same limits. Reconsidering means a pushed image and the pin it adds, and the
+  spec's wording amended either way.
+- **The arm64 suite is nextest alone.** The spec says the arm64 suite runs on
+  `ubuntu-24.04-arm`; the round's suite is nextest then the doctests, and a
+  doctest is compiled where it runs, so an archive built on x86-64 holds none.
+  The x86-64 job runs them, and architecture-dependent code in a doctest is the
+  gap. Reconsidering means a second full workspace build on the arm runner for
+  doctests only.
+- **The archives are attested in the `draft` job, after every build, suite and
+  smoke run has passed**, over the archives the build jobs uploaded, from the
+  same run and commit. The spec says the attestation is made "when it is
+  built"; made in the build job, an archive whose suite then failed would hold
+  an attestation and ship nowhere. Reconsidering means attesting per build job
+  and accepting those orphans.
 
 
 

@@ -26,6 +26,16 @@ build's state under `target/release-image/` -- its cargo target directory,
 `CARGO_HOME` and `uv`'s cache and environment -- never the host build's, which
 another compiler's C and another glibc fill.
 
+**The workflows run these steps** (`.github/workflows/`): a job on a runner
+runs `release.py <step>` as a host does, building the image from the
+Dockerfile there. `build --release` is the one release-only step: it hands the
+container the workspace version as `RELEASE_VARIABLE`, the only thing of the
+host's it is ever given. `suite-archive` builds the cross target's
+tests into a nextest archive and `suite --archived` runs it, on an arm64 host's
+image, so the second target's code runs its tests somewhere; its doctests do
+not run, a doctest being compiled where it runs. What becomes of the output --
+the archives, the checksums, the draft, the publish -- is `scripts/release_ci.py`.
+
 **The register builds here too** (`scripts/measure.py`): the shipped binary it
 times is `build --target x86_64-unknown-linux-gnu`'s, and each variant it times
 beside that one -- an allocator leg, the instrument, the `xz_decode` example --
@@ -44,7 +54,10 @@ Usage:
     cd scripts && uv run release.py image                 # build the image, unless built
     cd scripts && uv run release.py build [--target T]    # release-build pgdt, each held to the floor
     cd scripts && uv run release.py build --no-default-features --features system --target-dir D
-    cd scripts && uv run release.py suite                 # the x86-64 suite, in the image
+    cd scripts && uv run release.py build --release       # a release's build: names the version
+    cd scripts && uv run release.py suite                 # the host-native suite, in the image
+    cd scripts && uv run release.py suite-archive         # the cross target's tests, as a nextest archive
+    cd scripts && uv run release.py suite --archived      # that archive's tests, on its own architecture
     cd scripts && uv run release.py notices [--target T]  # each target's THIRD-PARTY-NOTICES, beside its binary
     cd scripts && uv run release.py bench --package pgdump_query --bench decoders --filter nested
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
@@ -69,7 +82,7 @@ import textwrap
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import check
 
@@ -87,8 +100,13 @@ TARGETS: dict[str, str] = {
     "x86_64-unknown-linux-gnu": "libc6-dev",
     "aarch64-unknown-linux-gnu": "libc6-dev-arm64-cross",
 }
-#: The one target the image runs: the other is cross-built.
+#: The one target an x86-64 image runs: the other is cross-built there.
 NATIVE_TARGET = "x86_64-unknown-linux-gnu"
+#: The target the x86-64 image cross-builds and an arm64 host's image runs.
+CROSS_TARGET = "aarch64-unknown-linux-gnu"
+#: The variable `pgdt` reads to know it is a release's build, which must name
+#: the workspace version (`pgdt/src/main.rs`, `RELEASED`).
+RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
 
 #: The round's own suite (`check.py`'s `CHECKS`), so the image runs what a
 #: round does: nextest, then the doctests.
@@ -233,9 +251,11 @@ def run_in_image(
     uid: int | None = None,
     gid: int | None = None,
     git: Path | None = None,
+    env: Mapping[str, str] = {},
 ) -> list[str]:
     """The container run that executes `release.py <step> --inside` in the
-    image, as the invoking user, the tree mounted at `WORKDIR`.
+    image, as the invoking user, the tree mounted at `WORKDIR`. `env` is the
+    host's only say in the container's environment.
 
     `target` replaces `state`'s cargo target directory, `CARGO_HOME` staying
     shared: a build of other features writes the same output path, so one
@@ -258,6 +278,8 @@ def run_in_image(
     ]  # fmt: skip
     if git is not None:
         argv += ["-v", f"{git.resolve()}:{WORKDIR}/.git"]
+    for key, value in env.items():
+        argv += ["-e", f"{key}={value}"]
     dirs = state_dirs(state, target)
     for name, (at, env) in MOUNTS.items():
         argv += ["-v", f"{dirs[name]}:{at}"]
@@ -840,18 +862,63 @@ def step_notices(targets: Sequence[str]) -> int:
     return 0
 
 
-def step_suite() -> int:
+def workspace_version(repo: Path = REPO) -> str:
+    """`[workspace.package] version`, the one place the version lives."""
+    return tomllib.loads((repo / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+
+
+def suite_archive_path(target_dir: Path) -> Path:
+    """Where the cross target's nextest archive is written and read, under
+    the cargo target directory both steps see."""
+    return target_dir / "nextest" / f"{CROSS_TARGET}.tar.zst"
+
+
+def suite_archive_argv(archive: Path) -> list[str]:
+    """The cross target's tests, built and archived rather than run: `--locked`
+    and an explicit `--target`, as the release build's."""
+    return [
+        "cargo", "nextest", "archive", "--locked", "--workspace",
+        "--target", CROSS_TARGET, "--archive-file", str(archive),
+    ]  # fmt: skip
+
+
+def archived_suite_argv(archive: Path) -> list[str]:
+    """The round's nextest run (`SUITE`'s first command) over an archive,
+    its sources remapped to the checkout at `WORKDIR`. The doctests are
+    left out: rustdoc compiles them where it runs, so no archive holds one."""
+    head = ("cargo", "nextest", "run")
+    nextest = SUITE[0]
+    if nextest[: len(head)] != head:
+        raise ReleaseError(f"the round's first suite command is not a nextest run: {nextest}")
+    rest = [a for a in nextest[len(head):] if a != "--workspace"]
+    return [*head, "--archive-file", str(archive), "--workspace-remap", WORKDIR, *rest]
+
+
+def step_suite(archived: bool = False) -> int:
+    """The suite: the round's own, or, `archived`, the cross target's archived
+    tests, which an image on that target's architecture runs."""
+    argvs = [archived_suite_argv(suite_archive_path(target_dir()))] if archived else SUITE
     status = 0
-    for argv in SUITE:
+    for argv in argvs:
         print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
         status |= subprocess.run(argv, cwd=REPO).returncode
     return 1 if status else 0
 
 
+def step_suite_archive() -> int:
+    """The cross target's tests built and archived, for `step_suite(archived)`."""
+    archive = suite_archive_path(target_dir())
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    run_step(suite_archive_argv(archive))
+    print(f"{CROSS_TARGET}: {archive}", flush=True)
+    return 0
+
+
 # --- the command line ------------------------------------------------------
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, which the workflows' step lines are tested against."""
     p = argparse.ArgumentParser(
         prog="release.py",
         description=__doc__.split("\n\n")[0],
@@ -872,6 +939,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--target-dir", type=Path,
         help="a host cargo target directory of its own, in place of the release state's",
     )  # fmt: skip
+    b.add_argument(
+        "--release", action="store_true",
+        help=f"a release's build: {RELEASE_VARIABLE} names the workspace version, so --version drops (unreleased)",
+    )  # fmt: skip
     b.add_argument("--inside", action="store_true", help="run here: this is the image")
     r = sub.add_parser(
         "bench", help=f"one cargo bench, run for {NATIVE_TARGET} in the image, held to the floor"
@@ -888,12 +959,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="one target (repeatable); every release target by default",
     )  # fmt: skip
     n.add_argument("--inside", action="store_true", help="run here: this is the image")
-    s = sub.add_parser("suite", help=f"the {NATIVE_TARGET} suite, in the image")
+    s = sub.add_parser("suite", help="the suite, in the image")
+    s.add_argument(
+        "--archived", action="store_true",
+        help=f"the {CROSS_TARGET} nextest archive `suite-archive` wrote, run on that architecture",
+    )  # fmt: skip
     s.add_argument("--inside", action="store_true", help="run here: this is the image")
+    a = sub.add_parser(
+        "suite-archive", help=f"build the {CROSS_TARGET} tests into a nextest archive, in the image"
+    )
+    a.add_argument("--inside", action="store_true", help="run here: this is the image")
     f = sub.add_parser("floor", help="hold one binary to a glibc floor")
     f.add_argument("binary", type=Path)
     f.add_argument("--floor", required=True, help="a glibc release, such as 2.41")
-    args = p.parse_args(argv)
+    return p
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     try:
         if args.cmd == "floor":
@@ -915,6 +998,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             target = args.target_dir
             if args.inside and target is not None:
                 raise ReleaseError("--target-dir is the host's; inside, CARGO_TARGET_DIR names it")
+            if args.inside and args.release:
+                raise ReleaseError(f"--release is the host's; inside, {RELEASE_VARIABLE} names the version")
         bench = Bench(args.package, args.bench, args.filter) if args.cmd == "bench" else None
         if args.inside:
             check_inside()
@@ -922,18 +1007,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return step_bench(bench)
             if args.cmd == "notices":
                 return step_notices(args.target or list(TARGETS))
-            return step_suite() if args.cmd == "suite" else step_build(builds)
+            if args.cmd == "suite-archive":
+                return step_suite_archive()
+            return step_suite(args.archived) if args.cmd == "suite" else step_build(builds)
         tag = ensure_image(container)
         prepare_state(target=target)
+        env: dict[str, str] = {}
         if args.cmd == "suite":
-            step, git = ["suite"], git_view()
+            step, git = ["suite", *(["--archived"] if args.archived else [])], git_view()
+        elif args.cmd == "suite-archive":
+            step, git = ["suite-archive"], None
         elif bench is not None:
             step, git = bench.step(), None
         elif args.cmd == "notices":
             step, git = ["notices", *(f"--target={t}" for t in args.target or ())], None
         else:
             step, git = build_step(builds), None
-        return subprocess.run(run_in_image(container, tag, step, target=target, git=git)).returncode
+            if args.release:
+                env[RELEASE_VARIABLE] = workspace_version()
+        return subprocess.run(run_in_image(container, tag, step, target=target, git=git, env=env)).returncode
     except ReleaseError as e:
         print(f"release.py: {e}", file=sys.stderr)
         return 2

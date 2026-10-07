@@ -1,0 +1,30 @@
+# The release publication: a pushed `v*` tag publishes the draft Release
+# `release-build.yml` made for it (`docs/design/roadmap-P29-releases.md`,
+# "Building, tagging and publishing").
+#
+# The tag must be annotated, its message becomes the Release body, and the
+# draft is found by the tag's name and checked against the tag's commit; a tag
+# with no matching draft fails here, loudly. Every check is in
+# `scripts/release_ci.py` (`plan_publish`), and the tag name arrives as
+# `GITHUB_REF_NAME`, never interpolated into a shell line.
+name: release-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/release_ci.py publish
+        env:
+          GH_TOKEN: ${{ github.token }}

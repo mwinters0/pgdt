@@ -1,0 +1,177 @@
+# The release build: a manually dispatched workflow that builds `pgdt` for both
+# targets from one pushed commit and leaves a DRAFT Release. Publishing is
+# `release-publish.yml`, run by the tag the maintainer pushes once the draft
+# exists (`docs/design/roadmap-P29-releases.md`, "Building, tagging and
+# publishing").
+#
+# **The workflow holds no logic.** Every step is one line of `scripts/release.py`
+# (the image, the builds, the notices, the suites) or `scripts/release_ci.py`
+# (the archives, the smoke run, the checksums, the draft), whose tests hold
+# these lines to those scripts' own command lines
+# (`scripts/test_release_ci.py`). The commit arrives as `INPUT_REF` in the
+# environment, never interpolated into a shell line, and the scripts validate
+# it. Every action is pinned by commit, and every job holds the permissions it
+# uses and no more.
+#
+# Each build and each suite is a job of its own: a runner's disk is not sized
+# for two workspace builds, and the jobs have no use for each other's.
+name: release-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The full commit id to build, 40 hex characters; the draft is of this commit
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  INPUT_REF: ${{ inputs.ref }}
+  PGDT_RELEASE_CONTAINER: docker
+
+jobs:
+  # Refuse before building: a ref that is not the commit, or a version a Release
+  # already carries.
+  preflight:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: python3 scripts/release_ci.py preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  x86-64-release:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: python3 scripts/release.py image
+      - run: python3 scripts/release.py build --release --target=x86_64-unknown-linux-gnu
+      - run: python3 scripts/release.py notices --target=x86_64-unknown-linux-gnu
+      - run: python3 scripts/release_ci.py archive --target=x86_64-unknown-linux-gnu
+      - run: python3 scripts/release_ci.py smoke --target=x86_64-unknown-linux-gnu
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-x86_64-unknown-linux-gnu
+          path: dist/*.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+
+  x86-64-suite:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: python3 scripts/release.py image
+      - run: python3 scripts/release.py suite
+
+  arm64-release:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: python3 scripts/release.py image
+      - run: python3 scripts/release.py build --release --target=aarch64-unknown-linux-gnu
+      - run: python3 scripts/release.py notices --target=aarch64-unknown-linux-gnu
+      - run: python3 scripts/release_ci.py archive --target=aarch64-unknown-linux-gnu
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-aarch64-unknown-linux-gnu
+          path: dist/*.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+
+  # The arm64 tests are built here, on the architecture the image cross-builds
+  # for, and run on an arm64 runner below.
+  arm64-suite-build:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: python3 scripts/release.py image
+      - run: python3 scripts/release.py suite-archive
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suite-aarch64-unknown-linux-gnu
+          path: target/release-image/target/nextest/aarch64-unknown-linux-gnu.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+
+  # arm64 code runs here: the archived suite in the arm64 image of the same
+  # Dockerfile, and the shipped archive's `pgdt`, in a fresh `debian:trixie`.
+  arm64:
+    needs: [arm64-release, arm64-suite-build]
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: archive-aarch64-unknown-linux-gnu
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: suite-aarch64-unknown-linux-gnu
+          path: target/release-image/target/nextest
+      - run: python3 scripts/release_ci.py smoke --target=aarch64-unknown-linux-gnu
+      - run: python3 scripts/release.py image
+      - run: python3 scripts/release.py suite --archived
+
+  # Only a build that passed everything is drafted. The archives are attested
+  # here, from the commit, before any tag exists.
+  draft:
+    needs: [x86-64-release, x86-64-suite, arm64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - run: python3 scripts/release_ci.py checksums
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.tar.xz
+      - run: python3 scripts/release_ci.py draft
+        env:
+          GH_TOKEN: ${{ github.token }}

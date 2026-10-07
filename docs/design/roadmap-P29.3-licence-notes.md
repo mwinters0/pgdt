@@ -11,10 +11,9 @@ comments say how each piece works.
 - **A release build sets `PGDT_RELEASE_VERSION` to the workspace version**,
   read by `option_env!`; the `--version` line then drops `(unreleased)`. A
   value naming any other version, an empty one included, fails the build, so
-  the workflow reads the version from the manifest (`cargo metadata`) rather
-  than from the tag or an input. `run_in_image` passes no host variable into
-  the container, so a CI step running `release.py build --inside` sets it in
-  the job's own environment; the register's builds never see it.
+  the host reads the version from the manifest rather than from the tag or an
+  input: `release.py build --release` hands it to the container, the only thing
+  of the host's the container is given, and the register's builds never pass it.
 - **`release.py notices [--target T]` writes
   `$CARGO_TARGET_DIR/<target>/release/THIRD-PARTY-NOTICES`**, beside the
   binary `build` writes, so the archive step finds both in one directory. It

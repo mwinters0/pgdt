@@ -24,17 +24,11 @@ docstrings say how each step runs; the readings below are
 
 ## What 29.4 inherits
 
-- **A CI step is `python3 scripts/release.py <step> --inside`** in a container
-  built from `release/Dockerfile`; the host wrapper only adds the container
-  run. `--inside` refuses an image built from other copies of
-  `rust-toolchain.toml` or `mise.toml` than the tree's.
+- **`--inside` refuses an image built from other copies of
+  `rust-toolchain.toml` or `mise.toml` than the tree's.**
 - **The suite's container needs `--security-opt seccomp=unconfined`**:
   `pgdt/tests/namespace_init.rs` unshares a user namespace, which the default
-  profile refuses (all three failed without it). A CI container job passes it
-  in `options:`.
-- **The image is x86-64 only.** The arm64 suite run needs an image of its own
-  for the nextest archive: this Dockerfile downloads the x64 `mise` and
-  installs the cross toolchain an arm64 host has no use for.
+  profile refuses (all three failed without it); `run_in_image` passes it.
 - **One load-dependent failure in two full runs of the suite**:
   `map_file`'s `an_interrupt_inside_a_later_database_types_the_segments_it_finished`
   failed once under the whole suite and passed 60 times alone, in the image.

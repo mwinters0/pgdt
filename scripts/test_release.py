@@ -195,6 +195,16 @@ class Image(unittest.TestCase):
         self.assertIn("-e UV_PROJECT_ENVIRONMENT=/state/uv/venv", joined)
         self.assertEqual(argv[-5:], ["pgdt-release:x", "python3", "scripts/release.py", "suite", "--inside"])
 
+    def test_the_host_names_nothing_to_a_step_but_what_it_is_asked_to(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = release.run_in_image(["docker"], "t", ["build"], state=Path(tmp))
+            named = release.run_in_image(
+                ["docker"], "t", ["build"], state=Path(tmp), env={release.RELEASE_VARIABLE: "0.1.0"}
+            )
+        self.assertNotIn(release.RELEASE_VARIABLE, " ".join(bare))
+        self.assertIn(f"-e {release.RELEASE_VARIABLE}=0.1.0", " ".join(named))
+        self.assertEqual(named[-5:], bare[-5:], "the step is the same, and still last")
+
     def test_a_step_may_unshare_and_reads_the_git_view_it_is_given(self):
         with tempfile.TemporaryDirectory() as tmp:
             plain = release.run_in_image(["docker"], "t", ["suite"], state=Path(tmp))
@@ -445,7 +455,7 @@ class ThisRepo(unittest.TestCase):
     def test_every_target_has_its_cross_package_installed(self):
         text = release.DOCKERFILE.read_text()
         for package in release.TARGETS.values():
-            self.assertRegex(text, rf"\s{re.escape(package)}\s")
+            self.assertRegex(text, rf"(?<![\w-]){re.escape(package)}(?![\w-])")
 
     def test_the_toolchain_is_an_exact_release_carrying_every_cross_target(self):
         tc = tomllib.loads((release.REPO / "rust-toolchain.toml").read_text())["toolchain"]
@@ -561,6 +571,63 @@ class ThisRepo(unittest.TestCase):
             self.assertEqual(len(runs), ran)
             self.assertIn("--no-run", runs[0])
         self.assertEqual(runs[0], bench.cargo_argv(no_run=True))
+
+    def test_a_release_build_hands_the_container_the_workspace_version_and_no_other_does(self):
+        ran: list[list[str]] = []
+
+        def host(args: list[str]) -> list[str]:
+            ran.clear()
+            with tempfile.TemporaryDirectory() as tmp, \
+                    unittest.mock.patch.object(release, "ensure_image", return_value="t"), \
+                    unittest.mock.patch.object(release, "prepare_state"), \
+                    unittest.mock.patch.object(release, "git_view", return_value=None), \
+                    unittest.mock.patch.object(release, "STATE", Path(tmp)), \
+                    unittest.mock.patch.object(
+                        release.subprocess, "run", lambda argv, **_: ran.append(argv) or unittest.mock.Mock(returncode=0)
+                    ):
+                self.assertEqual(release.main(args), 0)
+            return ran[0]
+
+        manifest = tomllib.loads((release.REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+        self.assertEqual(release.workspace_version(), manifest)
+        self.assertIn(f"{release.RELEASE_VARIABLE}={manifest}", host(["build", "--release"]))
+        self.assertNotIn(release.RELEASE_VARIABLE, " ".join(host(["build"])))
+        self.assertNotIn(release.RELEASE_VARIABLE, " ".join(host(["suite"])))
+        self.assertEqual(release.main(["build", "--release", "--inside"]), 2)
+
+    def test_the_cross_target_s_tests_are_archived_locked_and_run_from_the_archive_as_the_round_runs_them(self):
+        archive = release.suite_archive_path(Path("/state/target"))
+        self.assertEqual(archive, Path(f"/state/target/nextest/{release.CROSS_TARGET}.tar.zst"))
+        built = release.suite_archive_argv(archive)
+        self.assertEqual(built[:3], ["cargo", "nextest", "archive"])
+        self.assertIn("--locked", built)
+        self.assertEqual(built[built.index("--target") + 1], release.CROSS_TARGET)
+        self.assertEqual(built[built.index("--archive-file") + 1], str(archive))
+        ran = release.archived_suite_argv(archive)
+        self.assertEqual(ran[:3], ["cargo", "nextest", "run"])
+        self.assertEqual(ran[ran.index("--archive-file") + 1], str(archive))
+        self.assertEqual(ran[ran.index("--workspace-remap") + 1], release.WORKDIR)
+        self.assertEqual(ran[-1], "--no-fail-fast", "the round's own flags, but the workspace the archive names")
+        self.assertNotIn("--workspace", ran)
+        self.assertNotIn("doc", ran)
+        self.assertNotEqual(release.CROSS_TARGET, release.NATIVE_TARGET)
+        self.assertIn(release.CROSS_TARGET, release.TARGETS)
+
+    def test_the_archived_suite_and_its_archive_round_trip_through_the_command_line(self):
+        for step, patched, expect in (
+            (["suite", "--archived"], "step_suite", True),
+            (["suite"], "step_suite", False),
+        ):
+            seen = []
+            with unittest.mock.patch.object(release, "check_inside"), \
+                    unittest.mock.patch.object(release, patched, lambda archived: seen.append(archived) or 0):
+                self.assertEqual(release.main([*step, "--inside"]), 0)
+            self.assertEqual(seen, [expect])
+        ran = []
+        with unittest.mock.patch.object(release, "check_inside"), \
+                unittest.mock.patch.object(release, "step_suite_archive", lambda: ran.append(1) or 0):
+            self.assertEqual(release.main(["suite-archive", "--inside"]), 0)
+        self.assertEqual(ran, [1])
 
     def test_a_target_dir_is_the_host_s(self):
         self.assertEqual(release.main(["build", "--target-dir", "/x", "--inside"]), 2)
