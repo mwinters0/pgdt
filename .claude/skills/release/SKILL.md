@@ -57,13 +57,17 @@ targets' release builds, both `THIRD-PARTY-NOTICES` under the allow-list, the
 x86-64 suite, the archives, the smoke run of the x86-64 one, the checksums.
 arm64 is a build only: this host runs no arm64 code.
 
-**It runs long**, so per `CLAUDE.md`, "Long-running processes": detached,
-logging under `runs/`, never waited on. Launch it and stop here.
+**It runs long**, so per `CLAUDE.md`, "Long-running processes": detached and
+logging under `runs/`. Unlike a sweep it is watched, by the maintainer's
+choice: the release is the whole of the session's work and step 5 is owed as
+soon as it ends. The log's last line is `REHEARSAL OK <ID>` or
+`REHEARSAL FAILED <ID>`, so its end is read from the log, never from a process.
 
 ```sh
 V=<the version>; mkdir -p runs/release-v$V
 ID=$(git rev-parse HEAD)
 setsid bash -c "set -euo pipefail
+trap 'echo REHEARSAL FAILED $ID' EXIT
 rm -rf dist
 (cd scripts && uv run release.py image && uv run release.py build --release \
   && uv run release.py notices && uv run release.py suite \
@@ -71,10 +75,18 @@ rm -rf dist
 python3 scripts/release_ci.py archive
 python3 scripts/release_ci.py smoke --target=x86_64-unknown-linux-gnu
 python3 scripts/release_ci.py checksums
+trap - EXIT
 echo REHEARSAL OK $ID" > runs/release-v$V/rehearsal.log 2>&1 < /dev/null &
 ```
 
-Print the log's path and that `/release` picks up from it. **On a later run,
+Then `CronCreate` a recurring job every 30 minutes, on off-minutes
+(`17,47 * * * *`), whose prompt names the log, `V` and `ID` and says: read the
+log's last line; on `REHEARSAL OK <ID>`, `CronDelete` this job and do
+`/release`'s step 5; on `REHEARSAL FAILED <ID>`, `CronDelete` it and report the
+failing step from the log's tail; otherwise report one line of progress and
+stop. Print the log's path and the job's ID, and end the turn: the job carries
+the release from here. It lives only as long as the session, so **on a later
+run,
 with `V` and `ID` computed as above, step 4 is done if
 `runs/release-v<V>/rehearsal.log` ends with `REHEARSAL OK <ID>`**; a log
 without it, or for another commit, is a failure to read or a rehearsal to
