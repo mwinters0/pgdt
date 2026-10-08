@@ -24,6 +24,9 @@ from typing import Sequence
 import check
 import release
 
+#: The round's nextest run, which the release suite starts with.
+NEXTEST: tuple[str, ...] = next(c.argv for c in check.CHECKS if c.name == "nextest")
+
 # The version-needs section and two symbol lines, as `readelf --version-info
 # --dyn-syms --wide` prints them for a host build of `pgdt`.
 READELF = """\
@@ -473,14 +476,14 @@ class ThisRepo(unittest.TestCase):
         lib = [check.Package("base", "base", frozenset(), (check.Target("base", "lib", ("lib.rs",)),))]
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "lib.rs").write_text("/// A function.\npub fn f() {}\n")
-            self.assertEqual(release.suite(Path(tmp), lambda _: lib), [release.NEXTEST])
+            self.assertEqual(release.suite(Path(tmp), lambda _: lib), [NEXTEST])
             Path(tmp, "lib.rs").write_text("/// ```\n/// assert!(true);\n/// ```\npub fn f() {}\n")
             self.assertEqual(
                 release.suite(Path(tmp), lambda _: lib),
-                [release.NEXTEST, check.doctest_check(["base"]).argv],
+                [NEXTEST, check.doctest_check(["base"]).argv],
             )
         names = {c.argv: c.name for c in check.CHECKS}
-        self.assertEqual(names[release.NEXTEST], "nextest")
+        self.assertEqual(names[NEXTEST], "nextest")
 
     def test_the_build_is_locked_and_per_target(self):
         argv = release.Build("aarch64-unknown-linux-gnu").cargo_argv()
@@ -609,39 +612,15 @@ class ThisRepo(unittest.TestCase):
         self.assertNotIn(release.RELEASE_VARIABLE, " ".join(host(["suite"])))
         self.assertEqual(release.main(["build", "--release", "--inside"]), 2)
 
-    def test_the_cross_target_s_tests_are_archived_locked_and_run_from_the_archive_as_the_round_runs_them(self):
-        archive = release.suite_archive_path(Path("/state/target"))
-        self.assertEqual(archive, Path(f"/state/target/nextest/{release.CROSS_TARGET}.tar.zst"))
-        built = release.suite_archive_argv(archive)
-        self.assertEqual(built[:3], ["cargo", "nextest", "archive"])
-        self.assertIn("--locked", built)
-        self.assertEqual(built[built.index("--target") + 1], release.CROSS_TARGET)
-        self.assertEqual(built[built.index("--archive-file") + 1], str(archive))
-        ran = release.archived_suite_argv(archive)
-        self.assertEqual(ran[:3], ["cargo", "nextest", "run"])
-        self.assertEqual(ran[ran.index("--archive-file") + 1], str(archive))
-        self.assertEqual(ran[ran.index("--workspace-remap") + 1], release.WORKDIR)
-        self.assertEqual(ran[-1], "--no-fail-fast", "the round's own flags, but the workspace the archive names")
-        self.assertNotIn("--workspace", ran)
-        self.assertNotIn("doc", ran)
-        self.assertNotEqual(release.CROSS_TARGET, release.NATIVE_TARGET)
-        self.assertIn(release.CROSS_TARGET, release.TARGETS)
-
-    def test_the_archived_suite_and_its_archive_round_trip_through_the_command_line(self):
-        for step, patched, expect in (
-            (["suite", "--archived"], "step_suite", True),
-            (["suite"], "step_suite", False),
-        ):
-            seen = []
-            with unittest.mock.patch.object(release, "check_inside"), \
-                    unittest.mock.patch.object(release, patched, lambda archived: seen.append(archived) or 0):
-                self.assertEqual(release.main([*step, "--inside"]), 0)
-            self.assertEqual(seen, [expect])
-        ran = []
+    def test_the_suite_is_one_step_and_the_command_line_takes_no_archive(self):
+        seen = []
         with unittest.mock.patch.object(release, "check_inside"), \
-                unittest.mock.patch.object(release, "step_suite_archive", lambda: ran.append(1) or 0):
-            self.assertEqual(release.main(["suite-archive", "--inside"]), 0)
-        self.assertEqual(ran, [1])
+                unittest.mock.patch.object(release, "step_suite", lambda: seen.append(1) or 0):
+            self.assertEqual(release.main(["suite", "--inside"]), 0)
+        self.assertEqual(seen, [1])
+        for argv in (["suite", "--archived"], ["suite-archive"]):
+            with self.assertRaises(SystemExit):
+                release.main(argv)
 
     def test_a_target_dir_is_the_host_s(self):
         self.assertEqual(release.main(["build", "--target-dir", "/x", "--inside"]), 2)

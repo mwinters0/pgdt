@@ -4,8 +4,8 @@
 # and tags the image by its inputs.
 #
 # Built on the architecture it runs on: an x86-64 host's image cross-builds the
-# arm64 target, and an arm64 host's runs that target's archived suite, so
-# the cross toolchain below is installed on x86-64 alone.
+# arm64 target, and an arm64 host's runs the suite natively, so the cross
+# toolchain below is installed on x86-64 alone.
 #
 # **The digest below is the one pin of what a release links.** It names the
 # base image, its glibc — the floor every release links against — and, through
@@ -92,8 +92,9 @@ RUN set -eu; \
     chmod -R a+rX "$MISE_DATA_DIR"
 
 # The arm64 cross build: the linker, and the C compiler, archiver and linker
-# every `cc`-driven build script reads by target. On an arm64 host nothing
-# builds that target, so these name tools it does not have and nothing reads them.
+# every `cc`-driven build script reads by target. On an arm64 host that target
+# is the native one the suite builds, and these names are Debian's own triplet
+# names for its native `gcc` and `binutils`.
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
     AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar

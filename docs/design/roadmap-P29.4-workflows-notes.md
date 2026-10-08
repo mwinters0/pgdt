@@ -2,11 +2,10 @@
 
 What the later slices inherit from the workflows. The mechanism is
 `.github/workflows/release-build.yml` and `release-publish.yml`, which hold no
-logic, `scripts/release.py` (`suite-archive`, `suite --archived`,
-`build --release`) and `scripts/release_ci.py`, whose docstrings say what each
+logic, `scripts/release.py` (`suite`, `build --release`) and `scripts/release_ci.py`, whose docstrings say what each
 step does; the readings below are `runs/29.4-workflows/` (`image.log`,
-`build.log`, `build-arm.log`, `notices.log`, `smoke.log`, `suite-archive.log` (the 24-job run that
-failed), `suite-archive-j6.log`),
+`build.log`, `build-arm.log`, `notices.log`, `smoke.log`, `suite-archive.log`
+(a 24-job cross build of the arm64 tests that failed), `suite-archive-j6.log`),
 not figures.
 
 ## What was run, and what was not
@@ -15,14 +14,12 @@ not figures.
 from the two-architecture Dockerfile (x86-64 side); both targets' `build
 --release`; both `notices`; both archives; `checksums`, whose output
 `sha256sum -c` accepts; `smoke` on the x86-64 archive, whose `--version`
-carries no `(unreleased)`; and `suite-archive`, which wrote a 2.4 GB archive
-that `cargo nextest list --archive-file … --workspace-remap /work` extracted
-and read (it then could not execute an arm64 test binary, as expected here). The scripts' logic is `scripts/test_release_ci.py`'s,
+carries no `(unreleased)`. The scripts' logic is `scripts/test_release_ci.py`'s,
 against stand-ins for `gh` and the container runtime.
 
 **Never run**: the workflow files themselves (they parse; `uv run --with
 pyyaml` read both), the `gh` calls against a live repository, the arm64 image
-(no arm64 host or `binfmt` here), `suite --archived` on one, `actions/attest`,
+(no arm64 host or `binfmt` here), `suite` on one, `actions/attest`,
 and a runner's disk and memory under a whole job. **`v0.1.0` is the first live
 run of the publish workflow, and `29.6`'s first dispatch of the build.** A build
 run failing before `draft` leaves nothing to clean up; a draft left behind
@@ -51,21 +48,16 @@ blocks the same version's next dispatch at `preflight`, and is deleted by hand.
 - **A runner's disk is the first-run risk.** Each build and each suite is a job
   of its own for it, none measured: the dev-profile test build is the large
   one. A `no space left` is a job to split further or a step to free the
-  runner's preinstalled software. The arm64 tests cross to their runner as one
-  artifact, its size unmeasured.
-- **A cold cross build of the tests ran out of memory at its links** under the
-  image's 20 GB limit with this host's 24 cargo jobs (`ld` killed, signal 9),
-  and completed at six; a runner's four CPUs make four jobs, which is unmeasured
-  against its 16 GB. The step takes no job cap; whether a runner needs one
-  is unmeasured.
+  runner's preinstalled software.
+- **A cold cross build of the arm64 tests ran out of memory at its links** under
+  the image's 20 GB limit with this host's 24 cargo jobs (`ld` killed, signal
+  9), and completed at six; the arm64 runner's four CPUs make four jobs, which is
+  unmeasured against its 16 GB, as is the time of its cold build. The step takes
+  no job cap; whether a runner needs one is unmeasured.
 - **The arm64 image is an untested build**: the Dockerfile picks `mise`'s
   checksum and the cross toolchain by `dpkg --print-architecture`, and `mise
   install` fetches every tool in `mise.toml` for arm64, which this host
   cannot confirm.
-- **The arm64 suite is nextest alone**: a doctest is compiled where it runs, so
-  no archive holds one. No workspace library holds a doctest today, so nothing
-  is lost; the x86-64 suite runs the doctests as the round does, and
-  `test_release_ci` fails when a library first holds one (`M220`).
 - **Attestation and the arm runner both want a public repository** (or a plan
   that provides them).
 

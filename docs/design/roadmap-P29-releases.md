@@ -161,10 +161,12 @@ release's in that string alone.
 
 **What the build workflow proves before it drafts.** Both targets are
 cross-built in the image. The x86-64 suite runs in the image; the arm64 suite
-is cross-built as a nextest archive and run on GitHub's `ubuntu-24.04-arm`
-runner in the arm64 variant of the same pinned image, so arm64 code runs its
-tests somewhere; it is nextest alone, a doctest being compiled where it runs
-([`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "29.4's unattended calls, reviewed"). Each archived `pgdt` then passes a smoke run on its own
+is built and run on GitHub's `ubuntu-24.04-arm` runner in the arm64 variant of
+the same pinned image, so arm64 code runs its tests somewhere, the suite
+exactly as the x86-64 job runs it. Nothing of a suite is passed between jobs:
+the test binaries are gigabytes, and a runner builds them where it runs them
+([`../status/history/2026-10-08.md`](../status/history/2026-10-08.md), "The arm64
+suite is built where it runs"). Each archived `pgdt` then passes a smoke run on its own
 architecture — `--version` carrying no `(unreleased)`, a `parse` and a `query`
 of a committed fixture. Only then is the draft created. The suite runs
 development-profile test binaries, so it tests the source per architecture; the

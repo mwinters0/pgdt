@@ -577,44 +577,26 @@ class Workflows(unittest.TestCase):
             self.assertIn(("scripts/release_ci.py", ["archive", flag]), runs, target)
             self.assertIn(("scripts/release_ci.py", ["smoke", flag]), runs, target)
         self.assertIn(("scripts/release.py", ["suite"]), runs)
-        self.assertIn(("scripts/release.py", ["suite-archive"]), runs)
-        self.assertIn(("scripts/release.py", ["suite", "--archived"]), runs)
         # Only a release's build is `--release`, and only the release builds.
         builds = [a for s, a in runs if s == "scripts/release.py" and a[0] == "build"]
         self.assertEqual(len(builds), len(release.TARGETS))
         self.assertTrue(all("--release" in a for a in builds))
 
-    def test_the_arm64_suite_runs_on_an_arm64_runner_and_the_rest_on_x86_64(self):
-        for job, body in jobs_of("release-build.yml").items():
+    def test_the_arm64_suite_and_smoke_run_on_an_arm64_runner_and_the_rest_on_x86_64(self):
+        jobs = jobs_of("release-build.yml")
+        arm = {"arm64-suite", "arm64-smoke"}
+        for job, body in jobs.items():
             runner = re.search(r"(?m)^    runs-on: (\S+)$", "\n".join(body)).group(1)
-            self.assertEqual(runner, "ubuntu-24.04-arm" if job == "arm64" else "ubuntu-24.04", job)
-        arm = "\n".join(jobs_of("release-build.yml")["arm64"])
-        self.assertIn("suite --archived", arm)
-        self.assertIn(f"smoke --target={release.CROSS_TARGET}", arm)
-
-    def test_no_workspace_library_holds_a_doctest_the_arm64_suite_would_skip(self):
-        """The arm64 suite is nextest alone, a doctest being compiled where it
-        runs (`docs/design/roadmap-P29-releases.md`, "The build image"), which
-        loses nothing while no library holds one. The first one decides
-        whether arm64 runs it, here rather than found later."""
-        docs = check.doctest_packages(release.REPO, check.workspace(release.REPO))
-        self.assertEqual(
-            docs, set(),
-            f"{', '.join(sorted(docs))} now holds a doctest, which the x86-64 suite runs and the "
-            "arm64 suite does not: it is nextest alone, a doctest being compiled where it runs "
-            "(docs/design/roadmap-P29-releases.md, \"The build image\"). Decide whether the "
-            "arm64 job runs the doctests, then amend that decision and this test.",
-        )  # fmt: skip
+            self.assertEqual(runner, "ubuntu-24.04-arm" if job in arm else "ubuntu-24.04", job)
+        suite = "\n".join(jobs["arm64-suite"])
+        self.assertIn("release.py suite", suite)
+        self.assertIn("needs: preflight", suite, "the suite waits on no build")
+        self.assertIn(f"smoke --target={release.CROSS_TARGET}", "\n".join(jobs["arm64-smoke"]))
 
     def test_the_artifacts_the_jobs_pass_on_are_the_paths_the_scripts_use(self):
         text = "\n".join(lines_of("release-build.yml"))
-        nextest = release.suite_archive_path(release.STATE / "target").relative_to(release.REPO)
-        self.assertIn(f"path: {nextest}", text)
         self.assertIn(f"path: {release_ci.DIST.relative_to(release.REPO)}/*.tar.xz", text)
-        self.assertEqual(
-            release.suite_archive_path(Path("/state/target")),
-            Path(f"/state/target/nextest/{release.CROSS_TARGET}.tar.zst"),
-        )
+        self.assertNotIn("nextest", text, "a test binary is built where it runs, never passed on")
 
     def test_the_attestation_covers_the_archives_after_the_checksums_are_made(self):
         draft = "\n".join(jobs_of("release-build.yml")["draft"])
