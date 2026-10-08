@@ -15,7 +15,10 @@ suite is built where it runs". Nothing below ran on an arm64 host.
   its disk are unmeasured; the earlier 24-job cross build's out-of-memory is in
   [`roadmap-P29.4-workflows-notes.md`](roadmap-P29.4-workflows-notes.md), "What
   29.6 inherits". A runner that cannot hold the build is a job cap or a lighter
-  test profile for the suite, a measurement first.
+  test profile for the suite, a measurement first. `release.py`'s container limit
+  (`MEMORY`) is above a runner's 16 GB, so on either suite job it limits
+  nothing, and running out kills the runner rather than the container: a lost
+  runner rather than `ld`'s signal 9 is how that reads in the run's log.
 - **The arm64 suite now runs the doctests** as the x86-64 job does, so a library
   first holding one needs no decision about arm64.
 - **The arm64 image now compiles**, where it only ran an archive before: the
