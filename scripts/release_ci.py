@@ -266,7 +266,10 @@ def step_smoke(target: str, dist: Path = DIST, repo: Path = REPO) -> int:
     archive, stem = dist / archive_name(version, target), archive_stem(version, target)
     base = release.pinned_base((repo / "release" / "Dockerfile").read_text())
     container = shlex.split(release.CONTAINER)
-    with tarfile.open(archive) as tar, tempfile.TemporaryDirectory(prefix="pgdt-smoke-") as tmp:
+    # Beside the archive, not in `/tmp`: the container runtime mounts it from
+    # its own namespace, and a shell's `/tmp` may be private (systemd's
+    # `PrivateTmp`), so a bind of it finds nothing.
+    with tarfile.open(archive) as tar, tempfile.TemporaryDirectory(prefix="pgdt-smoke-", dir=dist) as tmp:
         check_layout(tar.getnames(), stem)
         tar.extractall(tmp, filter="data")
         data = Path(tmp) / "data"

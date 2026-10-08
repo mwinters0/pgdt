@@ -277,6 +277,9 @@ class Smoke(unittest.TestCase):
             base = release.pinned_base(release.DOCKERFILE.read_text())
             for argv in ran:
                 self.assertIn(base, argv)
+                mount = argv[argv.index("-v") + 1]
+                self.assertTrue(mount.startswith(f"{dist}/pgdt-smoke-"), mount)
+            self.assertEqual(sorted(p.name for p in dist.iterdir()), [release_ci.archive_name(version, target)])
 
             def failing(argv, **_kwargs):
                 return subprocess.CompletedProcess(argv, 3, stdout="", stderr="boom")
