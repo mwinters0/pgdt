@@ -1,7 +1,14 @@
-# `cargo-about`'s configuration for a release's `THIRD-PARTY-NOTICES`
-# (`docs/design/roadmap-P29-releases.md`, "Licence and notices"). Read by
-# `scripts/release.py notices`, which runs `cargo-about` with `--fail`, so a
-# crate whose licence this file does not accept stops the release.
+# `cargo-about`'s configuration for a release's `THIRD-PARTY-NOTICES`, one per
+# archive, generated from the linked closure of the target it ships and never
+# committed. Read by `scripts/release.py notices`, which runs `cargo-about` with
+# `--fail`, so a crate whose licence this file does not accept stops the
+# release. The notices are not in `mise run check`, which stays offline: they
+# are made at a `Cargo.lock` change (`upgrade-deps`) and at `/release`'s
+# rehearsal, a dependency moving being every way they break.
+#
+# `private = { ignore = true }` is left off: it keys on `publish = false`,
+# which `vendor/xz-seek` declares too, so `release.py` drops the workspace
+# members itself.
 #
 # **The allow-list.** A licence below is accepted for every crate; one accepted
 # for a single crate is in that crate's table, so a second crate under it stops

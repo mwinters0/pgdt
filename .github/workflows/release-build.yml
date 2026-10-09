@@ -1,8 +1,7 @@
 # The release build: a manually dispatched workflow that builds `pgdt` for both
 # targets from one pushed commit and leaves a DRAFT Release. Publishing is
 # `release-publish.yml`, run by the tag the maintainer pushes once the draft
-# exists (`docs/design/roadmap-P29-releases.md`, "Building, tagging and
-# publishing").
+# exists (`scripts/release_ci.py`, "Build first, tag second").
 #
 # **The workflow holds no logic.** Every `run:` step is one line of `scripts/release.py`
 # (the image, the builds, the notices, the suites) or `scripts/release_ci.py`
@@ -108,7 +107,11 @@ jobs:
 
   # arm64 code runs on the arm64 runner: the suite, built and run in the arm64
   # image of the same Dockerfile, beside the cross build rather than after it,
-  # needing nothing of it.
+  # needing nothing of it. Rejected: the test binaries cross-built and passed
+  # between jobs, gigabytes every release would upload and download; qemu-user
+  # on an x86-64 runner, which would run the tests under that host's `/proc`,
+  # cgroups and page size and without arm's memory ordering, the very things
+  # the runtime-discovery and allocator tests read.
   arm64-suite:
     needs: preflight
     runs-on: ubuntu-24.04-arm

@@ -139,7 +139,7 @@ Eighteen standing rules for reading anything below:
   they run in is that image's base by its digest (`measure.register_image`),
   so one pin, `release/Dockerfile`'s, names the build's glibc, the floor a
   release promises and the runtime every figure stands on
-  ([`roadmap-P29-releases.md`](roadmap-P29-releases.md), "The build image").
+  ([`decisions.md`](decisions.md), "D104").
   The pin moves only through `upgrade-deps`, and the next stamp names its
   glibc. Before the first reading `measure.apparatus_preflight` starts `pgdt
   --version` in the image and refuses a sweep whose binary does not load —

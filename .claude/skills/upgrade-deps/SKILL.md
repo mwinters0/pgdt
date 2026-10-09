@@ -19,7 +19,7 @@ applies.
    **The compiler and the release image move here too**, each an apparatus
    change: `rust-toolchain.toml`'s `channel`, and `release/Dockerfile`'s
    `FROM` digest, which pins every package the image installs
-   (`docs/design/roadmap-P29-releases.md`, "When the pin moves"). **So do
+   (`docs/design/decisions.md`, "D104"). **So do
    `mise.toml`'s tools**, each pinned to an exact version that the image
    installs too: a bump there moves the image's tag, and `upstream.md` and the
    invariants are walked for a tool as for a crate.

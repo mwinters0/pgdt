@@ -15,22 +15,31 @@ members = [
 # `scripts/vendor_xz_seek.py` re-syncs it.
 exclude = ["vendor/xz-seek"]
 
-# The one place the version lives, and what `/release` moves; every member
-# takes it, and a path dependency between members states no requirement, so a
-# bump is this line. Every member is `Apache-2.0`, the text at the root's
-# `LICENSE`, and unpublishable: a release is `pgdt`'s archives, never a crate
-# (`docs/design/roadmap-P29-releases.md`, "The version and how a build names
-# it" and "Licence and notices").
+# The one place the version lives, and what `/release` moves
+# (`.claude/skills/release/SKILL.md`); every member takes it, and a path
+# dependency between members states no requirement, so a bump is this line.
+# Every member is `Apache-2.0`, the licence DataFusion and Arrow carry and
+# `datafusion-cli-pgdump`'s copy of `datafusion-cli`'s `main.rs` inherits, its
+# text at the root's `LICENSE`; `vendor/xz-seek` keeps its own. Every member is
+# unpublishable: a release is `pgdt`'s archives, never a crate
+# (`docs/design/decisions.md`, "D104").
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
 
-# The test build optimizes; debug assertions and overflow checks stay on
-# (`docs/design/decisions.md`, "D92"). Line tables only: a backtrace and a
-# debugger still name the file and line, and the 66 test binaries every
-# library change relinks stop carrying full debuginfo.
+# The test build optimizes, the workspace at 1 and its dependencies at 2: the
+# fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone
+# leaves most of their cost, and `dev` keeps debug assertions and overflow
+# checks at any level. `release`, `bench` and `profiling` do not inherit `dev`,
+# so no figure moves. Rejected: tests under `--release`, which drops both
+# checks; moving a sweep out of the default suite (`pruning.rs`'s own refusal).
+# Reopens: an edit-to-test rebuild costing more than the sweeps save
+# (`docs/status/history/2026-09-25.md`, "M152: the test build optimizes").
+# Line tables only: a backtrace and a debugger still name the file and line,
+# and the 66 test binaries every library change relinks stop carrying full
+# debuginfo.
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"

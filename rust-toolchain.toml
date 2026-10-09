@@ -1,5 +1,5 @@
 # The one Rust every build uses: development, the register and the release
-# (`docs/design/roadmap-P29-releases.md`, "The compiler"). It moves only
+# (`docs/design/decisions.md`, "D104"). It moves only
 # through `.claude/skills/upgrade-deps/SKILL.md`, since the shipped binary is
 # the timed one only while one compiler builds both (`docs/design/decisions.md`,
 # "D13").

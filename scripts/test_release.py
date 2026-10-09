@@ -3,7 +3,7 @@
 
 The floor check is held to `readelf` text of the shape a real binary prints,
 and `ThisRepo` holds the committed Dockerfile, toolchain pin and suite to what
-`docs/design/roadmap-P29-releases.md` commits them to.
+`docs/design/decisions.md`, "D104", commits them to.
 """
 
 from __future__ import annotations

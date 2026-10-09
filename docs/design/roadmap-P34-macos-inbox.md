@@ -24,11 +24,11 @@ Apple target has never been tried.
 **Why P34 cares.** [`roadmap.md`](roadmap.md), "A default runs as fast as the
 allocation permits" makes the discovered path the normal one, so a macOS
 binary needs a discovery path and the `RT<n>` entries it rests on before it
-ships — which is why P29 ships Linux only. A compile against both Apple targets
+ships — which is why a release ships Linux only. A compile against both Apple targets
 is the cheapest first slice.
 
-**Origin.** Filed 2026-10-01 by the session sketching P29; moved here
-2026-10-06 when P29's grilling took macOS out of its scope.
+**Origin.** Filed 2026-10-01; moved here 2026-10-06, when releases were
+scoped to Linux.
 
 ---
 
@@ -48,5 +48,5 @@ those C builds against an Apple SDK; building on a macOS runner means a CI leg
 the local release rehearsal cannot reproduce. An arm64 Mach-O also needs at
 least an ad-hoc signature to run.
 
-**Origin.** Filed 2026-10-06 by P29's grilling, from a `cargo metadata` /
+**Origin.** Filed 2026-10-06, from a `cargo metadata` /
 `cargo tree` walk of `pgdt`'s default-feature closure per target.

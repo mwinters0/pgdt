@@ -2,10 +2,9 @@
 """The release build: its image, `pgdt` built in it for both targets, and the
 suite run there.
 
-`docs/design/roadmap-P29-releases.md`, "The build image", is what this
-implements: one image, `release/Dockerfile`, pinned by digest, builds every
-binary and notice a release ships, and the glibc it links against is the floor a release
-promises. Each step is an argv run in that image, so a rehearsal here and CI
+`docs/design/decisions.md`, "D104", is what this implements: one image,
+`release/Dockerfile`, pinned by digest, builds every binary and notice a
+release ships, and the glibc it links against is the floor a release promises. Each step is an argv run in that image, so a rehearsal here and CI
 run the same commands: on the host a step is wrapped in a container run (CI's
 runner is such a host, `PGDT_RELEASE_CONTAINER=docker`; a `container:` job
 takes an image reference and the image is never pushed), and `--inside` runs
@@ -111,6 +110,10 @@ RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
 CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
 #: The container's memory limit: a whole-workspace test build links dozens of
 #: binaries at once, and this machine's rule is a limit on every container run.
+#: It is above an arm64 runner's memory, so running out there loses the runner
+#: rather than killing `ld`; nothing has read that job's time, memory or disk,
+#: and a runner that cannot hold the build wants a job cap or a lighter test
+#: profile, measured first.
 MEMORY = os.environ.get("PGDT_RELEASE_MEMORY", "20g")
 #: The build's state on the host. Under the repository's `target/`, so it is
 #: ignored and lives wherever that directory does.

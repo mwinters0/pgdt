@@ -1,6 +1,6 @@
 # The release publication: a pushed `v*` tag publishes the draft Release
-# `release-build.yml` made for it (`docs/design/roadmap-P29-releases.md`,
-# "Building, tagging and publishing").
+# `release-build.yml` made for it (`scripts/release_ci.py`, "Build first, tag
+# second").
 #
 # The tag must be annotated, its message becomes the Release body, and the
 # draft is found by the tag's name and checked against the tag's commit; a tag

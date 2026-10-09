@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D103 -->
+<!-- decision-watermark: D104 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -537,11 +537,6 @@ the set keyed by its compared kind as gathering resolved the column, not by its 
 bounds off a dictionary (D75); one slot; a second `macaddr` set, or a float's for one pair of values; the zeros told apart in the
 key, which every term equates them by; a kind stored per set; a DDL flag. Code: `bounds_kinds`, `bounds_set_keyed_by`, `stored_order`.
 
-### D80 An early stop is reported after the fact, per block, in bytes
-Rejected: counting rows past the stop, never read and so only estimable; a zero for a stop planned
-and never reached; exact bytes when split, read past each piece's limit. Reopens: an account needing
-exact bytes, which each piece reporting its first row's start would give. Code: `stream::EarlyStop`.
-
 ### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
 Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock, a
 vector or map charged ahead of its growth, in flight made when short, unmade when over. Rejected: a
@@ -682,14 +677,6 @@ trips the flag at an offset, and koji covers the real scale. The round trip hold
 decode; that decode is right is the value oracle's (`oracle/values.tsv`): each typed node as the server
 reads it, by send function or arithmetic, over every `types` flag set with DDL (`value_oracle.rs`).
 
-### D92 The test build optimizes: the workspace at `opt-level = 1`, its dependencies at `2`
-The fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone leaves most of
-their cost, and `dev` keeps debug assertions and overflow checks at any level. `release`, `bench`
-and `profiling` do not inherit `dev`, so no figure moves. Rejected: tests under `--release`, which
-drops both checks; moving a sweep out of the default suite (`pruning.rs`'s own refusal). Reopens: an
-edit-to-test rebuild costing more than the sweeps save. Code: `Cargo.toml`. Evidence:
-`docs/status/history/2026-09-25.md`, "M152: the test build optimizes".
-
 ### D102 The unrepresentable category is read off hand-written extremes through DataFusion's own path, never listed
 `types`' `t_extremes` holds PostgreSQL's least, greatest and special values of each arm mapping to a type but `Utf8View`, one column an arm,
 and `t_extremes_nested` the nested shapes, by hand, PostgreSQL keeping no catalog of them. Each decoded is formatted by `arrow-cast` and cast
@@ -698,3 +685,13 @@ moving the calendar fails the check; `floor_mapping.py` holds columns and typed 
 forces its extremes (D38). Rejected: the list kept by review; a bound written per type (the list again); a decoder's refusal as the test,
 which took `24:00:00`; a binary type's cast, which reads its bytes as UTF-8. Code: `arrow_holds`, `floor_mapping.py`'s `extremes_problems`.
 Evidence: `every_extreme_is_held_by_arrow_or_recorded`.
+
+## Releases (`release/`, `scripts/release.py`, `scripts/release_ci.py`, `scripts/debian_window.py`)
+### D104 A release is `pgdt` for Linux, linked against one digest-pinned Debian-stable image that also builds what the register times
+Two targets, Linux on x86-64 and arm64; macOS waits on a discovery path of its own (P34), Windows on an I/O layer that is `std::os::unix`. glibc, not static musl: the
+shipped binary is the timed one (D13) and every figure a glibc build, so musl is a libc swap no sitting priced. A host build needs the newest `GLIBC_` versions, so the floor is a pin
+following Debian stable, the `postgres:*` images' base: a new stable gets at least six months' grace on its predecessor, and by twelve the pin has moved (`debian_window.py`). One
+`debian:trixie` digest, its packages read from the snapshot it records, builds both targets and every binary the register times, run in the same base, so one pin names the build's
+glibc, the floor and every figure's runtime; `rust-toolchain.toml` pins one compiler for development, the register and the release; each pin moves through `upgrade-deps`, an
+apparatus change. Rejected: `cargo zigbuild` (zig's clang for every C dependency, a floor suffix synced by hand, a stray `CC` silently compiling against the host's headers); a build
+runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (the register timing host `stable`).

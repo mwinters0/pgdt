@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Whether the release image's Debian pin is inside the window a release allows.
 
-`docs/design/roadmap-P29-releases.md`, "The Linux libc", is what this
-implements: **a new Debian stable gets a grace period of at least six
-months**, during which the pin stays on its predecessor, and **twelve months
-after Debian's release the pin must have moved**. So, for the codename
+`docs/design/decisions.md`, "D104", is what this implements: **a new Debian
+stable gets a grace period of at least six months**, during which the pin stays
+on its predecessor, and **twelve months after Debian's release the pin must
+have moved**. So, for the codename
 `release/Dockerfile`'s `FROM` names:
 
 * a codename Debian has not released, or released under six months ago, is

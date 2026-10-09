@@ -48,7 +48,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M216 are struck**, and nothing at or below `M216` is reused. That is a
+**M1–M220 are struck**, and nothing at or below `M220` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -73,7 +73,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M217 | 2026-10-07 | `pgdump_query/tests/map_file.rs`'s `assert_an_interrupt_inside` trips on the read delivering the later database's first block's terminating LF, so the block's close banks it whatever the save throttle says, and load cannot fail `an_interrupt_inside_a_later_database_types_the_segments_it_finished` or its concatenated-file twin | | [`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "`M217`: the interrupt banks its own block" |
-| M218 | 2026-10-07 | The release image's inputs pinned: `release/Dockerfile`'s snapshot apt config gains `Acquire::Retries`; `cmake` leaves `mise.toml` and the Dockerfile, its comments in `mise.toml` and `pgdump_query/Cargo.toml` corrected; `uv` pinned exactly in `mise.toml`, `test_release.py` holding every tool exact and linked in the image; `upgrade-deps` covers `mise.toml`'s tools | | [`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "`M218`: the release image's inputs, pinned" |
-| M219 | 2026-10-06 | `pgdump_query`'s benches (`decoders.rs`, `whole_file.rs`) take mimalloc as their `#[global_allocator]` at `pgdt`'s pin, without `override`, as a dev-dependency of `pgdump_query`; `nested-decode-micro`'s prose re-read against the change | | [`../status/history/2026-10-06.md`](../status/history/2026-10-06.md), "`M219`: the benches take `pgdt`'s allocator" |
-| M220 | 2026-10-07 | `release.suite()` runs the doctest check as the round does (`check.every_check`, the libraries holding one, or none), and `test_release_ci` fails when `doctest_packages` is non-empty, its message naming the arm64 suite's decision | | [`../status/history/2026-10-07.md`](../status/history/2026-10-07.md), "`M220`: the release suite's doctests, as the round's" |

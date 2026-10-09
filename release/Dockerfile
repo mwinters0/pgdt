@@ -1,5 +1,5 @@
 # The image every release artifact is built in, and the suite run in
-# (`docs/design/roadmap-P29-releases.md`, "The build image"). Built and run by
+# (`docs/design/decisions.md`, "D104"). Built and run by
 # `scripts/release.py`, never by hand: it names the context this file expects
 # and tags the image by its inputs.
 #
@@ -20,7 +20,11 @@ FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b0
 # image recording no snapshot fails the build instead of reading the live
 # archive. The snapshot's `Release` files have expired by design, hence
 # `Check-Valid-Until=false`; what reading it costs over the live archive is
-# transient unavailability, which `Acquire::Retries` absorbs.
+# transient unavailability, which `Acquire::Retries` absorbs. Rejected: the
+# live archive, under which the compilers and the crt objects linked into every
+# binary move at each point release with the digest unchanged; a built image
+# pushed to a registry and pulled by its own digest, a second artifact to build
+# and re-pin at every Rust or tool bump.
 RUN set -eu; \
     f=/etc/apt/sources.list.d/debian.sources; \
     sed -i 's|^# \(http://snapshot\.debian\.org/archive/[a-z-]*/[0-9]*T[0-9]*Z\)$|URIs: \1|; /^URIs: http:\/\/deb\.debian\.org/d' "$f"; \
@@ -35,7 +39,9 @@ RUN set -eu; \
 # and `python3` are what the suite runs beside the binaries it builds. `make`
 # builds jemalloc for the register's `jemalloc` allocator leg
 # (`scripts/measure.py`, `ALLOCATOR_LEGS`), which is built here beside the
-# shipped binary; no release artifact links it.
+# shipped binary; no release artifact links it. Rejected: an image derived from
+# this one for that leg alone, a second image and build path guarding against a
+# build script in the shipped closure looking for `make`, of which there is none.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         binutils ca-certificates curl gcc git libc6-dev make procps python3 \
@@ -64,6 +70,7 @@ RUN cd /opt/toolchain && rustc --version && cargo --version \
 # **The tools `mise.toml` pins**, installed by `mise` from that file, so the
 # suite and the notices find what a checkout's `mise install` gives it
 # (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
+# Debian packages none of `mise`, `uv` or `cargo-nextest`, hence `mise`.
 # `mise` itself is pinned here by version and one checksum per architecture
 # (both in the release's `SHASUMS256.txt`), and only installs: each tool is
 # linked onto `PATH`, so nothing runs through it.

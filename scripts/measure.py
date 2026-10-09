@@ -152,8 +152,8 @@ def register_image() -> str:
 
     **One pin names the build's glibc and the runtime's**, so the binary a
     figure times runs under the glibc it was linked against, which is the
-    floor a release promises (`docs/design/roadmap-P29-releases.md`, "The
-    build image"). No variable moves it: a second image would be a second pin."""
+    floor a release promises (`docs/design/decisions.md`, "D104"). No
+    variable moves it: a second image would be a second pin."""
     return release.pinned_base(release.DOCKERFILE.read_text())
 
 

@@ -4,9 +4,11 @@
 The archive, the checksums, the smoke run's checks and the publication's
 refusals are held here against stand-ins for `gh` and the container runtime,
 and `Workflows` holds the two committed workflow files to what
-`docs/design/roadmap-P29-releases.md` commits them to: no step but a
-`release.py` or `release_ci.py` line the parsers accept, no input interpolated
-into a shell, every action pinned, every permission earned.
+`release_ci.py`'s docstring commits them to: no step but a `release.py` or
+`release_ci.py` line the parsers accept, no input interpolated into a shell,
+every action pinned, every permission earned. The files are read by line, not
+parsed as YAML: the standard library has no parser, and the scripts'
+environment pins its two dependencies for the bytes they decide.
 """
 
 from __future__ import annotations

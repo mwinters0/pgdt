@@ -2,8 +2,28 @@
 """What the release workflows do with what `release.py` built: the archives,
 their checksums, the smoke run, the draft Release and its publication.
 
-`docs/design/roadmap-P29-releases.md`, "Building, tagging and publishing" and
-"The artifacts", is what this implements. The workflows
+**Build first, tag second.** A dispatched workflow builds a pushed commit into
+a draft; the maintainer then pushes an annotated tag on it, whose message is
+the Release body, and the tag's workflow publishes the draft. A pushed tag is a
+`releases.atom` entry at once, carrying the annotation, under the entry id a
+Release on that tag later takes (observed on a tag-only repository; GitHub
+documents none of it, so re-check before leaning on it), so the annotation is
+where the text is when a feed reader first takes the entry, and nothing is
+announced before its binaries exist. Rejected: a build the tag triggers (a
+release announced while building, and a failed build an announced tag nobody
+can retract); the text in a file or a workflow input (the tag's entry read
+empty). Everything that leaves the machine is the maintainer's
+(`.claude/skills/release/SKILL.md`).
+
+**Verification needs no key we hold**: `SHA256SUMS`, an attestation per
+archive made from the build's commit before the tag exists (so verified by
+`--source-digest`, not by tag), and immutable releases, under which a mistake
+in a published release is a new version. Rejected: a GPG signature over the
+checksums, a key to keep and publish that adds nothing an identity-bound
+signature lacks. The binary keeps its symbols, the release profile stripping
+nothing beyond Cargo's default, so a user's panic backtrace names its functions.
+
+The workflows
 (`.github/workflows/release-build.yml`, `release-publish.yml`) hold no logic of
 their own: each `run:` step is one line calling `release.py` or this script,
 the rest being pinned actions that check out, upload, download and attest, so

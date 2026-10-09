@@ -3682,13 +3682,17 @@ pub enum PlanNoteKind {
 
 /// One block a [`TableStream`] replayed under an early stop — the filter, or
 /// a [`DynamicFilter`]'s state, requiring a bound the block's stored row
-/// order closes — and what the stop left unread ([`TableStream::early_stops`];
-/// `docs/design/decisions.md`, "D80").
+/// order closes — and what the stop left unread ([`TableStream::early_stops`]),
+/// reported after the fact, in bytes.
 ///
 /// **Per block, not a count**, because a partitioned replay can hand one
 /// block's pieces to several sub-streams and a piece past the stopping row
 /// stops at its own first row: a caller summing over sub-streams counts a
-/// block once by its `header_offset`, and adds its bytes.
+/// block once by its `header_offset`, and adds its bytes. Rejected: counting
+/// rows past the stop, never read and so only estimable; a zero for a stop
+/// planned and never reached; exact bytes when split, read past each piece's
+/// limit. Reopens: an account needing exact bytes, which each piece reporting
+/// its first row's start would give.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EarlyStop {
     /// The block, by its [`CopyBlock::header_offset`].

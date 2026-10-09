@@ -5,7 +5,7 @@ description: Prepare a `pgdt` release on the maintainer's machine — check the 
 
 A release is cut in three hands: **this skill makes one commit and a
 rehearsal; the maintainer pushes, dispatches the build and tags; CI owns the
-bytes** (`docs/design/roadmap-P29-releases.md`, "`/release`"). **Nothing here
+bytes** (`scripts/release_ci.py`, "Build first, tag second"). **Nothing here
 leaves the machine** — no `git push`, no `gh workflow run`, no tag — since a
 draft is visible to anyone with access to the repository and a tag is a
 `releases.atom` entry at once. It asks the maintainer one
@@ -47,8 +47,8 @@ revert, not a release. Then `git add Cargo.toml Cargo.lock` and commit as
 `Release v<V>`.
 
 The rehearsal comes after the commit, since it reads the manifest's version and
-the commit's time, so it builds what the SHA step 5 prints will build
-(`docs/design/roadmap-P29-releases.md`, "`/release`").
+the commit's time, so it builds what the SHA step 5 prints will build; an
+unpushed commit is as reversible as an edit.
 
 ## 4. Rehearse
 

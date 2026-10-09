@@ -63,9 +63,12 @@ fn version() -> &'static str {
 }
 
 /// The variable the release workflow builds with, naming the version it
-/// releases (`docs/design/roadmap-P29-releases.md`, "The version and how a
-/// build names it"). Cargo rebuilds when it changes, as for any variable
-/// `option_env!` reads.
+/// releases, so a release says it is one and every other build says it is
+/// not. Cargo rebuilds when it changes, as for any variable `option_env!`
+/// reads. Rejected: a `build.rs` reading `git describe`, which re-runs at
+/// every commit and names a dirty tree after a commit it does not match. A
+/// version bump alone invalidates no cache, caches being keyed on
+/// `CACHE_FORMAT_VERSION` alone.
 const RELEASE_VARIABLE: Option<&str> = option_env!("PGDT_RELEASE_VERSION");
 
 /// Whether this is a release's build: the variable names this crate's own
