@@ -75,10 +75,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The whole history, as the round's check has it: the suite resolves
+      # the commits `measurements.md` declares. A build needs only the ref.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+          fetch-depth: 0
       - run: python3 scripts/release.py image
       - run: python3 scripts/release.py suite
 
@@ -116,6 +119,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+          fetch-depth: 0
       - run: python3 scripts/release.py image
       - run: python3 scripts/release.py suite
 

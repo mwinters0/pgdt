@@ -550,6 +550,9 @@ class Workflows(unittest.TestCase):
             checkout = "\n".join(body)
             self.assertIn("ref: ${{ inputs.ref }}", checkout, job)
             self.assertIn("persist-credentials: false", checkout, job)
+            # The suite resolves commits the docs declare; a shallow clone
+            # fails it on CI alone.
+            self.assertEqual("fetch-depth: 0" in checkout, "release.py suite" in checkout, job)
 
     def test_the_draft_waits_for_every_job_that_proves_something(self):
         jobs = jobs_of("release-build.yml")
