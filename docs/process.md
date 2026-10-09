@@ -49,7 +49,8 @@ the evidence half lands first.
 **4. Land a slice, write its notes** — `roadmap-P<N>.<M>-<slug>-notes.md`, as it
 lands, even for a slice that lands no code, stating outcome: what the next phase
 inherits and the negative results, never a restatement of the spec. Tick the box
-in the same change and point it at the notes.
+in the same change and point it at the notes. **The last slice's box is ticked
+like any other**; the wrap is a separate change.
 
 **5. Wrap the phase.** Consolidate the slice notes into one
 `roadmap-P<N>-<slug>-notes.md`, delete the per-slice files, and delete the

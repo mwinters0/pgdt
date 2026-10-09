@@ -27,7 +27,8 @@ Every one of these is in the *same* change as the code, never a follow-up.
    or quotes a measured number. The register is capped, so an entry added may
    mean one pruned.
 3. **The STATUS checklist ticked**, linking the notes doc, plus any change to
-   "Not started" or the deficiency register the slice caused.
+   "Not started" or the deficiency register the slice caused. **The last
+   slice's box is ticked like any other**; the wrap is a separate change.
 4. **The phase spec left untouched** — progress never goes there; the spec
    changes only when a *decision* does, with the reasoning in a history entry.
 5. **A history entry** only for a pickup point or a discovery that changed the
