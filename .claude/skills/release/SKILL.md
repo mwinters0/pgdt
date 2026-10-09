@@ -52,8 +52,9 @@ the commit's time, so it builds what the SHA step 5 prints will build
 
 ## 4. Rehearse
 
-The workflows' own commands, so no second recipe exists: the image, both
-targets' release builds, both `THIRD-PARTY-NOTICES` under the allow-list, the
+The workflows' own commands, run for both targets at once rather than a job a
+target, with the scripts' tests beside them and without `preflight` and
+`draft`, which reach GitHub: the image, both targets' release builds, both `THIRD-PARTY-NOTICES` under the allow-list, the
 x86-64 suite, the archives, the smoke run of the x86-64 one, the checksums.
 arm64 is a build only: this host runs no arm64 code.
 

@@ -4,7 +4,7 @@
 # exists (`docs/design/roadmap-P29-releases.md`, "Building, tagging and
 # publishing").
 #
-# **The workflow holds no logic.** Every step is one line of `scripts/release.py`
+# **The workflow holds no logic.** Every `run:` step is one line of `scripts/release.py`
 # (the image, the builds, the notices, the suites) or `scripts/release_ci.py`
 # (the archives, the smoke run, the checksums, the draft), whose tests hold
 # these lines to those scripts' own command lines

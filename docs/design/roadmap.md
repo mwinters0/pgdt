@@ -170,7 +170,8 @@ Four bounds, and they are what keep this from being "take everything":
   the other. `stream::worker_count` and `BufferPool::slots`' clamp are the
   second half in code: resident saturates at `WorkerMemory::at` of the
   announced count — its readers' own terms plus the block pool's retention
-  list — and what no pool holds, so budget above that is taken by nothing.
+  list — and what no pool holds, plus what `at` does not bill (`KD24`'s chunk
+  free list, `KD111`'s unit), so budget above that is taken by nothing.
   Below it the bound is not the budget: where a stated `--jobs` outruns what
   the budget affords, the block pool's slot ceiling follows the announced count
   and resident passes the stated number (`KD21`). The first half is

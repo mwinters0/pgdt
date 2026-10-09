@@ -35,7 +35,8 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// budgets, and neither holding is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count
 /// comes off its budget — a plain dump's scan, or one reader, whose count
-/// cannot fall, still leaves the margin. *Rejected: taking them off the
+/// cannot fall, still leaves the margin, or where one reader alone overruns it,
+/// overruns it no further. *Rejected: taking them off the
 /// allowance the margin is a fraction of*: the container's limit is still the
 /// whole allowance, and a margin taken of less would let the predicted
 /// resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`] of the

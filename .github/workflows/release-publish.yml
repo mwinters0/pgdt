@@ -5,7 +5,7 @@
 # The tag must be annotated, its message becomes the Release body, and the
 # draft is found by the tag's name and checked against the tag's commit; a tag
 # with no matching draft fails here, loudly. Every check is in
-# `scripts/release_ci.py` (`plan_publish`), and the tag name arrives as
+# `scripts/release_ci.py` (`fetch_tag`, `plan_publish`), and the tag name arrives as
 # `GITHUB_REF_NAME`, never interpolated into a shell line.
 name: release-publish
 

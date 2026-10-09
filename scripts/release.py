@@ -4,7 +4,7 @@ suite run there.
 
 `docs/design/roadmap-P29-releases.md`, "The build image", is what this
 implements: one image, `release/Dockerfile`, pinned by digest, builds every
-release artifact, and the glibc it links against is the floor a release
+binary and notice a release ships, and the glibc it links against is the floor a release
 promises. Each step is an argv run in that image, so a rehearsal here and CI
 run the same commands: on the host a step is wrapped in a container run (CI's
 runner is such a host, `PGDT_RELEASE_CONTAINER=docker`; a `container:` job
@@ -15,9 +15,9 @@ it as it stands, which is what the image itself does.
 copies, `rust-toolchain.toml` and `mise.toml` -- so a changed pin builds a new
 image and an unchanged one is reused, never a stale image under a name that
 outlived what built it. `--inside` refuses an image built from other copies
-of those files than the tree's.
+of the two copied files than the tree's.
 
-**Every binary built is held to the floor** (`check_floor`): no `GLIBC_`
+**Every binary `build` or `bench` makes is held to the floor** (`check_floor`): no `GLIBC_`
 version it needs may be past the glibc of the image's `libc6-dev` its target
 links against. The link is against that glibc, so the check holds by
 construction; it is the guard that says so, and the one a host build fails.
@@ -36,11 +36,13 @@ the image is on, so an arm64 host's image is how the second target's code runs
 its tests: nothing of the suite crosses between hosts. What becomes of the output --
 the archives, the checksums, the draft, the publish -- is `scripts/release_ci.py`.
 
-**The register builds here too** (`scripts/measure.py`): the shipped binary it
-times is `build --target x86_64-unknown-linux-gnu`'s, and each variant it times
-beside that one -- an allocator leg, the instrument, the `xz_decode` example --
-is this recipe with only its package, features or target directory changed
-(`Build`), so two binaries a figure compares differ by what the figure names.
+**The register builds here too** (`scripts/measure.py`): the binary it times as
+the shipped one is `build --target x86_64-unknown-linux-gnu`'s, a release's
+build but for `--release`'s variable, which only `--version` reads; each
+variant it times beside that one -- an allocator leg, the instrument, the
+`xz_decode` example -- is this recipe with only its package, example, features
+or target directory changed (`Build`), so two binaries a figure compares differ
+by what the figure names.
 A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler
 and glibc, criterion's output landing in the release state's target directory.
 
@@ -281,7 +283,8 @@ def run_in_image(
 
 
 def check_inside(copies: Path = IN_IMAGE_COPIES, repo: Path = REPO) -> None:
-    """Refuse to run a step in an image built from other pins than the tree's."""
+    """Refuse to run a step in an image built from other copies of
+    `CONTEXT_FILES` than the tree's."""
     for name in CONTEXT_FILES:
         have = copies / name
         if not have.is_file():
@@ -421,7 +424,7 @@ class Build:
     `Build(target)` is a release's own: `pgdt` at its default features. Every
     other value is a variant the register times beside it, which shares the
     image, the compiler, `--locked` and the explicit `--target` with it, so it
-    differs from the release's binary by its package and features alone."""
+    differs from that build by its package, example and features alone."""
 
     target: str = NATIVE_TARGET
     package: str = "pgdt"
@@ -495,7 +498,7 @@ class Bench:
 
     def criterion_root(self, target_dir: Path) -> Path:
         """Where criterion writes under `target_dir`: `$CARGO_TARGET_DIR/criterion`,
-        which the image sets for every step (`MOUNTS`)."""
+        which every step's container run sets (`MOUNTS`)."""
         return target_dir / "criterion"
 
     def step(self) -> list[str]:

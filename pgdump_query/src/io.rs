@@ -1038,9 +1038,10 @@ impl Parallelism {
     /// count comes off the budget**, for every source: where the count cannot
     /// fall — a source recommending no per-worker memory, whose count no
     /// ceiling bounds, or one worker, the floor — the predicted resident still
-    /// stays under the margin, and a budget pushed below a unit declines it
-    /// (`docs/design/decisions.md`, "D4"). The cap is untouched, and with
-    /// nothing held the budget is [`Parallelism::fit`]'s.
+    /// stays under the margin, or where one worker alone overruns it, no
+    /// further over it than with nothing held, and a budget pushed below a
+    /// unit declines it (`docs/design/decisions.md`, "D4"). The cap is
+    /// untouched, and with nothing held the budget is [`Parallelism::fit`]'s.
     /// *Rejected: a plain-source exception*, what a plain budget is worth
     /// being `KD25`'s and `KD32`'s question rather than this rule's.
     pub fn within_shared(
@@ -1110,9 +1111,9 @@ impl Parallelism {
     /// there is one no allowance raises, and one below it — an allowance
     /// under [`MEMORY_RESERVE`] plus that constant, or holdings the margin
     /// could not absorb —
-    /// is one a larger allowance does. A source recommending a cost is carved
-    /// by the count its cost affords, so a larger allowance raises its budget
-    /// with the count.
+    /// is one a larger allowance does. A source recommending a cost is
+    /// answered yes, its count unread: its budget rises with the count wherever
+    /// the cap or the margin, rather than `jobs`, bounded it.
     pub fn allowance_raises_budget(memory: Option<WorkerMemory>, budget: u64) -> bool {
         recommended(memory).is_some() || budget < DEFAULT_MEMORY_BUDGET
     }
@@ -2277,9 +2278,10 @@ impl BlockCache {
     /// list is `slots() - 1` units shared by every reader, and is
     /// [`WorkerMemory`]'s second term.
     ///
-    /// It is one number with two consumers — [`BlockCache::affordable`] and
-    /// [`xz_partition_advice`]. *Rejected:* two statements of the one
-    /// cost, which is how a divisor comes to charge nothing for the decoder.
+    /// It is one number with three consumers — [`BlockCache::affordable`],
+    /// [`xz_partition_advice`] and [`BlockCache::worker_memory`]. *Rejected:*
+    /// two statements of the one cost, which is how a divisor comes to charge
+    /// nothing for the decoder.
     fn reader_bytes(&self, chunk_bytes: u64, decode_bytes: u64) -> u64 {
         (self.unit as u64).saturating_add(chunk_bytes).saturating_add(decode_bytes)
     }
@@ -2938,7 +2940,8 @@ impl XzSource {
 /// `xz_seek::Verify::Full`'s seek-away escape, now a call we make — and the
 /// block a run's last read stopped inside is left as that run's reading ends
 /// ([`ByteRangeSource::complete_reads`]). Dropping a handle part-way compares
-/// nothing, so a handle is dropped uncompleted only where its read failed.
+/// nothing, so a handle is dropped uncompleted only where its read failed or
+/// its stream carries no check ([`LiveBlock::leave`]).
 struct LiveBlock {
     /// Which block the handle is decoding.
     index: usize,

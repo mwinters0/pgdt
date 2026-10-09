@@ -2047,8 +2047,8 @@ fn resume_notice(
 ///
 /// As a PID namespace's init — `pgdt` `exec`'d in a container — the kernel
 /// discards any signal left at its default action, so there the handler
-/// `_exit`s with `128 + n` instead, as [`die_by`] does, and `init`'s own
-/// handlers on both signals are released to these.
+/// `_exit`s with `128 + n` instead, the status [`die_by`] exits with there,
+/// and `init`'s own handlers on both signals are released to these.
 fn install_interrupt_guard(
     cancel: Arc<Cancellation>,
     init: &mut InitShutdown,
@@ -2118,7 +2118,7 @@ impl InterruptGuard {
 /// n)`: a shell reports the two alike, but a calling script stops only past a
 /// child a signal killed (`docs/design/runtime-invariants.md`, "RT20").
 /// Nothing runs destructors past this, so the instrument is asked here rather
-/// than left to `main`'s guard, and stdout is flushed.
+/// than left to `commands`' guard, and stdout is flushed.
 ///
 /// **Not as a PID namespace's init**, which the kernel shields from a signal
 /// it raises at itself under the default action: the raise would be dropped

@@ -56,9 +56,10 @@
 //!   (`docs/design/decisions.md`, "D33").
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
-//!   whenever a comment block's TOC-Name line parses (I3, I16). The verbose
-//!   `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines that can
-//!   precede the Name line are ordinary comment lines to this parser.
+//!   whenever a comment block's TOC-Name line parses (I3, I16), unless the
+//!   statement it heads classifies as `Framing`, whose header is vetoed. The
+//!   verbose `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines
+//!   that can precede the Name line are ordinary comment lines to this parser.
 //!
 //! - **TOC inheritance for follow-on statements.** A TOC entry is not one
 //!   statement: `Builder`'s `governing_toc` is the entry a comment-less
@@ -136,7 +137,8 @@ pub struct Span {
     /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
     /// `VersionHeader`) carrying no TOC comment of its own, or a `COPY` block's or large-object region's, with
     /// no TOC comment of its own, or one whose own TOC-shaped comment did not
-    /// parse. Not a substitute for
+    /// parse, or a `Framing` statement's, whose header is vetoed even where it
+    /// has its own. Not a substitute for
     /// [`SpanBody`]'s own per-kind
     /// fields: the two are separately-sourced observations of one object
     /// (`docs/design/decisions.md`, "D30").
@@ -200,6 +202,14 @@ pub struct TocHeader {
 /// `; Type: ` inside an object's own name, so a pathological name can
 /// mis-split. I3 treats the TOC comment as a hint, and this parser only ever
 /// feeds enrichment, never a boundary.
+///
+/// deficiency: KD114 — `step` hands this a trimmed line, so an empty owner's
+/// `; Owner: ` arrives as `; Owner:`, the split on `"; Owner: "` fails, and the
+/// whole header is `None`: the entry (`COMMENT ON EXTENSION`'s, in the
+/// fixtures) still owns its span but carries no `TocHeader`, so `pgdt info`'s
+/// `object kinds:` census never counts it and TOC coverage reads it as
+/// unattributed. The empty-string arm of the owner's placeholder test is
+/// reached only by an untrimmed line, which the unit test below passes.
 fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
     let rest = trimmed.strip_prefix("-- ")?;
     let rest = rest
@@ -1460,10 +1470,10 @@ impl Builder {
     }
 
     /// Push the finished span for a [`Mode::InsertRun`] that has ended,
-    /// however its caller found that out — [`step`](Self::step),
-    /// [`flush_pending`](Self::flush_pending) at end of scan, or
-    /// [`close_insert_run`](Self::close_insert_run) when a non-`push_span`
-    /// entry point interrupts a still-open run.
+    /// however its caller found that out — [`step`](Self::step) or
+    /// [`flush_pending`](Self::flush_pending) at end of scan.
+    /// [`close_insert_run`](Self::close_insert_run) calls it too, but never
+    /// with a run open (`KD106`).
     fn push_insert_run(
         &mut self,
         start: u64,
@@ -1487,8 +1497,8 @@ impl Builder {
         // deficiency: KD106 — `on_copy_start` and `on_large_object_start` call
         // this after their own `mem::replace` has left `self.mode` `Idle`, so
         // a run either one interrupts is dropped: its bytes extend the span
-        // before it and no `InsertRun` counts its rows. `pg_dump` ends every
-        // run with a blank line, which `step` closes it on.
+        // before it and no `InsertRun` counts its rows. `pg_dump` follows every
+        // run with the next entry's TOC comment, which `step` closes it on.
         if let Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
         {
@@ -1522,14 +1532,15 @@ impl Builder {
     /// `end`, and stamping its `end` there would be wrong.
     ///
     /// A `COPY` block's two edges are both such boundaries, and
-    /// `crate::stream`'s mapping pass calls this at each of them: right after
-    /// [`on_copy_end`](Self::on_copy_end), to bank progress at completed
-    /// blocks (`mode` is `Idle` for the block's duration and I12 puts the
-    /// large-object region strictly after it, so nothing pends one either);
-    /// and right after [`on_copy_start`](Self::on_copy_start), at the *start*
-    /// offset of the still-pending `Data` span, where `self.spans.last()` is
-    /// the DDL span before it and I1 makes this the boundary
-    /// `crate::preamble::dump_metadata_from_spans` may be called at.
+    /// `crate::stream`'s mapping pass calls this at both: right after
+    /// [`on_copy_end`](Self::on_copy_end) where the save throttle's gate opens,
+    /// to bank progress at a completed block (`mode` is `Idle` for the block's
+    /// duration and I12 puts the large-object region strictly after it, so
+    /// nothing pends one either); and right after
+    /// [`on_copy_start`](Self::on_copy_start) at a database's first block, at
+    /// the *start* offset of the still-pending `Data` span, where
+    /// `self.spans.last()` is the DDL span before it and I1 makes this the
+    /// boundary `crate::preamble::dump_metadata_from_spans` may be called at.
     pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
         debug_assert!(matches!(self.mode, Mode::Idle));
         debug_assert!(self.pending_large_objects.is_none());
@@ -2327,7 +2338,7 @@ mod tests {
 
     /// The case [`Builder::snapshot`] exists for: `stream.rs`'s live segment
     /// needs a tiling span list *before* the scan reaches its true end, right
-    /// after each `CopyEnd`, `mode` being `Idle` from the `CopyStart` before
+    /// after a `CopyEnd`, `mode` being `Idle` from the `CopyStart` before
     /// it. `check_tiling` is checked at every such boundary
     /// rather than only at the very end.
     #[test]

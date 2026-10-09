@@ -2,7 +2,7 @@
 //!
 //! **Off by default and never in a shipped binary.** The whole module is
 //! behind the `introspect` Cargo feature; without it every item here is a
-//! no-op and the binary is byte-for-byte the one that ships. With it, `pgdt`
+//! no-op that compiles to nothing. With it, `pgdt`
 //! installs a counting `#[global_allocator]` over `mimalloc::MiMalloc` and
 //! writes, on the way out, what the program held, what mimalloc was holding
 //! for it, and what glibc was holding for the C code beside it.

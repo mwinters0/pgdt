@@ -219,7 +219,7 @@ count and the census read every row); a proposal is sized against the per-row pr
 TOC-driven segmentation is unsound on non-`pg_dump` input, and a dollar-quoted body can hold a
 TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a refusal. A span's `end` is fixed by
 the next push, so `Builder::snapshot` is possible. The preamble prepass (byte 0 to the first `COPY`
-header, I1) runs up front in both mapping entry points, or an interrupted `parse` banks blocks with
+header, I1) runs up front in both mapping entry points unless the cache holds it, or an interrupted `parse` banks blocks with
 no DDL. `attach_text` slices span text after building and `Data` spans store none, which is why
 `query` cannot run cache-only. Evidence: `preamble-prepass`.
 

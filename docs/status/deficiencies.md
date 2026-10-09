@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD113 -->
-**`KD1`–`KD113` are allocated, and nothing at or below `KD113` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD114 -->
+**`KD1`–`KD114` are allocated, and nothing at or below `KD114` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -507,3 +507,9 @@ than reading as a phase nobody has sliced.
   the provider's scans share no budget, though unstated is not unlimited
   (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
   user. Detail: `pgdump_query/src/io.rs`.
+
+- **KD114** — a TOC header whose owner is empty (`; Owner: `, as
+  `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry
+  owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
+  it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
+  any change to the TOC header parser. Detail: `pgdump_query/src/map.rs`.

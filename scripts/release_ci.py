@@ -5,12 +5,14 @@ their checksums, the smoke run, the draft Release and its publication.
 `docs/design/roadmap-P29-releases.md`, "Building, tagging and publishing" and
 "The artifacts", is what this implements. The workflows
 (`.github/workflows/release-build.yml`, `release-publish.yml`) hold no logic of
-their own: each step is one line calling `release.py` or this script, so what a
-workflow does is what these tests hold it to, and the first live run is not the
-first time any of it has run. **A workflow never interpolates an input into a
+their own: each `run:` step is one line calling `release.py` or this script,
+the rest being pinned actions that check out, upload, download and attest, so
+what a workflow does is what these tests hold it to, and the first live run is
+not the first time any of it has run but for the GitHub calls the tests fake
+(`Gh`). **A workflow never interpolates an input into a
 shell line**: the commit a build is dispatched for and the tag a publish is
 triggered by arrive as environment variables (`INPUT_REF`, `GITHUB_REF_NAME`)
-and are validated here before anything reads them.
+and are validated here before anything is built or published from them.
 
 **A draft is matched by name.** The build creates it as `v<manifest version>`;
 the publish finds it by the pushed tag's name and then checks its commit, so a
@@ -18,14 +20,15 @@ tag naming another version finds nothing, and the tag, the draft and the
 archives carry one string. Publishing is refused unless the tag is annotated
 (its message is the Release body, and a lightweight tag has none), the draft
 exists unpublished, was built from the tag's commit, and holds exactly the
-assets this script names: a draft built by anything else is not published.
+assets this script names: a draft failing any of these is not published.
 
 **An archive is deterministic**: one top-level directory, entries in a fixed
 order with fixed ownership, and the commit's own time, so the same inputs give
 the same bytes.
 
-Usage (the first four read `release.py`'s output under the release state's
-target directory and write `dist/`):
+Usage (`archive` reads `release.py`'s output under the release state's target
+directory; `archive` and `checksums` write `dist/`, which `smoke` and `draft`
+read):
 
     python3 scripts/release_ci.py preflight                   # INPUT_REF is HEAD; no Release for the version yet
     python3 scripts/release_ci.py archive [--target T]...     # dist/pgdt-v<version>-<target>.tar.xz
@@ -429,10 +432,11 @@ class Publication:
 def plan_publish(name: str, tag: Tag, releases: Sequence[dict]) -> Publication:
     """The release `name`'s tag publishes, or the reason it must not.
 
-    **Every refusal is a tag that does not match its draft**: an unannotated
-    tag (no text), a tag with no draft (nothing was built for it), a draft
-    already published, one built from another commit, or one not holding
-    exactly the assets of this version. A published release is immutable, so
+    **Every refusal is a tag that is not a release's or does not match its
+    draft**: a name not `v<major>.<minor>.<patch>`, an unannotated tag or an
+    empty annotation (no text), a tag with no draft (nothing was built for it)
+    or several, a draft already published, one built from another commit, or
+    one not holding exactly the uploaded assets of this version. A published release is immutable, so
     each is checked before the one irreversible call."""
     m = TAG_RE.match(name)
     if not m:

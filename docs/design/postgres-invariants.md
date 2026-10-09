@@ -65,7 +65,7 @@ preamble search at each `\connect`.
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `decisions.md` ("D30"); the mapping pass restating
 `DumpMetadata` at **each** `\connect`ed database's first `COPY` block
-(`decisions.md`, "D63"), which the per-database scope limit licenses — each
+(`pgdump_query/src/stream.rs`, `map_forward`), which the per-database scope limit licenses — each
 database's first `COPY` header closes that database's preamble;
 `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers
 for metadata built by some scan other than the mapping pass.
@@ -1769,7 +1769,8 @@ fixture's database sequence is chosen by naming, not observed: a second
 data-carrying database named `pgdt_tenant` lands between `pgdt_fixture` and
 `postgres`, which is what makes "cancel inside the *second* database's data" a
 deterministic file offset for the recurring-metadata-boundary test
-(`decisions.md`, "D63"). If the ordering
+(`pgdump_query/tests/map_file.rs`,
+`an_interrupt_inside_a_later_database_types_the_segments_it_finished`). If the ordering
 changed, that test would cancel in the wrong segment and still pass.
 **Re-verify:**
 ```sh

@@ -5703,7 +5703,7 @@ def gate_section(
 ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
 
 #: What an *instrumented* build appends beside its allocator
-#: (`pgdt/src/introspect.rs`). Such a build takes an atomic on every allocation
+#: (`pgdt/src/introspect.rs`). Such a build takes atomics on every allocation
 #: and prints its own live bytes and its allocators' statistics: it is how an
 #: attribution is taken, and it is not what any figure may be timed or measured
 #: on (`docs/design/roadmap.md`, "Attribution is introspective; only the gate
@@ -5888,7 +5888,7 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
 
     **Its own target dir**, because a `--features` build in the shipped
     one's overwrites the shipped binary — every other figure's — with a
-    binary that takes an atomic on every allocation and that
+    binary that takes atomics on every allocation and that
     `binary_allocator` then refuses, which is a sitting lost to a build step.
     Built in the release image (`build_in_image`), as the shipped binary is.
 
@@ -7933,7 +7933,7 @@ def _reserve_instrument_specs() -> list[RunSpec]:
     whether the cap had any arena to remove.
 
     These legs are readings of this figure, declared here; the build is never
-    the timed binary: it takes an atomic on every allocation and
+    the timed binary: it takes atomics on every allocation and
     `binary_allocator` refuses it."""
     return [
         RunSpec(
@@ -8199,7 +8199,7 @@ def run_reserve(session: Session) -> str:
     stays as the independent reading it has to agree with — two instruments
     sharing no mechanism, which is the independence
     `.claude/skills/evidence/SKILL.md`'s third rule asks for. The instrument
-    build is never the timed binary: it takes an atomic on every allocation, and
+    build is never the timed binary: it takes atomics on every allocation, and
     `binary_allocator` refuses it (`docs/design/roadmap.md`, "Attribution is
     introspective; only the gate is blind").
 
@@ -9148,7 +9148,7 @@ def run_reserve(session: Session) -> str:
         attribution = (
             "**What the process says it held**, on the introspection build running the "
             "same flagless shape as the axis above. These are this figure's instrument legs, "
-            "declared in its register entry; the build takes an atomic on every allocation and "
+            "declared in its register entry; the build takes atomics on every allocation and "
             "`pgdt --version` names it, so it is never timed. **It counted in front of "
             "mimalloc, so the process held two heaps**: the Rust heap is mimalloc's, and "
             "glibc's holds only what reached C `malloc`. The account this figure draws — the "
@@ -9168,7 +9168,7 @@ def run_reserve(session: Session) -> str:
         attribution = (
             "**What the process says it held**, on the introspection build running the "
             "same flagless shape as the axis above. These are this figure's instrument legs, "
-            "declared in its register entry; the build takes an atomic on every allocation and "
+            "declared in its register entry; the build takes atomics on every allocation and "
             "`pgdt --version` names it, so it is never timed. The "
             "two families do not cover the same memory — the Rust column is what passed through "
             "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "

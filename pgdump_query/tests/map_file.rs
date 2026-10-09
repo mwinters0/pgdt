@@ -372,9 +372,10 @@ impl ByteRangeSource for FailsPast<'_> {
 }
 
 /// **The write-per-block claim, and the reason resuming is worth building.**
-/// Every completed block is banked at a `CopyEnd` watermark, which is a
-/// resumable point by construction — an interrupted scan leaves something to
-/// resume from and something to report, rather than nothing at all.
+/// Every completed block is a `CopyEnd` watermark, a resumable point by
+/// construction, and the first is banked, the save throttle starting due — an
+/// interrupted scan leaves something to resume from and something to report,
+/// rather than nothing at all.
 ///
 /// The interruption is cut exactly one byte past the first block's end, with
 /// one-byte reads so that boundary is a read boundary: the block's own save has
