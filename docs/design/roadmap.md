@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27, P28, P30, P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
-| P29 — versioned binary releases | Current | [spec](roadmap-P29-releases.md); checklist in [`STATUS.md`](../status/STATUS.md) |
+| P29 — versioned binary releases | Complete | [spec](roadmap-P29-releases.md); [notes](roadmap-P29-releases-notes.md) |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
@@ -675,7 +675,8 @@ criterion. The facts are in [its inbox](roadmap-P32-schema-model-inbox.md).
 ## P29 — Versioned binary releases
 
 Publishing `pgdt` as versioned GitHub Releases, Linux only. Specified in
-[`roadmap-P29-releases.md`](roadmap-P29-releases.md).
+[`roadmap-P29-releases.md`](roadmap-P29-releases.md); complete, its notes
+[`roadmap-P29-releases-notes.md`](roadmap-P29-releases-notes.md).
 
 ## P34 — macOS
 

@@ -134,6 +134,9 @@ our API, CLI, or data until we reach v1.0.
     - [ ] DuckDB
     - [ ] Trino (?)
     - [ ] Spark (?)
+- Distribution
+    - [x] Linux binaries for x86-64 and arm64, as versioned releases (see: [installing](docs/manual/installing.md))
+    - [ ] macOS
 - Metadata collection:
     - [x] A full byte-exact file map and DDL object inventory.
     - [x] Row groups with per-column statistics.
