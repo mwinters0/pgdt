@@ -124,8 +124,11 @@ Run it after rewriting a heading.
 - **We do not make design decisions based on implementation cost** — we
   shouldn't reinvent available wheels, but the elegance and correctness of our
   final 1.0 design is all that matters.
-- **Memories** go in this project, not user memory; development may move
-  machines.
+- **Claude Code's auto-memory (`~/.claude/projects/…/memory/`) is not used
+  here**: it is machine-local, and development may move machines. A lesson
+  goes into the repo, in the doc or skill that governs it, proposed to the
+  maintainer first if it adds a rule.
+- **Commit straight onto `main`**, never on a branch; push only when asked.
 - **The session scratchpad is not a home.** Before a session or round
   reports, whatever a later one needs moves to `runs/` or to a data directory
   `CLAUDE.local.md` names, and the record (notes doc, history entry, handoff
