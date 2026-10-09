@@ -38,5 +38,4 @@ suite is built where it runs". Nothing below ran on an arm64 host.
 - **qemu-user was not taken.** It would run the cross-built tests on this host,
   but under this host's `/proc`, cgroups and page size, and without arm's
   memory ordering, which are what the runtime-discovery and allocator tests
-  look at; it needs a system-wide `binfmt` registration this machine lacks.
-  `/release` still rehearses arm64 as a build only.
+  look at. `/release` still rehearses arm64 as a build only.

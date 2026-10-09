@@ -88,7 +88,7 @@ Spec: [`../design/roadmap-P29-releases.md`](../design/roadmap-P29-releases.md).
 - [x] **29.4** The two workflows: `release-build` (both targets in the image, the x86-64 suite there, the arm64 suite's archive on `ubuntu-24.04-arm`, a smoke run of each archived `pgdt`, attestations, `SHA256SUMS`, the draft) and `release-publish` (the tag's draft checked against its commit, the annotation as the body, published), its logic a tested script under `scripts/` — [notes](../design/roadmap-P29.4-workflows-notes.md)
 - [x] **29.4.1** The arm64 suite built where it runs: the cross-built nextest archive, its upload and its `suite --archived` run dropped for `release.py suite` on the arm64 runner, a job beside the cross build, the doctests included — [notes](../design/roadmap-P29.4.1-arm64-suite-notes.md)
 - [x] **29.5** `/release` and the user's page: the skill, with the Debian window check; a manual page on installing and verifying; the README and CONTRIBUTING — [notes](../design/roadmap-P29.5-release-notes.md)
-- [ ] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture
+- [x] **29.6** v0.1.0: immutable releases on, cut by the maintainer through `/release`, and verified from outside — `gh attestation verify`, `gh release verify-asset`, each archive run in a fresh `debian:trixie` on its architecture — [notes](../design/roadmap-P29.6-v0.1.0-notes.md)
 
 ## Not started
 
