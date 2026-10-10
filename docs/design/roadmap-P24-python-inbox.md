@@ -48,3 +48,19 @@ nulls.
 **Origin.** Filed 2026-09-30, closing a call on D98. Contingent on
 `arrow-cast` still printing through `chrono` (`../status/upstream.md`, "UF2").
 
+
+## The library P24 binds is six crates with no facade
+
+**Fact.** P35 splits `pgdump_query` into `pgdt-core`, `pgdt-model`,
+`pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query`, and retires the
+`pgdump_query` facade rather than keeping it as a public face; what a
+boundary forces public that is not API sits in each crate's `internal`
+module, and no embedder may name one
+([`roadmap-P35-seams.md`](roadmap-P35-seams.md), "Naming and layout").
+
+**Why P24 cares.** The binding is an embedder like `datafusion-pgdump`, and
+which crates it depends on, and whether it wants one entry crate of its own,
+is its to decide — the spec says P24 makes its own entry point.
+
+**Origin.** Filed 2026-10-10, grilling P35; contingent on P35 landing as
+specified.

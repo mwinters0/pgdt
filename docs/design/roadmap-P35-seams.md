@@ -21,9 +21,34 @@ question; that is the moment crate boundaries can be real rather than drawn.
 Compile time is the second motive and the weaker one: the edit-to-check loop
 is already short (`runs/rebuild-baseline-20261009.txt`), and a round's cost is
 mostly the suite running. What a split buys is that an edit in one crate no
-longer re-reads the others, and a test binary moved down links less; a
-`--timings` run on the split tree against the baseline is the figure, taken by
-the slice that carves the crates, not promised here.
+longer re-reads the others, and a test binary moved down links less. **No
+reading of it is taken**: no outcome would undo the split, and a before and
+after on two commits prices everything between them. A build-time figure
+earns its apparatus when the loop becomes the complaint.
+
+**Runtime is a cost the split can carry unseen.** One crate lets the compiler
+inline across every module; six stop it at each boundary for a function that
+is neither generic nor `#[inline]`, and the per-field and per-row calls —
+query into codec and core — are where that lands. The release build states no
+profile, so nothing restores it, and nothing has measured it. The phase owes a
+reading of what the split costs at run time, and a regression's remedy is a
+release-profile decision with its own `D<k>` and figure, never a slice's
+quiet edit.
+
+The reading is a `release-profile` figure built as `allocator` is: legs at
+Cargo's default, thin LTO, and fat LTO with one codegen unit, each built from
+the tree measured, so no sitting subtracts one commit from another. It sits
+once on the one-crate tree and once on the split one; **the split cost
+nothing recoverable if the default leg's gap to fat LTO is no wider after the
+carve than before, within the figure's noise**. The shipped build's profile
+is decided from the two sittings whatever they show, the first pricing
+today's binary as much as the split. It times the `allocator` figure's three
+shapes — `parse`, and `query` untyped and typed, warm over the control file —
+which hold the per-row split and the per-field decode the split crosses. Each
+leg is a named Cargo profile inheriting `release`, built into its own target
+dir, and `pgdt --version` names it, a binary that cannot say which leg it is
+refused as an allocator leg is; `profiling` inherits whatever `release`
+becomes, so a sampling profile is always of the shipped build.
 
 ## The crate graph
 
@@ -32,9 +57,17 @@ layers of D68 become crates, with one new one below the parsers.
 
 - **`pgdt-core`** — the error type, the `introspect` hooks, the SQL lexer and
   the COPY text format: what every other crate reads and nothing else owns.
+  **The error type names no dependency's error**: it is the library's
+  vocabulary of failure, and a dependency's error — Arrow's, xz-seek's,
+  bincode's, tokio's — is a cause it carries opaquely, reached by downcast,
+  never a variant that would compile that dependency into every crate.
 - **`pgdt-model`** — the dump's vocabulary: spans, blocks, the schema the
   preamble declares, block statistics, diagnostics. **This is the cache's
-  format**; `bump-cache-format` points here. Pure data, no I/O, no Arrow.
+  format**, `CACHE_FORMAT_VERSION` beside it, and `bump-cache-format` points
+  here. Data, and the contracts over a
+  block's rows that the parsers call and a layer above implements
+  (`FieldCount`, `BlockObserver`) — a contract over the data is model wherever
+  its implementor sits; no I/O, no Arrow.
 - **`pgdt-io`** — byte sources (local, `.xz`, fetched, remote), the memory
   limit and its discovery, worker sizing. The `http` feature lives here.
 - **`pgdt-dump`** — the parsers and the cache: the scanner, the preamble
@@ -52,9 +85,15 @@ layers of D68 become crates, with one new one below the parsers.
 
 What the graph settles: D74's two rules — the parsing crates compile no Arrow,
 the codec reaches `arrow::datatypes` and no further and does no I/O — become
-dependency lists rather than greps. Why `pgdt-model` exists: without it the
+dependency lists rather than greps. Cargo refuses a cycle but not an edge the
+graph does not draw, so once the facade is gone a script reads the graph
+from `cargo metadata` and holds every member's dependencies to the list
+above, the codec synchronous and no embedder naming an `internal` path. Why `pgdt-model` exists: without it the
 codec sits above the preamble grammar, so a change to how `CREATE TABLE` is
 read recompiles every decoder; with it the codec and the parsers are siblings.
+Why `pgdt-core` is not folded into it: the model is exactly what the cache
+persists, so an edit there is the edit that asks whether the format bumps, and
+that test holds only while the lexer and the error type live elsewhere.
 Why the cache is not its own crate: it persists the model and is read by the
 index loader that then scans, so it sits beside the parsers, not below them.
 
@@ -72,13 +111,18 @@ the register; the skill names when one is due.
 Library crates are `pgdt-<name>`. The two DataFusion crates keep their
 `datafusion-*` names: releases are being cut, and that prefix is how the
 DataFusion ecosystem finds a provider. `namespace-init` and `peak-rss` are
-apparatus, not library, and keep their names. Every member moves under
+apparatus, not library, and keep their names. A dependency's version is
+stated once, in `[workspace.dependencies]`, every member naming it by
+`workspace = true`. Every member moves under
 `crates/`; `vendor/xz-seek` stays where the vendoring script puts it.
 
 During the carve, `pgdump_query` stays as a facade re-exporting what the new
 crates define, so the test binaries, `pgdt` and the DataFusion crates keep
 building slice by slice; the last carving slice retires it. Pre-1.0 means the
-facade owes nobody its survival ([`roadmap.md`](roadmap.md), "Pre-1.0").
+facade owes nobody its survival ([`roadmap.md`](roadmap.md), "Pre-1.0"), and
+none is kept as a public face: each crate's `internal` module already marks
+its API, a crate re-exporting the rest would spell every public name twice,
+and nothing is published (D104). P24's bindings make their own entry point.
 
 ## The file limits and the skill
 
@@ -103,7 +147,10 @@ port. P33 grows it, and the exemption is reconsidered there.
 ## What this phase does not do
 
 - **Change behaviour.** A move is whole; a signature changes only where a
-  crate boundary forces a type public.
+  crate boundary forces a type public. **What a boundary forces public that is
+  not API goes in that crate's `internal` module**, so a caller reaching past
+  the API names the word, and `datafusion-pgdump`, `datafusion-cli-pgdump`
+  and `pgdt` never do — a check, not a convention.
 - **Publish a `pgtypes` crate.** The codec crate makes one possible — its
   Arrow mapping is one module and its catalog types come from the model — but
   a published crate needs its own catalog types and Arrow behind a feature,
@@ -119,6 +166,7 @@ Evidence first: the limits script and its baseline before anything moves.
 Tests out of the big files before they are split, so the split reviews
 production code alone. The cycles inside the one crate broken, and the
 layering test rewritten to the crate assignment, before any `Cargo.toml`
-exists — the test passing is the proof the graph is acyclic. Then the carve,
-bottom up, behind the facade; then the facade retired and the record
-repointed; then the seams round over what is still red.
+exists — the test passing is the proof the graph is acyclic. The profile
+figure's first sitting; then the carve, bottom up, behind the facade; then
+the figure's second sitting and the profile decided; then the facade retired
+and the record repointed; then the seams round over what is still red.

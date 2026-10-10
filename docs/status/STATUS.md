@@ -85,9 +85,12 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 
 - [x] **35.1** The limits and the skill: `scripts/file_limits.py` with its tests, a meter in `check.py`, the `seams` skill, the rule in `process.md`, and the baseline report over the tree — [notes](../design/roadmap-P35.1-file-limits-notes.md)
 - [x] **35.2** Inline test modules moved to a file beside their module, in every file over a limit; every script and citation that named a test by its old path repointed — [notes](../design/roadmap-P35.2-tests-beside-notes.md)
-- [ ] **35.3** The cycles inside `pgdump_query` broken in place — the cancellation token and chunk default down to `io`, the catalog, span, block and statistics types gathered into a `model` module, the index loader lifted out of `index` — and `tests/layering.rs` carrying the crate assignment, passing
-- [ ] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises; the `--timings` reading against the baseline
-- [ ] **35.5** The facade retired; every member under `crates/`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
+- [ ] **35.3** The cycles inside `pgdump_query` broken in place — the cancellation token and chunk default down to `io`, the catalog, span, block and statistics types gathered into a `model` module, the index loader lifted out of `index`, `CACHE_FORMAT_VERSION` into `model` — and `tests/layering.rs` carrying the crate assignment, passing
+- [ ] **35.7** The ordering keys and the field-grammar checks lifted out of `predicate.rs` into a module of their own, assigned to `pgdt-codec` in `tests/layering.rs`
+- [ ] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree
+- [ ] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there
+- [ ] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`
+- [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
 - [ ] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green
 
 ## Not started

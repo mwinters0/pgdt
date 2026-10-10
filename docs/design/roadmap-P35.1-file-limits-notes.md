@@ -37,10 +37,8 @@ repoint's, in every `--affected` run too.
 
 - **A `touch` rebuild is a floor, not a cost.** `runs/rebuild-baseline-20261009.txt`
   holds one sample each of the library, the binary, one test binary and
-  `cargo check` rebuilt after touching one file: seconds, not minutes. The
-  before/after that slice owes is a `cargo build --timings` of the suite's
-  build on each tree, the same command on both, since the suite's build is
-  where a change's cost is paid.
+  `cargo check` rebuilt after touching one file: seconds, not minutes. It is
+  a note, not a figure, and no slice re-takes it (the spec, "Why now").
 - **Members are read from `[workspace].members` with globs**, so `crates/*`
   needs no edit here.
 
