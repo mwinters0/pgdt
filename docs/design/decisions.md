@@ -645,10 +645,10 @@ Rejected: four layers in one crate with upward deviations; the cache a crate of 
 Core, model, io and dump never name Arrow; the codec only its schema types and `i256`, is synchronous and does no I/O, nor does
 the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building
 to the read buffers, D46). Anything persisted is model vocabulary — declared type strings, never a `DataType` or another codec
-conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above
-(`model::BlockObserver`, `model::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by
-`map_err` where a crate meets it and reached by downcast, so no crate compiles another's dependency for the error's sake.
-Rejected: a `#[from]` variant per dependency's error, which compiles Arrow, xz-seek and bincode into every crate.
+conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above (`model::BlockObserver`,
+`model::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by `map_err` where a crate meets
+it and reached by downcast. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every
+crate; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

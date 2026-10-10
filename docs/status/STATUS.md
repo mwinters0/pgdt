@@ -90,7 +90,8 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree — [notes](../design/roadmap-P35.8-release-profile-notes.md)
 - [x] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL, of which there are none; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there — [notes](../design/roadmap-P35.4-carve-notes.md)
 - [ ] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`
-- [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
+- [ ] **35.10** Every forced-public item reachable only through its crate's `internal`: every library module private, each API namespace an embedder names a public module of named re-exports, and each method a crate above calls that is not API behind an extension trait `internal` exports
+- [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`, refusing an embedder's `internal` path or `timed!`/`row_evaluated!` and a codec `arrow_buffer` item but `i256`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
 - [ ] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green
 
 ## Not started
@@ -123,34 +124,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A method a crate above calls, and an item a crate above reaches in a
-  `pub` module, is reachable by its own path, not only through `internal`.**
-  The carve re-exports every item a boundary forced public from its crate's
-  `internal` and imports it from there, but a method or field has no module
-  to live in, so the `pub(crate)` ones a crate above calls became `pub` where
-  they stand (`DatabaseMetadata::empty`, `BlockCensus::merge`,
-  `FieldRefusal::into_error`, among others), and an item in a `pub` module
-  (`map::Builder`, `load::scan_preamble`, the cache's encoding behind
-  `test-support`) is public at that module's path as well. Why: the spec's
-  rule cannot be spelled for a method, and keeping a `pub` module's items off
-  its path means making every public module private behind an explicit
-  re-export, a reshaping no slice row names. Reconsidering means doing that,
-  with methods behind extension traits in `internal`, before 35.5 writes the
-  check that no embedder names `internal` — which as things stand sees none
-  of these ([`../design/roadmap-P35.4-carve-notes.md`](../design/roadmap-P35.4-carve-notes.md)).
-- **`pgdt-codec` depends on `arrow-buffer` beside `arrow-schema`**, for
-  `i256`, the decimal ordering key in `key.rs`, where the spec says the codec
-  "names `arrow-schema` only". Why: `arrow::datatypes::i256` is
-  `arrow-buffer`'s, which D74's "`arrow::datatypes` only" allowed, and the
-  spec's narrower phrase predates the keys moving into the codec (35.7); D74
-  now reads "its schema types and `i256`". Reconsidering means a 256-bit
-  integer that is not Arrow's for the key, a change to what a key holds.
-- **`datafusion-cli-pgdump` takes `async-trait`, `clap`, `datafusion` and
-  `tokio` from `[workspace.dependencies]`**, so its requirements are
-  `pgdt`'s (`clap` 4.6.6, `tokio` 1.53.1) rather than the targeted
-  `datafusion-cli` release's own (4.5.60, 1.52), which its manifest said it
-  mirrors; the comment now says a workspace version is upstream's or narrower
-  within it. Why: the spec states every shared version once, and the
-  lockfile already held one version of each, so nothing built changed.
-  Reconsidering means exempting that crate's copied-`main.rs` dependencies
-  from the rule, their requirements upstream's verbatim and stated twice.

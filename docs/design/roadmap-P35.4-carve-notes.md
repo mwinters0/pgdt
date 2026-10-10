@@ -26,8 +26,9 @@ needs it.
   its dev-dependencies.
 - **A method or a field cannot go in `internal`**: one a crate above calls is
   `pub` where it is defined, and an item made `pub` inside a `pub` module is
-  reachable by that module's path too. STATUS's "Decisions worth another
-  look" carries the call.
+  reachable by that module's path too. 35.10 closes both
+  ([`roadmap-P35-seams.md`](roadmap-P35-seams.md), "What this phase does not
+  do").
 - **`timed!` and `row_evaluated!` are `#[macro_export]`ed** and re-exported
   from `pgdt-core::internal`. Their `cfg(feature = "introspect")` is read in
   the expanding crate; every crate compiling such a gate — `pgdt-model`,
@@ -84,8 +85,9 @@ needs it.
 - **A doc link from a lower crate to a higher one does not resolve**
   (`pgdt-model`'s to `pgdt_dump::cache::Unusable`, say): rustdoc warns, and
   no check runs rustdoc.
-- **The check 35.5 writes sees `internal` paths only**, and so not the
-  methods and `pub`-module items the previous section names.
+- **The check 35.5 writes sees `internal` paths and the two macros**, and
+  so holds only once 35.10 has left no other route to the methods and
+  `pub`-module items the previous section names.
 
 ## Negative results
 

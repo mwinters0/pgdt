@@ -79,8 +79,8 @@ layers of D68 become crates, with one new one below the parsers.
   model. Depends on core, model, io.
 - **`pgdt-codec`** — PostgreSQL values: every decoder, the datetime grammar,
   nested literals, the type register, the comparison plans and their ordering
-  keys, column resolution. Depends on core and model; names `arrow-schema`
-  only and is synchronous. The ordering keys move here from the query layer,
+  keys, column resolution. Depends on core and model; names `arrow-schema`,
+  and `arrow-buffer` for `i256` alone, and is synchronous. The ordering keys move here from the query layer,
   where they sit today in `predicate.rs`: they are value semantics, not
   filtering.
 - **`pgdt-query`** — Arrow batches, the streams, the filter expression,
@@ -92,7 +92,10 @@ the codec reaches `arrow::datatypes` and no further and does no I/O — become
 dependency lists rather than greps. Cargo refuses a cycle but not an edge the
 graph does not draw, so once the facade is gone a script reads the graph
 from `cargo metadata` and holds every member's dependencies to the list
-above, the codec synchronous and no embedder naming an `internal` path. Why `pgdt-model` exists: without it the
+above, the codec synchronous and naming no `arrow_buffer` item but `i256`,
+and no embedder naming an `internal` path or
+`timed!` or `row_evaluated!`, which Rust roots at their crate whatever module
+declares them. Why `pgdt-model` exists: without it the
 codec sits above the preamble grammar, so a change to how `CREATE TABLE` is
 read recompiles every decoder; with it the codec and the parsers are siblings.
 Why `pgdt-core` is not folded into it: the model is exactly what the cache
@@ -154,7 +157,14 @@ port. P33 grows it, and the exemption is reconsidered there.
   crate boundary forces a type public. **What a boundary forces public that is
   not API goes in that crate's `internal` module**, so a caller reaching past
   the API names the word, and `datafusion-pgdump`, `datafusion-cli-pgdump`
-  and `pgdt` never do — a check, not a convention.
+  and `pgdt` never do — a check, not a convention. So no other path reaches
+  it: every library module is private, an API namespace an embedder names
+  (`cache`, `decode`, `instrument`, …) being a public module of named
+  re-exports, and a method a crate above calls that is not API is a method
+  of an extension trait `internal` exports, its body unmoved. `internal` is
+  per crate: a crate above may adopt a lower crate's `internal` item into its
+  own API by re-exporting it, where the item must be defined lower but means
+  something only above (`OVERWRITE_WAYS_OUT`, the cache's remedy text).
 - **Publish a `pgtypes` crate.** The codec crate makes one possible — its
   Arrow mapping is one module and its catalog types come from the model — but
   a published crate needs its own catalog types and Arrow behind a feature,
@@ -172,5 +182,6 @@ production code alone. The cycles inside the one crate broken, and the
 layering test rewritten to the crate assignment, before any `Cargo.toml`
 exists — the test passing is the proof the graph is acyclic. The profile
 figure's first sitting; then the carve, bottom up, behind the facade; then
-the figure's second sitting and the profile decided; then the facade retired
-and the record repointed; then the seams round over what is still red.
+the figure's second sitting and the profile decided; then every forced-public
+item put where only `internal` reaches it, so the check is written against a
+tree it can hold; then the facade retired and the record repointed; then the seams round over what is still red.

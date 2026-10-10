@@ -26,11 +26,10 @@ default = []
 introspect = ["pgdump_query/introspect"]
 
 [dependencies]
-# Every version below this crate alone names is the targeted `datafusion-cli`
-# release's own (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so
-# the copied `main.rs` builds against what it was written for; one the
-# workspace states for every member is that release's requirement or a
-# narrower one within it.
+# The copied `main.rs` builds against what it was written for because
+# `datafusion-cli`'s own manifest carries upstream's requirements into the one
+# lockfile; a version stated here, the workspace's or this crate's own, can
+# only narrow one of them.
 async-trait = { workspace = true }
 clap = { workspace = true, features = ["cargo", "derive"] }
 datafusion = { workspace = true }
