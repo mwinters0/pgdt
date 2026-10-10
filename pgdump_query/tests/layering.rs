@@ -34,6 +34,7 @@ const CRATES: &[(&str, &str)] = &[
     ("datetime_in", "codec"),
     ("nested", "codec"),
     ("unrepresentable", "codec"),
+    ("key", "codec"),
     ("batch", "query"),
     ("stream", "query"),
     ("predicate", "query"),

@@ -65,6 +65,7 @@ use crate::decode::{
     typmod_unscaled_digits,
 };
 use crate::instrument::StatisticsScope;
+use crate::key::{ValueKey, field_refused, grammar_refuses};
 use crate::model::{
     BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef,
     ColumnDictionary, ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES,
@@ -76,7 +77,6 @@ use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, Unchecked,
     column_grammar, unchecked_positions,
 };
-use crate::predicate::{ValueKey, field_refused, grammar_refuses};
 use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::statistics::{
     Charge, ROW_GROUP_DEFAULT_SIZE_BYTES, STATISTICS_ACCOUNT_CHARGE_STEP, StatisticsAccount,

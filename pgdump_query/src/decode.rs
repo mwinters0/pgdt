@@ -40,7 +40,7 @@ pub enum Unread {
     /// some supported major — a shortfall (`docs/design/decisions.md`,
     /// "D55"). Each reader classifies what it fails on by the server's
     /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
-    /// `crate::predicate`'s `jsonb_unread`, and `crate::datetime_in` for the
+    /// `crate::key`'s `jsonb_unread`, and `crate::datetime_in` for the
     /// date and time types). No reader is widened to read one: a blank
     /// around a number, a hexadecimal float, `nan(…)`, an exponent in a
     /// `numeric` field, `0x1F`, `1_000` and `y2001m02d04` stay unparsed, and
@@ -782,7 +782,7 @@ pub fn decode_date32(s: &str) -> Option<i32> {
 
 /// [`decode_date32`] telling a day PostgreSQL refuses from text that is no
 /// day here. The infinities are [`Unread::Unparsed`]: values of the type, but
-/// no day, which a caller ranks first if it can (`crate::predicate`).
+/// no day, which a caller ranks first if it can (`crate::key`).
 pub(crate) fn date_days(s: &str) -> Read<i32> {
     if s == "infinity" || s == "-infinity" {
         return Err(Unread::Unparsed);
@@ -820,7 +820,7 @@ const POW10: [i64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 /// `HH:MM:SS[.ffffff]`, no offset. Returns whole seconds since midnight and
 /// the microsecond remainder separately, since callers need both a plain
 /// `Time64` value (`seconds*1_000_000 + micros`) and, for a timestamp, the
-/// same pair added onto a day count. `crate::predicate` reads it too, for the
+/// same pair added onto a day count. `crate::key` reads it too, for the
 /// time half of a `time with time zone` comparison — that type has no Arrow
 /// mapping of its own, so its *ordering* is the only path that decodes it.
 ///
@@ -878,7 +878,7 @@ const DAY_MICROS: i64 = 86_400_000_000;
 
 /// A `time`'s microseconds since midnight as PostgreSQL holds it, its
 /// inclusive upper bound `24:00:00` included — what its comparison orders
-/// (`crate::predicate`), where [`decode_time64_micros`] is what Arrow holds.
+/// (`crate::key`), where [`decode_time64_micros`] is what Arrow holds.
 pub(crate) fn time_of_day_micros(s: &str) -> Read<i64> {
     let (seconds, micros) = parse_time_of_day(s)?;
     Ok(seconds * 1_000_000 + micros)
@@ -911,7 +911,7 @@ pub fn render_time64_micros_into(v: i64, out: &mut String) {
 /// substring — the fractional-seconds part, if any, is digits and a `.` only.
 ///
 /// `timetz_out` writes the same `EncodeTimezone` form (I40), so
-/// `crate::predicate` splits a `time with time zone` with this. What it does
+/// `crate::key` splits a `time with time zone` with this. What it does
 /// with the two halves is not what a timestamp does: the offset is kept, not
 /// discarded, because two `timetz` values are equal only when the zone
 /// matches as well as the instant.
@@ -996,7 +996,7 @@ const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
 /// A finite timestamp's microseconds from PostgreSQL's epoch, 2000-01-01 UTC —
 /// the `int64` PostgreSQL stores it as (I49), so every value it admits fits,
 /// the three decades [`decode_timestamp_micros`] cannot count from 1970
-/// included. What its comparison orders (`crate::predicate`), where
+/// included. What its comparison orders (`crate::key`), where
 /// [`decode_timestamp_micros`] is what Arrow holds; [`Unread::Unparsed`] for
 /// the infinities, and an [`Unread`] for text that is not a timestamp.
 pub(crate) fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Read<i64> {
@@ -2028,7 +2028,7 @@ pub(crate) fn macaddr8_in(s: &str) -> Option<[u8; 8]> {
 /// guaranteed in `*_out`'s form and never read past `*_in`'s" makes to the
 /// newest major's reading.
 // deficiency: KD84 — the readers of an `oid` (`str::parse`, in the typed read
-// and `predicate::field_key`) take `010` for 10, as v15 and earlier do, where
+// and `key::field_key`) take `010` for 10, as v15 and earlier do, where
 // v16 and later read it as octal 8 and refuse `08` (I66). Which the dump's
 // server meant is its version's to say, and no reader is handed it.
 pub(crate) fn oid_unread(s: &str) -> Unread {

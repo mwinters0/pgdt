@@ -56,7 +56,7 @@ pub enum EvaluationPart {
     /// A leaf unescaping its field (`copy::RawRow::decode`).
     Unescape,
     /// A leaf reading the unescaped text as its column's comparison key
-    /// (`predicate::order_key` or its nested counterpart); a comparison of
+    /// (`key::order_key` or its nested counterpart); a comparison of
     /// text has none.
     Key,
     /// A term comparing that key or text with its bound.

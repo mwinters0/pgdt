@@ -195,7 +195,7 @@ pub enum Error {
         /// is about this build's grammar rather than about the type: a
         /// `boolean` is refused `true` because it is written `t` or `f`, not
         /// because `boolean` has no such value. Supplied by
-        /// `crate::predicate::accepted_form`, which sits beside the grammar
+        /// `crate::key::accepted_form`, which sits beside the grammar
         /// it describes. A `String` because two arms answer with the column's
         /// own comparison payload — an enum's declared labels, a
         /// `numeric(p,s)`'s scale.

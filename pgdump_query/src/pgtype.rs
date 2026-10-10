@@ -273,7 +273,7 @@ impl IntervalQualifier {
 
 /// How one column's field text becomes a value two sides of a comparison can
 /// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
-/// thing `crate::predicate` needs in order to read a side.
+/// thing `crate::key` needs in order to read a side.
 ///
 /// A small closed vocabulary rather than the Arrow type, which does not
 /// correspond to it (`docs/design/decisions.md`, "D40").

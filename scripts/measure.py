@@ -6166,11 +6166,12 @@ MAP = ("pgdump_query/src/map.rs", "pgdump_query/src/model/span.rs")
 #: the save throttle's gate. A figure that prices the map declares both, or a
 #: change to the gate reads green against a table it just moved.
 MAP_BUILD = (*MAP, "pgdump_query/src/stream.rs")
-#: Where a filter term is resolved and evaluated. Its own mechanism because
+#: Where a filter term is resolved and evaluated, and the ordering keys it
+#: compares by. Its own mechanism because
 #: until `predicate-terms` no registered figure passed a filter at all, so
 #: nothing in the register was moved by this file and nothing declared it --
 #: which is the same shape of blindness the read path had before `READ`.
-PREDICATE = ("pgdump_query/src/predicate.rs",)
+PREDICATE = ("pgdump_query/src/predicate.rs", "pgdump_query/src/key.rs")
 #: Per-type scalar decode and render-back. Its own mechanism rather than part
 #: of `NESTED`, because the figures it moves are not the ones `NESTED` moves:
 #: every figure that runs a *typed* query pays it on every scalar column,
@@ -6221,7 +6222,7 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
 #: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
-#: `pgtype.rs`, `resolve.rs` and `predicate.rs` are the comparison a bound is
+#: `pgtype.rs`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
     "pgdump_query/src/gather.rs",

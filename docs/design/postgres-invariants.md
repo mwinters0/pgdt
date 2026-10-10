@@ -1250,7 +1250,7 @@ and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
 `preamble::base_type_delimiter`, `pgtype::typdelim` and
-`predicate::array_delimiter`, which split a strict parse's array of `box` at
+`key::array_delimiter`, which split a strict parse's array of `box` at
 `;` and of a base type at its `DELIMITER`.
 
 **Re-verify:**
@@ -1959,7 +1959,7 @@ infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
-`pgtype.rs`'s `comparison_for` and `predicate.rs`'s `pg_float_cmp`.
+`pgtype.rs`'s `comparison_for` and `key.rs`'s `pg_float_cmp`.
 
 **Re-verify.**
 
@@ -2057,7 +2057,7 @@ answer at 17–18. Live against the koji replica (PostgreSQL 16.15): every one o
 `'Infinity'::numeric > 5` answers `t`; `'NaN'::numeric(5,2)` yields `NaN`;
 `'Infinity'::numeric(5,2)` raises *numeric field overflow*.
 
-**Relied on by.** `predicate.rs`'s `special_order_key` and `OrderKey`'s three
+**Relied on by.** `key.rs`'s `special_order_key` and `OrderKey`'s three
 non-finite variants — [`decisions.md`](decisions.md), "D55", whose `Date32`, `Timestamp`, `Decimal` and
 `interval` register rows are *Agrees* only because of this.
 
@@ -2590,7 +2590,7 @@ v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
 type can hold.
 
 **Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
-and `MacAddr` arms and `predicate.rs`'s parsers for them —
+and `MacAddr` arms and `key.rs`'s parsers for them —
 [`decisions.md`](decisions.md), "D55",
 where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
@@ -2739,7 +2739,7 @@ and the duplicate rule are unchanged. `escape_json`'s body moved into an
 across all six. `json_lex_number` gained the incremental-parser branch at v17,
 which `jsonb_in` does not enter.
 
-**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `predicate.rs`'s
+**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `key.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order` —
@@ -3068,7 +3068,7 @@ and no parser can reproduce them without the subtype's own order:
 (`{[5,6),[1,2)}` → `{[1,2),[5,6)}`, `{[1,3),[2,5)}` → `{[1,5)}`, `{[1,1)}` →
 `{}`). A discrete range also canonicalizes its bounds — `int4range '[1,10]'` is
 `[1,11)` — through the subtype's successor function. All three are I46, and
-`predicate.rs` reproduces them over the decoded bound *keys* after this
+`key.rs` reproduces them over the decoded bound *keys* after this
 grammar has done what it can.
 
 **Proof.** `array_in`/`ArrayCount`/`ReadArrayStr` in
@@ -3233,7 +3233,7 @@ the element's own question, one level down, and I32/I37/I43 are where it lives.
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `predicate.rs`'s `compare_nested`, and `pgtype.rs`'s
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key.rs`'s `compare_nested`, and `pgtype.rs`'s
 `NestedCompare`, whose `Uncomparable` position is the inheritance rule.
 
 **Re-verify.** Read the functions:
@@ -3374,7 +3374,7 @@ read (see `decisions.md`, "D58").
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6, its out-of-range lines against 13.23 too.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `predicate.rs`'s `make_range`, `serialize_range`, `compare_range`,
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key.rs`'s `make_range`, `serialize_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
 `NestedCompare::Range`/`Multirange` and the `Discrete` value
 `builtin_range_subtype` sets. The first claim is also what makes a
@@ -3660,7 +3660,7 @@ backward compatibility with no alternative left to select.
 carry both typedefs and the same two limits.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D97" and "D99" — a
-timestamp's comparison key (`predicate.rs`, `order_key`, through
+timestamp's comparison key (`key.rs`, `order_key`, through
 `decode::timestamp_postgres_micros`), so every value's view bounds such a
 value and the refuse mode's filter orders it.
 
@@ -4184,7 +4184,7 @@ prefix from v16 — is a spelling, not a range (I80).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `predicate::int_in`, which refuses a field or a filter
+**Relied on by:** `key::int_in`, which refuses a field or a filter
 literal of any of the three types past its column's width, a parse keying the
 field failing on it.
 
@@ -4357,7 +4357,7 @@ which spellings it reads is I82.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::numeric_in_stores`, which `predicate.rs` applies to
+**Relied on by:** `decode::numeric_in_stores`, which `key.rs` applies to
 a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
 semantics, `decode::NumericSpelling::stored`, which bounds a field spelled
 otherwise, and `JsonCursor::number`, which refuses a `jsonb` number so
@@ -4652,7 +4652,7 @@ meets; no field is refused here for it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `predicate.rs`'s `field_key`, which refuses a field naming
+**Relied on by:** `key.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
 it holds; `pgtype::text_grammar`, whose `TextGrammar::RefusesAll` refuses
@@ -4870,7 +4870,7 @@ case agrees across the three but `line '[(2,0),(3,1.7976931348623157e308)]'`,
 read by 13 alone, and `line '[(Infinity,1),(0,2)]'`, refused by 13 alone. The
 cases are `decode.rs`'s
 `a_geometric_field_is_refused_only_where_every_major_refuses_it`; `box[]`'s
-and `point[]`'s are `predicate.rs`'s. Hexadecimal reading was checked against
+and `point[]`'s are `key.rs`'s. Hexadecimal reading was checked against
 glibc's `strtod` over 595,823 generated spellings, with no difference.
 
 **Scope limit.** A server whose `strtod` reads no hexadecimal number refuses
@@ -5209,7 +5209,7 @@ and `scanint8` (`int8.c`, before v15) or `pg_strtoint64`: `isspace`, a sign,
 `32` and `64`, whose slow path reads the prefixes and underscores; v17 and
 v18 differ from v16 in how they negate alone.
 
-**Observed.** Every integer case of `predicate.rs`'s
+**Observed.** Every integer case of `key.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 each of the three types in a `postgres:<major>-trixie` container at all six
 majors: `0x1F`, `0x_1F`, `0_1` and ` -0x1_F ` are read from v16 only; `_1`,
@@ -5255,7 +5255,7 @@ converts nothing, then `isspace` and end. The backend keeps `LC_NUMERIC` at
 `C` (`src/backend/main/main.c`), so the point is `.`. The grammar is the same
 at every major; v13 also corrects a Solaris `strtod`.
 
-**Observed.** Every float case of `predicate.rs`'s
+**Observed.** Every float case of `key.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 both types in a `postgres:<major>-trixie` container (glibc 2.41) at all six
 majors, alike at each: `0x1.8p1`, `0x.8`, `nan(abc_1)` and `\t-1.5e3\n` are
@@ -5307,7 +5307,7 @@ v16.15 (`set_var_from_non_decimal_integer_str`, the exponent loop); v15
 differs from v14 only in a negative scale's typmod, and v17 and v18 from v16
 in nothing these functions do.
 
-**Observed.** Every `numeric` case of `predicate.rs`'s
+**Observed.** Every `numeric` case of `key.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 `numeric_in` with no typmod, with `numeric(10,2)`'s and from v15 with
 `numeric(3,-2)`'s, in a `postgres:<major>-trixie` container at all six

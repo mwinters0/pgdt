@@ -20,12 +20,12 @@ use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
 use crate::gather::{declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution};
+use crate::key::ValueKey;
 use crate::model::{
     Bounds, ColumnDef, ColumnDictionary, ColumnStatistics, CopyBlock, DumpIndex, DumpMetadata,
     Sortedness, StatisticsView, TableName, UnrepresentableTier,
 };
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
-use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
 use crate::unrepresentable::column_tiers;
 

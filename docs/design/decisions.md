@@ -290,7 +290,7 @@ Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
-sharing `Utf8View` compare differently, and `predicate.rs` never reads the Arrow type. DataFusion
+sharing `Utf8View` compare differently, and neither `predicate.rs` nor `key.rs` reads the Arrow type. DataFusion
 semantics, one per query lest rows depend on what a plan pushes, maps each kind (`datafusion_order`); no
 term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
 text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column
@@ -423,7 +423,7 @@ checks every field, marks each block it checks whole and re-reads each held bloc
 what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;
 recording the mode; refusing such a cache (D20); `Strict` failing from the record. Defaults: `Null` (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `checker`.
 
-## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
+## Predicates (`predicate.rs`, `key.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed but for membership and the unrepresentable test
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
 `Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
@@ -634,11 +634,11 @@ pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value 
 ## Layering
 ### D68 Six crates-to-be, the module assignment Cargo will enforce
 core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`,
-`leader`), codec (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`), query (`batch`, `stream`,
+`leader`), codec (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`, `key`), query (`batch`, `stream`,
 `predicate`, `gather`, `prune`, `summary`, `statistics`); each uses only crates before it, dump and codec siblings, a module
 assigned before it is written (`tests/layering.rs`); CLI and embedders above query. Model is what the cache persists, apart
 from core so an edit there is the one asking whether the format bumps, and below the parsers so the codec does not recompile
-with the grammar. Statistics gathering decodes, so is query's; worker sizing and the cut are io's, the leader asking them.
+with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them.
 Rejected: four layers in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency

@@ -12,6 +12,7 @@ mod error;
 mod gather;
 pub mod instrument;
 mod io;
+mod key;
 mod leader;
 mod lex;
 pub mod load;
