@@ -5,7 +5,7 @@
 //! for byte, over every fixture in the tree
 //! (`docs/design/decisions.md`, "D52").
 //!
-//! **Bytes, not a decoded index.** `pgdump_query/tests/map_file.rs` already
+//! **Bytes, not a decoded index.** `crates/pgdt-query/tests/map_file.rs` already
 //! compares the in-memory `DumpIndex` a parallel mapping pass builds against an
 //! eager one's, over five schemas. What only the binary can say is that the
 //! *file* the next command reads is the same file: a field that survives the

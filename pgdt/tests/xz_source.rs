@@ -2,7 +2,7 @@
 //! differential parity against the same content read plain
 //! (`docs/design/decisions.md`, "D73").
 //!
-//! `pgdump_query/tests/cache.rs` covers the same ground at the library level,
+//! `crates/pgdt-query/tests/cache.rs` covers the same ground at the library level,
 //! through `open_local`/`build_index` directly. This file is the only one that
 //! drives the actual `pgdt` binary against a `.xz` source — its own argument
 //! parsing, its cache round trip, and its text/JSON rendering, run the way a
@@ -11,7 +11,7 @@
 //! **Two fixtures, generated at test time, not committed** — deliberate, since
 //! the input is 2,352 bytes and the compression cost is
 //! negligible. Both are derived from the same hand-written dump
-//! `pgdump_query/tests/cache.rs`'s own xz tests already use
+//! `crates/pgdt-query/tests/cache.rs`'s own xz tests already use
 //! (`tests/data/edge_cases.sql`), which is deliberately not
 //! `pg_dump` output and carries no `CREATE TABLE` DDL — every column here
 //! resolves `Utf8View`, so a byte-for-byte comparison between the plain and
@@ -26,12 +26,12 @@ use common::{run, stderr_of, stdout_of};
 use pgdump_query::cache::OVERWRITE_WAYS_OUT;
 
 /// The hand-written dump these fixtures derive from —
-/// `pgdump_query/tests/data/edge_cases.sql`, not the generated `fixtures/`
+/// `crates/pgdt-query/tests/data/edge_cases.sql`, not the generated `fixtures/`
 /// tree `common::fixture` addresses, which carries no equivalent file (xz
 /// container shape does not depend on a PostgreSQL major, so nothing here
 /// needs one).
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdump_query/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/pgdt-query/tests/data/edge_cases.sql")
 }
 
 /// Compress `edge_cases.sql` with `xz_args` into a fresh directory as `name`.
@@ -54,7 +54,7 @@ fn xz_fixture(xz_args: &[&str], name: &str) -> (tempfile::TempDir, PathBuf) {
 
 /// Seekable, multi-block: `--block-size=512` splits `edge_cases.sql` (2,352
 /// bytes) into several blocks — the same size
-/// `pgdump_query/tests/cache.rs`'s own `xz_compress` uses, confirmed there
+/// `crates/pgdt-query/tests/cache.rs`'s own `xz_compress` uses, confirmed there
 /// (by an `is_seekable()` assertion, not just a comment) to actually force
 /// the split on this exact fixture.
 fn seekable_xz() -> (tempfile::TempDir, PathBuf) {

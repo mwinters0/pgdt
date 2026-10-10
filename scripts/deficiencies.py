@@ -154,6 +154,7 @@ DOC_ROOT = REPO / "docs"
 
 #: Where a code marker may live -- and the only place a detail exists.
 CODE_ROOTS = (
+    *sorted((REPO / "crates").glob("*/src")),
     REPO / "pgdump_query" / "src",
     REPO / "pgdt" / "src",
     REPO / "datafusion-pgdump" / "src",
@@ -222,7 +223,7 @@ def _index(ident: str) -> int:
 STANCE_RE = re.compile(r"\*\*\(([abc])\)\s+([^*]+?)\*\*")
 OWNED_RE = re.compile(r"^owned by\s+(\S.*)$")
 
-#: `Detail: `pgdump_query/src/io.rs``. A repo-relative path in backticks, not a
+#: `Detail: `crates/pgdt-io/src/io.rs``. A repo-relative path in backticks, not a
 #: link: the target is source, and a Markdown link into it resolves nowhere a
 #: reader of the rendered index can follow anyway.
 DETAIL_RE = re.compile(r"Detail:\s*`([^`]+)`")

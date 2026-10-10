@@ -22,7 +22,7 @@ use pgdump_query::{
     ScanOptions, SchemaMode, SpanBody, StatisticsRequest, TableName, map_file, table_stream,
 };
 
-#[path = "../../pgdump_query/tests/common/refused.rs"]
+#[path = "../../crates/pgdt-query/tests/common/refused.rs"]
 mod refused;
 
 /// A sink for a registration whose findings this target is not about.

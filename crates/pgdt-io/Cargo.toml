@@ -1,0 +1,49 @@
+[package]
+name = "pgdt-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+introspect = ["pgdt-core/introspect"]
+# The remote source (`RemoteSource`) and everything that names a URL.
+# **Default-off**: what `object_store`'s `http` feature drags in, an
+# `aws-lc-sys` C build included, is too much to impose on an embedder that
+# reads local files.
+#
+# `tokio/net` and `tokio/time` are declared here rather than inherited: the
+# backend needs the IO and time drivers at runtime and nothing in its own tree
+# turns them on, so a library built with this feature has a runtime that can
+# drive it.
+http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
+
+[dependencies]
+bytes = { workspace = true }
+futures = { workspace = true }
+# `http` only, and `default-features = false` to leave out the `fs` backend:
+# what is wanted is one `HttpStore` over ranged GETs. The `http` feature
+# resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its
+# `cc` builder; nothing installs CMake, so a version falling back to it fails
+# the build by name.
+object_store = { version = "0.14.2", optional = true, default-features = false, features = [
+    "http",
+] }
+pgdt-core = { path = "../pgdt-core" }
+tokio = { workspace = true, features = ["rt", "sync"] }
+# The facade only — no subscriber, no output policy. The library names the
+# phases worth watching (the seek-table walk, the scan's start and
+# completion); the CLI decides whether and how to render them
+# (`docs/design/decisions.md`, "D67").
+tracing = { workspace = true }
+# `http` only: the same crate `object_store` parses URLs with, so a `Url` this
+# crate builds is the one its backend takes. What reads it is
+# `Origin::resolve`, which classifies a `--source` argument.
+url = { version = "2.5.8", optional = true }
+# `XzSource` constructs a seek table, walking the file's stream footers at
+# open time.
+xz-seek = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -41,7 +41,7 @@ quotes a number: every figure is in
 | Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault; a query may compare as DataFusion compares the emitted value instead, which refuses a nested column and orders one with no plan bytewise | `predicate.rs`, `key.rs`, `pgtype.rs`; D40, D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | the codec, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced on its own channel per term, or per column in a query's semantics; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation; the value oracle | committed under `fixtures/<major>/oracle/` and checked by `predicate/tests.rs`, `scripts/oracle_differences.py` and `scripts/oracle_register.py`; `values.tsv` beside them, the server's reading of every typed value of the `types` schema, which every typed read of its flag sets is held to and every typed arm has a case in (`scripts/value_oracle.py`) | D70, D71, D73 |
-| Emitter register | `pg_dump`'s and `pg_dumpall`'s literals and options, read out of the functions pgdt's readers consume — each keyword a reader recognises mapped to a listed function or `mise run check` fails — into `fixtures/<major>/emitters.tsv` by `scripts/emitter_register.py --extract`, and the value forms a setting or a typmod selects, hand-listed beside the extraction, all joined against the fixtures; a row no fixture reaches is exempt with a reason the record resolves or it fails `mise run check`, and a fixture exposing a filed defect is held failing by `pgdump_query/tests/known_failures.rs` | `scripts/emitter_register.py`; D71 |
+| Emitter register | `pg_dump`'s and `pg_dumpall`'s literals and options, read out of the functions pgdt's readers consume — each keyword a reader recognises mapped to a listed function or `mise run check` fails — into `fixtures/<major>/emitters.tsv` by `scripts/emitter_register.py --extract`, and the value forms a setting or a typmod selects, hand-listed beside the extraction, all joined against the fixtures; a row no fixture reaches is exempt with a reason the record resolves or it fails `mise run check`, and a fixture exposing a filed defect is held failing by `crates/pgdt-query/tests/known_failures.rs` | `scripts/emitter_register.py`; D71 |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38 |
 | Compressed input (`--source foo.dump.xz`) | working serially and at any `--jobs`; the seek table is cached; a file the budget cannot block-decode streams and says so; gzip, zstd and lz4 are not read (P15, P18) | `io.rs` (`XzSource`), `cache.rs`; D14–D19; [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md) |
 | Partitioned replay and the interior split | working; `query` is the replay's consumer and the mapping pass the split's, and each answers what the serial path answers; a sub-stream can pin more than the budget bills (`KD23`) and a window over small blocks over-reads (`KD22`) | `stream.rs`, `leader.rs`; D5, D7, D8, D48, D51, D52 |
@@ -88,7 +88,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.3** The cycles inside `pgdump_query` broken in place — the cancellation token and chunk default down to `io`, the catalog, span, block and statistics types gathered into a `model` module, the index loader lifted out of `index`, `CACHE_FORMAT_VERSION` into `model` — and `tests/layering.rs` carrying the crate assignment, passing — [notes](../design/roadmap-P35.3-model-notes.md)
 - [x] **35.7** The ordering keys and the field-grammar checks lifted out of `predicate.rs` into a module of their own, assigned to `pgdt-codec` in `tests/layering.rs` — [notes](../design/roadmap-P35.7-keys-notes.md)
 - [x] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree — [notes](../design/roadmap-P35.8-release-profile-notes.md)
-- [ ] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there
+- [x] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL, of which there are none; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there — [notes](../design/roadmap-P35.4-carve-notes.md)
 - [ ] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`
 - [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
 - [ ] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green
@@ -122,3 +122,35 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A method a crate above calls, and an item a crate above reaches in a
+  `pub` module, is reachable by its own path, not only through `internal`.**
+  The carve re-exports every item a boundary forced public from its crate's
+  `internal` and imports it from there, but a method or field has no module
+  to live in, so the `pub(crate)` ones a crate above calls became `pub` where
+  they stand (`DatabaseMetadata::empty`, `BlockCensus::merge`,
+  `FieldRefusal::into_error`, among others), and an item in a `pub` module
+  (`map::Builder`, `load::scan_preamble`, the cache's encoding behind
+  `test-support`) is public at that module's path as well. Why: the spec's
+  rule cannot be spelled for a method, and keeping a `pub` module's items off
+  its path means making every public module private behind an explicit
+  re-export, a reshaping no slice row names. Reconsidering means doing that,
+  with methods behind extension traits in `internal`, before 35.5 writes the
+  check that no embedder names `internal` — which as things stand sees none
+  of these ([`../design/roadmap-P35.4-carve-notes.md`](../design/roadmap-P35.4-carve-notes.md)).
+- **`pgdt-codec` depends on `arrow-buffer` beside `arrow-schema`**, for
+  `i256`, the decimal ordering key in `key.rs`, where the spec says the codec
+  "names `arrow-schema` only". Why: `arrow::datatypes::i256` is
+  `arrow-buffer`'s, which D74's "`arrow::datatypes` only" allowed, and the
+  spec's narrower phrase predates the keys moving into the codec (35.7); D74
+  now reads "its schema types and `i256`". Reconsidering means a 256-bit
+  integer that is not Arrow's for the key, a change to what a key holds.
+- **`datafusion-cli-pgdump` takes `async-trait`, `clap`, `datafusion` and
+  `tokio` from `[workspace.dependencies]`**, so its requirements are
+  `pgdt`'s (`clap` 4.6.6, `tokio` 1.53.1) rather than the targeted
+  `datafusion-cli` release's own (4.5.60, 1.52), which its manifest said it
+  mirrors; the comment now says a workspace version is upstream's or narrower
+  within it. Why: the spec states every shared version once, and the
+  lockfile already held one version of each, so nothing built changed.
+  Reconsidering means exempting that crate's copied-`main.rs` dependencies
+  from the rule, their requirements upstream's verbatim and stated twice.

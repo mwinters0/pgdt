@@ -1,7 +1,7 @@
 //! What the CLI's integration tests need before they can assert anything:
 //! how to run the binary, where the fixtures are, and where `scripts/` is.
 //!
-//! Same reason as `pgdump_query/tests/common/mod.rs`: each `tests/*.rs` file
+//! Same reason as `crates/pgdt-query/tests/common/mod.rs`: each `tests/*.rs` file
 //! is its own crate, so without a shared module each one carries its own copy.
 
 // Each test binary compiles the whole module and uses a subset of it.
@@ -18,7 +18,7 @@ pub mod oracle;
 
 /// The fixtures holding a field PostgreSQL refuses, which a data-level parse
 /// fails on: `pgdump_query`'s list, included by path so no copy drifts.
-#[path = "../../../pgdump_query/tests/common/refused.rs"]
+#[path = "../../../crates/pgdt-query/tests/common/refused.rs"]
 pub mod refused;
 
 /// The built `pgdt` binary, ready to take arguments. Cargo hands us the exact
@@ -62,7 +62,7 @@ pub fn fixture(relative: &str) -> PathBuf {
 /// `inserts`/`column-inserts` (no `COPY` blocks at all), and `dumpall`
 /// (concatenated, multi-`\connect`).
 ///
-/// A deliberate second copy of `pgdump_query/tests/common/mod.rs`'s function of
+/// A deliberate second copy of `crates/pgdt-query/tests/common/mod.rs`'s function of
 /// the same name, for the reason stated at the top of this file: the two test
 /// crates cannot share a module, and a path helper is what each one needs
 /// before it can address a fixture at all.

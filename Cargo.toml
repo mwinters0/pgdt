@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/*",
     "pgdump_query",
     "pgdt",
     "datafusion-pgdump",
@@ -11,7 +12,7 @@ members = [
 # vendor/xz-seek is a frozen, read-only copy of an unpublished crate
 # (docs/design/decisions.md, "The compressed source") -- excluded from the
 # workspace, so it stays out of the shared lockfile and member list, but named
-# as a path dependency by pgdump_query itself.
+# as a path dependency below, for `pgdt-io` and `pgdt-dump`.
 # `scripts/vendor_xz_seek.py` re-syncs it.
 exclude = ["vendor/xz-seek"]
 
@@ -28,6 +29,46 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
+
+# Every version more than one member names, stated once, and the Arrow crates
+# beside `arrow`, which move with it; a member names it by `workspace = true`
+# and adds the features it needs. Members' own path dependencies state no
+# version and are not listed. Any other version only one member names stays in
+# that member's manifest.
+[workspace.dependencies]
+# Arrow and DataFusion move together (`docs/design/roadmap.md`, "Arrow follows
+# DataFusion"). No default features anywhere: a member turns on what it uses,
+# and an embedder what it wants.
+arrow = { version = "59.2.0", default-features = false }
+# The same `arrow-buffer` and `arrow-schema` `arrow` itself depends on, named by
+# `pgdt-codec`, which reaches Arrow's schema types and `i256` and nothing that
+# builds an array (`docs/design/decisions.md`, "D74").
+arrow-buffer = { version = "59.2.0", default-features = false }
+arrow-schema = { version = "59.2.0", default-features = false }
+async-trait = "0.1.89"
+bincode = "2"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", default-features = false }
+clap = "4.6.6"
+criterion = "0.8.2"
+datafusion = { version = "55.1.0", default-features = false }
+futures = "0.3.34"
+insta = "1.48.0"
+libc = "0.2.189"
+memchr = "2.8.3"
+mimalloc = { version = "0.1.50", default-features = false }
+serde = "1.0.229"
+signal-hook = { version = "0.4.4", default-features = false }
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+tokio = "1.53.1"
+tracing = "0.1"
+# A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
+# workspace, not published (`docs/design/decisions.md`, "The compressed
+# source"). The default features (`liblzma`, `fast-checks`) are the manifest's
+# own, and are kept over `xz4rust` so that the integration being vetted is the
+# one that ships.
+xz-seek = { path = "vendor/xz-seek" }
 
 # The test build optimizes, the workspace at 1 and its dependencies at 2: the
 # fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone

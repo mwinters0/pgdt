@@ -6,7 +6,7 @@
 //! commands that scan lives — so the two cases below are the ones nothing else
 //! in the tree can observe: that a bound-but-moved signal stops the report, and
 //! that the flag is a usage error where there is no source to bind it to.
-//! `pgdump_query/tests/identity.rs` pins what the refusal itself compares; this
+//! `crates/pgdt-query/tests/identity.rs` pins what the refusal itself compares; this
 //! file pins that `info` asks for it.
 //!
 //! One selection meaning one thing includes how the refusal *reads*, so the

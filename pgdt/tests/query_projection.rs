@@ -1,7 +1,7 @@
 //! `pgdt query --column` / `--no-columns` — projection's CLI surface
 //! (`docs/design/decisions.md`, "D28" and "The CLI").
 //!
-//! `pgdump_query/tests/projection.rs` already holds what a projection *means*
+//! `crates/pgdt-query/tests/projection.rs` already holds what a projection *means*
 //! against `table_stream`. What only the binary can say is the part these
 //! pin: which flag combinations the parser refuses and at what exit status,
 //! and what the rendered stream looks like — above all that a zero-column

@@ -43,7 +43,7 @@ introspect = [
 
 [dependencies]
 anyhow = "1.0.104"
-arrow = { version = "59.2.0", default-features = false }
+arrow = { workspace = true }
 # `wrap_help`, not just `derive`: without it `clap` wraps help text at no width
 # at all, so a flag whose doc comment is a paragraph prints as one line the
 # terminal hard-wraps mid-word, losing the hanging indent an option list is read
@@ -51,16 +51,16 @@ arrow = { version = "59.2.0", default-features = false }
 # (`docs/design/decisions.md`, "D67"), so those paragraphs are the normal case rather than the
 # exception. `tests/help_text.rs` snapshots every page so the rendering is
 # reviewable at all.
-clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
+clap = { workspace = true, features = ["derive", "wrap_help"] }
 # `pgdt sql`: DataFusion's own CLI, whose copied arguments are the
 # subcommand's and whose entry point it calls. Unconditional, so the binary
 # every figure times is the one a release ships (`docs/design/decisions.md`,
 # "D13").
 datafusion-cli-pgdump = { path = "../datafusion-cli-pgdump" }
-futures = "0.3.34"
+futures = { workspace = true }
 # `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
 # second one writes into. A default build does not depend on it directly.
-libc = { version = "0.2.189", optional = true }
+libc = { workspace = true, optional = true }
 # `introspect` only: `mi_stats_get_json` and `mi_free`, behind `extended`, as
 # upstream DataFusion's benchmarks read mimalloc's statistics. The version is
 # the one `mimalloc` itself links, so the two name one library.
@@ -68,8 +68,9 @@ libmimalloc-sys = { version = "0.1.49", optional = true, default-features = fals
 # The shipped allocator. No default features, as upstream's `datafusion-cli`
 # links it: no `override`, so `liblzma` and `aws-lc` keep libc's `malloc` and
 # the process has two heaps (`docs/design/decisions.md`, "D13").
-# `pgdump_query`'s benches link it at this same requirement, which moves with it.
-mimalloc = { version = "0.1.50", optional = true, default-features = false }
+# `pgdt-codec`'s and `pgdt-query`'s benches link it from the same workspace
+# requirement.
+mimalloc = { workspace = true, optional = true }
 # As its PID namespace's init, an `_exit` on every signal that ends the process
 # elsewhere, bar a fault (`docs/design/decisions.md`, "D26").
 namespace-init = { path = "../namespace-init" }
@@ -77,7 +78,7 @@ namespace-init = { path = "../namespace-init" }
 # live in this crate, so `cargo test --workspace` runs them unconditionally
 # rather than behind feature unification.
 pgdump_query = { path = "../pgdump_query", features = ["http"] }
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0.145"
 # No default features: `flag` and `low_level` are what `parse`'s handlers are
 # built from -- the signal's number stored, the default action run on a
@@ -87,7 +88,7 @@ serde_json = "1.0.145"
 # registry is the one `tokio`'s `signal` already installs through, so these
 # and the stream that cancels the scan run side by side. Rejected: `sigaction`
 # and `raise` by hand, `unsafe` of this binary's own reimplementing them.
-signal-hook = { version = "0.4.4", default-features = false }
+signal-hook = { workspace = true }
 tikv-jemallocator = { version = "0.6.0", optional = true }
 # `rt`, not `rt-multi-thread`: `pgdt`'s own commands run a `current_thread`
 # runtime and dispatch every unit of work through `spawn_blocking`, so the
@@ -100,8 +101,8 @@ tikv-jemallocator = { version = "0.6.0", optional = true }
 # `net` and `time` beside them: the remote source's client needs the IO and
 # time drivers, and this binary declares them rather than inheriting them by
 # feature unification from a dependency that could stop enabling them.
-tokio = { version = "1.53.1", features = ["rt", "macros", "signal", "net", "time"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["rt", "macros", "signal", "net", "time"] }
+tracing = { workspace = true }
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
 # koji orchestrator logs already use
@@ -112,17 +113,20 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [dev-dependencies]
 # The one type `ByteRangeSource`'s signature names that the library does not
 # re-export, and a unit test here implements that trait to pin what an omitted
-# `--jobs` asks the source for (`ParallelArgs::resolve`). The version tracks
-# `pgdump_query`'s own, since the two `Bytes` must be one type.
-bytes = "1.12.1"
-# `tests/help_text.rs` only. Same version as `pgdump_query`'s, so one
-# `cargo insta review` covers both crates' snapshots.
-insta = "1.48.0"
+# `--jobs` asks the source for (`ParallelArgs::resolve`). The workspace's
+# version, as the library's, since the two `Bytes` must be one type.
+bytes = { workspace = true }
+# `tests/help_text.rs` only. The workspace's version, as `pgdt-query`'s, so
+# one `cargo insta review` covers both crates' snapshots.
+insta = { workspace = true }
 # `tests/namespace_init.rs` runs the binary as a PID namespace's init.
 namespace-init = { path = "../namespace-init", features = ["test-support"] }
 pgdump_query = { path = "../pgdump_query", features = ["http"] }
-tempfile = "3.27.0"
+# `tests/common/refused.rs`, included from `pgdt-query`'s tests by path,
+# names its statistics request there.
+pgdt-query = { path = "../crates/pgdt-query" }
+tempfile = { workspace = true }
 # `rt` here too, as the binary states it: every `#[tokio::test]` in this
 # crate takes the default `current_thread` flavour, the one `pgdt`'s own
 # commands run.
-tokio = { version = "1.53.1", features = ["rt", "macros", "net", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "net", "time"] }

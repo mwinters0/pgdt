@@ -1,0 +1,35 @@
+[package]
+name = "pgdt-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Helpers a crate above's tests call, compiled into this crate only for them:
+# `pgdt-query` turns it on in its dev-dependencies.
+[features]
+test-support = []
+
+[dependencies]
+# `i256`, a decimal's ordering key (`key.rs`), and nothing else: the codec
+# builds no array (`docs/design/decisions.md`, "D74").
+arrow-buffer = { workspace = true }
+# `arrow.uuid`/`arrow.json` and the `supports_data_type` check that stamps
+# them live in `extension` (see `pgtype::CanonicalExtension`).
+arrow-schema = { workspace = true, features = ["canonical_extension_types"] }
+pgdt-core = { path = "../pgdt-core" }
+pgdt-model = { path = "../pgdt-model" }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+arrow = { workspace = true }
+criterion = { workspace = true }
+# The bench's `#[global_allocator]`: `pgdt`'s shipped allocator at `pgdt`'s
+# requirement, without `override` as there, so a bench times the heap the
+# binary ships rather than glibc's `malloc`. A dev-dependency because the
+# library names no allocator (`docs/design/decisions.md`, "D13").
+mimalloc = { workspace = true }
+
+[[bench]]
+name = "decoders"
+harness = false

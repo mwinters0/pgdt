@@ -167,7 +167,8 @@ answer.
 **Origin.** The remote-input grilling, 2026-09-17, which drained the entry that carried
 the gate; the vendoring decision itself is
 [`decisions.md`](decisions.md), "D14". **Contingent on**
-`pgdump_query/Cargo.toml` still naming a path dependency on `vendor/xz-seek`.
+the root `Cargo.toml`'s `[workspace.dependencies]` still naming a path dependency on
+`vendor/xz-seek`.
 
 ---
 
@@ -192,5 +193,5 @@ before the slices are written, since it is what decides whether the fetched arm
 exists at all.
 
 **Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
-sources still sharing one budget value — see `pgdump_query/src/io.rs` and
+sources still sharing one budget value — see `crates/pgdt-io/src/io.rs` and
 ([`decisions.md`](decisions.md), "D15").

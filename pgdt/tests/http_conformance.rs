@@ -271,7 +271,7 @@ fn query_over_a_real_origin_streams_the_same_rows_a_local_query_streams() {
 // large. A fetched `.xz` opens by walking stream footers backward — a chain of
 // tiny ranged GETs whose every position is read out of the bytes of the one
 // before it, ending at the object's last twelve bytes, at least one per stream
-// (`pgdump_query/src/io.rs`, `walk_seek_table`). The oracle answers one
+// (`crates/pgdt-io/src/io.rs`, `walk_seek_table`). The oracle answers one
 // request per connection and says `Connection: close` on every response
 // (`tests/common/oracle.rs`), so it has never seen those requests arrive down
 // a connection it is holding open, which is what a real origin does with them.

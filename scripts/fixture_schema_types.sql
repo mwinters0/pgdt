@@ -508,7 +508,7 @@ INSERT INTO public.t_composite VALUES
 -- column, so this field stays on the one-dimensional path and row 6 fails to
 -- decode wherever a query emits it; a filter comparing it reads it structurally
 -- and answers. A table of its own, so every other composite reads whole; the
--- generated pruning check's error leg reads it (pgdump_query/tests/pruning.rs,
+-- generated pruning check's error leg reads it (crates/pgdt-query/tests/pruning.rs,
 -- `check`), with rows either side for its terms over `id` to prune around.
 CREATE TABLE public.t_composite_matrix (
     id integer PRIMARY KEY,

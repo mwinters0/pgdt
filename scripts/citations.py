@@ -138,6 +138,7 @@ DATED_ENTRY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 
 #: Rust: sources only. Comments and doc comments, never code.
 RUST_ROOTS = (
+    "crates",
     "pgdump_query",
     "pgdt",
     "datafusion-pgdump",

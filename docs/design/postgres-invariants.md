@@ -65,7 +65,7 @@ preamble search at each `\connect`.
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `decisions.md` ("D30"); the mapping pass restating
 `DumpMetadata` at **each** `\connect`ed database's first `COPY` block
-(`pgdump_query/src/stream.rs`, `map_forward`), which the per-database scope limit licenses — each
+(`crates/pgdt-query/src/stream.rs`, `map_forward`), which the per-database scope limit licenses — each
 database's first `COPY` header closes that database's preamble;
 `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers
 for metadata built by some scan other than the mapping pass.
@@ -396,7 +396,7 @@ the empty-`search_path` line.
 confirm fixtures still contain `set_config('search_path', '', false)`;
 `grep -n 'BPCHAROID' -A14 src/backend/utils/adt/format_type.c`;
 `grep -n 'implicitly-searched namespaces' -A14 src/backend/catalog/namespace.c`; and
-`cargo test -p pgdump_query --test pgtype`, which reads `t_type_spelling` and
+`cargo test -p pgdt-query --test pgtype`, which reads `t_type_spelling` and
 `t_bit`.
 
 ---
@@ -463,7 +463,7 @@ pair *then* its own `\connect`.
 `pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
-(`pgdump_query/tests/common/mod.rs`'s `multidb_fixture`, versions 13/16/18);
+(`crates/pgdt-query/tests/common/mod.rs`'s `multidb_fixture`, versions 13/16/18);
 `fixtures/{13..18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run at
 every major (`tests/preamble.rs`,
 `every_dumpall_database_keeps_its_own_version_headers`).
@@ -760,7 +760,7 @@ see `pg-dump-compatibility.md` and P8 Track A in `roadmap.md`. `--inserts`
 format string is unchanged across all three. Also consistent with every
 fixture in `fixtures/` and with koji (`pg_dump 16.14`), none of which
 contains a `COPY` line with an options clause.
-**Relied on by:** `pgdump_query/src/copy.rs`'s `parse_copy_header` (its doc
+**Relied on by:** `crates/pgdt-core/src/copy.rs`'s `parse_copy_header` (its doc
 comment states the deliberate non-match for `WITH (...)`);
 `pg-dump-compatibility.md` ("`COPY` header variants" and "CSV-format `COPY`
 blocks"); `roadmap.md` (P8 Track A).
@@ -810,7 +810,7 @@ precision`: `1e14` → `100000000000000` (`1e14`, 15 digits), `1e15` →
 crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
-**Relied on by:** `pgdump_query/src/decode.rs`'s `render_f32`/`render_f64`
+**Relied on by:** `crates/pgdt-codec/src/decode.rs`'s `render_f32`/`render_f64`
 (`docs/design/decisions.md`, "D44"), whose fixed/scientific decision uses
 `FLT_DIG`/`DBL_DIG` (6/15) as the threshold, and the round-trip test under
 `decisions.md`'s "D73".
@@ -841,7 +841,7 @@ row per `chr(n)` codepoint) round-tripping through
 `pgdump_query::copy::encode_field`/`decode_field` byte-for-byte —
 `copy_text_escaping_round_trips_through_postgres`, `tests/scan.rs`.
 
-**Relied on by:** `pgdump_query/src/copy.rs`'s `encode_field`, which
+**Relied on by:** `crates/pgdt-core/src/copy.rs`'s `encode_field`, which
 implements these seven escapes only — `decode_field`'s inverse for text
 `pg_dump` could have produced, not a general COPY-text encoder. Also
 `decisions.md`, "D52": `\n` is one of the seven, so a literal LF byte inside a
@@ -1769,7 +1769,7 @@ fixture's database sequence is chosen by naming, not observed: a second
 data-carrying database named `pgdt_tenant` lands between `pgdt_fixture` and
 `postgres`, which is what makes "cancel inside the *second* database's data" a
 deterministic file offset for the recurring-metadata-boundary test
-(`pgdump_query/tests/map_file.rs`,
+(`crates/pgdt-query/tests/map_file.rs`,
 `an_interrupt_inside_a_later_database_types_the_segments_it_finished`). If the ordering
 changed, that test would cancel in the wrong segment and still pass.
 **Re-verify:**
@@ -2901,7 +2901,7 @@ grep -n -B2 -A4 'nondeterministic collations not supported' \
 grep -h 'CREATE COLLATION' fixtures/*/types/default.sql | sort | uniq -c
 grep -h 'CREATE COLLATION public.nd_collation' fixtures/*/types/binary-upgrade.sql \
   | sort | uniq -c
-cargo test -p pgdump_query --test preamble the_icu_collversion
+cargo test -p pgdt-query --test preamble the_icu_collversion
 ```
 
 ---
@@ -3083,7 +3083,7 @@ the other three call.
 **Observed.** Every row above answers as stated on `postgres:16.15-trixie` and
 `postgres:18.6-trixie`, through the probe below. The committed evidence is the
 acceptance walk in
-`pgdump_query/tests/nested.rs` (`oracle::the_input_grammars_accept_exactly_what_the_server_accepted`),
+`crates/pgdt-query/tests/nested.rs` (`oracle::the_input_grammars_accept_exactly_what_the_server_accepted`),
 which asserts every nested row of `fixtures/<13-18>/oracle/literals.tsv`
 against the parsers — 397 literals over six majors.
 
@@ -3594,7 +3594,7 @@ The infinities have one spelling each (I34).
 **Observed.** `fixtures/<13–18>/statistics/*.sql`'s `public.spans.stamp` is
 inserted from `2026-01-01 00:00:00+00` and `2026-01-01 05:00:00+05`, one
 instant, and `2026-07-01 12:00:00-07`: every major writes two texts, the first
-two as `2026-01-01 00:00:00+00` (`pgdump_query/tests/statistics_fixture.rs`
+two as `2026-01-01 00:00:00+00` (`crates/pgdt-query/tests/statistics_fixture.rs`
 asserts the count).
 
 **Scope limit.** **Per connection, so per database.** `pg_dumpall` runs one
@@ -3649,7 +3649,7 @@ outside it.
 
 **Observed.** `fixtures/<13–18>/types/default.sql`'s `t_timestamp` `id` 7
 and `t_extremes`' timestamps hold `294276-12-31 23:59:59.999999`, and
-`pgdump_query/tests/ordering.rs`,
+`crates/pgdt-query/tests/ordering.rs`,
 `a_timestamp_past_i64_is_ordered_by_the_refuse_mode_s_filter`, orders it.
 
 **Scope limit.** Integer datetimes, which every supported major is built
@@ -3707,7 +3707,7 @@ governs every line after the `SET` executes.
 
 **Observed.** Every fixture at all six routine versions carries
 `SET standard_conforming_strings = on;`, and
-`pgdump_query/tests/scan.rs`,
+`crates/pgdt-query/tests/scan.rs`,
 `a_dollar_inside_a_literal_identifier_or_comment_opens_no_body`, reads a
 hand-written `off` file whose `'it\'s $$ here'` ends where `off` says.
 
@@ -3720,7 +3720,7 @@ print both lines, call `_doSetFixedOutputState(AH)` at the same three sites and
 quote with the same two macro calls.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D23" — the lexer outside a
-`COPY` block (`pgdump_query/src/lex.rs`), which the scanner, `map::Builder` and
+`COPY` block (`crates/pgdt-core/src/lex.rs`), which the scanner, `map::Builder` and
 `StatementScan` read the setting into, and `CopyScanner::resume`'s default.
 
 **Re-verify.**
@@ -3774,7 +3774,7 @@ precision; and
 writes `0	0	1200	0`; `0.00012::numeric(2,5)` writes `0.00012`,
 `0::numeric(2,5)` writes `0.00000`, and `5e-200::numeric(1,200)` writes 199
 zeros after the point, then `5`. No fixture holds a negative-scale column;
-`pgdump_query/tests/decode.rs`,
+`crates/pgdt-query/tests/decode.rs`,
 `a_negative_scale_zero_reads_as_zero_in_every_mode`, reads a hand-built one,
 and `a_scale_past_the_precision_or_arrows_reach_reads_every_value` one past
 the precision.

@@ -3,7 +3,7 @@
 //! register, and "The CLI").
 //!
 //! What an ordering comparison *means* is pinned against the library in
-//! `pgdump_query/src/predicate.rs` and `pgdump_query/tests/ordering.rs`.
+//! `crates/pgdt-query/src/predicate.rs` and `crates/pgdt-query/tests/ordering.rs`.
 //! What only the binary can say is how a term is split into column, operator
 //! and value, and that a divergent comparison is announced on stderr — the
 //! signal that exists nowhere else, since it is neither a `Diagnostic` nor a

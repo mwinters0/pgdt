@@ -6,7 +6,7 @@ and every piece of evidence is about an arm.
 description. This module is the join.
 
 **What it exists to check.** The comparison register in
-`pgdump_query/src/pgtype.rs` says how a column of a declared type compares and
+`crates/pgdt-codec/src/pgtype.rs` says how a column of a declared type compares and
 whether that is PostgreSQL's own order; `scripts/comparison_oracle.py`'s case
 table is what PostgreSQL actually answers. Neither knows about the other. The
 register grows one arm at a time as types are closed, and an arm added with no
@@ -110,7 +110,7 @@ REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "fixtures"
 
 #: The register itself. Arms are read out of it because a `match` is not data.
-REGISTER = REPO / "pgdump_query" / "src" / "pgtype.rs"
+REGISTER = REPO / "crates" / "pgdt-codec" / "src" / "pgtype.rs"
 
 #: The DDL the oracle's database is loaded from, and therefore the only source
 #: that says what kind a `public.*` case names.
@@ -205,15 +205,15 @@ COLLATION_ARMS = (
         ),
         evidence=(
             Evidence(
-                "pgdump_query/src/pgtype/tests.rs",
+                "crates/pgdt-codec/src/pgtype/tests.rs",
                 "fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too(",
             ),
             Evidence(
-                "pgdump_query/src/pgtype/tests.rs",
+                "crates/pgdt-codec/src/pgtype/tests.rs",
                 "fn only_the_non_deterministic_collation_reaches_equality(",
             ),
             Evidence(
-                "pgdump_query/src/predicate/tests.rs",
+                "crates/pgdt-query/src/predicate/tests.rs",
                 "fn a_non_deterministic_collation_announces_under_equality_and_ordering(",
             ),
         ),

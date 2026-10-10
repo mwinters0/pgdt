@@ -1,0 +1,41 @@
+[package]
+name = "pgdt-query"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+introspect = ["pgdt-core/introspect", "pgdt-model/introspect", "pgdt-io/introspect"]
+
+[dependencies]
+arrow = { workspace = true }
+async-stream = "0.3"
+bytes = { workspace = true }
+futures = { workspace = true }
+memchr = { workspace = true }
+pgdt-codec = { path = "../pgdt-codec" }
+pgdt-core = { path = "../pgdt-core" }
+pgdt-dump = { path = "../pgdt-dump" }
+pgdt-io = { path = "../pgdt-io" }
+pgdt-model = { path = "../pgdt-model" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
+criterion = { workspace = true, features = ["async_tokio"] }
+insta = { workspace = true }
+# What this crate's tests reach there (each one's `test-support`).
+pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
+pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }
+# The benches' `#[global_allocator]`, as `pgdt-codec`'s.
+mimalloc = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+xz-seek = { workspace = true }
+
+[[bench]]
+name = "whole_file"
+harness = false

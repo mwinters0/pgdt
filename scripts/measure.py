@@ -5444,7 +5444,7 @@ _XZ_DECODE_BUILT = False
 
 
 def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
-    """`pgdump_query`'s `xz_decode` example, built and copied beside the other
+    """`pgdt-io`'s `xz_decode` example, built and copied beside the other
     measurement binaries.
 
     Mechanical, so the harness does it rather than asking for a binary: a
@@ -5470,7 +5470,7 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
         return out
     log(f"  building the xz_decode instrument into {out}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    built = build_in_image(cfg, release.Build(package="pgdump_query", example="xz_decode"))
+    built = build_in_image(cfg, release.Build(package="pgdt-io", example="xz_decode"))
     shutil.copyfile(built, out)
     out.chmod(0o755)
     _XZ_DECODE_BUILT = True
@@ -6225,16 +6225,16 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 
 
 #: The paths behind each mechanism a figure can depend on. Declared narrowly
-#: on purpose: a blanket `pgdump_query/src/` would mark every figure stale on
+#: on purpose: a blanket `crates/` would mark every figure stale on
 #: every commit, which is a `--stale` nobody reads. The cost of narrowness is
 #: that a change *outside* these paths that moves a figure goes unannounced —
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
 SCAN = (
-    "pgdump_query/src/scan.rs",
-    "pgdump_query/src/copy.rs",
-    "pgdump_query/src/lex.rs",
-    "pgdump_query/src/stream.rs",
+    "crates/pgdt-dump/src/scan.rs",
+    "crates/pgdt-core/src/copy.rs",
+    "crates/pgdt-core/src/lex.rs",
+    "crates/pgdt-query/src/stream.rs",
 )
 #: Every figure that times a `pgdt` run over a file reads its bytes through
 #: this one module, whatever else the figure is about, so it is its own
@@ -6243,19 +6243,19 @@ SCAN = (
 #: The read path was undeclared until the buffer pool landed, which made a
 #: change to the largest single term in a warm `parse`'s user time read green
 #: against every table it moved.
-READ = ("pgdump_query/src/io.rs",)
-MAP = ("pgdump_query/src/map.rs", "pgdump_query/src/model/span.rs")
+READ = ("crates/pgdt-io/src/io.rs",)
+MAP = ("crates/pgdt-dump/src/map.rs", "crates/pgdt-model/src/span.rs")
 #: The map's own per-block cost is two files, not one: `map::Builder::snapshot`
 #: clones the span list and `stream::splice` rebuilds the index from it, under
 #: the save throttle's gate. A figure that prices the map declares both, or a
 #: change to the gate reads green against a table it just moved.
-MAP_BUILD = (*MAP, "pgdump_query/src/stream.rs")
+MAP_BUILD = (*MAP, "crates/pgdt-query/src/stream.rs")
 #: Where a filter term is resolved and evaluated, and the ordering keys it
 #: compares by. Its own mechanism because
 #: until `predicate-terms` no registered figure passed a filter at all, so
 #: nothing in the register was moved by this file and nothing declared it --
 #: which is the same shape of blindness the read path had before `READ`.
-PREDICATE = ("pgdump_query/src/predicate.rs", "pgdump_query/src/key.rs")
+PREDICATE = ("crates/pgdt-query/src/predicate.rs", "crates/pgdt-codec/src/key.rs")
 #: Per-type scalar decode and render-back. Its own mechanism rather than part
 #: of `NESTED`, because the figures it moves are not the ones `NESTED` moves:
 #: every figure that runs a *typed* query pays it on every scalar column,
@@ -6264,19 +6264,19 @@ PREDICATE = ("pgdump_query/src/predicate.rs", "pgdump_query/src/key.rs")
 #: allocations, which is the third instance of the blindness `READ` and
 #: `PREDICATE` record: a file nothing declared because no slice had yet
 #: touched it.
-DECODE = ("pgdump_query/src/decode.rs",)
-CACHE = ("pgdump_query/src/cache.rs",)
+DECODE = ("crates/pgdt-codec/src/decode.rs",)
+CACHE = ("crates/pgdt-dump/src/cache.rs",)
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96").
 UNREPRESENTABLE = (
-    "pgdump_query/src/unrepresentable.rs",
-    "pgdump_query/src/model/block.rs",
+    "crates/pgdt-codec/src/unrepresentable.rs",
+    "crates/pgdt-model/src/block.rs",
 )
-NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
+NESTED = ("crates/pgdt-codec/src/nested.rs", "crates/pgdt-query/src/batch.rs")
 PREAMBLE = (
-    "pgdump_query/src/load.rs",
-    "pgdump_query/src/preamble.rs",
-    "pgdump_query/src/model/catalog.rs",
+    "crates/pgdt-dump/src/load.rs",
+    "crates/pgdt-dump/src/preamble.rs",
+    "crates/pgdt-model/src/catalog.rs",
 )
 #: A query figure also reads through the CLI's own row rendering. The whole
 #: `src/` directory rather than `main.rs`: a declared path is matched by
@@ -6309,11 +6309,11 @@ DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: `pgtype.rs`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
-    "pgdump_query/src/gather.rs",
-    "pgdump_query/src/statistics.rs",
-    "pgdump_query/src/model/statistics.rs",
-    "pgdump_query/src/pgtype.rs",
-    "pgdump_query/src/resolve.rs",
+    "crates/pgdt-query/src/gather.rs",
+    "crates/pgdt-query/src/statistics.rs",
+    "crates/pgdt-model/src/statistics.rs",
+    "crates/pgdt-codec/src/pgtype.rs",
+    "crates/pgdt-codec/src/resolve.rs",
     *PREDICATE,
 )
 #: What a query figure's reading carries beyond its rows, its query timed over
@@ -7148,7 +7148,7 @@ VIEW_BATCH = 1024
 
 #: `nested-decode-micro`'s program: criterion's `nested` group of
 #: `benches/decoders.rs`.
-NESTED_BENCH = release.Bench("pgdump_query", "decoders", "nested")
+NESTED_BENCH = release.Bench("pgdt-codec", "decoders", "nested")
 
 
 def bench_in_image(session: Session, figure: str, bench: release.Bench) -> Path:
@@ -7549,7 +7549,7 @@ def run_xz_decode_scaling(session: Session) -> str:
         )
     notes = (
         "\n\nEach cell is wall clock, the plaintext rate it implies, and the speedup over that "
-        f"leg's own one-worker row. The instrument is `pgdump_query/examples/xz_decode.rs` in a "
+        f"leg's own one-worker row. The instrument is `crates/pgdt-io/examples/xz_decode.rs` in a "
         f"{DECODE_MEMORY} container — **not** the register's 512 MB, which cannot hold "
         f"{DECODE_WORKERS[-1]} decoded 24 MiB blocks — and it refuses a run whose plan admits "
         "fewer workers than were asked for.\n\n"
@@ -10095,7 +10095,7 @@ FIGURES: list[Figure] = [
         id="nested-decode-micro",
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
-        depends=("pgdump_query/src/nested.rs", "pgdump_query/benches/decoders.rs"),
+        depends=("crates/pgdt-codec/src/nested.rs", "crates/pgdt-codec/benches/decoders.rs"),
         run=run_nested_decode_micro,
     ),
     # `depends` carries the scan path as well as the decode one, which no other
@@ -10190,7 +10190,7 @@ FIGURES: list[Figure] = [
         # the control leg's bytes are a compression of.
         depends=(
             "vendor/xz-seek/src/",
-            "pgdump_query/examples/xz_decode.rs",
+            "crates/pgdt-io/examples/xz_decode.rs",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
@@ -10216,7 +10216,7 @@ FIGURES: list[Figure] = [
             *NESTED,
             *DECODE,
             *QUERY_CLI,
-            "pgdump_query/src/leader.rs",
+            "crates/pgdt-dump/src/leader.rs",
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
@@ -10224,7 +10224,7 @@ FIGURES: list[Figure] = [
             # prune by its statistics under their filter.
             *CACHE,
             *STATISTICS,
-            "pgdump_query/src/prune.rs",
+            "crates/pgdt-query/src/prune.rs",
             *DATAFUSION,
         ),
         warm_inputs=("control", "control_xz"),
@@ -10246,7 +10246,7 @@ FIGURES: list[Figure] = [
             *MAP,
             *READ,
             *QUERY_CLI,
-            "pgdump_query/src/leader.rs",
+            "crates/pgdt-dump/src/leader.rs",
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
@@ -10359,7 +10359,7 @@ FIGURES: list[Figure] = [
             *READ,
             *CACHE,
             *QUERY_CLI,
-            "pgdump_query/src/leader.rs",
+            "crates/pgdt-dump/src/leader.rs",
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
@@ -10433,7 +10433,7 @@ FIGURES: list[Figure] = [
             *READ,
             *CACHE,
             *STATISTICS,
-            "pgdump_query/src/prune.rs",
+            "crates/pgdt-query/src/prune.rs",
             *NESTED,
             *DECODE,
             *QUERY_CLI,
@@ -10458,7 +10458,7 @@ FIGURES: list[Figure] = [
             *READ,
             *CACHE,
             *STATISTICS,
-            "pgdump_query/src/prune.rs",
+            "crates/pgdt-query/src/prune.rs",
             *NESTED,
             *DECODE,
             *DATAFUSION,
@@ -10480,7 +10480,7 @@ FIGURES: list[Figure] = [
             *READ,
             *CACHE,
             *STATISTICS,
-            "pgdump_query/src/prune.rs",
+            "crates/pgdt-query/src/prune.rs",
             *NESTED,
             *DECODE,
             *DATAFUSION,
@@ -10552,11 +10552,12 @@ EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 # Consumers: who repeats a figure, computed from who names it.
 # --------------------------------------------------------------------------
 
-#: Where a consumer can live. Documents, the two crates and the scripts that
+#: Where a consumer can live. Documents, the crates and the scripts that
 #: are not this harness -- a figure's numbers are quoted in prose and its
 #: claims are asserted in doc comments, and both of those are in here.
 CONSUMER_ROOTS: tuple[tuple[str, str], ...] = (
     ("docs", "**/*.md"),
+    ("crates", "**/*.rs"),
     ("pgdump_query", "**/*.rs"),
     ("pgdt", "**/*.rs"),
     ("scripts", "*.py"),
@@ -11434,8 +11435,8 @@ NOT_OURS = {
                 *MAP,
                 *CACHE,
                 *PREAMBLE,
-                "pgdump_query/src/resolve.rs",
-                "pgdump_query/src/pgtype.rs",
+                "crates/pgdt-codec/src/resolve.rs",
+                "crates/pgdt-codec/src/pgtype.rs",
                 *QUERY_CLI,
             ),
         ),
@@ -11443,8 +11444,8 @@ NOT_OURS = {
             "benches",
             "benches/decoders.rs per-type pairs, benches/whole_file.rs",
             "Tripwires, not figures: they quote no number in the doc, so there is no table to "
-            "emit. That is a decision, not an oversight -- `cargo bench -p pgdump_query` runs "
-            "them.",
+            "emit. That is a decision, not an oversight -- `cargo bench -p pgdt-codec` and "
+            "`-p pgdt-query` run them.",
             # No edge, and the empty tuple is the claim rather than an omission:
             # this section publishes no reading, so there is nothing a diff
             # could invalidate. It is the same sentence that puts it outside the

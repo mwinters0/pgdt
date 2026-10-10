@@ -24,8 +24,8 @@ test-support = []
 [dependencies]
 # The signal numbers, `SIGRTMIN()` and `SIGRTMAX()` among them, which
 # `signal-hook` does not re-export.
-libc = "0.2.189"
+libc = { workspace = true }
 # No default features: `flag::register_conditional_shutdown` and
 # `low_level::unregister` are all this uses. Its registry is the one `tokio`'s
 # `signal` installs through, so these run beside a binary's own handlers.
-signal-hook = { version = "0.4.4", default-features = false }
+signal-hook = { workspace = true }

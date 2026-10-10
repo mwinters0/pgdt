@@ -557,7 +557,7 @@ fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
 /// **An allocation at or under the reserve resolves to a budget of zero,
 /// a resolved value rather than an error.** Zero produces one reader on
 /// the streaming path, and the `PlanNote` beside it tells the user their
-/// allocation bound the scan (`pgdump_query/tests/partitioned_replay.rs`,
+/// allocation bound the scan (`crates/pgdt-query/tests/partitioned_replay.rs`,
 /// `a_budget_below_one_readers_worth_says_the_allocation_bound_it`).
 #[test]
 fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {

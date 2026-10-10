@@ -2,7 +2,7 @@
 """The `.xz` inputs the register's compressed figures are taken on.
 
 Two of them are `xz-decode-scaling`'s, read by
-`pgdump_query/examples/xz_decode.rs` under `scripts/measure.py`, and both exist
+`crates/pgdt-io/examples/xz_decode.rs` under `scripts/measure.py`, and both exist
 to answer one question — how a block decoder's plaintext throughput scales with
 worker count — over the two kinds of bytes that answer it differently:
 

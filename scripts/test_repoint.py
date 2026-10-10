@@ -213,7 +213,8 @@ class ThisRepo(unittest.TestCase):
     def test_every_workspace_crate_is_counted(self):
         """A crate the meter does not read grows the record unmetered."""
         cargo = tomllib.loads((repoint.REPO / "Cargo.toml").read_text())
-        self.assertEqual(set(repoint.CODE_ROOTS), set(cargo["workspace"]["members"]))
+        members = {m.removesuffix("/*") for m in cargo["workspace"]["members"]}
+        self.assertEqual(set(repoint.CODE_ROOTS), members)
 
 
 if __name__ == "__main__":

@@ -54,32 +54,32 @@ than reading as a phase nobody has sliced.
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
   `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
-  need attribution. Detail: `pgdump_query/src/map/tests.rs`.
+  need attribution. Detail: `crates/pgdt-dump/src/map/tests.rs`.
 
 - **KD2** — an array nested inside a composite is decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
   `Error::FieldDecode`. **(c) unowned**; promoted by a schema that holds one,
   the per-path census being deferred on frequency. Detail:
-  `pgdump_query/src/resolve.rs`.
+  `crates/pgdt-codec/src/resolve.rs`.
 
 - **KD3** — two array shapes come back as text with no way to ask for more,
   `NestedArrayElement` and `VaryingArrayShape`, though both are fully
   understood. **(c) unowned**; promoted by a caller whose arrays are matrices
   or scientific data, for whom a string is the wrong answer. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
   wherever the save throttle's gate does not close it — which is every
   `--dtcache none` scan, since a no-op save leaves nothing to amortize.
   **(c) unowned**; promoted by a dump with thousands of blocks
-  scanned under `--dtcache none`. Detail: `pgdump_query/src/stream.rs`.
+  scanned under `--dtcache none`. Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
   candidate it found. The DataFusion provider never shows it, reading only a
   complete map. **(c) unowned**; promoted by a concatenated or
   `pg_dumpall`-style file reaching a user through a cold query. Detail:
-  `pgdump_query/src/batch.rs`.
+  `crates/pgdt-query/src/batch.rs`.
 
 - **KD48** — a file's `SET search_path` is not read, so an unqualified name
   resolves as under the default path: a collation a declared one could shadow
@@ -88,7 +88,7 @@ than reading as a phase nobody has sliced.
   naming `pg_catalog` after the declaring schema, which only a hand-written
   file sets (I8). **(c) unowned**; promoted by such a
   file in hand, the fix being to model the path. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD7** — a column that *states* a collation this build does not implement is
   compared bytewise, so the row set is not the server's: under `<`/`>` always,
@@ -96,7 +96,7 @@ than reading as a phase nobody has sliced.
   the fix is a comparison per named collation, up to a provider version. **(c)
   unowned**; promoted by [`../design/roadmap.md`](../design/roadmap.md)'s
   Future item "collation-aware comparison", intent without a phase. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD9** — an `INSERT` run costs an order of magnitude more than a `COPY`
   scan warm and most of a cold NVMe scan's time (`measurements.md`,
@@ -104,7 +104,7 @@ than reading as a phase nobody has sliced.
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan all three are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
-  `pgdump_query/src/preamble.rs`.
+  `crates/pgdt-dump/src/preamble.rs`.
 
 - **KD10** — a column whose declared type this build models no comparison for
   answers `=`/`!=` bytewise, which is not the server's answer for the geometric
@@ -112,14 +112,14 @@ than reading as a phase nobody has sliced.
   outright, and the announcement misses a type reached through a container
   (`box[]`). **(c) unowned**; promoted by a dump whose queried columns are
   geometric or hold a `money`-shaped extension type. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD13** — `money` is below the ADBC floor: the driver answers `int64` and we
   answer `Utf8View`, because `cash_out` renders through the monetary locale and
   `pg_dump` sets `lc_monetary` nowhere, so the file cannot say which locale
   wrote a value. **(a) deliberate tradeoff** — closing it means guessing a
   locale or asking for one, which the bar refuses for every other type. Detail:
-  `pgdump_query/src/pgtype.rs`.
+  `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD57** — `pgdt query` prints in file order holding one batch a
   sub-stream, so past its first round only the earliest live sub-stream reads
@@ -135,21 +135,21 @@ than reading as a phase nobody has sliced.
   twice the decode work and its speedup is capped near half the reader count.
   **(c) unowned**; promoted by a phase taking up compressed scan throughput,
   and the fix left is an in-flight map, a wider cut having been measured and
-  refused. Detail: `pgdump_query/src/io.rs`.
+  refused. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD21** — the block pool's slot ceiling follows the worker count a caller
   *announced* rather than the one delivered, so a `--jobs` well above what the
   read-buffer budget affords holds more than that budget — 1,280 MiB against
   1,024 at `--jobs 24` and a 1 GiB budget on a 128 MiB-block file.
   **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
-  Detail: `pgdump_query/src/io.rs`.
+  Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD22** — the leader cuts a window of `workers` partitions or more from a
   `COPY` block's start and drains every piece before merging, so a dump of
   blocks much smaller than that window is read and parsed two orders of
   magnitude over, worse at every worker added and reached with no flag typed.
   **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
-  `pgdump_query/src/leader.rs`.
+  `crates/pgdt-dump/src/leader.rs`.
 
 - **KD23** — a `pgdt query` sub-stream can pin several decoded blocks where the
   budget bills one: a query partition is cut over a whole `CopyBlock` rather
@@ -157,7 +157,7 @@ than reading as a phase nobody has sliced.
   bound it and a held batch's `max_source_span` reaches up to four of koji's 24
   MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
   memory, the repair reversing a recorded decision either way. Detail:
-  `pgdump_query/src/stream.rs`.
+  `crates/pgdt-query/src/stream.rs`.
 
 - **KD24** — the chunk pool's free list is billed nowhere, so a compressed
   source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks — 4
@@ -165,7 +165,7 @@ than reading as a phase nobody has sliced.
   flat in the count and never above the stated budget unless one chunk is. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
-  `pgdump_query/src/io.rs`.
+  `crates/pgdt-io/src/io.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS` chunks a reader,
   capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
@@ -173,14 +173,14 @@ than reading as a phase nobody has sliced.
   billed against 4 held at the shipped chunk, and unbounded above a budget of
   `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
   scan on a real device, which is that path's own reopening condition. Detail:
-  `pgdump_query/src/io.rs`.
+  `crates/pgdt-io/src/io.rs`.
 
 - **KD26** — no charge bills a compressed source's seek table, the only
   unbilled term in the account that grows with the file rather than the count —
   3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
   read off. **(c) unowned**; promoted by a source whose index is not small
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
-  has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
+  has no per-source term to bill it with. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
   D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
@@ -189,13 +189,13 @@ than reading as a phase nobody has sliced.
   to decline block decode on an ordinary `.xz`: a stated allowance raises
   neither, and `--chunk-size` moves them only as far as `KD41` lets it.
   **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
-  on a real device. Detail: `pgdump_query/src/stream.rs`.
+  on a real device. Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows several
   kilobytes per table, about a fifth of it live structure the preamble alone
   pays (`measurements.md`, `peak-rss` and `rss-attribution`).
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
-  in hand being one. Detail: `pgdump_query/src/model/catalog.rs`.
+  in hand being one. Detail: `crates/pgdt-model/src/catalog.rs`.
 
 - **KD29** — a flagless `pgdt` run reads its memory limit once for the
   status lines and the statistics allowance and again inside
@@ -209,7 +209,7 @@ than reading as a phase nobody has sliced.
   the run's start, so a span following one longer than the cap can be stored
   empty and `truncated` however short it is. **(c) unowned**; promoted by a
   `--map` listing seen to lose a statement's text. Detail:
-  `pgdump_query/src/map.rs`.
+  `crates/pgdt-dump/src/map.rs`.
 
 - **KD33** — statistics stop where the account fills: nothing releases
   `Term::Retained` while the pass gathers forward, so a dump long enough fills
@@ -217,7 +217,7 @@ than reading as a phase nobody has sliced.
   file and a query pruning nothing over the tail. How much is covered depends on
   the allowance the box resolved, which a user cannot predict. **(b) owned by
   P23**, whose remedy is a granularity derived from the dump's length. Detail:
-  `pgdump_query/src/gather.rs`.
+  `crates/pgdt-query/src/gather.rs`.
 
 - **KD35** — a budget too small for a decoded block is read serially: the
   piecewise arm advises one partition on both providers, where a decoder retains
@@ -226,7 +226,7 @@ than reading as a phase nobody has sliced.
   fetched arm's statelessness, which would have served several partitions for
   want of cut points alone, was spent to stop it re-decoding a block a scan sits
   inside. **(c) unowned**; promoted by a phase taking up compressed scan
-  throughput, which is also what takes the figure. Detail: `pgdump_query/src/io.rs`.
+  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs at least four round trips per
@@ -234,7 +234,7 @@ than reading as a phase nobody has sliced.
   read. The remedy is a straddling window, below which one fetch a stream is a
   floor rather than a remaining cost. **(c) unowned**; promoted by a phase that
   tunes the network, which is where the deferred fetch policy belongs.
-  Detail: `pgdump_query/src/io.rs`.
+  Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD37** — a cancelled read the leader dispatched inside the statistics
   back-fill propagates instead of banking: a source answering a cancellation by
@@ -243,7 +243,7 @@ than reading as a phase nobody has sliced.
   where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
   unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
   its map reached EOF, or in a strict one's check of a map short of it, the fix being the arm the mapping pass already carries.
-  Detail: `pgdump_query/src/stream.rs`.
+  Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD38** — a pgdump scan planned while others hold the session budget gets
   what they left, so a join's second-planned table can run on one reader while
@@ -254,13 +254,13 @@ than reading as a phase nobody has sliced.
 - **KD46** — a block holding one distinct value records `Ascending`, so a
   descending table holding one declares no ordering to DataFusion and a sort
   it would satisfy is planned. **(c) unowned**; promoted by a table seen to lose its
-  ordering to one. Detail: `pgdump_query/src/summary.rs`.
+  ordering to one. Detail: `crates/pgdt-query/src/summary.rs`.
 
 - **KD47** — where an exact bound and a clipped one share their text, the
   first folded is kept, so a clipped one first leaves a column's `MIN` or
   `MAX` `Inexact` and read rather than answered from statistics. **(c)
   unowned**; promoted by an extreme seen read where it could answer. Detail:
-  `pgdump_query/src/summary.rs`.
+  `crates/pgdt-query/src/summary.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
   collation (I32), and nothing reads it: every column of a type taking the
@@ -268,7 +268,7 @@ than reading as a phase nobody has sliced.
   database's columns warn where they agree with the server, and another
   collation's are announced as a possibility rather than a fact. **(c)
   unowned**; promoted by the roadmap's "Collation-aware comparison", whose
-  environment-free half it belongs to. Detail: `pgdump_query/src/pgtype.rs`.
+  environment-free half it belongs to. Detail: `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD41** — a replay plan never announces its read chunk, so a plain
   source is cut by the chunk its last read announced: a `pgdt query` over a
@@ -276,13 +276,13 @@ than reading as a phase nobody has sliced.
   provider's first scan after `SET pgdump.chunk_size` at the chunk before it,
   so the smaller chunk a plan note advises seats nothing more on that plan.
   **(c) unowned**; promoted by a stated chunk seen not to seat what the note
-  promised. Detail: `pgdump_query/src/stream.rs`.
+  promised. Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
   90th-percentile group it is read at, so a block already past the maximum
   merges further past it. **(c) unowned**; promoted by a stated maximum seen
-  to leave a block's groups past it. Detail: `pgdump_query/src/gather.rs`.
+  to leave a block's groups past it. Detail: `crates/pgdt-query/src/gather.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared
@@ -290,21 +290,21 @@ than reading as a phase nobody has sliced.
   is read balanced over what its static filter keeps rather than over what
   the join's filter does. **(c) unowned**; promoted by such a table's probe
   side seen unbalanced, the fix being a cut that breaks at every boundary
-  nothing proves. Detail: `pgdump_query/src/stream.rs`.
+  nothing proves. Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD54** — a query's replay keeps every chunk a batch's views point into
   until the batch flushes, and the read pool keeps `POOL_DEPTH` of them, so a
   batch spanning more chunks drops the rest and the reads after it zero fresh
   buffers — a third of the costing row's off-leg user cycles, under mimalloc.
   **(c) unowned**; promoted by a figure pricing the zeroing or a phase taking
-  up query-path memory. Detail: `pgdump_query/src/io.rs`.
+  up query-path memory. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD55** — a membership over a text-compared column probes std's
   SipHash-keyed set with the field's text, among the costliest terms of the
   costing row's evaluation, where a fast hasher seeded once a process would
   keep a flooded list's defence at a fraction of the cost. **(c) unowned**;
   promoted by row evaluation going on by default, or a figure pricing
-  `pgdt --where`'s `in (…)`. Detail: `pgdump_query/src/predicate.rs`.
+  `pgdt --where`'s `in (…)`. Detail: `crates/pgdt-query/src/predicate.rs`.
 
 - **KD56** — an ungrouped aggregate's dynamic filter drops a column's bounds
   in DataFusion 55.1 while a batch of it holds no value, so a scan pruning
@@ -321,7 +321,7 @@ than reading as a phase nobody has sliced.
   legs from four readers overrun `MEMORY_UNPOOLED_BOUND` by `KD111`'s unit and
   one mimalloc keeps, a worst rep the reserve and, in `-m 1536m`, the margin;
   their `system` twins hold inside all three. **(b) owned by P23**, which
-  re-takes them, sets both constants and runs the blind gate. Detail: `pgdump_query/src/io.rs`.
+  re-takes them, sets both constants and runs the blind gate. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its
@@ -334,7 +334,7 @@ than reading as a phase nobody has sliced.
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
-  streams. Detail: `pgdump_query/src/io.rs`.
+  streams. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
@@ -344,25 +344,25 @@ than reading as a phase nobody has sliced.
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
-  a file and is not told. Detail: `pgdump_query/src/stream.rs`.
+  a file and is not told. Detail: `crates/pgdt-query/src/stream.rs`.
 
 - **KD82** — `=`, `!=` and `IN` on a canonicalized kind compare a field's
   spelling, so a hand-written field its decoder reads in a spelling `*_out`
   never writes — `1.005` in a `numeric(10,2)`, a braced `uuid` — is missed
   where a typed read and an ordering operator take its value. **(c)
   unowned**; promoted by a user meeting it. Detail:
-  `pgdump_query/src/predicate.rs`.
+  `crates/pgdt-query/src/predicate.rs`.
 
 - **KD84** — an `oid` written with a leading zero, which no `pg_dump` writes,
   is read in decimal as v15 and earlier read it, where v16 and later read it
   in octal, `010` as 8, and refuse `08`. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.
+  hand-written dump holding one. Detail: `crates/pgdt-codec/src/decode.rs`.
 
 - **KD85** — a `macaddr` field in which a layout `macaddr_in`'s `sscanf`
   tries meets an octet opening with a sign or `0x`, read by glibc's rules,
   is never refused, though the server refuses some (`08:00:2b:01:02:-1`, a
   malformed dash-separated address), so a parse keying it goes on past one. **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `pgdump_query/src/decode.rs`.
+  Detail: `crates/pgdt-codec/src/decode.rs`.
 
 - **KD86** — on an enum whose labels the preamble did not read exactly, a
   filter literal naming a label they lack is refused, and so is such a field
@@ -370,13 +370,13 @@ than reading as a phase nobody has sliced.
   though the server may hold the label. **(c)
   unowned**; promoted by a hand-written dump renaming or adding a label in a
   statement this build does not read. Detail:
-  `pgdump_query/src/predicate.rs`.
+  `crates/pgdt-query/src/predicate.rs`.
 
 - **KD87** — an enum's labels changed by code this build does not read as an
   `ALTER TYPE` — a `DO` block, a function a statement calls, a write to
   `pg_enum`, a psql include — stay marked exact, so a parse fails on a field
   naming a label so added, which a restore reads. **(c) unowned**; promoted
-  by a hand-written dump doing so. Detail: `pgdump_query/src/preamble.rs`.
+  by a hand-written dump doing so. Detail: `crates/pgdt-dump/src/preamble.rs`.
 
 - **KD88** — a query's typed read of an enum column emits a label the type
   does not declare, which `enum_in` refuses, so such a field no default
@@ -384,13 +384,13 @@ than reading as a phase nobody has sliced.
   refused only by a query ordering on the column or comparing an array or
   composite holding it. **(c) unowned**; a strict
   parse refuses it, so promoted by a query wanted to refuse it without one.
-  Detail: `pgdump_query/src/batch.rs`.
+  Detail: `crates/pgdt-query/src/batch.rs`.
 
 - **KD89** — an `ALTER TYPE … ADD VALUE … BEFORE` or `AFTER`, which no
   `pg_dump` writes, is folded as if it appended the label, so an ordering
   filter and the bounds it prunes by order that label last where the server
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `pgdump_query/src/preamble.rs`.
+  Detail: `crates/pgdt-dump/src/preamble.rs`.
 
 - **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
   want of a complete cache, names a `pgdt parse` without
@@ -402,7 +402,7 @@ than reading as a phase nobody has sliced.
   refused though PostgreSQL writes and reads one up to I71's bound, and one up
   to a read chunk past the limit is read or refused by where the reads fall —
   the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
-  `P33`**. Detail: `pgdump_query/src/scan.rs`.
+  `P33`**. Detail: `crates/pgdt-dump/src/scan.rs`.
 
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks
@@ -411,14 +411,14 @@ than reading as a phase nobody has sliced.
   hold; only the `varchar(n)` half changes an answer, its `<` and `=`, the
   latter needing `KD82` closed too. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail:
-  `pgdump_query/src/decode.rs`.
+  `crates/pgdt-codec/src/decode.rs`.
 
 - **KD99** — a `time(p)`, `timetz(p)`, `timestamp(p)`, `timestamptz(p)` or
   qualified `interval` field is read as written, not rounded or truncated by
   its typmod as PostgreSQL stores it, which no `pg_dump` writes, so a typed
   read emits, keys and compares a value the server does not hold. **(c)
   unowned**; promoted by a hand-written dump holding one. Detail:
-  `pgdump_query/src/decode.rs`.
+  `crates/pgdt-codec/src/decode.rs`.
 
 - **KD101** — a `COPY` block whose first row holds a raw CR before its
   line's end, its rows ending in a bare CR, is read as LF-split lines and
@@ -426,51 +426,51 @@ than reading as a phase nobody has sliced.
   CR and discards what psql sends after that (I91): that block's rows are
   wrong, and a field among them may be refused where PostgreSQL reads it; no
   `pg_dump` writes one. **(c) unowned**; promoted by a hand-written dump
-  holding one. Detail: `pgdump_query/src/scan.rs`.
+  holding one. Detail: `crates/pgdt-dump/src/scan.rs`.
 
 - **KD102** — a partition declared `CREATE TABLE … PARTITION OF`, which no
   `pg_dump` writes (I86), takes its columns, `NOT NULL`s and `CHECK`s from its
   parent, and no lookup reaches them: each of its columns is declared
   nowhere, so read as text and checked for nothing, and a parent's `CHECK` is
   not named for it. **(c) unowned**; promoted by a hand-written dump holding
-  one. Detail: `pgdump_query/src/preamble.rs`.
+  one. Detail: `crates/pgdt-dump/src/preamble.rs`.
 
 - **KD103** — a carriage return inside a line outside a quoted region ends a
   `--` comment and is the newline a literal's continuation needs, as psql's
   lexer reads it, where the lexer takes only the line's end, so a statement
   after a CR on a comment's line is read as that comment; no `pg_dump` writes
   one (I90). **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `pgdump_query/src/lex.rs`.
+  Detail: `crates/pgdt-core/src/lex.rs`.
 
 - **KD104** — a backslash before a raw LF or tab in a `COPY` row makes that
   byte data, as a restore reads it (I91), where the scanner ends the row at
   the LF and `split_fields` splits at the tab; no `pg_dump` writes either
   (I15). **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `pgdump_query/src/scan.rs`.
+  Detail: `crates/pgdt-dump/src/scan.rs`.
 
 - **KD105** — a `\.` line at the file's end with no LF after it ends its
   block, where a restore refuses it as a corrupt or mismatched marker (I91);
   `pg_dump` ends every line with an LF. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `pgdump_query/src/scan.rs`.
+  hand-written dump holding one. Detail: `crates/pgdt-dump/src/scan.rs`.
 
 - **KD106** — an `INSERT` run that a `COPY` header or a large object's
   `BEGIN;` follows with no blank line between them is dropped rather than
   closed: its bytes extend the span before it and no `InsertRun` counts its
   rows; `pg_dump` ends every run with a blank line. **(c) unowned**; promoted
-  by a hand-written dump holding one. Detail: `pgdump_query/src/map.rs`.
+  by a hand-written dump holding one. Detail: `crates/pgdt-dump/src/map.rs`.
 
 - **KD107** — a block's recorded first refused field, under
   `--postgres-invalid-values ignore`, can be a later one than a restore
   fails at, where a read in pieces declined before it and another read of
   the block is merged into it, so a refusing parse over the cache names that
   later line. **(c) unowned**; promoted by a refusing parse naming the wrong
-  line. Detail: `pgdump_query/src/model/statistics.rs`.
+  line. Detail: `crates/pgdt-model/src/statistics.rs`.
 
 - **KD108** — under `--postgres-invalid-values ignore`, a float past its
   type's range spelled with blanks around it or in hexadecimal is not read
   as the parse rounds it, as a decimal one is, but fails a query decoding
   it; `float_out` writes neither spelling. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `pgdump_query/src/decode.rs`.
+  hand-written dump holding one. Detail: `crates/pgdt-codec/src/decode.rs`.
 
 - **KD109** — no instrument attributes the shipped allocator's blocks to call
   stacks: mimalloc is linked without `override`, so heaptrack and valgrind,
@@ -494,7 +494,7 @@ than reading as a phase nobody has sliced.
   rather than the count — half of `MEMORY_UNPOOLED_BOUND` at 128 MiB blocks.
   Unattributed; `KD20`'s duplicate decode is the candidate. **(b) owned by
   P23**, which bills the unit or, if it is `KD20`'s, takes the in-flight map.
-  Detail: `pgdump_query/src/io.rs`.
+  Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD112** — the provider splits a plain scan by `target_partitions` on any
   device, never reading the source's recommendation of one, so where one
@@ -506,10 +506,10 @@ than reading as a phase nobody has sliced.
   a source's recommended charge stands uncapped, at the count asked for, and
   the provider's scans share no budget, though unstated is not unlimited
   (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
-  user. Detail: `pgdump_query/src/io.rs`.
+  user. Detail: `crates/pgdt-io/src/io.rs`.
 
 - **KD114** — a TOC header whose owner is empty (`; Owner: `, as
   `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry
   owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
   it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
-  any change to the TOC header parser. Detail: `pgdump_query/src/map.rs`.
+  any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map.rs`.

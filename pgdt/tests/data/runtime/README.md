@@ -12,7 +12,7 @@ They are committed rather than built in a `tempdir` because what they pin is a
 matter are the ones no single machine has: this project's machines run a pure
 v2 unified hierarchy, so the v1 arm cannot exist beside it (`RT6`), and a
 machine with a limit cannot exercise the no-limit arm at the same time. The
-reader's own unit cases stay beside the reader, in `pgdump_query/src/io.rs`.
+reader's own unit cases stay beside the reader, in `crates/pgdt-io/src/io.rs`.
 
 What a tree establishes is that the reader handles the shape the register
 describes — not that a kernel still produces it, which only a host of that kind

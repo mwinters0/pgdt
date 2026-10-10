@@ -6,7 +6,7 @@
 -- so the heap holds the rows in insertion order and `pg_dump`'s COPY writes them
 -- in that order. That is what makes a column declared "ascending" below
 -- ascending in the file. It is asserted on the bytes, not assumed:
--- pgdump_query/tests/statistics_fixture.rs reads each block and checks every
+-- crates/pgdt-query/tests/statistics_fixture.rs reads each block and checks every
 -- shape this header names, on every major.
 --
 -- No value here needs COPY escaping, so a field's text in the file is the value

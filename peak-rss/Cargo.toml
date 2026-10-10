@@ -15,4 +15,4 @@ publish.workspace = true
 [dependencies]
 # `getrusage` and `struct rusage`, whose layout is the target's rather than a
 # hand-written one.
-libc = "0.2.189"
+libc = { workspace = true }

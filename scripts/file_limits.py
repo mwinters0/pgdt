@@ -64,7 +64,7 @@ TOTAL_HARD = 7500
 #: would make the file worse rather than smaller. Read as live debts: one that
 #: no longer holds fails the check.
 EXEMPT: dict[str, str] = {
-    "pgdump_query/src/datetime_in.rs": (
+    "crates/pgdt-codec/src/datetime_in.rs": (
         "a transliteration of upstream datetime.c, sectioned as the original is; "
         "a cut would un-mirror the port, and P33 reconsiders it"
     ),

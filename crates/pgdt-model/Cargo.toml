@@ -1,0 +1,20 @@
+[package]
+name = "pgdt-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+introspect = ["pgdt-core/introspect"]
+
+[dependencies]
+# The calendar `arrow-cast` formats a `date` or timestamp through, whose last
+# day bounds the engine tier of the unrepresentable count (RT21) and is
+# recorded by the cache that counted under it (`calendar_end`). No features:
+# only `NaiveDate`'s range is read, and the version is `arrow`'s own.
+chrono = { workspace = true }
+pgdt-core = { path = "../pgdt-core" }
+# `rc` for `CopyBlock::statistics`, held by `Arc` so a map clone copies a
+# reference.
+serde = { workspace = true, features = ["derive", "rc"] }

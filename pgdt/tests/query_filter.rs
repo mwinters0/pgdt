@@ -2,7 +2,7 @@
 //! (`docs/design/decisions.md`, "Predicates" and "The CLI").
 //!
 //! What a conjunction *means* is pinned against the library in
-//! `pgdump_query/tests/batch.rs`. What only the binary can say is that the
+//! `crates/pgdt-query/tests/batch.rs`. What only the binary can say is that the
 //! flag accumulates rather than replacing, that each repetition is parsed as
 //! its own term, and that a fault in any term reaches the user naming that
 //! term's column.

@@ -37,7 +37,7 @@ fn plain_dump() -> PathBuf {
 /// The same hand-written dump `xz_source.rs`/`parallelism.rs` build their
 /// `.xz` fixtures from.
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdump_query/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/pgdt-query/tests/data/edge_cases.sql")
 }
 
 /// A seekable multi-block `.xz` copy, in a directory of its own. `xz` is not

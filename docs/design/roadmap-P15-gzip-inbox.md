@@ -190,5 +190,5 @@ before the slices are written, since it is what decides whether the fetched arm
 exists at all.
 
 **Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
-sources still sharing one budget value — see `pgdump_query/src/io.rs` and
+sources still sharing one budget value — see `crates/pgdt-io/src/io.rs` and
 ([`decisions.md`](decisions.md), "D15").

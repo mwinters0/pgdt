@@ -782,11 +782,11 @@ def _split(tokens: Sequence[Token], sep: str) -> Iterable[Sequence[Token]]:
 #: The pgdt modules that read a dump's statements: the scanner, the `COPY`
 #: framing, the lexer, the map's classification and the preamble's grammar.
 READERS: tuple[str, ...] = (
-    "pgdump_query/src/scan.rs",
-    "pgdump_query/src/copy.rs",
-    "pgdump_query/src/lex.rs",
-    "pgdump_query/src/map.rs",
-    "pgdump_query/src/preamble.rs",
+    "crates/pgdt-dump/src/scan.rs",
+    "crates/pgdt-core/src/copy.rs",
+    "crates/pgdt-core/src/lex.rs",
+    "crates/pgdt-dump/src/map.rs",
+    "crates/pgdt-dump/src/preamble.rs",
 )
 
 #: Calls a reader matches a keyword with: a constant they take is a keyword

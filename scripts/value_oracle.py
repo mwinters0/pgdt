@@ -5,7 +5,7 @@ the `types` fixture, and the reconciliation holding it to the typed arms.
 docs/design/decisions.md, "D73", says which test holds which half of "decode
 is right". `generate_fixtures.py` runs the pass in the database the
 comparison oracle is asked in, and writes `fixtures/<major>/oracle/values.tsv`;
-`pgdump_query/tests/value_oracle.rs` holds every typed read of every `types`
+`crates/pgdt-query/tests/value_oracle.rs` holds every typed read of every `types`
 flag set that has DDL to it.
 
 **A reading is the server's, never its output spelling.** Each scalar type a

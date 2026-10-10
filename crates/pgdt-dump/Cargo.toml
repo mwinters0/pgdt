@@ -1,0 +1,31 @@
+[package]
+name = "pgdt-dump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# What a crate above's tests reach that nothing else may: the cache's encoding,
+# for the tests holding a save to it. `pgdt-query` turns it on in its
+# dev-dependencies.
+[features]
+test-support = []
+
+[dependencies]
+bincode = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
+futures = { workspace = true }
+memchr = { workspace = true }
+pgdt-core = { path = "../pgdt-core" }
+pgdt-io = { path = "../pgdt-io" }
+pgdt-model = { path = "../pgdt-model" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+# `serde` on for `cache::CompressionIndex`, which names `xz_seek::SeekTable`
+# in its `Xz` variant.
+xz-seek = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

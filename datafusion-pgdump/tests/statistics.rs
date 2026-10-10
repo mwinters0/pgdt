@@ -55,7 +55,7 @@ use pgdump_query::{
     TableName, UnrepresentableMode, map_file,
 };
 
-#[path = "../../pgdump_query/tests/common/refused.rs"]
+#[path = "../../crates/pgdt-query/tests/common/refused.rs"]
 mod refused;
 
 /// A sink for a registration whose findings this target is not about.

@@ -535,7 +535,7 @@ class StatisticsFigures(unittest.TestCase):
         self.assertNotEqual(measure.STATISTICS_MEMORY, measure.Config().memory)
 
     def test_the_group_size_stated_is_the_librarys_default(self):
-        src = (measure.REPO / "pgdump_query/src/statistics.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-query/src/statistics.rs").read_text()
         self.assertEqual(measure.ROW_GROUP_SIZE, 1 << 20)
         self.assertIn("pub const ROW_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;", src)
 
@@ -664,7 +664,7 @@ class StatisticsFigures(unittest.TestCase):
         # The regexes key on wording two crates print; a rewording there would
         # leave every leg reading as one that skipped nothing, which the
         # renderer refuses — loudly, but a sitting late.
-        stream = (measure.REPO / "pgdump_query/src/stream.rs").read_text()
+        stream = (measure.REPO / "crates/pgdt-query/src/stream.rs").read_text()
         cli = (measure.REPO / "pgdt/src/main.rs").read_text()
         self.assertIn(
             '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
@@ -1589,7 +1589,7 @@ class Glibc(unittest.TestCase):
         )  # fmt: skip
         self.assertEqual(
             ran[0][-5:],
-            ["bench", "--package=pgdump_query", "--bench=decoders", "--filter=nested", "--inside"],
+            ["bench", "--package=pgdt-codec", "--bench=decoders", "--filter=nested", "--inside"],
         )
         # The estimates are read out of the release state, where the image's
         # `CARGO_TARGET_DIR` puts criterion's output, never the host's `target/`.
@@ -1823,7 +1823,7 @@ class PredicateShapes(unittest.TestCase):
     def test_the_figure_is_taken_on_the_brace_free_control(self):
         fig = measure.SELECTABLE_BY_ID["predicate-terms"]
         self.assertEqual(fig.warm_inputs, ("control",))
-        self.assertIn("pgdump_query/src/predicate.rs", fig.depends)
+        self.assertIn("crates/pgdt-query/src/predicate.rs", fig.depends)
 
 
 class ProjectionWidths(unittest.TestCase):
@@ -2753,9 +2753,9 @@ class ParallelFigures(unittest.TestCase):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
             with self.subTest(figure=fid):
                 depends = measure.SELECTABLE_BY_ID[fid].depends
-                self.assertIn("pgdump_query/src/leader.rs", depends)
+                self.assertIn("crates/pgdt-dump/src/leader.rs", depends)
                 self.assertIn("vendor/xz-seek/src/", depends)
-                self.assertIn("pgdump_query/src/io.rs", depends)
+                self.assertIn("crates/pgdt-io/src/io.rs", depends)
 
     def test_a_stage_selection_does_not_reach_them(self):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
@@ -3146,7 +3146,7 @@ class CompressedAccount(unittest.TestCase):
         # `limit.bytes.saturating_sub(MEMORY_RESERVE)`, read off the source
         # rather than trusted, since the whole point of the check above is that
         # it reasons in the library's own arithmetic.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn("allowance.saturating_sub(MEMORY_RESERVE)", src)
         self.assertEqual(
             measure.discovered_budget(512 << 20), (512 << 20) - measure.LIBRARY_MEMORY_RESERVE
@@ -3342,7 +3342,7 @@ class CompressedAccount(unittest.TestCase):
     def test_the_mirrored_chunk_size_is_the_librarys_default(self):
         # The one term of the three that is a library constant rather than a
         # property of the file or of the decoder.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
             src,
@@ -3384,7 +3384,7 @@ class CompressedAccount(unittest.TestCase):
         # read here rather than the arithmetic trusted: `affordable` asks
         # `worker_memory(..).at(1) <= budget`, and `worker_memory` is the
         # per-reader term `pooling`ed at `POOL_DEPTH`.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(
             "self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget",
             src,
@@ -3609,7 +3609,7 @@ class CompressedAccount(unittest.TestCase):
         # in the library and not here would check the rule against a promise it
         # no longer makes — and the margin is the line `reserve`'s gate
         # reports each leg against.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
         self.assertIn(
             f"pub const MEMORY_RESERVE: u64 = {measure.LIBRARY_MEMORY_RESERVE >> 20} << 20;",
@@ -3635,7 +3635,7 @@ class CompressedAccount(unittest.TestCase):
         # then compares a budget to. Split, they are two numbers 7 MiB apart
         # and the mirror is a model of neither. Both come off one composition
         # site, which is what is pinned here.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(
             "fn default_worker_memory(&self) -> Option<WorkerMemory> {\n"
             "        self.budget.block_worker_memory()",
@@ -3652,7 +3652,7 @@ class CompressedAccount(unittest.TestCase):
         # shape has to be the library's: a pool that clamped somewhere else
         # would make every cell of the check arithmetic about a rule nothing
         # implements.
-        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(
             "(self.pool_depth.max(workers).saturating_sub(1) as u64)"
             ".saturating_mul(self.pool_unit)",
@@ -3689,7 +3689,7 @@ class CompressedAccount(unittest.TestCase):
         # that is not a constant: a field renamed or reordered in `stream.rs`
         # turns every reader count into a missing key, and the figure would fail
         # a sitting in rather than at its first second.
-        src = (measure.REPO / "pgdump_query/src/stream.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-query/src/stream.rs").read_text()
         event = src[: src.index('"scan started"')]
         jobs = event.rindex("jobs = ")
         budget = event.rindex("memory_bytes = ")
@@ -3976,7 +3976,7 @@ class XzDecodeScaling(unittest.TestCase):
         # binary that drives it, and the generators behind the two files.
         fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
         self.assertIn("vendor/xz-seek/src/", fig.depends)
-        self.assertIn("pgdump_query/examples/xz_decode.rs", fig.depends)
+        self.assertIn("crates/pgdt-io/examples/xz_decode.rs", fig.depends)
         self.assertIn("scripts/generate_xz_input.py", fig.depends)
         for path in fig.depends:
             self.assertFalse(path.startswith("pgdump_query/src/"), path)
@@ -4418,7 +4418,7 @@ class InstrumentReport(unittest.TestCase):
 class Staleness(unittest.TestCase):
     def test_a_file_under_a_declared_directory_counts(self):
         touched = dict(
-            (f.id, hits) for f, hits in measure.figures_touched(["pgdump_query/src/map.rs"])
+            (f.id, hits) for f, hits in measure.figures_touched(["crates/pgdt-dump/src/map.rs"])
         )
         self.assertIn("scan-throughput-warm", touched)
         self.assertIn("statistics-gathering", touched)
@@ -4433,7 +4433,7 @@ class Staleness(unittest.TestCase):
 
     def test_the_bench_source_reaches_the_micro(self):
         touched = [
-            f.id for f, _ in measure.figures_touched(["pgdump_query/benches/decoders.rs"])
+            f.id for f, _ in measure.figures_touched(["crates/pgdt-codec/benches/decoders.rs"])
         ]
         self.assertEqual(touched, ["nested-decode-micro"])
 
@@ -4487,7 +4487,7 @@ class CommentOnlyCommits(unittest.TestCase):
         self.assertEqual(measure.hunk_ranges(diff), ([3, 4, 10], [8, 9, 10]))
 
     def test_an_unresolvable_commit_is_not_comment_only(self):
-        self.assertFalse(measure.comment_only_commit("no-such-rev", "pgdump_query/src/io.rs"))
+        self.assertFalse(measure.comment_only_commit("no-such-rev", "crates/pgdt-io/src/io.rs"))
 
     def test_a_path_the_commit_did_not_touch_is_not_comment_only(self):
         # Silence is not an excuse: saying "comment-only" about a path with no
@@ -5539,13 +5539,13 @@ class OutsideInvalidation(unittest.TestCase):
         # two compared reports differing by one line of user-defined-type
         # detail the report had gained in between.
         for path in (
-            "pgdump_query/src/io.rs",
-            "pgdump_query/src/scan.rs",
-            "pgdump_query/src/map.rs",
-            "pgdump_query/src/cache.rs",
-            "pgdump_query/src/preamble.rs",
-            "pgdump_query/src/resolve.rs",
-            "pgdump_query/src/pgtype.rs",
+            "crates/pgdt-io/src/io.rs",
+            "crates/pgdt-dump/src/scan.rs",
+            "crates/pgdt-dump/src/map.rs",
+            "crates/pgdt-dump/src/cache.rs",
+            "crates/pgdt-dump/src/preamble.rs",
+            "crates/pgdt-codec/src/resolve.rs",
+            "crates/pgdt-codec/src/pgtype.rs",
             "pgdt/src/main.rs",
         ):
             with self.subTest(path=path):
@@ -6678,7 +6678,7 @@ class ChunkSize(unittest.TestCase):
         # about the constant the library ships. A drift between the two would
         # publish a comparison against a value nothing runs.
         self.assertIn(measure.CHUNK_DEFAULT, measure.CHUNK_SIZES)
-        source = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        source = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << {measure.CHUNK_DEFAULT.bit_length() - 1};",
             source,
@@ -6688,7 +6688,7 @@ class ChunkSize(unittest.TestCase):
         # Above `io::POOL_MAX_BYTES` the buffer pool stops keeping the buffer,
         # so every chunk is allocated and zeroed afresh. The sweep has to hold
         # a row either side of it or the table cannot say so.
-        source = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        source = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
         match = re.search(r"POOL_MAX_BYTES: usize = (\d+) << 20", source)
         assert match is not None, "the read path no longer names a pool ceiling"
         ceiling = int(match.group(1)) << 20

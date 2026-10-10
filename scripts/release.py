@@ -59,7 +59,7 @@ Usage:
     cd scripts && uv run release.py build --release       # a release's build: names the version
     cd scripts && uv run release.py suite                 # the host-native suite, in the image
     cd scripts && uv run release.py notices [--target T]  # each target's THIRD-PARTY-NOTICES, beside its binary
-    cd scripts && uv run release.py bench --package pgdump_query --bench decoders --filter nested
+    cd scripts && uv run release.py bench --package pgdt-codec --bench decoders --filter nested
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
     python3 scripts/release.py build --inside             # a step, already in the image
     cd scripts && uv run python -m unittest test_release

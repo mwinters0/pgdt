@@ -2170,7 +2170,7 @@ cd scripts && uv run measure.py --figure nested-decode-micro
 
 It reads criterion's own `estimates.json` rather than scraping the console,
 because a rounded ratio is how a table acquires a number nobody can reproduce.
-The bench alone is `cd scripts && uv run release.py bench --package pgdump_query
+The bench alone is `cd scripts && uv run release.py bench --package pgdt-codec
 --bench decoders --filter nested`, which runs `cargo bench` in the image and
 leaves criterion's output under `target/release-image/target/criterion/`.
 
@@ -3068,7 +3068,7 @@ per-reading table `measure.py --drift` computes from their `raw.json` is
 | 16 | **1.632 s** (1.624–1.647) · ~1974 MB/s · 9.51× | **0.971 s** (0.968–1.012) · ~3318 MB/s · 7.87× |
 | 24 | **1.427 s** (1.423–1.509) · ~2257 MB/s · 10.88× | **0.972 s** (0.955–0.990) · ~3315 MB/s · 7.86× |
 
-Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. The instrument is `pgdump_query/examples/xz_decode.rs` in a 2g container — **not** the register's 512 MB, which cannot hold 24 decoded 24 MiB blocks — and it refuses a run whose plan admits fewer workers than were asked for.
+Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. The instrument is `crates/pgdt-io/examples/xz_decode.rs` in a 2g container — **not** the register's 512 MB, which cannot hold 24 decoded 24 MiB blocks — and it refuses a run whose plan admits fewer workers than were asked for.
 
 - Generated control: 563.8 MB compressed, 3.00 GiB of plaintext, 5.45×
 - koji, 128 streams: 195.7 MB compressed, 3.00 GiB of plaintext, 15.70× (`scripts/generate_xz_input.py` refuses a slice outside 14–18×)
@@ -3201,7 +3201,7 @@ side by side and never subtracted.
   sixteen.** The `.xz` `parse` column does so at no row: `KD20`'s doubled
   decode comes from a fused worker's tail read landing in its successor's
   block. A replay sub-stream's last chunk reads past its limit into its
-  successor's bytes the same way (`pgdump_query/src/stream.rs`, `replay`), but
+  successor's bytes the same way (`crates/pgdt-query/src/stream.rs`, `replay`), but
   no reading here counts its decodes. Nothing explains why it gains so little
   past sixteen.
 - **Rep 1 is slow**: the slowest of five on the plain provider rows at two
@@ -3818,7 +3818,7 @@ resumed leg, uncontended over the same file, is what says so.
 not a figure: a scan stopped inside a hundred-gigabyte block and resumed
 produces the same structural record — span for span — as an uninterrupted one
 (`decisions.md`, "The CLI"). The fixture-scale version is
-`pgdump_query/tests/map_file.rs`'s
+`crates/pgdt-query/tests/map_file.rs`'s
 `a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which stops
 between blocks and asserts the resumed *index* equals an eager scan's — a stop
 inside a block is its `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`,
@@ -4112,7 +4112,7 @@ allocator as their `#[global_allocator]`, so a tripwire moves with the heap the
 binary ships ([`decisions.md`](decisions.md), "D13").
 
 ```sh
-cargo bench -p pgdump_query
+cargo bench -p pgdt-codec -p pgdt-query
 ```
 
 - `benches/decoders.rs` — one `decode`/`render` pair per mapped type family.

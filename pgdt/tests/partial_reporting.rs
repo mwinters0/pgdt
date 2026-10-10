@@ -28,7 +28,7 @@ use common::{fixture, pgdt, run, stderr_of, stdout_of};
 
 /// Two copies of `edge_cases/create.sql` concatenated, the second's database
 /// renamed — a real `\connect`-delimited multi-database dump, the same
-/// construction `pgdump_query/tests/common/mod.rs`'s `multidb_fixture` uses.
+/// construction `crates/pgdt-query/tests/common/mod.rs`'s `multidb_fixture` uses.
 fn sandboxed_multidb() -> (tempfile::TempDir, PathBuf) {
     let content = std::fs::read_to_string(fixture("16/edge_cases/create.sql")).unwrap();
     let dir = tempfile::tempdir().unwrap();

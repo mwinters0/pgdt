@@ -9,7 +9,7 @@ stance every row outside it declares; `docs/design/decisions.md`, "D38", describ
 **The rule, restated only far enough to compute it.** Wherever
 `adbc_driver_postgresql` yields a *non-opaque* Arrow type for a declared type,
 ours is never a widening of it. `fixtures/<major>/adbc/floor.tsv` is what the
-driver answers; `builtin_scalar` in `pgdump_query/src/pgtype.rs` is what we
+driver answers; `builtin_scalar` in `crates/pgdt-codec/src/pgtype.rs` is what we
 answer, with `Utf8View` the fallback for every name it does not carry. Neither
 knows about the other, and both move: a type mapped without evidence and a
 floor row nothing answers are the two ways this decays, so both directions
@@ -98,7 +98,7 @@ FIXTURES = REPO / "fixtures"
 
 #: The mapping itself. Arms are read out of it because a `match` is not data --
 #: `oracle_register.py`'s reading of the same file, for the same reason.
-MAPPING = REPO / "pgdump_query" / "src" / "pgtype.rs"
+MAPPING = REPO / "crates" / "pgdt-codec" / "src" / "pgtype.rs"
 
 #: Where the driver pin lives. One value, in one place, asserted against the
 #: rows rather than restated here.

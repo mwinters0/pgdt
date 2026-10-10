@@ -735,8 +735,8 @@ the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
 
 ```sh
 grep -A2 'name = "hashbrown"' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/Cargo.lock"
-cargo test -p pgdump_query --lib a_full_map_grows_into_the_table_it_is_charged
-cargo test -p pgdump_query --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
+cargo test -p pgdt-query --lib a_full_map_grows_into_the_table_it_is_charged
+cargo test -p pgdt-query --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
 cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
@@ -773,7 +773,7 @@ ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
 
 ```sh
 grep -n -A20 'fn grow_exact' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs"
-cargo test -p pgdump_query --lib a_vector_grows_into_the_capacity_it_is_charged
+cargo test -p pgdt-query --lib a_vector_grows_into_the_capacity_it_is_charged
 cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
@@ -943,7 +943,7 @@ them.
 **Re-verify:**
 
 ```sh
-cargo tree -p pgdump_query --features http -e normal,features -i tokio | grep -c rt-multi-thread
+cargo tree -p pgdt-query --features pgdt-io/http -e normal,features -i tokio | grep -c rt-multi-thread
 cargo test -p pgdt --test remote
 ```
 

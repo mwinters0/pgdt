@@ -746,22 +746,26 @@ class RealWorkspace(unittest.TestCase):
         load = lambda _: self.packages  # noqa: E731
         fixture = check.plan_changes(check.REPO, ["fixtures/16/statistics/default.sql"], load)
         nextest = argv_of(fixture)["nextest"]
-        self.assertIn("binary_id(=pgdump_query::pruning)", nextest[-1])
+        self.assertIn("binary_id(=pgdt-query::pruning)", nextest[-1])
         self.assertIn("binary_id(=datafusion-pgdump::pushdown)", nextest[-1])
         plan = check.plan_changes(check.REPO, ["pgdt/src/main.rs"], load)
         self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "pgdt"])
 
     def test_a_library_reads_its_data_and_not_its_whole_package(self):
         # `copy.rs` holds the value "." and `cache.rs` the template
-        # ".{}-{}.tmp", each of which read as the package directory once.
-        (lib,) = [t for p in self.packages if p.name == "pgdump_query" for t in p.targets if t.kind == "lib"]
-        prefixes = self.prefixes[lib.binary_id]
-        self.assertIn("pgdump_query/tests/data/edge_cases.sql", prefixes)
-        self.assertNotIn("pgdump_query", prefixes)
-        self.assertNotIn("pgdump_query/src", prefixes)
+        # ".{}-{}.tmp", each of which read as the package directory once;
+        # `leader.rs`'s tests read the hand-written dump beside another
+        # crate's tests.
+        libs = {p.name: t for p in self.packages for t in p.targets if t.kind == "lib"}
+        prefixes = self.prefixes[libs["pgdt-dump"].binary_id]
+        self.assertIn("crates/pgdt-query/tests/data/edge_cases.sql", prefixes)
+        for name in ("pgdt-core", "pgdt-dump"):
+            prefixes = self.prefixes[libs[name].binary_id]
+            self.assertNotIn(f"crates/{name}", prefixes)
+            self.assertNotIn(f"crates/{name}/src", prefixes)
         load = lambda _: self.packages  # noqa: E731
         plan = check.plan_changes(
-            check.REPO, ["pgdump_query/src/copy.rs"], load, {"pgdump_query/src/copy.rs"}
+            check.REPO, ["crates/pgdt-core/src/copy.rs"], load, {"crates/pgdt-core/src/copy.rs"}
         )
         self.assertEqual(argv_of(plan)["nextest"][-1], "binary_id(=pgdump_query::layering)")
         self.assertNotIn("doctest", argv_of(plan))

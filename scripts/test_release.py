@@ -442,13 +442,19 @@ class ThisRepo(unittest.TestCase):
         root = tomllib.loads((release.REPO / "Cargo.toml").read_text())
         self.assertEqual(root["workspace"]["package"]["license"], "Apache-2.0")
         self.assertIs(root["workspace"]["package"]["publish"], False)
-        for member in root["workspace"]["members"]:
+        members = [
+            str(path.relative_to(release.REPO))
+            for m in root["workspace"]["members"]
+            for path in sorted(release.REPO.glob(m))
+        ]
+        names = {Path(member).name for member in members}
+        for member in members:
             manifest = tomllib.loads((release.REPO / member / "Cargo.toml").read_text())
             self.assertEqual(manifest["package"]["license"], {"workspace": True}, member)
             self.assertEqual(manifest["package"]["publish"], {"workspace": True}, member)
             for table in ("dependencies", "dev-dependencies", "build-dependencies"):
                 for dep, spec in manifest.get(table, {}).items():
-                    if isinstance(spec, dict) and "path" in spec and dep in root["workspace"]["members"]:
+                    if isinstance(spec, dict) and "path" in spec and dep in names:
                         self.assertNotIn("version", spec, f"{member}'s {table}.{dep}")
         self.assertIn("Apache License\n", (release.REPO / "LICENSE").read_text())
 

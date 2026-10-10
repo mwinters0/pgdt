@@ -859,7 +859,11 @@ class ThisRepo(unittest.TestCase):
         cargo = tomllib.loads((deficiencies.REPO / "Cargo.toml").read_text())
         self.assertEqual(
             set(deficiencies.CODE_ROOTS),
-            {deficiencies.REPO / m / "src" for m in cargo["workspace"]["members"]},
+            {
+                crate / "src"
+                for m in cargo["workspace"]["members"]
+                for crate in deficiencies.REPO.glob(m)
+            },
         )
 
     def test_the_real_register_reconciles(self):
@@ -1003,15 +1007,15 @@ class ThisRepo(unittest.TestCase):
 
 
 class KnownFailureTables(unittest.TestCase):
-    """A row of a strict known-failure table (`pgdump_query/tests/
+    """A row of a strict known-failure table (`crates/pgdt-query/tests/
     known_failures.rs`, and a sweep's own exclusion beside it) asserts that a
     filed defect still shows: one naming an entry the index does not carry
     asserts a defect nobody can look up. Checked here, the register's own
     reconciliation, because no Rust test reads `docs/`."""
 
     TABLES = (
-        "pgdump_query/tests/known_failures.rs",
-        "pgdump_query/tests/value_oracle.rs",
+        "crates/pgdt-query/tests/known_failures.rs",
+        "crates/pgdt-query/tests/value_oracle.rs",
     )
 
     def test_every_row_names_an_open_entry(self):

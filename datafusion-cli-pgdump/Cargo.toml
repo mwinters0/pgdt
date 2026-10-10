@@ -26,12 +26,14 @@ default = []
 introspect = ["pgdump_query/introspect"]
 
 [dependencies]
-# Every version below is the targeted `datafusion-cli` release's own
-# (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so the copied
-# `main.rs` builds against what it was written for.
-async-trait = "0.1.89"
-clap = { version = "4.5.60", features = ["cargo", "derive"] }
-datafusion = { version = "55.1.0", default-features = false }
+# Every version below this crate alone names is the targeted `datafusion-cli`
+# release's own (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so
+# the copied `main.rs` builds against what it was written for; one the
+# workspace states for every member is that release's requirement or a
+# narrower one within it.
+async-trait = { workspace = true }
+clap = { workspace = true, features = ["cargo", "derive"] }
+datafusion = { workspace = true }
 datafusion-cli = "=55.1.0"
 datafusion-common = { version = "55.1.0", default-features = false }
 # `http` on, as `pgdt` turns it on: a dump is anything `pgdt --source` takes.
@@ -44,4 +46,4 @@ env_logger = "0.11"
 namespace-init = { path = "../namespace-init" }
 pgdump_query = { path = "../pgdump_query" }
 regex = "1.12"
-tokio = { version = "1.52", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }

@@ -2047,6 +2047,7 @@ dependencies = [
  "async-trait",
  "datafusion",
  "futures",
+ "pgdt-query",
  "pgdump_query",
  "tempfile",
  "thiserror",
@@ -3623,6 +3624,7 @@ dependencies = [
  "libmimalloc-sys",
  "mimalloc",
  "namespace-init",
+ "pgdt-query",
  "pgdump_query",
  "serde",
  "serde_json",
@@ -3635,29 +3637,107 @@ dependencies = [
 ]
 
 [[package]]
-name = "pgdump_query"
+name = "pgdt-codec"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-buffer",
  "arrow-schema",
+ "criterion",
+ "mimalloc",
+ "pgdt-core",
+ "pgdt-model",
+ "serde",
+]
+
+[[package]]
+name = "pgdt-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "memchr",
+ "serde",
+ "simdutf8",
+ "thiserror",
+]
+
+[[package]]
+name = "pgdt-dump"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "futures",
+ "memchr",
+ "pgdt-core",
+ "pgdt-io",
+ "pgdt-model",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "xz-seek",
+]
+
+[[package]]
+name = "pgdt-io"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "object_store 0.14.2",
+ "pgdt-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "xz-seek",
+]
+
+[[package]]
+name = "pgdt-model"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pgdt-core",
+ "serde",
+]
+
+[[package]]
+name = "pgdt-query"
+version = "0.1.0"
+dependencies = [
+ "arrow",
  "async-stream",
  "bincode",
  "bytes",
- "chrono",
  "criterion",
  "futures",
  "insta",
  "memchr",
  "mimalloc",
- "object_store 0.14.2",
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
+ "pgdt-model",
  "serde",
- "simdutf8",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
- "url",
  "xz-seek",
+]
+
+[[package]]
+name = "pgdump_query"
+version = "0.1.0"
+dependencies = [
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
+ "pgdt-model",
+ "pgdt-query",
 ]
 
 [[package]]

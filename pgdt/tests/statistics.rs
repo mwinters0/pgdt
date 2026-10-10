@@ -3,7 +3,7 @@
 //! of them.
 //!
 //! What a gathered statistic means is the library's
-//! (`pgdump_query/tests/statistics.rs`). What only the binary can say is that
+//! (`crates/pgdt-query/tests/statistics.rs`). What only the binary can say is that
 //! `parse` gathers by default, that each flag reaches the cache it writes, that
 //! a combination the flags cannot all mean is refused rather than
 //! half-honoured, that `info --json` exports every block's groups compact and
@@ -238,7 +238,7 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
 
 /// **The export is every group's statistics as the cache holds them**, on
 /// columns whose shape the fixture asserts
-/// (`pgdump_query/tests/statistics_fixture.rs`): at a group size of a few KiB
+/// (`crates/pgdt-query/tests/statistics_fixture.rs`): at a group size of a few KiB
 /// `ordered` spans several groups, its `id` ascends group over group and
 /// `reversed` descends, `high_card` overflows every group's dictionary and
 /// `low_card` fills none, and text under the default collation keeps one

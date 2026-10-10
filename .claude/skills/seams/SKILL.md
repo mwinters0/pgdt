@@ -51,9 +51,9 @@ pg_refuses.py`. Every script that reads the file by path (`rg -n
 '<module>\.rs' scripts/`): `emitter_register.py`, `oracle_register.py`,
 `floor_mapping.py` each name readers by file. Every citation by filename in
 `docs/` and `README.md` (`rg -n '`<module>\.rs`' docs/ README.md`), repointed
-to the file that now holds what the sentence names. `tests/layering.rs` lists
-`src/*.rs` by stem: a module becoming a directory keeps its stem and its
-layer; a new top-level file is assigned one before it is written.
+to the file that now holds what the sentence names. A module's crate is the
+directory it lives under, and `tests/layering.rs` holds each crate's
+dependencies to D68's graph: a cut inside a crate leaves both alone.
 
 ## 4. A crate is a seam too
 

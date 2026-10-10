@@ -82,6 +82,7 @@ MEASURED_RE = re.compile(
 PROVENANCE_RE = re.compile(r"\bP\d+\.\d+\b|\bM\d{1,3}\b|\b2026-\d\d-\d\d\b")
 COMMENT_RE = re.compile(r"^\s*//")
 CODE_ROOTS = (
+    "crates",
     "pgdump_query",
     "pgdt",
     "datafusion-pgdump",

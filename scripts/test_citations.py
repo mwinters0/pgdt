@@ -299,7 +299,7 @@ class CitationTests(unittest.TestCase):
 
     def test_rust_doc_comment_leader_inside_a_citation(self) -> None:
         self.repo.write(
-            "pgdump_query/src/map.rs",
+            "crates/pgdt-dump/src/map.rs",
             "/// A shape written ahead of the archive proper\n"
             '/// (`docs/design/architecture.md`, "The map is built\n'
             "/// once, from the preamble\").\n"
@@ -309,7 +309,7 @@ class CitationTests(unittest.TestCase):
 
     def test_rust_code_is_not_prose(self) -> None:
         self.repo.write(
-            "pgdump_query/src/map.rs",
+            "crates/pgdt-dump/src/map.rs",
             'const DOC: &str = "docs/design/architecture.md";\n'
             'const SECTION: &str = "Fixtures tree";\n',
         )
@@ -317,7 +317,7 @@ class CitationTests(unittest.TestCase):
 
     def test_a_citation_cannot_be_assembled_across_code(self) -> None:
         self.repo.write(
-            "pgdump_query/src/map.rs",
+            "crates/pgdt-dump/src/map.rs",
             "/// See `docs/design/architecture.md`,\n"
             "pub fn f() {}\n"
             '/// "Fixtures tree" is not a citation of the line above it.\n'
@@ -423,7 +423,8 @@ class RealTreeTests(unittest.TestCase):
     def test_every_workspace_crate_is_read(self) -> None:
         """A crate the walk does not read has its citations go unresolved."""
         cargo = tomllib.loads((citations.REPO / "Cargo.toml").read_text())
-        self.assertEqual(set(citations.RUST_ROOTS), set(cargo["workspace"]["members"]))
+        members = {m.removesuffix("/*") for m in cargo["workspace"]["members"]}
+        self.assertEqual(set(citations.RUST_ROOTS), members)
 
 
 class DatedEntryTests(unittest.TestCase):

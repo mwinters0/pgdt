@@ -4,7 +4,7 @@
 //! with generated filters over every major's fixtures, the library reading
 //! each table through the replay a scan runs, its statistics gathered at a
 //! group size that leaves pruning groups to skip, beside
-//! `pgdump_query/tests/pruning.rs`'s check of what pruning keeps.
+//! `crates/pgdt-query/tests/pruning.rs`'s check of what pruning keeps.
 //!
 //! **And a replay reading it as a dynamic filter loses no row it keeps**:
 //! the same filters handed to the replay as a scan hands them

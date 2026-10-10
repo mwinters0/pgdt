@@ -5,93 +5,22 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# The introspection build's library half (`src/instrument.rs`): which
-# allocations are statistics, for `pgdt`'s counting allocator to count. Enabled
-# only by that crate's own `introspect` feature; a build without it compiles
-# every hook to nothing.
+# The facade over the `pgdt-*` crates while they are carved (`src/lib.rs`);
+# each feature is the crates' own, passed through.
 [features]
-introspect = []
-# The remote source (`io::RemoteSource`) and everything that names a URL.
-# **Default-off**: what `object_store`'s `http` feature drags in, an
-# `aws-lc-sys` C build included, is too much to impose on an embedder that
-# reads local files.
-#
-# `tokio/net` and `tokio/time` are declared here rather than inherited: the
-# backend needs the IO and time drivers at runtime and nothing in its own tree
-# turns them on, so a library built with this feature has a runtime that can
-# drive it.
-http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
+introspect = [
+    "pgdt-core/introspect",
+    "pgdt-model/introspect",
+    "pgdt-io/introspect",
+    "pgdt-query/introspect",
+]
+http = ["pgdt-io/http"]
 
 [dependencies]
-arrow = { version = "59.2.0", default-features = false }
-# The same `arrow-schema` `arrow` itself depends on, named directly because
-# `arrow::datatypes` re-exports the type list and not the `extension` module:
-# `arrow.uuid`/`arrow.json` and the `supports_data_type` check that stamps
-# them live there (see `pgtype::CanonicalExtension`).
-arrow-schema = { version = "59.2.0", default-features = false, features = [
-    "canonical_extension_types",
-] }
-async-stream = "0.3"
-bincode = { version = "2", features = ["serde"] }
-bytes = "1.12.1"
-# The calendar `arrow-cast` formats a `date` or timestamp through, whose last
-# day bounds the engine tier of the unrepresentable count (RT21) and is
-# recorded by the cache that counted under it (`model::calendar_end`). No
-# features: only `NaiveDate`'s range is read, and the version is `arrow`'s own.
-chrono = { version = "0.4.45", default-features = false }
-futures = "0.3.34"
-memchr = "2.8.3"
-# `http` only, and `default-features = false` to leave out the `fs` backend:
-# what is wanted is one `HttpStore` over ranged GETs. The `http` feature
-# resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its
-# `cc` builder; nothing installs CMake, so a version falling back to it fails
-# the build by name.
-object_store = { version = "0.14.2", optional = true, default-features = false, features = [
-    "http",
-] }
-# `rc` for `model::CopyBlock::statistics`, held by `Arc` so a map clone copies a
-# reference.
-serde = { version = "1.0.229", features = ["derive", "rc"] }
-# SIMD UTF-8 validation, for the one bulk check a chunk of rows gets in place
-# of one per field (`copy::validated_prefix`).
-simdutf8 = "0.1.5"
-thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt", "sync"] }
-# The facade only — no subscriber, no output policy. The library names the
-# phases worth watching (the seek-table walk, the scan's start and
-# completion); the CLI decides whether and how to render them
-# (`docs/design/decisions.md`, "D67").
-tracing = "0.1"
-# `http` only: the same crate `object_store` parses URLs with, so a `Url` this
-# crate builds is the one its backend takes. What reads it is
-# `io::Origin::resolve`, which classifies a `--source` argument.
-url = { version = "2.5.8", optional = true }
-# A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
-# workspace, not published (`docs/design/decisions.md`, "The compressed
-# source"). The default features (`liblzma`, `fast-checks`) are the manifest's
-# own, and are kept over `xz4rust` so that the integration being vetted is the
-# one that ships. `serde` is turned on for `cache::CompressionIndex`,
-# which names `xz_seek::SeekTable` in its `Xz` variant; `io::XzSource`
-# constructs one, walking the file's stream footers at open time.
-xz-seek = { path = "../vendor/xz-seek", features = ["serde"] }
+pgdt-codec = { path = "../crates/pgdt-codec" }
+pgdt-core = { path = "../crates/pgdt-core" }
+pgdt-dump = { path = "../crates/pgdt-dump" }
+pgdt-io = { path = "../crates/pgdt-io" }
+pgdt-model = { path = "../crates/pgdt-model" }
+pgdt-query = { path = "../crates/pgdt-query" }
 
-[dev-dependencies]
-criterion = { version = "0.8.2", features = ["async_tokio"] }
-insta = "1.48.0"
-# The benches' `#[global_allocator]`: `pgdt`'s shipped allocator at `pgdt`'s
-# requirement, without `override` as there, so a bench times the heap the
-# binary ships rather than glibc's `malloc`. A dev-dependency because the
-# library names no allocator (`docs/design/decisions.md`, "D13"); the two
-# requirements resolve to one version, the lockfile holding one per
-# semver-compatible range.
-mimalloc = { version = "0.1.50", default-features = false }
-tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
-
-[[bench]]
-name = "decoders"
-harness = false
-
-[[bench]]
-name = "whole_file"
-harness = false

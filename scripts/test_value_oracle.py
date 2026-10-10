@@ -4,7 +4,7 @@
 
 The walk is tested over a hand-built catalog, since what it emits is SQL a
 server runs; that the SQL reads what it should is the committed
-`values.tsv` and `pgdump_query/tests/value_oracle.rs`, which holds every typed
+`values.tsv` and `crates/pgdt-query/tests/value_oracle.rs`, which holds every typed
 read to it.
 """
 

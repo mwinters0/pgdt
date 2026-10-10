@@ -31,7 +31,9 @@ applies.
 3. **Walk the invariants** whose **Verified against** names a moved crate
    (`rg -n 'Verified against.*<crate>' docs/design/*invariants.md`), running
    each one's **Re-verify** at the new version.
-4. **Bump, build and `mise run check`.** A test pinning upstream behaviour —
+4. **Bump, build and `mise run check`.** A version more than one member
+   names is stated once, in the root `Cargo.toml`'s `[workspace.dependencies]`,
+   and bumped there; a member's own manifest states only one it alone names. A test pinning upstream behaviour —
    every **Watch** test, and each one the shell's header names — fails on
    purpose when upstream moves. Read each failure against the register and the
    invariants before touching it, and never edit one to pass without acting on
