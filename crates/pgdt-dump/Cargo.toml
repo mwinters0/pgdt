@@ -22,7 +22,7 @@ pgdt-model = { path = "../pgdt-model" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
-# `serde` on for `cache::CompressionIndex`, which names `xz_seek::SeekTable`
+# `serde` on for `cache::file::CompressionIndex`, which names `xz_seek::SeekTable`
 # in its `Xz` variant.
 xz-seek = { workspace = true, features = ["serde"] }
 

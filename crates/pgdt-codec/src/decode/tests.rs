@@ -73,7 +73,7 @@ fn a_float_past_its_range_is_refused_and_one_in_it_read() {
 /// unread, and told nothing, every one of them is.
 #[test]
 fn a_float_field_past_its_range_is_read_only_when_ignored() {
-    use PostgresInvalidValues::{Default, Ignore};
+    use pgdt_model::PostgresInvalidValues::{Default, Ignore};
     for (text, read) in [
         ("1.79769313486232e+308", f64::MAX),
         ("-1.79769313486232e+308", -f64::MAX),

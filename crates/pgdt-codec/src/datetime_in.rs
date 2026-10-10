@@ -33,8 +33,8 @@
 //! A byte past `0x7F` is classed by the server's locale, so a text holding
 //! one is taken as read.
 
-use crate::decode_impl as decode;
-use crate::pgtype_impl::IntervalQualifier;
+use crate::decode;
+use crate::pgtype::IntervalQualifier;
 
 /// A supported major whose grammar differs from the one before it: 14 reads
 /// as 13 does.

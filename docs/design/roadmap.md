@@ -838,7 +838,7 @@ What it inherits:
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its
   replay, which keeps none, around nothing (D85). Its instrument is kept —
-  `instrument::statistics_loaded`, the heap a cache load hands a pass, which is
+  `instrument::hooks::statistics_loaded`, the heap a cache load hands a pass, which is
   the only statistics term a query has. It is filed for P22 as well, being a
   fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.

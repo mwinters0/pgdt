@@ -191,11 +191,11 @@ pub enum Error {
         op: &'static str,
         value: String,
         declared_type: String,
-        /// The form the column's comparison actually reads, so the sentence
-        /// is about this build's grammar rather than about the type: a
-        /// `boolean` is refused `true` because it is written `t` or `f`, not
-        /// because `boolean` has no such value. Supplied by
-        /// `pgdt_codec::key::accepted_form`, which sits beside the grammar
+        /// The form the column's comparison actually reads, so the sentence is
+        /// about this build's grammar rather than about the type: a `boolean`
+        /// is refused `true` because it is written `t` or `f`, not because
+        /// `boolean` has no such value. Supplied by
+        /// `pgdt_codec::internal::accepted_form`, which sits beside the grammar
         /// it describes. A `String` because two arms answer with the column's
         /// own comparison payload — an enum's declared labels, a
         /// `numeric(p,s)`'s scale.

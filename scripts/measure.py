@@ -2647,7 +2647,7 @@ PRUNING_UNNARROWED = "unnarrowed"
 #: The legs, in the table's column order: what `query --statistics` states.
 PRUNING_LEGS = ("none", "all")
 #: **No leg prices carrying statistics.** The cache is decoded whole whatever
-#: the query states (`cache::read_cache_file`), so every leg pays the
+#: the query states (`cache::file::read_cache_file`), so every leg pays the
 #: statistics' decode, and no `parse` writes a cache that holds its table's
 #: census without its statistics: a metadata-level one leaves the query to
 #: re-read the table for its census inside the timer. A column override's
@@ -6255,7 +6255,11 @@ MAP_BUILD = (*MAP, "crates/pgdt-query/src/stream.rs")
 #: until `predicate-terms` no registered figure passed a filter at all, so
 #: nothing in the register was moved by this file and nothing declared it --
 #: which is the same shape of blindness the read path had before `READ`.
-PREDICATE = ("crates/pgdt-query/src/predicate.rs", "crates/pgdt-codec/src/key.rs")
+PREDICATE = (
+    "crates/pgdt-query/src/predicate.rs",
+    "crates/pgdt-codec/src/key.rs",
+    "crates/pgdt-codec/src/key/order.rs",
+)
 #: Per-type scalar decode and render-back. Its own mechanism rather than part
 #: of `NESTED`, because the figures it moves are not the ones `NESTED` moves:
 #: every figure that runs a *typed* query pays it on every scalar column,
@@ -6264,8 +6268,25 @@ PREDICATE = ("crates/pgdt-query/src/predicate.rs", "crates/pgdt-codec/src/key.rs
 #: allocations, which is the third instance of the blindness `READ` and
 #: `PREDICATE` record: a file nothing declared because no slice had yet
 #: touched it.
-DECODE = ("crates/pgdt-codec/src/decode.rs",)
-CACHE = ("crates/pgdt-dump/src/cache.rs",)
+DECODE = (
+    "crates/pgdt-codec/src/decode.rs",
+    "crates/pgdt-codec/src/decode/digits.rs",
+    "crates/pgdt-codec/src/decode/float.rs",
+    "crates/pgdt-codec/src/decode/refusal.rs",
+    "crates/pgdt-codec/src/decode/stored.rs",
+)
+CACHE = (
+    "crates/pgdt-dump/src/cache.rs",
+    "crates/pgdt-dump/src/cache/file.rs",
+    "crates/pgdt-dump/src/cache/identity.rs",
+)
+#: The type register, and the files its non-API items sit in beside it.
+PGTYPE = (
+    "crates/pgdt-codec/src/pgtype.rs",
+    "crates/pgdt-codec/src/pgtype/discrete.rs",
+    "crates/pgdt-codec/src/pgtype/divergence.rs",
+    "crates/pgdt-codec/src/pgtype/strict.rs",
+)
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96").
 UNREPRESENTABLE = (
@@ -6306,13 +6327,13 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
 #: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
-#: `pgtype.rs`, `resolve.rs` and `PREDICATE` are the comparison a bound is
+#: `PGTYPE`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
     "crates/pgdt-query/src/gather.rs",
     "crates/pgdt-query/src/statistics.rs",
     "crates/pgdt-model/src/statistics.rs",
-    "crates/pgdt-codec/src/pgtype.rs",
+    *PGTYPE,
     "crates/pgdt-codec/src/resolve.rs",
     *PREDICATE,
 )
@@ -11424,11 +11445,12 @@ NOT_OURS = {
             # CLI, which decide the fifth — the last of those is not
             # hypothetical, the 2026-09-05 comparison differing from the
             # 2026-08-27 one by exactly one line of user-defined-type detail the
-            # report had gained in between. `resolve.rs` and `pgtype.rs` are
-            # named here rather than in a shared constant because this is the
-            # only section in the document whose readings a change to them can
-            # falsify: every figure that resolves a type publishes a duration,
-            # and a duration is not what the report's text identity is.
+            # report had gained in between. `resolve.rs` and the register's
+            # files (`PGTYPE`) are declared here rather than by every figure
+            # that resolves a type because this is the only section in the
+            # document whose readings a change to them can falsify: every
+            # figure that resolves a type publishes a duration, and a duration
+            # is not what the report's text identity is.
             depends=(
                 *READ,
                 *SCAN,
@@ -11436,7 +11458,7 @@ NOT_OURS = {
                 *CACHE,
                 *PREAMBLE,
                 "crates/pgdt-codec/src/resolve.rs",
-                "crates/pgdt-codec/src/pgtype.rs",
+                *PGTYPE,
                 *QUERY_CLI,
             ),
         ),

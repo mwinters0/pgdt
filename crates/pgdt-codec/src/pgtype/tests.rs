@@ -1,5 +1,6 @@
 use arrow_schema::TimeUnit;
 
+use super::strict::{column_grammar, unchecked_positions};
 use super::*;
 use pgdt_model::ColumnDef;
 

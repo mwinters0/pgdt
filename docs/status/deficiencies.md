@@ -411,7 +411,7 @@ than reading as a phase nobody has sliced.
   hold; only the `varchar(n)` half changes an answer, its `<` and `=`, the
   latter needing `KD82` closed too. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail:
-  `crates/pgdt-codec/src/decode.rs`.
+  `crates/pgdt-codec/src/decode/refusal.rs`.
 
 - **KD99** — a `time(p)`, `timetz(p)`, `timestamp(p)`, `timestamptz(p)` or
   qualified `interval` field is read as written, not rounded or truncated by
@@ -470,7 +470,8 @@ than reading as a phase nobody has sliced.
   type's range spelled with blanks around it or in hexadecimal is not read
   as the parse rounds it, as a decimal one is, but fails a query decoding
   it; `float_out` writes neither spelling. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `crates/pgdt-codec/src/decode.rs`.
+  hand-written dump holding one. Detail:
+  `crates/pgdt-codec/src/decode/float.rs`.
 
 - **KD109** — no instrument attributes the shipped allocator's blocks to call
   stacks: mimalloc is linked without `override`, so heaptrack and valgrind,
@@ -524,4 +525,4 @@ than reading as a phase nobody has sliced.
   PostgreSQL does through `ValueKey`, but an array, record, range or
   multirange only through `internal`'s `NestedKey`, which exposes its
   representation. **(b) owned by P36**. Detail:
-  `crates/pgdt-codec/src/key.rs`.
+  `crates/pgdt-codec/src/key/order.rs`.

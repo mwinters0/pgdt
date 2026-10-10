@@ -43,7 +43,7 @@ pub enum PostgresInvalidValues {
     /// one, its row group then keeping no statistic of its column a read could
     /// contradict and its block recording it
     /// ([`crate::CopyBlock::ignored_refusals`]), and a query reads a float past its type's range as
-    /// `decode::float_field` reads it, a `varchar(n)` or `char(n)` value past
+    /// `pgdt_codec::internal::float_field` reads it, a `varchar(n)` or `char(n)` value past
     /// its length as written and a NULL in a `NOT NULL` column as NULL, and
     /// fails on every other such field. A
     /// filter literal is never opted out.

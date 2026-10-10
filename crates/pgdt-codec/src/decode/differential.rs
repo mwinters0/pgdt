@@ -1,3 +1,4 @@
+use super::digits::push_integer;
 use super::*;
 
 /// A deterministic 64-bit LCG, so a failure is reproducible from the

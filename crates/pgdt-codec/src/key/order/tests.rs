@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::pgtype_impl::{comparison_for, text_grammar};
+use crate::pgtype::{comparison_for, text_grammar};
 use pgdt_model::{ColumnDef, TypeDef, TypeKind};
 
 /// **A strict parse finds a refusal anywhere in a field** ([`field_refused`]):
@@ -293,7 +293,7 @@ fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
         (
             K::Numeric {
                 infinities: false,
-                typmod: Some(crate::pgtype_impl::NumericTypmod { precision: 3, scale: 0 }),
+                typmod: Some(crate::pgtype::NumericTypmod { precision: 3, scale: 0 }),
             },
             "1000",
         ),
@@ -372,7 +372,7 @@ fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
 /// read it. A case this build reads is one some major reads.
 #[test]
 fn a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it() {
-    use crate::pgtype_impl::NumericTypmod;
+    use crate::pgtype::NumericTypmod;
     use CompareKind as K;
     let check = |kind: &CompareKind, text: &str, read: bool| {
         let key = field_key(kind, text);
@@ -892,7 +892,7 @@ fn the_numeric_clause_branches_on_the_sign_of_the_scale() {
     assert_eq!(
         accepted_form(&CompareKind::Numeric {
             infinities: false,
-            typmod: Some(crate::pgtype_impl::NumericTypmod { precision: 77, scale: 0 }),
+            typmod: Some(crate::pgtype::NumericTypmod { precision: 77, scale: 0 }),
         }),
         "as a number of at most 131072 digits before the point and 16383 after it, or `NaN`"
     );

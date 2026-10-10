@@ -40,7 +40,7 @@ against its allowance before resolving its worker count, so it resolves fewer
 workers rather than being killed, and its replay, which keeps none, is billed
 nothing ([`decisions.md`](decisions.md), "D85"). It was taken before the
 constant it is priced against, which this phase may replace. Its instrument is
-kept: `instrument::statistics_loaded`, the heap a cache load hands a pass,
+kept: `instrument::hooks::statistics_loaded`, the heap a cache load hands a pass,
 which is the only statistics term a query has.
 
 **Why P22 cares.** The billing is a fourth consumer resolving against the same

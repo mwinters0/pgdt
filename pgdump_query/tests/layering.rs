@@ -106,7 +106,8 @@ fn production(krate: &str) -> Vec<(PathBuf, String)> {
                 named = Some(path);
                 continue;
             }
-            let line = line.strip_prefix("pub ").unwrap_or(line);
+            let line =
+                line.strip_prefix("pub(crate) ").or(line.strip_prefix("pub ")).unwrap_or(line);
             if let Some(name) = line.strip_prefix("mod ").and_then(|l| l.strip_suffix(';')) {
                 let child = match named {
                     Some(path) => dir.join(path),

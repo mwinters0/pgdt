@@ -5,10 +5,11 @@
 //! **Off by default and compiled out of every build that does not ask.** The
 //! `introspect` feature turns it on, and only a binary's own `introspect`
 //! feature does — `pgdt`'s, which turns on `datafusion-cli-pgdump`'s for
-//! `sql` (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is an
-//! empty guard, [`timed!`] is what it wraps beside its part evaluated and
-//! dropped, [`row_evaluated!`] what it wraps and nothing more, and every function recording or reading a figure does
-//! nothing.
+//! `sql` (`docs/design/decisions.md`, "D13"): without it, `StatisticsScope` is
+//! an empty guard, [`timed!`](crate::timed) is what it wraps beside its part
+//! evaluated and dropped, [`row_evaluated!`](crate::row_evaluated) what it
+//! wraps and nothing more, and every function recording or reading a figure
+//! does nothing.
 //! The library still installs no allocator; the binary's counting allocator
 //! calls `allocated` and `freed`, and this module decides what counts.
 //!
@@ -27,6 +28,8 @@
 //! charged ahead — made or not yet, on any thread — and the worst shortfall of
 //! the first and excess of the second are kept, raw and past the allowance the
 //! account gives its open observers' uncharged growth then.
+
+pub(crate) mod hooks;
 
 #[cfg(feature = "introspect")]
 pub use enabled::{StatisticsReading, allocated, freed, statistics_reading};
@@ -56,8 +59,8 @@ pub enum EvaluationPart {
     /// A leaf unescaping its field (`copy::RawRow::decode`).
     Unescape,
     /// A leaf reading the unescaped text as its column's comparison key
-    /// (`key::order_key` or its nested counterpart); a comparison of
-    /// text has none.
+    /// (`pgdt_codec::internal::order_key` or its nested counterpart); a
+    /// comparison of text has none.
     Key,
     /// A term comparing that key or text with its bound.
     Compare,
@@ -100,151 +103,13 @@ impl EvaluationPart {
     }
 }
 
-/// `$body`, timed as `$part` where the instrument is built in — a leaf part
-/// only inside [`row_evaluated!`]. **Without the instrument it expands to
-/// `$body`, `$part` evaluated and dropped beside it**, so a shipped build compiles what it wraps
-/// exactly as written; an inlined closure is not enough to promise that.
-/// With it, `$body` runs in a closure passed to [`timed_span`], which the
-/// calling module imports under the feature. The `cfg` is read in the crate
-/// expanding it, so each such crate has an `introspect` turning on this one's.
-#[macro_export]
-macro_rules! timed {
-    ($part:expr, $body:expr) => {{
-        #[cfg(feature = "introspect")]
-        {
-            timed_span($part, || $body)
-        }
-        #[cfg(not(feature = "introspect"))]
-        {
-            let _ = $part;
-            $body
-        }
-    }};
-}
-
-/// `$body`, one row's evaluation against a dynamic filter's state, timed as
-/// [`EvaluationPart::Row`] with every leaf part it reaches, where the
-/// instrument is built in, through [`evaluated_row`]; without it, `$body`
-/// alone, as [`timed!`] is.
-#[macro_export]
-macro_rules! row_evaluated {
-    ($body:expr) => {{
-        #[cfg(feature = "introspect")]
-        {
-            evaluated_row(|| $body)
-        }
-        #[cfg(not(feature = "introspect"))]
-        {
-            $body
-        }
-    }};
-}
-
-/// What [`timed!`] runs its body through with the instrument built in.
-#[cfg(feature = "introspect")]
-#[inline(always)]
-pub fn timed_span<T>(part: EvaluationPart, f: impl FnOnce() -> T) -> T {
-    evaluation::timed(part, f)
-}
-
-/// What [`row_evaluated!`] runs its body through with the instrument built in.
-#[cfg(feature = "introspect")]
-#[inline(always)]
-pub fn evaluated_row<T>(f: impl FnOnce() -> T) -> T {
-    evaluation::row(f)
-}
-
-/// How many block decodes a piecewise `.xz` read path has begun rather than
-/// resumed.
-///
-/// **Nothing without the instrument**: the field is absent, `begun` compiles
-/// away and no build that ships carries the atomic. What it exists for is a
-/// property a shipped build cannot state — that a block a forward scan sits
-/// inside is decoded once rather than once per read — which a test asserts
-/// rather than argues (`docs/design/decisions.md`, "D15").
-#[derive(Debug, Default)]
-pub struct DecodeCounter {
-    #[cfg(feature = "introspect")]
-    begun: std::sync::atomic::AtomicU64,
-}
-
-impl DecodeCounter {
-    /// A block is about to be begun rather than resumed. Counted where that
-    /// is decided, so a `begin` that then errors is counted.
-    #[inline]
-    pub fn begun(&self) {
-        #[cfg(feature = "introspect")]
-        self.begun.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// How many have. Racy against a read still running, which the caller
-    /// avoids by reading once the read has returned.
-    #[cfg(feature = "introspect")]
-    pub fn count(&self) -> u64 {
-        self.begun.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// Attributes every allocation and free the current thread makes to
-/// statistics while it is alive. Scopes nest.
-pub struct StatisticsScope {
-    #[cfg(feature = "introspect")]
-    outer: bool,
-}
-
-impl StatisticsScope {
-    #[inline]
-    pub fn enter() -> Self {
-        #[cfg(feature = "introspect")]
-        {
-            Self { outer: enabled::IN_STATISTICS.replace(true) }
-        }
-        #[cfg(not(feature = "introspect"))]
-        {
-            Self {}
-        }
-    }
-}
-
-#[cfg(feature = "introspect")]
-impl Drop for StatisticsScope {
-    fn drop(&mut self) {
-        enabled::IN_STATISTICS.set(self.outer);
-    }
-}
-
-/// Record that a cache load handed a pass `bytes` of block statistics — the
-/// walk [`pgdt_model::DumpIndex::statistics_heap_bytes`] does. Nothing without the
-/// instrument, and the call sites are `cfg`'d, so a shipped build does not walk
-/// the index for it.
-///
-/// **It is the only statistics term a `query` has.** A query loads a cache and
-/// keeps no [`pgdt_query::statistics::StatisticsAccount`], so nothing else says what
-/// the cache handed it.
-#[cfg(feature = "introspect")]
-pub fn statistics_loaded(bytes: u64) {
-    enabled::statistics_loaded(bytes);
-}
-
-/// Compare the account's new `total`, `announced` of it charged ahead of
-/// allocations, with the live statistics bytes, keeping the worst difference
-/// either way past `allowance`, the uncharged growth its open observers may
-/// hold. Nothing without the instrument.
-#[inline]
-pub fn statistics_account_updated(total: u64, announced: u64, allowance: u64) {
-    #[cfg(feature = "introspect")]
-    enabled::account_updated(total, announced, allowance);
-    #[cfg(not(feature = "introspect"))]
-    let _ = (total, announced, allowance);
-}
-
 #[cfg(feature = "introspect")]
 mod enabled {
     use std::cell::Cell;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     thread_local! {
-        /// Whether this thread is inside a [`super::StatisticsScope`]. `const`
+        /// Whether this thread is inside a [`super::hooks::StatisticsScope`]. `const`
         /// and without a destructor, so reading it from inside an allocator
         /// allocates nothing and is sound on a thread being torn down.
         pub(super) static IN_STATISTICS: Cell<bool> = const { Cell::new(false) };
@@ -308,7 +173,7 @@ mod enabled {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct StatisticsReading {
         /// The most block-statistics heap a cache load handed a pass
-        /// ([`super::statistics_loaded`]).
+        /// ([`super::hooks::statistics_loaded`]).
         pub loaded: u64,
         /// Statistics bytes live now.
         pub live: u64,

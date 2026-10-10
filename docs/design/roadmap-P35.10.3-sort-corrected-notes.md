@@ -9,8 +9,6 @@ crate's `lib.rs` is where it lands. No body changed and no test moved;
 ## How it fell
 
 - **`pgdt_codec::key` is a fifth API namespace**, holding `ValueKey` alone.
-  `key.rs` loads as `key_impl` by `#[path]`, as the other four namespaces'
-  files do, and its test module carries `#[path = "key/tests.rs"]`.
   `ValueKey::compare` is no longer gated, so the codec's `test-support`
   feature gates only `scalar_tier` and `scalar_read`. Every signature
   `ValueKey` has names API alone (`pgtype::CompareKind`, `decode::Read`).

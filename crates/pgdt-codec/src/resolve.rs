@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use arrow_schema::{Field, Schema, SchemaRef};
 
-use crate::pgtype_impl::{
+use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TypeOutcome, comparison_for,
     domain_not_null, resolve_declared_type, with_extension,
 };
@@ -35,7 +35,7 @@ pub enum SchemaMode {
 }
 
 /// Per-column outcome of resolving one declared type against this build's
-/// mapping table. Distinct from [`crate::pgtype_impl::TypeOutcome`]: this adds
+/// mapping table. Distinct from [`crate::pgtype::TypeOutcome`]: this adds
 /// the "no DDL explained this column at all" case, which is a
 /// join-against-`DumpMetadata` question, not a type-mapping one.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,7 +208,7 @@ pub struct ResolvedSchema {
     /// A codec conclusion, produced here because this is where its inputs meet:
     /// the declared type string and the database's own `CREATE TYPE` list.
     /// `pgdt_query::predicate` reads this instead of inspecting the Arrow type
-    /// (`crate::pgtype_impl::comparison_for`).
+    /// (`crate::pgtype::comparison_for`).
     ///
     /// A column that did not resolve `Mapped` is [`ComparisonPlan::Refused`]
     /// whatever its declared type said — the census can take a column out of
@@ -259,7 +259,7 @@ impl ResolvedSchema {
     /// (`pgdt_query::gather`). A query's schema says only which kind a term reads
     /// bounds by ([`ComparisonPlan::bounds_read_by`]); which stored set that
     /// is, is read off these kinds recomputed for the block
-    /// ([`crate::pgtype_impl::bounds_set_keyed_by`]).
+    /// ([`crate::pgtype::bounds_set_keyed_by`]).
     pub fn bounds_kinds(&self, i: usize) -> [Option<CompareKind>; 2] {
         if self.plans[i].is_scalar() { self.comparisons[i].bounds_kinds() } else { [None, None] }
     }
@@ -339,7 +339,7 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 /// shape that resolves to a nested `Array` — an array whose element type is
 /// itself an array, whose literal is one brace deep and whose census therefore
 /// reads `(1, 1)` (I26) — is refused at resolution
-/// ([`crate::pgtype_impl::TypeOutcome::NestedArrayElement`]), so this function has
+/// ([`crate::pgtype::TypeOutcome::NestedArrayElement`]), so this function has
 /// no such plan to guard against and never needs to ask how the depth it is
 /// looking at was arrived at.
 fn retype_from_census(
@@ -911,7 +911,7 @@ mod tests {
     /// whether it applies — and its value is the register's own answer.
     #[test]
     fn every_column_carries_a_comparison_plan() {
-        use crate::pgtype_impl::{CompareKind, ComparisonPlan};
+        use crate::pgtype::{CompareKind, ComparisonPlan};
 
         let types = vec![TypeDef {
             name: "public.mood".to_string(),
@@ -940,7 +940,7 @@ mod tests {
                 ComparisonPlan::Compared { kind: CompareKind::Int { bytes: 4 }, divergence: None },
                 ComparisonPlan::diverging(
                     CompareKind::Text { length: None },
-                    crate::pgtype_impl::ComparisonDivergence::UnknownCollation,
+                    crate::pgtype::ComparisonDivergence::UnknownCollation,
                 ),
                 ComparisonPlan::Compared {
                     kind: CompareKind::Enum {
@@ -950,14 +950,12 @@ mod tests {
                     divergence: None,
                 },
                 // Nested: compared structurally, one node per level.
-                ComparisonPlan::Nested(crate::pgtype_impl::NestedCompare::Array(Box::new(
-                    crate::pgtype_impl::Position::nullable(
-                        crate::pgtype_impl::NestedCompare::Leaf {
-                            declared: "integer".to_string(),
-                            kind: CompareKind::Int { bytes: 4 },
-                            divergence: None,
-                        },
-                    )
+                ComparisonPlan::Nested(crate::pgtype::NestedCompare::Array(Box::new(
+                    crate::pgtype::Position::nullable(crate::pgtype::NestedCompare::Leaf {
+                        declared: "integer".to_string(),
+                        kind: CompareKind::Int { bytes: 4 },
+                        divergence: None,
+                    },)
                 ))),
                 // A type this build never mapped has no order here.
                 ComparisonPlan::Refused,
@@ -976,7 +974,7 @@ mod tests {
     /// `COLLATE` clause is half the question and is a fact about the column.
     #[test]
     fn two_text_columns_of_one_table_can_compare_differently() {
-        use crate::pgtype_impl::{CompareKind, ComparisonDivergence};
+        use crate::pgtype::{CompareKind, ComparisonDivergence};
 
         let mut meta = one_db(&[("public.t", &[("plain", "text"), ("bytewise", "text")])], vec![]);
         meta.databases[0].tables.get_mut("public.t").unwrap().columns[1].collation =
@@ -1010,7 +1008,7 @@ mod tests {
     /// whole dump said about that name, not the clause.
     #[test]
     fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
-        use crate::pgtype_impl::{CompareKind, ComparisonDivergence};
+        use crate::pgtype::{CompareKind, ComparisonDivergence};
         use pgdt_model::CollationDef;
 
         let build = |deterministic: bool| {
@@ -1044,7 +1042,7 @@ mod tests {
     /// against the outcome that survived.
     #[test]
     fn a_census_refused_column_claims_no_order() {
-        use crate::pgtype_impl::ComparisonPlan;
+        use crate::pgtype::ComparisonPlan;
 
         let meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
         let cols = vec!["v".to_string()];
@@ -1052,8 +1050,8 @@ mod tests {
         assert_eq!(
             text.comparisons,
             [ComparisonPlan::diverging(
-                crate::pgtype_impl::CompareKind::Text { length: None },
-                crate::pgtype_impl::ComparisonDivergence::UnknownCollation,
+                crate::pgtype::CompareKind::Text { length: None },
+                crate::pgtype::ComparisonDivergence::UnknownCollation,
             )]
         );
 

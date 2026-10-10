@@ -39,16 +39,21 @@
 //! error under every selection but `none`, which only warns, and
 //! [`SourceWatch`] is the mechanism.
 
-use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
+pub(crate) mod file;
+pub(crate) mod identity;
+
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use bincode::error::{DecodeError, EncodeError};
-use serde::{Deserialize, Serialize};
+use bincode::error::EncodeError;
+use serde::Serialize;
 
+use self::file::{
+    CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, read_cache_file,
+    write_beside,
+};
+use self::identity::SourceIdentity;
 use crate::load::{
     non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
@@ -59,208 +64,6 @@ use pgdt_core::{Error, Result};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin, internal::is_weak_tag};
 use pgdt_model::internal::DiagnosticExt;
 use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, Diagnostic, DumpIndex, SpanBody, calendar_end};
-
-/// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
-/// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read
-/// before the rest is decoded, and neither is ever reshaped**, so any build
-/// tells a file that is not a pgdt cache ([`Unusable::NotACache`]) from
-/// another build's ([`Unusable::UnsupportedVersion`]) — the difference between
-/// a file no scan may overwrite and one `--overwrite-unusable-cache` may
-/// ([`CacheMode::with_overwrite_unusable`]).
-pub const CACHE_MAGIC: [u8; 8] = *b"pgdtcach";
-
-/// The dump file's identity as observed when a cache was last saved — see
-/// the module docs.
-///
-/// **Opaque, not a struct** (`docs/design/decisions.md`, "D21"): each variant
-/// carries whatever evidence its own kind of source has, an ETag not being a
-/// `SystemTime` and a local file having no origin at all
-/// (`docs/design/decisions.md`, "D87"). What the three
-/// comparisons below read is a *signal* — origin, modification, stored size —
-/// rather than a variant, so a pairing of two kinds is compared rather than
-/// refused.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceIdentity {
-    /// Backed by [`ByteRangeSource::stored_size`]/`modified` — a source that
-    /// was not fetched from anywhere, decompressing or not.
-    LocalFile {
-        stored_size: u64,
-        /// `(seconds, nanoseconds)` since the Unix epoch: the model's own on-disk
-        /// vocabulary, `SystemTime` not being `Serialize`. `None` when the
-        /// source exposed no mtime.
-        mtime: Option<(u64, u32)>,
-    },
-    /// An object fetched from somewhere, which records two things a file does
-    /// not: **where it came from**, which is what
-    /// [`StrictIdentity::location`] binds, and the server's **entity tag**,
-    /// which is the stronger of the two modification signals
-    /// [`StrictIdentity::time`] binds.
-    Remote {
-        origin: String,
-        etag: Option<String>,
-        /// `Last-Modified`, in [`SourceIdentity::LocalFile`]'s on-disk
-        /// vocabulary. `None` where the server sent none — which is what a
-        /// substituted epoch is read as (`pgdt_io::io`'s `weak_identity`).
-        last_modified: Option<(u64, u32)>,
-        stored_size: u64,
-    },
-}
-
-impl SourceIdentity {
-    pub async fn observe(source: &dyn ByteRangeSource) -> Result<Self> {
-        let stored_size = source.stored_size().await?;
-        let modified = source
-            .modified()
-            .await?
-            .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default())
-            .map(|d| (d.as_secs(), d.subsec_nanos()));
-        // A source that was fetched from somewhere says so; every other one
-        // records no origin, which is the decision rather than a gap
-        // (`ByteRangeSource::remote_identity`).
-        Ok(match source.remote_identity() {
-            Some(remote) => SourceIdentity::Remote {
-                origin: remote.origin().to_string(),
-                etag: remote.etag().map(ToOwned::to_owned),
-                last_modified: modified,
-                stored_size,
-            },
-            None => SourceIdentity::LocalFile { stored_size, mtime: modified },
-        })
-    }
-
-    /// Bytes as stored — the half that refuses (`docs/design/decisions.md`,
-    /// "D20").
-    fn stored_size(&self) -> u64 {
-        match self {
-            SourceIdentity::LocalFile { stored_size, .. }
-            | SourceIdentity::Remote { stored_size, .. } => *stored_size,
-        }
-    }
-
-    /// The modification time this identity carries, as a `SystemTime`: the model's
-    /// on-disk `(seconds, nanoseconds)` is backed out at the boundary, so
-    /// what leaves this module is what the trait answered and what an
-    /// embedder formats.
-    fn modified(&self) -> Option<SystemTime> {
-        let stamp = match self {
-            SourceIdentity::LocalFile { mtime, .. }
-            | SourceIdentity::Remote { last_modified: mtime, .. } => *mtime,
-        };
-        stamp.map(|(s, n)| UNIX_EPOCH + Duration::new(s, n))
-    }
-
-    /// The server's entity tag, where this identity has one at all.
-    fn etag(&self) -> Option<&str> {
-        match self {
-            SourceIdentity::LocalFile { .. } => None,
-            SourceIdentity::Remote { etag, .. } => etag.as_deref(),
-        }
-    }
-
-    /// Where the object was fetched from, or `None` for a source that was not
-    /// fetched from anywhere (D87).
-    fn origin(&self) -> Option<&str> {
-        match self {
-            SourceIdentity::LocalFile { .. } => None,
-            SourceIdentity::Remote { origin, .. } => Some(origin),
-        }
-    }
-
-    /// What the weak half of this identity says against `live`'s — the half
-    /// that warns rather than refuses (see the module docs). **The answer
-    /// keeps what was compared**, so a caller refusing on it states what it
-    /// saw rather than only that it looked.
-    ///
-    /// **The strongest signal both sides carry decides it: a strong entity
-    /// tag, then `Last-Modified`, then a weak tag.** A strong tag is the
-    /// server's statement that these are the same bytes, so where both sides
-    /// have one it settles the question and a `Last-Modified` disagreeing
-    /// with it is not consulted (`docs/design/decisions.md`, "D21"). A weak
-    /// one states only equivalent content (RFC 9110, §8.8.1), which is not
-    /// what a map of byte offsets needs, so it cannot outrank a moved
-    /// `Last-Modified` — the reason [`pgdt_io::io`] pins no read by it either —
-    /// and decides only where neither side states one. **There it can show a
-    /// change and never confirm one**: opaque tags that differ, with either
-    /// side's `W/` set aside, are [`WeakIdentity::TagDiffers`], and equal ones
-    /// are [`WeakIdentity::Unconfirmed`] — the same reason RFC 9110, §13.1.5
-    /// forbids a weak tag in `If-Range`. Rejected: comparing them weakly
-    /// (§8.8.3.2) and agreeing, which answers equivalence where the map asks
-    /// for bytes; exact equality, `W/` being the tag's strength and not part
-    /// of it.
-    fn weak_against(&self, live: &Self) -> WeakIdentity {
-        let tags = self.etag().zip(live.etag());
-        if let Some((cached, live)) = tags.filter(|(c, l)| !is_weak_tag(c) && !is_weak_tag(l)) {
-            return tag_against(cached, live, cached == live);
-        }
-        match (self.modified(), live.modified()) {
-            (Some(cached), Some(live)) if cached == live => WeakIdentity::Agrees,
-            (Some(cached), Some(live)) => WeakIdentity::Differs { cached, live },
-            (None, None) => match tags {
-                Some((cached, live)) => {
-                    let opaque = |tag: &'_ str| tag.strip_prefix("W/").unwrap_or(tag).to_owned();
-                    if opaque(cached) == opaque(live) {
-                        WeakIdentity::Unconfirmed {
-                            cached: cached.to_string(),
-                            live: live.to_string(),
-                        }
-                    } else {
-                        tag_against(cached, live, false)
-                    }
-                }
-                None => WeakIdentity::Absent { cached: None, live: None },
-            },
-            (cached, live) => WeakIdentity::Absent { cached, live },
-        }
-    }
-
-    /// What this identity's origin says against `live`'s — the second
-    /// advisory answer, and the one [`StrictIdentity::location`] binds
-    /// (`docs/design/decisions.md`, "D87").
-    ///
-    /// **Two sources that were both fetched from nowhere agree**, which is
-    /// what makes `location` inert on a local file rather than a refusal
-    /// nobody asked for (D87).
-    fn origin_against(&self, live: &Self) -> OriginMatch {
-        match (self.origin(), live.origin()) {
-            (cached, live) if cached == live => OriginMatch::Agrees,
-            (cached, live) => OriginMatch::Differs {
-                cached: cached.map(ToOwned::to_owned),
-                live: live.map(ToOwned::to_owned),
-            },
-        }
-    }
-
-    /// How a run that started from this identity and now sees `live` says
-    /// what moved — [`Error::SourceChangedWhileRead`]'s evidence clause.
-    /// Never called where the two are equal, so it is never empty.
-    fn differences(&self, live: &Self) -> String {
-        let mut said = Vec::new();
-        let (was, now) = (self.stored_size(), live.stored_size());
-        if was != now {
-            said.push(format!("its stored size went from {was} to {now} byte(s)"));
-        }
-        if self.modified() != live.modified() {
-            said.push("its modification time moved".to_string());
-        }
-        if self.etag() != live.etag() {
-            said.push("the server's entity tag for it changed".to_string());
-        }
-        if !matches!(self.origin_against(live), OriginMatch::Agrees) {
-            said.push("it is no longer the same origin".to_string());
-        }
-        said.join(" and ")
-    }
-}
-
-/// A tag comparison's answer, `matched` being whichever comparison the
-/// tags' strength called for ([`SourceIdentity::weak_against`]).
-fn tag_against(cached: &str, live: &str, matched: bool) -> WeakIdentity {
-    if matched {
-        WeakIdentity::Agrees
-    } else {
-        WeakIdentity::TagDiffers { cached: cached.to_string(), live: live.to_string() }
-    }
-}
 
 /// What the origin recorded in a cache said against the live source's — the
 /// second half of what a cache load compares, beside [`WeakIdentity`]
@@ -629,35 +432,6 @@ impl SourceWatch {
     }
 }
 
-/// What produced the indexed blocks' byte offsets. Plain-format offsets are
-/// raw file positions; a future archive format's would be entry-relative, so
-/// the two must never be silently conflated.
-///
-/// A compressed source's indexed offsets are *also* plain-format offsets —
-/// byte for byte what a plain scan of the same decompressed content
-/// produces — so a compressed source never sets this to anything but
-/// `Plain`; what changes is [`CompressionIndex`], a sibling field
-/// (`docs/design/decisions.md`, "D21").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContainerKind {
-    Plain,
-}
-
-/// What compression sits between this cache's plain-format offsets and the
-/// bytes on disk — `None` for a source that needs no such index
-/// (`docs/design/decisions.md`, "D21"). A sibling of
-/// [`ContainerKind`], not a value of it: see that type's docs.
-///
-/// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
-/// [`pgdt_io::XzSource`] answers from the table it already built while opening,
-/// so persisting a cache never re-walks the file; read back by [`claim`]
-/// before any source exists, which spares every later command that walk. A
-/// future gzip index is a different *shape* and gets its own sibling variant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CompressionIndex {
-    Xz(xz_seek::SeekTable),
-}
-
 /// The shape of the container a cache's offsets sit under, read off the
 /// persisted [`CompressionIndex`].
 ///
@@ -698,29 +472,6 @@ impl CompressionShape {
             max_block_uncompressed: table.max_block_uncompressed(),
         }
     }
-}
-
-/// What a cache file holds after [`CACHE_MAGIC`] and its version.
-/// [`CacheFileRef`] is what a save encodes, the same fields in this order, so
-/// the two change together.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CacheFile {
-    pub container_kind: ContainerKind,
-    pub compression: Option<CompressionIndex>,
-    pub identity: SourceIdentity,
-    /// The addressable (decompressed, for a compressed source) length —
-    /// [`ByteRangeSource::size`] as observed at save time. Its own field, not
-    /// an alias of `identity`'s stored size (`docs/design/decisions.md`,
-    /// "D21"), and the number
-    /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
-    /// `total_size` for the coverage arithmetic.
-    pub total_size: u64,
-    /// The last day of the calendar the index's unrepresentable counts were
-    /// taken under ([`pgdt_model::calendar_end`]): a build whose calendar
-    /// ends elsewhere refuses a cache holding one
-    /// ([`Unusable::CalendarChanged`]; `docs/design/decisions.md`, "D96").
-    pub calendar_end: i32,
-    pub index: DumpIndex,
 }
 
 /// Everything a cache file persists beside its index and `total_size`, as it
@@ -898,64 +649,6 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
     Ok(status_from_file(file, weak, origin))
 }
 
-/// Read and header-check the cache at `path`, shared by [`load`],
-/// [`load_offline`] and [`claim`]. `Err(status)` is an outcome that needs no
-/// live source to reach; the two that compare against one are [`load`]'s.
-///
-/// **The header is read before anything is decoded** ([`CACHE_MAGIC`]), so
-/// another build's cache is told from foreign bytes whatever its shape; the
-/// rest is decoded through a buffered reader, never read whole first
-/// (`docs/design/decisions.md`, "D78"). A file ending before its magic
-/// ends is not a pgdt cache; one ending after it is [`Unusable::Unreadable`],
-/// as any other undecodable content is; an I/O failure reading it is still an
-/// error.
-pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
-    let unusable = |why| Ok(Err(CacheStatus::Unusable(why)));
-    let mut reader = match File::open(path) {
-        Ok(file) => BufReader::new(file),
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            return Ok(Err(CacheStatus::Missing));
-        }
-        Err(e) => return Err(Error::Io(e)),
-    };
-    let mut magic = [0u8; CACHE_MAGIC.len()];
-    match reader.read_exact(&mut magic) {
-        Ok(()) if magic == CACHE_MAGIC => {}
-        Ok(()) => return unusable(Unusable::NotACache),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::NotACache),
-        Err(e) => return Err(Error::Io(e)),
-    }
-    let mut version = [0u8; 4];
-    match reader.read_exact(&mut version) {
-        Ok(()) => {}
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::Unreadable),
-        Err(e) => return Err(Error::Io(e)),
-    }
-    let found = u32::from_le_bytes(version);
-    if found != CACHE_FORMAT_VERSION {
-        return unusable(Unusable::UnsupportedVersion { found });
-    }
-    match bincode::serde::decode_from_reader::<CacheFile, _, _>(reader, bincode::config::standard())
-    {
-        // Counts taken under another calendar are not this build's, and a
-        // cache holding none has nothing to be wrong about.
-        Ok(file)
-            if file.calendar_end != calendar_end()
-                && file.index.blocks().any(|block| block.unrepresentable.is_some()) =>
-        {
-            unusable(Unusable::CalendarChanged {
-                counted_under: file.calendar_end,
-                build: calendar_end(),
-            })
-        }
-        Ok(file) => Ok(Ok(file)),
-        Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
-            Err(Error::Io(inner))
-        }
-        Err(_) => unusable(Unusable::Unreadable),
-    }
-}
-
 /// What the cache at a path settles about a dump file **before any source
 /// exists** — [`claim`]'s answer (`docs/design/decisions.md`, "D18").
 ///
@@ -1105,19 +798,6 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     }
 }
 
-/// What [`save`] encodes: [`CacheFile`]'s fields in [`CacheFile`]'s order,
-/// the index borrowed rather than cloned, so the bytes are the ones an owned
-/// `CacheFile` encodes to and [`read_cache_file`] decodes.
-#[derive(Serialize)]
-pub struct CacheFileRef<'a> {
-    pub container_kind: ContainerKind,
-    pub compression: Option<CompressionIndex>,
-    pub identity: SourceIdentity,
-    pub total_size: u64,
-    pub calendar_end: i32,
-    pub index: &'a DumpIndex,
-}
-
 /// Write `index` to `path` (colocated or explicit — whichever the caller
 /// resolved), replacing any existing cache there, and record `source`'s
 /// current stored size/mtime plus its addressable length for [`load`] to
@@ -1158,42 +838,6 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
                 other => Error::cache_encode(other),
             })
     })
-}
-
-/// Run `encode` into a new file [`beside`] `path`, then rename that file over
-/// `path`; on any failure, remove it and leave `path` as it was.
-pub fn write_beside(
-    path: &Path,
-    encode: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
-) -> Result<()> {
-    let beside = beside(path);
-    let file = OpenOptions::new().write(true).create_new(true).open(&beside)?;
-    let written = (|| {
-        let mut writer = BufWriter::new(file);
-        encode(&mut writer)?;
-        writer.flush()?;
-        // Closed before the rename, which some platforms need.
-        drop(writer);
-        std::fs::rename(&beside, path)?;
-        Ok(())
-    })();
-    if written.is_err() {
-        // Best-effort: the error being returned is the one worth reporting.
-        let _ = std::fs::remove_file(&beside);
-    }
-    written
-}
-
-/// The file a save writes before renaming it over `path`: in `path`'s own
-/// directory, so the rename never crosses a filesystem, and named
-/// `<cache file name>.<pid>-<n>.tmp`, unique to this process and this save,
-/// so two saves of one cache — two processes, or two tasks of one — never
-/// write into one file.
-fn beside(path: &Path) -> PathBuf {
-    static SAVES: AtomicU64 = AtomicU64::new(0);
-    let mut name: OsString = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
-    name.push(format!(".{}-{}.tmp", std::process::id(), SAVES.fetch_add(1, Ordering::Relaxed)));
-    path.with_file_name(name)
 }
 
 /// How a caller wants the structure cache handled for one operation, and
@@ -1485,6 +1129,5 @@ impl CacheMode {
     }
 }
 
-#[path = "cache/tests.rs"]
 #[cfg(test)]
 mod tests;

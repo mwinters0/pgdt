@@ -19,19 +19,11 @@ body changed and no test moved.
   35.10.1 re-sorted the line by purpose
   ([`roadmap-P35.10.1-api-sort-notes.md`](roadmap-P35.10.1-api-sort-notes.md)).
 - **Four namespaces, the ones an embedder names**: `pgdt_dump::cache`,
-  `pgdt_codec::decode`, `pgdt_codec::pgtype` and `pgdt_core::instrument`,
-  each an inline module of named re-exports of its file's API. `resolve`
-  was named once, by `pgdt`, for items all at the codec's root, so `pgdt`
-  names the root instead and the module is private.
-- **A namespace's file loads as `<name>_impl`**, by `#[path]` in `lib.rs`, a
-  root `pub mod` and a private module being unable to share a name. A file
-  `#[path]` loads owns its directory as a `mod.rs` does, so its own test
-  modules carry `#[path = "<name>/tests.rs"]` too, written before
-  `#[cfg(test)]` so `tests/layering.rs` and `file_limits.py`, which read
-  `#[cfg(test)]` then `mod` as the end of production code, read it unchanged.
-  `tests/layering.rs` follows a `#[path]`; `check.py`'s `module_files` does
-  not, and reads only test targets, none of which carries one on a library
-  file.
+  `pgdt_codec::decode`, `pgdt_codec::pgtype` and `pgdt_core::instrument`.
+  `resolve` was named once, by `pgdt`, for items all at the codec's root, so
+  `pgdt` names the root instead and the module is private. How each
+  namespace's file is laid out is 35.10.2's
+  ([`roadmap-P35.10.2-namespaces-notes.md`](roadmap-P35.10.2-namespaces-notes.md)).
 - **One extension trait per type, `<Type>Ext`**, the methods' bodies in an
   `impl` beside the type's inherent one: ten in `pgdt-model` — `ArrayShape`,
   `Unrepresentable`, `BlockCensus`, `DatabaseMetadata`, `TableDef`,

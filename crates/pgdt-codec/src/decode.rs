@@ -17,7 +17,18 @@
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `tests/scan.rs`.
 
-use pgdt_model::PostgresInvalidValues;
+pub(crate) mod digits;
+pub(crate) mod float;
+pub(crate) mod refusal;
+pub(crate) mod stored;
+
+use self::digits::{push_fraction, push_two, push_year};
+pub(crate) use self::float::{Float, float_field};
+pub(crate) use self::refusal::{
+    NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, bytea_unread, char_typmod_refuses,
+    numeric_in_stores,
+};
+pub(crate) use self::stored::{time_of_day_micros, timestamp_postgres_micros};
 
 /// Why a text is read as no value of its type, where a caller must tell the
 /// two apart: a parse fails on the first field PostgreSQL refuses, and on no
@@ -40,7 +51,7 @@ pub enum Unread {
     /// some supported major — a shortfall (`docs/design/decisions.md`,
     /// "D55"). Each reader classifies what it fails on by the server's
     /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
-    /// `crate::key`'s `jsonb_unread`, and `crate::datetime_in` for the
+    /// `crate::key::order`'s `jsonb_unread`, and `crate::datetime_in` for the
     /// date and time types). No reader is widened to read one: a blank
     /// around a number, a hexadecimal float, `nan(…)`, an exponent in a
     /// `numeric` field, `0x1F`, `1_000` and `y2001m02d04` stay unparsed, and
@@ -50,25 +61,6 @@ pub enum Unread {
 
 /// A reader's answer where [`Unread`] matters.
 pub type Read<T> = Result<T, Unread>;
-
-/// A float field, as [`float_in`] reads it — or, under
-/// [`PostgresInvalidValues::Ignore`], a spelling it refuses as out of range
-/// read as the parse rounds it: past the largest finite value, that value of
-/// its sign, as `*_out` meant it (I57), and below the smallest, zero.
-pub fn float_field<F: Float>(text: &str, invalid: PostgresInvalidValues) -> Option<F> {
-    match (float_in::<F>(text), invalid) {
-        (Ok(value), _) => Some(value),
-        (Err(Unread::Refused), PostgresInvalidValues::Ignore) => {
-            // deficiency: KD108 — Rust's parse reads no blank and no
-            // hexadecimal spelling, so ` 1e400` and `0x1p1024`, which
-            // `float_unread` refuses as out of range, are not rounded but
-            // unread, and a query reading one fails.
-            let value = text.parse::<F>().ok()?;
-            Some(if value.is_infinite() { value.largest_of_sign() } else { value })
-        }
-        (Err(_), _) => None,
-    }
-}
 
 /// `t`/`f`, COPY TEXT's boolean spelling.
 pub fn decode_bool(s: &str) -> Option<bool> {
@@ -424,50 +416,6 @@ fn hex_float_out_of_range<F: Float>(digits: &[u8], integer: usize, exponent: i64
     lead < least - 1 || (lead == least - 1 && !(1..width).any(bit))
 }
 
-/// What [`float_in`] needs of `f32` and `f64`.
-pub trait Float: std::str::FromStr + Copy {
-    /// The significand's bits, the implicit one included.
-    const SIGNIFICAND_BITS: u32;
-    /// The power of two of the largest finite value's leading bit.
-    const MAX_EXP: i64;
-    /// The power of two of the least subnormal.
-    const MIN_SUBNORMAL_EXP: i64;
-    fn is_infinite(self) -> bool;
-    fn is_zero(self) -> bool;
-    /// The type's largest finite value, of this value's sign.
-    fn largest_of_sign(self) -> Self;
-}
-
-impl Float for f32 {
-    const SIGNIFICAND_BITS: u32 = f32::MANTISSA_DIGITS;
-    const MAX_EXP: i64 = f32::MAX_EXP as i64 - 1;
-    const MIN_SUBNORMAL_EXP: i64 = f32::MIN_EXP as i64 - f32::MANTISSA_DIGITS as i64;
-    fn is_infinite(self) -> bool {
-        f32::is_infinite(self)
-    }
-    fn is_zero(self) -> bool {
-        self == 0.0
-    }
-    fn largest_of_sign(self) -> Self {
-        f32::MAX.copysign(self)
-    }
-}
-
-impl Float for f64 {
-    const SIGNIFICAND_BITS: u32 = f64::MANTISSA_DIGITS;
-    const MAX_EXP: i64 = f64::MAX_EXP as i64 - 1;
-    const MIN_SUBNORMAL_EXP: i64 = f64::MIN_EXP as i64 - f64::MANTISSA_DIGITS as i64;
-    fn is_infinite(self) -> bool {
-        f64::is_infinite(self)
-    }
-    fn is_zero(self) -> bool {
-        self == 0.0
-    }
-    fn largest_of_sign(self) -> Self {
-        f64::MAX.copysign(self)
-    }
-}
-
 /// `FLT_DIG` — the significant-digit threshold PostgreSQL's `float4out`
 /// switches to scientific notation at (see [`format_shortest`]'s docs).
 const FLT_DIG: i32 = 6;
@@ -522,139 +470,6 @@ pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
     (y + i64::from(m <= 2), m, d)
-}
-
-/// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
-/// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every zero-padded field a
-/// `date`, a `time` or a `timestamp` is written from is two digits wide, or a
-/// four-digit year's two of them, so a
-/// field becomes an indexed slice and a two-byte copy rather than a trip
-/// through `core::fmt` (`docs/design/decisions.md`, "D44").
-const DEC_PAIRS_BYTES: [u8; 200] = {
-    let digits = *b"0123456789";
-    let mut table = [0u8; 200];
-    let mut v = 0usize;
-    while v < 100 {
-        table[v * 2] = digits[v / 10];
-        table[v * 2 + 1] = digits[v % 10];
-        v += 1;
-    }
-    table
-};
-
-/// The same table as text, converted once at compile time, so a renderer
-/// appends with `push_str` and pays no UTF-8 validation — the same shape as
-/// [`HEX_PAIRS`].
-static DEC_PAIRS: &str = match str::from_utf8(&DEC_PAIRS_BYTES) {
-    Ok(s) => s,
-    Err(_) => panic!("decimal digits are ASCII"),
-};
-
-/// The ten decimal digits, so a leading odd digit is appended as a `&str`
-/// slice like every other digit and the whole function stays free of
-/// byte-to-`str` conversion.
-static DEC_DIGITS: &str = "0123456789";
-
-/// `format!("{value:0width$}")` for an `i64`, digit for digit: sign-aware zero
-/// padding, so a `-` leads and the padding zeros follow it, and no padding at
-/// all once the digits are already that wide. `width` of `0` is therefore
-/// exactly `i64::to_string`, which is what [`push_integer`] is.
-///
-/// Three properties are load-bearing rather than stylistic
-/// (`docs/design/decisions.md`, "D44"):
-///
-/// - **The digits come out two at a time**, off [`DEC_PAIRS`], the algorithm
-///   the standard library's own integer `Display` uses.
-/// - **Every digit is a slice of a `&'static str`**, the sign and padding
-///   pushed as ASCII `char`s, so nothing here converts bytes to text and no
-///   UTF-8 validation is paid per field.
-/// - **The whole length is reserved once**, so no `push_str` grows the
-///   buffer.
-#[inline]
-fn push_padded(out: &mut String, value: i64, width: usize) {
-    // Pair values, least significant first; a `u64` has at most nine of them
-    // ahead of its leading one or two digits.
-    let mut pairs = [0u8; 10];
-    let mut count = 0;
-    let mut magnitude = value.unsigned_abs();
-    while magnitude >= 100 {
-        pairs[count] = (magnitude % 100) as u8;
-        count += 1;
-        magnitude /= 100;
-    }
-    let lead = magnitude as usize;
-    let negative = value < 0;
-    let digits = 2 * count + if lead >= 10 { 2 } else { 1 };
-    out.reserve(width.max(digits + usize::from(negative)));
-    if negative {
-        out.push('-');
-    }
-    for _ in (digits + usize::from(negative))..width {
-        out.push('0');
-    }
-    if lead >= 10 {
-        out.push_str(&DEC_PAIRS[lead * 2..lead * 2 + 2]);
-    } else {
-        out.push_str(&DEC_DIGITS[lead..lead + 1]);
-    }
-    for pair in pairs[..count].iter().rev() {
-        let at = usize::from(*pair) * 2;
-        out.push_str(&DEC_PAIRS[at..at + 2]);
-    }
-}
-
-/// An integer field's digits, appended: the same text `i64::to_string`
-/// produces, without the `String` it allocates.
-///
-/// `write!(out, "{value}")` reaches the same `Display` impl through
-/// `core::fmt::write`, which this path never uses
-/// (`docs/design/decisions.md`, "D44").
-#[inline]
-pub fn push_integer(out: &mut String, value: i64) {
-    push_padded(out, value, 0);
-}
-
-/// `format!("{value:02}")` — one table lookup for the two-digit range every
-/// calendar and clock field of a well-formed value lives in.
-fn push_two(out: &mut String, value: i64) {
-    if (0..100).contains(&value) {
-        let at = value as usize * 2;
-        out.push_str(&DEC_PAIRS[at..at + 2]);
-    } else {
-        push_padded(out, value, 2);
-    }
-}
-
-/// `format!("{year:04}")`, as two pairs for the four-digit years and the
-/// general path for anything wider — `Date32`'s day range reaches years either
-/// side of five million.
-fn push_year(out: &mut String, year: i64) {
-    if (0..10_000).contains(&year) {
-        push_two(out, year / 100);
-        push_two(out, year % 100);
-    } else {
-        push_padded(out, year, 4);
-    }
-}
-
-/// The fractional-seconds digits, `micros` in `1..1_000_000`: six digits with
-/// trailing zeros trimmed, which is what PostgreSQL writes (`00:00:00.5`, not
-/// `.500000`). The trim is a `truncate` back to the last non-zero digit,
-/// bounded by `start` so it can never reach text the caller had already
-/// written.
-fn push_fraction(out: &mut String, micros: i64) {
-    let start = out.len();
-    push_two(out, micros / 10_000);
-    push_two(out, (micros / 100) % 100);
-    push_two(out, micros % 100);
-    let mut end = out.len();
-    {
-        let bytes = out.as_bytes();
-        while end > start && bytes[end - 1] == b'0' {
-            end -= 1;
-        }
-    }
-    out.truncate(end);
 }
 
 /// The `YYYY-MM-DD` head a `date` and a `timestamp` share, out of a day count.
@@ -876,14 +691,6 @@ fn format_hms_frac_into(out: &mut String, total_micros: i64) {
 /// Arrow's `Time64` day, in microseconds: the first value past it.
 const DAY_MICROS: i64 = 86_400_000_000;
 
-/// A `time`'s microseconds since midnight as PostgreSQL holds it, its
-/// inclusive upper bound `24:00:00` included — what its comparison orders
-/// (`crate::key`), where [`decode_time64_micros`] is what Arrow holds.
-pub fn time_of_day_micros(s: &str) -> Read<i64> {
-    let (seconds, micros) = parse_time_of_day(s)?;
-    Ok(seconds * 1_000_000 + micros)
-}
-
 /// `None` for anything unparseable, and for `24:00:00`: a real, valid
 /// boundary value (PostgreSQL's inclusive upper bound for `time`) that
 /// Arrow's `Time64`, holding `[0, 86400 s)`, cannot, so it is refused as
@@ -992,28 +799,6 @@ const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 /// PostgreSQL's epoch, 2000-01-01 00:00:00 UTC, in microseconds from the
 /// Unix epoch.
 const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
-
-/// A finite timestamp's microseconds from PostgreSQL's epoch, 2000-01-01 UTC —
-/// the `int64` PostgreSQL stores it as (I49), so every value it admits fits,
-/// the three decades [`decode_timestamp_micros`] cannot count from 1970
-/// included. What its comparison orders (`crate::key`), where
-/// [`decode_timestamp_micros`] is what Arrow holds; [`Unread::Unparsed`] for
-/// the infinities, and an [`Unread`] for text that is not a timestamp.
-pub fn timestamp_postgres_micros(s: &str, with_tz: bool) -> Read<i64> {
-    let postgres = timestamp_micros_wide(s, with_tz)? - POSTGRES_EPOCH_UNIX_MICROS;
-    Ok(i64::try_from(postgres).expect("PostgreSQL's range is an i64 of microseconds"))
-}
-
-/// [`render_timestamp_micros`] of a [`timestamp_postgres_micros`] value, so a
-/// timestamp past what `i64` counts from 1970 is written as the dump writes it.
-pub fn render_timestamp_postgres_micros(v: i64, with_tz: bool) -> String {
-    let unix = i128::from(v) + POSTGRES_EPOCH_UNIX_MICROS;
-    let days = i64::try_from(unix.div_euclid(86_400_000_000)).expect("an i64 of micros is days");
-    let of_day = i64::try_from(unix.rem_euclid(86_400_000_000)).expect("under a day");
-    let mut out = String::with_capacity(32);
-    push_timestamp(days, of_day, with_tz, &mut out);
-    out
-}
 
 pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
     // `YYYY-MM-DD HH:MM:SS.ffffff+00`, with room for the era marker.
@@ -1475,36 +1260,6 @@ pub fn render_bytea(bytes: &[u8]) -> String {
         push_hex_pair(&mut out, *byte);
     }
     out
-}
-
-/// Why [`decode_bytea`] read no value from `s`: `byteain` refuses it, or
-/// reads a spelling this build does not — a blank between hex pairs, any
-/// byte the `escape` form writes escaped written as itself, or the reverse
-/// (`docs/design/decisions.md`, "D55").
-// pg-refuses: I69 — every refusal here is `byteain`'s.
-pub fn bytea_unread(s: &str) -> Unread {
-    let b = s.as_bytes();
-    let reads = match b.strip_prefix(b"\\x") {
-        // `hex_decode_safe`: a blank between pairs, never inside one.
-        Some(hex) => {
-            let mut digits = hex.iter().filter(|&&c| !matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
-            let mut pairs = hex.split(|&c| matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
-            digits.all(u8::is_ascii_hexdigit) && pairs.all(|run| run.len() % 2 == 0)
-        }
-        None => {
-            let mut at = 0;
-            loop {
-                match b.get(at..) {
-                    Some([]) | None => break true,
-                    Some([b'\\', b'0'..=b'3', b'0'..=b'7', b'0'..=b'7', ..]) => at += 4,
-                    Some([b'\\', b'\\', ..]) => at += 2,
-                    Some([b'\\', ..]) => break false,
-                    Some(_) => at += 1,
-                }
-            }
-        }
-    };
-    if reads { Unread::Unparsed } else { Unread::Refused }
 }
 
 /// An `inet` or `cidr` value as `network_in` reads it: its family (`true`
@@ -2028,7 +1783,7 @@ pub(crate) fn macaddr8_in(s: &str) -> Option<[u8; 8]> {
 /// guaranteed in `*_out`'s form and never read past `*_in`'s" makes to the
 /// newest major's reading.
 // deficiency: KD84 — the readers of an `oid` (`str::parse`, in the typed read
-// and `key::field_key`) take `010` for 10, as v15 and earlier do, where
+// and `key::order::field_key`) take `010` for 10, as v15 and earlier do, where
 // v16 and later read it as octal 8 and refuse `08` (I66). Which the dump's
 // server meant is its version's to say, and no reader is handed it.
 pub(crate) fn oid_unread(s: &str) -> Unread {
@@ -2585,63 +2340,6 @@ fn numeric_spelling_v16(b: &[u8]) -> Option<NumericSpelling> {
         point: integer + exponent,
         dscale,
     })
-}
-
-/// Whether a `character varying(n)` or `character(n)` field, `n` being
-/// `length`, is one `varchar_input` or `bpchar_input` refuses: longer than
-/// `length` characters, with anything but a blank, `0x20`, past them (I75).
-/// The characters are counted in UTF-8, the one encoding read here; a field
-/// no longer in bytes than `length` is read without counting, and a field it
-/// does not refuse is read as written ([`crate::pgtype_impl::CompareKind::Text`]).
-// deficiency: KD96 — a field longer than `length` only by trailing blanks,
-// which `varchar_input` and `bpchar_input` cut to `length` characters (I75),
-// keeps them here, and a `character(n)` field shorter than `length`, which
-// `bpchar_input` pads, is not padded. Either way a typed read emits a value
-// the server does not hold; only a `character varying(n)`'s longer field also
-// answers otherwise, keyed, bounded and compared with its blanks, so `<` and
-// `=` differ from the server over it, where `character(n)`'s comparison trims
-// both sides. No `pg_dump` writes either. The fix cuts the field in the read,
-// the key and the bounds, and records per group whether any field was cut: a
-// `SchemaMode::Strings` term reads the column as its text from the same set
-// (D79), so it reads only a group where none was, never losing a real dump's
-// bounds; `=`, `!=` and `IN` answer by the cut value only once `KD82` closes.
-// `numeric(p,s)` is rounded where this is not because its rounding decides
-// its refusal (I51), and no refusal here needs the cut. **(c) unowned**;
-// promoted by a hand-written dump holding one.
-// pg-refuses: I75 — a non-blank past the typmod's length.
-pub fn char_typmod_refuses(text: &str, length: u32) -> bool {
-    let length = length as usize;
-    if text.len() <= length {
-        return false;
-    }
-    text.char_indices().nth(length).is_some_and(|(cut, _)| text[cut..].bytes().any(|b| b != b' '))
-}
-
-/// `NUMERIC_DSCALE_MAX`: the most digits `numeric_in` stores after the point,
-/// a trailing zero counting (I63).
-pub const NUMERIC_DSCALE_MAX: usize = 16383;
-
-/// The most digits `numeric_in` stores before the point, a leading zero not
-/// counting: `NUMERIC_WEIGHT_MAX`, `i16::MAX`, base-10000 digits past the
-/// first (I63).
-pub const NUMERIC_INTEGER_DIGITS_MAX: usize = 4 * (i16::MAX as usize + 1);
-
-/// Whether `numeric_in` with no typmod stores the number written
-/// `[-]int[.frac]` rather than refusing it as overflowing the format (I63):
-/// every digit after the point counts toward its display scale, and its
-/// weight counts from the first non-zero digit before it. Only the two bounds
-/// are checked; the grammar is its reader's.
-///
-/// What it bounds is a bare `numeric`'s field and every literal, which the
-/// server coerces with no typmod. A typmod'd column's field is rounded to its
-/// scale before the bounds are checked, and never reaches them (I51).
-// pg-refuses: I63 — a display scale or a weight past the storage format's.
-pub fn numeric_in_stores(text: &str) -> bool {
-    let digits = text.strip_prefix('-').unwrap_or(text);
-    let (int, frac) = digits.split_once('.').unwrap_or((digits, ""));
-    frac.len() <= NUMERIC_DSCALE_MAX
-        && (int.len() <= NUMERIC_INTEGER_DIGITS_MAX
-            || int.trim_start_matches('0').len() <= NUMERIC_INTEGER_DIGITS_MAX)
 }
 
 /// Render an unscaled decimal integer (`i128`/`i256`'s own `Display`, e.g.
@@ -3339,7 +3037,6 @@ pub(crate) fn line_in(text: &str) -> bool {
     skip_c_spaces(b, i) == b.len() && !(fp_zero(coefficients[0]) && fp_zero(coefficients[1]))
 }
 
-#[path = "decode/tests.rs"]
 #[cfg(test)]
 mod tests;
 
@@ -3350,10 +3047,8 @@ mod tests;
 /// corpora below are generated rather
 /// than listed: a disagreement on an input nobody thought to write down is a
 /// test failure and not a report from the field.
-#[path = "decode/prior_shape.rs"]
 #[cfg(test)]
 mod prior_shape;
 
-#[path = "decode/differential.rs"]
 #[cfg(test)]
 mod differential;

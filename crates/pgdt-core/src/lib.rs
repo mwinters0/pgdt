@@ -5,8 +5,7 @@
 
 mod copy;
 mod error;
-#[path = "instrument.rs"]
-mod instrument_impl;
+pub mod instrument;
 mod lex;
 
 pub use copy::{
@@ -16,19 +15,6 @@ pub use copy::{
 };
 pub use error::{Error, RowEndingRefusal, Unusable};
 
-/// What an instrumented binary reads of the library's own work: an API
-/// namespace, its items re-exported by name from the private module that
-/// defines them, which is loaded under another name only because this one
-/// takes `instrument`.
-pub mod instrument {
-    pub use crate::instrument_impl::EvaluationPart;
-    #[cfg(feature = "introspect")]
-    pub use crate::instrument_impl::{
-        EvaluationReading, StatisticsReading, allocated, evaluation_reading, freed,
-        statistics_reading,
-    };
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// What a crate above reaches that is not this crate's API: public only
@@ -37,9 +23,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub mod internal {
     pub use crate::copy::{Cursor, hex_val};
     pub use crate::error::OVERWRITE_WAYS_OUT;
-    pub use crate::instrument_impl::{DecodeCounter, StatisticsScope, statistics_account_updated};
+    pub use crate::instrument::hooks::{
+        DecodeCounter, StatisticsScope, statistics_account_updated,
+    };
     #[cfg(feature = "introspect")]
-    pub use crate::instrument_impl::{evaluated_row, statistics_loaded, timed_span};
+    pub use crate::instrument::hooks::{evaluated_row, statistics_loaded, timed_span};
     pub use crate::lex::{
         Lexer, LineLex, Quote, Region, canonical_type_name, ident_cont, parse_type_name,
         standard_conforming_strings,

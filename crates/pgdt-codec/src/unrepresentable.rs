@@ -25,9 +25,9 @@ use std::sync::Arc;
 
 use arrow_schema::DataType;
 
-use crate::decode_impl::{civil_from_days, decode_date32, interval_parts, timestamp_micros_wide};
+use crate::decode::{civil_from_days, decode_date32, interval_parts, timestamp_micros_wide};
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
-use crate::pgtype_impl::{NestedPlan, RANGE_STRUCT_FIELDS};
+use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_core::{CopyHeader, decode_field};
 use pgdt_model::{
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn the_calendar_ends_where_rt21_says() {
         let end = calendar_end();
-        assert_eq!(crate::decode_impl::render_date32(end), "262142-12-31");
+        assert_eq!(crate::decode::render_date32(end), "262142-12-31");
         assert_eq!(candidate_year(end), 262142);
     }
 
