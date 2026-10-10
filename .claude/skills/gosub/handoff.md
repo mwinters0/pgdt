@@ -51,6 +51,11 @@ next: fold tables.md into docs/design/measurements.md per --check consumers, tic
 - `running`, `done`, `failed` and `stuck` say how to read that output in as few
   words as carry the meaning, and **name every exit code the job can plausibly
   produce**; silence about one is the reader guessing.
+- **A bare process records its own exit status**: the shell `setsid` starts
+  writes it once the job ends, so that shell must outlive the job —
+  `setsid bash -c 'cmd > log 2>&1; echo $? > exit' &`. Never `exec` the job
+  inside it: `exec` replaces the shell, the `echo` never runs, and `check`
+  can only ever say the job vanished, even of one that finished cleanly.
 - `stop` ends the job safely and says what that costs — for a bare process, a
   process-group kill (`pkill -g <pgid>`) with the pgid written out. `started` and
   `expect` let the reader compute elapsed time without asking.
