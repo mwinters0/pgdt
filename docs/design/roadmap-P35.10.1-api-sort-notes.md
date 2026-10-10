@@ -25,13 +25,12 @@ Each crate's `lib.rs` is where it lands. No body changed and no test moved;
     there.
   - `pgdt-query`: the per-block statistics re-read — `gather_block_statistics`,
     `BlockReread`, `bounded_columns`, `StatisticsBackfill`, and
-    `StatisticsRequest::backfill` behind `StatisticsRequestExt`. Its
-    arguments are the gatherer's own bookkeeping, and `map_file` given a
-    `StatisticsRequest` is the call that back-fills. The crate has an
-    `internal` module for the first time; only its own integration tests
-    name it.
-  - `pgdt-model`: `BlockGathered`, which only the observer contract and
-    `BlockReread` name.
+    `StatisticsRequest::backfill` behind `StatisticsRequestExt` — and
+    `pgdt-model`'s `BlockGathered`. That was wrong: P10's spec designed the
+    re-read as the library's per-block back-fill entry point, its result
+    stored through `pgdt-model` API, and 35.10.3 restores it
+    ([`../status/history/2026-10-10.md`](../status/history/2026-10-10.md),
+    "The per-block re-read, reviewed").
 - **One path**: `pgtype`'s seventeen items left `pgdt-codec`'s root, so they
   are `pgdt_codec::pgtype::<item>` alone. Every other crate already had one
   path per item.
@@ -44,20 +43,22 @@ Each crate's `lib.rs` is where it lands. No body changed and no test moved;
   `check_tiling` and `dump_metadata_from_spans`; `pgdt-codec`'s nested
   literal codec at its root, as the spec names it, and `decode`'s decoders,
   decimal digit readers included.
-- **Content `lib.rs` lists that stays internal**: `pgdt-core`'s SQL lexer,
-  and `pgdt-codec`'s datetime grammar and ordering keys. A key's only order
-  outside the crate is the test-gated `ValueKey::compare`, and `OrderKey`
-  exposes its representation, so making them API means designing a surface,
-  not sorting one (STATUS, "Decisions worth another look").
+- **Content `lib.rs` lists that is not API**: `pgdt-core`'s SQL lexer,
+  plumbing for the scanner and the preamble, and `pgdt-codec`'s datetime
+  grammar, a crate-private refusal check. The spec's test is what a crate is
+  for, not what its `lib.rs` lists. The sort left `ValueKey` in `internal`
+  too, which was wrong: it already hides `OrderKey` behind `of` and an order
+  over API inputs, so 35.10.3 makes it API. `NestedKey` has no such wrapper,
+  so ordering a nested value stays internal, `KD116`
+  ([`../status/history/2026-10-10.md`](../status/history/2026-10-10.md),
+  "The codec's ordering keys, reviewed").
 
 ## What 35.10.2 and 35.5 inherit
 
 - **`decode`'s non-API items now include the four refusal checks**, for
   35.10.2's private child module at the file's seam; `pgtype`'s are 35.10's.
-- **The facade dropped five names** no embedder named — `BlockGathered`,
-  `BlockReread`, `StatisticsBackfill`, `bounded_columns`,
-  `gather_block_statistics` — and re-exports `pgtype`'s items from
-  `pgdt_codec::pgtype`.
+- **The facade re-exports `pgtype`'s items from `pgdt_codec::pgtype`**, and
+  dropped the re-read's five names, which 35.10.3 restores.
 - **35.5's check holds of this tree**: no item sits at a crate's root and in
   a namespace, nor in both API and `internal`, and no embedder names
   `pgdt_query::internal`.

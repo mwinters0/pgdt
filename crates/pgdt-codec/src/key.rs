@@ -1260,6 +1260,14 @@ impl ValueKey {
 /// container rather than the absence of one: `{1,NULL}` is a two-element
 /// array. The whole field being NULL is a different fact — the `\N` the row
 /// carries — and is SQL's `Unknown` as it is for a scalar column.
+///
+/// deficiency: KD116 — a nested value has no API key. An embedder orders a
+/// scalar as PostgreSQL does through `ValueKey`, which hides its `OrderKey`
+/// behind `of` and an order; ordering an array, record, range or multirange
+/// means this enum, whose variants expose `OrderKey`, and [`nested_key`],
+/// whose [`Side`] mixes a filter literal's grammar with a field's. Both are
+/// `internal`. **(b) owned by P36**: closing it means a hidden-representation
+/// key over [`NestedCompare`], read as a field, ordered by [`compare_nested`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum NestedKey {
     /// A scalar position, through the leaf type's own [`OrderKey`].

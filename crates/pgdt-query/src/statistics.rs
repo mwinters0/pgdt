@@ -194,6 +194,14 @@ impl StatisticsRequestExt for StatisticsRequest {
     /// what this request asks of it — `None` when it holds that already, or
     /// when the request tracks nothing in it.
     ///
+    /// deficiency: KD115 — `bounded` must be `bounded_columns` of this same
+    /// block and the metadata the re-read will resolve it against, and nothing
+    /// checks that it is: a caller passing another block's mask, or one
+    /// resolved against other metadata, is answered for columns the re-read
+    /// will not bound as the mask says. `map_file`'s back-fill is the only
+    /// caller today and computes both together. **(b) owned by P36**: closing
+    /// it means this taking the metadata and computing the mask itself.
+    ///
     /// **A block lacks the requested statistics** where it holds none — every
     /// block mapped at the metadata level that this request puts at the data
     /// level among them, the re-read censusing it too — where a

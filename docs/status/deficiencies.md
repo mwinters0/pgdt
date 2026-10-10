@@ -23,8 +23,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD114 -->
-**`KD1`–`KD114` are allocated, and nothing at or below `KD114` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD116 -->
+**`KD1`–`KD116` are allocated, and nothing at or below `KD116` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -513,3 +513,15 @@ than reading as a phase nobody has sliced.
   owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
   it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
   any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map.rs`.
+
+- **KD115** — `StatisticsRequest::backfill` takes a `bounded` mask the caller
+  must compute with `bounded_columns` over the same block and metadata, and
+  nothing checks the two agree, so an embedder back-filling one block can ask
+  for the wrong columns silently. **(b) owned by P36**. Detail:
+  `crates/pgdt-query/src/statistics.rs`.
+
+- **KD116** — a nested value has no API key: an embedder orders a scalar as
+  PostgreSQL does through `ValueKey`, but an array, record, range or
+  multirange only through `internal`'s `NestedKey`, which exposes its
+  representation. **(b) owned by P36**. Detail:
+  `crates/pgdt-codec/src/key.rs`.
