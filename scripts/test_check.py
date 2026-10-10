@@ -411,10 +411,10 @@ class RunAndVerify(unittest.TestCase):
             check.verify(repo, edits, before)
             self.assertIn("did not pass; running the checks", before.getvalue())
 
-    def test_the_real_checks_are_the_rounds_six_commands(self):
+    def test_the_real_checks_are_the_rounds_seven_commands(self):
         self.assertEqual(
             [c.name for c in check.CHECKS],
-            ["fmt", "clippy", "nextest", "doctest", "unittest", "repoint"],
+            ["fmt", "clippy", "nextest", "doctest", "unittest", "repoint", "seams"],
         )
         for c in check.CHECKS:
             self.assertTrue((check.REPO / c.cwd).is_dir(), c.cwd)
@@ -602,7 +602,7 @@ class Affected(unittest.TestCase):
             raise AssertionError("cargo metadata was read")
 
         plan = check.plan_changes(self.repo, ["docs/d.md", "app/README.md", ".claude/x"], refuse)
-        self.assertEqual([c.name for c in plan.checks], ["unittest", "repoint"])
+        self.assertEqual([c.name for c in plan.checks], ["unittest", "repoint", "seams"])
         self.assertIn("none read by a test", plan.note)
 
     def test_a_library_change_runs_its_dependents(self):
@@ -628,7 +628,7 @@ class Affected(unittest.TestCase):
         plan = check.plan_changes(
             self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
         )
-        self.assertEqual([c.name for c in plan.checks], ["fmt", "clippy", "unittest", "repoint"])
+        self.assertEqual([c.name for c in plan.checks], ["fmt", "clippy", "unittest", "repoint", "seams"])
         self.assertEqual(argv_of(plan)["clippy"][-2:], ["-p", "base"])
         self.assertIn("linted only, their changes being comments, base", plan.note)
 
@@ -668,7 +668,7 @@ class Affected(unittest.TestCase):
 
     def test_a_read_path_runs_its_readers_and_lints_nothing(self):
         plan = self.plan("fixtures/a.sql")
-        self.assertEqual([c.name for c in plan.checks], ["nextest", "unittest", "repoint"])
+        self.assertEqual([c.name for c in plan.checks], ["nextest", "unittest", "repoint", "seams"])
         self.assertEqual(
             argv_of(plan)["nextest"],
             ["cargo", "nextest", "run", "--no-fail-fast", "-p", "base", "-E", "binary_id(=base::t)"],

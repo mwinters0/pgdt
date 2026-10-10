@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The per-round checks, each run once, logged whole, summarized short.
 
-A round of work ends on the same six commands every time -- `cargo fmt
+A round of work ends on the same seven commands every time -- `cargo fmt
 --check`, `cargo clippy`, the suite under `cargo nextest`, the doctests,
-the scripts' own `unittest` and `repoint.py` -- and a session reading their raw
+the scripts' own `unittest`, `repoint.py` and `file_limits.py` -- and a session reading their raw
 output pipes it through `grep` and `head` to find the lines that matter, then
 re-runs the suite when the pipe cut what it needed. This runs each command
 once, writes its whole output to a log under `runs/check/`, and prints a
@@ -32,7 +32,9 @@ runs the checks.
 **A red repoint meter is not a failure.** It says the record has outgrown its
 last blind read and a repoint is due, which is a round of its own
 (`.claude/skills/go/SKILL.md`); the summary says so, and the run passes. A cap
-`repoint.py` names fails it like any other check.
+`repoint.py` names fails it like any other check. **So is a red seams
+meter** (`file_limits.py`): a file past a hard limit says a seams round is due
+(`.claude/skills/seams/SKILL.md`), and only a stale exemption fails the check.
 
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
@@ -44,8 +46,8 @@ the check is left out. The reading errs only toward running.
 
 **`--affected` runs the cargo checks the change can reach**, the change being
 every path whose content differs between `HEAD`'s tree and the stamped one.
-The scripts' `unittest` and `repoint.py` always run, being cheap and the ones
-that read the docs. A changed path runs the targets reading it, and what the
+The scripts' `unittest`, `repoint.py` and `file_limits.py` always run, being
+cheap and the ones that read the docs and the tree's shape. A changed path runs the targets reading it, and what the
 first of the other three rules it meets gives it:
 
 - **Read by a test target** -- a string literal in one of its sources, taken
@@ -265,7 +267,22 @@ def summarize_repoint(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
-#: The round's six commands. `every_check` is what a run without
+FILE_LIMITS_METER_RE = re.compile(r"^!! \S+: .* against \d+")
+
+
+def summarize_file_limits(text: str, exit_code: int) -> Outcome:
+    lines = [line.rstrip() for line in text.splitlines()]
+    verdict = next((line for line in lines if line.startswith("file-limits: ")), None)
+    problems = tuple(line for line in lines if line.startswith("!! "))
+    headline = verdict or "file_limits.py printed no result"
+    if exit_code == 0:
+        return Outcome("ok", headline)
+    if exit_code == 1 and problems and all(FILE_LIMITS_METER_RE.match(p) for p in problems):
+        return Outcome("meter", headline, problems)
+    return Outcome("FAILED", headline, problems or _tail(text))
+
+
+#: The round's seven commands. `every_check` is what a run without
 #: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
     Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt),
@@ -284,7 +301,12 @@ CHECKS: tuple[Check, ...] = (
     ),
     Check("unittest", ("uv", "run", "python", "-m", "unittest"), "scripts", summarize_unittest),
     Check("repoint", ("uv", "run", "repoint.py"), "scripts", summarize_repoint),
+    Check("seams", ("uv", "run", "file_limits.py"), "scripts", summarize_file_limits),
 )
+
+#: The checks every `--affected` run keeps: cheap, and the ones reading the
+#: docs and the tree's shape rather than any one target.
+ALWAYS = ("unittest", "repoint", "seams")
 
 
 def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
@@ -708,7 +730,7 @@ def plan_changes(
     load: Callable[[Path], list[Package]] = workspace,
     comment_only: Collection[str] = (),
 ) -> Plan:
-    always = tuple(c for c in CHECKS if c.name in ("unittest", "repoint"))
+    always = tuple(c for c in CHECKS if c.name in ALWAYS)
     if not changed:
         return Plan(always, "affected: nothing changed since HEAD, so no cargo check runs")
     if all(UNTESTED_RE.search(p) for p in changed):
@@ -820,8 +842,11 @@ def render_footer(record: dict) -> str:
             f"{record['tree_after'][:12]}), so this run verifies neither",
             *([f"failed: {', '.join(failed)}"] if failed else []),
         ]
-    if any(c["status"] == "meter" for c in record["checks"]):
+    meters = {c["name"] for c in record["checks"] if c["status"] == "meter"}
+    if "repoint" in meters:
         parts.append("repoint's meter is red, so a repoint is due")
+    if "seams" in meters:
+        parts.append("the seams meter is red, so a seams round is due")
     return "; ".join(parts)
 
 

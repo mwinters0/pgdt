@@ -30,6 +30,7 @@ cd scripts && uv run upstream.py      # the upstream register vs the `upstream: 
 cd scripts && uv run pg_refuses.py    # each `pg-refuses: I<n>` marker vs its invariant's "Relied on by"
 cd scripts && uv run major_differences.py  # the `VD<n>` register, and no `VD<n>` cited outside it
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
+cd scripts && uv run file_limits.py   # every .rs against the size limits (`docs/process.md`, "Seams"); red means /seams
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts
 cd scripts && uv run python -m unittest test_<script>   # one script's own tests

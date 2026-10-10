@@ -83,7 +83,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 
-- [ ] **35.1** The limits and the skill: `scripts/file_limits.py` with its tests, a meter in `check.py`, the `seams` skill, the rule in `process.md`, and the baseline report over the tree
+- [x] **35.1** The limits and the skill: `scripts/file_limits.py` with its tests, a meter in `check.py`, the `seams` skill, the rule in `process.md`, and the baseline report over the tree — [notes](../design/roadmap-P35.1-file-limits-notes.md)
 - [ ] **35.2** Inline test modules moved to a file beside their module, in every file over a limit; every script and citation that named a test by its old path repointed
 - [ ] **35.3** The cycles inside `pgdump_query` broken in place — the cancellation token and chunk default down to `io`, the catalog, span, block and statistics types gathered into a `model` module, the index loader lifted out of `index` — and `tests/layering.rs` carrying the crate assignment, passing
 - [ ] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises; the `--timings` reading against the baseline
