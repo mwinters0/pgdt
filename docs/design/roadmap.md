@@ -251,6 +251,37 @@ less is an opt-out, never the default. **What it spends doing that is a separate
 question**: workers and memory keep the defaults "A default runs as fast as the
 allocation permits" sets, the library's conservative.
 
+### Where a setting trades one workload for another, the typed DataFusion query wins
+
+**A setting that favors one workload over another by a small margin is decided
+in this order: a typed DataFusion query — `pgdt sql`, or the library under an
+embedder's session — then `pgdt parse`, then `pgdt query`; `--schema-mode
+strings` comes last wherever it is reached from.** The typed DataFusion query
+is the primary use case through v1.x: exploring a dump interactively is where
+a wait is felt. A parse exists to pre-pay that query's cost ("A parse does all
+the work a later query could use"), so it ranks below what it accelerates.
+`pgdt query` mostly serves batch jobs over shapes the user already knows.
+Strings mode is an escape hatch: no performance is left on the floor there for
+nothing, but it is traded for any mode above it.
+
+**Small is under 3%.** Where a figure's own noise is wider than that, a gap it
+does not resolve is small too ([`measurements.md`](measurements.md), "A move
+smaller than the apparatus resolves is not a finding"). A larger trade is
+decided on its own figures, not by this order.
+
+### A downstream build is within 3% of ours
+
+**An embedder compiles our crates under their own profile, and Cargo's default
+release profile is the one to assume** — no cross-crate LTO, sixteen codegen
+units. Our `[profile.release]` never reaches their build, and across a crate
+boundary a function that is neither generic nor `#[inline]` is not inlined
+without LTO. So **the shipped profile buys at most 3% over Cargo's default** on
+each workload the order above ranks, the first-ranked first; a wider gap is
+closed in the code — `#[inline]` on a hot cross-crate call, or a call that no
+longer crosses — never left to the profile. The `release-profile` figure's
+`release-default` leg is that build, and its gap to the shipped leg is this
+rule's check.
+
 ### Coverage increases monotonically
 
 **A later change may subdivide a span or attach detail to it, never reduce

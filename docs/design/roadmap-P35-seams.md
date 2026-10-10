@@ -31,9 +31,11 @@ inline across every module; six stop it at each boundary for a function that
 is neither generic nor `#[inline]`, and the per-field and per-row calls —
 query into codec and core — are where that lands. The release build states no
 profile, so nothing restores it, and nothing has measured it. The phase owes a
-reading of what the split costs at run time, and a regression's remedy is a
-release-profile decision with its own `D<k>` and figure, never a slice's
-quiet edit.
+reading of what the split costs at run time. A regression's remedy is in the
+code, never the profile alone: an embedder builds without our profile, so the
+default leg is held within 3% of the shipped one ([`roadmap.md`](roadmap.md),
+"A downstream build is within 3% of ours"), and the shipped profile is its own
+decision with its own `D<k>` and figure, never a slice's quiet edit.
 
 The reading is a `release-profile` figure built as `allocator` is: legs at
 Cargo's default, thin LTO, and fat LTO with one codegen unit, each built from
@@ -42,7 +44,9 @@ once on the one-crate tree and once on the split one; **the split cost
 nothing recoverable if the default leg's gap to fat LTO is no wider after the
 carve than before, within the figure's noise**. The shipped build's profile
 is decided from the two sittings whatever they show, the first pricing
-today's binary as much as the split. It times the `allocator` figure's three
+today's binary as much as the split, and a small trade between shapes by
+[`roadmap.md`](roadmap.md), "Where a setting trades one workload for another,
+the typed DataFusion query wins". It times the `allocator` figure's three
 shapes — `parse`, and `query` untyped and typed, warm over the control file —
 which hold the per-row split and the per-field decode the split crosses. Each
 leg is a named Cargo profile inheriting `release`, built into its own target
