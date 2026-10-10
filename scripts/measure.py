@@ -10155,6 +10155,31 @@ FIGURES: list[Figure] = [
         shares=ALLOCATOR_SHARES,
         run=run_allocator,
     ),
+    # What link-time optimization buys the shipped build, read once on the
+    # one-crate tree and once on the split one. `depends` is `allocator`'s,
+    # the same three shapes, plus where the legs are declared — the root
+    # manifest's profiles — and `pgdt/build.rs`, which names a leg's profile.
+    Figure(
+        id="release-profile",
+        section="What link-time optimization buys the shipped build",
+        stage="warm",
+        depends=_declare(
+            *SCAN,
+            *MAP,
+            *NESTED,
+            *DECODE,
+            *READ,
+            *QUERY_CLI,
+            *GEN_PERF,
+            *CACHE,
+            *STATISTICS,
+            "pgdt/Cargo.toml",
+            "pgdt/build.rs",
+            "Cargo.toml",
+        ),
+        warm_inputs=("control",),
+        run=run_release_profile,
+    ),
     Figure(
         id="xz-decode-scaling",
         section="What a second decode worker buys, and what the twenty-fourth does not",
@@ -10484,8 +10509,8 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
 #:
-#: **Empty is the healthy state, not a disused mechanism**; `release-profile`
-#: waits here for the commit that lands it. A figure published outside a stamped sweep declares inside its own
+#: **Empty is the healthy state, not a disused mechanism.** A figure published
+#: outside a stamped sweep declares inside its own
 #: marker the commit it was taken at, and a sitting run from a working tree
 #: carrying its own uncommitted apparatus has no such commit to name — so an
 #: instrument built ahead of that commit waits here rather than in `FIGURES`.
@@ -10493,33 +10518,7 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = [
-    # What link-time optimization buys the shipped build, read once on the
-    # one-crate tree and once on the split one. `depends` is `allocator`'s,
-    # the same three shapes, plus where the legs are declared — the root
-    # manifest's profiles — and `pgdt/build.rs`, which names a leg's profile.
-    Figure(
-        id="release-profile",
-        section="What link-time optimization buys the shipped build",
-        stage="warm",
-        depends=_declare(
-            *SCAN,
-            *MAP,
-            *NESTED,
-            *DECODE,
-            *READ,
-            *QUERY_CLI,
-            *GEN_PERF,
-            *CACHE,
-            *STATISTICS,
-            "pgdt/Cargo.toml",
-            "pgdt/build.rs",
-            "Cargo.toml",
-        ),
-        warm_inputs=("control",),
-        run=run_release_profile,
-    ),
-]
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

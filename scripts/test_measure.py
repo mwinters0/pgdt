@@ -1327,11 +1327,11 @@ class ReleaseProfile(unittest.TestCase):
     def _cfg(self, tmp: str) -> "measure.Config":
         return measure.Config(out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds")
 
-    def test_it_waits_untaken_and_borrows_nothing(self):
-        # Standing in no sharing edge is what lets it publish from the commit
-        # that lands it, outside a sweep, and twice in one phase.
+    def test_it_is_taken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish outside a sweep,
+        # and twice in one phase.
         fig = measure.SELECTABLE_BY_ID["release-profile"]
-        self.assertIn(fig, measure.UNTAKEN)
+        self.assertIn(fig, measure.FIGURES)
         self.assertEqual(fig.shares, ())
         self.assertEqual(measure.entangled_with("release-profile"), [])
 
@@ -2489,8 +2489,9 @@ class Untaken(unittest.TestCase):
     What an entry waits on is a **commit to name** as its sitting, since a
     figure published outside a stamped sweep declares one inside its own marker
     and a sitting taken from a tree that carries the instrument uncommitted has
-    none. `xz-decode-scaling` waited here for exactly that and left when the
-    commit existed; the two `parallel-*` figures wait on it now."""
+    none. `xz-decode-scaling`, the two `parallel-*` figures and
+    `release-profile` each waited here for exactly that and left when the
+    commit existed."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:

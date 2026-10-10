@@ -60,11 +60,11 @@ quotes a number: every figure is in
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
 && uv run measure.py --stale` names what is red and why. **Every register
-figure but `session-drift` was taken in one sitting at `3a34f062`, on the
-shipped mimalloc build made in the release image and run in `debian:trixie`
-under its glibc, with its binaries staged on tmpfs**, the scan figures at the
+figure but `session-drift` and `release-profile` was taken in one sitting at
+`3a34f062`, on the shipped mimalloc build made in the release image and run in
+`debian:trixie` under its glibc, with its binaries staged on tmpfs**, the scan figures at the
 metadata level and the query figures over a data-level cache.
-`session-drift` is the `da05a72` pair's, and `reserve`'s 128 MiB-block `rule`
+`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `881c76f1`, and `reserve`'s 128 MiB-block `rule`
 cells are a reading `KD34` names.
 What a sweep does not re-take: `session-drift`, which only a second sweep on
 a first's commit does, and the koji section, outside the register and red,
@@ -87,7 +87,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.2** Inline test modules moved to a file beside their module, in every file over a limit; every script and citation that named a test by its old path repointed — [notes](../design/roadmap-P35.2-tests-beside-notes.md)
 - [x] **35.3** The cycles inside `pgdump_query` broken in place — the cancellation token and chunk default down to `io`, the catalog, span, block and statistics types gathered into a `model` module, the index loader lifted out of `index`, `CACHE_FORMAT_VERSION` into `model` — and `tests/layering.rs` carrying the crate assignment, passing — [notes](../design/roadmap-P35.3-model-notes.md)
 - [x] **35.7** The ordering keys and the field-grammar checks lifted out of `predicate.rs` into a module of their own, assigned to `pgdt-codec` in `tests/layering.rs` — [notes](../design/roadmap-P35.7-keys-notes.md)
-- [ ] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree — the instrument is landed and waits in `measure.UNTAKEN`; the first sitting remains, taken from the commit that lands it and before 35.4's carve; [notes](../design/roadmap-P35.8-release-profile-notes.md)
+- [x] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree — [notes](../design/roadmap-P35.8-release-profile-notes.md)
 - [ ] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there
 - [ ] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`
 - [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths

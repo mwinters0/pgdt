@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **All 24 figures below come from that sitting.**
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **24 of the 25 figures below come from that sitting.** The other carries its own sitting commit inside its marker, and every reader of this stamp argues from that instead: `release-profile` (`881c76f1`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -1366,6 +1366,76 @@ session's `pgdt` and a stale leg still answers `--version` with its own
 allocator name, so nothing would notice. The tell in a run log: `building the
 <leg> allocator leg into …` must appear once per non-reference leg before
 `rep1`.
+
+## What link-time optimization buys the shipped build
+
+<!-- figure: release-profile — taken at `881c76f1` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure release-profile` -->
+
+| Warm, on tmpfs | `release-default` — Cargo's default: no cross-crate LTO, 16 codegen units | `release-thin` — thin LTO, 16 codegen units | `release-fat` — fat LTO, one codegen unit |
+|---|---|---|---|
+| `pgdt parse` — structure discovery | **0.452 s** (0.433–0.474) | **0.435 s** (0.431–0.458) — 0.96× | **0.429 s** (0.426–0.465) — 0.95× |
+| `query --schema-mode strings` — zero-copy extraction | **3.03 s** (3.00–3.07) | **2.94 s** (2.94–2.97) — 0.97× | **3.00 s** (2.97–3.05) — 0.99× |
+| `query --schema-mode typed` | **4.45 s** (4.43–4.49) | **4.38 s** (4.35–4.39) — 0.98× | **4.35 s** (4.30–4.39) — 0.98× |
+| `dd` → `/dev/null` — the co-measured floor | **0.339 s** (0.337–0.340) | — | — |
+
+Every leg was asked which profile built it before it was timed — `release-default`, `release-thin`, `release-fat` — and each links `mimalloc`, the shipped allocator, so the columns differ by the profile alone.
+
+Each `query` row reads a cache one untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote in the same container, and states `--statistics none`, so no row group is skipped: its reading carries decoding that cache whole, statistics included, and no mapping pass.
+
+Per-rep readings (s):
+- `pgdt parse` — structure discovery (release-default): 0.452, 0.451, 0.464, 0.433, 0.474
+- `pgdt parse` — structure discovery (release-thin): 0.431, 0.433, 0.458, 0.450, 0.435
+- `pgdt parse` — structure discovery (release-fat): 0.426, 0.428, 0.435, 0.465, 0.429
+- `query --schema-mode strings` — zero-copy extraction (release-default): 3.00, 3.00, 3.03, 3.07, 3.05
+- `query --schema-mode strings` — zero-copy extraction (release-thin): 2.94, 2.94, 2.97, 2.96, 2.94
+- `query --schema-mode strings` — zero-copy extraction (release-fat): 3.05, 2.97, 3.00, 3.00, 2.99
+- `query --schema-mode typed` (release-default): 4.49, 4.45, 4.43, 4.45, 4.44
+- `query --schema-mode typed` (release-thin): 4.39, 4.38, 4.38, 4.39, 4.35
+- `query --schema-mode typed` (release-fat): 4.35, 4.37, 4.39, 4.34, 4.30
+- `dd` → `/dev/null` (warm): 0.340, 0.339, 0.337, 0.338, 0.339
+
+Apparatus over every run in this table: CPU stall ≤0.31%, I/O stall ≤19.40%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.84 GHz, ≤65°C.
+
+**Inside this sitting, both LTO legs beat Cargo's default on `typed`, thin
+LTO beats it on `strings`, and nothing is resolved on `parse`.** On `typed`
+the default leg's 4.43–4.49 s lies wholly above thin's and fat's spreads; on
+`strings` thin's 2.94–2.97 s lies below the default's 3.00–3.07 s while fat's
+2.97–3.05 s overlaps it; on `parse` all three spreads overlap. `parse` cannot
+resolve a codegen difference here: user time is about a fifth of its wall
+clock in every leg (`raw.json`'s `cpu_seconds`), the rest being the kernel's
+reads, and its spreads are wider than any of its gaps. The figure is read by
+its gaps, never its absolutes (`run_release_profile`'s rustdoc), and the
+gap a sitting on another tree is set against is the default leg's to
+`release-fat`: resolved on `typed`, inside the spread on `strings` and
+`parse`. A cell's own spread is about 1–2% on `typed`, 1–3% on `strings` and
+6–10% on `parse`, so a later gap that moves by less on a shape is inside this
+figure's noise there.
+
+**Fat LTO is slower than thin on `strings`, and that is unattributed.** The
+two cells' spreads only touch, at 2.97 s, with every pair of legs run
+adjacently and reps 4 and 5 in reverse order; and the difference is user
+time — thin 2.41–2.44 s, fat 2.45–2.51 s — not stall, so it is not the
+apparatus. What the figure cannot say is whether it is fat LTO's code or the
+layout one codegen unit happens to produce: "Two builds of one source can
+differ by layout" above prices layout alone at ~10% in a tight loop, and this
+figure takes no `instructions:u`, the count that holds still when layout
+moves. `perf stat -e instructions:u` over each leg on that shape would
+attribute it; until then it is a reading of these three binaries, not of fat
+LTO.
+
+**The I/O stall in the apparatus line is the container's, not the
+reading's.** PSI's I/O counter is machine-wide and brackets the whole
+container, not the timed command. Accounted in time rather than in percent,
+every run carries 32–263 ms of it whatever its shape — a per-container term,
+not a per-second one — which is why it reads 3–19% of a `parse` or `dd`
+window of about 1.3 s and at most 3% of a `query` window of 8–10 s. The
+`≤19.40%` is one run, the sitting's first, and that reading is its cell's
+median; the run with the next-largest stall, 249 ms, is `release-fat`'s
+first `strings`, its cell's slowest, and without it that cell still sits at
+or above thin's whole spread. PSI I/O is gated in neither regime ("The gate
+is armed, per regime"). What the per-container term is made of is
+unattributed: containerd setting up and tearing down each run on the root
+volume is the candidate, and nothing here has checked it.
 
 ## Scan throughput by input shape
 
