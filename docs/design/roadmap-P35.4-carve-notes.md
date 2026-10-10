@@ -21,9 +21,8 @@ needs it.
   `#[cfg(feature = "introspect")]` on the hooks only that build compiles, and
   `#[cfg(any(test, feature = "test-support"))]` on what only a crate above's
   tests reach — `pgdt-codec`'s `scalar_tier` and `scalar_read`, and
-  `pgdt-dump`'s cache encoding; `ValueKey::compare` carries the same gate
-  where it is defined. `pgdt-query` turns both crates' `test-support` on in
-  its dev-dependencies.
+  `pgdt-dump`'s cache encoding. `pgdt-query` turns both crates'
+  `test-support` on in its dev-dependencies.
 - **A method or a field cannot go in `internal`**: one a crate above calls is
   `pub` where it is defined, and an item made `pub` inside a `pub` module is
   reachable by that module's path too. 35.10 closes both

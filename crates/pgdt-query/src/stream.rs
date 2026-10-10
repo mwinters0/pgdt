@@ -62,8 +62,7 @@ use crate::predicate::{
 };
 use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::statistics::{
-    StatisticsAccount, StatisticsBackfill, StatisticsHeld, StatisticsRequest, StatisticsRequestExt,
-    Term,
+    StatisticsAccount, StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
 use pgdt_codec::internal::{database_for_name, read_as_text};
@@ -104,11 +103,10 @@ use pgdt_model::internal::{
     BlockCensusExt, BlockStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt,
 };
 use pgdt_model::{
-    ArrayShape, BlockCensus, BlockStatistics, CopyBlock, DataBlock, Diagnostic, DiagnosticKind,
-    DumpIndex, DumpMetadata, Finding, IgnoredRefusals, PostgresInvalidValues, Severity, Sortedness,
-    Span, SpanBody, TableName, Unrepresentable, UnrepresentableTier,
-    internal::{BlockGathered, BlockObserver},
-    union_census,
+    ArrayShape, BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, Finding, IgnoredRefusals, PostgresInvalidValues,
+    Severity, Sortedness, Span, SpanBody, TableName, Unrepresentable, UnrepresentableTier,
+    internal::BlockObserver, union_census,
 };
 
 /// State for a `COPY` block whose table matches the query: the batcher

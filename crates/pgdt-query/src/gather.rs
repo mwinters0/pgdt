@@ -65,7 +65,8 @@ use crate::statistics::{
 };
 use pgdt_codec::internal::database_for_name;
 use pgdt_codec::internal::{ColumnTier, column_tiers};
-use pgdt_codec::internal::{ValueKey, field_refused, grammar_refuses};
+use pgdt_codec::internal::{field_refused, grammar_refuses};
+use pgdt_codec::key::ValueKey;
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits},
@@ -81,11 +82,11 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{CopyHeader, decode_field, split_fields};
 use pgdt_model::internal::{IgnoredRefusalsExt, UnrepresentableExt};
 use pgdt_model::{
-    BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef, ColumnDictionary,
+    BlockGathered, BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef, ColumnDictionary,
     ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpMetadata,
     FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, RowGroup, Sortedness,
     Unrepresentable, UnrepresentableTier,
-    internal::{BlockGathered, BlockObserver, max_rows_group, min_rows_group, text_heap, vec_heap},
+    internal::{BlockObserver, max_rows_group, min_rows_group, text_heap, vec_heap},
 };
 
 /// The observer for one block, charging what it holds to `account`, or

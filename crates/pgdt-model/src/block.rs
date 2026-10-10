@@ -5,8 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::statistics::BlockGathered;
-use crate::{CopyBlock, IgnoredRefusals};
+use crate::{BlockGathered, CopyBlock, IgnoredRefusals};
 
 /// The most dimensions PostgreSQL can give an array — `MAXDIM`, 6 in every
 /// supported version (I25). A literal whose leading brace run is longer than

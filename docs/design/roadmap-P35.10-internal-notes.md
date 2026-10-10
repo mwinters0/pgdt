@@ -40,7 +40,7 @@ body changed and no test moved.
   defining crate imports the trait as one above does.
 - **A method on a type only `internal` exports stays inherent**: `Cursor`,
   `Lexer`, `DecodeCounter`, `StatisticsScope`, `Builder`, the leader types,
-  `ValueKey`, `ColumnTier`, `UnrepresentableRead`. Nothing reaches one but
+  `ColumnTier`, `UnrepresentableRead`. Nothing reaches one but
   through `internal`, as with the leader types' fields; no API signature or
   public field names any of them.
 - **Comment paths moved with the items**: a `pgdt_*::<module>::<item>` path

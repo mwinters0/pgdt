@@ -6,7 +6,8 @@
 mod datetime_in;
 #[path = "decode.rs"]
 mod decode_impl;
-mod key;
+#[path = "key.rs"]
+mod key_impl;
 mod nested;
 #[path = "pgtype.rs"]
 mod pgtype_impl;
@@ -37,6 +38,14 @@ pub mod decode {
     };
 }
 
+/// A value's place in its column's order, as PostgreSQL's comparison orders
+/// it: an API namespace, its item re-exported by name from the private module
+/// that defines it, which is loaded under another name only because this one
+/// takes `key`.
+pub mod key {
+    pub use crate::key_impl::ValueKey;
+}
+
 /// The type register: what each declared type resolves to and how its values
 /// compare. An API namespace, its items re-exported by name from the private
 /// module that defines them, which is loaded under another name only because
@@ -59,10 +68,10 @@ pub mod internal {
         float_field, numeric_in_stores, push_integer, render_timestamp_postgres_micros,
         time_of_day_micros, timestamp_postgres_micros,
     };
-    pub use crate::key::{
-        NestedKey, OrderKey, Side, ValueKey, accepted_form, compare_keys, compare_nested,
-        field_refused, grammar_refuses, int_in, literal_key, nested_accepted_form, nested_key,
-        order_key, read_key, render_macaddr, special_order_key,
+    pub use crate::key_impl::{
+        NestedKey, OrderKey, Side, accepted_form, compare_keys, compare_nested, field_refused,
+        grammar_refuses, int_in, literal_key, nested_accepted_form, nested_key, order_key,
+        read_key, render_macaddr, special_order_key,
     };
     pub use crate::nested::{push_array_null, quote_array_element};
     pub use crate::pgtype_impl::{

@@ -107,9 +107,9 @@ use pgdt_core::split_fields;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::{ArrayShapeExt, BlockCensusExt, FieldRefusalExt, UnrepresentableExt};
 use pgdt_model::{
-    BlockCensus, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
+    BlockCensus, BlockGathered, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
     SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TilingIssue, TocHeader, TypeDef,
-    internal::{BlockGathered, BlockObserver, FieldCount},
+    internal::{BlockObserver, FieldCount},
 };
 
 /// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any

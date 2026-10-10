@@ -175,21 +175,7 @@ impl StatisticsRequest {
         let tracked: Vec<bool> = header.columns.iter().map(|c| data(Some(c))).collect();
         tracked.contains(&true).then_some(tracked)
     }
-}
 
-/// What a crate above calls on [`StatisticsRequest`] that is not its API:
-/// public only because a crate boundary forced it, and reached through
-/// `internal`.
-pub trait StatisticsRequestExt {
-    fn backfill(
-        &self,
-        block: &CopyBlock,
-        bounded: &[bool],
-        allowance: Option<u64>,
-    ) -> Option<StatisticsBackfill>;
-}
-
-impl StatisticsRequestExt for StatisticsRequest {
     /// What re-reading `block`, already mapped, must gather for it to hold
     /// what this request asks of it — `None` when it holds that already, or
     /// when the request tracks nothing in it.
@@ -240,7 +226,7 @@ impl StatisticsRequestExt for StatisticsRequest {
     /// maximum. Rejected: predicting the finer size from the groups another
     /// sizing left, which saves that first read by guessing where the read
     /// would have measured.
-    fn backfill(
+    pub fn backfill(
         &self,
         block: &CopyBlock,
         bounded: &[bool],

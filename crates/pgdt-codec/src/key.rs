@@ -1208,8 +1208,7 @@ impl ValueKey {
     }
 
     /// [`compare_keys`]: a total order over the keys of one kind, the one a
-    /// filter compares by — what a test holds [`Self::stored_order`] against.
-    #[cfg(any(test, feature = "test-support"))]
+    /// filter compares by, of which [`Self::stored_order`] is a refinement.
     pub fn compare(&self, other: &Self) -> Ordering {
         compare_keys(&self.0, &other.0)
     }
@@ -2222,5 +2221,6 @@ fn decimal_accepted_form(scale: i8) -> String {
     }
 }
 
+#[path = "key/tests.rs"]
 #[cfg(test)]
 mod tests;

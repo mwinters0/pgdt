@@ -25,12 +25,10 @@ use pgdt_model::{
     BlockStatistics, ColumnRefusals, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, Sortedness,
 };
-use pgdt_query::internal::{
-    StatisticsBackfill, StatisticsRequestExt, bounded_columns, gather_block_statistics,
-};
 use pgdt_query::{
     BLOCK_MAX_ROW_GROUPS, MapRun, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget, map_file,
+    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;

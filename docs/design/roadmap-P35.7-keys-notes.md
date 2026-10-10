@@ -37,13 +37,9 @@ was, and nothing persisted changed.
   `pub(crate)` only because a variant of `OrderKey` or `NestedKey` names
   them (`private_interfaces`); the three structs' fields stay private, and
   nothing outside `key` matches a key's variants.
-- **`ValueKey::compare` is `#[cfg(test)]`** and `gather/tests.rs` calls it,
-  so once codec and query are two crates it needs a gate a query test build
-  can set — the `test-support` feature 35.2's notes name for a helper cut
-  off from its importer.
 - **`predicate/tests.rs`'s oracle module reaches `key` too** (`order_key`,
-  `compare_keys`, `OrderKey`, `ValueKey`, `field_refused`), through the same
-  `internal` path.
+  `compare_keys`, `OrderKey`, `field_refused`), through the same `internal`
+  path.
 - **`measure.py`'s `PREDICATE` names `key.rs`** beside `predicate.rs`, so
   `STATISTICS` and the `predicate-terms` figure declare it; the carve
   repoints both paths.
