@@ -16,6 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P35 — crate seams and file limits | **Current** | [`roadmap-P35-seams.md`](roadmap-P35-seams.md); progress in [`STATUS.md`](../status/STATUS.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -46,7 +47,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P34`** — nothing at or below it
+centering"). **Phase numbering continues from `P35`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.

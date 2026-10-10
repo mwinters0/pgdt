@@ -279,6 +279,23 @@ correction stays inside "the record is refuted"'s three conditions and its
 phase-local scope; what cannot be corrected there is listed in the day's entry
 for the maintainer.
 
+## Seams: the code read against its size
+
+A file that has outgrown one reader's working memory is the code's mortar
+failure: nothing in it is wrong, and nobody can find anything in it. So the
+code carries caps as the record does, asserted by `scripts/file_limits.py`,
+which states the numbers once: a **soft** limit on a file's production code
+lines and functions, past which a split is due the next time someone is in the
+file; a **hard** limit on each, and on its total length with its tests, past
+which it is due now; and an **exemption table** naming each file allowed past
+a hard limit with its reason — a port mirroring an upstream file's sections, a
+cut that would be arbitrary. The check is a **meter**, like repoint's: red
+never fails a round, because a slice is sized by its review and not by what it
+leaves long; it says a seams round is due, and `.claude/skills/seams/SKILL.md`
+is that round's procedure. **A crate is a seam too**: the workspace graph is
+the current answer to where the compilation units fall, not a fixed one, and
+the same round asks whether a crate should split or two should merge.
+
 ## The keystone: striking the centering
 
 A masonry arch is built over *centering*, a temporary frame holding every stone
