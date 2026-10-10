@@ -93,9 +93,10 @@ dependency lists rather than greps. Cargo refuses a cycle but not an edge the
 graph does not draw, so once the facade is gone a script reads the graph
 from `cargo metadata` and holds every member's dependencies to the list
 above, the codec synchronous and naming no `arrow_buffer` item but `i256`,
-and no embedder naming an `internal` path or
+no embedder naming an `internal` path or
 `timed!` or `row_evaluated!`, which Rust roots at their crate whatever module
-declares them. Why `pgdt-model` exists: without it the
+declares them, no library module loaded by `#[path]`, and no namespaced API
+item re-exported at its crate's root too. Why `pgdt-model` exists: without it the
 codec sits above the preamble grammar, so a change to how `CREATE TABLE` is
 read recompiles every decoder; with it the codec and the parsers are siblings.
 Why `pgdt-core` is not folded into it: the model is exactly what the cache
@@ -158,10 +159,19 @@ port. P33 grows it, and the exemption is reconsidered there.
   not API goes in that crate's `internal` module**, so a caller reaching past
   the API names the word, and `datafusion-pgdump`, `datafusion-cli-pgdump`
   and `pgdt` never do — a check, not a convention. So no other path reaches
-  it: every library module is private, an API namespace an embedder names
-  (`cache`, `decode`, `instrument`, …) being a public module of named
-  re-exports, and a method a crate above calls that is not API is a method
-  of an extension trait `internal` exports, its body unmoved. `internal` is
+  it: every library module is private but an API namespace an embedder
+  would name (`cache`, `decode`, `instrument`, …), which is its file's own
+  module made public, defining the API and holding what is not API in
+  private child modules cut at the seam between them, so no file loads by
+  `#[path]` under a second name; and a method a crate above calls that is not API is a method
+  of an extension trait `internal` exports, its body unmoved. **A crate's API
+  is a designed surface**: what an embedder of that crate would call, given
+  what its `lib.rs` says the crate is for, whether or not one does today —
+  the `COPY` text format is `pgdt-core`'s, the nested literal codec
+  `pgdt-codec`'s beside `decode`. Neither what was `pub` before the carve,
+  which the one crate's integration tests forced, nor what an embedder names
+  today decides it. **An API item has one path**: a namespaced item is not
+  also at its crate's root. `internal` is
   per crate: a crate above may adopt a lower crate's `internal` item into its
   own API by re-exporting it, where the item must be defined lower but means
   something only above (`OVERWRITE_WAYS_OUT`, the cache's remedy text).
