@@ -118,7 +118,7 @@ LOREM_WORDS = (
 
 # The exact escapes pg_dump's own COPY TO ever emits -- postgres-invariants.md
 # I15. Reproduced here (rather than shelling out to `pgdt`) because this
-# script has no Rust runtime to call into; pgdump_query::copy::encode_field
+# script has no Rust runtime to call into; pgdt_core::encode_field
 # implements the identical mapping and its round trip against real pg_dump
 # output is what backs I15 in the first place.
 ESCAPES = {

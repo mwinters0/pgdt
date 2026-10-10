@@ -838,7 +838,7 @@ backslash-prefixed. No code path in `copyto.c` ever writes `\NNN` or `\xNN`.
 **Verified against:** `CopyAttributeOutText` in `release-v18.6/src/backend/commands/copyto.c`
 (identical logic in `release-v16.15`), and the `public.escapes` fixture (one
 row per `chr(n)` codepoint) round-tripping through
-`pgdump_query::copy::encode_field`/`decode_field` byte-for-byte —
+`pgdt_core::encode_field`/`decode_field` byte-for-byte —
 `copy_text_escaping_round_trips_through_postgres`, `tests/scan.rs`.
 
 **Relied on by:** `crates/pgdt-core/src/copy.rs`'s `encode_field`, which

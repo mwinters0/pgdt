@@ -6,7 +6,10 @@ use pgdt_codec::internal::{
     NestedKey, OrderKey, Side, accepted_form, compare_keys, compare_nested, int_in, literal_key,
     nested_accepted_form, nested_key, order_key, read_key, render_macaddr, special_order_key,
 };
-use pgdt_codec::resolve::{ColumnResolution, ResolvedSchema};
+use pgdt_codec::internal::{
+    render_timestamp_postgres_micros, time_of_day_micros, timestamp_postgres_micros,
+};
+use pgdt_codec::{ColumnResolution, ResolvedSchema};
 use pgdt_codec::{
     internal::datafusion_position_divergences,
     pgtype::{
@@ -14,10 +17,10 @@ use pgdt_codec::{
         UnanswerableReason,
     },
 };
-use pgdt_core::copy::{RawRow, RowSplit};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
 use pgdt_core::{Error, Result};
+use pgdt_core::{RawRow, RowSplit};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::{Finding, PostgresInvalidValues, Severity, Unrepresentable};
 
@@ -262,7 +265,7 @@ impl Default for Expr {
 /// One term of one query whose comparison does not answer what PostgreSQL's
 /// own operator for that column would — reported per stream by
 /// `crate::stream::TableStream::comparison_notes`, on its own channel rather
-/// than as a `Diagnostic` or a [`pgdt_codec::resolve::ColumnNote`]
+/// than as a `Diagnostic` or a [`pgdt_codec::ColumnNote`]
 /// (`docs/design/decisions.md`, "D59", "D68"), and reaching a caller's
 /// `pgdt_model::DiagnosticSink` beside them as a
 /// [`pgdt_model::Finding`].
@@ -481,7 +484,7 @@ fn postgres_divergences(
 /// emits rather than off which terms this build answers.
 ///
 /// A column that did not resolve says nothing here: its fall-back
-/// [`pgdt_codec::resolve::ColumnNote`] is already a `Warning` saying the value is
+/// [`pgdt_codec::ColumnNote`] is already a `Warning` saying the value is
 /// the file's text, which is all DataFusion compares.
 fn datafusion_divergences(
     resolved: &ResolvedSchema,
@@ -611,9 +614,9 @@ fn equality_comparison(
         // it. Comparing by text would answer `=` but no ordering.
         K::Enum { labels, .. } => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
-        K::Time => decode::render_time64_micros(decode::time_of_day_micros(text).ok()?),
-        K::Timestamp { with_tz } => decode::render_timestamp_postgres_micros(
-            decode::timestamp_postgres_micros(text, *with_tz).ok()?,
+        K::Time => decode::render_time64_micros(time_of_day_micros(text).ok()?),
+        K::Timestamp { with_tz } => render_timestamp_postgres_micros(
+            timestamp_postgres_micros(text, *with_tz).ok()?,
             *with_tz,
         ),
         K::MacAddr { octets } => render_macaddr(text, *octets)?,
@@ -1263,7 +1266,7 @@ impl ResolvedTerm {
             });
         };
         // The key and the comparison are timed apart, where the instrument
-        // is built in (`pgdt_core::instrument::timed!`), each key dropped where
+        // is built in (`pgdt_core::timed!`), each key dropped where
         // it was when it was a temporary of the comparison.
         Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {

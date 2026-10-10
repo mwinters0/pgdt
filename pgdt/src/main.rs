@@ -18,14 +18,14 @@ use pgdump_query::cache::{
 };
 use pgdump_query::model::CACHE_FORMAT_VERSION;
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
-use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership, NestedPlan, Origin,
-    Parallelism, PostgresInvalidValues, Predicate, PredicateOp, QueryOptions,
-    ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ScanOptions, Severity, Span, SpanBody, StatisticsLevel,
-    StatisticsRequest, StatisticsSelection, StatisticsTarget, StrictUnchecked, TableReference,
-    TypeKind, UnrepresentableMode, open, preamble_only, render_field_into, strict_unchecked,
+    ArrayShape, ByteRangeSource, Cancellation, ColumnResolution, CompareKind, ComparisonPlan,
+    DataBlock, Diagnostic, DumpIndex, DumpMetadata, Expr, Finding, KnownCompression, Membership,
+    NestedPlan, Origin, Parallelism, PostgresInvalidValues, Predicate, PredicateOp, QueryOptions,
+    ROW_GROUP_DEFAULT_MIN_ROWS, Recognized, ResolvedSchema, ScanOptions, SchemaMode, Severity,
+    Span, SpanBody, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StrictUnchecked, TableReference, TypeKind, UnrepresentableMode, open, preamble_only,
+    render_field_into, resolve_columns, strict_unchecked,
 };
 use tracing::Instrument;
 

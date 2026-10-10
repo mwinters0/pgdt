@@ -13,7 +13,7 @@
 //!
 //! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
 //!    `scanned_through`, recording every `COPY` block it passes and
-//!    classifying the DDL between them through a [`pgdt_dump::map::Builder`], and
+//!    classifying the DDL between them through a [`pgdt_dump::internal::Builder`], and
 //!    **yields nothing**. It stops as soon as the queried table is settled
 //!    ([`ScanExtent::UntilTargetSettled`]).
 //! 2. Every block the map holds for that table is then replayed for its rows,
@@ -26,14 +26,14 @@
 //! exit past the first read but an error. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
-//! that, [`table_stream`] runs [`pgdt_dump::load::scan_preamble`] once (skipped
+//! that, [`table_stream`] runs [`pgdt_dump::internal::scan_preamble`] once (skipped
 //! once a cache already has it), whatever table was queried and under
 //! [`CacheMode::Disabled`] too. It covers the *first* database; every later
 //! `\connect`ed one is stated by [`map_forward`] at that database's first
 //! `COPY` block (I1).
 //!
 //! **Type resolution**: a matching `COPY` block's column list is resolved
-//! against that captured metadata into a [`pgdt_codec::resolve::ResolvedSchema`]
+//! against that captured metadata into a [`pgdt_codec::ResolvedSchema`]
 //! ([`TableStream::resolved_schema`]), and the batches this stream yields are
 //! built to it: typed under `SchemaMode::Typed`, all-`Utf8View` under
 //! `SchemaMode::Strings`. A table's blocks may list its columns in different
@@ -65,45 +65,42 @@ use crate::statistics::{
     StatisticsAccount, StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
+use pgdt_codec::internal::{database_for_name, read_as_text};
 use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     UnrepresentableMode,
     internal::{UnrepresentableRead, counter_for, unrepresentable_reads, unrepresentable_tests},
 };
-use pgdt_codec::{
-    internal::{database_for_name, read_as_text},
-    resolve::{ResolvedSchema, SchemaMode, resolve_columns},
-};
-use pgdt_core::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::statistics_loaded;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::{evaluated_row, timed_span};
+use pgdt_core::{CopyHeader, RawRow, RowSplit, validated_prefix};
 use pgdt_core::{Error, Result};
 use pgdt_core::{
     instrument::EvaluationPart,
     internal::{StatisticsScope, row_evaluated, timed},
 };
+use pgdt_dump::attach_text;
 #[cfg(test)]
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_dump::cache::{CacheLoad, CacheMode, SourceWatch};
+use pgdt_dump::dump_metadata_from_spans;
+use pgdt_dump::internal::announce_cancellation;
+use pgdt_dump::internal::{Builder, census_row};
 use pgdt_dump::internal::{CensusPlan, RegionScan, Shortfall, scan_region};
 use pgdt_dump::internal::{
     non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
 };
-use pgdt_dump::preamble::dump_metadata_from_spans;
-use pgdt_dump::{
-    internal::announce_cancellation,
-    scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, scan as scan_events},
-};
-use pgdt_dump::{
-    internal::{Builder, census_row},
-    map::attach_text,
-};
+use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, scan as scan_events};
 use pgdt_io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, Partitioning, RetainedUnit, WaitPolicy,
     WorkerMemory,
     internal::{cut, memory_budget_display, worker_count},
+};
+use pgdt_model::internal::{
+    BlockCensusExt, BlockStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt,
 };
 use pgdt_model::{
     ArrayShape, BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, Diagnostic,
@@ -418,7 +415,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// Replace everything a mapping scan covered with what it built: `prefix`
 /// (the spans that already tiled `[0, seg_start)`, untouched) followed by
 /// `built` (a complete tiling of `[seg_start, watermark)` from
-/// [`pgdt_dump::map::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
+/// [`pgdt_dump::internal::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
 /// that makes the result tile the whole file even though the scan stopped
 /// early (`docs/design/decisions.md`, "D30").
 ///
@@ -551,7 +548,7 @@ enum Pass<'a> {
 /// Scan `source` end to end and build its full file map, every block
 /// censused and counted and none gathering statistics — the eager, serial
 /// pass the incremental one ([`map_file`]) is held to. One pass:
-/// [`pgdt_dump::map::Builder`] is fed the whole [`Event`] stream, and
+/// [`pgdt_dump::internal::Builder`] is fed the whole [`Event`] stream, and
 /// `DumpIndex::metadata` is [`dump_metadata_from_spans`] over the result and
 /// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
 /// "D34").
@@ -637,7 +634,7 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
 /// a `ScanExtent` beside a sentinel table name, which is dead data any later
 /// reader has to prove is unused.
 ///
-/// The [`pgdt_dump::map::Builder`] is seeded with the database in scope at the
+/// The [`pgdt_dump::internal::Builder`] is seeded with the database in scope at the
 /// frontier, which it cannot infer; [`splice`] places its spans after the
 /// frontier (`docs/design/decisions.md`, "D48").
 ///
@@ -768,7 +765,7 @@ async fn map_forward(
                         // recurring one of the two boundaries
                         // `dump_metadata_from_spans` may be called at (I1).
                         // Retreat to a pending TOC comment's own start as
-                        // `pgdt_dump::load::scan_preamble` does, so the span list
+                        // `pgdt_dump::internal::scan_preamble` does, so the span list
                         // ends where the `Data` span is about to begin.
                         let boundary =
                             builder.pending_comment_start().unwrap_or(start.header_offset);
@@ -1063,7 +1060,7 @@ enum BlockClose {
     Interrupted,
 }
 
-/// Close a `COPY` block on the [`pgdt_dump::map::Builder`] and do everything
+/// Close a `COPY` block on the [`pgdt_dump::internal::Builder`] and do everything
 /// [`map_forward`] owes at a `CopyEnd`: the splice, the throttled save, and the
 /// early-stop check. **One body, two call sites** — the serial scanner's
 /// `CopyEnd` and a region [`pgdt_dump::leader::scan_region`] closed
@@ -1237,7 +1234,7 @@ pub struct MapRun {
 /// Map `source` end to end, **continuing from whatever `cache` already
 /// holds** — `pgdt parse`'s scan (`docs/design/decisions.md`, "D61"). This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
-/// only a scan reaching EOF may state; `pgdt_dump::load::build_index` stays the
+/// only a scan reaching EOF may state; `pgdt_query::build_index` stays the
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
 /// duplicates the splice-onto-a-prefix logic here.
 ///
@@ -1878,7 +1875,7 @@ fn report_statistics_declines(
 }
 
 /// The hints every top-level read loop announces before its first read
-/// (`pgdt_dump::scan::scan`, [`map_forward`]): its chunk length, its budget, the
+/// (`pgdt_dump::scan`, [`map_forward`]): its chunk length, its budget, the
 /// caller's cancellation where there is one, and that it grants no wait.
 fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
     source.hint_read_size(scan_options.chunk_size_bytes);
@@ -3418,7 +3415,7 @@ async fn census_metadata_level(
 
 /// One fact about *this query's plan*, as opposed to a fact about the file
 /// ([`pgdt_model::DiagnosticKind`], the model), about one column
-/// (`pgdt_codec::resolve::ResolvedSchema::notes`, the codec) or about one predicate
+/// (`pgdt_codec::ResolvedSchema::notes`, the codec) or about one predicate
 /// term ([`ComparisonNote`], query) — a fourth channel, deliberately not a widening of
 /// any of the other three (`docs/design/decisions.md`, "D19"), and a
 /// [`Finding`] like each of them, so one sink drains all four. See
@@ -3450,7 +3447,7 @@ pub enum PlanLever {
     /// recommending no per-reader cost stops at
     /// `pgdt_io::DEFAULT_MEMORY_BUDGET`.
     LargerAllowance,
-    /// A smaller read chunk (`pgdt_dump::scan::ScanOptions::chunk_size_bytes`) —
+    /// A smaller read chunk (`pgdt_dump::ScanOptions::chunk_size_bytes`) —
     /// listed only where the source sizes a reader from it
     /// ([`pgdt_io::Partitioning::sized_by_read_chunk`]) or the batch span
     /// the plan charged sits on the chunk floor ([`derived_source_span`]),
@@ -3486,7 +3483,7 @@ pub enum PlanNoteKind {
     /// (`docs/design/decisions.md`, "D83"), so a message offering the budget
     /// alone is inert exactly where this fires on a plain one. The other is
     /// the announced read chunk
-    /// (`pgdt_dump::scan::ScanOptions::chunk_size_bytes`), which a replay plan
+    /// (`pgdt_dump::ScanOptions::chunk_size_bytes`), which a replay plan
     /// never announces (`KD41`), and which a source cutting by it sizes
     /// `footprint` from, a fixed multiple of it
     /// (`pgdt_io::Partitioning::partition_bytes`), and which floors the
@@ -3569,7 +3566,7 @@ pub enum PlanNoteKind {
     /// buy, and where it still came up short of what was asked for a
     /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
     /// at one announced read chunk
-    /// (`pgdt_dump::scan::ScanOptions::chunk_size_bytes`) is the floor, and what
+    /// (`pgdt_dump::ScanOptions::chunk_size_bytes`) is the floor, and what
     /// moves a span off it is what [`derived_source_span`] divides: a larger
     /// `memory_bytes`, a smaller `Parallelism::jobs`, or a smaller charge per
     /// reader — which a source sizing its reader from the read chunk
@@ -4199,7 +4196,7 @@ fn cut_blocks(
 /// hands.
 ///
 /// **The floor is `chunk_size`**, the length the replay loop announces to the
-/// source (`pgdt_dump::scan::ScanOptions::chunk_size_bytes`,
+/// source (`pgdt_dump::ScanOptions::chunk_size_bytes`,
 /// [`pgdt_io::ByteRangeSource::hint_read_size`]), so a budget that affords
 /// the count at no span at all narrows to one read chunk and leaves the
 /// shortfall to [`worker_count`]; below that the span would cost rows per
@@ -5025,7 +5022,7 @@ impl DynamicRead {
     ) -> bool {
         let Some(state) = self.state() else { return false };
         // Timed whole where the instrument is built in
-        // (`pgdt_core::instrument::row_evaluated!`).
+        // (`pgdt_core::row_evaluated!`).
         row_evaluated!({
             let rejected = matches!(state.matches(raw_row, split, table, row_offset), Ok(false));
             if rejected {

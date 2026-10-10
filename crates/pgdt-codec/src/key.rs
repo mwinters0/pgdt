@@ -14,12 +14,12 @@ use arrow_buffer::i256;
 
 use crate::datetime_in;
 use crate::datetime_in::DateTimeInput;
-use crate::decode;
-use crate::decode::{NumericColumn, Read, Unread};
+use crate::decode_impl as decode;
+use crate::decode_impl::{NumericColumn, Read, Unread};
 use crate::nested;
-use crate::pgtype::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, Geometric,
-    IntervalQualifier, NestedCompare, Position, TextGrammar,
+use crate::pgtype_impl::{
+    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, DiscreteExt,
+    Geometric, IntervalQualifier, NestedCompare, Position, TextGrammar,
 };
 use pgdt_model::PostgresInvalidValues;
 

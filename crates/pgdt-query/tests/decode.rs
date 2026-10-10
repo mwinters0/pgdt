@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
-use pgdt_codec::resolve::{ColumnResolution, SchemaMode};
+use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_codec::{NestedPlan, UnrepresentableMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;

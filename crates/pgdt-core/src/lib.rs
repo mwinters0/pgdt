@@ -3,13 +3,31 @@
 //! (`docs/design/decisions.md`, "D68"). The error type names no dependency's
 //! error; a dependency's is a cause it carries opaquely (D74).
 
-pub mod copy;
+mod copy;
 mod error;
-pub mod instrument;
+#[path = "instrument.rs"]
+mod instrument_impl;
 mod lex;
 
-pub use copy::CopyHeader;
+pub use copy::{
+    COPY_BLOCK_TERMINATOR, COPY_TEXT_DELIMITER, CopyHeader, FieldRanges, RawRow, RowSplit,
+    decode_field, encode_field, field_ranges, is_terminator, parse_copy_header, split_fields,
+    validated_prefix,
+};
 pub use error::{Error, RowEndingRefusal, Unusable};
+
+/// What an instrumented binary reads of the library's own work: an API
+/// namespace, its items re-exported by name from the private module that
+/// defines them, which is loaded under another name only because this one
+/// takes `instrument`.
+pub mod instrument {
+    pub use crate::instrument_impl::EvaluationPart;
+    #[cfg(feature = "introspect")]
+    pub use crate::instrument_impl::{
+        EvaluationReading, StatisticsReading, allocated, evaluation_reading, freed,
+        statistics_reading,
+    };
+}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -19,9 +37,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub mod internal {
     pub use crate::copy::{Cursor, hex_val};
     pub use crate::error::OVERWRITE_WAYS_OUT;
-    pub use crate::instrument::{DecodeCounter, StatisticsScope, statistics_account_updated};
+    pub use crate::instrument_impl::{DecodeCounter, StatisticsScope, statistics_account_updated};
     #[cfg(feature = "introspect")]
-    pub use crate::instrument::{evaluated_row, statistics_loaded, timed_span};
+    pub use crate::instrument_impl::{evaluated_row, statistics_loaded, timed_span};
     pub use crate::lex::{
         Lexer, LineLex, Quote, Region, canonical_type_name, ident_cont, parse_type_name,
         standard_conforming_strings,

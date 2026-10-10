@@ -682,7 +682,7 @@ async fn resume_token_from_break_continues_correctly() {
 /// must agree once rendered back through `rows_of`.
 #[tokio::test]
 async fn escapes_table_round_trips_through_postgres_batched() {
-    use pgdt_codec::resolve::SchemaMode;
+    use pgdt_codec::SchemaMode;
     for version in [13, 16, 18] {
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
             let options =

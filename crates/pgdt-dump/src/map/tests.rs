@@ -1,5 +1,5 @@
 use super::*;
-use pgdt_core::copy::CopyHeader;
+use pgdt_core::CopyHeader;
 use pgdt_model::{
     DataBlock, Span, SpanBody, TocHeader, TypeKind, UnrepresentableTier, internal::FieldCount,
 };

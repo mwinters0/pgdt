@@ -6,8 +6,8 @@
 //! `pgdt/tests/query_projection.rs`.
 
 use futures::StreamExt;
+use pgdt_codec::ColumnResolution;
 use pgdt_codec::UnrepresentableMode;
-use pgdt_codec::resolve::ColumnResolution;
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;

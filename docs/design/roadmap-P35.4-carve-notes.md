@@ -70,9 +70,10 @@ needs it.
 
 ## What 35.5 inherits
 
-- **The facade re-exports exactly what its root and its public modules did**,
-  by name, from the crate now defining each; nothing but the embedders and
-  `tests/layering.rs` builds against it.
+- **The facade re-exports what its root did**, by name, from the crate now
+  defining each, and since 35.10 only the public modules an embedder names
+  ([`roadmap-P35.10-internal-notes.md`](roadmap-P35.10-internal-notes.md));
+  nothing but the embedders and `tests/layering.rs` builds against it.
 - **What still names `pgdump_query`**: `pgdt`'s, `datafusion-pgdump`'s and
   `datafusion-cli-pgdump`'s `use`s and manifests; `pgdump_query::…` paths in
   prose across `docs/`, `scripts/` and comments, which resolve through the

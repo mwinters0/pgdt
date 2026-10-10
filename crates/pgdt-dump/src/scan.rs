@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use pgdt_core::copy::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::internal::{Lexer, Region, standard_conforming_strings};
+use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
 use pgdt_io::{
     ByteRangeSource, Cancellation, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
@@ -61,7 +61,7 @@ pub struct Row<'a> {
     /// The row line with its terminating newline stripped, and a `\r` before
     /// it unless a backslash escapes it, when it is the last field's own byte
     /// (I91). Fields are still delimiter-separated and still escaped; use
-    /// [`pgdt_core::copy::split_fields`] and [`pgdt_core::copy::decode_field`].
+    /// [`pgdt_core::split_fields`] and [`pgdt_core::decode_field`].
     pub raw: &'a [u8],
 }
 
@@ -721,7 +721,7 @@ pub struct ScanOptions {
     ///
     /// Chunk granularity — a window of pieces while the leader holds a region
     /// — not `CopyEnd` granularity, and read by
-    /// [`pgdt_query::stream::map_file`]'s two passes alone — the mapping loop and
+    /// [`pgdt_query::map_file`]'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
     /// built on it never read the polled bit
@@ -758,13 +758,13 @@ pub struct ScanOptions {
     /// recorded in the map as having declined under this number
     /// ([`pgdt_model::CopyBlock::statistics_declined`]).
     ///
-    /// **Read by [`pgdt_query::stream::map_file`] alone**: a query gathers nothing,
+    /// **Read by [`pgdt_query::map_file`] alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
     pub statistics_allowance_bytes: Option<u64>,
     /// What gathering does with a field its type's `*_in` refuses: fails the
     /// pass at the first, by default, or goes on past it, or checks every
-    /// field ([`PostgresInvalidValues`]). Read by [`pgdt_query::stream::map_file`] and
-    /// [`pgdt_query::stream::gather_block_statistics`] alone, as gathering is; a
+    /// field ([`PostgresInvalidValues`]). Read by [`pgdt_query::map_file`] and
+    /// [`pgdt_query::gather_block_statistics`] alone, as gathering is; a
     /// query's reads are [`pgdt_query::QueryOptions::postgres_invalid_values`]'.
     pub postgres_invalid_values: PostgresInvalidValues,
 }

@@ -1,5 +1,5 @@
 //! Row/batch assembly: turns rows inside a `COPY` block into typed Arrow
-//! `RecordBatch`es, one column builder per [`pgdt_codec::resolve::ResolvedSchema`]
+//! `RecordBatch`es, one column builder per [`pgdt_codec::ResolvedSchema`]
 //! field (`docs/design/decisions.md`, "D46").
 //!
 //! A `Utf8View` field that needs no unescaping is appended as a zero-copy
@@ -42,14 +42,18 @@ use bytes::Bytes;
 use crate::predicate::Expr;
 use crate::stream::{ResumeToken, table_stream};
 use pgdt_codec::decode;
-use pgdt_codec::nested::{self, RangeLiteral};
+use pgdt_codec::internal::{float_field, push_array_null, push_integer, quote_array_element};
 use pgdt_codec::pgtype::{ComparisonSemantics, NestedPlan, Position};
-use pgdt_codec::resolve::{ResolvedSchema, SchemaMode};
+use pgdt_codec::{
+    RangeLiteral, RecordLiteral, decode_array, decode_int2vector, decode_multirange, decode_range,
+    decode_record, render_int2vector, render_range, render_record,
+};
+use pgdt_codec::{ResolvedSchema, SchemaMode};
 use pgdt_codec::{UnrepresentableMode, internal::UnrepresentableRead};
-use pgdt_core::copy::{RawRow, RowSplit};
 use pgdt_core::{Error, Result};
+use pgdt_core::{RawRow, RowSplit};
+use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_dump::scan::ScanOptions;
 use pgdt_io::{ByteRangeSource, Parallelism};
 use pgdt_model::{PostgresInvalidValues, StatisticsView, UnrepresentableTier};
 
@@ -108,7 +112,7 @@ pub struct QueryOptions {
     /// are bought at the cost of batch size rather than declined
     /// (`docs/design/decisions.md`, "D84"). The derivation only moves down,
     /// and never narrows past **one announced read chunk**
-    /// ([`pgdt_dump::scan::ScanOptions::chunk_size_bytes`], which is what a
+    /// ([`pgdt_dump::ScanOptions::chunk_size_bytes`], which is what a
     /// chunk-shaped source retains) — a span stated below that floor is left
     /// where it was, the floor bounding the derivation rather than the
     /// result; a serial [`crate::table_stream`] does not derive at all.
@@ -116,7 +120,7 @@ pub struct QueryOptions {
     /// Whether to resolve column types against the dump's DDL
     /// (`docs/design/decisions.md`, "D46"). Every `RecordBatch` this build
     /// produces carries the same schema as its query's
-    /// [`pgdt_codec::resolve::ResolvedSchema`] — a column this build has no
+    /// [`pgdt_codec::ResolvedSchema`] — a column this build has no
     /// mapping for stays `Utf8View`, as `SchemaMode::Strings` maps every
     /// column.
     pub schema_mode: SchemaMode,
@@ -346,9 +350,9 @@ impl RetainedChunks {
     }
 }
 
-/// One column's typed builder, chosen from a [`pgdt_codec::resolve::ResolvedSchema`]
+/// One column's typed builder, chosen from a [`pgdt_codec::ResolvedSchema`]
 /// field's [`DataType`] — the complete set [`pgdt_codec::pgtype::resolve_declared_type`]
-/// and [`pgdt_codec::resolve::resolve_columns`] can ever produce.
+/// and [`pgdt_codec::resolve_columns`] can ever produce.
 /// `with_precision_and_scale`/`with_timezone_opt` tag the three builders
 /// whose default type is not the schema's — the two decimals and the
 /// timestamp — every other arm's default already matching, so a `finish()`ed array's type matches the schema exactly, which
@@ -734,7 +738,7 @@ fn append_typed(
     match builder {
         ColumnBuilder::Utf8View(..) => unreachable!("caller handles Utf8View directly"),
         ColumnBuilder::Array(parts) => {
-            let literal = nested::decode_array(text).ok_or_else(fail)?;
+            let literal = decode_array(text).ok_or_else(fail)?;
             if literal.is_decorated() {
                 // Arrow lists are 0-based and have no lower bound, so an
                 // `[lb:ub]=` value's index origin has nowhere to go. Failing
@@ -756,7 +760,7 @@ fn append_typed(
                 .map_err(|()| fail())?;
         }
         ColumnBuilder::Multirange(parts) => {
-            let members = nested::decode_multirange(text).ok_or_else(fail)?;
+            let members = decode_multirange(text).ok_or_else(fail)?;
             for member in &members {
                 let ColumnBuilder::Range(range) = &mut *parts.child else {
                     unreachable!("a multirange's child is always the range struct")
@@ -770,7 +774,7 @@ fn append_typed(
         // is the only NULL in COPY TEXT, so `''` fills a zero-length list
         // rather than collapsing into the null beside it.
         ColumnBuilder::Int2Vector(parts) => {
-            let values = nested::decode_int2vector(text).ok_or_else(fail)?;
+            let values = decode_int2vector(text).ok_or_else(fail)?;
             let ColumnBuilder::Int16(child) = &mut *parts.child else {
                 unreachable!("an int2vector's child is always Int16")
             };
@@ -781,7 +785,7 @@ fn append_typed(
             parts.validity.push(true);
         }
         ColumnBuilder::Record(parts) => {
-            let literal = nested::decode_record(text).ok_or_else(fail)?;
+            let literal = decode_record(text).ok_or_else(fail)?;
             if parts.children.is_empty() {
                 // A zero-field composite is written `()`, and so is a
                 // one-field composite holding NULL — the literal cannot tell
@@ -806,7 +810,7 @@ fn append_typed(
             parts.validity.push(true);
         }
         ColumnBuilder::Range(parts) => {
-            let literal = nested::decode_range(text).ok_or_else(fail)?;
+            let literal = decode_range(text).ok_or_else(fail)?;
             append_range(parts, &literal, invalid).map_err(|()| fail())?;
         }
         ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or_else(fail)?),
@@ -817,10 +821,10 @@ fn append_typed(
         // contradicting its own DDL, same as any other undecodable field.
         ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(|_| fail())?),
         ColumnBuilder::Float32(b) => {
-            b.append_value(decode::float_field(text, invalid).ok_or_else(fail)?);
+            b.append_value(float_field(text, invalid).ok_or_else(fail)?);
         }
         ColumnBuilder::Float64(b) => {
-            b.append_value(decode::float_field(text, invalid).ok_or_else(fail)?);
+            b.append_value(float_field(text, invalid).ok_or_else(fail)?);
         }
         ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or_else(fail)?),
         ColumnBuilder::TimestampMicro { builder, has_tz } => {
@@ -941,7 +945,7 @@ pub(crate) fn column_of(
 
 /// Accumulates rows from a single `COPY` block into typed `RecordBatch`es,
 /// one [`ColumnBuilder`] per field of the query's
-/// [`pgdt_codec::resolve::ResolvedSchema`].
+/// [`pgdt_codec::ResolvedSchema`].
 pub(crate) struct RowBatcher {
     schema: SchemaRef,
     /// Qualified table name, for `Error::FieldDecode`'s context.
@@ -1262,10 +1266,10 @@ fn push_utf8view_field(
 }
 
 /// Render one row of `column` back to the same PostgreSQL text form
-/// `pgdt_core::copy::decode_field` would have produced for it
+/// `pgdt_core::decode_field` would have produced for it
 /// (`docs/design/decisions.md`, "D66"), and the round-trip tests' oracle.
 /// `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
-/// [`pgdt_codec::resolve::resolve_columns`] can ever produce.
+/// [`pgdt_codec::resolve_columns`] can ever produce.
 ///
 /// **The `Result` is for a value with no text form at all**, which is a third
 /// outcome and not a NULL: [`Error::FieldRender`] says which, and a value is
@@ -1276,7 +1280,7 @@ fn push_utf8view_field(
 /// `plan` is needed for the same reason [`ColumnBuilder`] needs it: the Arrow
 /// type does not say which literal form a nested value is written in, and
 /// `int4range[]` and `int4multirange` share one. It comes from
-/// [`pgdt_codec::resolve::ResolvedSchema::plans`], positionally; a caller that
+/// [`pgdt_codec::ResolvedSchema::plans`], positionally; a caller that
 /// knows its column is scalar passes `&NestedPlan::Scalar`, which is
 /// [`NestedPlan`]'s `Default`. There is no plan-less entry point
 /// (`docs/design/decisions.md`, "D43").
@@ -1381,7 +1385,7 @@ pub fn render_field_into(
                     reason: "an int2vector has no encoding for a NULL element".to_string(),
                 });
             }
-            out.push_str(&nested::render_int2vector(values.values()));
+            out.push_str(&render_int2vector(values.values()));
             return Ok(true);
         }
         NestedPlan::Record(field_plans) => {
@@ -1392,14 +1396,14 @@ pub fn render_field_into(
                 .zip(field_plans)
                 .map(|(child, p)| render_field(child.as_ref(), row, &p.plan))
                 .collect::<Result<_>>()?;
-            out.push_str(&nested::render_record(&nested::RecordLiteral { fields }));
+            out.push_str(&render_record(&RecordLiteral { fields }));
             return Ok(true);
         }
         NestedPlan::Range(bound) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
             let flag =
                 |i: usize| s.column(i).as_any().downcast_ref::<BooleanArray>().unwrap().value(row);
-            out.push_str(&nested::render_range(&RangeLiteral {
+            out.push_str(&render_range(&RangeLiteral {
                 empty: flag(4),
                 lower: render_field(s.column(0).as_ref(), row, bound)?,
                 upper: render_field(s.column(1).as_ref(), row, bound)?,
@@ -1417,25 +1421,22 @@ pub fn render_field_into(
             column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row),
         )),
         DataType::Int16 => {
-            decode::push_integer(
+            push_integer(
                 out,
                 i64::from(column.as_any().downcast_ref::<Int16Array>().unwrap().value(row)),
             );
         }
         DataType::Int32 => {
-            decode::push_integer(
+            push_integer(
                 out,
                 i64::from(column.as_any().downcast_ref::<Int32Array>().unwrap().value(row)),
             );
         }
         DataType::Int64 => {
-            decode::push_integer(
-                out,
-                column.as_any().downcast_ref::<Int64Array>().unwrap().value(row),
-            );
+            push_integer(out, column.as_any().downcast_ref::<Int64Array>().unwrap().value(row));
         }
         DataType::UInt32 => {
-            decode::push_integer(
+            push_integer(
                 out,
                 i64::from(column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row)),
             );
@@ -1499,10 +1500,10 @@ pub fn render_field_into(
 }
 
 /// Write an `array_out` literal for a `List` value straight into `out`,
-/// walking the Arrow list rather than building a [`nested::ArrayLiteral`].
+/// walking the Arrow list rather than building a [`pgdt_codec::ArrayLiteral`].
 ///
 /// Each element is rendered where it will be read, and
-/// [`nested::quote_array_element`] moves it aside only if the grammar wants
+/// [`quote_array_element`] moves it aside only if the grammar wants
 /// it quoted, so an `integer[]` of fifty is fifty appends and no allocation
 /// (`docs/design/decisions.md`, "D44").
 ///
@@ -1573,9 +1574,9 @@ fn render_list_level(
         }
         let mark = out.len();
         if render_field_into(values.as_ref(), i, child_plan, out)? {
-            nested::quote_array_element(out, mark, scratch);
+            quote_array_element(out, mark, scratch);
         } else {
-            nested::push_array_null(out);
+            push_array_null(out);
         }
         *leaves += 1;
     }

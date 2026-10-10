@@ -24,12 +24,12 @@ pub struct DatabaseMetadata {
     /// names no database. Never guessed: a `--create` dump's pre-`\connect`
     /// segment names no real database either, and is told apart by being
     /// *replaced* rather than pushed when the first `\connect` arrives, its
-    /// version headers carried over ([`pgdt_dump::preamble::dump_metadata_from_spans`]'s `Connect`
+    /// version headers carried over ([`pgdt_dump::dump_metadata_from_spans`]'s `Connect`
     /// arm).
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
-    /// `true` for every entry a [`pgdt_query::stream::build_index`] full scan or a
-    /// [`pgdt_dump::load::scan_preamble`] prepass produces, neither ever leaving
+    /// `true` for every entry a [`pgdt_query::build_index`] full scan or a
+    /// [`pgdt_dump::internal::scan_preamble`] prepass produces, neither ever leaving
     /// a segment half-read. The *first* database's metadata is present after
     /// any scan that persists a cache (the preamble prepass,
     /// `docs/design/decisions.md`, "D30") and every later `\connect`ed
@@ -47,7 +47,7 @@ pub struct DatabaseMetadata {
     /// `COLLATE "en_US.utf8"` clause resolves to nothing here (I42).
     pub collations: Vec<CollationDef>,
     /// Qualified table name (`schema.table`, folded the same way
-    /// [`pgdt_core::copy::CopyHeader::qualified_name`] is) -> what its `CREATE
+    /// [`pgdt_core::CopyHeader::qualified_name`] is) -> what its `CREATE
     /// TABLE` declared, and the `--binary-upgrade` `ALTER TABLE` forms that
     /// add a reference to it. A column is looked up through
     /// [`DatabaseMetadata::declared_column`], which reaches the columns the
@@ -256,8 +256,16 @@ impl DatabaseMetadata {
             _ => None,
         })
     }
+}
 
-    pub fn empty(name: Option<String>) -> Self {
+/// What a crate above calls on [`DatabaseMetadata`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait DatabaseMetadataExt {
+    fn empty(name: Option<String>) -> Self;
+}
+
+impl DatabaseMetadataExt for DatabaseMetadata {
+    fn empty(name: Option<String>) -> Self {
         Self {
             name,
             preamble_complete: false,
@@ -428,8 +436,16 @@ impl TableDef {
     pub fn with_columns(columns: Vec<ColumnDef>) -> Self {
         Self { columns, ..Self::default() }
     }
+}
 
-    pub fn add(&mut self, reference: &TableReference) {
+/// What a crate above calls on [`TableDef`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait TableDefExt {
+    fn add(&mut self, reference: &TableReference);
+}
+
+impl TableDefExt for TableDef {
+    fn add(&mut self, reference: &TableReference) {
         match reference {
             TableReference::Parent(parent) if !self.parents.contains(parent) => {
                 self.parents.push(parent.clone());
@@ -519,7 +535,7 @@ pub enum TypeKind {
     ///
     /// All-or-nothing, unlike `CREATE TABLE`'s column list: `record_out` is
     /// positional and carries no field names (I23), so there is no join to
-    /// recover a dropped field the way `pgdt_codec::resolve::resolve_columns`
+    /// recover a dropped field the way `pgdt_codec::resolve_columns`
     /// recovers a dropped column by name, and a three-field type parsed as
     /// two would fail the field-count check on every valid row of it.
     /// `Some(vec![])` is a real zero-field composite (`CREATE TYPE x AS ();`,

@@ -30,7 +30,7 @@ use arrow::datatypes::{
 };
 use futures::StreamExt;
 use pgdt_codec::NestedPlan;
-use pgdt_codec::resolve::SchemaMode;
+use pgdt_codec::SchemaMode;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;

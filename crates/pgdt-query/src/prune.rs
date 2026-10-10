@@ -26,7 +26,8 @@ use std::sync::Arc;
 use crate::gather::{declared_column, stored_bounds_kinds};
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
 use pgdt_codec::pgtype::{CompareKind, bounds_set_keyed_by};
-use pgdt_core::copy::{RawRow, RowSplit};
+use pgdt_core::{RawRow, RowSplit};
+use pgdt_model::internal::ColumnStatisticsExt;
 use pgdt_model::{
     BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata, Sortedness,
     StatisticsView, Unrepresentable,

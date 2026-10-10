@@ -5,10 +5,10 @@
 //!
 //! Pure, synchronous, no I/O and no Arrow (`docs/design/decisions.md`, "D74").
 //! Like `crate::decode`, every function here works on the *already
-//! COPY-unescaped* text `pgdt_core::copy::decode_field` returns, and every
+//! COPY-unescaped* text `pgdt_core::decode_field` returns, and every
 //! `render_*` is the exact inverse of its `decode_*`: feeding it a value
 //! decoded from real `pg_dump` output reproduces that output byte for byte.
-//! Turning the result back into on-disk bytes is `pgdt_core::copy::encode_field`'s
+//! Turning the result back into on-disk bytes is `pgdt_core::encode_field`'s
 //! job, not this module's.
 //!
 //! **`decode_*` and `parse_*` are two scanners, not one with a flag**

@@ -69,7 +69,7 @@ fn a_stated_span_is_spent_down_to_seat_the_readers_and_no_further() {
 /// **The floor is the chunk this caller announced, not the shipped one**
 /// (`docs/design/decisions.md`, "D84"): the pin is the span rounded out to
 /// what the source retains, and what it retains is what the replay loop
-/// asked it to read in (`pgdt_dump::scan::ScanOptions::chunk_size_bytes`).
+/// asked it to read in (`pgdt_dump::ScanOptions::chunk_size_bytes`).
 ///
 /// The shape is `--chunk-size 64k` on a plain source, whose per-worker
 /// footprint is eight of whatever chunk it was told to read
@@ -188,7 +188,7 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
     let block = CopyBlock {
-        header: pgdt_core::copy::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
+        header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
         database: None,
         header_offset: 0,
         data_offset: 33,
@@ -292,7 +292,7 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
         }
     }
     let block = CopyBlock {
-        header: pgdt_core::copy::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
+        header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
         database: None,
         header_offset: 0,
         data_offset: 33,
@@ -425,7 +425,7 @@ fn an_absurd_save_cost_saturates_rather_than_panicking() {
 fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
     use pgdt_model::DatabaseMetadata;
 
-    let header = pgdt_core::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;")
+    let header = pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;")
         .expect("a well-formed header");
     let first = DatabaseMetadata {
         name: Some("first".to_string()),
@@ -490,7 +490,7 @@ fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
 #[test]
 fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
     let block = CopyBlock {
-        header: pgdt_core::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
+        header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
         database: None,
         header_offset: 0,
         data_offset: 0,
@@ -538,7 +538,7 @@ fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
 #[test]
 fn a_segment_resumes_from_the_row_its_pause_left() {
     let block = CopyBlock {
-        header: pgdt_core::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
+        header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
         database: None,
         header_offset: 10,
         data_offset: 40,

@@ -1,13 +1,13 @@
 //! The facade over the six `pgdt-*` crates while they are carved: every name
-//! this crate exported before the carve, re-exported from the crate that now
-//! defines it, so its dependents keep building until the facade is retired
+//! this crate's root exported before the carve, and the namespaces an
+//! embedder names, re-exported from the crate that now defines each, so its
+//! dependents keep building until the facade is retired
 //! (`docs/design/roadmap-P35-seams.md`, "Naming and layout").
 
-pub use pgdt_codec::{decode, nested, pgtype, resolve};
-pub use pgdt_core::{copy, instrument};
-pub use pgdt_dump::{cache, load, map, preamble};
+pub use pgdt_codec::{decode, pgtype};
+pub use pgdt_core::instrument;
+pub use pgdt_dump::cache;
 pub use pgdt_model as model;
-pub use pgdt_query::{batch, predicate, statistics, stream, summary};
 
 pub use pgdt_codec::{
     CanonicalExtension, ColumnNote, ColumnResolution, CompareKind, ComparisonDivergence,

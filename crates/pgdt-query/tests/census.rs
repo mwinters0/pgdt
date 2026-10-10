@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 
-use pgdt_codec::resolve::{ColumnResolution, SchemaMode};
+use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};

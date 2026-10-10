@@ -63,8 +63,10 @@ use crate::statistics::{
     Charge, ROW_GROUP_DEFAULT_SIZE_BYTES, STATISTICS_ACCOUNT_CHARGE_STEP, StatisticsAccount,
     StatisticsBackfill, StatisticsRequest, Term,
 };
+use pgdt_codec::internal::database_for_name;
 use pgdt_codec::internal::{ColumnTier, column_tiers};
 use pgdt_codec::internal::{ValueKey, field_refused, grammar_refuses};
+use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     decode::{
         Unread, char_typmod_refuses, decode_bytea, decode_bytea_escape, render_bytea,
@@ -73,17 +75,14 @@ use pgdt_codec::{
     internal::bytea_unread,
 };
 use pgdt_codec::{
-    internal::database_for_name,
-    resolve::{ResolvedSchema, SchemaMode, resolve_columns},
-};
-use pgdt_codec::{
     internal::{column_grammar, unchecked_positions},
     pgtype::{
         CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, Unchecked,
     },
 };
-use pgdt_core::copy::{CopyHeader, decode_field, split_fields};
 use pgdt_core::internal::StatisticsScope;
+use pgdt_core::{CopyHeader, decode_field, split_fields};
+use pgdt_model::internal::{IgnoredRefusalsExt, UnrepresentableExt};
 use pgdt_model::{
     BlockGathered, BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef, ColumnDictionary,
     ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpMetadata,

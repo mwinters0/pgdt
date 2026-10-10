@@ -13,12 +13,12 @@ use crate::{
     IgnoredRefusals, TableDef, TableReference, TypeKind, Unrepresentable,
     deserialize_block_statistics,
 };
-use pgdt_core::copy::CopyHeader;
+use pgdt_core::CopyHeader;
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
 /// together tiles the file, a partial scan's unread rest one `Unscanned`
-/// span — see [`pgdt_dump::map::check_tiling`].
+/// span — see [`pgdt_dump::check_tiling`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start: u64,
@@ -29,7 +29,7 @@ pub struct Span {
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
     /// cache so `pgdt info` answers without re-reading the dump
-    /// (`docs/design/decisions.md`, "D30"). `None` until [`pgdt_dump::map::attach_text`] has
+    /// (`docs/design/decisions.md`, "D30"). `None` until [`pgdt_dump::attach_text`] has
     /// run, and permanently `None` for [`SpanBody::Data`] and
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded.
     pub text: Option<SpanText>,
@@ -126,7 +126,7 @@ pub struct InsertRun {
     pub database: Option<String>,
     /// The table every statement in this run targets, as its own first
     /// `INSERT INTO` line named it — schema-qualified when the line was,
-    /// matching [`CopyHeader::qualified_name`](pgdt_core::copy::CopyHeader::qualified_name)'s
+    /// matching [`CopyHeader::qualified_name`](pgdt_core::CopyHeader::qualified_name)'s
     /// convention for the same object.
     pub table: String,
     /// Number of `INSERT` statements folded into this span — free to
@@ -137,7 +137,7 @@ pub struct InsertRun {
 /// The large-object data region (I12) — every `BEGIN;`/`COMMIT;`-wrapped
 /// `lo_open`/`lowrite`/`lo_close` run in the file, merged into a single `Data`
 /// span regardless of how many archive entries `pg_dump` split it across (one
-/// on v13-16, one per object on v17+ — see [`pgdt_dump::map::Builder::on_large_object_start`]).
+/// on v13-16, one per object on v17+ — see [`pgdt_dump::internal::Builder::on_large_object_start`]).
 /// No identity at all: the region's only identity is the OID in each
 /// `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
 /// region (`docs/design/decisions.md`, "D33").
@@ -177,7 +177,7 @@ pub enum SpanBody {
     Data(DataBlock),
     /// A `\connect <name>` meta-command — distinct from
     /// [`Framing`](SpanBody::Framing) because
-    /// [`pgdt_dump::preamble::dump_metadata_from_spans`] needs the database name
+    /// [`pgdt_dump::dump_metadata_from_spans`] needs the database name
     /// itself to reconstruct `DumpMetadata`'s per-database segmenting.
     Connect {
         database: String,
@@ -193,7 +193,7 @@ pub enum SpanBody {
     },
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>'
     /// ...;` (I6) — recognized so
-    /// [`pgdt_dump::preamble::dump_metadata_from_spans`] can fold the label into
+    /// [`pgdt_dump::dump_metadata_from_spans`] can fold the label into
     /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
     AlterTypeAddValue {
         type_name: String,
@@ -202,7 +202,7 @@ pub enum SpanBody {
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> DROP ATTRIBUTE
     /// <attr>;`, dropping a composite's placeholder for an attribute the type
     /// has dropped — recognized so
-    /// [`pgdt_dump::preamble::dump_metadata_from_spans`] can remove the field from
+    /// [`pgdt_dump::dump_metadata_from_spans`] can remove the field from
     /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
     AlterTypeDropAttribute {
         type_name: String,
@@ -212,7 +212,7 @@ pub enum SpanBody {
     /// [`pgdt_dump::preamble`] does not read — `RENAME VALUE`, `ADD VALUE IF NOT
     /// EXISTS`, a label no plain `'…'` literal spells — naming the type it alters, or `None`
     /// where it names none this grammar reads. No `pg_dump` writes one; it is
-    /// recognized so [`pgdt_dump::preamble::dump_metadata_from_spans`] can mark
+    /// recognized so [`pgdt_dump::dump_metadata_from_spans`] can mark
     /// the labels it may have changed inexact.
     EnumLabelsUnread {
         type_name: Option<String>,
@@ -222,7 +222,7 @@ pub enum SpanBody {
     /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
     /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL`, an `ATTACH PARTITION`,
     /// whose `table` is the partition it attaches — recognized so
-    /// [`pgdt_dump::preamble::dump_metadata_from_spans`] can fold the reference
+    /// [`pgdt_dump::dump_metadata_from_spans`] can fold the reference
     /// into the [`Table`](SpanBody::Table) span it targets.
     AlterTableReference {
         table: String,
@@ -240,12 +240,12 @@ pub enum SpanBody {
     /// into its owning entry's span (the module docs' "no grouping").
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span
-    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_query::stream::build_map`,
+    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_query::build_map`,
     /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
 }
 
-/// What [`pgdt_dump::map::check_tiling`] found wrong, if anything.
+/// What [`pgdt_dump::check_tiling`] found wrong, if anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum TilingIssue {
     /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
@@ -286,7 +286,7 @@ pub struct CopyBlock {
     /// root rather than the partition whose rows follow, and **other blocks
     /// in this same dump carry the same header name**. Stored, not concluded
     /// from (`docs/design/decisions.md`, "D74"), and read by
-    /// `pgdt_query::stream::table_stream` to decide whether a cold query may stop
+    /// `pgdt_query::table_stream` to decide whether a cold query may stop
     /// once the queried table's block closes or must run to EOF, those blocks
     /// not being adjacent (`docs/design/decisions.md`, "D49").
     pub partition_root: Option<String>,
@@ -404,8 +404,8 @@ pub struct DumpIndex {
     /// eager scan.
     pub scanned_through: u64,
     /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` only for
-    /// a `DumpIndex` built by hand rather than by `pgdt_query::stream::build_index`. A derived
-    /// view over `spans` (`pgdt_dump::preamble::dump_metadata_from_spans`),
+    /// a `DumpIndex` built by hand rather than by `pgdt_query::build_index`. A derived
+    /// view over `spans` (`pgdt_dump::dump_metadata_from_spans`),
     /// computed once (`docs/design/decisions.md`, "D34").
     pub metadata: Option<DumpMetadata>,
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`

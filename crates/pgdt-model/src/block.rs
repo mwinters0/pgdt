@@ -35,6 +35,27 @@ pub struct ArrayShape {
 }
 
 impl ArrayShape {
+    /// Fold another block's census for the same column into this one —
+    /// min-of-mins, max-of-maxes, a lower-bound prefix anywhere counting
+    /// everywhere. One table's data can occupy several blocks (I2).
+    pub fn merge(&mut self, other: &ArrayShape) {
+        self.dims = match (self.dims, other.dims) {
+            (Some((a_min, a_max)), Some((b_min, b_max))) => {
+                Some((a_min.min(b_min), a_max.max(b_max)))
+            }
+            (some, None) | (None, some) => some,
+        };
+        self.lower_bound_prefix |= other.lower_bound_prefix;
+    }
+}
+
+/// What a crate above calls on [`ArrayShape`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait ArrayShapeExt {
+    fn observe(&mut self, field: &[u8]);
+}
+
+impl ArrayShapeExt for ArrayShape {
     /// Fold one still-COPY-escaped field into this column's census. The
     /// field is not decoded first: neither `{` nor the `[lb:ub]=` prefix is
     /// in COPY TEXT's escape set (I15). A field that does not open with `{`,
@@ -45,7 +66,7 @@ impl ArrayShape {
     /// Dimensionality is the **leading brace run** (I25): `array_out` opens
     /// with exactly `ndim` braces and force-quotes any element containing a
     /// `{`, so no element can extend the run.
-    pub fn observe(&mut self, field: &[u8]) {
+    fn observe(&mut self, field: &[u8]) {
         let mut rest = field;
         if rest.first() == Some(&b'[') {
             // `[lb:ub]…=` — the prefix runs to the `=` that introduces the
@@ -69,19 +90,6 @@ impl ArrayShape {
         let depth = rest.iter().take_while(|&&b| b == b'{').count().min(u8::MAX as usize) as u8;
         let (min, max) = self.dims.unwrap_or((depth, depth));
         self.dims = Some((min.min(depth), max.max(depth)));
-    }
-
-    /// Fold another block's census for the same column into this one —
-    /// min-of-mins, max-of-maxes, a lower-bound prefix anywhere counting
-    /// everywhere. One table's data can occupy several blocks (I2).
-    pub fn merge(&mut self, other: &ArrayShape) {
-        self.dims = match (self.dims, other.dims) {
-            (Some((a_min, a_max)), Some((b_min, b_max))) => {
-                Some((a_min.min(b_min), a_max.max(b_max)))
-            }
-            (some, None) | (None, some) => some,
-        };
-        self.lower_bound_prefix |= other.lower_bound_prefix;
     }
 }
 
@@ -114,14 +122,6 @@ pub struct Unrepresentable {
 }
 
 impl Unrepresentable {
-    /// Count one value past `tier`.
-    pub fn add(&mut self, tier: UnrepresentableTier) {
-        match tier {
-            UnrepresentableTier::Format => self.format += 1,
-            UnrepresentableTier::Engine => self.engine += 1,
-        }
-    }
-
     /// Fold another block's, or a piece's, count for the same column in.
     pub fn merge(&mut self, other: &Unrepresentable) {
         self.format += other.format;
@@ -131,6 +131,22 @@ impl Unrepresentable {
     /// Whether no value was counted in either tier.
     pub fn is_zero(&self) -> bool {
         self.format == 0 && self.engine == 0
+    }
+}
+
+/// What a crate above calls on [`Unrepresentable`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait UnrepresentableExt {
+    fn add(&mut self, tier: UnrepresentableTier);
+}
+
+impl UnrepresentableExt for Unrepresentable {
+    /// Count one value past `tier`.
+    fn add(&mut self, tier: UnrepresentableTier) {
+        match tier {
+            UnrepresentableTier::Format => self.format += 1,
+            UnrepresentableTier::Engine => self.engine += 1,
+        }
     }
 }
 
@@ -159,9 +175,16 @@ pub struct BlockCensus {
     pub unrepresentable: Vec<Unrepresentable>,
 }
 
-impl BlockCensus {
+/// What a crate above calls on [`BlockCensus`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait BlockCensusExt {
+    fn new(columns: usize) -> Self;
+    fn merge(&mut self, other: &BlockCensus);
+}
+
+impl BlockCensusExt for BlockCensus {
     /// Nothing folded yet, for a block `columns` wide.
-    pub fn new(columns: usize) -> Self {
+    fn new(columns: usize) -> Self {
         BlockCensus {
             shapes: vec![ArrayShape::default(); columns],
             unrepresentable: vec![Unrepresentable::default(); columns],
@@ -170,7 +193,7 @@ impl BlockCensus {
 
     /// Fold another piece's, or another read's, census of the same block in —
     /// length-tolerant, since a row wider than its header grows the census.
-    pub fn merge(&mut self, other: &BlockCensus) {
+    fn merge(&mut self, other: &BlockCensus) {
         if other.shapes.len() > self.shapes.len() {
             self.shapes.resize(other.shapes.len(), ArrayShape::default());
         }

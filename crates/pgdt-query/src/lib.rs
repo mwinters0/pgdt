@@ -3,13 +3,13 @@
 //! embedder — `datafusion-pgdump`, `datafusion-cli-pgdump`, `pgdt` — reads a
 //! dump through.
 
-pub mod batch;
+mod batch;
 mod gather;
-pub mod predicate;
+mod predicate;
 mod prune;
-pub mod statistics;
-pub mod stream;
-pub mod summary;
+mod statistics;
+mod stream;
+mod summary;
 
 pub use batch::{
     QueryOptions, ScanExtent, decode_field, read_table, render_field, render_field_into,

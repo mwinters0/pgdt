@@ -9,8 +9,9 @@
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
-use pgdt_core::copy::CopyHeader;
-use pgdt_core::instrument;
+use pgdt_core::CopyHeader;
+use pgdt_core::internal as instrument;
+use pgdt_model::internal::BlockStatisticsExt;
 use pgdt_model::{CopyBlock, GroupSizing};
 
 /// The group size a request that states none gathers at: one mebibyte of a
@@ -425,7 +426,7 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,
     /// The bytes every statistic alive may hold between them
-    /// ([`pgdt_dump::scan::ScanOptions::statistics_allowance_bytes`]); `None` bounds
+    /// ([`pgdt_dump::ScanOptions::statistics_allowance_bytes`]); `None` bounds
     /// nothing and declines nothing.
     allowance: Option<u64>,
 }

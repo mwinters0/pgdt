@@ -17,7 +17,7 @@
 //! tag takes the identifier after it, so `$e'…'` opens a plain literal where
 //! psql gives the `e` back and reads an escape string.
 //!
-//! [`pgdt_dump::scan::CopyScanner`] lexes every line outside a block, so a `$$`
+//! [`pgdt_dump::CopyScanner`] lexes every line outside a block, so a `$$`
 //! inside any of these opens no body (`docs/design/decisions.md`, "D23"), and
 //! [`pgdt_dump::preamble::StatementScan`] lexes a statement's lines with the same
 //! rules, so a statement's end agrees with the scanner's regions.

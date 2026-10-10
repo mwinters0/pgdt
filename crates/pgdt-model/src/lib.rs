@@ -39,8 +39,15 @@ pub use statistics::{
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::block::{BlockObserver, FieldCount};
-    pub use crate::statistics::{max_rows_group, min_rows_group, text_heap, vec_heap};
+    pub use crate::block::{
+        ArrayShapeExt, BlockCensusExt, BlockObserver, FieldCount, UnrepresentableExt,
+    };
+    pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
+    pub use crate::diagnostic::DiagnosticExt;
+    pub use crate::statistics::{
+        BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt,
+        max_rows_group, min_rows_group, text_heap, vec_heap,
+    };
 }
 
 /// **Bump whenever a persisted field is added, removed or reshaped.** A cache

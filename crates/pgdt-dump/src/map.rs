@@ -39,7 +39,7 @@
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
 //!   driven directly by [`crate::load::scan_preamble`] and `pgdt_query::stream`'s
 //!   mapping passes, fed the same [`crate::scan::Event`] stream those already
-//!   walk. `pgdt_query::stream::build_map` is a thin wrapper for callers that just
+//!   walk. `pgdt_query::build_map` is a thin wrapper for callers that just
 //!   want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
@@ -101,10 +101,11 @@ use crate::preamble::{
 };
 use crate::scan::{CopyEnd, CopyStart};
 use pgdt_core::Result;
-use pgdt_core::copy::split_fields;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::internal::standard_conforming_strings;
+use pgdt_core::split_fields;
 use pgdt_io::ByteRangeSource;
+use pgdt_model::internal::{ArrayShapeExt, BlockCensusExt, FieldRefusalExt, UnrepresentableExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
     SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TilingIssue, TocHeader, TypeDef,
@@ -319,8 +320,8 @@ enum Mode {
 }
 
 /// The statement-driven boundary/classification pass, shared by
-/// `pgdt_query::stream::build_map` (a standalone, always-to-EOF scan) and
-/// `pgdt_query::stream::build_index`/[`crate::load::scan_preamble`], which drive
+/// `pgdt_query::build_map` (a standalone, always-to-EOF scan) and
+/// `pgdt_query::build_index`/[`crate::load::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub struct Builder {
@@ -519,7 +520,7 @@ impl Builder {
     }
 
     /// A builder with `database` already in scope — what
-    /// [`pgdt_query::stream::table_stream`]'s mapping pass needs, starting at the
+    /// [`pgdt_query::table_stream`]'s mapping pass needs, starting at the
     /// map's frontier rather than at byte 0 and possibly well inside an
     /// already-`\connect`ed database's territory whose `\connect` line it
     /// never reads.

@@ -1,5 +1,6 @@
 use super::*;
 use crate::statistics::StatisticsTerms;
+use pgdt_model::internal::UnrepresentableExt;
 
 /// SplitMix64, seeded, so a failing case reproduces.
 struct Rng(u64);

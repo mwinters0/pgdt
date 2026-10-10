@@ -4,12 +4,13 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 
 use super::*;
+use pgdt_codec::ColumnNote;
+use pgdt_codec::internal::DiscreteExt;
 use pgdt_codec::internal::scalar_read;
 use pgdt_codec::internal::{ValueKey, field_refused};
 use pgdt_codec::pgtype::{Discrete, NestedPlan};
 use pgdt_codec::pgtype::{bounds_set_keyed_by, comparison_for};
-use pgdt_codec::resolve::ColumnNote;
-use pgdt_core::copy::encode_field;
+use pgdt_core::encode_field;
 use pgdt_model::{BoundsSet, CollationDef, ColumnDef, TypeDef, TypeKind, UnrepresentableTier};
 
 /// [`super::resolve_term`] in PostgreSQL's semantics, which every test
@@ -1698,7 +1699,7 @@ fn an_undecodable_field_is_a_field_decode_error() {
 /// `None`, and nothing else is.
 #[test]
 fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
-    use pgdt_core::copy::encode_field;
+    use pgdt_core::encode_field;
     let scalar = |declared: &str, op, literal: &str| {
         let schema = one_column(declared, DataType::Utf8View);
         resolve_term(&order_predicate(op, literal), 0, &schema, 0).unwrap()
@@ -3365,11 +3366,11 @@ mod oracle {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use pgdt_codec::resolve::{SchemaMode, resolve_columns};
-    use pgdt_core::copy::{decode_field, encode_field, split_fields};
+    use pgdt_codec::{SchemaMode, resolve_columns};
+    use pgdt_core::{decode_field, encode_field, split_fields};
+    use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
-    use pgdt_dump::load::preamble_only;
-    use pgdt_dump::scan::ScanOptions;
+    use pgdt_dump::preamble_only;
     use pgdt_io::LocalFileSource;
     use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
 

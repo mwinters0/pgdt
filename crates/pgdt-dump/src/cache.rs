@@ -57,6 +57,7 @@ pub use pgdt_core::internal::OVERWRITE_WAYS_OUT;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin, internal::is_weak_tag};
+use pgdt_model::internal::DiagnosticExt;
 use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, Diagnostic, DumpIndex, SpanBody, calendar_end};
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
@@ -817,8 +818,8 @@ pub enum CacheStatus {
     /// (`docs/design/decisions.md`, "D22"). What "not enough" means is
     /// caller-specific: `pgdt info` states the coverage
     /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
-    /// incremental scan (`pgdt_query::stream::map_file`,
-    /// `pgdt_query::stream::table_stream`, `crate::load::preamble_only`) builds
+    /// incremental scan (`pgdt_query::map_file`,
+    /// `pgdt_query::table_stream`, `crate::load::preamble_only`) builds
     /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
     /// `total_size`, `compression` and `envelope` are
     /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
@@ -1323,7 +1324,7 @@ impl CacheMode {
     ///
     /// `Incomplete` is treated exactly like `Valid` — both are
     /// [`CacheLoad::Index`] — because every caller of this method
-    /// (`pgdt_query::stream::map_file`, `pgdt_query::stream::map_for_query`, which
+    /// (`pgdt_query::map_file`, `pgdt_query::stream::map_for_query`, which
     /// serves both `pgdt_query::table_stream` and `pgdt_query::table_stream_partitions`,
     /// and `crate::load::preamble_only`) builds forward from whatever partial
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead
@@ -1484,5 +1485,6 @@ impl CacheMode {
     }
 }
 
+#[path = "cache/tests.rs"]
 #[cfg(test)]
 mod tests;

@@ -23,12 +23,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Unrepresentable, UnrepresentableTier};
+use pgdt_core::CopyHeader;
 use pgdt_core::Error;
-use pgdt_core::copy::CopyHeader;
-use pgdt_core::instrument;
+use pgdt_core::internal as instrument;
 
 /// What a read does with a field its type's `*_in` refuses
-/// ([`pgdt_codec::decode::Unread::Refused`]), stated for a parse on [`pgdt_dump::scan::ScanOptions`]
+/// ([`pgdt_codec::decode::Unread::Refused`]), stated for a parse on [`pgdt_dump::ScanOptions`]
 /// and for a query on [`pgdt_query::QueryOptions`] (`docs/design/decisions.md`,
 /// "D103").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -79,7 +79,7 @@ pub enum BlockGathered {
     /// memory is what fits a wide table. Granularity never depends on memory;
     /// whether a block gathers does (`docs/design/decisions.md`, "D85").
     Declined {
-        /// The [`pgdt_dump::scan::ScanOptions::statistics_allowance_bytes`] it declined
+        /// The [`pgdt_dump::ScanOptions::statistics_allowance_bytes`] it declined
         /// under, which the map records
         /// ([`crate::CopyBlock::statistics_declined`]) so that a
         /// back-fill retries it only under a larger one.
@@ -131,11 +131,17 @@ pub struct FieldRefusal {
     pub value: Option<String>,
 }
 
-impl FieldRefusal {
+/// What a crate above calls on [`FieldRefusal`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait FieldRefusalExt {
+    fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error;
+}
+
+impl FieldRefusalExt for FieldRefusal {
     /// The error a pass fails with, naming the table and the column off
     /// `header` and the row's line by its number and by its offset in the
     /// file, the block's data starting at `data_offset`.
-    pub fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error {
+    fn into_error(self, header: &CopyHeader, data_offset: u64) -> Error {
         let table = header.qualified_name();
         let column = header.columns.get(self.column).cloned().unwrap_or_default();
         let line_offset = data_offset + self.offset;
@@ -196,25 +202,6 @@ impl IgnoredRefusals {
         (columns, at)
     }
 
-    /// Count `refusal`, which follows every one already counted in its
-    /// column, keeping it as the column's first where nothing was.
-    pub fn add(held: &mut Option<Self>, refusal: FieldRefusal) {
-        match Self::slot(held, refusal.column) {
-            (columns, Ok(at)) => columns[at].count += 1,
-            (columns, Err(at)) => columns.insert(at, ColumnRefusals { first: refusal, count: 1 }),
-        }
-    }
-
-    /// Fold `later`'s, whose rows all follow those `held` counted.
-    pub fn fold(held: &mut Option<Self>, later: Option<Self>) {
-        for later in later.into_iter().flat_map(|later| later.columns) {
-            match Self::slot(held, later.first.column) {
-                (columns, Ok(at)) => columns[at].count += later.count,
-                (columns, Err(at)) => columns.insert(at, later),
-            }
-        }
-    }
-
     /// Merge `other`'s, read over the same block from its first row as
     /// `held`'s was, either perhaps stopping at a decline: a column's first is
     /// `held`'s, and its count the larger, the read covering more rows having
@@ -243,13 +230,48 @@ impl IgnoredRefusals {
             .filter(|first| tracked.get(first.column).copied().unwrap_or(false))
             .min_by_key(|first| (first.line, first.column))
     }
+}
+
+/// What a crate above calls on [`IgnoredRefusals`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait IgnoredRefusalsExt: Sized {
+    fn add(held: &mut Option<Self>, refusal: FieldRefusal);
+    fn fold(held: &mut Option<Self>, later: Option<Self>);
+    fn error_for(
+        &self,
+        tracked: &[bool],
+        header: &CopyHeader,
+        data_offset: u64,
+        cache: &std::path::Path,
+    ) -> Option<Error>;
+}
+
+impl IgnoredRefusalsExt for IgnoredRefusals {
+    /// Count `refusal`, which follows every one already counted in its
+    /// column, keeping it as the column's first where nothing was.
+    fn add(held: &mut Option<Self>, refusal: FieldRefusal) {
+        match Self::slot(held, refusal.column) {
+            (columns, Ok(at)) => columns[at].count += 1,
+            (columns, Err(at)) => columns.insert(at, ColumnRefusals { first: refusal, count: 1 }),
+        }
+    }
+
+    /// Fold `later`'s, whose rows all follow those `held` counted.
+    fn fold(held: &mut Option<Self>, later: Option<Self>) {
+        for later in later.into_iter().flat_map(|later| later.columns) {
+            match Self::slot(held, later.first.column) {
+                (columns, Ok(at)) => columns[at].count += later.count,
+                (columns, Err(at)) => columns.insert(at, later),
+            }
+        }
+    }
 
     /// The error a parse under [`crate::PostgresInvalidValues::Default`]
     /// keying `tracked` fails with over a cache, at `cache`, holding this
     /// block's record — `None` where no tracked column holds one: the first
     /// among them ([`Self::first_among`]) worded as
     /// [`FieldRefusal::into_error`] words it, saying where it was read from.
-    pub fn error_for(
+    fn error_for(
         &self,
         tracked: &[bool],
         header: &CopyHeader,
@@ -285,9 +307,9 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`pgdt_query::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
+    /// An unstated size: [`pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
     /// re-read for a broken maximum predicts, merged pairwise
-    /// past [`pgdt_query::statistics::BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
+    /// past [`pgdt_query::BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
     /// `max_rows` is the stated maximum the size was chosen under, if any: it
@@ -499,29 +521,6 @@ pub fn max_rows_group(rows: &[u64]) -> u64 {
 }
 
 impl BlockStatistics {
-    /// Whether this block's groups break `max_rows`: its 90th-percentile group
-    /// holds more rows than that. A block with no group breaks nothing.
-    pub fn breaks_max_rows(&self, max_rows: u64) -> bool {
-        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        !rows.is_empty() && max_rows_group(&rows) > max_rows
-    }
-
-    /// **The group size a re-read of this block should gather at to meet
-    /// `max_rows`**: halved, from the size it holds, until the rows its
-    /// 90th-percentile group would then hold are within the maximum — a
-    /// prediction, since halving a group does not halve every group's rows,
-    /// and one the re-read is free to miss where a block's rows cluster.
-    /// Asked only of a block [`Self::breaks_max_rows`] answered for, so it
-    /// holds at least one group.
-    pub fn predicted_group_size(&self, max_rows: u64) -> u64 {
-        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        let (mut size, mut densest) = (self.group_size, max_rows_group(&rows));
-        while densest > max_rows && size > 1 {
-            (size, densest) = (size / 2, densest.div_ceil(2));
-        }
-        size
-    }
-
     /// The heap one block's statistics hold, the allocation of the `Arc` that
     /// shares them included: what [`pgdt_query::statistics::StatisticsAccount`] charges a retained or a
     /// loaded block. Each term is the size the allocator was asked for — a
@@ -533,6 +532,38 @@ impl BlockStatistics {
             + vec_heap(&self.groups)
             + vec_heap(&self.columns)
             + self.columns.iter().flatten().map(ColumnStatistics::heap_bytes).sum::<u64>()
+    }
+}
+
+/// What a crate above calls on [`BlockStatistics`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait BlockStatisticsExt {
+    fn breaks_max_rows(&self, max_rows: u64) -> bool;
+    fn predicted_group_size(&self, max_rows: u64) -> u64;
+}
+
+impl BlockStatisticsExt for BlockStatistics {
+    /// Whether this block's groups break `max_rows`: its 90th-percentile group
+    /// holds more rows than that. A block with no group breaks nothing.
+    fn breaks_max_rows(&self, max_rows: u64) -> bool {
+        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
+        !rows.is_empty() && max_rows_group(&rows) > max_rows
+    }
+
+    /// **The group size a re-read of this block should gather at to meet
+    /// `max_rows`**: halved, from the size it holds, until the rows its
+    /// 90th-percentile group would then hold are within the maximum — a
+    /// prediction, since halving a group does not halve every group's rows,
+    /// and one the re-read is free to miss where a block's rows cluster.
+    /// Asked only of a block [`Self::breaks_max_rows`] answered for, so it
+    /// holds at least one group.
+    fn predicted_group_size(&self, max_rows: u64) -> u64 {
+        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
+        let (mut size, mut densest) = (self.group_size, max_rows_group(&rows));
+        while densest > max_rows && size > 1 {
+            (size, densest) = (size / 2, densest.div_ceil(2));
+        }
+        size
     }
 }
 
@@ -613,15 +644,6 @@ impl ColumnStatistics {
         })
     }
 
-    /// Group `group`'s count, zero where the block holds no such value.
-    pub fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
-        self.unrepresentable
-            .as_ref()
-            .and_then(|counts| counts.get(group))
-            .copied()
-            .unwrap_or_default()
-    }
-
     fn heap_bytes(&self) -> u64 {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
         let listed = |groups: &Vec<Option<Bounds>>| {
@@ -661,6 +683,23 @@ impl ColumnStatistics {
     pub fn value_bytes_where(&self, groups: usize, keep: impl Fn(usize) -> bool) -> Option<u64> {
         let counted = Some(&self.value_bytes).filter(|counted| counted.len() == groups)?;
         Some(counted.iter().enumerate().filter(|&(g, _)| keep(g)).map(|(_, bytes)| bytes).sum())
+    }
+}
+
+/// What a crate above calls on [`ColumnStatistics`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait ColumnStatisticsExt {
+    fn unrepresentable_in(&self, group: usize) -> Unrepresentable;
+}
+
+impl ColumnStatisticsExt for ColumnStatistics {
+    /// Group `group`'s count, zero where the block holds no such value.
+    fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
+        self.unrepresentable
+            .as_ref()
+            .and_then(|counts| counts.get(group))
+            .copied()
+            .unwrap_or_default()
     }
 }
 

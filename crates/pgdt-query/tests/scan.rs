@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use pgdt_core::RowEndingRefusal;
-use pgdt_core::copy::{decode_field, encode_field, split_fields};
+use pgdt_core::{decode_field, encode_field, split_fields};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{Event, ScanOptions, scan};
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};

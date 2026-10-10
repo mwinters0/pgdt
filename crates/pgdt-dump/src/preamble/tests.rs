@@ -1,4 +1,5 @@
 use super::*;
+use pgdt_model::internal::DatabaseMetadataExt;
 use pgdt_model::{
     CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, Extension, NotNull, PartitionOf,
     SpanBody, TableDef, TableReference, TypeDef, TypeKind,
@@ -1191,7 +1192,7 @@ fn span(body: SpanBody) -> pgdt_model::Span {
 
 fn dummy_data_span() -> pgdt_model::Span {
     span(SpanBody::Data(pgdt_model::DataBlock::Copy(pgdt_model::CopyBlock {
-        header: pgdt_core::copy::CopyHeader {
+        header: pgdt_core::CopyHeader {
             schema: None,
             table: "placeholder".to_string(),
             columns: Vec::new(),

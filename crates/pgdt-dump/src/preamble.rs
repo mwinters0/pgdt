@@ -30,6 +30,7 @@ use std::collections::BTreeSet;
 
 use pgdt_core::internal::Cursor;
 use pgdt_core::internal::{Lexer, Region, canonical_type_name, ident_cont, parse_type_name};
+use pgdt_model::internal::{DatabaseMetadataExt, TableDefExt};
 use pgdt_model::{
     CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, NotNull,
     PartitionOf, Span, SpanBody, TableDef, TableReference, TypeDef, TypeKind,
@@ -64,8 +65,8 @@ pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
 }
 
 /// Parse a (possibly schema-qualified) identifier from the start of `s`,
-/// same folding rules as [`pgdt_core::copy::parse_copy_header`]'s table names —
-/// so the result matches [`pgdt_core::copy::CopyHeader::qualified_name`] exactly
+/// same folding rules as [`pgdt_core::parse_copy_header`]'s table names —
+/// so the result matches [`pgdt_core::CopyHeader::qualified_name`] exactly
 /// for the same object. Returns the qualified name and how many bytes of `s`
 /// it consumed. `pub(crate)` for [`crate::map`]'s `INSERT INTO` target
 /// parsing, which needs the same identifier grammar this module already
@@ -1392,9 +1393,9 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
 /// end of file, or (per I1) the start of the current database's first `COPY`
-/// block — [`pgdt_query::stream::build_map`] and `crate::load::scan_preamble`'s own
+/// block — [`pgdt_query::build_map`] and `crate::load::scan_preamble`'s own
 /// span builder both only ever produce spans this way. A span list with an
-/// `Unscanned` tail cut off anywhere else (e.g. `pgdt_query::stream::table_stream`'s
+/// `Unscanned` tail cut off anywhere else (e.g. `pgdt_query::table_stream`'s
 /// live segment) would make the trailing database's `preamble_complete` a lie.
 pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
     let mut seen_connect = false;

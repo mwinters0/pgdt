@@ -3,16 +3,16 @@
 //!
 //! Pure, synchronous, no I/O (`docs/design/decisions.md`, "D74"). A decode
 //! function takes an already-COPY-unescaped `&str` field (what
-//! `pgdt_core::copy::decode_field` returns) and returns a plain Rust value; it
+//! `pgdt_core::decode_field` returns) and returns a plain Rust value; it
 //! never takes an Arrow builder — building the array is `batch.rs`'s job
 //! (query's), which is also where these are wired to their [`arrow_schema::DataType`].
 //!
 //! Every `render_*` function is the exact inverse of its `decode_*`
 //! counterpart — but [`render_bytea`], which writes the hex form whichever
-//! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `pgdt_core::copy::decode_field`
+//! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `pgdt_core::decode_field`
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
-//! `pgdt_core::copy::encode_field`'s job (`docs/design/decisions.md`, "D68").
+//! `pgdt_core::encode_field`'s job (`docs/design/decisions.md`, "D68").
 //! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `tests/scan.rs`.
@@ -1277,7 +1277,7 @@ pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {
 /// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
 /// The two hex decoders below loop per *byte* over a field of any length,
 /// so they read a table rather than branching through
-/// [`pgdt_core::copy::hex_val`]'s three ranges: a pair becomes two loads, a
+/// [`pgdt_core::internal::hex_val`]'s three ranges: a pair becomes two loads, a
 /// shift and an or, and validity is one bit test on the accumulated `or`.
 const HEX_NIBBLE: [u8; 256] = {
     let mut table = [BAD_NIBBLE; 256];
@@ -2592,7 +2592,7 @@ fn numeric_spelling_v16(b: &[u8]) -> Option<NumericSpelling> {
 /// `length` characters, with anything but a blank, `0x20`, past them (I75).
 /// The characters are counted in UTF-8, the one encoding read here; a field
 /// no longer in bytes than `length` is read without counting, and a field it
-/// does not refuse is read as written ([`crate::pgtype::CompareKind::Text`]).
+/// does not refuse is read as written ([`crate::pgtype_impl::CompareKind::Text`]).
 // deficiency: KD96 — a field longer than `length` only by trailing blanks,
 // which `varchar_input` and `bpchar_input` cut to `length` characters (I75),
 // keeps them here, and a `character(n)` field shorter than `length`, which
@@ -3339,6 +3339,7 @@ pub(crate) fn line_in(text: &str) -> bool {
     skip_c_spaces(b, i) == b.len() && !(fp_zero(coefficients[0]) && fp_zero(coefficients[1]))
 }
 
+#[path = "decode/tests.rs"]
 #[cfg(test)]
 mod tests;
 
@@ -3349,8 +3350,10 @@ mod tests;
 /// corpora below are generated rather
 /// than listed: a disagreement on an input nobody thought to write down is a
 /// test failure and not a report from the field.
+#[path = "decode/prior_shape.rs"]
 #[cfg(test)]
 mod prior_shape;
 
+#[path = "decode/differential.rs"]
 #[cfg(test)]
 mod differential;

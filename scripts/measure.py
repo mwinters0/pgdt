@@ -2519,7 +2519,7 @@ SWEEP_JOBS = 1
 #: queries such a cache.
 NO_STATISTICS = "--statistics-level metadata"
 
-#: `pgdump_query::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
+#: `pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
 #: held to the library's by a test.
 ROW_GROUP_SIZE = 1 << 20
 

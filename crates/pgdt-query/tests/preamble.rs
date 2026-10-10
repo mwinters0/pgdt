@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use futures::StreamExt;
+use pgdt_codec::ColumnResolution;
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::resolve::ColumnResolution;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::LocalFileSource;

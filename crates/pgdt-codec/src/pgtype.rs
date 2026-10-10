@@ -99,12 +99,12 @@ pub enum NestedPlan {
     /// through `apply_typmod` as `COPY` puts it (I51), whose bound is
     /// `precision` digits: `Decimal(max(p, s), s)` carries the scale and, where
     /// the scale exceeds the precision, not the precision
-    /// ([`crate::decode::typmod_unscaled_digits`]).
+    /// ([`crate::decode_impl::typmod_unscaled_digits`]).
     Decimal { precision: u16 },
     /// A `character varying(n)` or `character(n)` held as its text, filled
     /// as `Scalar` is and refused past `length` characters but for trailing
     /// blanks, as `COPY` refuses it (I75,
-    /// [`crate::decode::char_typmod_refuses`]).
+    /// [`crate::decode_impl::char_typmod_refuses`]).
     Text { length: u32 },
     /// `array_out` → `List<child>`. Nested `Array`s are the multi-dimensional
     /// case and **only** that: the plan's depth is the dimensionality the
@@ -302,8 +302,8 @@ pub enum CompareKind {
     Float64,
     /// A `numeric(p,s)` typed as an Arrow decimal at `scale`, compared as an
     /// unscaled integer there: a field put through its typmod
-    /// ([`crate::decode::typmod_unscaled_digits`]), a literal read exactly
-    /// ([`crate::decode::decimal_unscaled_digits`]).
+    /// ([`crate::decode_impl::typmod_unscaled_digits`]), a literal read exactly
+    /// ([`crate::decode_impl::decimal_unscaled_digits`]).
     Decimal {
         precision: u16,
         scale: i8,
@@ -317,7 +317,7 @@ pub enum CompareKind {
     Bytea,
     /// Bytewise over the text the file holds. `length` is a `character
     /// varying(n)`'s `n`, past which a field is refused but for trailing
-    /// blanks ([`crate::decode::char_typmod_refuses`]); `None` for every
+    /// blanks ([`crate::decode_impl::char_typmod_refuses`]); `None` for every
     /// other text, and for a literal's reading, which no typmod reaches.
     /// The length refuses a field and never moves a key.
     Text {
@@ -345,7 +345,7 @@ pub enum CompareKind {
     /// `numeric_in`'s storage bounds reach, a typmod rounding first (I63).
     ///
     /// `typmod` is the declared one, which a field is put through
-    /// ([`crate::decode::typmod_unscaled_digits`]) before it is normalized;
+    /// ([`crate::decode_impl::typmod_unscaled_digits`]) before it is normalized;
     /// `None` for the bare form, and for a typmod this build cannot read.
     Numeric {
         infinities: bool,
@@ -505,7 +505,7 @@ pub fn datafusion_position_divergences(
 /// How a comparison here differs from PostgreSQL's own for the same declared
 /// type. The declared type then sharpens the sentence a user reads, since
 /// several declared types share one divergence for different reasons (see
-/// `pgdt_query::predicate::ComparisonNote::message`).
+/// `pgdt_query::ComparisonNote::message`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonDivergence {
     /// The column is held as text and compared bytewise where the server has
@@ -596,7 +596,7 @@ pub enum ComparisonDivergence {
     /// This and the five variants after it are DataFusion semantics' own:
     /// produced by [`CompareKind::datafusion_divergence`],
     /// [`NestedCompare::datafusion_divergences`] and
-    /// `pgdt_query::predicate::column_divergences`, never by the register — as
+    /// `pgdt_query::column_divergences`, never by the register — as
     /// [`CompareKind::IntervalFields`] is produced by
     /// [`CompareKind::datafusion_order`] alone.
     LabelText,
@@ -793,7 +793,13 @@ pub enum Discrete {
     Date,
 }
 
-impl Discrete {
+/// What a crate above calls on [`Discrete`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait DiscreteExt {
+    fn largest(self) -> i64;
+}
+
+impl DiscreteExt for Discrete {
     /// The subtype's largest value, in the key a bound of it is read into:
     /// a bound here has no successor, and the canonical function raises
     /// `integer`, `bigint` or `date out of range` on it (I46). A leaf's key is
@@ -804,7 +810,7 @@ impl Discrete {
     ///
     /// A date's is `5874897-12-31` as days since 1970, the day before
     /// `IS_VALID_DATE`'s exclusive `DATE_END_JULIAN`.
-    pub fn largest(self) -> i64 {
+    fn largest(self) -> i64 {
         match self {
             Discrete::Int4 => i64::from(i32::MAX),
             Discrete::Int8 => i64::MAX,
@@ -2809,5 +2815,6 @@ fn comparison_user_type(
     }
 }
 
+#[path = "pgtype/tests.rs"]
 #[cfg(test)]
 mod tests;

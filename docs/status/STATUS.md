@@ -90,7 +90,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.8** The `release-profile` figure built — Cargo's default, thin LTO, and fat LTO with one codegen unit, each leg built from the tree measured and asked what it is before it is timed — and its first sitting taken on the one-crate tree — [notes](../design/roadmap-P35.8-release-profile-notes.md)
 - [x] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL, of which there are none; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there — [notes](../design/roadmap-P35.4-carve-notes.md)
 - [x] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`: fat LTO in one codegen unit, D105 — [notes](../design/roadmap-P35.9-second-sitting-notes.md)
-- [ ] **35.10** Every forced-public item reachable only through its crate's `internal`: every library module private, each API namespace an embedder names a public module of named re-exports, and each method a crate above calls that is not API behind an extension trait `internal` exports
+- [x] **35.10** Every forced-public item reachable only through its crate's `internal`: every library module private, each API namespace an embedder names a public module of named re-exports, and each method a crate above calls that is not API behind an extension trait `internal` exports — [notes](../design/roadmap-P35.10-internal-notes.md)
 - [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`, refusing an embedder's `internal` path or `timed!`/`row_evaluated!` and a codec `arrow_buffer` item but `i256`; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
 - [ ] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green
 
@@ -123,3 +123,23 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A crate's API is what was public before the carve, so `pgdt-core`'s root
+  carries `copy`'s twelve items beside `CopyHeader`, and `pgdt-codec`'s
+  `nested`'s nineteen**, though no embedder names one: only the crates above
+  and their tests do.
+  The spec says what a boundary forces public goes in `internal` and never
+  says what is API; the carve's own widening is the one mechanical line, and
+  the pre-carve facade published both modules
+  ([`../design/roadmap-P35.10-internal-notes.md`](../design/roadmap-P35.10-internal-notes.md)).
+  Reconsidering means moving those into `internal`, where `pgdt-query`'s
+  integration tests, which read fields through `decode_field` and
+  `split_fields`, then name them too.
+- **The four namespaces' files load as `cache_impl`, `decode_impl`,
+  `pgtype_impl` and `instrument_impl` by `#[path]`**, each file's test
+  modules `#[path]`ed beside it. A namespace and its file's module cannot
+  share a name, and the alternatives move files: renaming `cache.rs`,
+  `decode.rs`, `pgtype.rs` and `instrument.rs`, which the docs cite by name
+  some 130 times, or declaring each module inside its namespace, which moves
+  it under a directory. Reconsidering means one of those, in 35.5's
+  repointing or 35.6's seams round, and dropping the `#[path]` lines.

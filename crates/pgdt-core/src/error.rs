@@ -81,7 +81,7 @@ pub enum Error {
     /// another file — so it refuses rather than starting cold and overwriting
     /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
     /// points — `pgdt_query::map_file`, `pgdt_query::table_stream`,
-    /// `pgdt_query::table_stream_partitions` and `pgdt_dump::load::preamble_only` —
+    /// `pgdt_query::table_stream_partitions` and `pgdt_dump::preamble_only` —
     /// before any byte of the dump is read, through
     /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the mode
     /// may overwrite the cache instead; and by a caller pre-empting them, as

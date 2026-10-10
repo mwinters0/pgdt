@@ -23,13 +23,13 @@
 //!
 //! [`Severity`] and the `{severity, kind}` shape are the vocabulary shared
 //! across producers, not one enum: `DumpIndex` is the model's and
-//! `pgdt_codec::resolve::ColumnResolution` is a codec conclusion, so a
+//! `pgdt_codec::ColumnResolution` is a codec conclusion, so a
 //! [`DiagnosticKind`] variant carrying one would make the model name a codec
-//! type (`docs/design/decisions.md`, "D68"). `pgdt_codec::resolve::ColumnNote` is
+//! type (`docs/design/decisions.md`, "D68"). `pgdt_codec::ColumnNote` is
 //! the per-column record in the codec — one per column, always present — and
-//! `pgdt_query::predicate::ComparisonNote` the comparison one in query, per term
-//! or, from `pgdt_query::predicate::column_divergences`, per column, and
-//! `pgdt_query::stream::PlanNote` what a query's plan settled, also in query.
+//! `pgdt_query::ComparisonNote` the comparison one in query, per term
+//! or, from `pgdt_query::column_divergences`, per column, and
+//! `pgdt_query::PlanNote` what a query's plan settled, also in query.
 //!
 //! **The four are unified at the drain, not at the storage type**: each
 //! implements [`Finding`], defined here in the model so that every crate can, and a
@@ -48,9 +48,9 @@ use crate::TilingIssue;
 /// One finding from any of the library's diagnostic channels, as a
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
 /// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (the
-/// model, about the file), `pgdt_codec::resolve::ColumnNote` (the codec, about one
-/// column's type), `pgdt_query::predicate::ComparisonNote` (query, about one term of
-/// a query, or one column in a query's semantics) and `pgdt_query::stream::PlanNote`
+/// model, about the file), `pgdt_codec::ColumnNote` (the codec, about one
+/// column's type), `pgdt_query::ComparisonNote` (query, about one term of
+/// a query, or one column in a query's semantics) and `pgdt_query::PlanNote`
 /// (query, about one query's plan).
 ///
 /// A sink wanting the structured record rather than the sentence recovers it
@@ -158,7 +158,7 @@ pub enum DiagnosticKind {
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
     /// non-seekable table — pushed once per index, whether the table was just
-    /// walked (`pgdt_dump::load::build_index`, `pgdt_dump::load::preamble_only`) or
+    /// walked (`pgdt_query::build_index`, `pgdt_dump::preamble_only`) or
     /// read back from a persisted cache (`pgdt_dump::cache::status_from_file`).
     NonSeekableCompressedSource { block_count: usize },
 }
@@ -212,10 +212,6 @@ impl Finding for Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn tiling_broken(issues: Vec<TilingIssue>) -> Self {
-        Self { severity: Severity::Error, kind: DiagnosticKind::TilingBroken { issues } }
-    }
-
     /// Public, unlike its siblings: a caller matching on
     /// [`pgdt_dump::cache::CacheStatus`] itself rather than going through
     /// [`pgdt_dump::cache::CacheMode::load`] still has to turn a
@@ -240,17 +236,32 @@ impl Diagnostic {
     pub fn cache_origin_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
     }
+}
 
-    pub fn toc_coverage(attributed: usize, spans: usize) -> Self {
+/// What a crate above calls on [`Diagnostic`] that is not its API: public only
+/// because a crate boundary forced it, and reached through `internal`.
+pub trait DiagnosticExt {
+    fn tiling_broken(issues: Vec<TilingIssue>) -> Self;
+    fn toc_coverage(attributed: usize, spans: usize) -> Self;
+    fn cache_offline() -> Self;
+    fn non_seekable_compressed_source(block_count: usize) -> Self;
+}
+
+impl DiagnosticExt for Diagnostic {
+    fn tiling_broken(issues: Vec<TilingIssue>) -> Self {
+        Self { severity: Severity::Error, kind: DiagnosticKind::TilingBroken { issues } }
+    }
+
+    fn toc_coverage(attributed: usize, spans: usize) -> Self {
         Self { severity: Severity::Info, kind: DiagnosticKind::TocCoverage { attributed, spans } }
     }
 
-    pub fn cache_offline() -> Self {
+    fn cache_offline() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOffline }
     }
 
     /// D19's warning: usable as-is, so `Warning` rather than `Error`.
-    pub fn non_seekable_compressed_source(block_count: usize) -> Self {
+    fn non_seekable_compressed_source(block_count: usize) -> Self {
         Self {
             severity: Severity::Warning,
             kind: DiagnosticKind::NonSeekableCompressedSource { block_count },

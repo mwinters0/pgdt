@@ -38,6 +38,7 @@ use pgdt_io::{
     ByteRangeSource, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
+use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
     BlockCensus,
     internal::{BlockObserver, FieldCount},

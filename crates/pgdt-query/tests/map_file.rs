@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
-use pgdt_codec::resolve::{ColumnResolution, SchemaMode, resolve_columns};
+use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdt_dump::{ScanOptions, cache, preamble_only};
 use pgdt_io::{ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};

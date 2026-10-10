@@ -88,7 +88,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// `docs/design/decisions.md`, "D9".
     fn hint_read_size(&self, _len: usize) {}
     /// The xz seek table behind this source, for a caller building a cache
-    /// envelope to persist alongside it (`pgdt_dump::cache::CompressionIndex`
+    /// envelope to persist alongside it (`pgdt_dump::internal::CompressionIndex`
     /// wraps this at save time). See `docs/design/decisions.md`, "D18".
     ///
     /// `None` by default, right for a source with no compression layer. Both
@@ -370,7 +370,7 @@ pub enum PartitionBoundaries {
 /// (`docs/design/decisions.md`, "D46").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RetainedUnit {
-    /// The read chunk. A batch spanning `pgdt_query::batch::QueryOptions`'
+    /// The read chunk. A batch spanning `pgdt_query::QueryOptions`'
     /// `max_source_span` bytes pins the chunk buffers those bytes were read
     /// into, and those are bytes [`Partitioning::partition_bytes`] has not
     /// charged for — so a caller adds the span. A plain file's answer.
@@ -1608,7 +1608,7 @@ const POOL_DEPTH: usize = 4;
 ///
 /// The read path's steady state is chunk-sized — [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`],
 /// tunable through `ScanOptions::chunk_size_bytes`. What can be far larger is
-/// `pgdt_dump::map::attach_text`'s coalesced span read, which happens once per map
+/// `pgdt_dump::attach_text`'s coalesced span read, which happens once per map
 /// and never again; holding one of those for the rest of a process would trade
 /// what a scan holds resident (`peak-rss`) for an allocation nothing asks for
 /// twice.
@@ -1933,7 +1933,7 @@ impl BufferPool {
     /// **What it costs is a second *pooled* read unit**, which the plain path
     /// does not have: it reads [`PartitionRead::Chunked`], so every buffer its
     /// read loop takes is the announced length. It does take one other length
-    /// — `pgdt_dump::map::attach_text`'s run read, which is bounded by the spans
+    /// — `pgdt_dump::attach_text`'s run read, which is bounded by the spans
     /// it is filling rather than by the hint — and this rule is exactly what
     /// drops that buffer instead of pooling it. The two-unit sources are the
     /// `.xz` ones, [`XzSource`] and `FetchedXzSource`, whose `XzBudget` takes
@@ -3416,7 +3416,7 @@ pub struct FetchedXzSource {
     held: Mutex<Option<HeldBlock>>,
     /// How many block decodes the piecewise arm has begun. Absent without
     /// `introspect`, which is the build that asserts a block a scan sits
-    /// inside is decoded once (`pgdt_core::instrument::DecodeCounter`).
+    /// inside is decoded once (`pgdt_core::internal::DecodeCounter`).
     decodes: DecodeCounter,
     /// What the caller announced and everything derived from it, which
     /// [`XzSource`] holds the same value of: only the decoder charge inside it
@@ -4817,7 +4817,7 @@ fn announce_remote_walk(origin: &Origin) {
 /// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
 /// is worst-case-best across the device classes measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`pgdt_dump::scan::ScanOptions::chunk_size_bytes`] is
+/// Public and named because it is what [`pgdt_dump::ScanOptions::chunk_size_bytes`] is
 /// compared against and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the

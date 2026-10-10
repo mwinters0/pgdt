@@ -89,21 +89,32 @@ fn production_of(path: &Path) -> String {
 }
 
 /// A crate's production code: each file a production `mod name;` declares,
-/// from the crate root down. A module declared under `#[cfg(test)]` is a test
-/// file and is not read.
+/// from the crate root down, at the file a `#[path = "…"]` before it names
+/// where one does. A module declared under `#[cfg(test)]` is a test file and
+/// is not read.
 fn production(krate: &str) -> Vec<(PathBuf, String)> {
     let src = crate_dir(krate).join("src");
     let mut out = Vec::new();
     let mut pending = vec![(src.join("lib.rs"), src.clone())];
     while let Some((file, dir)) = pending.pop() {
         let code = production_of(&file);
+        let mut named: Option<&str> = None;
         for line in code.lines() {
             let line = line.trim();
+            if let Some(path) = line.strip_prefix("#[path = \"").and_then(|l| l.strip_suffix("\"]"))
+            {
+                named = Some(path);
+                continue;
+            }
             let line = line.strip_prefix("pub ").unwrap_or(line);
             if let Some(name) = line.strip_prefix("mod ").and_then(|l| l.strip_suffix(';')) {
-                let child = dir.join(format!("{name}.rs"));
+                let child = match named {
+                    Some(path) => dir.join(path),
+                    None => dir.join(format!("{name}.rs")),
+                };
                 pending.push((child, dir.join(name)));
             }
+            named = None;
         }
         out.push((file, code));
     }
