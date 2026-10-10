@@ -20,8 +20,9 @@ use std::sync::Arc;
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
+use pgdt_codec::UnrepresentableMode;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode};
-use pgdt_codec::{NestedPlan, UnrepresentableMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};

@@ -31,7 +31,7 @@ use arrow::array::{
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
-use pgdt_codec::NestedPlan;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_query::render_field_into;
 
 struct Counting;

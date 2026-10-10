@@ -42,7 +42,9 @@ use bytes::Bytes;
 use crate::predicate::Expr;
 use crate::stream::{ResumeToken, table_stream};
 use pgdt_codec::decode;
-use pgdt_codec::internal::{float_field, push_array_null, push_integer, quote_array_element};
+use pgdt_codec::internal::{
+    char_typmod_refuses, float_field, push_array_null, push_integer, quote_array_element,
+};
 use pgdt_codec::pgtype::{ComparisonSemantics, NestedPlan, Position};
 use pgdt_codec::{
     RangeLiteral, RecordLiteral, decode_array, decode_int2vector, decode_multirange, decode_range,
@@ -359,7 +361,7 @@ impl RetainedChunks {
 /// `RecordBatch::try_new` checks.
 enum ColumnBuilder {
     /// A text, and a `character varying(n)`'s or `character(n)`'s length,
-    /// past which a field is refused ([`decode::char_typmod_refuses`]).
+    /// past which a field is refused ([`char_typmod_refuses`]).
     Utf8View(StringViewBuilder, Option<u32>),
     Bool(BooleanBuilder),
     Int16(Int16Builder),
@@ -718,7 +720,7 @@ fn append_range(
 /// says to read it as it is.
 fn text_refused(text: &str, length: Option<u32>, invalid: PostgresInvalidValues) -> bool {
     invalid != PostgresInvalidValues::Ignore
-        && length.is_some_and(|length| decode::char_typmod_refuses(text, length))
+        && length.is_some_and(|length| char_typmod_refuses(text, length))
 }
 
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,

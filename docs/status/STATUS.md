@@ -91,7 +91,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.4** `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query` carved under `crates/`, `pgdump_query` a facade over them, every integration test moved to the lowest crate whose API it exercises, `io`'s unit tests that drive a scan or a stream moved whole to the lowest crate holding what they use, and `pgdt-codec` dev-depending on `pgdt-dump` for its tests that parse DDL, of which there are none; every shared version in `[workspace.dependencies]`, the `upgrade-deps` skill pointed there — [notes](../design/roadmap-P35.4-carve-notes.md)
 - [x] **35.9** The `release-profile` figure's second sitting, on the split tree, and the shipped build's release profile decided from the two in a `D<k>`: fat LTO in one codegen unit, D105 — [notes](../design/roadmap-P35.9-second-sitting-notes.md)
 - [x] **35.10** Every forced-public item reachable only through its crate's `internal`: every library module private, each API namespace an embedder names a public module of named re-exports, and each method a crate above calls that is not API behind an extension trait `internal` exports — [notes](../design/roadmap-P35.10-internal-notes.md)
-- [ ] **35.10.1** Each crate's API sorted by the spec's definition ("What this phase does not do"): what an embedder of the crate would call by its purpose stays API, the rest goes to `internal`, and each API item has one path — 35.10 having taken "public before the carve" for API
+- [x] **35.10.1** Each crate's API sorted by the spec's definition ("What this phase does not do"): what an embedder of the crate would call by its purpose stays API, the rest goes to `internal`, and each API item has one path — 35.10 having taken "public before the carve" for API — [notes](../design/roadmap-P35.10.1-api-sort-notes.md)
 - [ ] **35.10.2** Each API namespace its file's own module made public, what it holds that is not API moved to private child modules at the file's seam and re-exported by `internal`, and no library file loaded by `#[path]` — the layout the spec names ("What this phase does not do"), over 35.10.1's sort
 - [ ] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`, refusing an embedder's `internal` path or `timed!`/`row_evaluated!`, a codec `arrow_buffer` item but `i256`, a `#[path]` on a library module, and an API item re-exported at its crate's root beside its namespace; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths
 - [ ] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green
@@ -125,3 +125,25 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`pgdt-core`'s SQL lexer and `pgdt-codec`'s datetime grammar and ordering
+  keys stay internal**, though each crate's `lib.rs` lists them among what
+  it holds. An embedder would call a key to order two values as PostgreSQL
+  does, but nothing public offers that today: `ValueKey::compare` is
+  test-gated, and `OrderKey` and the functions building it expose the key's
+  representation, so making them API is designing a surface rather than
+  sorting one
+  ([`../design/roadmap-P35.10.1-api-sort-notes.md`](../design/roadmap-P35.10.1-api-sort-notes.md)).
+  Reconsidering means a slice designing that surface — `ValueKey` with an
+  order, say — and moving it out of `internal`.
+- **The per-block statistics re-read is `pgdt-query`'s `internal`**:
+  `gather_block_statistics`, `BlockReread`, `bounded_columns`,
+  `StatisticsBackfill` and `StatisticsRequest::backfill`, with
+  `pgdt-model`'s `BlockGathered`. Its arguments are the gatherer's own
+  bookkeeping and `map_file` back-fills on a request, so no embedder needs
+  it; but the crate now has an `internal` module that only its own
+  integration tests name, where `pgdt-codec` and `pgdt-dump` gate their
+  test-only items behind `test-support`. Reconsidering means either keeping
+  the re-read as API, for an embedder back-filling one block lazily, or
+  gating `pgdt_query::internal` behind a `test-support` feature its tests
+  turn on.

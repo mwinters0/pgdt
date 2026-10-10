@@ -68,11 +68,8 @@ use pgdt_codec::internal::{ColumnTier, column_tiers};
 use pgdt_codec::internal::{ValueKey, field_refused, grammar_refuses};
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
-    decode::{
-        Unread, char_typmod_refuses, decode_bytea, decode_bytea_escape, render_bytea,
-        typmod_unscaled_digits,
-    },
-    internal::bytea_unread,
+    decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea, typmod_unscaled_digits},
+    internal::{bytea_unread, char_typmod_refuses},
 };
 use pgdt_codec::{
     internal::{column_grammar, unchecked_positions},
@@ -84,11 +81,11 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{CopyHeader, decode_field, split_fields};
 use pgdt_model::internal::{IgnoredRefusalsExt, UnrepresentableExt};
 use pgdt_model::{
-    BlockGathered, BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef, ColumnDictionary,
+    BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef, ColumnDictionary,
     ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpMetadata,
     FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, RowGroup, Sortedness,
     Unrepresentable, UnrepresentableTier,
-    internal::{BlockObserver, max_rows_group, min_rows_group, text_heap, vec_heap},
+    internal::{BlockGathered, BlockObserver, max_rows_group, min_rows_group, text_heap, vec_heap},
 };
 
 /// The observer for one block, charging what it holds to `account`, or
@@ -237,7 +234,7 @@ impl StrictUnchecked {
 pub struct UncheckedColumn {
     pub column: String,
     /// The position within the column's value, spelled as
-    /// [`pgdt_codec::NestedCompare::uncomparable`] spells one — `[]` an element,
+    /// [`pgdt_codec::pgtype::NestedCompare::uncomparable`] spells one — `[]` an element,
     /// `.name` a field, `.bound` a range's bound — and empty for the value.
     pub path: String,
     /// The type declared at that position, as the dump wrote it; empty for

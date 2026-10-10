@@ -25,10 +25,12 @@ use pgdt_model::{
     BlockStatistics, ColumnRefusals, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, Sortedness,
 };
+use pgdt_query::internal::{
+    StatisticsBackfill, StatisticsRequestExt, bounded_columns, gather_block_statistics,
+};
 use pgdt_query::{
     BLOCK_MAX_ROW_GROUPS, MapRun, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    bounded_columns, gather_block_statistics, map_file,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget, map_file,
 };
 
 mod common;
@@ -580,7 +582,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
 /// incomplete rather than `Exact` over the groups that kept a bound.
 #[tokio::test]
 async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
-    use pgdt_codec::ComparisonSemantics;
+    use pgdt_codec::pgtype::ComparisonSemantics;
     use pgdt_model::{DataBlock, SpanBody};
     use pgdt_model::{StatisticsView, TableName};
     use pgdt_query::{QueryOptions, table_schema, table_summary};

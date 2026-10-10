@@ -16,11 +16,13 @@ body changed and no test moved.
   made private took its API to the crate root where no namespace holds it:
   `copy`'s to `pgdt-core`'s, `nested`'s to `pgdt-codec`'s, and `scan`'s
   `DollarQuoteEnd` to `pgdt-dump`'s, which an `Event` variant carries.
+  35.10.1 re-sorted the line by purpose
+  ([`roadmap-P35.10.1-api-sort-notes.md`](roadmap-P35.10.1-api-sort-notes.md)).
 - **Four namespaces, the ones an embedder names**: `pgdt_dump::cache`,
   `pgdt_codec::decode`, `pgdt_codec::pgtype` and `pgdt_core::instrument`,
-  each an inline module of named re-exports of its file's API, root items
-  included. `resolve` was named once, by `pgdt`, for items all at the codec's
-  root, so `pgdt` names the root instead and the module is private.
+  each an inline module of named re-exports of its file's API. `resolve`
+  was named once, by `pgdt`, for items all at the codec's root, so `pgdt`
+  names the root instead and the module is private.
 - **A namespace's file loads as `<name>_impl`**, by `#[path]` in `lib.rs`, a
   root `pub mod` and a private module being unable to share a name. A file
   `#[path]` loads owns its directory as a `mod.rs` does, so its own test

@@ -21,14 +21,20 @@ pub use predicate::{
     ComparisonNote, Expr, Membership, Predicate, PredicateOp, Truth, column_divergences,
 };
 pub use statistics::{
-    BLOCK_MAX_ROW_GROUPS, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsHeld, StatisticsLevel, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, StatisticsTerms,
+    BLOCK_MAX_ROW_GROUPS, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES, StatisticsHeld,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{
-    BlockReread, BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, MapRun, PlanLever,
-    PlanNote, PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream,
-    bounded_columns, build_index, build_map, gather_block_statistics, map_file, table_schema,
-    table_stream, table_stream_partitions,
+    BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, MapRun, PlanLever, PlanNote,
+    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, build_index, build_map,
+    map_file, table_schema, table_stream, table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};
+
+/// What this crate's own integration tests reach that is not its API: public
+/// only because a crate boundary forced it, and named here so a caller
+/// reaching past the API names the word. No embedder names it.
+pub mod internal {
+    pub use crate::statistics::{StatisticsBackfill, StatisticsRequestExt};
+    pub use crate::stream::{BlockReread, bounded_columns, gather_block_statistics};
+}

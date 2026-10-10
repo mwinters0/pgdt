@@ -1002,7 +1002,7 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
 /// declares no table, so no field of any is checked.
 #[tokio::test]
 async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() {
-    use pgdt_codec::Unchecked;
+    use pgdt_codec::pgtype::Unchecked;
     use pgdt_query::strict_unchecked;
     fn base<'a>(column: &'a str, declared: &str) -> (&'a str, &'a str, String, Unchecked) {
         (column, "", declared.to_string(), Unchecked::BaseType)
@@ -1184,7 +1184,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
 /// table is declared.
 #[tokio::test]
 async fn a_hand_written_partition_hierarchy_is_named_per_block() {
-    use pgdt_codec::Unchecked;
+    use pgdt_codec::pgtype::Unchecked;
     use pgdt_query::{UncheckedBound, strict_unchecked};
     let dir = tempfile::tempdir().unwrap();
     let unchecked_of = |text: &str| {

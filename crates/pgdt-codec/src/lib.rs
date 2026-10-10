@@ -19,12 +19,6 @@ pub use nested::{
     parse_multirange, parse_range, parse_record, render_array, render_int2vector,
     render_multirange, render_range, render_record,
 };
-pub use pgtype_impl::{
-    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
-    IntervalQualifier, NestedCompare, NestedPlan, NumericTypmod, Position, TypeOutcome,
-    UnanswerableReason, Unchecked, bounds_set_keyed_by, comparison_for, extension_for,
-    resolve_declared_type,
-};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use unrepresentable::UnrepresentableMode;
 
@@ -34,10 +28,9 @@ pub use unrepresentable::UnrepresentableMode;
 /// takes `decode`.
 pub mod decode {
     pub use crate::decode_impl::{
-        NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, Read, Unread, char_typmod_refuses,
-        decimal_unscaled_digits, decode_bool, decode_bytea, decode_bytea_escape, decode_date32,
-        decode_f32, decode_f64, decode_interval, decode_time64_micros, decode_timestamp_micros,
-        decode_uuid, numeric_in_stores, render_bool, render_bytea, render_bytea_escape,
+        Read, Unread, decimal_unscaled_digits, decode_bool, decode_bytea, decode_bytea_escape,
+        decode_date32, decode_f32, decode_f64, decode_interval, decode_time64_micros,
+        decode_timestamp_micros, decode_uuid, render_bool, render_bytea, render_bytea_escape,
         render_date32, render_date32_into, render_decimal, render_f32, render_f64, render_interval,
         render_time64_micros, render_time64_micros_into, render_timestamp_micros,
         render_timestamp_micros_into, render_uuid, typmod_unscaled_digits,
@@ -62,7 +55,8 @@ pub mod pgtype {
 /// past the API names the word.
 pub mod internal {
     pub use crate::decode_impl::{
-        Float, bytea_unread, float_field, push_integer, render_timestamp_postgres_micros,
+        Float, NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, bytea_unread, char_typmod_refuses,
+        float_field, numeric_in_stores, push_integer, render_timestamp_postgres_micros,
         time_of_day_micros, timestamp_postgres_micros,
     };
     pub use crate::key::{

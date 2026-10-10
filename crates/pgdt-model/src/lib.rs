@@ -29,10 +29,9 @@ pub use span::{
 };
 use statistics::deserialize_block_statistics;
 pub use statistics::{
-    BlockGathered, BlockStatistics, Bounds, BoundsSet, BoundsView, ColumnBounds, ColumnDictionary,
-    ColumnRefusals, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, RowGroup, Sortedness,
-    StatisticsView,
+    BlockStatistics, Bounds, BoundsSet, BoundsView, ColumnBounds, ColumnDictionary, ColumnRefusals,
+    ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, FieldRefusal,
+    GroupSizing, IgnoredRefusals, PostgresInvalidValues, RowGroup, Sortedness, StatisticsView,
 };
 
 /// What a crate above reaches that is not this crate's API: public only
@@ -45,8 +44,8 @@ pub mod internal {
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::statistics::{
-        BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt,
-        max_rows_group, min_rows_group, text_heap, vec_heap,
+        BlockGathered, BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt,
+        IgnoredRefusalsExt, max_rows_group, min_rows_group, text_heap, vec_heap,
     };
 }
 

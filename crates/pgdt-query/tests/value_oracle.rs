@@ -29,8 +29,8 @@ use arrow::datatypes::{
     TimestampMicrosecondType, UInt32Type,
 };
 use futures::StreamExt;
-use pgdt_codec::NestedPlan;
 use pgdt_codec::SchemaMode;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;

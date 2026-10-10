@@ -5,7 +5,7 @@
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use pgdt_codec::NestedPlan;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
@@ -328,7 +328,10 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        QueryOptions { semantics: pgdt_codec::ComparisonSemantics::DataFusion, ..options.clone() },
+        QueryOptions {
+            semantics: pgdt_codec::pgtype::ComparisonSemantics::DataFusion,
+            ..options.clone()
+        },
         Some(token.clone()),
         CacheMode::DISABLED,
     );

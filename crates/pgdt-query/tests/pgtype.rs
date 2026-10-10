@@ -10,8 +10,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields};
+use pgdt_codec::UnrepresentableMode;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdt_codec::{NestedPlan, UnrepresentableMode};
 use pgdt_dump::ScanOptions;
 use pgdt_io::LocalFileSource;
 use pgdt_model::{DumpMetadata, TableName};

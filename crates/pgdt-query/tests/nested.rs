@@ -13,8 +13,8 @@
 use std::ops::ControlFlow;
 use std::path::Path;
 
-use pgdt_codec::NestedPlan;
 use pgdt_codec::SchemaMode;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{
     decode_array, decode_int2vector, decode_multirange, decode_range, decode_record, render_array,
     render_int2vector, render_multirange, render_range, render_record,
@@ -284,7 +284,7 @@ mod oracle {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
-    use pgdt_codec::{NestedPlan, TypeOutcome, resolve_declared_type};
+    use pgdt_codec::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
     use pgdt_codec::{
         parse_array, parse_int2vector, parse_multirange, parse_range, parse_record, render_array,
         render_int2vector, render_multirange, render_range, render_record,

@@ -7,7 +7,8 @@ use pgdt_codec::internal::{
     nested_accepted_form, nested_key, order_key, read_key, render_macaddr, special_order_key,
 };
 use pgdt_codec::internal::{
-    render_timestamp_postgres_micros, time_of_day_micros, timestamp_postgres_micros,
+    numeric_in_stores, render_timestamp_postgres_micros, time_of_day_micros,
+    timestamp_postgres_micros,
 };
 use pgdt_codec::{ColumnResolution, ResolvedSchema};
 use pgdt_codec::{
@@ -595,7 +596,7 @@ fn equality_comparison(
         .to_string(),
         K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
         K::Decimal { .. }
-            if semantics == ComparisonSemantics::Postgres && !decode::numeric_in_stores(text) =>
+            if semantics == ComparisonSemantics::Postgres && !numeric_in_stores(text) =>
         {
             return None;
         }

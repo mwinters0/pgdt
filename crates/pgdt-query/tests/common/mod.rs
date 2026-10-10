@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use arrow::array::RecordBatch;
-use pgdt_codec::NestedPlan;
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_query::render_field;
 
 /// The **hand-written** dump at `tests/data/edge_cases.sql` — not a `pg_dump`

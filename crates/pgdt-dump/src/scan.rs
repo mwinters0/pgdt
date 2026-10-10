@@ -764,7 +764,7 @@ pub struct ScanOptions {
     /// What gathering does with a field its type's `*_in` refuses: fails the
     /// pass at the first, by default, or goes on past it, or checks every
     /// field ([`PostgresInvalidValues`]). Read by [`pgdt_query::map_file`] and
-    /// [`pgdt_query::gather_block_statistics`] alone, as gathering is; a
+    /// [`pgdt_query::internal::gather_block_statistics`] alone, as gathering is; a
     /// query's reads are [`pgdt_query::QueryOptions::postgres_invalid_values`]'.
     pub postgres_invalid_values: PostgresInvalidValues,
 }

@@ -214,7 +214,7 @@ pub struct ResolvedSchema {
     /// whatever its declared type said — the census can take a column out of
     /// `Mapped` after the declared type has been read — but for
     /// [`ColumnResolution::UnrepresentableValues`] under
-    /// [`crate::ComparisonSemantics::Postgres`], which keeps the declared
+    /// [`crate::pgtype::ComparisonSemantics::Postgres`], which keeps the declared
     /// type's plan ([`read_as_text`]).
     pub comparisons: Vec<ComparisonPlan>,
     /// Whether each column's declaration makes it `NOT NULL` — on the column,
