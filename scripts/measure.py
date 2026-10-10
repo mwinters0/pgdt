@@ -207,10 +207,11 @@ class Config:
     sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
     bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(REGISTER_BIN)))
-    # The `allocator` figure's three legs and the instrument, and the host
-    # builds the printed recipes make. Each is a full cargo target dir, so it
-    # goes on scratch rather than under `runs/`, which holds logs and small
-    # binaries; the binaries themselves are copied into `runs/`. A separate
+    # The `allocator` figure's three legs, the `release-profile` figure's
+    # three, the instrument, and the host builds the printed recipes make.
+    # Each is a full cargo target dir, so it goes on scratch rather than
+    # under `runs/`, which holds logs and small binaries; the binaries
+    # themselves are copied into `runs/`. A separate
     # target dir per leg is not tidiness: a `--features` build writes the
     # shipped build's output path, so building a leg in the shipped build's
     # dir would silently replace `bin_pgdt` and every other figure in the same
@@ -4494,6 +4495,8 @@ class Session:
             return ensure_xz_decode_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
+        if which.startswith("profile:"):
+            return ensure_profile_binary(self.cfg, which.removeprefix("profile:"), self.log)
         if which == "introspect":
             return ensure_instrument_binary(self.cfg, self.log)
         raise ValueError(f"unknown binary {which!r}")
@@ -5847,6 +5850,87 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
             "it would publish a comparison of two identical binaries"
         )
     log(f"  {out.name}: {leg}")
+    return out
+
+
+#: The `release-profile` figure's legs, each a Cargo profile inheriting
+#: `release` in the root `Cargo.toml`, in the table's column order with the
+#: caption each carries. **The first is the one every ratio is against**:
+#: Cargo's default restated as a profile of its own rather than `release`
+#: itself, so the leg stays the default whatever `release` comes to state, and
+#: rather than the shipped binary, so all three are built alike from the tree
+#: measured and no column is borrowed from another figure.
+PROFILE_LEGS: tuple[tuple[str, str], ...] = (
+    ("release-default", "Cargo's default: no cross-crate LTO, 16 codegen units"),
+    ("release-thin", "thin LTO, 16 codegen units"),
+    ("release-fat", "fat LTO, one codegen unit"),
+)
+
+#: What `pgdt --version` names of the profile (`pgdt/src/profile.rs`).
+PROFILE_RE = re.compile(r"\(profile: ([a-z0-9-]+)\)")
+
+
+def binary_profile(binary: Path) -> str:
+    """Which Cargo profile a built `pgdt` was made under, read out of the
+    binary, for `binary_allocator`'s reason: three legs differing only in a
+    flag passed to `cargo` are a table of the wrong comparison the moment one
+    flag is dropped, and nothing else would notice. A binary naming none is
+    refused, as is one naming `unknown`, which is `pgdt/build.rs` failing to
+    read its profile."""
+    out = run([str(binary), "--version"], capture=True)
+    match = PROFILE_RE.search(out)
+    if match is None or match.group(1) == "unknown":
+        raise RuntimeError(
+            f"{binary} --version does not name the profile it was built under "
+            f"({out.strip()!r}) — it cannot be a `release-profile` leg"
+        )
+    return match.group(1)
+
+
+#: Legs built by this process, and legs a dry run has announced, for
+#: `_ALLOC_BUILT`'s and `_ALLOC_ANNOUNCED`'s reasons.
+_PROFILE_BUILT: set[str] = set()
+_PROFILE_ANNOUNCED: set[str] = set()
+
+
+def ensure_profile_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> Path:
+    """One leg of the `release-profile` figure, built and then interrogated.
+
+    `ensure_allocator_binary`'s details, with the profile in the allocator's
+    place: **the default features**, so every leg links the shipped allocator
+    and the three differ by the profile alone; **its own target dir**, apart
+    from the shipped build's and the other legs'; **`--version` read back**,
+    naming this leg's profile and the shipped allocator, or the leg is
+    refused; and **once per process**.
+    Built in the release image (`build_in_image`), as the shipped binary is.
+    """
+    if leg not in dict(PROFILE_LEGS):
+        raise ValueError(f"unknown release-profile leg {leg!r}")
+    out = cfg.out_dir / f"pgdt-{leg}"
+    if leg in _PROFILE_BUILT:
+        return out
+    target = image_target_dir(cfg, leg)
+    if cfg.dry_run:
+        if leg not in _PROFILE_ANNOUNCED:
+            _PROFILE_ANNOUNCED.add(leg)
+            log(f"  [dry-run] would build the {leg} profile leg into {target}")
+        return out
+    log(f"  building the {leg} profile leg into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    built = build_in_image(cfg, release.Build(profile=leg), target_dir=target)
+    shutil.copyfile(built, out)
+    out.chmod(0o755)
+    _PROFILE_BUILT.add(leg)
+    got, allocator = binary_profile(out), binary_allocator(out)
+    if got != leg or allocator != ALLOCATOR_LEGS[0]:
+        out.unlink()
+        _PROFILE_BUILT.discard(leg)
+        raise RuntimeError(
+            f"the {leg} leg reports profile `{got}` and allocator `{allocator}`: a leg is "
+            f"its own profile at the shipped features ({ALLOCATOR_LEGS[0]}), or timing it "
+            "publishes a comparison of something else"
+        )
+    log(f"  {out.name}: {leg}, {allocator}")
     return out
 
 
@@ -7287,6 +7371,89 @@ def run_allocator(session: Session) -> str:
         + "\n"
         + _cached_query_note("Each `query` row")
         + note
+        + "\n"
+        + _per_rep(figure, session, specs)
+    )
+
+
+# -- the release profile ----------------------------------------------------
+
+
+def _release_profile_specs() -> list[RunSpec]:
+    """Every leg of every `allocator` shape, plus the co-measured floor.
+
+    The shapes are `_ALLOCATOR_SHAPES` rather than a list of their own: they
+    hold the per-row split and the per-field decode that a crate boundary
+    stops the compiler inlining across, which is what the figure prices. No
+    reading is borrowed (`Figure.shares` is empty), since no other figure
+    times these builds."""
+    specs = [
+        RunSpec(f"profile:{leg}", "control", command, "warm", f"{label} ({leg})")
+        for command, label, _ in _ALLOCATOR_SHAPES
+        for leg, _ in PROFILE_LEGS
+    ]
+    specs.append(RunSpec("none", "control", "dd", "warm", "`dd` → `/dev/null` (warm)"))
+    return specs
+
+
+def run_release_profile(session: Session) -> str:
+    """What cross-crate inlining is worth to the shipped build: one row per
+    shape, one column per profile, each leg's median against the first's.
+
+    **A sitting is read against itself, never against another commit's.**
+    Every leg is built from the tree being measured, so what one sitting
+    answers is the gap between its legs; set beside a sitting on another
+    tree, the gaps compare where the absolutes would price every commit
+    between the two (`.claude/skills/evidence/SKILL.md`, rule 7)."""
+    figure = "release-profile"
+    specs = _release_profile_specs()
+    # Every leg built before the first reading, for `run_allocator`'s reason.
+    for leg, _ in PROFILE_LEGS:
+        ensure_profile_binary(session.cfg, leg, session.log)
+    session.sweep(figure, specs, session.cfg.reps(5))
+
+    base = PROFILE_LEGS[0][0]
+    rows = []
+    for command, label, _ in _ALLOCATOR_SHAPES:
+        reference = median(
+            session.get(figure, RunSpec(f"profile:{base}", "control", command, "warm", ""))
+        )
+        cells = [label]
+        for leg, _ in PROFILE_LEGS:
+            values = session.get(figure, RunSpec(f"profile:{leg}", "control", command, "warm", ""))
+            cell = fmt_median_spread(values)
+            if leg != base:
+                cell += f" — {median(values) / reference:.2f}×"
+            cells.append(cell)
+        rows.append(cells)
+    rows.append(
+        [
+            "`dd` → `/dev/null` — the co-measured floor",
+            fmt_median_spread(session.get(figure, specs[-1])),
+            *(["—"] * (len(PROFILE_LEGS) - 1)),
+        ]
+    )
+    header = [f"`{leg}` — {caption}" for leg, caption in PROFILE_LEGS]
+    table = md_table(["Warm, on tmpfs", *header], rows)
+
+    if session.cfg.dry_run:
+        provenance = "Legs are not built or interrogated under `--dry-run`.\n"
+    else:
+        named = ", ".join(
+            f"`{binary_profile(ensure_profile_binary(session.cfg, leg, session.log))}`"
+            for leg, _ in PROFILE_LEGS
+        )
+        provenance = (
+            f"Every leg was asked which profile built it before it was timed — {named} — "
+            f"and each links `{ALLOCATOR_LEGS[0]}`, the shipped allocator, so the columns "
+            "differ by the profile alone.\n"
+        )
+    return (
+        table
+        + "\n\n"
+        + provenance
+        + "\n"
+        + _cached_query_note("Each `query` row")
         + "\n"
         + _per_rep(figure, session, specs)
     )
@@ -10317,8 +10484,8 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
 #:
-#: **Empty is the healthy state, not a disused mechanism, and it is empty
-#: now.** A figure published outside a stamped sweep declares inside its own
+#: **Empty is the healthy state, not a disused mechanism**; `release-profile`
+#: waits here for the commit that lands it. A figure published outside a stamped sweep declares inside its own
 #: marker the commit it was taken at, and a sitting run from a working tree
 #: carrying its own uncommitted apparatus has no such commit to name — so an
 #: instrument built ahead of that commit waits here rather than in `FIGURES`.
@@ -10326,7 +10493,33 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # What link-time optimization buys the shipped build, read once on the
+    # one-crate tree and once on the split one. `depends` is `allocator`'s,
+    # the same three shapes, plus where the legs are declared — the root
+    # manifest's profiles — and `pgdt/build.rs`, which names a leg's profile.
+    Figure(
+        id="release-profile",
+        section="What link-time optimization buys the shipped build",
+        stage="warm",
+        depends=_declare(
+            *SCAN,
+            *MAP,
+            *NESTED,
+            *DECODE,
+            *READ,
+            *QUERY_CLI,
+            *GEN_PERF,
+            *CACHE,
+            *STATISTICS,
+            "pgdt/Cargo.toml",
+            "pgdt/build.rs",
+            "Cargo.toml",
+        ),
+        warm_inputs=("control",),
+        run=run_release_profile,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

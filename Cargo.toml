@@ -63,3 +63,26 @@ opt-level = 2
 inherits = "release"
 debug = "line-tables-only"
 strip = "none"
+
+# The `release-profile` figure's three legs (`scripts/measure.py`,
+# `PROFILE_LEGS`): what link-time optimization buys the shipped build, each
+# timed beside the others from the tree being measured. Each inherits
+# `release` and pins both of the two knobs the figure varies, so a leg stays
+# the comparison it names whatever `release` comes to state. `release` itself
+# states neither, which is Cargo's default — `release-default` restated.
+# `pgdt --version` names the profile a binary was built under
+# (`pgdt/build.rs`), which is how the harness asks a leg what it is.
+[profile.release-default]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+[profile.release-thin]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
+[profile.release-fat]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

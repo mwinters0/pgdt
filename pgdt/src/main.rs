@@ -32,6 +32,7 @@ use tracing::Instrument;
 mod alloc;
 mod info_statistics;
 mod introspect;
+mod profile;
 mod where_expr;
 
 #[derive(Parser)]
@@ -47,16 +48,18 @@ struct Cli {
 
 /// What `pgdt --version` prints: the crate version, `(unreleased)` unless
 /// this is a release's build ([`RELEASED`]), the allocator's markers
-/// ([`alloc::MARKERS`]), and the DataFusion release `sql` is, which `sql`'s
+/// ([`alloc::MARKERS`]), the Cargo profile ([`profile::MARKER`]), and the
+/// DataFusion release `sql` is, which `sql`'s
 /// help also closes on, `sql` carrying no `--version` of its own. Formatted
 /// once at run time: `DATAFUSION_VERSION` is a path, which `concat!` refuses.
 fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "{}{} {} (datafusion: {})",
+            "{}{} {} {} (datafusion: {})",
             env!("CARGO_PKG_VERSION"),
             if RELEASED { "" } else { " (unreleased)" },
             alloc::MARKERS,
+            profile::MARKER,
             datafusion_cli_pgdump::DATAFUSION_VERSION
         )
     });

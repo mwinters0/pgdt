@@ -39,9 +39,9 @@ the archives, the checksums, the draft, the publish -- is `scripts/release_ci.py
 the shipped one is `build --target x86_64-unknown-linux-gnu`'s, a release's
 build but for `--release`'s variable, which only `--version` reads; each
 variant it times beside that one -- an allocator leg, the instrument, the
-`xz_decode` example -- is this recipe with only its package, example, features
-or target directory changed (`Build`), so two binaries a figure compares differ
-by what the figure names.
+`xz_decode` example, a `release-profile` leg -- is this recipe with only its
+package, example, features, profile or target directory changed (`Build`), so
+two binaries a figure compares differ by what the figure names.
 A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler
 and glibc, criterion's output landing in the release state's target directory.
 
@@ -55,6 +55,7 @@ Usage:
     cd scripts && uv run release.py image                 # build the image, unless built
     cd scripts && uv run release.py build [--target T]    # release-build pgdt, each held to the floor
     cd scripts && uv run release.py build --no-default-features --features system --target-dir D
+    cd scripts && uv run release.py build --profile release-fat --target-dir D
     cd scripts && uv run release.py build --release       # a release's build: names the version
     cd scripts && uv run release.py suite                 # the host-native suite, in the image
     cd scripts && uv run release.py notices [--target T]  # each target's THIRD-PARTY-NOTICES, beside its binary
@@ -422,12 +423,13 @@ def target_dir() -> Path:
 
 @dataclass(frozen=True)
 class Build:
-    """One release-profile `cargo build` in the image, for one target.
+    """One `cargo build` in the image, for one target.
 
-    `Build(target)` is a release's own: `pgdt` at its default features. Every
-    other value is a variant the register times beside it, which shares the
-    image, the compiler, `--locked` and the explicit `--target` with it, so it
-    differs from that build by its package, example and features alone."""
+    `Build(target)` is a release's own: `pgdt` at its default features, under
+    `release`. Every other value is a variant the register times beside it,
+    which shares the image, the compiler, `--locked` and the explicit
+    `--target` with it, so it differs from that build by its package,
+    example, features and profile alone."""
 
     target: str = NATIVE_TARGET
     package: str = "pgdt"
@@ -435,9 +437,14 @@ class Build:
     example: str | None = None
     features: tuple[str, ...] = ()
     default_features: bool = True
+    #: A Cargo profile inheriting `release`, whose output directory is its
+    #: name: a `release-profile` figure leg (`scripts/measure.py`,
+    #: `PROFILE_LEGS`).
+    profile: str = "release"
 
     def cargo_argv(self) -> list[str]:
-        argv = ["cargo", "build", "--release", "--locked", "-p", self.package, "--target", self.target]
+        profile = ["--release"] if self.profile == "release" else ["--profile", self.profile]
+        argv = ["cargo", "build", *profile, "--locked", "-p", self.package, "--target", self.target]
         if self.example is not None:
             argv += ["--example", self.example]
         if not self.default_features:
@@ -448,7 +455,7 @@ class Build:
 
     def binary(self, target_dir: Path) -> Path:
         """Where the build writes its binary under `target_dir`."""
-        out = target_dir / self.target / "release"
+        out = target_dir / self.target / self.profile
         return out / "examples" / self.example if self.example is not None else out / self.package
 
     def options(self) -> list[str]:
@@ -460,6 +467,8 @@ class Build:
             opts.append("--no-default-features")
         if self.features:
             opts.append(f"--features={','.join(self.features)}")
+        if self.profile != "release":
+            opts.append(f"--profile={self.profile}")
         return opts
 
 
@@ -906,6 +915,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--features", default="", help="comma-separated features, as cargo takes them")
     b.add_argument("--no-default-features", action="store_true")
     b.add_argument(
+        "--profile", default="release",
+        help="a Cargo profile inheriting release, in its place (default: release)",
+    )  # fmt: skip
+    b.add_argument(
         "--target-dir", type=Path,
         help="a host cargo target directory of its own, in place of the release state's",
     )  # fmt: skip
@@ -954,7 +967,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.cmd == "build":
             features = tuple(f for f in args.features.split(",") if f)
             builds = [
-                Build(t, args.package, args.example, features, not args.no_default_features)
+                Build(
+                    t, args.package, args.example, features, not args.no_default_features, args.profile
+                )
                 for t in (args.target or TARGETS)
             ]
             target = args.target_dir

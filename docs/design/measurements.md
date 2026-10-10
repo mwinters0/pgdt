@@ -133,7 +133,8 @@ Eighteen standing rules for reading anything below:
 
   **The register times what a release ships, under the glibc it links.**
   Every binary a figure runs in the image — the shipped `pgdt`, each
-  `allocator` leg, the instrument and the `xz_decode` example — is built in
+  `allocator` leg, each `release-profile` leg, the instrument and the
+  `xz_decode` example — is built in
   the release image (`measure.build_in_image`), so a figure's two builds
   differ by what it names and never by a compiler or a glibc; and the image
   they run in is that image's base by its digest (`measure.register_image`),

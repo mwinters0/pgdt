@@ -503,14 +503,32 @@ class ThisRepo(unittest.TestCase):
         )
         self.assertEqual(release.Build().binary(Path("/t")), Path(f"/t/{release.NATIVE_TARGET}/release/pgdt"))
 
+    def test_a_profile_leg_is_the_release_build_under_another_profile(self):
+        # Cargo refuses `--release` beside `--profile`, so the one replaces the
+        # other and nothing else moves; the binary lands in the profile's own
+        # directory, which is where `measure.ensure_profile_binary` copies from.
+        shipped = release.Build().cargo_argv()
+        leg = release.Build(profile="release-fat").cargo_argv()
+        at = shipped.index("--release")
+        self.assertEqual(leg, [*shipped[:at], "--profile", "release-fat", *shipped[at + 1:]])
+        self.assertEqual(
+            release.Build(profile="release-fat").binary(Path("/t")),
+            Path(f"/t/{release.NATIVE_TARGET}/release-fat/pgdt"),
+        )
+        self.assertNotIn("--profile=release", release.build_step([release.Build()]))
+
     def test_a_build_step_round_trips_through_the_command_line(self):
-        build = release.Build(features=("introspect",))
-        step = release.build_step([build])
-        seen = []
-        with unittest.mock.patch.object(release, "check_inside"), \
-                unittest.mock.patch.object(release, "step_build", lambda b: seen.extend(b) or 0):
-            self.assertEqual(release.main([*step, "--inside"]), 0)
-        self.assertEqual(seen, [build])
+        for build in (
+            release.Build(features=("introspect",)),
+            release.Build(profile="release-thin"),
+        ):
+            with self.subTest(build=build):
+                step = release.build_step([build])
+                seen = []
+                with unittest.mock.patch.object(release, "check_inside"), \
+                        unittest.mock.patch.object(release, "step_build", lambda b: seen.extend(b) or 0):
+                    self.assertEqual(release.main([*step, "--inside"]), 0)
+                self.assertEqual(seen, [build])
 
     def test_one_step_runs_one_build_per_target(self):
         both = [release.Build(t) for t in release.TARGETS]

@@ -1299,6 +1299,159 @@ class Allocator(unittest.TestCase):
         self.assertNotIn("allocator", measure.session_stamp("deadbee", dirty=False))
 
 
+def profile_leg_binary(cfg: "measure.Config", leg: str) -> Path:
+    """Where the image's build of one `release-profile` leg lands on the host."""
+    return measure.release.Build(profile=leg).binary(measure.image_target_dir(cfg, leg))
+
+
+def write_profile_leg(cfg: "measure.Config", leg: str) -> None:
+    built = profile_leg_binary(cfg, leg)
+    built.parent.mkdir(parents=True, exist_ok=True)
+    built.write_text("#!/bin/true\n")
+
+
+class ReleaseProfile(unittest.TestCase):
+    """The `release-profile` figure: three profiles, `allocator`'s three
+    shapes, one table, every leg built from the tree measured.
+
+    Each assertion is a way to publish a plausible table of the wrong
+    comparison: a leg built under the wrong profile or the wrong allocator, a
+    leg borrowed from another build or another sitting, or a default leg that
+    moves with `release` and so stops being the default."""
+
+    def setUp(self):
+        measure._PROFILE_BUILT.clear()
+        measure._PROFILE_ANNOUNCED.clear()
+        without_the_release_image(self)
+
+    def _cfg(self, tmp: str) -> "measure.Config":
+        return measure.Config(out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds")
+
+    def test_it_waits_untaken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish from the commit
+        # that lands it, outside a sweep, and twice in one phase.
+        fig = measure.SELECTABLE_BY_ID["release-profile"]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(measure.entangled_with("release-profile"), [])
+
+    def test_the_shapes_are_the_allocator_figure_s(self):
+        specs = measure._release_profile_specs()
+        timed = collections.Counter((s.command, s.binary) for s in specs if s.command != "dd")
+        self.assertEqual(
+            set(timed),
+            {
+                (command, f"profile:{leg}")
+                for command, _, _ in measure._ALLOCATOR_SHAPES
+                for leg, _ in measure.PROFILE_LEGS
+            },
+        )
+        self.assertEqual(set(timed.values()), {1})
+        for spec in specs:
+            with self.subTest(spec=spec.label):
+                self.assertEqual((spec.input, spec.regime), ("control", "warm"))
+
+    def test_no_leg_is_the_shipped_binary(self):
+        # Every column built alike from the tree measured: the shipped binary
+        # is another build of `release`, which a later decision may move.
+        binaries = {s.binary for s in measure._release_profile_specs()}
+        self.assertNotIn("pgdt", binaries)
+        self.assertEqual([s.binary for s in measure._release_profile_specs()].count("none"), 1)
+
+    def test_each_leg_is_a_profile_inheriting_release_that_pins_both_knobs(self):
+        # A leg pinning only one knob would move with `release` on the other,
+        # and the default leg would stop being Cargo's default the day
+        # `release` states a profile of its own.
+        manifest = tomllib.loads((measure.REPO / "Cargo.toml").read_text())
+        profiles = manifest["profile"]
+        want = {
+            "release-default": (False, 16),
+            "release-thin": ("thin", 16),
+            "release-fat": ("fat", 1),
+        }
+        self.assertEqual([leg for leg, _ in measure.PROFILE_LEGS], list(want))
+        for leg, (lto, units) in want.items():
+            with self.subTest(leg=leg):
+                self.assertEqual(profiles[leg]["inherits"], "release")
+                self.assertEqual(profiles[leg]["lto"], lto)
+                self.assertEqual(profiles[leg]["codegen-units"], units)
+
+    def test_its_declared_paths_include_where_the_legs_live(self):
+        fig = measure.SELECTABLE_BY_ID["release-profile"]
+        for path in ("Cargo.toml", "pgdt/build.rs", "pgdt/Cargo.toml"):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+        for path in measure.FIGURES_BY_ID["allocator"].depends:
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_a_version_string_yields_its_profile(self):
+        out = "pgdt 0.1.0 (unreleased) (allocator: mimalloc) (profile: release-thin) (datafusion: 55.1.0)\n"
+        with unittest.mock.patch.object(measure, "run", return_value=out):
+            self.assertEqual(measure.binary_profile(Path("/pgdt")), "release-thin")
+
+    def test_a_binary_naming_no_profile_or_an_unknown_one_is_refused(self):
+        for out in ("pgdt 0.1.0 (allocator: mimalloc)\n", "pgdt 0.1.0 (profile: unknown)\n"):
+            with self.subTest(out=out), unittest.mock.patch.object(measure, "run", return_value=out):
+                with self.assertRaises(RuntimeError):
+                    measure.binary_profile(Path("/pgdt"))
+
+    def test_an_unknown_leg_is_never_built(self):
+        with self.assertRaises(ValueError):
+            measure.ensure_profile_binary(measure.Config(), "release", lambda _: None)
+
+    def test_a_leg_builds_its_profile_at_the_default_features_in_its_own_target_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+            calls = []
+
+            def fake_run(argv, cwd=None, capture=False, quiet=False):
+                calls.append(list(argv))
+                write_profile_leg(cfg, "release-fat")
+                return ""
+
+            with unittest.mock.patch.object(measure, "run", fake_run), \
+                 unittest.mock.patch.object(measure, "binary_profile", return_value="release-fat"), \
+                 unittest.mock.patch.object(measure, "binary_allocator", return_value="mimalloc"):
+                out = measure.ensure_profile_binary(cfg, "release-fat", lambda _: None)
+                # Twice in one process is one build.
+                measure.ensure_profile_binary(cfg, "release-fat", lambda _: None)
+            self.assertEqual(len(calls), 1)
+            argv = calls[0]
+            self.assertIn("--profile=release-fat", argv)
+            self.assertNotIn("--no-default-features", argv)
+            self.assertFalse(any(a.startswith("--features") for a in argv))
+            target = measure.image_target_dir(cfg, "release-fat").resolve()
+            self.assertIn(f"{target}:/state/target", argv)
+            self.assertEqual(out, cfg.out_dir / "pgdt-release-fat")
+
+    def test_a_leg_reporting_another_profile_or_allocator_is_refused(self):
+        for profile, allocator in (("release", "mimalloc"), ("release-thin", "system")):
+            with self.subTest(profile=profile, allocator=allocator), \
+                 tempfile.TemporaryDirectory() as tmp:
+                measure._PROFILE_BUILT.clear()
+                cfg = self._cfg(tmp)
+
+                def fake_run(argv, cwd=None, capture=False, quiet=False, cfg=cfg):
+                    write_profile_leg(cfg, "release-thin")
+                    return ""
+
+                with unittest.mock.patch.object(measure, "run", fake_run), \
+                     unittest.mock.patch.object(measure, "binary_profile", return_value=profile), \
+                     unittest.mock.patch.object(measure, "binary_allocator", return_value=allocator):
+                    with self.assertRaises(RuntimeError):
+                        measure.ensure_profile_binary(cfg, "release-thin", lambda _: None)
+                self.assertFalse((cfg.out_dir / "pgdt-release-thin").exists())
+                self.assertNotIn("release-thin", measure._PROFILE_BUILT)
+
+    def test_a_profile_leg_resolves_to_a_binary(self):
+        session = measure.Session(measure.Config(dry_run=True), None, lambda _: None)
+        self.assertEqual(
+            session.binary_path("profile:release-thin"),
+            measure.Config().out_dir / "pgdt-release-thin",
+        )
+
+
 class Glibc(unittest.TestCase):
     """Which glibc a figure ran under: the image pinned by digest, each place
     a figure's program runs asked for its glibc, and the answer named in the
