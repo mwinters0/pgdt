@@ -54,7 +54,7 @@ than reading as a phase nobody has sliced.
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
   `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
-  need attribution. Detail: `pgdump_query/src/map.rs`.
+  need attribution. Detail: `pgdump_query/src/map/tests.rs`.
 
 - **KD2** — an array nested inside a composite is decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard

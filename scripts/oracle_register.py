@@ -205,15 +205,15 @@ COLLATION_ARMS = (
         ),
         evidence=(
             Evidence(
-                "pgdump_query/src/pgtype.rs",
+                "pgdump_query/src/pgtype/tests.rs",
                 "fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too(",
             ),
             Evidence(
-                "pgdump_query/src/pgtype.rs",
+                "pgdump_query/src/pgtype/tests.rs",
                 "fn only_the_non_deterministic_collation_reaches_equality(",
             ),
             Evidence(
-                "pgdump_query/src/predicate.rs",
+                "pgdump_query/src/predicate/tests.rs",
                 "fn a_non_deterministic_collation_announces_under_equality_and_ordering(",
             ),
         ),
