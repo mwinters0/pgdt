@@ -73,3 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M221 | | The `release-profile` figure times a warm typed `pgdt sql -c` shape | | [2026-10-10](../status/history/2026-10-10.md), "The shipped profile, reviewed" |

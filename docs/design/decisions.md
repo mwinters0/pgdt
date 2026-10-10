@@ -688,11 +688,11 @@ glibc, the floor and every figure's runtime; `rust-toolchain.toml` pins one comp
 apparatus change. Rejected: `cargo zigbuild` (zig's clang for every C dependency, a floor suffix synced by hand, a stray `CC` silently compiling against the host's headers); a build
 runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (the register timing host `stable`).
 
-### D105 The shipped build is fat LTO in one codegen unit, as DataFusion's own release is
+### D105 The shipped build is fat LTO in one codegen unit, as DataFusion's own release profile is
 `[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Both LTO legs beat Cargo's default on `pgdt query`'s typed shape, the
 per-field decode a DataFusion scan runs too, on the one-crate tree and the split one, and lose on no shape; thin and fat are level on every shape the split tree resolves, so the tie goes
-to the profile DataFusion releases its own CLI under, `pgdt sql` running that engine and no leg timing it (D13's precedent). The default leg is held to this one by the roadmap's
-downstream-build rule, closed in the code where it fails, never here.
+to the profile DataFusion's workspace declares and benchmarks its engine under, `pgdt sql` running that engine and no leg timing it (D13's precedent); `cargo install datafusion-cli`
+builds under Cargo's default, a published crate carrying no profile. The default leg is held to this one by the roadmap's downstream-build rule, closed in the code where it fails, never here.
 Rejected: Cargo's default (a resolved gain traded for nothing); thin LTO (level wherever the figure resolves, its quicker build a cost to us, not a user). Reopens: a leg timing a typed
 DataFusion query, or an `instructions:u` count, that tells thin from fat; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`,
 `test_the_shipped_profile_is_the_fat_leg_restated`. Evidence: `release-profile`.

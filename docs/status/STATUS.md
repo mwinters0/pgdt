@@ -123,17 +123,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The shipped build is fat LTO in one codegen unit, not thin LTO**
-  ([`../design/decisions.md`](../design/decisions.md), "D105"). Both LTO legs
-  beat Cargo's default on the typed `pgdt query` shape in both sittings, and
-  on the split tree thin and fat are level on every shape the figure times.
-  Why fat: it is DataFusion's own release profile, and `pgdt sql`, the
-  first-ranked workload, runs DataFusion's engine, which no leg times — D13's
-  precedent of building as that CLI does. Thin's one advantage is a quicker
-  build, counted as a cost to us rather than to a user. Reconsidering means
-  `lto = "thin"` and sixteen codegen units in `[profile.release]` and its test
-  in `test_measure.py`: no reading either sitting resolves changes, and every
-  rebuild of the shipped build — each sitting's, the `allocator` legs', the
-  instrument's, `profiling`'s, a release's — gets several times cheaper
-  ([`../design/roadmap-P35.9-second-sitting-notes.md`](../design/roadmap-P35.9-second-sitting-notes.md)).
