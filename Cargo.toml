@@ -88,6 +88,12 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 
+# The shipped build: fat LTO in one codegen unit, `release-fat` below restated
+# (`docs/design/decisions.md`, "D105").
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # The profiling build. A sampling profile is how this project attributes scan
 # cost per function rather than per subtraction (`docs/design/decisions.md`,
 # "D25"), and
@@ -109,8 +115,8 @@ strip = "none"
 # `PROFILE_LEGS`): what link-time optimization buys the shipped build, each
 # timed beside the others from the tree being measured. Each inherits
 # `release` and pins both of the two knobs the figure varies, so a leg stays
-# the comparison it names whatever `release` comes to state. `release` itself
-# states neither, which is Cargo's default — `release-default` restated.
+# the comparison it names whatever `release` comes to state; `release-fat` is
+# the shipped build, and `release-default` Cargo's.
 # `pgdt --version` names the profile a binary was built under
 # (`pgdt/build.rs`), which is how the harness asks a leg what it is.
 [profile.release-default]

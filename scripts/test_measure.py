@@ -1376,6 +1376,16 @@ class ReleaseProfile(unittest.TestCase):
                 self.assertEqual(profiles[leg]["lto"], lto)
                 self.assertEqual(profiles[leg]["codegen-units"], units)
 
+    def test_the_shipped_profile_is_the_fat_leg_restated(self):
+        # D105: `release` states exactly the knobs `release-fat` pins, so the
+        # default leg's gap to that leg is the gap to what ships.
+        profiles = tomllib.loads((measure.REPO / "Cargo.toml").read_text())["profile"]
+        knobs = ("lto", "codegen-units")
+        self.assertEqual(
+            {k: profiles["release"].get(k) for k in knobs},
+            {k: profiles["release-fat"][k] for k in knobs},
+        )
+
     def test_its_declared_paths_include_where_the_legs_live(self):
         fig = measure.SELECTABLE_BY_ID["release-profile"]
         for path in ("Cargo.toml", "pgdt/build.rs", "pgdt/Cargo.toml"):

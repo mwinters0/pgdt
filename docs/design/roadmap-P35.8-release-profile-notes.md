@@ -10,7 +10,8 @@ shipped build".
 - **Three profiles in the root `Cargo.toml`**, `release-default`,
   `release-thin` and `release-fat`, each inheriting `release` and pinning
   both `lto` and `codegen-units`, so no leg moves when 35.9 gives `release`
-  a profile of its own. `release` itself is unchanged and states nothing.
+  a profile of its own. `release` itself was left to 35.9, which made it
+  `release-fat` restated (D105).
 - **`pgdt --version` names the profile**, `(profile: <name>)` after the
   allocator's markers, from `pgdt/build.rs` through `src/profile.rs`. Every
   build carries it, a release's included.
@@ -46,7 +47,7 @@ phase.
   needs that count first.
 - **It does not license comparing the default leg with the shipped binary or
   with any other figure's absolutes.** The default leg is a separate build of
-  `release` restated, and a warm absolute across sittings resolves no better
+  Cargo's default, and a warm absolute across sittings resolves no better
   than the register's floor ([`measurements.md`](measurements.md), "A move
   smaller than the apparatus resolves is not a finding").
 - **The apparatus line's I/O stall disqualifies nothing.** It is a
@@ -59,9 +60,9 @@ phase.
 - **The two sittings compare by their gaps, never their absolutes**: each is
   read against itself (`run_release_profile`'s rustdoc), and the spec's
   criterion is the default leg's gap to `release-fat` before and after.
-- **The shipped binary is no column.** `release-default` is `release`
-  restated, so it is not another figure's reference reading, and a decision
-  that moves `release` leaves every leg where it is.
+- **The shipped binary is no column.** Each leg is built apart from it, so
+  no leg is another figure's reference reading, and a decision that moves
+  `release` leaves every leg where it is.
 - **35.9's sitting replaces this table**, the figure now being in
   `measure.FIGURES` (so a sweep re-takes it too). The one-crate gaps then
   live only in git at the commit that folds this sitting and in

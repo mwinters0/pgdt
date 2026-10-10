@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D104 -->
+<!-- decision-watermark: D105 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -95,13 +95,11 @@ second binary the provider figures would time. Reopens: a contention figure; a m
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content
-An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress` output
-(compatibility). Recognition compares magic and sits outside the trait, and is *told* those bytes by
-`Origin`'s probe — which also answers D20's size, so what is settled before a source exists stops being a
-statement about files. Rejected: extension dispatch; a probe cached across failure. `xz-seek` is a vendored
-read-only copy (`scripts/vendor_xz_seek.py`); a bug is fixed upstream, and so was the seam a fetched source
-needs — nothing can `await` inside `CompressedSource::read_at`, so the walk and the block handle are sans-IO
-and driven from here. Rejected: a path dependency, failing `cargo check` without the sibling checkout.
+An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress` output (compatibility). Recognition compares magic and sits outside the trait, and is
+*told* those bytes by `Origin`'s probe — which also answers D20's size, so what is settled before a source exists stops being a statement about files. Rejected: extension dispatch; a
+probe cached across failure. `xz-seek` is a vendored read-only copy (`scripts/vendor_xz_seek.py`); a bug is fixed upstream, and so was the seam a fetched source needs — nothing can
+`await` inside `CompressedSource::read_at`, so the walk and the block handle are sans-IO and driven from here. Rejected: a path dependency, failing `cargo check` without the sibling
+checkout.
 
 ### D15 A read decodes whole blocks and retains them; reading one in pieces is the fallback
 Whole-block decode, LRU-retained, afforded at one reader against the caller's number from file-wide inputs
@@ -237,13 +235,10 @@ boundaries rest on no line-anchored invariant) and the run's end is lexed as the
 stay untaken until the `INSERT` row reader exists (`KD9`).
 
 ### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
-`blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
-streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
-behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
-byte range, no piece knowing a global row index. A back-fill keeps a block's columns, and its size
-unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its
-groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries, keyed alike but
-past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
+`blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in
+their block behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a byte range, no piece knowing a global row index. A back-fill keeps a
+block's columns, and its size unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its groups predict. Rejected: `SparseRowIndex`;
+padded `character` bounds and entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and
@@ -280,13 +275,10 @@ shadow it — `pg_dump` writes built-ins bare under an emptied path (I8), so it 
 columns; a collation takes the weaker verdict because `pg_dump` qualifies every one (`KD48`).
 
 ### D38 The ADBC driver's shipped release is a floor, swept from the catalog
-Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never
-`main`, one row per declarable `pg_catalog` type. `status`/`extension` columns take a row out of the
-rule by themselves, and only what they cannot say gets a `Disposition` with a stance and a resolving
-citation. `floor_mapping.py` compares value space (`Utf8View` is `string`) and reports an unknown
-arm, never guessing. It binds the typed mode alone: the untyped mode, like `--schema-mode strings`, is the user
-asking for a type wider than the floor, and widens only a column the map says its front end cannot hold (D100).
-Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
+Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never `main`, one row per declarable `pg_catalog` type. `status`/`extension` columns take
+a row out of the rule by themselves, and only what they cannot say gets a `Disposition` with a stance and a resolving citation. `floor_mapping.py` compares value space (`Utf8View` is
+`string`) and reports an unknown arm, never guessing. It binds the typed mode alone: the untyped mode, like `--schema-mode strings`, is the user asking for a type wider than the floor,
+and widens only a column the map says its front end cannot hold (D100). Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
@@ -520,13 +512,10 @@ contradicts that default or spells it twice; refusing a size beside `METADATA`, 
 entries, in the library (the CLI refuses both, a person's intent being ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
-None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21) so
-a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and dictionary hold
-only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or
-equates bumps the version. Both ends stream; a save renames its own file over the cache, so no copy
-meets the statistics and a kill keeps the last save, orphaning its file. Rejected: a separable
-statistics file; its own semantics version; the copy charged; one beside name two saves share.
-Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
+None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21) so a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and
+dictionary hold only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or equates bumps the version. Both ends stream; a save renames its own file
+over the cache, so no copy meets the statistics and a kill keeps the last save, orphaning its file. Rejected: a separable statistics file; its own semantics version; the copy charged;
+one beside name two saves share. Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go in each order a semantics compares by exactly, a dictionary where it equates exactly
 A scalar column keeps bounds and row order per exact order, one set where two coincide: the register's where exact, else DataFusion's
@@ -698,3 +687,12 @@ following Debian stable, the `postgres:*` images' base: a new stable gets at lea
 glibc, the floor and every figure's runtime; `rust-toolchain.toml` pins one compiler for development, the register and the release; each pin moves through `upgrade-deps`, an
 apparatus change. Rejected: `cargo zigbuild` (zig's clang for every C dependency, a floor suffix synced by hand, a stray `CC` silently compiling against the host's headers); a build
 runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (the register timing host `stable`).
+
+### D105 The shipped build is fat LTO in one codegen unit, as DataFusion's own release is
+`[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Both LTO legs beat Cargo's default on `pgdt query`'s typed shape, the
+per-field decode a DataFusion scan runs too, on the one-crate tree and the split one, and lose on no shape; thin and fat are level on every shape the split tree resolves, so the tie goes
+to the profile DataFusion releases its own CLI under, `pgdt sql` running that engine and no leg timing it (D13's precedent). The default leg is held to this one by the roadmap's
+downstream-build rule, closed in the code where it fails, never here.
+Rejected: Cargo's default (a resolved gain traded for nothing); thin LTO (level wherever the figure resolves, its quicker build a cost to us, not a user). Reopens: a leg timing a typed
+DataFusion query, or an `instructions:u` count, that tells thin from fat; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`,
+`test_the_shipped_profile_is_the_fat_leg_restated`. Evidence: `release-profile`.
