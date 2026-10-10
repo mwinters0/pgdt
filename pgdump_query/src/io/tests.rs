@@ -642,7 +642,7 @@ fn a_block_decoding_partition_spans_at_most_the_cut_width() {
             assert!(start < size, "a frontier inside the file");
             let end = advice.window_end(start, workers, size);
             assert!(end > start, "a window must advance: {workers} workers from {start}");
-            let ranges = crate::stream::cut(start..end, &advice, workers);
+            let ranges = cut(start..end, &advice, workers);
             assert!(
                 ranges.len() <= workers,
                 "{workers} workers were handed {} pieces from {start}",
@@ -835,7 +835,7 @@ async fn xz_source_seek_table_reports_every_block() {
 
 /// **A compressed source recommends the cores it was given, capped at its
 /// own block count** (`docs/design/decisions.md`, "D2"):
-/// `crate::stream::cut` cuts at block boundaries, so a file with fewer
+/// `crate::io::cut` cuts at block boundaries, so a file with fewer
 /// blocks than the machine has cores offers no seam for the rest.
 ///
 /// The core count is asserted against `available_parallelism()` rather
@@ -1350,7 +1350,7 @@ fn corrupt_check(path: &Path, index: usize) {
 
 /// Whether `result` is a block failing its own check.
 fn check_failed<T: std::fmt::Debug>(result: Result<T>) -> bool {
-    matches!(result, Err(Error::Xz(xz_seek::Error::BlockCheckFailed { .. })))
+    matches!(&result, Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::BlockCheckFailed { .. })))
 }
 
 /// **A block a read stopped inside owes its check until the run ends.**
@@ -1755,7 +1755,7 @@ async fn a_table_from_another_file_is_an_invalid_table_rather_than_a_read() {
         Arc::new(LocalFileSource::open(compressed.path()).unwrap());
     let stored_size = transport.size().await.unwrap();
     let err = FetchedXzSource::with_table(transport, stored_size, table).unwrap_err();
-    assert!(matches!(err, Error::Xz(xz_seek::Error::InvalidTable { .. })), "{err:?}");
+    assert!(matches!(err.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })), "{err:?}");
 }
 
 /// The single-block shape reads correctly too — there is no seek structure
@@ -2561,7 +2561,7 @@ fn a_compressed_source_recommends_what_its_workers_hold() {
 /// **The charge an allowance is solved against before the file is open is
 /// the charge the resulting count then meets.** `Parallelism::fit` solves
 /// a cap against `default_worker_memory` with nothing announced;
-/// `crate::stream::worker_count` solves the budget that produced against
+/// `crate::io::worker_count` solves the budget that produced against
 /// `partitions().worker_memory()` once the scan has announced its chunk.
 /// Charged at the pool ceiling instead of the default chunk, the first
 /// would sit above the second and resolve fewer readers than the scan
@@ -2586,8 +2586,172 @@ fn the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge() {
     let advice = source.partitions(0..payload.len() as u64);
     assert_eq!(advice.worker_memory(), memory, "the recommendation and the charge are one shape");
     assert_eq!(
-        crate::stream::worker_count(parallelism, advice.worker_memory()),
+        worker_count(parallelism, advice.worker_memory()),
         jobs,
         "the count the allowance bought is the count the scan runs"
     );
+}
+
+/// A guard that records its own drop, so a test can assert that a future
+/// given up on was released rather than merely left unpolled.
+struct DropFlag(Arc<AtomicBool>);
+
+impl Drop for DropFlag {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The signal reports a cancellation that landed **before** anyone waited
+/// on it: a reader that reaches its await after the ask must not wait for
+/// a second one that will never come.
+#[tokio::test]
+async fn the_signal_resolves_at_once_for_a_cancellation_already_asked_for() {
+    let cancel = Cancellation::new();
+    assert!(!cancel.is_cancelled());
+    cancel.cancel();
+    assert!(cancel.is_cancelled());
+    cancel.cancelled().await;
+}
+
+/// And it reports one that lands **while** a waiter is registered, which
+/// is the ordinary case: the waiter is parked before `cancel` is called.
+#[tokio::test]
+async fn a_registered_waiter_is_woken_by_a_later_cancel() {
+    let cancel = Cancellation::new();
+    tokio::join!(cancel.cancelled(), async {
+        assert!(!cancel.is_cancelled(), "the waiter parks before the ask");
+        cancel.cancel();
+    });
+}
+
+/// `cancel` is idempotent, and the polled bit is one-way.
+#[tokio::test]
+async fn cancelling_twice_says_the_same_thing() {
+    let cancel = Cancellation::new();
+    cancel.cancel();
+    cancel.cancel();
+    assert!(cancel.is_cancelled());
+    cancel.cancelled().await;
+}
+
+/// Work that finishes before anyone cancels is handed back whole.
+#[tokio::test]
+async fn until_cancelled_yields_work_that_finished_first() {
+    let cancel = Cancellation::new();
+    assert_eq!(cancel.until_cancelled(async { 7u8 }).await, Some(7));
+    assert!(!cancel.is_cancelled(), "asking nothing cancels nothing");
+}
+
+/// **The point of the awaitable form.** Work that never finishes is given
+/// up on at the cancellation *and dropped there* — which is what lets a
+/// reader release a request in flight instead of waiting out whatever
+/// deadline sits under it.
+#[tokio::test]
+async fn until_cancelled_drops_the_work_it_gave_up_on() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let guard = DropFlag(Arc::clone(&dropped));
+    let forever = async move {
+        let _guard = guard;
+        std::future::pending::<u8>().await
+    };
+
+    let cancel = Cancellation::new();
+    let (given_up, ()) = tokio::join!(cancel.until_cancelled(forever), async {
+        assert!(!dropped.load(Ordering::SeqCst), "still in flight before the ask");
+        cancel.cancel();
+    });
+
+    assert_eq!(given_up, None, "cancellation, not an answer");
+    assert!(dropped.load(Ordering::SeqCst), "the request in flight was released");
+}
+
+/// The two properties every cut has to have, whatever the source advised:
+/// the pieces **tile** the range exactly, in ascending order, and there
+/// are never more of them than the caller asked for.
+fn assert_tiles(range: Range<u64>, pieces: &[Range<u64>], want: usize) {
+    assert!(!pieces.is_empty(), "a cut always yields at least the range itself");
+    assert!(pieces.len() <= want.max(1), "{} pieces for want {want}", pieces.len());
+    assert_eq!(pieces[0].start, range.start);
+    assert_eq!(pieces[pieces.len() - 1].end, range.end);
+    for pair in pieces.windows(2) {
+        assert_eq!(pair[0].end, pair[1].start, "{pieces:?}");
+    }
+}
+
+/// `Anywhere` is cut evenly, and never into pieces of zero bytes: a range
+/// shorter than the worker count is cut into one piece per byte and no
+/// finer, a piece with no bytes being able to own no rows.
+#[test]
+fn an_anywhere_source_is_cut_evenly_and_never_below_a_byte() {
+    let advice = Partitioning::anywhere(1 << 20);
+    for want in [1usize, 2, 3, 4, 7, 8, 64] {
+        let pieces = cut(100..900, &advice, want);
+        assert_tiles(100..900, &pieces, want);
+        assert_eq!(pieces.len(), want.max(1));
+    }
+    let pieces = cut(10..13, &advice, 8);
+    assert_eq!(pieces, vec![10..11, 11..12, 12..13]);
+}
+
+/// `At` is cut only where the source offered, thinned evenly when it
+/// offers more boundaries than the caller can use, and taken whole when it
+/// offers exactly as many as are wanted.
+#[test]
+fn an_at_source_is_cut_only_where_it_offered() {
+    let advice = Partitioning::at(vec![20, 40, 60, 80], 1 << 20);
+    assert_eq!(cut(0..100, &advice, 5), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
+    assert_eq!(cut(0..100, &advice, 9), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
+    assert_eq!(cut(0..100, &advice, 3), vec![0..40, 40..80, 80..100]);
+    assert_eq!(cut(0..100, &advice, 2), vec![0..60, 60..100]);
+    // Boundaries outside the range are not cuts, nor are its own ends.
+    assert_eq!(cut(40..80, &advice, 4), vec![40..60, 60..80]);
+    for want in [1usize, 2, 3, 4, 5, 9] {
+        assert_tiles(0..100, &cut(0..100, &advice, want), want);
+    }
+}
+
+/// A source that declines to be split is not split, however many workers
+/// the caller has — the empty `At` is a policy, not an absence
+/// (`docs/design/decisions.md`, "D7").
+#[test]
+fn a_source_that_declines_to_be_split_is_not() {
+    assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);
+}
+
+/// The bytes bind as well as the count, and they bind on the number of
+/// **sub-streams**: eight workers against a budget that affords two
+/// partitions is two.
+#[test]
+fn a_stated_budget_caps_the_worker_count_below_the_stated_jobs() {
+    let eight = Parallelism::workers(8, 64 << 20);
+    let per = WorkerMemory::per_worker;
+    assert_eq!(worker_count(eight, per(32 << 20)), 2);
+    assert_eq!(worker_count(eight, per(4 << 20)), 8);
+    // A footprint larger than the whole budget still leaves one worker.
+    assert_eq!(worker_count(eight, per(128 << 20)), 1);
+    // A source that states no footprint is bounded by `jobs` alone.
+    assert_eq!(worker_count(eight, per(0)), 8);
+    // The serial state is one worker, whatever budget it carries.
+    assert_eq!(worker_count(Parallelism::default(), per(32 << 20)), 1);
+    assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), per(32 << 20)), 1);
+}
+
+/// **A shared pool is billed, so the budget is solved rather than
+/// divided.** The block pool retains a unit for every slot but the one a
+/// reader is filling — `POOL_DEPTH - 1` of them below four readers and
+/// `jobs - 1` above — which a per-worker charge does not carry.
+#[test]
+fn a_shared_pool_is_billed_before_the_count_is_handed_back() {
+    let eight = Parallelism::workers(8, 64 << 20);
+    let charge = WorkerMemory::per_worker(16 << 20).pooling(16 << 20, 4);
+    // One reader costs 16 + 3 x 16 = 64 MiB, two cost 32 + 48 = 80 — so
+    // this budget affords exactly one where the division said four.
+    assert_eq!(worker_count(eight, charge), 1);
+    // One byte short, and the serial floor is what is left: never zero.
+    assert_eq!(worker_count(Parallelism::workers(8, (64 << 20) - 1), charge), 1);
+    // Above the pool's own depth every reader takes a slot with it, so the
+    // cost is `n x 32 - 16` MiB: 240 MiB affords eight, and 224 seven.
+    assert_eq!(worker_count(Parallelism::workers(8, 240 << 20), charge), 8);
+    assert_eq!(worker_count(Parallelism::workers(8, 224 << 20), charge), 7);
 }

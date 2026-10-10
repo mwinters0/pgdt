@@ -6,7 +6,7 @@
 //! and a cache mtime mismatch, too weak by default to invalidate on and with
 //! no column or schema to hang off. [`DiagnosticKind`] has grown past them —
 //! its variants are the list. All are collected on
-//! [`crate::index::DumpIndex`] and left for a caller to drain.
+//! [`crate::model::DumpIndex`] and left for a caller to drain.
 //!
 //! **This is not the library's only channel, and the division is by kind, not
 //! by necessity.** A `tracing` line carries cost and progress as a run meets
@@ -22,17 +22,17 @@
 //! (`docs/design/decisions.md`, "D34") and recomputed on load.
 //!
 //! [`Severity`] and the `{severity, kind}` shape are the vocabulary shared
-//! across producers, not one enum: `DumpIndex` is L1 and
-//! `crate::resolve::ColumnResolution` is an L2 conclusion, so a
-//! [`DiagnosticKind`] variant carrying one would make L1 name an L2 type
-//! (`docs/design/decisions.md`, "D68"). `crate::resolve::ColumnNote` is the
-//! per-column record at L2 — one per column, always present — and
-//! `crate::predicate::ComparisonNote` the comparison one at L4, per term or,
-//! from `crate::predicate::column_divergences`, per column, and
-//! `crate::stream::PlanNote` what a query's plan settled, also at L4.
+//! across producers, not one enum: `DumpIndex` is the model's and
+//! `crate::resolve::ColumnResolution` is a codec conclusion, so a
+//! [`DiagnosticKind`] variant carrying one would make the model name a codec
+//! type (`docs/design/decisions.md`, "D68"). `crate::resolve::ColumnNote` is
+//! the per-column record in the codec — one per column, always present — and
+//! `crate::predicate::ComparisonNote` the comparison one in query, per term
+//! or, from `crate::predicate::column_divergences`, per column, and
+//! `crate::stream::PlanNote` what a query's plan settled, also in query.
 //!
 //! **The four are unified at the drain, not at the storage type**: each
-//! implements [`Finding`], defined here at L1 so that every layer can, and a
+//! implements [`Finding`], defined here in the model so that every crate can, and a
 //! caller hands any of them to one [`DiagnosticSink`] of its own through
 //! [`drain`]. Each channel is still read where it is produced — a
 //! `DumpIndex`, a `ResolvedSchema`, a `TableStream` — so what the sink adds is
@@ -43,15 +43,15 @@ use std::fmt::Debug;
 
 use serde::Serialize;
 
-use crate::map::TilingIssue;
+use crate::model::TilingIssue;
 
 /// One finding from any of the library's diagnostic channels, as a
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
-/// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (L1,
-/// about the file), `crate::resolve::ColumnNote` (L2, about one column's type),
-/// `crate::predicate::ComparisonNote` (L4, about one term of a query, or one
-/// column in a query's semantics) and `crate::stream::PlanNote` (L4, about one
-/// query's plan).
+/// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (the
+/// model, about the file), `crate::resolve::ColumnNote` (the codec, about one
+/// column's type), `crate::predicate::ComparisonNote` (query, about one term of
+/// a query, or one column in a query's semantics) and `crate::stream::PlanNote`
+/// (query, about one query's plan).
 ///
 /// A sink wanting the structured record rather than the sentence recovers it
 /// through [`Finding::as_any`], downcasting to one of those four.
@@ -141,7 +141,7 @@ pub enum DiagnosticKind {
     CacheOriginChanged,
     /// How much of the map is attributed to a TOC entry: `attributed` spans
     /// out of `spans` total — a follow-on statement that inherited its
-    /// governing entry's header (`crate::map::Span::toc_owned` is `false`)
+    /// governing entry's header (`crate::model::Span::toc_owned` is `false`)
     /// counts the same as one whose own comment carried it
     /// (`docs/design/decisions.md`, "D31"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
@@ -158,7 +158,7 @@ pub enum DiagnosticKind {
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
     /// non-seekable table — pushed once per index, whether the table was just
-    /// walked (`crate::index::build_index`, `crate::index::preamble_only`) or
+    /// walked (`crate::load::build_index`, `crate::load::preamble_only`) or
     /// read back from a persisted cache (`crate::cache::status_from_file`).
     NonSeekableCompressedSource { block_count: usize },
 }

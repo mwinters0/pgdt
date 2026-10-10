@@ -26,7 +26,7 @@
 //! exit past the first read but an error. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
-//! that, [`table_stream`] runs [`crate::index::scan_preamble`] once (skipped
+//! that, [`table_stream`] runs [`crate::load::scan_preamble`] once (skipped
 //! once a cache already has it), whatever table was queried and under
 //! [`CacheMode::Disabled`] too. It covers the *first* database; every later
 //! `\connect`ed one is stated by [`map_forward`] at that database's first
@@ -60,26 +60,29 @@ use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent};
 use crate::cache::StrictIdentity;
 use crate::cache::{CacheLoad, CacheMode, SourceWatch};
 use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Finding, Severity};
 use crate::gather;
-use crate::index::{
-    ArrayShape, BlockCensus, CopyBlock, DumpIndex, TableName, Unrepresentable, UnrepresentableTier,
-    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
-    toc_coverage_diagnostic, union_census,
-};
 #[cfg(feature = "introspect")]
 use crate::instrument::statistics_loaded;
 use crate::instrument::{EvaluationPart, StatisticsScope, row_evaluated, timed};
 #[cfg(feature = "introspect")]
 use crate::instrument::{evaluated_row, timed_span};
 use crate::io::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
-    RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, Partitioning, RetainedUnit, WaitPolicy,
+    WorkerMemory, cut, memory_budget_display, worker_count,
 };
 use crate::leader::{self, CensusPlan, RegionScan};
-use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, census_row};
+use crate::load::{
+    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
+};
+use crate::map::{Builder, attach_text, census_row};
+use crate::model::{
+    ArrayShape, BlockCensus, BlockGathered, BlockObserver, BlockStatistics, CopyBlock, DataBlock,
+    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, Finding, IgnoredRefusals,
+    PostgresInvalidValues, Severity, Sortedness, Span, SpanBody, TableName, Unrepresentable,
+    UnrepresentableTier, union_census,
+};
 use crate::pgtype::ComparisonSemantics;
-use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
+use crate::preamble::dump_metadata_from_spans;
 use crate::predicate::{
     ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_membership, resolve_term,
 };
@@ -87,14 +90,12 @@ use crate::prune::{DynamicPruning, SortedStop, prune_block};
 use crate::resolve::{
     ResolvedSchema, SchemaMode, database_for_name, read_as_text, resolve_columns,
 };
-use crate::scan::PostgresInvalidValues;
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
     scan as scan_events,
 };
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, IgnoredRefusals, Sortedness, StatisticsAccount,
-    StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
+    StatisticsAccount, StatisticsBackfill, StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::summary::partition_orders;
 use crate::unrepresentable::{
@@ -547,7 +548,7 @@ enum Pass<'a> {
 /// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
 /// "D34").
 ///
-/// **Here rather than beside the index**, which is L1: counting a block's
+/// **Here rather than beside the index**, which is dump's: counting a block's
 /// values resolves its columns' declared types, so the pass states each
 /// database's DDL at its first `COPY` block as [`map_forward`] does
 /// (`docs/design/decisions.md`, "D96").
@@ -759,7 +760,7 @@ async fn map_forward(
                         // recurring one of the two boundaries
                         // `dump_metadata_from_spans` may be called at (I1).
                         // Retreat to a pending TOC comment's own start as
-                        // `crate::index::scan_preamble` does, so the span list
+                        // `crate::load::scan_preamble` does, so the span list
                         // ends where the `Data` span is about to begin.
                         let boundary =
                             builder.pending_comment_start().unwrap_or(start.header_offset);
@@ -1214,7 +1215,7 @@ pub struct MapRun {
     pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one
-    /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run the
+    /// ([`crate::model::CopyBlock::statistics_declined`]) — zero for a run the
     /// interrupt reached before the back-fill finished, which is where the
     /// count is taken. A run stating no allowance declines nothing itself, so
     /// it counts only a block an earlier run declined whose held statistics
@@ -1228,7 +1229,7 @@ pub struct MapRun {
 /// Map `source` end to end, **continuing from whatever `cache` already
 /// holds** — `pgdt parse`'s scan (`docs/design/decisions.md`, "D61"). This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
-/// only a scan reaching EOF may state; `crate::index::build_index` stays the
+/// only a scan reaching EOF may state; `crate::load::build_index` stays the
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
 /// duplicates the splice-onto-a-prefix logic here.
 ///
@@ -2232,8 +2233,8 @@ impl<'a> TableStream<'a> {
     /// (`docs/design/decisions.md`, "D59"): most are divergences of *order*
     /// alone (`crate::pgtype::ComparisonDivergence::affects_equality`), so a
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
-    /// under `=`. A third channel beside `DumpIndex.diagnostics` (L1) and
-    /// `ResolvedSchema.notes` (L2), each a [`crate::diagnostic::Finding`] a
+    /// under `=`. A third channel beside `DumpIndex.diagnostics` (the model)
+    /// and `ResolvedSchema.notes` (the codec), each a [`crate::model::Finding`] a
     /// caller drains into one sink with the others. Like
     /// [`Self::resolved_schema`], it describes the **last** block whose schema
     /// resolved.
@@ -2245,8 +2246,8 @@ impl<'a> TableStream<'a> {
     /// predicate ([`PlanNoteKind`]): the memory budget in force declining
     /// something, the row groups statistics let the replay skip, and each
     /// column's values read as NULL ([`PlanNoteKind::ReadAsNull`]). A fourth
-    /// channel beside `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes`
-    /// (L2) and [`Self::comparison_notes`] (L4).
+    /// channel beside `DumpIndex.diagnostics` (the model), `ResolvedSchema.notes`
+    /// (the codec) and [`Self::comparison_notes`] (query).
     ///
     /// **Settled before any block is read**, from the map and the source's own
     /// advice. A
@@ -2634,7 +2635,7 @@ struct Pruned {
     /// as its rows are read.
     rows: u64,
     /// Per projected field, the text bytes of its values in the groups `rows`
-    /// counts ([`crate::statistics::ColumnStatistics::value_bytes`]) — `None`
+    /// counts ([`crate::model::ColumnStatistics::value_bytes`]) — `None`
     /// wherever a block counted none — bounding what the replay emits of it
     /// as `rows` bounds its rows.
     value_bytes: Vec<Option<u64>>,
@@ -2785,7 +2786,7 @@ fn read_as_null(
 /// Per field of `planned`, the text bytes `block`'s statistics count of its
 /// values in the groups `kept` keeps — every group where `kept` is `None` —
 /// and `None` for a field the block's statistics did not count
-/// ([`crate::statistics::ColumnStatistics::value_bytes_where`]).
+/// ([`crate::model::ColumnStatistics::value_bytes_where`]).
 fn field_value_bytes(
     block: &CopyBlock,
     planned: Option<&PlannedBlock>,
@@ -3407,73 +3408,10 @@ async fn census_metadata_level(
     Ok(())
 }
 
-/// How many sub-streams a caller's [`Parallelism`] and a source's per-partition
-/// footprint allow between them.
-///
-/// **Both numbers bind, and the bytes bind on the *stream* count rather than
-/// per block**, the sub-streams being what run at once. A source that states
-/// no footprint (the declining default) is bounded by `jobs` alone, and the
-/// budget is *solved* against the source's cost, never divided by it
-/// ([`crate::io::WorkerMemory::affords`], and
-/// `docs/design/decisions.md`, "D4"). **Shared with the leader**, which asks
-/// the same question of an open `COPY` block's interior
-/// (`crate::leader::scan_region`, and `docs/design/decisions.md`, "D48").
-pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
-    let jobs = parallelism.jobs();
-    match parallelism.memory_bytes() {
-        Some(budget) if !memory.is_zero() => memory.affords(budget, jobs),
-        _ => jobs,
-    }
-}
-
-/// Cut `range` into at most `want` pieces where `advice` permits, in ascending
-/// order and tiling it exactly. `Anywhere` is cut evenly; `At(offsets)` at the
-/// source's own boundaries, thinned to `want - 1` of them and evenly spaced
-/// through the list when it offers more than the caller can use
-/// (`docs/design/decisions.md`, "D15"). An empty `At` is the source declining
-/// to be split, and it yields the range whole.
-///
-/// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
-/// open block's interior window with it: one cut rule for the two
-/// arrangements (`docs/design/decisions.md`, "D52").
-pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
-    if want <= 1 || range.start >= range.end {
-        return vec![range];
-    }
-    let mut cuts: Vec<u64> = match advice.boundaries() {
-        PartitionBoundaries::Anywhere => {
-            let len = range.end - range.start;
-            let want = want.min(usize::try_from(len).unwrap_or(usize::MAX)).max(1);
-            (1..want as u64).map(|i| range.start + len * i / want as u64).collect()
-        }
-        PartitionBoundaries::At(offsets) => {
-            let inside: Vec<u64> =
-                offsets.iter().copied().filter(|&o| o > range.start && o < range.end).collect();
-            let take = (want - 1).min(inside.len());
-            // `n` offers describe `n + 1` pieces, and what is spread evenly
-            // is the **pieces**, not the offers: with four offers and three
-            // wanted groups the cuts fall after the second and fourth piece.
-            // `ceil` rounds that the right way and keeps the picks strictly
-            // increasing, so `cuts.dedup()` below is a no-op on this arm — as
-            // it is on the other, once `want` is clamped to the length.
-            (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
-        }
-    };
-    cuts.dedup();
-    let mut out = Vec::with_capacity(cuts.len() + 1);
-    let mut start = range.start;
-    for cut in cuts {
-        out.push(start..cut);
-        start = cut;
-    }
-    out.push(start..range.end);
-    out
-}
-
 /// One fact about *this query's plan*, as opposed to a fact about the file
-/// ([`crate::diagnostic::DiagnosticKind`], L1), about one column
-/// (`crate::resolve::ResolvedSchema::notes`, L2) or about one predicate term
-/// ([`ComparisonNote`], L4) — a fourth channel, deliberately not a widening of
+/// ([`crate::model::DiagnosticKind`], the model), about one column
+/// (`crate::resolve::ResolvedSchema::notes`, the codec) or about one predicate
+/// term ([`ComparisonNote`], query) — a fourth channel, deliberately not a widening of
 /// any of the other three (`docs/design/decisions.md`, "D19"), and a
 /// [`Finding`] like each of them, so one sink drains all four. See
 /// [`TableStream::plan_notes`].
@@ -3576,7 +3514,7 @@ pub enum PlanNoteKind {
     /// source rather than derived here
     /// ([`crate::io::ByteRangeSource::block_decode_bytes`]).
     ///
-    /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
+    /// **Not a [`crate::model::DiagnosticKind`]**, for the reason its
     /// sibling above is not one (`docs/design/decisions.md`, "D19").
     CompressedBlockPathDeclined {
         block_count: usize,
@@ -3639,7 +3577,7 @@ pub enum PlanNoteKind {
     /// **The chunk is named only where [`PlanNote::levers`] lists it**, in
     /// [`PlanNoteKind::AllocationBelowFloor`]'s clause.
     ///
-    /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
+    /// **Not a [`crate::model::DiagnosticKind`]**, for the reason its
     /// siblings are not (`docs/design/decisions.md`, "D19").
     BatchSpanNarrowed { stated_bytes: u64, planned_bytes: u64, workers: usize, memory_bytes: u64 },
     /// The row-group statistics a mapping pass stored proved that
@@ -5308,7 +5246,7 @@ fn plan_replay(
 /// table the map holds no block for has the empty schema, as its stream has
 /// no rows. **Believe it only over a complete map**: a table's later blocks
 /// are part of its census and of its column-set check
-/// ([`crate::index::DumpIndex::is_complete`]).
+/// ([`crate::model::DumpIndex::is_complete`]).
 pub fn table_schema(
     index: &DumpIndex,
     table: &TableName,
@@ -5455,7 +5393,7 @@ impl TablePartitions {
 
     /// **Never fewer rows than the plan's partitions emit together**, settled
     /// with the plan and reading nothing: the rows of every row group the
-    /// filter's pruning kept ([`crate::statistics::RowGroup::rows`]), plus
+    /// filter's pruning kept ([`crate::model::RowGroup::rows`]), plus
     /// every row of each block it did not consult — one without statistics,
     /// or a query that turned them off or whose filter reads no field. It is
     /// a bound and not a count, since a kept group's rows may fail the filter
@@ -5469,7 +5407,7 @@ impl TablePartitions {
     /// field together**, parallel to [`Self::resolved_schema`]'s fields and
     /// settled as [`Self::kept_rows`] is: each field's values' text bytes over
     /// the groups pruning kept and every group of a block it did not consult
-    /// ([`crate::statistics::ColumnStatistics::value_bytes`]). `None` for a
+    /// ([`crate::model::ColumnStatistics::value_bytes`]). `None` for a
     /// field some block's statistics did not count.
     pub fn kept_value_bytes(&self) -> &[Option<u64>] {
         &self.plan.kept_value_bytes

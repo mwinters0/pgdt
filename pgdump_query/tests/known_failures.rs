@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::map::SpanBody;
+use pgdump_query::model::SpanBody;
 use pgdump_query::{DataBlock, LocalFileSource, ScanOptions, build_map};
 
 mod common;

@@ -42,22 +42,15 @@ use bytes::Bytes;
 use crate::cache::CacheMode;
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
-use crate::index::UnrepresentableTier;
 use crate::io::{ByteRangeSource, Parallelism};
+use crate::model::{PostgresInvalidValues, StatisticsView, UnrepresentableTier};
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::{ComparisonSemantics, NestedPlan, Position};
-use crate::scan::PostgresInvalidValues;
-// L4, imported by L3: `QueryOptions::filter` is the query's filter tree. One
-// of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
-use crate::statistics::StatisticsView;
-use crate::unrepresentable::{UnrepresentableMode, UnrepresentableRead};
-// L4, imported by L3: `read_table` is a push-mode entry point that belongs
-// in `stream.rs`; the other recorded deviation, named here rather than
-// reached for inline so `tests/layering.rs` sees it.
 use crate::stream::{ResumeToken, table_stream};
+use crate::unrepresentable::{UnrepresentableMode, UnrepresentableRead};
 use crate::{Error, Result};
 
 /// What one table query asks for, and how its batches are cut.
@@ -1217,11 +1210,12 @@ impl RowBatcher {
         self.bytes_in_batch = 0;
         self.span = None;
         let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
-        Ok(RecordBatch::try_new_with_options(
+        RecordBatch::try_new_with_options(
             self.schema.clone(),
             arrays,
             &RecordBatchOptions::new().with_row_count(Some(rows)),
-        )?)
+        )
+        .map_err(Error::arrow)
     }
 }
 
@@ -1305,7 +1299,7 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
 /// [`Error::FieldDecode`]'s condition without the row that raises it.
 ///
 /// It exists so that a caller holding field text out of band — a stored bound
-/// ([`crate::statistics::Bounds`]) — reads it back through the one decoder,
+/// ([`crate::model::Bounds`]) — reads it back through the one decoder,
 /// rather than a second one that could disagree with what a scan emits.
 /// `plan` travels beside the Arrow type as it does for [`render_field`].
 pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Option<ArrayRef> {

@@ -1425,7 +1425,7 @@ the character set. All four output shapes observed live on the local
 PostgreSQL 16 instance.
 
 **Relied on by:** `decisions.md`, "D35" — it is why
-`crate::index::ArrayShape::observe` can read a value's dimensionality off the
+`crate::model::ArrayShape::observe` can read a value's dimensionality off the
 raw, still-COPY-escaped field with no array parser at all, and why `{}`
 constrains neither bound.
 
@@ -5021,7 +5021,7 @@ subcommands), are not followed; no `pg_dump` writes the latter.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 16.15 (observed).
 
-**Relied on by:** `preamble::DatabaseMetadata::column_not_null` and
+**Relied on by:** `model::DatabaseMetadata::column_not_null` and
 `pgtype::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
 keying, a query reading or filtering on and a strict parse checking a column
 refuse a NULL by, and through `pgtype::Position::not_null`, which a query
@@ -5087,7 +5087,7 @@ once the data has loaded, as it does every post-data constraint. Nor is an
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 the fixtures at every major (observed).
 
-**Relied on by:** `preamble::DatabaseMetadata::table_checks` and
+**Relied on by:** `model::DatabaseMetadata::table_checks` and
 `TypeKind::Domain`'s `check`, through `strict_unchecked`, which names each as
 what a strict parse does not check.
 

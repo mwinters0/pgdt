@@ -14,8 +14,8 @@ use arrow::datatypes::{DataType, Field, Fields};
 use arrow_schema::extension::{Json, Uuid};
 
 use crate::copy::Cursor;
-use crate::preamble::{CollationDef, TypeDef, TypeKind, canonical_type_name};
-use crate::statistics::BoundsSet;
+use crate::lex::canonical_type_name;
+use crate::model::{BoundsSet, CollationDef, TypeDef, TypeKind};
 
 /// The outcome of mapping one declared type string, mirroring
 /// [`crate::resolve::ColumnResolution`] but at single-type granularity.
@@ -2474,7 +2474,7 @@ fn domains_beneath(
 }
 
 /// Map one declared type string — exactly as `pg_dump` wrote it, e.g. from
-/// [`crate::preamble::DatabaseMetadata::tables`] — against `types`, that
+/// [`crate::model::DatabaseMetadata::tables`] — against `types`, that
 /// same database's `CREATE TYPE`/`CREATE DOMAIN` list.
 ///
 /// The array check runs first because a declared array type still carries its
@@ -2661,7 +2661,7 @@ fn nested_position(
 /// and a range's bound are asked this same question in turn.
 ///
 /// **`collation` is the column's own `COLLATE` clause**, verbatim as the DDL
-/// wrote it ([`crate::preamble::ColumnDef::collation`]), or `None` where the
+/// wrote it ([`crate::model::ColumnDef::collation`]), or `None` where the
 /// column carries none — which `pg_dump` writes exactly when the column's
 /// collation is its type's default (I37). It is why the register is keyed per
 /// *column*: two `text` columns of one table can compare differently.

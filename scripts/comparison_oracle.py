@@ -11,7 +11,7 @@ so must be generated in the same container, from the same DDL, as
 Three files are written per major, under `fixtures/<version>/oracle/`, all in
 PostgreSQL's own COPY TEXT encoding (tab-separated, backslash-escaped, `\\N`
 for SQL NULL) because the server writes them with `COPY ... TO STDOUT` and
-this repo already reads that encoding in L1:
+this repo already reads that encoding in its core:
 
 - `meta.tsv`     -- `key`, `value`. The apparatus: server version, the
                     database's collation, and every session GUC that moves an

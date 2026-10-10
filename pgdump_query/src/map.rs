@@ -37,7 +37,7 @@
 //! ## What this module owns
 //!
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
-//!   driven directly by [`crate::index::scan_preamble`] and `crate::stream`'s
+//!   driven directly by [`crate::load::scan_preamble`] and `crate::stream`'s
 //!   mapping passes, fed the same [`crate::scan::Event`] stream those already
 //!   walk. `crate::stream::build_map` is a thin wrapper for callers that just
 //!   want a span list.
@@ -67,7 +67,7 @@
 //!   carried the header text itself (`docs/design/decisions.md`, "D31").
 //!
 //! - **The cross-reference set.** [`Builder`] accumulates `roles`/`tablespaces`
-//!   (both [`crate::index::DumpIndex`] fields of the same name) as spans
+//!   (both [`crate::model::DumpIndex`] fields of the same name) as spans
 //!   close: [`Builder::push_span`] reads `toc.owner`/`toc.tablespace`, and
 //!   [`Builder::push_statement_span`] scans the closing statement's own text
 //!   via [`extract_statement_cross_refs`] — the sources `Span::toc` alone
@@ -77,7 +77,7 @@
 //!   by slicing the file at each span's own offsets, capped at [`SPAN_STORED_TEXT_MAX_BYTES`];
 //!   `Data` and `Unscanned` spans store none. [`check_tiling`]'s production
 //!   callers report a failure as a
-//!   [`crate::diagnostic::DiagnosticKind::TilingBroken`] on the index and
+//!   [`crate::model::DiagnosticKind::TilingBroken`] on the index and
 //!   return the map anyway (`docs/design/decisions.md`, "D30").
 //!
 //! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
@@ -92,97 +92,24 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Result;
 use crate::copy::split_fields;
-use crate::index::{BlockCensus, CopyBlock, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
 use crate::io::ByteRangeSource;
 use crate::lex::standard_conforming_strings;
+use crate::model::{
+    BlockCensus, BlockGathered, BlockObserver, CopyBlock, DataBlock, Extension, FieldCount,
+    InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText,
+    TilingIssue, TocHeader, TypeDef,
+};
 use crate::preamble::{
-    CollationDef, Extension, StatementScan, StatementShape, TableDef, TableReference, TypeDef,
-    TypeKind, alter_type_labels_unread, classify_statement, extract_statement_cross_refs,
-    in_open_quote, insert_role, insert_tablespace, parse_alter_table_reference,
-    parse_alter_type_add_value_body, parse_alter_type_drop_attribute_body, parse_connect,
-    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
+    StatementScan, StatementShape, alter_type_labels_unread, classify_statement,
+    extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
+    parse_alter_table_reference, parse_alter_type_add_value_body,
+    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, push_stmt_line,
+    statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart};
-use crate::statistics::{BlockGathered, BlockObserver};
-
-/// One tile of the full file map. `start`/`end` are absolute file offsets;
-/// `[start, end)` never overlaps another span's range, and every span
-/// together tiles the file, a partial scan's unread rest one `Unscanned`
-/// span — see [`check_tiling`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Span {
-    pub start: u64,
-    pub end: u64,
-    /// The database this span belongs to — same convention as
-    /// [`CopyBlock::database`]: the name from the governing `\connect`, or
-    /// `None` for a plain dump (or content before any `\connect`).
-    pub database: Option<String>,
-    /// The span's own bytes, sliced from the file by offset and stored in the
-    /// cache so `pgdt info` answers without re-reading the dump
-    /// (`docs/design/decisions.md`, "D30"). `None` until [`attach_text`] has
-    /// run, and permanently `None` for [`SpanBody::Data`] and
-    /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded.
-    pub text: Option<SpanText>,
-    /// The TOC entry this span **belongs to** — not necessarily the comment
-    /// this span's own bytes start with. A follow-on statement with no TOC
-    /// comment of its own **inherits** the governing entry's header rather
-    /// than carrying `None`, and [`toc_owned`](Self::toc_owned) distinguishes
-    /// the two (`docs/design/decisions.md`, "D31"). `None` for a span with no
-    /// governing entry at all: the header-less-input fallback, or a span of
-    /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
-    /// `VersionHeader`) carrying no TOC comment of its own, or a `COPY` block's or large-object region's, with
-    /// no TOC comment of its own, or one whose own TOC-shaped comment did not
-    /// parse, or a `Framing` statement's, whose header is vetoed even where it
-    /// has its own. Not a substitute for
-    /// [`SpanBody`]'s own per-kind
-    /// fields: the two are separately-sourced observations of one object
-    /// (`docs/design/decisions.md`, "D30").
-    pub toc: Option<TocHeader>,
-    /// Whether *this span's own* preceding comment carried the TOC header
-    /// text (`true`), as opposed to `toc` being inherited from an earlier
-    /// entry's span (`false`) — `false` when `toc` is `None`, but for a comment
-    /// block shaped like a TOC entry whose header did not parse and that a
-    /// statement closes, and `false` for a statement classified `Framing`,
-    /// whose header is vetoed (`docs/design/decisions.md`, "D31"). An object
-    /// census (`pgdt info`'s `object kinds:`) counts `toc_owned` spans, one
-    /// per archive entry, while TOC coverage counts every attributed span
-    /// (`toc.is_some()`), inherited ones included
-    /// (`docs/design/decisions.md`, "D31").
-    pub toc_owned: bool,
-    pub body: SpanBody,
-}
-
-/// The fields of a TOC header comment (I3/I16) — `-- Name: <name>; Type:
-/// <kind>; Schema: <schema>; Owner: <owner>[; Tablespace: <tablespace>]`, or
-/// its `-- Data for Name: ...` sibling ahead of a `COPY` block. Parsed by
-/// [`parse_toc_header_line`]; see the module docs' "TOC enrichment" bullet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TocHeader {
-    /// `te->tag`, sanitized — the object's own name as `pg_dump` wrote it,
-    /// which for most kinds is unqualified (just `widgets`, not
-    /// `objects.widgets`) unlike a classified [`SpanBody`]'s own `name` field.
-    pub name: String,
-    /// `te->desc` — one of the closed vocabulary I16 documents (`TABLE`,
-    /// `FK CONSTRAINT`, `POLICY`, `TABLE DATA`, ...). Never `None`:
-    /// `_printTocEntry()` always writes a `Type:` field.
-    pub kind: String,
-    /// `None` for `Schema: -` (no namespace — a database-level or
-    /// namespace-less object).
-    pub schema: Option<String>,
-    /// `None` for `Owner: -` (`--no-owner`, or an owner-less kind like
-    /// `COMMENT`) or `Owner: ` (empty — some entry kinds pass an empty string
-    /// rather than `NULL` through `sanitize_line`). Both mean "no owner
-    /// recorded here" to a reader.
-    pub owner: Option<String>,
-    /// The `; Tablespace: <name>` suffix, present only when the entry has a
-    /// non-default tablespace and `--no-tablespaces` was not given.
-    pub tablespace: Option<String>,
-}
 
 /// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any
 /// comment line that doesn't match, which leaves [`Span::toc`] `None` — a
@@ -233,22 +160,6 @@ fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
         tablespace,
     })
 }
-
-/// A span's stored bytes. Capped at [`SPAN_STORED_TEXT_MAX_BYTES`]: one pathological function
-/// body must not make the cache unbounded, and the offsets are kept
-/// regardless, so a caller that needs the rest can always read the file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpanText {
-    /// Lossy UTF-8 of the span's bytes — truncated to the cap, if it hit one.
-    pub text: String,
-    /// Whether bytes were dropped to fit the cap.
-    pub truncated: bool,
-}
-
-/// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
-/// schema's DDL being small, it bites only on one enormous statement and the
-/// spans after it in its run (`KD31`).
-pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 
 /// Whether a span of this kind stores its text at all. `Data` spans never do
 /// (`docs/design/decisions.md`, "D30"); `Unscanned` covers bytes by
@@ -310,163 +221,6 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
         i = j + 1;
     }
     Ok(())
-}
-
-/// The payload behind [`SpanBody::Data`] — see that variant's docs for why
-/// one `Data` span kind covers all three producers despite them not sharing a
-/// shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DataBlock {
-    Copy(CopyBlock),
-    InsertRun(InsertRun),
-    LargeObjects(LargeObjectRegion),
-}
-
-/// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
-/// `INSERT INTO <table> ...;` statements, one per row, merged into a single
-/// `Data` span instead of one `Unparsed` span per statement. No inner
-/// offsets, nothing reading rows out of this yet
-/// (`docs/design/decisions.md`, "D33").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InsertRun {
-    /// Same convention as [`CopyBlock::database`].
-    pub database: Option<String>,
-    /// The table every statement in this run targets, as its own first
-    /// `INSERT INTO` line named it — schema-qualified when the line was,
-    /// matching [`CopyHeader::qualified_name`](crate::copy::CopyHeader::qualified_name)'s
-    /// convention for the same object.
-    pub table: String,
-    /// Number of `INSERT` statements folded into this span — free to
-    /// compute, finding the run's end meaning recognizing each completion.
-    pub row_count: u64,
-}
-
-/// The large-object data region (I12) — every `BEGIN;`/`COMMIT;`-wrapped
-/// `lo_open`/`lowrite`/`lo_close` run in the file, merged into a single `Data`
-/// span regardless of how many archive entries `pg_dump` split it across (one
-/// on v13-16, one per object on v17+ — see [`Builder::on_large_object_start`]).
-/// No identity at all: the region's only identity is the OID in each
-/// `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
-/// region (`docs/design/decisions.md`, "D33").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LargeObjectRegion {
-    /// Same convention as [`CopyBlock::database`].
-    pub database: Option<String>,
-}
-
-/// What a span is, at the granularity the statement-driven pass (no
-/// TOC enrichment) can tell — see the module docs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SpanBody {
-    Table {
-        name: String,
-        definition: TableDef,
-    },
-    TypeDef {
-        name: String,
-        kind: TypeKind,
-    },
-    Extension {
-        name: String,
-        schema: Option<String>,
-    },
-    /// A `CREATE COLLATION` — distinct from [`Unparsed`](SpanBody::Unparsed)
-    /// because `texteq` on a column of a non-deterministic collation is not a
-    /// byte comparison, and this statement is the only place a plain dump says
-    /// a collation is one (I42).
-    Collation {
-        collation: CollationDef,
-    },
-    /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
-    /// data region. One span kind for all three; [`DataBlock`] is where they
-    /// stop sharing a shape, only [`DataBlock::Copy`] carrying the inner
-    /// offsets a row reader seeks by (`docs/design/decisions.md`, "D33").
-    Data(DataBlock),
-    /// A `\connect <name>` meta-command — distinct from
-    /// [`Framing`](SpanBody::Framing) because
-    /// [`crate::preamble::dump_metadata_from_spans`] needs the database name
-    /// itself to reconstruct `DumpMetadata`'s per-database segmenting.
-    Connect {
-        database: String,
-    },
-    /// The dump's (or a `\connect`ed database's) own two-line version-header
-    /// comment block (I9): `-- Dumped from database version ...` / `-- Dumped
-    /// by pg_dump version ...`. Distinct from [`Framing`](SpanBody::Framing)
-    /// for the same reason [`Connect`](SpanBody::Connect) is: the derived view
-    /// needs the strings themselves.
-    VersionHeader {
-        server_version: Option<String>,
-        pg_dump_version: Option<String>,
-    },
-    /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>'
-    /// ...;` (I6) — recognized so
-    /// [`crate::preamble::dump_metadata_from_spans`] can fold the label into
-    /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
-    AlterTypeAddValue {
-        type_name: String,
-        label: String,
-    },
-    /// A `--binary-upgrade` dump's `ALTER TYPE <name> DROP ATTRIBUTE
-    /// <attr>;`, dropping a composite's placeholder for an attribute the type
-    /// has dropped — recognized so
-    /// [`crate::preamble::dump_metadata_from_spans`] can remove the field from
-    /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
-    AlterTypeDropAttribute {
-        type_name: String,
-        attribute: String,
-    },
-    /// An `ALTER TYPE` that could change an enum's labels and that
-    /// [`crate::preamble`] does not read — `RENAME VALUE`, `ADD VALUE IF NOT
-    /// EXISTS`, a label no plain `'…'` literal spells — naming the type it alters, or `None`
-    /// where it names none this grammar reads. No `pg_dump` writes one; it is
-    /// recognized so [`crate::preamble::dump_metadata_from_spans`] can mark
-    /// the labels it may have changed inexact.
-    EnumLabelsUnread {
-        type_name: Option<String>,
-    },
-    /// An `ALTER TABLE` adding to a table what
-    /// [`crate::preamble::parse_alter_table_reference`] reads — a
-    /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
-    /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL`, an `ATTACH PARTITION`,
-    /// whose `table` is the partition it attaches — recognized so
-    /// [`crate::preamble::dump_metadata_from_spans`] can fold the reference
-    /// into the [`Table`](SpanBody::Table) span it targets.
-    AlterTableReference {
-        table: String,
-        reference: TableReference,
-    },
-    /// File prologue/epilogue framing (the `PostgreSQL database dump`
-    /// banner, `\restrict`/`\unrestrict`, the `SET`/`set_config` preamble
-    /// block, ...) — never a real database object, and none of the more
-    /// specific framing-adjacent kinds above.
-    Framing,
-    /// A statement — complete (trailing `;`, parens/quotes balanced), or
-    /// closed early by a `--` line or a dollar body's end — or a TOC comment
-    /// no statement followed, that is none of this module's classified shapes — including every object kind
-    /// TOC enrichment would otherwise label, and any statement not grouped
-    /// into its owning entry's span (the module docs' "no grouping").
-    Unparsed,
-    /// Bytes no scan has walked yet — always a single trailing span
-    /// (`docs/design/decisions.md`, "D30"). Never produced by `crate::stream::build_map`,
-    /// which always scans to EOF; an incremental scan is what emits one.
-    Unscanned,
-}
-
-/// What [`check_tiling`] found wrong, if anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum TilingIssue {
-    /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
-    Discontinuity { after_index: usize, span_end: u64, next_start: u64 },
-    /// The spans aren't sorted by `start` — every other check assumes they
-    /// are, so this is reported instead of a misleading discontinuity.
-    OutOfOrder { index: usize },
-    /// The first span doesn't start at byte 0.
-    DoesNotStartAtZero { first_start: u64 },
-    /// The last span's `end` doesn't reach `expected_end` (the scanned
-    /// prefix's length, or the file size for a full scan).
-    DoesNotReachEnd { last_end: u64, expected_end: u64 },
-    /// A span's own `start >= end`.
-    Empty { index: usize },
 }
 
 /// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
@@ -566,7 +320,7 @@ enum Mode {
 
 /// The statement-driven boundary/classification pass, shared by
 /// `crate::stream::build_map` (a standalone, always-to-EOF scan) and
-/// `crate::stream::build_index`/[`crate::index::scan_preamble`], which drive
+/// `crate::stream::build_index`/[`crate::load::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub(crate) struct Builder {
@@ -633,22 +387,8 @@ pub(crate) struct Builder {
     standard_strings: bool,
 }
 
-/// **What a data-level block's values are counted against**: whether a field
-/// holds a value no Arrow type of its column's could hold, and past which
-/// limit (`docs/design/decisions.md`, "D96"). Defined here and implemented by
-/// `crate::unrepresentable`, which walks each leaf by the column's declared
-/// type — a cross-layer trait, as [`BlockObserver`] is
-/// (`docs/design/decisions.md`, "D74").
-pub(crate) trait FieldCount: Send + Sync {
-    /// Whether any column is tested, so a row is split for its count.
-    fn counts_any(&self) -> bool;
-    /// The tier `field` — column `column`'s still-escaped bytes — is past,
-    /// `None` for a value its column holds and for a column past the header.
-    fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier>;
-}
-
 /// Fold one data row of a `COPY` block into `census`: its fields into the
-/// array-shape census, one [`crate::index::ArrayShape`] per column, growing it for a row
+/// array-shape census, one [`crate::model::ArrayShape`] per column, growing it for a row
 /// that turns out to have more fields than the header named — a malformed
 /// row, which the mapping pass does not refuse — and each field `counter`
 /// tests into the unrepresentable count.
@@ -908,7 +648,7 @@ impl Builder {
     /// offset to seed the `Data` span that follows.
     ///
     /// `end` is the stop point [`finish`](Self::finish) is closing out at,
-    /// needed here because [`crate::index::scan_preamble`] can retreat it to
+    /// needed here because [`crate::load::scan_preamble`] can retreat it to
     /// a pending comment's own `start` rather than guess that comment's kind
     /// (`docs/design/decisions.md`, "D31"). A comment with `start >= end` is
     /// exactly that case, so it is dropped rather than pushed as a
@@ -1326,10 +1066,9 @@ impl Builder {
     /// Union an already-folded census and count into the open `COPY` block's
     /// own — what a block whose rows were counted by interior workers states
     /// instead of the [`on_row`](Self::on_row) calls it never made
-    /// (`crate::leader::scan_region`). Takes the L1 [`BlockCensus`] rather
-    /// than the leader's `Interior`: this module is L1 and the leader L4
-    /// (`docs/design/decisions.md`, "D68"). A block holding no census absorbs
-    /// nothing.
+    /// (`crate::leader::scan_region`). Takes the model's [`BlockCensus`]
+    /// rather than the leader's `Interior`, so the map does not reach into the
+    /// leader that drives it. A block holding no census absorbs nothing.
     pub(crate) fn absorb_census(&mut self, census: &BlockCensus) {
         if let Some(pending) = self.pending_census.as_mut() {
             pending.merge(census);
@@ -1554,7 +1293,7 @@ impl Builder {
     /// The start offset of a comment block currently being absorbed —
     /// `None` unless `self.mode` is [`Mode::Comment`]. A caller that must stop
     /// scanning *before* the decision a `--`-prefixed run is waiting on
-    /// ([`crate::index::scan_preamble`]) retreats its stop point here rather
+    /// ([`crate::load::scan_preamble`]) retreats its stop point here rather
     /// than guess the comment's kind (`docs/design/decisions.md`, "D31"):
     /// closing out at the stopping point would swallow it as a guessed
     /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span, permanently wrong

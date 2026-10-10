@@ -1,5 +1,8 @@
 use super::*;
 use crate::copy::CopyHeader;
+use crate::model::{
+    DataBlock, FieldCount, Span, SpanBody, TocHeader, TypeKind, UnrepresentableTier,
+};
 
 /// A block's count where no column is tested: what a `COPY` with no DDL
 /// above it is counted against.

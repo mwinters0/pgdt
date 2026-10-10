@@ -1900,7 +1900,7 @@ its own container, untimed and unwrapped.
 
 One `pgdt parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
-`scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
+`io::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
 against its row. The figure exists to decide one of the three I/O defaults and
 to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
@@ -3846,7 +3846,7 @@ does not read the byte total back at all; that is `pgdt info --dtcache <cache>
 
 <!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->
 
-`pgdt parse` and every cold query open with `index::scan_preamble`, which reads
+`pgdt parse` and every cold query open with `load::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that never polls
 `ScanOptions::cancel` (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
 

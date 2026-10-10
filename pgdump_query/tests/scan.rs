@@ -524,7 +524,7 @@ fn fixture18_objects(name: &str) -> PathBuf {
 
 /// `Event::DollarQuoteEnd` reports **where** a dollar-quoted region closed
 /// and nothing else: the lines of the region — including the one that closes
-/// it, which carries the statement's own `;` — stay unsurfaced, so L1's event
+/// it, which carries the statement's own `;` — stay unsurfaced, so the scanner's event
 /// contract still says nothing about DDL text
 /// (`docs/design/decisions.md`, "D30").
 #[tokio::test]

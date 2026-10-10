@@ -1,5 +1,5 @@
-//! The statistics gatherer: [`crate::statistics::BlockObserver`] implemented
-//! at L4, where a column's comparison is known
+//! The statistics gatherer: [`crate::model::BlockObserver`] implemented
+//! in query, where a column's comparison is known
 //! (`docs/design/decisions.md`, "D74").
 //!
 //! [`observer_for`] builds one per `COPY` block from the block's resolved
@@ -64,22 +64,23 @@ use crate::decode::{
     Unread, bytea_unread, char_typmod_refuses, decode_bytea, decode_bytea_escape, render_bytea,
     typmod_unscaled_digits,
 };
-use crate::index::{CopyBlock, Unrepresentable, UnrepresentableTier};
 use crate::instrument::StatisticsScope;
+use crate::model::{
+    BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, ColumnBounds, ColumnDef,
+    ColumnDictionary, ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES,
+    DICTIONARY_MAX_ENTRIES, DumpMetadata, FieldRefusal, GroupSizing, IgnoredRefusals,
+    PostgresInvalidValues, RowGroup, Sortedness, Unrepresentable, UnrepresentableTier,
+    max_rows_group, min_rows_group, text_heap, vec_heap,
+};
 use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TextGrammar, Unchecked,
     column_grammar, unchecked_positions,
 };
-use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::{ValueKey, field_refused, grammar_refuses};
 use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
-use crate::scan::PostgresInvalidValues;
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, Bounds, BoundsView, Charge, ColumnBounds,
-    ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    FieldRefusal, GroupSizing, IgnoredRefusals, ROW_GROUP_DEFAULT_SIZE_BYTES, RowGroup,
-    STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount, StatisticsBackfill,
-    StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap, vec_heap,
+    Charge, ROW_GROUP_DEFAULT_SIZE_BYTES, STATISTICS_ACCOUNT_CHARGE_STEP, StatisticsAccount,
+    StatisticsBackfill, StatisticsRequest, Term,
 };
 use crate::unrepresentable::{ColumnTier, column_tiers};
 
@@ -258,7 +259,7 @@ pub struct UncheckedBound {
     pub partition: String,
     /// The partitioned table it is a partition of.
     pub parent: String,
-    /// Its text ([`crate::preamble::PartitionOf::bound`]), `None` where the
+    /// Its text ([`crate::model::PartitionOf::bound`]), `None` where the
     /// preamble names the parent and the bound is not read.
     pub bound: Option<String>,
 }
@@ -497,7 +498,7 @@ pub(crate) fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> 
 }
 
 /// Whether gathering keeps sums for a column the typed read emits as
-/// `data_type` ([`crate::statistics::ColumnStatistics::sums`]) — and so
+/// `data_type` ([`crate::model::ColumnStatistics::sums`]) — and so
 /// whether a column a query emits so is the one they were summed as.
 pub(crate) fn keeps_sums(data_type: &DataType) -> bool {
     Summand::of(data_type, &NestedPlan::Scalar).is_some()
@@ -505,7 +506,7 @@ pub(crate) fn keeps_sums(data_type: &DataType) -> bool {
 
 /// The declaration `metadata` holds for column `name` of the table
 /// `qualified` in `database`, wherever the table takes it from
-/// ([`crate::preamble::DatabaseMetadata::declared_column`]) — what a column's
+/// ([`crate::model::DatabaseMetadata::declared_column`]) — what a column's
 /// statistics record their declared type and collation from, and what a
 /// query compares those against (`crate::prune`).
 pub(crate) fn declared_column<'m>(
@@ -703,7 +704,7 @@ impl Gatherer {
     /// having passed its allowance: the block's groups and columns are freed,
     /// its charge goes to nothing in the same update, and the allowance it
     /// declined under is what the map records
-    /// (`crate::index::CopyBlock::statistics_declined`). Called with the
+    /// (`crate::model::CopyBlock::statistics_declined`). Called with the
     /// caller's [`StatisticsScope`] open, so what it frees is attributed as
     /// what allocated it was.
     ///
@@ -1290,7 +1291,7 @@ struct ColumnGatherer {
     /// Each closed group's count of such values, for a column `tier` tests
     /// ([`ColumnStatistics::unrepresentable`]).
     unrepresentable: Option<Vec<Unrepresentable>>,
-    /// One per [`BoundsSet`], in its order.
+    /// One per [`crate::model::BoundsSet`], in its order.
     bounds: [Option<BoundsGatherer>; 2],
     dictionary: Option<DictionaryGatherer>,
     /// The column over the open group.
@@ -1683,7 +1684,7 @@ struct GroupState {
     value_bytes: u64,
     /// The values past what the column's type holds so far, by tier.
     unrepresentable: Unrepresentable,
-    /// One per [`BoundsSet`], `None` for a set the column does not keep.
+    /// One per [`crate::model::BoundsSet`], `None` for a set the column does not keep.
     bounds: [Option<GroupBounds>; 2],
     /// The group's distinct texts in first-seen order, `None` once past a
     /// cap, at a field that is not text or at one an ignoring parse went past;
@@ -2197,7 +2198,7 @@ impl RowOrder {
 }
 
 /// A column's row order in each view of its values
-/// (`crate::statistics::StatisticsView`): over the values every layer holds,
+/// (`crate::model::StatisticsView`): over the values every layer holds,
 /// and — **once the rows observed hold a value past a tier, and not before** —
 /// over those and the engine's tier, and over every value. Until then the
 /// three are one order, which is what a fork copies.

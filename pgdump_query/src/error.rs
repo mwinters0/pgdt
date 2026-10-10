@@ -2,12 +2,19 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error as ThisError;
 
+/// A dependency's error, carried opaquely: the library's failures are its own
+/// vocabulary, so no variant names a dependency's type, and a caller wanting
+/// the cause downcasts it (`docs/design/decisions.md`, "D74").
+pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// A background task panicked or was cancelled; the cause is tokio's
+    /// `JoinError` ([`Error::join`]).
     #[error("background task failed: {0}")]
-    Join(#[from] tokio::task::JoinError),
+    Join(#[source] Cause),
     #[error("COPY block at offset {header_offset} has no terminating `\\.` line")]
     UnterminatedCopyBlock { header_offset: u64 },
     #[error("large-object data region at offset {start_offset} has no terminating `COMMIT;` line")]
@@ -22,8 +29,10 @@ pub enum Error {
         "row at offset {row_offset} (COPY block at {header_offset}) has {found} column(s), expected {expected}"
     )]
     ColumnCountMismatch { header_offset: u64, row_offset: u64, expected: usize, found: usize },
+    /// Arrow refused something; the cause is its `ArrowError`
+    /// ([`Error::arrow`]).
     #[error("arrow error: {0}")]
-    Arrow(#[from] arrow::error::ArrowError),
+    Arrow(#[source] Cause),
     /// A `--source` argument names something this build does not read: a URL
     /// scheme it speaks nothing for, a `file:` URL naming another machine, a
     /// URL carrying a credential it would have to send, or a place whose kind
@@ -55,11 +64,14 @@ pub enum Error {
     /// `.xz`-compressed [`crate::XzSource`]
     /// (`docs/design/decisions.md`, "The compressed source and the cache").
     /// The crate's own `Error::compressed_offset`/`uncompressed_range` carry
-    /// the position; this variant only wraps and displays it.
+    /// the position; this variant only wraps and displays it, the cause
+    /// being an `xz_seek::Error` ([`Error::xz`]).
     #[error("xz error: {0}")]
-    Xz(#[from] xz_seek::Error),
+    Xz(#[source] Cause),
+    /// The cache did not encode; the cause is bincode's `EncodeError`
+    /// ([`Error::cache_encode`]).
     #[error("failed to encode structure cache: {0}")]
-    CacheEncode(#[from] bincode::error::EncodeError),
+    CacheEncode(#[source] Cause),
     #[error("cache is disabled (`--dtcache none`), but `{operation}` requires a cache file")]
     CacheDisabled { operation: &'static str },
     #[error("cache mode mismatch: {0}")]
@@ -69,7 +81,7 @@ pub enum Error {
     /// another file — so it refuses rather than starting cold and overwriting
     /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
     /// points — `crate::map_file`, `crate::table_stream`,
-    /// `crate::table_stream_partitions` and `crate::index::preamble_only` —
+    /// `crate::table_stream_partitions` and `crate::load::preamble_only` —
     /// before any byte of the dump is read, through
     /// `crate::cache::CacheMode::refusal`, which answers none where the mode
     /// may overwrite the cache instead; and by a caller pre-empting them, as
@@ -290,7 +302,7 @@ pub enum Error {
     /// [`Self::FieldRefused`], read from the cache rather than the dump: a
     /// parse under [`crate::PostgresInvalidValues::Default`] whose cache
     /// records a field an earlier parse ignoring such fields went past
-    /// ([`crate::index::CopyBlock::ignored_refusals`]) fails with the first it
+    /// ([`crate::model::CopyBlock::ignored_refusals`]) fails with the first it
     /// records in a column its request tracks, before reading anything — the
     /// verdict being the dump's, not that of whichever run gathered the cache.
     /// `refused` is that refusal as a read of the dump would have raised it.
@@ -365,6 +377,37 @@ fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
     }
 }
 
+impl Error {
+    /// [`Error::Arrow`] carrying `cause`, an `ArrowError`.
+    pub fn arrow(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::Arrow(Box::new(cause))
+    }
+
+    /// [`Error::Xz`] carrying `cause`, an `xz_seek::Error`.
+    pub fn xz(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::Xz(Box::new(cause))
+    }
+
+    /// [`Error::CacheEncode`] carrying `cause`, bincode's `EncodeError`.
+    pub fn cache_encode(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::CacheEncode(Box::new(cause))
+    }
+
+    /// [`Error::Join`] carrying `cause`, tokio's `JoinError`.
+    pub fn join(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error::Join(Box::new(cause))
+    }
+
+    /// The cause an [`Error::Xz`] carries, as the type it is — what a caller
+    /// telling one `xz_seek` failure from another matches on.
+    pub fn xz_cause<E: std::error::Error + 'static>(&self) -> Option<&E> {
+        match self {
+            Error::Xz(cause) => cause.downcast_ref(),
+            _ => None,
+        }
+    }
+}
+
 /// Why a cache at a path cannot be used — carried whole by `crate::cache::CacheStatus`,
 /// `CacheLoad`, `CacheClaim` and [`Error::CacheUnusable`], so a caller
 /// that reports it and one that refuses on it name the same reason
@@ -382,7 +425,7 @@ pub enum Unusable {
     /// short or damaged.
     Unreadable,
     /// Another build's cache: `found` is the format version its header
-    /// states, where this build reads `crate::cache::CACHE_FORMAT_VERSION`; nothing
+    /// states, where this build reads `crate::model::CACHE_FORMAT_VERSION`; nothing
     /// migrates (`docs/design/roadmap.md`, "Pre-1.0").
     UnsupportedVersion { found: u32 },
     /// A readable cache whose recorded *stored* size disagrees with the live
@@ -399,7 +442,7 @@ pub enum Unusable {
     /// to it; `crate::cache::load` answers it for a source opened without one.
     CompressionContradicted,
     /// A cache whose unrepresentable counts were taken under a calendar
-    /// ending on another day than this build's — `crate::index::calendar_end`,
+    /// ending on another day than this build's — `crate::model::calendar_end`,
     /// each a `Date32` day count — so a count of what a DataFusion query
     /// cannot display may be wrong either way (`docs/design/decisions.md`,
     /// "D96"). Never read as current and never replaced unasked: a `parse`

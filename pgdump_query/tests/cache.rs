@@ -7,10 +7,11 @@ use std::process::Command;
 
 use futures::StreamExt;
 use pgdump_query::cache::{
-    CACHE_FORMAT_VERSION, CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch,
-    StrictIdentity, Unusable, WeakIdentity,
+    CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch, StrictIdentity, Unusable,
+    WeakIdentity,
 };
-use pgdump_query::map::SpanBody;
+use pgdump_query::model::CACHE_FORMAT_VERSION;
+use pgdump_query::model::SpanBody;
 use pgdump_query::{
     ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Origin, Parallelism,
     QueryOptions, Recognized, ScanOptions, StatisticsRequest, XzSource, build_index, cache,
@@ -1105,7 +1106,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let (last, rows) = items.split_last().expect("the stream yields");
     assert!(rows.iter().all(Result::is_ok) && !rows.is_empty(), "{items:?}");
     assert!(
-        matches!(last, Err(Error::Xz(xz_seek::Error::BlockCheckFailed { .. }))),
+        matches!(&last, Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::BlockCheckFailed { .. }))),
         "the run must end on the block's check: {last:?}"
     );
 }

@@ -2243,7 +2243,7 @@ def predicate_expr(shape: str) -> str:
 
 
 #: The read chunk sizes `chunk-size` is taken at, in bytes, smallest first.
-#: `1 << 20` is the shipped default (`scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES`) and every
+#: `1 << 20` is the shipped default (`io::SCAN_CHUNK_DEFAULT_SIZE_BYTES`) and every
 #: other row is read against it.
 #:
 #: **The range brackets the read path's own buffer-pool ceiling.** 8 MiB is
@@ -3136,7 +3136,7 @@ def charge_bytes(unit: int, jobs: int) -> int:
     count, plus the retention list those readers share.
 
     `WorkerMemory::at`, mirrored — what `Parallelism::fit` solves a cap against
-    and what `stream::worker_count` solves a budget against, so under discovery
+    and what `io::worker_count` solves a budget against, so under discovery
     it is also the budget a run reports for itself.
     """
     return jobs * reader_bytes(unit) + pool_bytes(unit, jobs)
@@ -6160,7 +6160,7 @@ SCAN = (
 #: change to the largest single term in a warm `parse`'s user time read green
 #: against every table it moved.
 READ = ("pgdump_query/src/io.rs",)
-MAP = ("pgdump_query/src/map.rs",)
+MAP = ("pgdump_query/src/map.rs", "pgdump_query/src/model/span.rs")
 #: The map's own per-block cost is two files, not one: `map::Builder::snapshot`
 #: clones the span list and `stream::splice` rebuilds the index from it, under
 #: the save throttle's gate. A figure that prices the map declares both, or a
@@ -6183,9 +6183,16 @@ DECODE = ("pgdump_query/src/decode.rs",)
 CACHE = ("pgdump_query/src/cache.rs",)
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96").
-UNREPRESENTABLE = ("pgdump_query/src/unrepresentable.rs",)
+UNREPRESENTABLE = (
+    "pgdump_query/src/unrepresentable.rs",
+    "pgdump_query/src/model/block.rs",
+)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
-PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
+PREAMBLE = (
+    "pgdump_query/src/load.rs",
+    "pgdump_query/src/preamble.rs",
+    "pgdump_query/src/model/catalog.rs",
+)
 #: A query figure also reads through the CLI's own row rendering. The whole
 #: `src/` directory rather than `main.rs`: a declared path is matched by
 #: prefix, so naming the one file leaves every other module in that crate as a
@@ -6213,11 +6220,13 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 #: around it, the library `pgdt` calls.
 DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
-#: `statistics.rs` are the gathering; `pgtype.rs`, `resolve.rs` and
-#: `predicate.rs` are the comparison a bound is keyed and ordered under.
+#: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
+#: `pgtype.rs`, `resolve.rs` and `predicate.rs` are the comparison a bound is
+#: keyed and ordered under.
 STATISTICS = (
     "pgdump_query/src/gather.rs",
     "pgdump_query/src/statistics.rs",
+    "pgdump_query/src/model/statistics.rs",
     "pgdump_query/src/pgtype.rs",
     "pgdump_query/src/resolve.rs",
     *PREDICATE,

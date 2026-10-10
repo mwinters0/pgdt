@@ -25,19 +25,18 @@
 //!   structural: one that begins inside a string, a quoted identifier or a
 //!   comment is that region's content.
 
-use std::future::Future;
 use std::ops::ControlFlow;
-use std::pin::pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
-use futures::future::{Either, select};
-use tokio::sync::Notify;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header};
-use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
+use crate::io::{
+    ByteRangeSource, Cancellation, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
+    memory_budget_display,
+};
 use crate::lex::{Lexer, Region, standard_conforming_strings};
+use crate::model::PostgresInvalidValues;
 use crate::{Error, Result, RowEndingRefusal};
 
 /// The start of a COPY data block.
@@ -82,7 +81,7 @@ pub struct CopyEnd {
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
 /// `crate::map::Builder::feed_line` classifies into spans, using
 /// `crate::preamble`'s grammar. No line reaches a `DumpMetadata` directly:
-/// [`crate::index::DumpMetadata`] is derived from the finished spans
+/// [`crate::model::DumpMetadata`] is derived from the finished spans
 /// (`docs/design/decisions.md`, "D34"), never from a second pass. A COPY block's data
 /// rows never reach this arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,7 +124,7 @@ pub struct LargeObjectEnd {
 /// dollar-quoted string — including the one carrying the statement's own
 /// closing `;` — so without this the first such body in a TOC-comment-less
 /// file absorbs every statement after it into one span. Surfacing the
-/// *lines* stays rejected: it would leak a mapping concern into L1's event
+/// *lines* stays rejected: it would leak a mapping concern into the scanner's event
 /// contract, and span text is sliced from the file by offset anyway
 /// (`docs/design/decisions.md`, "D30").
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -689,139 +688,12 @@ impl ChunkCarry {
     }
 }
 
-/// Bytes requested per read from the source, unless a caller says otherwise.
-///
-/// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
-/// is worst-case-best across the device classes measured
-/// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`ScanOptions::chunk_size_bytes`] is
-/// compared against and what callers scale from.
-///
-/// **Raising it costs memory, not pooling.** Every read loop announces the
-/// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
-/// a chunk of any size is kept and reused by the local source's buffer pool.
-/// What a larger chunk costs is the pool holding four buffers of it, or the
-/// caller's stated memory budget's worth ([`crate::Parallelism`], defaulting
-/// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count
-/// falls out of that budget, so the cost levels off
-/// (`docs/design/decisions.md`, "D9").
-pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;
-
 /// The longest line a scan carries across a chunk boundary unless a caller
 /// says otherwise ([`ScanOptions::max_line_bytes`], which says where a line
 /// is measured). A row is held whole before it is emitted, so this and the
 /// chunk size bound what one row may cost in memory; a dump holding larger
 /// values states a larger limit.
 pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
-
-/// A caller's ask that a scan stop, in both the forms a reader consumes it
-/// in: a bit to poll and a signal to await.
-///
-/// The polled bit is what the mapping loops read once per chunk or leader
-/// window, and it is the whole mechanism for a reader whose wait is a
-/// `pread` — tens of milliseconds, bounded by the read already in flight. A
-/// reader whose wait is a network request has no such bound: its in-flight
-/// call can sit inside a retry schedule for minutes, and polling at the far
-/// side of it is a program that does not answer. So the same object carries a
-/// signal such a reader can select on and **drop** the request rather than
-/// wait it out (`docs/design/decisions.md`, "D26").
-///
-/// Both halves report the same one-way transition — once cancelled, always
-/// cancelled — so a reader may use either or both, and which it uses is a
-/// property of what it is waiting on rather than of what the caller asked for.
-#[derive(Debug, Default)]
-pub struct Cancellation {
-    flag: AtomicBool,
-    signal: Notify,
-}
-
-impl Cancellation {
-    /// A cancellation nobody has asked for yet.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Ask every reader holding this to stop. Idempotent, and never blocks:
-    /// it is called from a signal-handling task, and from a source's own read
-    /// path in the tests.
-    ///
-    /// The `SeqCst` store is what [`Cancellation::cancelled`]'s registration
-    /// is ordered against; the polled side needs nothing so strong.
-    pub fn cancel(&self) {
-        self.flag.store(true, Ordering::SeqCst);
-        self.signal.notify_waiters();
-    }
-
-    /// Whether cancellation has been asked for. `Relaxed` is the right
-    /// ordering: the bit guards nothing but itself — the reader's response is
-    /// to finish the chunk it already holds and save the index it already
-    /// owns — so nothing is published through it.
-    pub fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Relaxed)
-    }
-
-    /// Resolves once [`Cancellation::cancel`] has been called, at once if it
-    /// already has.
-    ///
-    /// The waiter is registered *before* the bit is read, which is what makes
-    /// this race-free against a `cancel` landing between the two: a cancel
-    /// wholly before the registration is seen by the load, and one after it
-    /// wakes a waiter that is already there.
-    pub async fn cancelled(&self) {
-        let mut signalled = pin!(self.signal.notified());
-        signalled.as_mut().enable();
-        if self.flag.load(Ordering::SeqCst) {
-            return;
-        }
-        signalled.await;
-    }
-
-    /// Run `work` until it finishes or this is cancelled, whichever happens
-    /// first. `None` is the cancellation, and `work` is **dropped where it
-    /// stood** — which is how a reader gives up a request in flight instead
-    /// of waiting for the answer it no longer wants.
-    pub async fn until_cancelled<F: Future>(&self, work: F) -> Option<F::Output> {
-        let work = pin!(work);
-        let cancelled = pin!(self.cancelled());
-        match select(work, cancelled).await {
-            Either::Left((done, _)) => Some(done),
-            Either::Right(((), _)) => None,
-        }
-    }
-}
-
-/// What a read does with a field its type's `*_in` refuses
-/// ([`crate::decode::Unread::Refused`]), stated for a parse on [`ScanOptions`]
-/// and for a query on [`crate::QueryOptions`] (`docs/design/decisions.md`,
-/// "D103").
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum PostgresInvalidValues {
-    /// Refused as a restore refuses it: a parse fails at the first such field
-    /// it decodes, or that its cache records an ignoring parse went past
-    /// ([`crate::Error::FieldRefusedRecorded`]), and a query decoding one fails
-    /// there.
-    #[default]
-    Default,
-    /// Read as the decoders read it, with no contract: a parse goes on past
-    /// one, its row group then keeping no statistic of its column a read could
-    /// contradict and its block recording it
-    /// ([`crate::index::CopyBlock::ignored_refusals`]), and a query reads a float past its type's range as
-    /// `decode::float_field` reads it, a `varchar(n)` or `char(n)` value past
-    /// its length as written and a NULL in a `NOT NULL` column as NULL, and
-    /// fails on every other such field. A
-    /// filter literal is never opted out.
-    Ignore,
-    /// **A parse checks every field**, failing at the first its type's `*_in`
-    /// refuses as [`Self::Default`] does, but over the fields `Default` leaves
-    /// to a query: a column the request leaves at the metadata level, a nested
-    /// value's elements, a value too long to key, and the rows of a block whose
-    /// statistics declined. A block it checks whole records it
-    /// ([`crate::index::CopyBlock::checked_in_full`]), and one the cache holds
-    /// unchecked is re-read and checked, so a clean run has checked every field
-    /// whichever runs built the cache. A query reads under it as under
-    /// `Default`.
-    Strict,
-}
 
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
@@ -884,7 +756,7 @@ pub struct ScanOptions {
     /// (`crate::statistics::StatisticsAccount`): a `COPY` block whose
     /// gathering would pass it declines, drops what it gathered, and is
     /// recorded in the map as having declined under this number
-    /// ([`crate::index::CopyBlock::statistics_declined`]).
+    /// ([`crate::model::CopyBlock::statistics_declined`]).
     ///
     /// **Read by [`crate::stream::map_file`] alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
@@ -940,8 +812,8 @@ where
 {
     let size = source.size().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
-    // `index::scan_preamble`, and `stream::map_forward` announces itself as
-    // "scan". `index::build_index` and `stream::build_map` share this label
+    // `load::scan_preamble`, and `stream::map_forward` announces itself as
+    // "scan". `stream::build_index` and `stream::build_map` share this label
     // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
@@ -1394,79 +1266,5 @@ mod tests {
                 "chunk_size {chunk_size} gave {err:?}"
             );
         }
-    }
-
-    /// A guard that records its own drop, so a test can assert that a future
-    /// given up on was released rather than merely left unpolled.
-    struct DropFlag(Arc<AtomicBool>);
-
-    impl Drop for DropFlag {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
-
-    /// The signal reports a cancellation that landed **before** anyone waited
-    /// on it: a reader that reaches its await after the ask must not wait for
-    /// a second one that will never come.
-    #[tokio::test]
-    async fn the_signal_resolves_at_once_for_a_cancellation_already_asked_for() {
-        let cancel = Cancellation::new();
-        assert!(!cancel.is_cancelled());
-        cancel.cancel();
-        assert!(cancel.is_cancelled());
-        cancel.cancelled().await;
-    }
-
-    /// And it reports one that lands **while** a waiter is registered, which
-    /// is the ordinary case: the waiter is parked before `cancel` is called.
-    #[tokio::test]
-    async fn a_registered_waiter_is_woken_by_a_later_cancel() {
-        let cancel = Cancellation::new();
-        tokio::join!(cancel.cancelled(), async {
-            assert!(!cancel.is_cancelled(), "the waiter parks before the ask");
-            cancel.cancel();
-        });
-    }
-
-    /// `cancel` is idempotent, and the polled bit is one-way.
-    #[tokio::test]
-    async fn cancelling_twice_says_the_same_thing() {
-        let cancel = Cancellation::new();
-        cancel.cancel();
-        cancel.cancel();
-        assert!(cancel.is_cancelled());
-        cancel.cancelled().await;
-    }
-
-    /// Work that finishes before anyone cancels is handed back whole.
-    #[tokio::test]
-    async fn until_cancelled_yields_work_that_finished_first() {
-        let cancel = Cancellation::new();
-        assert_eq!(cancel.until_cancelled(async { 7u8 }).await, Some(7));
-        assert!(!cancel.is_cancelled(), "asking nothing cancels nothing");
-    }
-
-    /// **The point of the awaitable form.** Work that never finishes is given
-    /// up on at the cancellation *and dropped there* — which is what lets a
-    /// reader release a request in flight instead of waiting out whatever
-    /// deadline sits under it.
-    #[tokio::test]
-    async fn until_cancelled_drops_the_work_it_gave_up_on() {
-        let dropped = Arc::new(AtomicBool::new(false));
-        let guard = DropFlag(Arc::clone(&dropped));
-        let forever = async move {
-            let _guard = guard;
-            std::future::pending::<u8>().await
-        };
-
-        let cancel = Cancellation::new();
-        let (given_up, ()) = tokio::join!(cancel.until_cancelled(forever), async {
-            assert!(!dropped.load(Ordering::SeqCst), "still in flight before the ask");
-            cancel.cancel();
-        });
-
-        assert_eq!(given_up, None, "cancellation, not an answer");
-        assert!(dropped.load(Ordering::SeqCst), "the request in flight was released");
     }
 }

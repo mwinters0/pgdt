@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 
-use crate::diagnostic::{Finding, Severity};
-use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
+use crate::model::{
+    ArrayShape, DatabaseMetadata, DumpMetadata, Finding, PG_ARRAY_MAX_DIMS, Severity,
+};
 use crate::pgtype::{
     CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TypeOutcome, comparison_for,
     domain_not_null, resolve_declared_type, with_extension,
 };
-use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
 /// Whether a query resolves column types at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -134,9 +134,9 @@ impl ColumnResolution {
 /// display (`pgdt info`) needs in one place, for every column.
 ///
 /// **A note, not a diagnostic**: there is exactly one per column, always. The
-/// file-level exception channel is [`crate::diagnostic::Diagnostic`], kept a
-/// separate type because `DumpIndex` is L1 and [`ColumnResolution`] an L2
-/// conclusion (`docs/design/decisions.md`, "D68"). What they share is the
+/// file-level exception channel is [`crate::model::Diagnostic`], kept a
+/// separate type because `DumpIndex` is the model's and [`ColumnResolution`]
+/// a codec conclusion (`docs/design/decisions.md`, "D68"). What they share is the
 /// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnNote {
@@ -205,7 +205,7 @@ pub struct ResolvedSchema {
     /// How each column compares — positional, parallel to `schema.fields()`
     /// like `columns` and `plans`.
     ///
-    /// An L2 conclusion, produced here because this is where its inputs meet:
+    /// A codec conclusion, produced here because this is where its inputs meet:
     /// the declared type string and the database's own `CREATE TYPE` list.
     /// `crate::predicate` reads this instead of inspecting the Arrow type
     /// (`crate::pgtype::comparison_for`).
@@ -266,7 +266,7 @@ impl ResolvedSchema {
 }
 
 /// Find the database named `database` in `metadata.databases` — an exact
-/// match on [`crate::preamble::DatabaseMetadata::name`], never a guess.
+/// match on [`crate::model::DatabaseMetadata::name`], never a guess.
 /// `database: None` matches the single unnamed database a plain (non-`\connect`)
 /// dump produces.
 ///
@@ -376,7 +376,7 @@ fn retype_from_census(
 /// `census` is the array-shape evidence this schema may commit to, positional
 /// like `columns` (`docs/design/decisions.md`, "D35"). A caller with no
 /// evidence — or none it may believe, which for a *reported* schema means
-/// `crate::index::DumpIndex::is_complete` is false — passes `&[]`, and every
+/// `crate::model::DumpIndex::is_complete` is false — passes `&[]`, and every
 /// column keeps the optimistic type the DDL alone gives it.
 ///
 /// A column of a database whose DDL the scan never reached comes back
@@ -557,7 +557,7 @@ pub(crate) fn read_as_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preamble::{ColumnDef, DatabaseMetadata, TableDef, TypeDef, TypeKind};
+    use crate::model::{ColumnDef, DatabaseMetadata, TableDef, TypeDef, TypeKind};
 
     fn one_db(tables: &[(&str, &[(&str, &str)])], types: Vec<TypeDef>) -> DumpMetadata {
         let mut db = DatabaseMetadata {
@@ -1014,8 +1014,8 @@ mod tests {
     /// whole dump said about that name, not the clause.
     #[test]
     fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
+        use crate::model::CollationDef;
         use crate::pgtype::{CompareKind, ComparisonDivergence};
-        use crate::preamble::CollationDef;
 
         let build = |deterministic: bool| {
             let mut meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
@@ -1169,9 +1169,9 @@ mod tests {
     /// without knowing which produced what.
     #[test]
     fn both_channels_order_on_one_severity_scale() {
-        use crate::diagnostic::{Diagnostic, DiagnosticKind};
+        use crate::model::{Diagnostic, DiagnosticKind};
 
-        let file = Diagnostic::tiling_broken(vec![crate::map::TilingIssue::Empty { index: 0 }]);
+        let file = Diagnostic::tiling_broken(vec![crate::model::TilingIssue::Empty { index: 0 }]);
         let column = ColumnNote {
             column: "c".to_string(),
             declared: None,

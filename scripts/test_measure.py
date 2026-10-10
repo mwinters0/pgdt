@@ -3188,7 +3188,7 @@ class CompressedAccount(unittest.TestCase):
     def test_the_mirrored_chunk_size_is_the_librarys_default(self):
         # The one term of the three that is a library constant rather than a
         # property of the file or of the decoder.
-        src = (measure.REPO / "pgdump_query/src/scan.rs").read_text()
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
             src,
@@ -6524,7 +6524,7 @@ class ChunkSize(unittest.TestCase):
         # about the constant the library ships. A drift between the two would
         # publish a comparison against a value nothing runs.
         self.assertIn(measure.CHUNK_DEFAULT, measure.CHUNK_SIZES)
-        source = (measure.REPO / "pgdump_query/src/scan.rs").read_text()
+        source = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << {measure.CHUNK_DEFAULT.bit_length() - 1};",
             source,

@@ -1,7 +1,7 @@
 use arrow::datatypes::TimeUnit;
 
 use super::*;
-use crate::preamble::ColumnDef;
+use crate::model::ColumnDef;
 
 fn ty(name: &str, kind: TypeKind) -> TypeDef {
     TypeDef { name: name.to_string(), kind }

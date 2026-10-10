@@ -9,7 +9,7 @@
 //! directly, with no subscriber installed, and see nothing.
 //!
 //! **Two mechanisms both scan, and both had to be named apart.** `parse`
-//! internally runs `index::scan_preamble` (a bounded prepass, `"preamble scan
+//! internally runs `load::scan_preamble` (a bounded prepass, `"preamble scan
 //! …"`) before `stream::map_forward` (the loop that actually reads the file,
 //! `"scan …"`), and a single uninterrupted run reports both in sequence. Every
 //! assertion here that touches a line spelling `"scan started"` or `"scan
@@ -117,7 +117,7 @@ fn opens_with_rfc3339_stamp(line: &str) -> bool {
         && stamp.ends_with('Z')
 }
 
-/// Lines reporting the bounded preamble prepass (`index::scan_preamble`,
+/// Lines reporting the bounded preamble prepass (`load::scan_preamble`,
 /// through `crate::scan::scan`).
 fn preamble_lines(stderr: &str) -> Vec<&str> {
     stderr.lines().filter(|l| l.contains("preamble scan")).collect()

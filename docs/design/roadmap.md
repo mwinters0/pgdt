@@ -52,9 +52,9 @@ is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
 [`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
-four layers, fix the direction dependencies may point, and pre-answer the
-cross-layer phases below: what statistics may persist and how they parse a
-value is settled there, and the remote source, as the ones P15 and P18 add, is L1. [`postgres-invariants.md`](postgres-invariants.md)
+six crates-to-be, fix the direction dependencies may point, and pre-answer the
+cross-crate phases below: what statistics may persist and how they parse a
+value is settled there, and the remote source, as the ones P15 and P18 add, is io's. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -167,7 +167,7 @@ Four bounds, and they are what keep this from being "take everything":
   allocate workers there is no memory for. The pair has to settle consistently
   on machines of *different shape* — a wide host with little memory per core
   and a narrow one with a great deal — so neither number may be chosen without
-  the other. `stream::worker_count` and `BufferPool::slots`' clamp are the
+  the other. `io::worker_count` and `BufferPool::slots`' clamp are the
   second half in code: resident saturates at `WorkerMemory::at` of the
   announced count — its readers' own terms plus the block pool's retention
   list — and what no pool holds, plus what `at` does not bill (`KD24`'s chunk

@@ -13,9 +13,10 @@ use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use namespace_init::{InitShutdown, namespace_init};
 use pgdump_query::cache::{
-    CACHE_FORMAT_VERSION, CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape,
-    OVERWRITE_WAYS_OUT, StrictIdentity, Unusable,
+    CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, OVERWRITE_WAYS_OUT,
+    StrictIdentity, Unusable,
 };
+use pgdump_query::model::CACHE_FORMAT_VERSION;
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
@@ -416,7 +417,7 @@ impl Discovered<'_> {
     /// *recommended* count is lowered to fit (`docs/design/roadmap.md`, "A
     /// default runs as fast as the allocation permits"); either allowance may
     /// put the budget below `DEFAULT_MEMORY_BUDGET`, and what it affords still
-    /// binds through `stream::worker_count`.
+    /// binds through `io::worker_count`.
     ///
     /// **A carved budget reaches the library at every worker count**, the
     /// serial state carrying one of its own
@@ -451,7 +452,7 @@ impl Discovered<'_> {
         };
         let parallelism = match (args.jobs, carved.memory_bytes()) {
             // A stated count is not lowered by the allowance; what the budget
-            // delivers still binds through `stream::worker_count`.
+            // delivers still binds through `io::worker_count`.
             (Some(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };
@@ -1912,8 +1913,9 @@ enum Slot {
 /// second.
 ///
 /// **Announced by the CLI rather than by a library channel** — the signal is
-/// per-column *and* conditional on a predicate, so L4, while
-/// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` L2. An embedder
+/// per-column *and* conditional on a predicate, so query's, while
+/// `DumpIndex.diagnostics` is the model's and `ResolvedSchema.notes` the
+/// codec's. An embedder
 /// drains `TableStream::comparison_notes` into its own
 /// `pgdump_query::DiagnosticSink` beside the other two; this command prints
 /// each channel where its output already speaks, and adopts no sink.
@@ -3140,7 +3142,7 @@ fn block_resolutions(
 /// [`CacheEnvelope`] around it — flattened to one object, plus what the file
 /// does not itself carry: the container's shape derived from its seek table,
 /// the diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D22"),
-/// and the per-block type resolution, an L2 conclusion an L1 index has no
+/// and the per-block type resolution, a codec conclusion the model's index has no
 /// field for. No schema stability is promised — see the `--json` flag's help
 /// text.
 ///

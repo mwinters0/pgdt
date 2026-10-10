@@ -5,7 +5,7 @@
 //! function takes an already-COPY-unescaped `&str` field (what
 //! `crate::copy::decode_field` returns) and returns a plain Rust value; it
 //! never takes an Arrow builder — building the array is `batch.rs`'s job
-//! (L3), which is also where these are wired to their [`arrow::datatypes::DataType`].
+//! (query's), which is also where these are wired to their [`arrow::datatypes::DataType`].
 //!
 //! Every `render_*` function is the exact inverse of its `decode_*`
 //! counterpart — but [`render_bytea`], which writes the hex form whichever
@@ -17,7 +17,7 @@
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `tests/scan.rs`.
 
-use crate::scan::PostgresInvalidValues;
+use crate::model::PostgresInvalidValues;
 
 /// Why a text is read as no value of its type, where a caller must tell the
 /// two apart: a parse fails on the first field PostgreSQL refuses, and on no

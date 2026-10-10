@@ -36,7 +36,7 @@ bincode = { version = "2", features = ["serde"] }
 bytes = "1.12.1"
 # The calendar `arrow-cast` formats a `date` or timestamp through, whose last
 # day bounds the engine tier of the unrepresentable count (RT21) and is
-# recorded by the cache that counted under it (`index::calendar_end`). No
+# recorded by the cache that counted under it (`model::calendar_end`). No
 # features: only `NaiveDate`'s range is read, and the version is `arrow`'s own.
 chrono = { version = "0.4.45", default-features = false }
 futures = "0.3.34"
@@ -49,7 +49,7 @@ memchr = "2.8.3"
 object_store = { version = "0.14.2", optional = true, default-features = false, features = [
     "http",
 ] }
-# `rc` for `index::CopyBlock::statistics`, held by `Arc` so a map clone copies a
+# `rc` for `model::CopyBlock::statistics`, held by `Arc` so a map clone copies a
 # reference.
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 # SIMD UTF-8 validation, for the one bulk check a chunk of rows gets in place

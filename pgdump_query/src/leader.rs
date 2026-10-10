@@ -31,12 +31,10 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::index::BlockCensus;
-use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy};
-use crate::map::{FieldCount, census_row};
+use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy, cut, worker_count};
+use crate::map::census_row;
+use crate::model::{BlockCensus, BlockObserver, FieldCount};
 use crate::scan::{CopyEnd, CopyScanner, Event, PieceEndings, RowEnding, ScanOptions};
-use crate::statistics::BlockObserver;
-use crate::stream::{cut, worker_count};
 use crate::{Error, Result, RowEndingRefusal};
 
 /// Where a piece's first byte sits relative to the rows.
@@ -327,7 +325,7 @@ pub(crate) enum BoundBy {
     /// ([`crate::io::ByteRangeSource::block_decode_bytes`]).
     Source,
     /// The source would be split, and the caller's memory budget affords fewer
-    /// readers of it than were asked for (`crate::stream::worker_count`).
+    /// readers of it than were asked for (`crate::io::worker_count`).
     Budget,
 }
 
@@ -705,7 +703,8 @@ async fn scan_partition(
             let scan = scan_piece(&bytes, start, entry, limit, plan.as_ref(), piece.as_mut());
             (scan, piece)
         })
-        .await?;
+        .await
+        .map_err(Error::join)?;
         piece = returned;
         let scan = scan?;
         // Finished when it has read the line ending at or past its limit,
@@ -742,10 +741,12 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::index::UnrepresentableTier;
+    use crate::io::Cancellation;
     use crate::io::{LocalFileSource, Parallelism};
-    use crate::map::{Builder, DataBlock, SpanBody};
-    use crate::scan::{Cancellation, ChunkCarry};
+    use crate::map::Builder;
+    use crate::model::UnrepresentableTier;
+    use crate::model::{DataBlock, SpanBody};
+    use crate::scan::ChunkCarry;
 
     /// A cancellation already asked for, so the scan under it stops at its
     /// first poll rather than at a moment a test would have to arrange.

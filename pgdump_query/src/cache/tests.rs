@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use super::*;
+use crate::model::CACHE_FORMAT_VERSION;
 use crate::{LocalFileSource, ScanOptions, StatisticsRequest, XzSource, map_file};
 
 /// Real `pg_dump` output whose columns gather bounds and dictionaries.
@@ -145,7 +146,7 @@ async fn a_cache_counted_under_another_calendar_is_refused() {
             writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
             bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
                 .map(drop)
-                .map_err(Error::CacheEncode)
+                .map_err(Error::cache_encode)
         })
         .unwrap();
         let status = load(&path, &source).await.unwrap();

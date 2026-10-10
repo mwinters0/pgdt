@@ -3,15 +3,15 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::pin::{Pin, pin};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use futures::future::{Either, select};
+use tokio::sync::Notify;
 
-#[cfg(feature = "http")]
-use std::sync::atomic::AtomicBool;
 #[cfg(feature = "http")]
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -19,7 +19,6 @@ use std::time::{Duration, UNIX_EPOCH};
 use object_store::ObjectStore as _;
 
 use crate::instrument::DecodeCounter;
-use crate::scan::{Cancellation, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
@@ -143,7 +142,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// (`pgdt`'s `Discovered::resolve`).
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
-    /// is `crate::stream::worker_count`'s question, asked of every count
+    /// is `worker_count`'s question, asked of every count
     /// alike. [`LocalFileSource`] inherits the default; [`XzSource`] overrides
     /// it. See `docs/design/decisions.md`, "D1" and "D2".
     fn default_workers(&self) -> usize {
@@ -649,7 +648,7 @@ impl Partitioning {
 
     /// What concurrent readers of this source cost, as a shape a budget is
     /// solved against — [`Partitioning::partition_bytes`] is its per-worker
-    /// term. `crate::stream::worker_count` solves against it,
+    /// term. `worker_count` solves against it,
     /// `crate::stream::plan_partitions` builds a query's charge from it, and
     /// `crate::leader` reads it for the `scan arrangement` note.
     pub fn worker_memory(&self) -> WorkerMemory {
@@ -728,7 +727,7 @@ impl Partitioning {
 
     /// Where a window of `want` partitions starting at `start` ends, never
     /// past `limit` — the number `crate::leader::run_region` hands
-    /// `crate::stream::cut`, and **the cut size, which is not the memory
+    /// `cut`, and **the cut size, which is not the memory
     /// charge**.
     ///
     /// [`Partitioning::partition_bytes`] is what one reader *holds*; this is
@@ -740,12 +739,12 @@ impl Partitioning {
     /// - [`PartitionBoundaries::At`] ends the window at the
     ///   **`want × `[`BOUNDARIED_PARTITION_UNITS`]-th boundary strictly past
     ///   `start`**, so the window holds `want` pieces of that many units each
-    ///   and [`crate::stream::cut`]'s thinning picks every `k`-th boundary.
+    ///   and [`cut`]'s thinning picks every `k`-th boundary.
     ///   Fewer boundaries left is the region's tail: the window runs to
     ///   `limit`, and thinning still cannot give a piece more than `k` units.
     ///
     /// **Do not size the window at `want × unit`.** From a mid-block frontier
-    /// that window contains `want` boundaries, [`crate::stream::cut`] is asked
+    /// that window contains `want` boundaries, [`cut`] is asked
     /// for `want` pieces, and the thinning drops the first — putting two
     /// blocks in the first piece. Hence "strictly past `start`" and the `× k`.
     /// Asserted by
@@ -2079,7 +2078,7 @@ impl ByteRangeSource for LocalFileSource {
                 Ok(slot)
             })
             .await
-            .map_err(Error::from)?
+            .map_err(Error::join)?
             .map_err(Error::from)?;
             Ok(Bytes::from_owner(slot).slice(..len))
         })
@@ -2090,7 +2089,7 @@ impl ByteRangeSource for LocalFileSource {
             let file = Arc::clone(&self.file);
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
-                .map_err(Error::from)?
+                .map_err(Error::join)?
                 .map_err(Error::from)?;
             Ok(len)
         })
@@ -2102,7 +2101,7 @@ impl ByteRangeSource for LocalFileSource {
             let mtime =
                 tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
                     .await
-                    .map_err(Error::from)?
+                    .map_err(Error::join)?
                     .map_err(Error::from)?;
             Ok(Some(mtime))
         })
@@ -2482,7 +2481,7 @@ impl XzBudget {
             // `POOL_DEPTH`'s, inherited.
             //
             // **`jobs` here is the count the caller *announced*, not the count
-            // `crate::stream::worker_count` then delivers.** They agree under
+            // `worker_count` then delivers.** They agree under
             // discovery and diverge where a stated `--jobs` outruns a stated
             // budget (`docs/design/decisions.md`, "D17").
             //
@@ -2680,7 +2679,7 @@ impl XzSource {
         tracing::info!(path = %path.display(), "seek table build started");
         let file = Arc::new(std::fs::File::open(&path)?);
         let stored_size = file.metadata()?.len();
-        let table = xz_seek::SeekTable::from_source(&file)?;
+        let table = xz_seek::SeekTable::from_source(&file).map_err(Error::xz)?;
         tracing::info!(
             path = %path.display(),
             streams = table.stream_count(),
@@ -2698,7 +2697,7 @@ impl XzSource {
     /// file's own length before trusting it, reading **no bytes** — so a
     /// table that does not describe this file costs nothing to reject, and a
     /// block header's own CRC32 is what catches one that survives validation.
-    /// A rejected table is `Error::Xz(xz_seek::Error::InvalidTable { .. })`,
+    /// A rejected table is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
     /// which is the error [`open_local`] turns into [`Recognized::Mismatch`]
     /// rather than a walk.
     pub fn with_table(path: impl AsRef<Path>, table: xz_seek::SeekTable) -> Result<Self> {
@@ -2718,7 +2717,7 @@ impl XzSource {
     /// file's own length, which is all `Builder::layout` ever wanted a source
     /// for: it cross-checks the table against the file it claims to describe
     /// and reads **no bytes**, so a table that does not describe this file is
-    /// `Error::Xz(xz_seek::Error::InvalidTable { .. })` — the error
+    /// an `Error::Xz` carrying `xz_seek::Error::InvalidTable` — the error
     /// [`open_local`] turns into [`Recognized::Mismatch`] rather than a walk.
     ///
     /// **What the alias buys is every table read with no lock at all** —
@@ -2746,7 +2745,7 @@ impl XzSource {
         table: xz_seek::SeekTable,
         stored_size: u64,
     ) -> Result<Self> {
-        let layout = xz_seek::Builder::new().layout(table, stored_size)?;
+        let layout = xz_seek::Builder::new().layout(table, stored_size).map_err(Error::xz)?;
         let table = layout.index_shared();
         // **The decoder charge includes the compressed input chunk because
         // this source does not lend**: a `std::fs::File` holds nothing, so
@@ -2792,7 +2791,7 @@ impl XzSource {
         let mut slot = cache.slot();
         // A decode that fails drops its slot, which `Drop` releases to the
         // pool as the plain source's failed read does.
-        task.decode_into(file, &mut slot.as_mut()[..len])?;
+        task.decode_into(file, &mut slot.as_mut()[..len]).map_err(Error::xz)?;
         let block = Arc::new(DecodedBlock { slot, len });
         cache.retain(index, Arc::clone(&block));
         Ok(block)
@@ -2957,7 +2956,7 @@ impl LiveBlock {
         task: &xz_seek::BlockTask,
         source: &S,
     ) -> Result<Self> {
-        Ok(Self { index, read: task.begin(source)? })
+        Ok(Self { index, read: task.begin(source).map_err(Error::xz)? })
     }
 
     /// Whether this handle can serve `from` out of block `index`.
@@ -2984,10 +2983,10 @@ impl LiveBlock {
         out: &mut [u8],
     ) -> Result<usize> {
         let mut skip = [0u8; PIECEWISE_SKIP_CHUNK];
-        self.read.advance_to(source, from, &mut skip)?;
+        self.read.advance_to(source, from, &mut skip).map_err(Error::xz)?;
         let mut filled = 0usize;
         while filled < out.len() {
-            let got = self.read.read(source, &mut out[filled..])?;
+            let got = self.read.read(source, &mut out[filled..]).map_err(Error::xz)?;
             if got == 0 {
                 break;
             }
@@ -3006,7 +3005,7 @@ impl LiveBlock {
             drop(self.read);
             return Ok(());
         }
-        Ok(self.read.complete(source)?)
+        self.read.complete(source).map_err(Error::xz)
     }
 
     /// Fill `out` from block `index` at `from` through the slot's handle:
@@ -3137,7 +3136,7 @@ fn xz_partition_advice(
     //   cache rather than recomputed and non-zero by
     //   `BlockCache::for_table`'s own guard;
     // - **the block pool's retention list is stated beside the per-reader
-    //   charge**, which is what lets `crate::stream::worker_count` solve
+    //   charge**, which is what lets `worker_count` solve
     //   for a count rather than divide by one
     //   ([`BlockCache::worker_memory`]).
     Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
@@ -3171,7 +3170,7 @@ impl ByteRangeSource for XzSource {
                 None => Self::read_in_pieces(offset, len, &table, &layout, &file, &live, &chunks),
             })
             .await
-            .map_err(Error::from)?
+            .map_err(Error::join)?
         })
     }
 
@@ -3187,7 +3186,7 @@ impl ByteRangeSource for XzSource {
             let mtime =
                 tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
                     .await
-                    .map_err(Error::from)?
+                    .map_err(Error::join)?
                     .map_err(Error::from)?;
             Ok(Some(mtime))
         })
@@ -3202,7 +3201,7 @@ impl ByteRangeSource for XzSource {
             let file = Arc::clone(&self.file);
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
-                .map_err(Error::from)?
+                .map_err(Error::join)?
                 .map_err(Error::from)?;
             Ok(len)
         })
@@ -3254,9 +3253,9 @@ impl ByteRangeSource for XzSource {
     /// **Decode is the one shape that demonstrably scales**
     /// (`parallel-scan-throughput`; `docs/design/decisions.md`, "D2"). What
     /// the caller's budget affords still binds afterwards
-    /// (`crate::stream::worker_count`).
+    /// (`worker_count`).
     ///
-    /// **Capped at this file's own block count**, `crate::stream::cut` cutting
+    /// **Capped at this file's own block count**, `cut` cutting
     /// at block boundaries — and capped *here*, where the count is
     /// recommended, because the recommendation is multiplied into a budget
     /// request ([`ByteRangeSource::default_worker_memory`]) and printed beside
@@ -3270,7 +3269,7 @@ impl ByteRangeSource for XzSource {
 
     /// **What readers of this file hold**: [`XzBudget::block_worker_memory`] —
     /// the per-reader charge plus the block pool's retention list, the shape
-    /// `crate::stream::worker_count` and [`Parallelism::fit`] both solve
+    /// `worker_count` and [`Parallelism::fit`] both solve
     /// against to hand back a count. `None` where there is no block path to
     /// buy — a file with no blocks, or one whose largest block is not a length
     /// on this target — since the piecewise arm has no second worker to
@@ -3300,7 +3299,7 @@ impl ByteRangeSource for XzSource {
                 leaving.map_or(Ok(()), |leaving| leaving.leave(&file))
             })
             .await
-            .map_err(Error::from)?
+            .map_err(Error::join)?
         })
     }
 }
@@ -3352,11 +3351,11 @@ pub async fn walk_seek_table(
     loop {
         let asked = usize::try_from(request.len()).map_err(|_| xz_short_read())?;
         let step = if request.start() == 0 && asked <= leading.len() {
-            walk.supply(request, &leading[..asked])?
+            walk.supply(request, &leading[..asked]).map_err(Error::xz)?
         } else {
             fetches += 1;
             let bytes = source.read_range(request.start(), asked).await?;
-            walk.supply(request, &bytes)?
+            walk.supply(request, &bytes).map_err(Error::xz)?
         };
         match step {
             xz_seek::Step::Need(next) => request = next,
@@ -3433,7 +3432,7 @@ impl FetchedXzSource {
     /// `stored_size` is the compressed object's own length, which the caller
     /// has from its [`Origin`] probe; `xz_seek` validates the table against it
     /// and for internal consistency, reading **no bytes**. A table that does
-    /// not describe this object is `Error::Xz(xz_seek::Error::InvalidTable)`,
+    /// not describe this object is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
     /// which is what [`open_remote`] turns into [`Recognized::Mismatch`]
     /// rather than a walk.
     pub fn with_table(
@@ -3445,7 +3444,7 @@ impl FetchedXzSource {
         // reason: it is the shortcut through exactly the defaults
         // `Reader::new` takes, `Verify::Full` included, so the two sources
         // decode identically.
-        let layout = xz_seek::Builder::new().layout(table, stored_size)?;
+        let layout = xz_seek::Builder::new().layout(table, stored_size).map_err(Error::xz)?;
         Ok(Self::assembled(source, layout))
     }
 
@@ -3515,11 +3514,11 @@ impl FetchedXzSource {
         let slot = cache.slot();
         let slot = tokio::task::spawn_blocking(move || -> Result<PooledBuffer> {
             let mut slot = slot;
-            task.decode_into(&window, &mut slot.as_mut()[..len])?;
+            task.decode_into(&window, &mut slot.as_mut()[..len]).map_err(Error::xz)?;
             Ok(slot)
         })
         .await
-        .map_err(Error::from)??;
+        .map_err(Error::join)??;
         let block = Arc::new(DecodedBlock { slot, len });
         cache.retain(index, Arc::clone(&block));
         Ok(block)
@@ -3626,7 +3625,7 @@ impl FetchedXzSource {
                     Ok((out, block, filled))
                 })
                 .await
-                .map_err(Error::from)??;
+                .map_err(Error::join)??;
             out = returned;
             held = Some(block);
             covered += filled;
@@ -3661,7 +3660,7 @@ impl FetchedXzSource {
         let Some(leaving) = held else {
             return Ok(());
         };
-        tokio::task::spawn_blocking(move || leaving.leave()).await.map_err(Error::from)?
+        tokio::task::spawn_blocking(move || leaving.leave()).await.map_err(Error::join)?
     }
 
     /// How many block decodes this source's piecewise arm has begun.
@@ -4182,7 +4181,7 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
         })
     })
     .await
-    .map_err(Error::from)?
+    .map_err(Error::join)?
 }
 
 /// What a caller already knows about a file's compression layer before
@@ -4291,7 +4290,9 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
         // reading a byte, and never walked for.
         (true, KnownCompression::Xz(table)) => match XzSource::with_table(path, table) {
             Ok(source) => Ok(Recognized::Source(Arc::new(source))),
-            Err(Error::Xz(xz_seek::Error::InvalidTable { .. })) => Ok(Recognized::Mismatch),
+            Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) => {
+                Ok(Recognized::Mismatch)
+            }
             Err(e) => Err(e),
         },
         (true, KnownCompression::Unknown) => {
@@ -4736,7 +4737,11 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
         (true, KnownCompression::Xz(table)) => {
             match FetchedXzSource::with_table(fetched(), probe.stored_size(), table) {
                 Ok(source) => Ok(Recognized::Source(Arc::new(source))),
-                Err(Error::Xz(xz_seek::Error::InvalidTable { .. })) => Ok(Recognized::Mismatch),
+                Err(error)
+                    if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) =>
+                {
+                    Ok(Recognized::Mismatch)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -4805,6 +4810,163 @@ fn announce_remote_walk(origin: &Origin) {
          compressed in many small streams. It is paid once: keep the cache this run \
          writes, or parse a local copy and read that.",
     );
+}
+
+/// Bytes requested per read from the source, unless a caller says otherwise.
+///
+/// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
+/// is worst-case-best across the device classes measured
+/// (`docs/design/measurements.md`, "What the read chunk size is worth").
+/// Public and named because it is what [`crate::scan::ScanOptions::chunk_size_bytes`] is
+/// compared against and what callers scale from.
+///
+/// **Raising it costs memory, not pooling.** Every read loop announces the
+/// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
+/// a chunk of any size is kept and reused by the local source's buffer pool.
+/// What a larger chunk costs is the pool holding four buffers of it, or the
+/// caller's stated memory budget's worth ([`crate::Parallelism`], defaulting
+/// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count
+/// falls out of that budget, so the cost levels off
+/// (`docs/design/decisions.md`, "D9").
+pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;
+
+/// A caller's ask that a scan stop, in both the forms a reader consumes it
+/// in: a bit to poll and a signal to await.
+///
+/// The polled bit is what the mapping loops read once per chunk or leader
+/// window, and it is the whole mechanism for a reader whose wait is a
+/// `pread` — tens of milliseconds, bounded by the read already in flight. A
+/// reader whose wait is a network request has no such bound: its in-flight
+/// call can sit inside a retry schedule for minutes, and polling at the far
+/// side of it is a program that does not answer. So the same object carries a
+/// signal such a reader can select on and **drop** the request rather than
+/// wait it out (`docs/design/decisions.md`, "D26").
+///
+/// Both halves report the same one-way transition — once cancelled, always
+/// cancelled — so a reader may use either or both, and which it uses is a
+/// property of what it is waiting on rather than of what the caller asked for.
+#[derive(Debug, Default)]
+pub struct Cancellation {
+    flag: AtomicBool,
+    signal: Notify,
+}
+
+impl Cancellation {
+    /// A cancellation nobody has asked for yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask every reader holding this to stop. Idempotent, and never blocks:
+    /// it is called from a signal-handling task, and from a source's own read
+    /// path in the tests.
+    ///
+    /// The `SeqCst` store is what [`Cancellation::cancelled`]'s registration
+    /// is ordered against; the polled side needs nothing so strong.
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.signal.notify_waiters();
+    }
+
+    /// Whether cancellation has been asked for. `Relaxed` is the right
+    /// ordering: the bit guards nothing but itself — the reader's response is
+    /// to finish the chunk it already holds and save the index it already
+    /// owns — so nothing is published through it.
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    /// Resolves once [`Cancellation::cancel`] has been called, at once if it
+    /// already has.
+    ///
+    /// The waiter is registered *before* the bit is read, which is what makes
+    /// this race-free against a `cancel` landing between the two: a cancel
+    /// wholly before the registration is seen by the load, and one after it
+    /// wakes a waiter that is already there.
+    pub async fn cancelled(&self) {
+        let mut signalled = pin!(self.signal.notified());
+        signalled.as_mut().enable();
+        if self.flag.load(Ordering::SeqCst) {
+            return;
+        }
+        signalled.await;
+    }
+
+    /// Run `work` until it finishes or this is cancelled, whichever happens
+    /// first. `None` is the cancellation, and `work` is **dropped where it
+    /// stood** — which is how a reader gives up a request in flight instead
+    /// of waiting for the answer it no longer wants.
+    pub async fn until_cancelled<F: Future>(&self, work: F) -> Option<F::Output> {
+        let work = pin!(work);
+        let cancelled = pin!(self.cancelled());
+        match select(work, cancelled).await {
+            Either::Left((done, _)) => Some(done),
+            Either::Right(((), _)) => None,
+        }
+    }
+}
+
+/// How many sub-streams a caller's [`Parallelism`] and a source's per-partition
+/// footprint allow between them.
+///
+/// **Both numbers bind, and the bytes bind on the *stream* count rather than
+/// per block**, the sub-streams being what run at once. A source that states
+/// no footprint (the declining default) is bounded by `jobs` alone, and the
+/// budget is *solved* against the source's cost, never divided by it
+/// ([`crate::io::WorkerMemory::affords`], and
+/// `docs/design/decisions.md`, "D4"). **Shared with the leader**, which asks
+/// the same question of an open `COPY` block's interior
+/// (`crate::leader::scan_region`, and `docs/design/decisions.md`, "D48").
+pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
+    let jobs = parallelism.jobs();
+    match parallelism.memory_bytes() {
+        Some(budget) if !memory.is_zero() => memory.affords(budget, jobs),
+        _ => jobs,
+    }
+}
+
+/// Cut `range` into at most `want` pieces where `advice` permits, in ascending
+/// order and tiling it exactly. `Anywhere` is cut evenly; `At(offsets)` at the
+/// source's own boundaries, thinned to `want - 1` of them and evenly spaced
+/// through the list when it offers more than the caller can use
+/// (`docs/design/decisions.md`, "D15"). An empty `At` is the source declining
+/// to be split, and it yields the range whole.
+///
+/// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
+/// open block's interior window with it: one cut rule for the two
+/// arrangements (`docs/design/decisions.md`, "D52").
+pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
+    if want <= 1 || range.start >= range.end {
+        return vec![range];
+    }
+    let mut cuts: Vec<u64> = match advice.boundaries() {
+        PartitionBoundaries::Anywhere => {
+            let len = range.end - range.start;
+            let want = want.min(usize::try_from(len).unwrap_or(usize::MAX)).max(1);
+            (1..want as u64).map(|i| range.start + len * i / want as u64).collect()
+        }
+        PartitionBoundaries::At(offsets) => {
+            let inside: Vec<u64> =
+                offsets.iter().copied().filter(|&o| o > range.start && o < range.end).collect();
+            let take = (want - 1).min(inside.len());
+            // `n` offers describe `n + 1` pieces, and what is spread evenly
+            // is the **pieces**, not the offers: with four offers and three
+            // wanted groups the cuts fall after the second and fourth piece.
+            // `ceil` rounds that the right way and keeps the picks strictly
+            // increasing, so `cuts.dedup()` below is a no-op on this arm — as
+            // it is on the other, once `want` is clamped to the length.
+            (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
+        }
+    };
+    cuts.dedup();
+    let mut out = Vec::with_capacity(cuts.len() + 1);
+    let mut start = range.start;
+    for cut in cuts {
+        out.push(start..cut);
+        start = cut;
+    }
+    out.push(start..range.end);
+    out
 }
 
 #[cfg(test)]

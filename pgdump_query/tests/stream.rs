@@ -313,7 +313,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
 /// ambiguity: naming the *first* database returns exactly that database's
 /// rows, matching what querying the un-concatenated single-database fixture
 /// returns. The first database is the one an incremental scan's preamble
-/// prepass always captures (`crate::index::scan_preamble`), so `Typed` mode
+/// prepass always captures (`crate::load::scan_preamble`), so `Typed` mode
 /// resolves it with no extra scan needed.
 #[tokio::test]
 async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() {

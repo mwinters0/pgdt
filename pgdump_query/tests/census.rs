@@ -1,7 +1,7 @@
 //! The array-shape census a full scan records on every `COPY` block
 //! (`docs/design/decisions.md`, "D35").
 //!
-//! `src/index.rs`'s unit tests pin what a single field contributes. These
+//! `src/model/block.rs`'s unit tests pin what a single field contributes. These
 //! pin the four things only a real dump can show: that the shapes recorded
 //! for `fixtures/*/types/default.sql` are the ones its literals actually
 //! carry, that every mapping pass a query makes records them whatever its
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use pgdump_query::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
-use pgdump_query::index::ArrayShape;
+use pgdump_query::model::ArrayShape;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
     ByteRangeSource, Error, LocalFileSource, QueryOptions, ScanExtent, ScanOptions,

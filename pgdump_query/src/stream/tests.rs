@@ -1,5 +1,5 @@
 use super::*;
-use crate::scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
+use crate::io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 
 /// **The span is spent before the count is cut, and it stops at the
 /// floor** (`docs/design/decisions.md`, "D84"). Every arm of
@@ -423,7 +423,7 @@ fn an_absurd_save_cost_saturates_rather_than_panicking() {
 /// between a future reordering and a silently wrongly-typed row.
 #[test]
 fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
-    use crate::preamble::DatabaseMetadata;
+    use crate::model::DatabaseMetadata;
 
     let header = crate::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;")
         .expect("a well-formed header");
@@ -482,96 +482,6 @@ fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
         )
         .is_ok()
     );
-}
-
-/// The two properties every cut has to have, whatever the source advised:
-/// the pieces **tile** the range exactly, in ascending order, and there
-/// are never more of them than the caller asked for.
-fn assert_tiles(range: Range<u64>, pieces: &[Range<u64>], want: usize) {
-    assert!(!pieces.is_empty(), "a cut always yields at least the range itself");
-    assert!(pieces.len() <= want.max(1), "{} pieces for want {want}", pieces.len());
-    assert_eq!(pieces[0].start, range.start);
-    assert_eq!(pieces[pieces.len() - 1].end, range.end);
-    for pair in pieces.windows(2) {
-        assert_eq!(pair[0].end, pair[1].start, "{pieces:?}");
-    }
-}
-
-/// `Anywhere` is cut evenly, and never into pieces of zero bytes: a range
-/// shorter than the worker count is cut into one piece per byte and no
-/// finer, a piece with no bytes being able to own no rows.
-#[test]
-fn an_anywhere_source_is_cut_evenly_and_never_below_a_byte() {
-    let advice = Partitioning::anywhere(1 << 20);
-    for want in [1usize, 2, 3, 4, 7, 8, 64] {
-        let pieces = cut(100..900, &advice, want);
-        assert_tiles(100..900, &pieces, want);
-        assert_eq!(pieces.len(), want.max(1));
-    }
-    let pieces = cut(10..13, &advice, 8);
-    assert_eq!(pieces, vec![10..11, 11..12, 12..13]);
-}
-
-/// `At` is cut only where the source offered, thinned evenly when it
-/// offers more boundaries than the caller can use, and taken whole when it
-/// offers exactly as many as are wanted.
-#[test]
-fn an_at_source_is_cut_only_where_it_offered() {
-    let advice = Partitioning::at(vec![20, 40, 60, 80], 1 << 20);
-    assert_eq!(cut(0..100, &advice, 5), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
-    assert_eq!(cut(0..100, &advice, 9), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
-    assert_eq!(cut(0..100, &advice, 3), vec![0..40, 40..80, 80..100]);
-    assert_eq!(cut(0..100, &advice, 2), vec![0..60, 60..100]);
-    // Boundaries outside the range are not cuts, nor are its own ends.
-    assert_eq!(cut(40..80, &advice, 4), vec![40..60, 60..80]);
-    for want in [1usize, 2, 3, 4, 5, 9] {
-        assert_tiles(0..100, &cut(0..100, &advice, want), want);
-    }
-}
-
-/// A source that declines to be split is not split, however many workers
-/// the caller has — the empty `At` is a policy, not an absence
-/// (`docs/design/decisions.md`, "D7").
-#[test]
-fn a_source_that_declines_to_be_split_is_not() {
-    assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);
-}
-
-/// The bytes bind as well as the count, and they bind on the number of
-/// **sub-streams**: eight workers against a budget that affords two
-/// partitions is two.
-#[test]
-fn a_stated_budget_caps_the_worker_count_below_the_stated_jobs() {
-    let eight = Parallelism::workers(8, 64 << 20);
-    let per = WorkerMemory::per_worker;
-    assert_eq!(worker_count(eight, per(32 << 20)), 2);
-    assert_eq!(worker_count(eight, per(4 << 20)), 8);
-    // A footprint larger than the whole budget still leaves one worker.
-    assert_eq!(worker_count(eight, per(128 << 20)), 1);
-    // A source that states no footprint is bounded by `jobs` alone.
-    assert_eq!(worker_count(eight, per(0)), 8);
-    // The serial state is one worker, whatever budget it carries.
-    assert_eq!(worker_count(Parallelism::default(), per(32 << 20)), 1);
-    assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), per(32 << 20)), 1);
-}
-
-/// **A shared pool is billed, so the budget is solved rather than
-/// divided.** The block pool retains a unit for every slot but the one a
-/// reader is filling — `POOL_DEPTH - 1` of them below four readers and
-/// `jobs - 1` above — which a per-worker charge does not carry.
-#[test]
-fn a_shared_pool_is_billed_before_the_count_is_handed_back() {
-    let eight = Parallelism::workers(8, 64 << 20);
-    let charge = WorkerMemory::per_worker(16 << 20).pooling(16 << 20, 4);
-    // One reader costs 16 + 3 x 16 = 64 MiB, two cost 32 + 48 = 80 — so
-    // this budget affords exactly one where the division said four.
-    assert_eq!(worker_count(eight, charge), 1);
-    // One byte short, and the serial floor is what is left: never zero.
-    assert_eq!(worker_count(Parallelism::workers(8, (64 << 20) - 1), charge), 1);
-    // Above the pool's own depth every reader takes a slot with it, so the
-    // cost is `n x 32 - 16` MiB: 240 MiB affords eight, and 224 seven.
-    assert_eq!(worker_count(Parallelism::workers(8, 240 << 20), charge), 8);
-    assert_eq!(worker_count(Parallelism::workers(8, 224 << 20), charge), 7);
 }
 
 /// Grouping keeps the pieces in file order and contiguous, which is what
@@ -705,7 +615,7 @@ fn two_blocks(dir: &std::path::Path) -> std::path::PathBuf {
 #[tokio::test]
 async fn a_replay_holds_no_block_s_statistics() {
     use crate::io::LocalFileSource;
-    use crate::statistics::{BlockStatistics, GroupSizing};
+    use crate::model::{BlockStatistics, GroupSizing};
 
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
@@ -798,7 +708,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     }]);
     let filter =
         resolve_expr(&below, &full, block.header_offset, ComparisonSemantics::Postgres).unwrap();
-    let reading = crate::statistics::StatisticsView::Every;
+    let reading = crate::model::StatisticsView::Every;
     let mut pruning =
         DynamicPruning::new(block, Arc::clone(&statistics), metadata, reading).unwrap();
     pruning.read(Arc::new(filter));
@@ -829,8 +739,9 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
 #[tokio::test]
 async fn a_block_prunes_in_the_view_its_query_reads() {
     use crate::io::LocalFileSource;
+    use crate::model::StatisticsView;
     use crate::predicate::Predicate;
-    use crate::statistics::{StatisticsRequest, StatisticsView};
+    use crate::statistics::StatisticsRequest;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dates.sql");

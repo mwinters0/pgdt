@@ -186,7 +186,7 @@ fn stored_bounds_and_order_hold_every_value_under_its_key() {
 /// group is kept for none.
 #[test]
 fn each_view_bounds_and_orders_the_values_it_takes() {
-    use crate::statistics::{BoundsSet, StatisticsView};
+    use crate::model::{BoundsSet, StatisticsView};
     use crate::unrepresentable::scalar_tier;
     use UnrepresentableTier::Format;
 

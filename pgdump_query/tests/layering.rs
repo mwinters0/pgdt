@@ -1,7 +1,7 @@
-//! The layering check: `docs/design/decisions.md`, "D68" and "D74", read off
-//! `src/*.rs`. Production code only — a test module's imports are not the
-//! module's dependencies — with comments stripped, so a doc link to
-//! `crate::foo` is not an edge.
+//! The crate check: `docs/design/decisions.md`, "D68" and "D74", read off
+//! `src/*.rs` and each module's production submodules. Production code only —
+//! a test module's imports are not the module's dependencies — with comments
+//! stripped, so a doc link to `crate::foo` is not an edge.
 //!
 //! Every `crate::` dependency has to be in a `use` for this to be complete,
 //! which is itself one of the assertions: an inline `crate::a::b` at a use
@@ -11,58 +11,84 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Each module's layer; 0 is cross-cutting. A `src/*.rs` file absent from
-/// this table fails: a module is assigned a layer before it is written (D68).
-const LAYERS: &[(&str, u8)] = &[
-    ("lib", 0),
-    ("error", 0),
-    ("instrument", 0),
-    ("io", 1),
-    ("scan", 1),
-    ("copy", 1),
-    ("lex", 1),
-    ("map", 1),
-    ("index", 1),
-    ("preamble", 1),
-    ("cache", 1),
-    ("diagnostic", 1),
-    ("statistics", 1),
-    ("pgtype", 2),
-    ("resolve", 2),
-    ("decode", 2),
-    ("datetime_in", 2),
-    ("nested", 2),
-    ("unrepresentable", 2),
-    ("batch", 3),
-    ("stream", 4),
-    ("predicate", 4),
-    ("leader", 4),
-    ("gather", 4),
-    ("prune", 4),
-    ("summary", 4),
+/// Each module's crate. A `src/*.rs` file absent from this table fails: a
+/// module is given a crate before it is written (D68). `lib` is the facade
+/// re-exporting the rest, and holds `Result` beside the error type.
+const CRATES: &[(&str, &str)] = &[
+    ("lib", "core"),
+    ("error", "core"),
+    ("instrument", "core"),
+    ("lex", "core"),
+    ("copy", "core"),
+    ("model", "model"),
+    ("io", "io"),
+    ("scan", "dump"),
+    ("map", "dump"),
+    ("preamble", "dump"),
+    ("cache", "dump"),
+    ("load", "dump"),
+    ("leader", "dump"),
+    ("pgtype", "codec"),
+    ("resolve", "codec"),
+    ("decode", "codec"),
+    ("datetime_in", "codec"),
+    ("nested", "codec"),
+    ("unrepresentable", "codec"),
+    ("batch", "query"),
+    ("stream", "query"),
+    ("predicate", "query"),
+    ("gather", "query"),
+    ("prune", "query"),
+    ("summary", "query"),
+    ("statistics", "query"),
 ];
 
-/// The upward edges D68 records. Each must still exist — a deviation the
-/// register lists and the code no longer has is a stale entry — and no other
-/// upward edge may.
-const DEVIATIONS: &[(&str, &str)] = &[("batch", "stream"), ("batch", "predicate")];
+/// The graph: what each crate may depend on besides itself. The dump's
+/// parsers and the codec are siblings, neither reaching the other.
+const DEPENDS: &[(&str, &[&str])] = &[
+    ("core", &[]),
+    ("model", &["core"]),
+    ("io", &["core", "model"]),
+    ("dump", &["core", "model", "io"]),
+    ("codec", &["core", "model"]),
+    ("query", &["core", "model", "io", "dump", "codec"]),
+];
+
+/// What a crate below the codec never names: Arrow, and in the core every
+/// dependency whose error the core's error type would otherwise carry (D74).
+const NO_ARROW: &[&str] = &["arrow::", "arrow_schema", "use arrow"];
+const CORE_NAMES_NO_DEPENDENCY: &[&str] = &["xz_seek", "bincode", "tokio", "object_store"];
+
+/// What the model and the codec never name: they do no I/O, and the codec is
+/// synchronous (D74).
+const NO_IO: &[&str] = &["async fn", "ByteRangeSource", "std::fs", "tokio", "xz_seek"];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
-fn layer_of(module: &str) -> u8 {
-    LAYERS
+fn crate_of(module: &str) -> &'static str {
+    CRATES
         .iter()
         .find(|(name, _)| *name == module)
-        .map(|(_, layer)| *layer)
-        .unwrap_or_else(|| panic!("src/{module}.rs has no layer in tests/layering.rs (D68)"))
+        .map(|(_, krate)| *krate)
+        .unwrap_or_else(|| panic!("src/{module}.rs has no crate in tests/layering.rs (D68)"))
 }
 
-/// The module's production code: everything before its first `#[cfg(test)]
+fn depends_on(from: &str, to: &str) -> bool {
+    from == to
+        || DEPENDS
+            .iter()
+            .find(|(krate, _)| *krate == from)
+            .unwrap_or_else(|| panic!("crate {from} has no entry in DEPENDS"))
+            .1
+            .contains(&to)
+}
+
+/// One file's production code: everything before its first `#[cfg(test)]
 /// mod`, with `//` comments removed.
-fn production(module: &str) -> String {
-    let text = fs::read_to_string(src_dir().join(format!("{module}.rs"))).unwrap();
+fn production_of(path: &Path) -> String {
+    let text = fs::read_to_string(path).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
@@ -79,6 +105,28 @@ fn production(module: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+/// A module's production code: its own file and each production submodule it
+/// declares (`mod name;` outside `#[cfg(test)]`), in `src/<module>/`. The
+/// crate root's declarations are the modules themselves.
+fn production(module: &str) -> String {
+    let mut code = production_of(&src_dir().join(format!("{module}.rs")));
+    if module == "lib" {
+        return code;
+    }
+    let submodules: Vec<String> = code
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("pub ").unwrap_or(line);
+            line.strip_prefix("mod ")?.strip_suffix(';').map(str::to_string)
+        })
+        .collect();
+    for submodule in submodules {
+        code.push_str(&production_of(&src_dir().join(module).join(format!("{submodule}.rs"))));
+    }
+    code
 }
 
 /// `use crate::…;` and `pub use crate::…;` statements, each joined onto one
@@ -141,7 +189,7 @@ fn targets(stmt: &str, reexports: &BTreeMap<String, String>) -> Vec<String> {
         .trim_end_matches(';')
         .trim();
     let (head, _) = path.split_once("::").unwrap_or((path, ""));
-    if LAYERS.iter().any(|(name, _)| *name == head) {
+    if CRATES.iter().any(|(name, _)| *name == head) {
         return vec![head.to_string()];
     }
     let names = head.trim_start_matches('{').trim_end_matches('}');
@@ -171,13 +219,17 @@ fn modules() -> Vec<String> {
     found
 }
 
+fn modules_in(krate: &str) -> impl Iterator<Item = &'static str> {
+    CRATES.iter().filter(move |(_, k)| *k == krate).map(|(module, _)| *module)
+}
+
 #[test]
-fn every_module_has_a_layer_and_every_layer_entry_a_module() {
+fn every_module_has_a_crate_and_every_crate_entry_a_module() {
     let found = modules();
     for module in &found {
-        layer_of(module);
+        crate_of(module);
     }
-    for (name, _) in LAYERS {
+    for (name, _) in CRATES {
         assert!(
             found.iter().any(|m| m == name),
             "tests/layering.rs lists src/{name}.rs, which is gone"
@@ -186,28 +238,23 @@ fn every_module_has_a_layer_and_every_layer_entry_a_module() {
 }
 
 #[test]
-fn use_points_down_or_sideways_except_the_recorded_deviations() {
+fn every_use_stays_inside_the_crate_graph() {
     let reexports = reexports();
-    let mut upward = Vec::new();
+    let mut crossing = Vec::new();
     for module in modules() {
         let (uses, _) = split_uses(&production(&module));
         for stmt in uses {
             for target in targets(&stmt, &reexports) {
-                if layer_of(&target) > layer_of(&module) {
-                    upward.push((module.clone(), target));
+                let (from, to) = (crate_of(&module), crate_of(&target));
+                if !depends_on(from, to) {
+                    crossing.push(format!("{module} ({from}) uses {target} ({to})"));
                 }
             }
         }
     }
-    upward.sort();
-    upward.dedup();
-    let mut recorded: Vec<(String, String)> =
-        DEVIATIONS.iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
-    recorded.sort();
-    assert_eq!(
-        upward, recorded,
-        "upward `use` edges (left) differ from the deviations D68 records (right)"
-    );
+    crossing.sort();
+    crossing.dedup();
+    assert!(crossing.is_empty(), "edges the crate graph does not draw (D68): {crossing:#?}");
 }
 
 #[test]
@@ -225,35 +272,51 @@ fn every_crate_dependency_is_in_a_use() {
 }
 
 #[test]
-fn l1_never_names_arrow() {
-    for (module, layer) in LAYERS {
-        if *layer != 1 {
-            continue;
-        }
-        let code = production(module);
-        for needle in ["arrow::", "arrow_schema", "use arrow"] {
-            assert!(!code.contains(needle), "src/{module}.rs (L1) names `{needle}` (D74)");
+fn the_crates_below_the_codec_never_name_arrow() {
+    for krate in ["core", "model", "io", "dump"] {
+        for module in modules_in(krate) {
+            let code = production(module);
+            for needle in NO_ARROW {
+                assert!(!code.contains(needle), "src/{module}.rs ({krate}) names `{needle}` (D74)");
+            }
         }
     }
 }
 
 #[test]
-fn l2_names_datatypes_only_and_is_synchronous() {
-    for (module, layer) in LAYERS {
-        if *layer != 2 {
-            continue;
+fn the_core_names_no_dependency_error_could_carry() {
+    for module in modules_in("core") {
+        let code = production(module);
+        for needle in CORE_NAMES_NO_DEPENDENCY {
+            assert!(!code.contains(needle), "src/{module}.rs (core) names `{needle}` (D74)");
         }
+    }
+}
+
+#[test]
+fn the_model_does_no_io() {
+    for module in modules_in("model") {
+        let code = production(module);
+        for needle in NO_IO {
+            assert!(!code.contains(needle), "src/{module}.rs (model) names `{needle}` (D74)");
+        }
+    }
+}
+
+#[test]
+fn the_codec_names_datatypes_only_and_is_synchronous() {
+    for module in modules_in("codec") {
         let code = production(module);
         for (at, _) in code.match_indices("arrow::") {
             let after = &code[at + "arrow::".len()..];
             assert!(
                 after.starts_with("datatypes"),
-                "src/{module}.rs (L2) reaches past `arrow::datatypes` (D74): arrow::{}",
+                "src/{module}.rs (codec) reaches past `arrow::datatypes` (D74): arrow::{}",
                 after.chars().take(24).collect::<String>()
             );
         }
-        for needle in ["async fn", "ByteRangeSource", "std::fs", "tokio"] {
-            assert!(!code.contains(needle), "src/{module}.rs (L2) names `{needle}` (D74)");
+        for needle in NO_IO {
+            assert!(!code.contains(needle), "src/{module}.rs (codec) names `{needle}` (D74)");
         }
     }
 }

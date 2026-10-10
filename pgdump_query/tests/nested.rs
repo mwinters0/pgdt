@@ -376,7 +376,7 @@ mod oracle {
     }
 
     /// Split one COPY TEXT line of a committed oracle file into its decoded
-    /// fields — the same L1 decoder that reads a dump, because the server
+    /// fields — the same core decoder that reads a dump, because the server
     /// wrote these files with `COPY ... TO STDOUT`.
     fn rows(path: &Path) -> Vec<Vec<Option<String>>> {
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

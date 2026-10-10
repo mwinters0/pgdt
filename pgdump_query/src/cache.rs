@@ -49,34 +49,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use bincode::error::{DecodeError, EncodeError};
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostic::Diagnostic;
 pub use crate::error::{OVERWRITE_WAYS_OUT, Unusable};
-use crate::index::{
-    DumpIndex, calendar_end, non_seekable_compression_diagnostic, tiling_diagnostics,
-    toc_coverage_diagnostic,
-};
 use crate::instrument::StatisticsScope;
 use crate::io::{ByteRangeSource, KnownCompression, Origin, is_weak_tag};
-use crate::map::{DataBlock, SpanBody};
+use crate::load::{
+    non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
+};
+use crate::model::{
+    CACHE_FORMAT_VERSION, DataBlock, Diagnostic, DumpIndex, SpanBody, calendar_end,
+};
 use crate::{Error, Result};
-
-/// **Bump whenever a persisted field is added, removed or reshaped.** A cache
-/// written under a different version is unusable
-/// ([`Unusable::UnsupportedVersion`]) rather than partially trusted
-/// (`docs/design/roadmap.md`, "Four decisions that keep later phases
-/// additive"); pre-1.0 a bump is free, nothing migrates (`CLAUDE.md`,
-/// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
-/// A new way of *reading* an existing on-disk shape needs no bump:
-/// [`CacheStatus::Incomplete`] reinterprets `scanned_through` against a size
-/// already stored. A new way of *choosing* what an unchanged field holds does:
-/// a block recording the request that sized it is read back as already sized
-/// under it, so a cache whose sizes today's rule would not choose is as
-/// unusable as one of another shape. So does a parse fix that saves other
-/// bytes for the same dump: `tests/cache.rs`'s
-/// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
-/// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
-/// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 68;
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read
@@ -103,7 +85,7 @@ enum SourceIdentity {
     /// was not fetched from anywhere, decompressing or not.
     LocalFile {
         stored_size: u64,
-        /// `(seconds, nanoseconds)` since the Unix epoch: L1's own on-disk
+        /// `(seconds, nanoseconds)` since the Unix epoch: the model's own on-disk
         /// vocabulary, `SystemTime` not being `Serialize`. `None` when the
         /// source exposed no mtime.
         mtime: Option<(u64, u32)>,
@@ -155,7 +137,7 @@ impl SourceIdentity {
         }
     }
 
-    /// The modification time this identity carries, as a `SystemTime`: L1's
+    /// The modification time this identity carries, as a `SystemTime`: the model's
     /// on-disk `(seconds, nanoseconds)` is backed out at the boundary, so
     /// what leaves this module is what the trait answered and what an
     /// embedder formats.
@@ -293,7 +275,7 @@ pub enum OriginMatch {
     /// Both were fetched from the same place, or neither was fetched at all.
     Agrees,
     /// They differ — advisory by default
-    /// ([`crate::diagnostic::DiagnosticKind::CacheOriginChanged`]) — with
+    /// ([`crate::model::DiagnosticKind::CacheOriginChanged`]) — with
     /// each side's, `None` for a source that records none.
     Differs { cached: Option<String>, live: Option<String> },
 }
@@ -338,7 +320,7 @@ pub enum WeakIdentity {
     /// exactly as [`WeakIdentity::Differs`] is.
     TagDiffers { cached: String, live: String },
     /// They differ — advisory by default
-    /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]) — with the
+    /// ([`crate::model::DiagnosticKind::CacheMtimeChanged`]) — with the
     /// time the cache recorded and the one the live source now reports.
     Differs { cached: SystemTime, live: SystemTime },
     /// One side has no modification signal, so there is nothing to compare;
@@ -734,7 +716,7 @@ struct CacheFile {
     /// `total_size` for the coverage arithmetic.
     total_size: u64,
     /// The last day of the calendar the index's unrepresentable counts were
-    /// taken under ([`crate::index::calendar_end`]): a build whose calendar
+    /// taken under ([`crate::model::calendar_end`]): a build whose calendar
     /// ends elsewhere refuses a cache holding one
     /// ([`Unusable::CalendarChanged`]; `docs/design/decisions.md`, "D96").
     calendar_end: i32,
@@ -837,7 +819,7 @@ pub enum CacheStatus {
     /// caller-specific: `pgdt info` states the coverage
     /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
     /// incremental scan (`crate::stream::map_file`,
-    /// `crate::stream::table_stream`, `crate::index::preamble_only`) builds
+    /// `crate::stream::table_stream`, `crate::load::preamble_only`) builds
     /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
     /// `total_size`, `compression` and `envelope` are
     /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
@@ -1078,7 +1060,7 @@ fn drop_attributed(mut index: DumpIndex) {
 /// "The compressed source and the cache"). With no live source to compare
 /// against, `weak` and `origin` are always the agreeing answer here;
 /// "unverified, historical" is a
-/// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
+/// [`crate::model::DiagnosticKind::CacheOffline`] pushed by
 /// [`CacheMode::load_offline`] instead.
 pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
     match read_cache_file(path)? {
@@ -1173,7 +1155,7 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
             .map(drop)
             .map_err(|e| match e {
                 EncodeError::Io { inner, .. } => Error::Io(inner),
-                other => Error::CacheEncode(other),
+                other => Error::cache_encode(other),
             })
     })
 }
@@ -1344,7 +1326,7 @@ impl CacheMode {
     /// [`CacheLoad::Index`] — because every caller of this method
     /// (`crate::stream::map_file`, `crate::stream::map_for_query`, which
     /// serves both `crate::table_stream` and `crate::table_stream_partitions`,
-    /// and `crate::index::preamble_only`) builds forward from whatever partial
+    /// and `crate::load::preamble_only`) builds forward from whatever partial
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead
     /// *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`], as
@@ -1437,7 +1419,7 @@ impl CacheMode {
     /// [`CacheStatus`] rather than a [`CacheLoad`]: with no scan to fall back
     /// on, a caller needs `Valid` apart from `Incomplete` — the one
     /// distinction `load` exists to erase. Every successful load gets a
-    /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed onto it
+    /// [`crate::model::DiagnosticKind::CacheOffline`] pushed onto it
     /// unconditionally.
     pub async fn load_offline(&self) -> Result<CacheStatus> {
         match self {

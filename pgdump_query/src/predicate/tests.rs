@@ -4,12 +4,10 @@ use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 
 use super::*;
 use crate::copy::encode_field;
-use crate::index::UnrepresentableTier;
+use crate::model::{BoundsSet, CollationDef, ColumnDef, TypeDef, TypeKind, UnrepresentableTier};
 use crate::pgtype::NestedPlan;
 use crate::pgtype::{bounds_set_keyed_by, comparison_for, text_grammar};
-use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
 use crate::resolve::ColumnNote;
-use crate::statistics::BoundsSet;
 use crate::unrepresentable::scalar_read;
 
 /// [`super::resolve_term`] in PostgreSQL's semantics, which every test
@@ -4261,9 +4259,9 @@ mod oracle {
     use super::*;
     use crate::cache::CacheMode;
     use crate::copy::{decode_field, encode_field, split_fields};
-    use crate::index::preamble_only;
     use crate::io::LocalFileSource;
-    use crate::preamble::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
+    use crate::load::preamble_only;
+    use crate::model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
     use crate::resolve::{SchemaMode, resolve_columns};
     use crate::scan::ScanOptions;
 
@@ -4456,7 +4454,7 @@ mod oracle {
     }
 
     /// Split one COPY TEXT line of a committed oracle file into its
-    /// decoded fields — the same L1 decoder that reads a dump, because
+    /// decoded fields — the same core decoder that reads a dump, because
     /// the server wrote these files with `COPY ... TO STDOUT`.
     fn fields(line: &[u8]) -> Vec<Option<String>> {
         split_fields(line).map(|f| decode_field(f).unwrap().map(|v| v.into_owned())).collect()
@@ -5042,7 +5040,7 @@ mod oracle {
         }
         assert!(values_sorted > 800, "only {values_sorted} values sorted");
         assert_eq!(
-            (crate::cache::CACHE_FORMAT_VERSION, digest),
+            (crate::model::CACHE_FORMAT_VERSION, digest),
             GOLDEN_ORDER,
             "the comparison order moved, or CACHE_FORMAT_VERSION did: bump CACHE_FORMAT_VERSION if any \
                  kind orders or equates differently, then re-pin both here"
@@ -5182,7 +5180,7 @@ mod oracle {
     fn arrow_extremes(
         array: &arrow::array::ArrayRef,
         group: &[&str],
-        stored: &crate::statistics::Bounds,
+        stored: &crate::model::Bounds,
     ) -> std::result::Result<(), String> {
         let n = group.len();
         let (min, max) = (arrow_against(array, n)?, arrow_against(array, n + 1)?);

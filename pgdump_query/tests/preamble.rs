@@ -8,7 +8,7 @@ use std::path::Path;
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
-use pgdump_query::preamble::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
+use pgdump_query::model::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
     DatabaseMetadata, DumpMetadata, LocalFileSource, PostgresInvalidValues, QueryOptions,
@@ -324,7 +324,7 @@ async fn data_only_dump_has_no_ddl_but_still_reports_versions() {
 ///
 /// `v_user` and `v_nd` are the user-collation reference form —
 /// schema-qualified, unquoted, outside `pg_catalog`. Kept verbatim, because
-/// that is L1's rule and because `pg_catalog."en_US.utf8"` above them has a
+/// that is the model's rule and because `pg_catalog."en_US.utf8"` above them has a
 /// dot *inside* the quoted name, so a pre-split `schema.name` pair would be
 /// ambiguous. The two are spelled alike here and answer differently only
 /// because of what the *statements* beside them say, which is the join
@@ -1260,7 +1260,7 @@ async fn a_hand_written_partition_hierarchy_is_named_per_block() {
 /// field and refuses the same text without its CR.
 #[tokio::test]
 async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
-    use pgdump_query::preamble::PartitionOf;
+    use pgdump_query::model::PartitionOf;
     // `\r\n` is a literal's own line break, `\n` the file's.
     let dump_with = |row: &str| {
         format!(

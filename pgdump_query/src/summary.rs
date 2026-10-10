@@ -20,12 +20,13 @@ use arrow::array::ArrayRef;
 
 use crate::batch::decode_field;
 use crate::gather::{declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution};
-use crate::index::{CopyBlock, DumpIndex, TableName, UnrepresentableTier};
+use crate::model::{
+    Bounds, ColumnDef, ColumnDictionary, ColumnStatistics, CopyBlock, DumpIndex, DumpMetadata,
+    Sortedness, StatisticsView, TableName, UnrepresentableTier,
+};
 use crate::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
-use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::ResolvedSchema;
-use crate::statistics::{Bounds, ColumnDictionary, ColumnStatistics, Sortedness, StatisticsView};
 use crate::unrepresentable::column_tiers;
 
 /// What a table's stored statistics amount to, one entry per column of the
@@ -70,7 +71,7 @@ pub struct ColumnSummary {
     pub distinct: Option<u64>,
     /// The column's non-NULL values summed as integers — a decimal's unscaled
     /// — and wrapped at 128 bits, which reduces exactly to any narrower
-    /// wrapping sum ([`crate::statistics::ColumnStatistics::sums`]): where
+    /// wrapping sum ([`crate::model::ColumnStatistics::sums`]): where
     /// every group of every block kept one, under the DDL it was gathered
     /// under, and the column is emitted in the type it was summed as. `None`
     /// elsewhere, and where the column holds no non-NULL value, whose sum is
@@ -78,7 +79,7 @@ pub struct ColumnSummary {
     pub sum: Option<i128>,
     /// The summed text bytes of the column's non-NULL values, where every
     /// group of every block counted them
-    /// ([`crate::statistics::ColumnStatistics::value_bytes`]); `None`
+    /// ([`crate::model::ColumnStatistics::value_bytes`]); `None`
     /// elsewhere. Read off the text, so believed whatever the DDL now says,
     /// as the NULL counts are.
     pub value_bytes: Option<u64>,
@@ -90,8 +91,8 @@ pub struct Bound {
     /// A one-element array of the column's Arrow type ([`decode_field`]).
     pub value: ArrayRef,
     /// Whether the value is one the column holds, rather than a bound outside
-    /// every value ([`crate::statistics::Bounds::min_exact`],
-    /// [`crate::statistics::Bounds::max_exact`]).
+    /// every value ([`crate::model::Bounds::min_exact`],
+    /// [`crate::model::Bounds::max_exact`]).
     pub exact: bool,
 }
 

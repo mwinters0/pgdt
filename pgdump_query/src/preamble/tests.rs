@@ -1,5 +1,8 @@
 use super::*;
-use crate::map::SpanBody;
+use crate::model::{
+    CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, Extension, NotNull, PartitionOf,
+    SpanBody, TableDef, TableReference, TypeDef, TypeKind,
+};
 
 /// Feed `lines` (joined with `\n`, the same way `crate::map::Builder`
 /// accumulates a statement) to [`classify_statement`] and unwrap the
@@ -1174,8 +1177,8 @@ fn extension_without_a_schema_clause() {
 
 /// A span with placeholder offsets — `dump_metadata_from_spans` never
 /// reads `start`/`end`/`database`, only `body`.
-fn span(body: SpanBody) -> crate::map::Span {
-    crate::map::Span {
+fn span(body: SpanBody) -> crate::model::Span {
+    crate::model::Span {
         start: 0,
         end: 0,
         database: None,
@@ -1186,8 +1189,8 @@ fn span(body: SpanBody) -> crate::map::Span {
     }
 }
 
-fn dummy_data_span() -> crate::map::Span {
-    span(SpanBody::Data(crate::map::DataBlock::Copy(crate::index::CopyBlock {
+fn dummy_data_span() -> crate::model::Span {
+    span(SpanBody::Data(crate::model::DataBlock::Copy(crate::model::CopyBlock {
         header: crate::copy::CopyHeader {
             schema: None,
             table: "placeholder".to_string(),
@@ -1736,32 +1739,6 @@ fn a_plain_ddl_statement_records_nothing() {
     let (roles, tablespaces) = refs_of("CREATE TABLE public.t (id integer);");
     assert!(roles.is_empty());
     assert!(tablespaces.is_empty());
-}
-
-/// A type name is kept in one spelling however the DDL wrote it: each part
-/// read as the server reads it — an unquoted one folded, a quoted one
-/// verbatim — and quoted back only where it is not a plain lower-case
-/// identifier (I29). Text that is not one name has no spelling.
-#[test]
-fn a_type_name_has_one_canonical_spelling() {
-    for (reference, canonical) in [
-        ("public.mood", "public.mood"),
-        ("PUBLIC.Mood", "public.mood"),
-        (r#""public"."mood""#, "public.mood"),
-        (r#"public."Mood""#, r#"public."Mood""#),
-        (r#"s."x ARRAY""#, r#"s."x ARRAY""#),
-        (r#"s."a""b""#, r#"s."a""b""#),
-        (r#"s."a.b""#, r#"s."a.b""#),
-        ("s.x$1", r#"s."x$1""#),
-        ("s . t ", "s.t"),
-        ("mood", "mood"),
-    ] {
-        assert_eq!(canonical_type_name(reference).as_deref(), Some(canonical), "{reference}");
-        assert_eq!(canonical_type_name(canonical).as_deref(), Some(canonical), "{canonical}");
-    }
-    for reference in ["integer[]", "double precision", r#"s."a"[]"#, "numeric(10,2)", "s."] {
-        assert_eq!(canonical_type_name(reference), None, "{reference}");
-    }
 }
 
 /// I29's own dump, and the four characters a name may hold that the

@@ -168,7 +168,7 @@ falling back to a cold query's early-stopping map, which brings each of those ba
 `Unusable` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
-Code: `cache::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
+Code: `model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
@@ -214,7 +214,7 @@ Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing b
 count and the census read every row); a proposal is sized against the per-row profile. Evidence:
 `nested-decode-micro`, `map-only`, `cross-file-floor`, `nested-end-to-end`.
 
-## The file map and the preamble (`map.rs`, `index.rs`, `preamble.rs`)
+## The file map and the preamble (`map.rs`, `load.rs`, `preamble.rs`, `model/`)
 ### D30 The statement grammar is primary; the TOC is enrichment
 TOC-driven segmentation is unsound on non-`pg_dump` input, and a dollar-quoted body can hold a
 TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a refusal. A span's `end` is fixed by
@@ -246,7 +246,7 @@ groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entrie
 past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
-`ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
+`ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and
 max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at
 the data level is censused, and so is every block a query's pass maps: gating on a full scan left
 early blocks uncensused. The metadata level records `None` and, but under a strict parse, splits no field; a typed query re-reads
@@ -259,16 +259,16 @@ by its own type, lexically, the boundary years and an interval's long hour part 
 `format` past Arrow's spec, `engine` past `calendar_end` (RT21). It persists as counts (D74); a type holding more or
 less bumps `CACHE_FORMAT_VERSION`, as D78's order does, and a cache counted under another calendar is refused (D20).
 Rejected: a decode per field; a type-blind test (`text` reading `infinity`); counting as a query reads (timing decides);
-one tier; a value the server refuses, a decode error, this being our front end's limit. Code: `unrepresentable::Counter`, `map::FieldCount`. Evidence:
+one tier; a value the server refuses, a decode error, this being our front end's limit. Code: `unrepresentable::Counter`, `model::FieldCount`. Evidence:
 `every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on name (I11); a composite's field
-list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect` segment is not a database (I9). L1
+list is all-or-nothing, `record_out` being positional (I23); a `--create` dump's pre-`\connect` segment is not a database (I9). The model
 stores text, never a type's conclusion: a declared type is its words, block comments and spacing dropped, a collation clause verbatim, `None`
 collation is "no clause" (I37), and `CollationDef` keeps only `deterministic` (I42). A type's or collation's name is kept in one spelling,
 both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, a column found through them as it
-is looked up, and a partition its parent and bound, the bound as text (I86). Of what the DDL implies, L1 keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
+is looked up, and a partition its parent and bound, the bound as text (I86). Of what the DDL implies, the model keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
 
 ## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
 ### D37 The bar: the dump alone determines the value
@@ -460,7 +460,7 @@ comparing operator, the NULL tests reading no value (I44–I47).
 
 ### D59 Divergence is per position on its own channel: per term, and per column at registration
 `ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
-conditional, so L4) and per column from `column_divergences` in a query's semantics — DataFusion's variants
+conditional, so query's) and per column from `column_divergences` in a query's semantics — DataFusion's variants
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
@@ -632,20 +632,23 @@ a script sums its own rollup, a table spanning blocks (I2) with no merge rule bu
 pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value name spells its suffixes past the page, its spec line exempt from the width assertion, until one pass over CLI output (`roadmap.md`, "Future — wanted, unscheduled"). Rejected: `long_help` per flag; a rollup; that value name cut to a placeholder piecemeal.
 
 ## Layering
-### D68 Four layers, drawn where crate boundaries would go
-L1 bytes and structure (`io`, `scan`, `copy`, `lex`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
-`statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`,
-`unrepresentable`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`, `summary`); `error`, `lib` and
-`instrument` in none; CLI and embedders above L4. `use` points down or sideways; a module gets a
-layer before it is written (`tests/layering.rs`). Deviations, moved with a `batch` rework:
-`read_table` (L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a split (D74).
+### D68 Six crates-to-be, the module assignment Cargo will enforce
+core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`,
+`leader`), codec (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`), query (`batch`, `stream`,
+`predicate`, `gather`, `prune`, `summary`, `statistics`); each uses only crates before it, dump and codec siblings, a module
+assigned before it is written (`tests/layering.rs`); CLI and embedders above query. Model is what the cache persists, apart
+from core so an edit there is the one asking whether the format bumps, and below the parsers so the codec does not recompile
+with the grammar. Statistics gathering decodes, so is query's; worker sizing and the cut are io's, the leader asking them.
+Rejected: four layers in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's).
 
-### D74 L1 is Arrow-free and L2 is pure, so a metadata-only crate split off would compile no Arrow
-L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and does no I/O; a decoder
-takes an unescaped field and returns a value, never a builder (L3, whose views marry array building
-to the read buffers, D46). Anything persisted is L1's vocabulary — declared type strings, never a
-`DataType` or another L2 conclusion, a statistic's bounds included. A cross-layer trait is defined
-below and implemented above (`statistics::BlockObserver`), as a scan predicate hook would be.
+### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
+Core, model, io and dump never name `arrow`; the codec names `arrow::datatypes` only, is synchronous and does no I/O, nor does
+the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building
+to the read buffers, D46). Anything persisted is model vocabulary — declared type strings, never a `DataType` or another codec
+conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above
+(`model::BlockObserver`, `model::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by
+`map_err` where a crate meets it and reached by downcast, so no crate compiles another's dependency for the error's sake.
+Rejected: a `#[from]` variant per dependency's error, which compiles Arrow, xz-seek and bincode into every crate.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use pgdump_query::map::{SpanBody, TilingIssue};
+use pgdump_query::model::{SpanBody, TilingIssue};
 use pgdump_query::{
     DiagnosticKind, LocalFileSource, ScanOptions, build_index, build_map, check_tiling,
     dump_metadata_from_spans,

@@ -195,7 +195,7 @@ than reading as a phase nobody has sliced.
   kilobytes per table, about a fifth of it live structure the preamble alone
   pays (`measurements.md`, `peak-rss` and `rss-attribution`).
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
-  in hand being one. Detail: `pgdump_query/src/preamble.rs`.
+  in hand being one. Detail: `pgdump_query/src/model/catalog.rs`.
 
 - **KD29** — a flagless `pgdt` run reads its memory limit once for the
   status lines and the statistics allowance and again inside
@@ -464,7 +464,7 @@ than reading as a phase nobody has sliced.
   fails at, where a read in pieces declined before it and another read of
   the block is merged into it, so a refusing parse over the cache names that
   later line. **(c) unowned**; promoted by a refusing parse naming the wrong
-  line. Detail: `pgdump_query/src/statistics.rs`.
+  line. Detail: `pgdump_query/src/model/statistics.rs`.
 
 - **KD108** — under `--postgres-invalid-values ignore`, a float past its
   type's range spelled with blanks around it or in hexadecimal is not read

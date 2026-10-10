@@ -1,6 +1,6 @@
 //! The pruning consumer: which row groups of a query's block its filter can
 //! skip, read off the statistics a mapping pass stored
-//! ([`crate::statistics::BlockStatistics`]) through the truth-set evaluator
+//! ([`crate::model::BlockStatistics`]) through the truth-set evaluator
 //! ([`ResolvedExpr::truths`]).
 //!
 //! **A group is skipped only when no row of it can make the filter's root
@@ -25,11 +25,12 @@ use std::sync::Arc;
 
 use crate::copy::{RawRow, RowSplit};
 use crate::gather::{declared_column, stored_bounds_kinds};
-use crate::index::{CopyBlock, Unrepresentable};
+use crate::model::{
+    BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata, Sortedness,
+    StatisticsView, Unrepresentable,
+};
 use crate::pgtype::{CompareKind, bounds_set_keyed_by};
-use crate::preamble::DumpMetadata;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
-use crate::statistics::{BlockStatistics, BoundsSet, ColumnStatistics, Sortedness, StatisticsView};
 
 /// What one block's statistics let a filter skip.
 #[derive(Debug, Clone)]
@@ -50,9 +51,9 @@ pub(crate) struct BlockPruning {
     /// Groups the statistics list.
     pub(crate) groups: u64,
     pub(crate) skipped_groups: u64,
-    /// The row bytes of the skipped groups ([`crate::statistics::RowGroup::bytes`]).
+    /// The row bytes of the skipped groups ([`crate::model::RowGroup::bytes`]).
     pub(crate) skipped_bytes: u64,
-    /// The rows of the kept groups ([`crate::statistics::RowGroup::rows`]):
+    /// The rows of the kept groups ([`crate::model::RowGroup::rows`]):
     /// every row a replay of the block can emit, and more wherever a kept
     /// group's rows fail the filter or a [`SortedStop`] ends the read.
     pub(crate) kept_rows: u64,

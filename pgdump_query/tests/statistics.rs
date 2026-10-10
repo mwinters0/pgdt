@@ -577,7 +577,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
 /// incomplete rather than `Exact` over the groups that kept a bound.
 #[tokio::test]
 async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
-    use pgdump_query::map::{DataBlock, SpanBody};
+    use pgdump_query::model::{DataBlock, SpanBody};
     use pgdump_query::{
         ComparisonSemantics, QueryOptions, StatisticsView, TableName, table_schema, table_summary,
     };
@@ -840,7 +840,7 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
 /// never reads as lacking.
 #[tokio::test]
 async fn a_text_column_held_without_bounds_is_reread_for_them() {
-    use pgdump_query::map::{DataBlock, SpanBody};
+    use pgdump_query::model::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "unbounded.sql");
     let options = ScanOptions::default();
     let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await.index;
@@ -888,7 +888,7 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
 /// (`docs/design/decisions.md`, "D79").
 #[tokio::test]
 async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
-    use pgdump_query::map::{DataBlock, SpanBody};
+    use pgdump_query::model::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&types_fixture(16, "data-only"), "undeclared.sql");
     let options = ScanOptions::default();
     let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::DATA).await.index;

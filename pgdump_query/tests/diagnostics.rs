@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
-use pgdump_query::diagnostic::drain;
+use pgdump_query::model::drain;
 use pgdump_query::{
     ColumnNote, ComparisonDivergence, ComparisonNote, ComparisonSemantics, Diagnostic,
     DiagnosticKind, DiagnosticSink, Expr, Finding, LocalFileSource, Predicate, PredicateOp,

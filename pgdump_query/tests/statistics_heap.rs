@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pgdump_query::cache::CacheMode;
-use pgdump_query::map::{DataBlock, SpanBody};
+use pgdump_query::model::{DataBlock, SpanBody};
 use pgdump_query::{
     DEFAULT_MEMORY_BUDGET, DumpIndex, LocalFileSource, MapRun, Parallelism, ScanOptions,
     StatisticsRequest, StatisticsSelection, StatisticsTerms, map_file,

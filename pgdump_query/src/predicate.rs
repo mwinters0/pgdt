@@ -9,11 +9,10 @@ use crate::datetime_in;
 use crate::datetime_in::DateTimeInput;
 use crate::decode;
 use crate::decode::{NumericColumn, Read, Unread};
-use crate::diagnostic::{Finding, Severity};
-use crate::index::Unrepresentable;
 #[cfg(feature = "introspect")]
 use crate::instrument::timed_span;
 use crate::instrument::{EvaluationPart as Part, timed};
+use crate::model::{Finding, PostgresInvalidValues, Severity, Unrepresentable};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, Discrete, Geometric,
@@ -21,7 +20,6 @@ use crate::pgtype::{
     datafusion_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
-use crate::scan::PostgresInvalidValues;
 use crate::unrepresentable::UnrepresentableRead;
 use crate::{Error, Result};
 
@@ -268,8 +266,8 @@ impl Default for Expr {
 /// `crate::stream::TableStream::comparison_notes`, on its own channel rather
 /// than as a `Diagnostic` or a [`crate::resolve::ColumnNote`]
 /// (`docs/design/decisions.md`, "D59", "D68"), and reaching a caller's
-/// `crate::diagnostic::DiagnosticSink` beside them as a
-/// [`crate::diagnostic::Finding`].
+/// `crate::model::DiagnosticSink` beside them as a
+/// [`crate::model::Finding`].
 ///
 /// Per term, a divergence being operator-conditional
 /// ([`ComparisonDivergence::affects_equality`]): a `text` column with no

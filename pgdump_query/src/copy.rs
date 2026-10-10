@@ -5,7 +5,7 @@
 //!
 //! [`decode_field`]/[`encode_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/decisions.md`, "D68". [`crate::decode`] (L2) never
+//! text — see `docs/design/decisions.md`, "D68". [`crate::decode`] (the codec) never
 //! sees escaped bytes at all: it takes `decode_field`'s already-unescaped
 //! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 

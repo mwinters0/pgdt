@@ -27,11 +27,9 @@ use arrow::datatypes::DataType;
 
 use crate::copy::{CopyHeader, decode_field};
 use crate::decode::{civil_from_days, decode_date32, interval_parts, timestamp_micros_wide};
-use crate::index::{Unrepresentable, UnrepresentableTier, calendar_end};
-use crate::map::FieldCount;
+use crate::model::{DumpMetadata, FieldCount, Unrepresentable, UnrepresentableTier, calendar_end};
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
-use crate::preamble::DumpMetadata;
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 
 use UnrepresentableTier::{Engine, Format};
@@ -160,7 +158,7 @@ fn leaves(resolved: &ResolvedSchema) -> Vec<Leaf> {
 
 /// **One column's tier test**, for a reader holding the value's text already:
 /// what a statistics observer counts each group's values by, and which of its
-/// views a value joins (`crate::statistics::StatisticsView`).
+/// views a value joins (`crate::model::StatisticsView`).
 #[derive(Debug, Clone)]
 pub(crate) struct ColumnTier {
     counter: Arc<Counter>,
@@ -254,7 +252,7 @@ impl UnrepresentableRead {
 /// holding one as its text, the rest holding none.
 ///
 /// **A column is tested only where `counts`, the block's own count
-/// ([`crate::index::CopyBlock::unrepresentable`]), says it holds such a value
+/// ([`crate::model::CopyBlock::unrepresentable`]), says it holds such a value
 /// in the tiers `reach` reads**, the count being the map's exact record of
 /// them (`docs/design/decisions.md`, "D96"); a block with no count is tested
 /// throughout.

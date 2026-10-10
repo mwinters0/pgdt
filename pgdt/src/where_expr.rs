@@ -14,7 +14,7 @@
 //! flags may disagree about.
 //!
 //! This module is the CLI's alone. `Expr` is a plain public enum an embedder
-//! fills in variant by variant, so nothing below L4 parses an expression.
+//! fills in variant by variant, so nothing below query parses an expression.
 
 use anyhow::{Context, Result};
 use pgdump_query::Expr;

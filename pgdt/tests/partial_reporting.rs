@@ -17,7 +17,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pgdump_query::cache::{CACHE_FORMAT_VERSION, OVERWRITE_WAYS_OUT};
+use pgdump_query::cache::OVERWRITE_WAYS_OUT;
+use pgdump_query::model::CACHE_FORMAT_VERSION;
 use pgdump_query::{
     DumpIndex, DumpMetadata, LocalFileSource, ScanOptions, Span, SpanBody, build_index, cache,
 };

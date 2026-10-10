@@ -30,7 +30,7 @@ use arrow::datatypes::{
 };
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
-use pgdump_query::map::SpanBody;
+use pgdump_query::model::SpanBody;
 use pgdump_query::resolve::SchemaMode;
 use pgdump_query::{
     DataBlock, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, build_map, table_stream,
