@@ -1,6 +1,6 @@
 # P35 — Crate seams and file limits
 
-The library becomes six crates whose dependency graph Cargo enforces, each
+The library becomes seven crates whose dependency graph Cargo enforces, each
 crate's module tree is redrawn as a design in which no file is past a limit,
 and a check and a skill keep both true afterwards. No behaviour changes:
 every test that passes before a slice passes after it, unmoved or moved whole.
@@ -56,11 +56,13 @@ becomes, so a sampling profile is always of the shipped build.
 
 ## The crate graph
 
-Six library crates, each depending only on those above it in this list; the
-layers of D68 become crates, with one new one below the parsers.
+Seven library crates, each depending only on those above it in this list; the
+layers of D68 become crates, with one new one below the parsers and one
+between them and the query layer, by the `seams` skill's crate test
+(`../status/history/2026-10-11.md`).
 
-- **`pgdt-core`** — the error type, the `introspect` hooks, the SQL lexer and
-  the COPY text format: what every other crate reads and nothing else owns.
+- **`pgdt-core`** — the error type, the `introspect` hooks, a type name's
+  canonical form and the COPY text format: what every other crate reads and nothing else owns.
   **The error type names no dependency's error**: it is the library's
   vocabulary of failure, and a dependency's error — Arrow's, xz-seek's,
   bincode's, tokio's — is a cause it carries opaquely, reached by downcast,
@@ -74,8 +76,8 @@ layers of D68 become crates, with one new one below the parsers.
   its implementor sits; no I/O, no Arrow.
 - **`pgdt-io`** — byte sources (local, `.xz`, fetched, remote), the memory
   limit and its discovery, worker sizing. The `http` feature lives here.
-- **`pgdt-dump`** — the parsers and the cache: the scanner, the preamble
-  grammar, the map builder, the interior split, persisting and reloading the
+- **`pgdt-dump`** — the parsers and the cache: the SQL lexer, the scanner,
+  the DDL grammar, the map builder, persisting and reloading the
   model. Depends on core, model, io.
 - **`pgdt-codec`** — PostgreSQL values: every decoder, the datetime grammar,
   nested literals, the type register, the comparison plans and their ordering
@@ -83,8 +85,14 @@ layers of D68 become crates, with one new one below the parsers.
   and `arrow-buffer` for `i256` alone, and is synchronous. The ordering keys move here from the query layer,
   where they sit today in `predicate.rs`: they are value semantics, not
   filtering.
+- **`pgdt-mapping`** — the mapping pass: a map extended from its frontier
+  with its observers attached, a block's interior split, the whole-file map,
+  the back-fill, statistics
+  gathering and the strict check, the statistics request and the account that
+  bills them. Depends on core, model, io, dump and codec; names `DataType` of
+  Arrow's and builds no array.
 - **`pgdt-query`** — Arrow batches, the streams, the filter expression,
-  statistics gathering and pruning, summaries. Everything above it is an
+  pruning, summaries. Everything above it is an
   embedder: `datafusion-pgdump`, `datafusion-cli-pgdump`, `pgdt`.
 
 What the graph settles: D74's two rules — the parsing crates compile no Arrow,
@@ -105,8 +113,10 @@ that test holds only while the lexer and the error type live elsewhere.
 Why the cache is not its own crate: it persists the model and is read by the
 index loader that then scans, so it sits beside the parsers, not below them.
 
-**Statistics gathering is query-side.** It decodes values, so it sits above
-the codec, as D68 has it; only the statistics *types* are model.
+**Statistics gathering is the mapping pass's.** It decodes values, so it
+sits above the codec, as D68 has it, and builds no array, so below the query
+layer; pruning and summaries read statistics through the filter expression,
+so they are query's; only the statistics *types* are model.
 
 **The graph is the current answer, not a fixed one.** The `seams` skill asks,
 each time it runs, whether a crate has become two or two have become one, by
