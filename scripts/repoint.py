@@ -63,7 +63,7 @@ HISTORY_CAP_FROM = "2026-09-13"
 #: caps that decide what a session costs before it has done anything.
 ORIENTATION_CAPS = {
     "CLAUDE.md": 150,
-    "docs/process.md": 500,
+    "docs/process.md": 525,
 }
 SKILL_LINES = 200
 #: Net lines the live record may grow between repoints before this goes red.

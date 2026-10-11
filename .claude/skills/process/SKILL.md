@@ -38,13 +38,23 @@ Every one of these is in the *same* change as the code, never a follow-up.
    external behaviour not already recorded there.
 7. **An inbox entry** for each fact a phase with no spec yet will need — the
    fact, why *that* phase cares, where it came from — filed now, not at wrap.
-8. **The deficiency register** (`docs/status/deficiencies.md`) **re-read** if
+8. **The concept map** (`docs/design/concepts.md`) **updated** if the slice
+   added, moved or removed a module or widened a concept: each file claimed
+   by the concept it holds, a crate's part saying why it sits there, and a
+   **Not in one place** line added for what the slice scattered, or struck for
+   what it gathered. `concepts.py` fails on an unclaimed file; the rest is
+   the review's.
+9. **The deficiency register** (`docs/status/deficiencies.md`) **re-read** if
    the checklist line names a `KD<k>`: closing its last part strikes index line
    and code-marker detail together in this change, a part closing into a
    *property* migrating beside its mechanism; partial closure rewrites the
    entry to what is still true and never annotates it with what was fixed.
 
 ## Writing or re-slicing a slice list
+
+**A spec places what the phase adds** on the concept map, the grilling
+settling where each new concept or part lives (`docs/process.md`, "The
+loop").
 
 **Writing the checklist sets the phase's roadmap index row to `Current`**, in the
 same change. **Check the deficiency register for `(b)` entries naming this

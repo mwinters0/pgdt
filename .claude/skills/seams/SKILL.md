@@ -1,6 +1,6 @@
 ---
 name: seams
-description: Redraw seams where the code has outgrown its files or crates — run `scripts/file_limits.py`, move inline tests beside their module, design the module tree a red file's crate now wants and cut toward it, and say when a crate should split or two merge. Use when the user invokes /seams, when the `seams` meter is red in `mise run check`, before a phase wrap, or when a slice leaves a file over a limit.
+description: Redraw seams where the code has outgrown its files or crates — run `scripts/file_limits.py`, move inline tests beside their module, design the next version of the concept map (`docs/design/concepts.md`) across crates and each crate's tree from it, cut toward it, and say when a crate should split, two merge, or a concept's part move crate. Use when the user invokes /seams, when the `seams` meter is red in `mise run check`, before a phase wrap, or when a slice leaves a file over a limit.
 ---
 
 The rule is `docs/process.md`, "Seams"; **invoke the `process` skill first**.
@@ -15,6 +15,10 @@ every `==` exemption. A hard line puts **its module tree** in this round's
 scope — the crate it sits in, or the top-level module when the crate is large
 — and every soft line inside that scope comes with it. `--all` prints every
 file's reading; read it for the whole scope, since the design is of the tree.
+
+Then read `docs/design/concepts.md` for every concept the scope's files hold,
+**and every crate each one reaches**: a concept is designed once, across the
+crates holding it, so its other crates' modules are in scope too.
 
 ## 2. Tests out first
 
@@ -38,6 +42,14 @@ change one concept is in one module. That is what people look for in a code
 layout, and every other property here serves it. The test
 is a reader who knows the domain and not the code: from the names and module
 docs alone, can they say where a concept lives, and where a new feature goes?
+
+**The design is the concept map's next version**: each concept's claims as the
+design draws them, and no **Not in one place** line it leaves standing. Draw it
+across crates first, then each crate's tree. A concept may span crates only
+along the layering (`docs/process.md`, "Seams"), each part saying why its crate
+holds it; a part with no such reason moves to the crate the layering names, and
+a whole module changing crate edits `docs/design/decisions.md`, "D68", so it
+goes to the maintainer as §4's answers do.
 
 The evidence for where seams fall, in order of weight:
 
@@ -70,7 +82,9 @@ reason (a dispatcher and its feature-gated arm do import each other).
 - **One concept, several files** — the antipattern that matters most, every
   other one below being a way of arriving at it or a symptom of it. A type
   family's reader, renderer and refusal check, or one grammar, spread over
-  modules — or over a library and the binary that uses it.
+  modules — or over crates where the layering does not divide it, a library
+  and the binary that uses it among them. The map's **Not in one place**
+  lines list the ones known.
 - **The banner split.** One file cut at its section banners into a flat list
   of siblings, and the round stops. The banners record where the file grew;
   groups among the siblings go unnested and the tree goes undesigned.
@@ -109,7 +123,9 @@ reason (a dispatcher and its feature-gated arm do import each other).
   to require it ("what is left is its API"). A rule is read for its goal;
   where it blocks the design, it goes to the maintainer, not the file's size.
 
-**What moves with the code.** Every marker on it — `deficiency: KD<k>`,
+**What moves with the code.** Its claim in `docs/design/concepts.md`, and the
+**Not in one place** line the cut settles, struck (`uv run concepts.py`).
+Every marker on it — `deficiency: KD<k>`,
 `upstream: UF<k>`, `pg-refuses: I<n>` — and the register line naming the
 file: run `uv run deficiencies.py`, `uv run upstream.py`, `uv run
 pg_refuses.py`. Every script that reads the file by path (`rg -n
@@ -131,6 +147,11 @@ ask it two questions, by evidence rather than taste:
   --stat`), and a dependency the smaller group would not need.
 - **Should two merge?** Most commits touching one touch the other, or the
   boundary forces a type `pub` that nothing outside the pair reads.
+- **Is a concept's part in the wrong crate?** The layering gives no reason for
+  it to be there, most of its callers sit in another crate, or an older layout
+  is the only reason it is where it is. Items moving between modules D68
+  already assigns to the right crate are a cut; a module changing crate is
+  this decision.
 
 Either answer is a **decision**, not a cut: it reverses or extends the entry
 that drew the graph, so it goes to the maintainer with the evidence, or under
@@ -149,7 +170,8 @@ has come under the limit fails the check and is struck.
 ## 6. Finish
 
 Run `cargo fmt`, then `mise run check` — whole, never `--affected`, since a
-move touches paths no test reads — and `uv run citations.py`. One commit a
+move touches paths no test reads — and `uv run citations.py` and `uv run
+concepts.py`. One commit a
 cut, subject `seams: <module> → <what it became>` or `seams: <module>'s tests
 beside it`, body listing each new file and what it holds. The notes doc of
 the slice that ran the round, or the day's history entry out of band, holds

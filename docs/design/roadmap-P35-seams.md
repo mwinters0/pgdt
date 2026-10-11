@@ -205,7 +205,10 @@ at their own banners and by visibility, which left most crates' trees
 undesigned; so the trees are designed next, every crate at once and with no
 code moved, the taste calls settled with the maintainer, because the trees are
 one design — a test or helper may belong a crate away from where it sits — and
-a design per slice would redraw what the last one drew. Then the cuts, sliced
+a design per slice would redraw what the last one drew. That design is the
+next version of the concept map ([`concepts.md`](concepts.md)), which records
+the tree as it stands and lists against each concept what it scatters; each
+cut moves the map toward it. Then the cuts, sliced
 by that design rather than by crate: each slice owns whole concepts, so no
 concept is half-moved between two; and a closing round that finds nothing
 past any limit.

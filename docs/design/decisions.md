@@ -8,7 +8,7 @@ rules, the line cap included, are `docs/process.md`, "The decision register".
 
 <!-- decision-watermark: D105 -->
 
-## I/O, memory and parallelism (`io.rs`)
+## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
 `Parallelism::default()` is `Serial`; discovery is opt-in, asked for by the CLI and by the DataFusion
 provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers` read in the library, so silence means concurrency.
@@ -93,7 +93,7 @@ Rejected: the platform allocator and `override`, off the path DataFusion tests o
 overwriting the operator's `MALLOC_ARENA_MAX`; DataFusion behind a feature (off, no figure times the download; on, a slim build nothing ships or times); two artifacts, or a
 second binary the provider figures would time. Reopens: a contention figure; a mimalloc-only gate failure whose confirmed mechanism no library change suiting both allocators (ranking first) and no mimalloc option reaches. Evidence: `allocator`.
 
-## The compressed source and the cache (`io.rs`, `cache.rs`)
+## The compressed source and the cache
 ### D14 `.xz` is read; recognition sniffs content
 An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress` output (compatibility). Recognition compares magic and sits outside the trait, and is
 *told* those bytes by `Origin`'s probe — which also answers D20's size, so what is settled before a source exists stops being a statement about files. Rejected: extension dispatch; a
@@ -168,7 +168,7 @@ the metadata holds included; record it nowhere: an older cache is then refused u
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
 Code: `model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
 
-## The scanner (`scan.rs`, `copy.rs`)
+## The scanner
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 `CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes`,
 and exceeding it errors, never truncates (`KD93`). A chunk is scanned in two passes, carried line then chunk in place
@@ -212,7 +212,7 @@ Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing b
 count and the census read every row); a proposal is sized against the per-row profile. Evidence:
 `nested-decode-micro`, `map-only`, `cross-file-floor`, `nested-end-to-end`.
 
-## The file map and the preamble (`map.rs`, `load.rs`, `preamble.rs`, `model/`)
+## The file map and the preamble
 ### D30 The statement grammar is primary; the TOC is enrichment
 TOC-driven segmentation is unsound on non-`pg_dump` input, and a dollar-quoted body can hold a
 TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a refusal. A span's `end` is fixed by
@@ -265,7 +265,7 @@ collation is "no clause" (I37), and `CollationDef` keeps only `deterministic` (I
 both sides of a lookup compared in it (I29). A table keeps its `INHERITS` parents and `OF` type, a column found through them as it
 is looked up, and a partition its parent and bound, the bound as text (I86). Of what the DDL implies, the model keeps only a column's `NOT NULL` and whether an enum's labels are whole. Rejected: a name's parts dequoted, `"a.b".c` being `a."b.c"`; references flattened in at the fold, which a later `ADD COLUMN` misses.
 
-## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
+## Type resolution and decoders
 ### D37 The bar: the dump alone determines the value
 A declared type maps to a real Arrow type only if its text round-trips consulting nothing outside
 the file; otherwise `Utf8View` with a note naming the kind of unknown. Misreading is unrecoverable,
@@ -318,7 +318,7 @@ what a dump holds and cannot loosen (the render inverse); `parse_*` reads what a
 cannot tighten; each transcribes the newest major and under-accepts (I35, I44). Wrong depth,
 `[lb:ub]=` or a field-count mismatch is refused, never reshaped. Evidence: `nested-decode-micro`.
 
-## Batches, streams and the leader (`batch.rs`, `stream.rs`, `leader.rs`)
+## Batches, streams and the leader
 ### D46 Zero-copy views are top-level `Utf8View` only, and `max_source_span` alone bounds pinned bytes
 Every other arm copies. A retained chunk is released only past its *last* byte (the carried row arrives inside the next chunk) and
 `invalidate_block_cache` runs on every flush keeping its batcher; any new flush trigger must honour it. `max_rows` and `max_bytes` count selected
@@ -415,7 +415,7 @@ checks every field, marks each block it checks whole and re-reads each held bloc
 what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;
 recording the mode; refusing such a cache (D20); `Strict` failing from the record. Defaults: `Null` (D38); `Default`, a restore refusing them. Code: `PostgresInvalidValues`, `checker`.
 
-## Predicates (`predicate.rs`, `key.rs`, `where_expr.rs`, `pushdown.rs`)
+## Predicates
 ### D53 The operator set is closed but for membership and the unrepresentable test
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
 `Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
@@ -488,7 +488,7 @@ are dropped at `reset_state`. Rejected: `PruningPredicate` (bounds decoded to sc
 a recursive query's next iteration needing rows the last one's ruled out. Reopens: a release whose producers hold with the zeros equal, then an `RT<n>`.
 Code: `datafusion-pgdump`'s `dynamic_filter::loosened`, `exec.rs`. Evidence: `dynamic_filter/tests.rs`, `tests/dynamic_filters.rs`, `tests/statistics.rs`.
 
-## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`, `summary.rs`)
+## Statistics
 ### D75 Pruning takes only what each operator family proves
 Bounds answer the ordering operators, and under an equality operator rule out "equal" but never "unequal"; a dictionary answers the
 equality operators; a stop needs an ordering term the root conjunction requires, on a column sorted the way its bound closes; terms
@@ -588,7 +588,7 @@ takes, exactly across pieces and merges (D82); every value PostgreSQL admits key
 Rejected: every value's bounds and the count alone; a set per view per column from its first row; a timestamp key of
 `i128` from 1970, a width chosen where PostgreSQL's is inherited. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
 
-## The CLI (`main.rs`, `error.rs`)
+## The CLI
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
 lacks (D48), and `--preamble-only` hangs off `parse`. Rejected: a scanning fallback; `--no-scan`.
@@ -622,9 +622,8 @@ pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value 
 
 ## Layering
 ### D68 Six crates, the module assignment Cargo enforces
-core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`, `leader`), codec (`pgtype`,
-`resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`, `key`), query (`batch`, `stream`, `predicate`, `gather`, `prune`, `summary`, `statistics`);
-each uses only crates before it, dump and codec siblings; CLI and embedders above query; every member's dependencies, and each library's API namespaces,
+core, model, io, dump, codec, query, each using only crates before it, dump and codec siblings, each module's crate and the reason for it stated once in
+`concepts.md`; CLI and embedders above query; every member's dependencies, and each library's API namespaces,
 held to tables in `scripts/layering.py`. Model is what the cache persists, apart from core so an edit there is the one asking whether the format bumps, and
 below the parsers so the codec does not recompile with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value
 semantics, so codec's; worker sizing and the cut are io's, the leader asking them. Rejected: four layers in one crate with upward deviations; the cache a crate of

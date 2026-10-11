@@ -33,6 +33,10 @@ and deletes it last. Protocol: `.claude/skills/grilling/SKILL.md`.
 will do and **why**, never how it lands in code, and **only for the current
 phase** — later ones are sketched to corner-avoidance depth and say so. Editing
 a spec to match what the code turned out to do erases the record of intent.
+**A spec names each concept the phase adds or extends and where it will live**
+(the concept map, under "Seams"): placement is settled in the grilling, not by
+whoever writes the code, and a part placed in another crate names the layering
+that puts it there.
 
 **3. Slice it.** Order slices so **each makes the next one's mistakes visible**;
 cheap, no-code, evidence-gathering slices go first. Then, in the same change,
@@ -50,7 +54,8 @@ the evidence half lands first.
 lands, even for a slice that lands no code, stating outcome: what the next phase
 inherits and the negative results, never a restatement of the spec. Tick the box
 in the same change and point it at the notes. **The last slice's box is ticked
-like any other**; the wrap is a separate change.
+like any other**; the wrap is a separate change. **A slice that adds, moves or
+removes a module updates the concept map in the same change.**
 
 **5. Wrap the phase.** Consolidate the slice notes into one
 `roadmap-P<N>-<slug>-notes.md`, delete the per-slice files, and delete the
@@ -304,6 +309,16 @@ slices; none lands a cut the design lacks. **A crate is a seam too**: the
 workspace graph is the current answer, not a fixed one, and the same round asks
 whether a crate should split or two merge.
 
+**The concept map**, `design/concepts.md`, is the design stated: each concept,
+the modules holding it in every crate, and why each crate holds its part. **A
+concept spans crates only along the layering** — data the cache persists in the
+model, value semantics in the codec, what decodes or builds Arrow in the query
+layer, a front end's syntax in its binary — and anything it scatters otherwise
+is listed against it until a round removes it. A round's design is the map's
+next version, so it is drawn across crates, never one crate at a time. Feature
+work keeps the map true as it grows: the spec places what a phase adds, and
+`scripts/concepts.py` fails on a production file no concept claims, or two do.
+
 ## The keystone: striking the centering
 
 A masonry arch is built over *centering*, a temporary frame holding every stone
@@ -378,6 +393,7 @@ high-water mark, unlanded items' numbers being spent too.
 | If the fact is… | It goes in… |
 |---|---|
 | How a mechanism works | the **code**, and its rustdoc |
+| Which concept a module holds, and why its crate holds that part | the **concept map**, `design/concepts.md` |
 | Why it is that shape, what was refused, what would reopen it | a **`D<k>`** entry |
 | A measured quantity | **measurements.md**, once; everything else cites the figure |
 | What exists right now | **STATUS.md** |

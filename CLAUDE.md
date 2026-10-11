@@ -32,6 +32,7 @@ cd scripts && uv run major_differences.py  # the `VD<n>` register, and no `VD<n>
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run file_limits.py   # every .rs against the size limits (`docs/process.md`, "Seams"); red means /seams
 cd scripts && uv run layering.py     # the crate graph (D68, D74) off `cargo metadata`, and what an embedder may name
+cd scripts && uv run concepts.py     # every production .rs claimed by one concept in `docs/design/concepts.md`
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run emitter_register.py [--extract]   # the emitter register; --extract reads the upstream checkouts
 cd scripts && uv run python -m unittest test_<script>   # one script's own tests
@@ -55,6 +56,9 @@ Never edit a `runs/` orchestration script while it is running.
 
 ## Where things are, and when to read them
 
+- `docs/design/concepts.md` — the concept map: each concept, the modules
+  holding it in every crate, and why each crate holds its part. **Read it
+  before deciding where new code goes**, grilling a phase, or a seams round.
 - `docs/design/decisions.md` — the decisions the code cannot explain, one
   numbered `D<k>` entry each, capped at 700 lines: anticipatory shapes, chosen
   defaults, measured refusals, and the layering rules. **Read the entries for
