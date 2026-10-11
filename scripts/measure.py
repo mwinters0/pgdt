@@ -13500,9 +13500,10 @@ def profile_recipe(cfg: Config) -> str:
     something else. `test_measure.py` asserts all six:
 
     * **the `profiling` binary, never `target/release/pgdt`.** `release`
-      carries no line tables and no frame pointers, so `perf` attributes every
-      sample to an address it cannot name and the report is a flat list of
-      `[unknown]`. The published figures stay on `release`, which is why this
+      keeps its symbol table, so a flat profile of it names functions, but it
+      carries no line tables and no frame pointers: no source lines for
+      `perf annotate`, and every call chain the reports below print stops at
+      the leaf. The published figures stay on `release`, which is why this
       is a second binary rather than a change to the one they use.
     * **`-C force-frame-pointers=yes` on the build line.** Cargo has no profile
       key for frame pointers, so `[profile.profiling]` alone gives line tables
