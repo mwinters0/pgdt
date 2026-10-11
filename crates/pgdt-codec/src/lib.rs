@@ -6,7 +6,7 @@
 pub mod compare;
 mod declared;
 pub mod decode;
-mod grammar;
+pub mod grammar;
 pub mod key;
 pub mod nested;
 pub mod pgtype;

@@ -103,7 +103,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
 NAMESPACES: dict[str, tuple[str, ...]] = {
     "pgdt-core": ("instrument",),
     "pgdt-dump": ("cache",),
-    "pgdt-codec": ("compare", "decode", "key", "nested", "pgtype"),
+    "pgdt-codec": ("compare", "decode", "grammar", "key", "nested", "pgtype"),
     "pgdt-mapping": ("statistics",),
 }
 

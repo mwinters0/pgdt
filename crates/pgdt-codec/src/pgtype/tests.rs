@@ -1,9 +1,10 @@
 use arrow_schema::TimeUnit;
 
 use super::*;
-use crate::compare::{TextGrammar, comparison_for};
+use crate::compare::comparison_for;
 use crate::declared::domain_not_null;
-use crate::grammar::text_grammar;
+use crate::grammar::TextGrammar;
+use crate::grammar::input::text_grammar;
 use pgdt_model::ColumnDef;
 
 fn ty(name: &str, kind: TypeKind) -> TypeDef {

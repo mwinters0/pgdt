@@ -8,7 +8,8 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::database_for_name;
 use pgdt_codec::internal::{field_refused, grammar_refuses};
 use pgdt_codec::{
-    compare::{ComparisonPlan, TextGrammar, Unchecked},
+    compare::ComparisonPlan,
+    grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
 use pgdt_core::{CopyHeader, decode_field, split_fields};

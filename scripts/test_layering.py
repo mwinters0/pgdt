@@ -18,10 +18,11 @@ BASE: dict[str, str] = {
     "pgdt-dump/src/lib.rs": "pub mod cache;\nmod scan;\n",
     "pgdt-dump/src/cache.rs": "pub struct CacheMode;\n",
     "pgdt-dump/src/scan.rs": "pub fn scan() {}\n",
-    "pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod key;\npub mod nested;\npub mod pgtype;\n",
+    "pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod grammar;\npub mod key;\npub mod nested;\npub mod pgtype;\n",
     "pgdt-codec/src/compare.rs": "pub enum CompareKind {}\n",
     "pgdt-codec/src/decode.rs": "pub enum Read {}\npub(crate) mod float;\n",
     "pgdt-codec/src/decode/float.rs": "pub fn float_field() {}\n",
+    "pgdt-codec/src/grammar.rs": "pub enum TextGrammar {}\n",
     "pgdt-codec/src/key.rs": "pub struct ValueKey;\n",
     "pgdt-codec/src/nested.rs": "pub struct ArrayLiteral;\n",
     "pgdt-codec/src/pgtype.rs": "pub enum TypeOutcome {}\n",
@@ -228,7 +229,7 @@ class Modules(unittest.TestCase):
         )
 
     def test_a_listed_namespace_must_exist(self):
-        found = problems({"pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod nested;\npub mod pgtype;\n"})
+        found = problems({"pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod grammar;\npub mod nested;\npub mod pgtype;\n"})
         self.assertEqual(found, ["pgdt-codec: namespace `key` has no module file"])
 
 
@@ -241,7 +242,7 @@ class OnePath(unittest.TestCase):
         ):
             with self.subTest(root=root):
                 found = problems(
-                    {"pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod key;\npub mod nested;\npub mod pgtype;\n" + root}
+                    {"pgdt-codec/src/lib.rs": "pub mod compare;\npub mod decode;\npub mod grammar;\npub mod key;\npub mod nested;\npub mod pgtype;\n" + root}
                 )
                 self.assertIn("pgdt-codec: `Read` is at its root and in `decode` (one path)", found)
 
@@ -250,6 +251,7 @@ class OnePath(unittest.TestCase):
             "pgdt-codec/src/lib.rs": """\
                 pub mod compare;
                 pub mod decode;
+                pub mod grammar;
                 pub mod key;
                 pub mod nested;
                 pub mod pgtype;

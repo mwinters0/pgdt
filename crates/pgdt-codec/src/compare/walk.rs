@@ -13,7 +13,7 @@ use crate::declared::{
     Position, Visits, array_element, builtin_name, companion_range, domain_terminal, find_type,
     is_box, split_typmod, typdelim,
 };
-use crate::grammar::text_grammar;
+use crate::grammar::input::text_grammar;
 use crate::pgtype::{builtin_range_subtype, builtin_scalar};
 
 /// The comparison for an array column, from the same walk [`resolve_array`]

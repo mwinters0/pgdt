@@ -378,7 +378,7 @@ cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
 `bpchar`, and its `t_bit` a column declared `bit` written `bit(1)` and one
 declared `"bit"` written so, at all six majors. Both are read:
 `declared.rs`'s `builtin_name` gives `character` its length of 1, and
-`grammar.rs`'s `text_grammar` gives `bit` its.
+`grammar/input.rs`'s `text_grammar` gives `bit` its.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
 `format_type` passes a name it does not spell as a keyword through
@@ -4655,7 +4655,7 @@ meets; no field is refused here for it.
 **Relied on by:** `key.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
-it holds; `grammar::text_grammar`, whose `TextGrammar::RefusesAll` refuses
+it holds; `grammar::input::text_grammar`, whose `TextGrammar::RefusesAll` refuses
 every field of an enum whose labels are exactly none.
 
 **Re-verify.**
@@ -4813,7 +4813,7 @@ into a `bit varying(2)` one. `format_type` names columns declared `bit`,
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `value::bit::bit_in`, which a strict parse checks a `bit` or
-`bit varying` field by, through `grammar::text_grammar`.
+`bit varying` field by, through `grammar::input::text_grammar`.
 
 **Re-verify.**
 
@@ -4883,7 +4883,7 @@ of megabytes; only arithmetic reaches it.
 **Relied on by:** `value::geometric::point_in`, `value::geometric::line_in`, `value::geometric::lseg_in`,
 `value::geometric::box_in`, `value::geometric::path_in`, `value::geometric::poly_in` and
 `value::geometric::circle_in`, which a strict parse checks a geometric field by, through
-`grammar::text_grammar`; `line_in` refusing only where every supported major
+`grammar::input::text_grammar`; `line_in` refusing only where every supported major
 refuses.
 
 **Re-verify.**
@@ -5134,7 +5134,7 @@ function, as statistics import may.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `grammar::text_grammar`, whose `TextGrammar::RefusesAll`
+**Relied on by:** `grammar::input::text_grammar`, whose `TextGrammar::RefusesAll`
 refuses every non-NULL field of these types.
 
 **Re-verify.**
@@ -5175,7 +5175,7 @@ any input function, is not an input function's refusal.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `grammar::text_grammar`, whose `TextGrammar::RefusesNothing`
+**Relied on by:** `grammar::input::text_grammar`, whose `TextGrammar::RefusesNothing`
 reads a field of these types and refuses none, a field being refused only
 where every supported major refuses it.
 

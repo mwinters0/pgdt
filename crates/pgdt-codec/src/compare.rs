@@ -10,7 +10,7 @@
 //! database's own `CREATE TYPE`/`DOMAIN` list, so the two answers are reached
 //! through one spelling of the same string. A position it orders by nothing
 //! carries the input grammar a strict parse reads it by
-//! ([`crate::grammar`]), whose types this namespace declares.
+//! ([`crate::grammar`]), the namespace declaring its types.
 
 mod walk;
 
@@ -22,8 +22,7 @@ use pgdt_model::{BoundsSet, CollationDef};
 use self::divergence::datafusion_position_divergences;
 pub use self::walk::comparison_for;
 use crate::declared::{IntervalQualifier, NumericTypmod, Position};
-pub use crate::grammar::check::Unchecked;
-pub use crate::grammar::{Geometric, TextGrammar};
+use crate::grammar::TextGrammar;
 
 /// How one column's field text becomes a value two sides of a comparison can
 /// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
@@ -498,7 +497,7 @@ pub enum NestedCompare {
     ///
     /// `grammar` is the position's input grammar where this build reads one for
     /// a type it orders by nothing
-    /// ([`text_grammar`](crate::grammar::text_grammar)), and `delimiter` its
+    /// ([`text_grammar`](crate::grammar::input::text_grammar)), and `delimiter` its
     /// type's `typdelim`, which an array of it is split at
     /// ([`typdelim`](crate::declared::typdelim)).
     Uncomparable {

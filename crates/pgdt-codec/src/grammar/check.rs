@@ -12,7 +12,7 @@ use crate::declared::{
     split_typmod,
 };
 use crate::decode::{Read, Unread};
-use crate::grammar::{Geometric, TextGrammar, text_grammar};
+use crate::grammar::input::{Geometric, TextGrammar, text_grammar};
 use crate::key::{OrderKey, field_key};
 use crate::value::bit::bit_in;
 use crate::value::geometric::{box_in, circle_in, line_in, lseg_in, path_in, point_in, poly_in};

@@ -231,9 +231,10 @@ typmod ([`decisions.md`](decisions.md), "D103").
 
 - **pgdt-mapping** — `statistics/gather/strict.rs`: an arm of the block
   observer, built where a block's gatherer is.
-- **pgdt-codec** — `grammar/`: what a column's fields are read by, whether
-  PostgreSQL refuses one, dispatching to the readers a key is built by, and
-  the form a filter's literal has to take.
+- **pgdt-codec** — `grammar/`, the namespace declaring the types a strict
+  parse's listing and the register's plans carry: what a column's fields are
+  read by, whether PostgreSQL refuses one, dispatching to the readers a key is
+  built by, and the form a filter's literal has to take.
 
 ## Statistics
 

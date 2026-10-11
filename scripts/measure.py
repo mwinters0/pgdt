@@ -6592,6 +6592,7 @@ PGTYPE = (
     "crates/pgdt-codec/src/grammar.rs",
     "crates/pgdt-codec/src/grammar/check.rs",
     "crates/pgdt-codec/src/grammar/form.rs",
+    "crates/pgdt-codec/src/grammar/input.rs",
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96"), and the fold of a row into
