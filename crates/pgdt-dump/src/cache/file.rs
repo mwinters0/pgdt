@@ -187,3 +187,6 @@ fn beside(path: &Path) -> PathBuf {
     name.push(format!(".{}-{}.tmp", std::process::id(), SAVES.fetch_add(1, Ordering::Relaxed)));
     path.with_file_name(name)
 }
+
+#[cfg(test)]
+mod tests;

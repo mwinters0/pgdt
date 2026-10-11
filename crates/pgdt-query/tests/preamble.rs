@@ -1,6 +1,6 @@
 //! Preamble/metadata extraction against real `pg_dump` output — the
 //! fixtures, `types`' above all, across the routine majors and flag
-//! sets (`docs/design/decisions.md`, "D36"). Unlike `crates/pgdt-dump/src/preamble.rs`'s unit tests (hand-written
+//! sets (`docs/design/decisions.md`, "D36"). Unlike `crates/pgdt-dump/src/ddl/tests.rs`'s unit tests (hand-written
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 
@@ -702,7 +702,7 @@ async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy(
 
 /// Real fixture coverage for a concatenated/`pg_dumpall`-shaped
 /// multi-database dump, as opposed to the hand-written `\connect` input in
-/// `crates/pgdt-dump/src/preamble.rs`'s unit tests.
+/// `crates/pgdt-dump/src/ddl/tests.rs`'s unit tests.
 #[tokio::test]
 async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed() {
     for version in [13, 16, 18] {

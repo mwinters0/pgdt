@@ -3933,7 +3933,7 @@ does not read the byte total back at all; that is `pgdt info --dtcache <cache>
 
 <!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->
 
-`pgdt parse` and every cold query open with `load::scan_preamble`, which reads
+`pgdt parse` and every cold query open with `preamble::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that never polls
 `ScanOptions::cancel` (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
 

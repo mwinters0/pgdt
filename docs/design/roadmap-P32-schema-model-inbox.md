@@ -9,7 +9,7 @@ entry, fold it into the spec or discard it as stale, and delete this file. See
 
 ## Table constraints are discarded; P32 is where they are held
 
-**Fact.** `preamble.rs`'s `parse_table_element` classifies a `CONSTRAINT`,
+**Fact.** `ddl/table.rs`'s `parse_table_element` classifies a `CONSTRAINT`,
 `CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, 18's table-level
 `NOT NULL <column>` or `LIKE` fragment as not-a-column (I53), keeping of them
 only the columns a `NOT NULL` or a `PRIMARY KEY` makes `NOT NULL`

@@ -218,7 +218,7 @@ async fn concatenated_dumpall_tiles_and_attributes_databases_by_connect() {
 }
 
 /// A `CREATE TABLESPACE` among a `pg_dumpall`'s globals is no `CREATE TABLE`:
-/// the keyword ends at a word boundary (`crate::preamble::strip_kw`). Every
+/// the keyword ends at a word boundary (pgdt-dump's `ddl::strip_kw`). Every
 /// fixture holding one is walked, at every major and flag set.
 #[tokio::test]
 async fn a_tablespace_among_the_globals_is_no_table() {
@@ -307,7 +307,7 @@ async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
 }
 
 /// A `CREATE TABLE`'s span carries the name and columns
-/// `crate::preamble::classify_statement` parsed out of the statement, that
+/// pgdt-dump's `ddl::classify_statement` parsed out of the statement, that
 /// being the only parser of one in the tree.
 #[tokio::test]
 async fn create_table_span_carries_name_and_columns() {

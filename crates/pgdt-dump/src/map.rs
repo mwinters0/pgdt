@@ -25,7 +25,7 @@
 //! Two fallbacks complete a statement no TOC header closes, on any input:
 //! [`crate::scan::Event::DollarQuoteEnd`], which
 //! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
-//! is in flight, and [`crate::preamble::statement_complete`] at a
+//! is in flight, and [`statement::statement_complete`] at a
 //! statement's terminating `;`, whether or not it is its own TOC entry. The lines themselves stay
 //! unsurfaced either way.
 //!
@@ -36,11 +36,15 @@
 //!
 //! ## What this module owns
 //!
+//! Its children hold where a statement ends ([`statement`]), a comment block
+//! read line by line ([`toc`]), and what every map is checked for and carries
+//! ([`tiling`]).
+//!
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
-//!   driven directly by [`crate::load::scan_preamble`] and `pgdt_query::stream`'s
-//!   mapping passes, fed the same [`crate::scan::Event`] stream those already
-//!   walk. `pgdt_query::build_map` is a thin wrapper for callers that just
-//!   want a span list.
+//!   driven directly by [`crate::preamble::scan_preamble`] and
+//!   `pgdt_query::stream`'s mapping passes, fed the same [`crate::scan::Event`]
+//!   stream those already walk. `pgdt_query::build_map` is a thin wrapper for
+//!   callers that just want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading;
@@ -74,195 +78,53 @@
 //!   cannot cover.
 //!
 //! - **Span text and the tiling check.** [`attach_text`] fills [`Span::text`]
-//!   by slicing the file at each span's own offsets, capped at [`SPAN_STORED_TEXT_MAX_BYTES`];
+//!   by slicing the file at each span's own offsets, capped at
+//!   [`SPAN_STORED_TEXT_MAX_BYTES`](pgdt_model::SPAN_STORED_TEXT_MAX_BYTES);
 //!   `Data` and `Unscanned` spans store none. [`check_tiling`]'s production
-//!   callers report a failure as a
-//!   [`pgdt_model::DiagnosticKind::TilingBroken`] on the index and
-//!   return the map anyway (`docs/design/decisions.md`, "D30").
+//!   callers report a failure as a [`pgdt_model::DiagnosticKind::TilingBroken`]
+//!   on the index and return the map anyway (`docs/design/decisions.md`,
+//!   "D30").
 //!
 //! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
 //! **every** `DumpIndex` tiles its file, one built by a query included.
-//! `DumpMetadata` is [`crate::preamble::dump_metadata_from_spans`], a derived
+//! `DumpMetadata` is [`crate::ddl::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
 //! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`],
 //! [`SpanBody::AlterTypeDropAttribute`], [`SpanBody::EnumLabelsUnread`] and
 //! [`SpanBody::AlterTableReference`] exist for rather than generic
 //! [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
+mod statement;
+mod tiling;
+mod toc;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::lex::standard_conforming_strings;
-use crate::preamble::{
-    StatementScan, StatementShape, alter_type_labels_unread, classify_statement,
-    extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
-    parse_alter_table_reference, parse_alter_type_add_value_body,
-    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, push_stmt_line,
-    statement_complete, strip_kw,
+use self::statement::{StatementScan, in_open_quote, push_stmt_line, statement_complete};
+pub use self::tiling::{
+    attach_text, check_tiling, non_seekable_compression_diagnostic, tiling_diagnostics,
+    toc_coverage_diagnostic,
 };
+use self::toc::{
+    close_comment, looks_like_toc_name_line, parse_toc_header_line, partition_root_marker,
+    version_header_field,
+};
+use crate::ddl::{
+    StatementShape, alter_type_labels_unread, classify_statement, extract_statement_cross_refs,
+    insert_role, insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body,
+    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, strip_kw,
+};
+use crate::lex::standard_conforming_strings;
 use crate::scan::{CopyEnd, CopyStart};
 use pgdt_core::Result;
 use pgdt_core::internal::StatisticsScope;
-use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
-    SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TilingIssue, TocHeader, TypeDef,
+    Span, SpanBody, TocHeader, TypeDef,
     internal::{BlockObserver, FieldCount},
 };
-
-/// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any
-/// comment line that doesn't match, which leaves [`Span::toc`] `None` — a
-/// comment block shaped like an entry still owning its span, so inheriting
-/// nothing ([`Span::toc_owned`]). `trimmed` is expected to have
-/// leading/trailing whitespace already removed.
-///
-/// All three of `_printTocEntry()`'s prefixes go through one code path:
-/// `TOC_PREFIX_DATA` ("Data for ") and `TOC_PREFIX_STATS` ("Statistics for ",
-/// a `pg_dump` 18+ `--statistics` component, I18) are each optional, and what
-/// follows one must still be `Name: `. Whether a prefix is also a *boundary*
-/// signal is [`looks_like_toc_name_line`]'s question
-/// (`docs/design/decisions.md`, "D31").
-///
-/// Splits on the field markers in the order `_printTocEntry()` writes them,
-/// not on a general grammar: `sanitize_line` never escapes a literal
-/// `; Type: ` inside an object's own name, so a pathological name can
-/// mis-split. I3 treats the TOC comment as a hint, and this parser only ever
-/// feeds enrichment, never a boundary.
-///
-/// deficiency: KD114 — `step` hands this a trimmed line, so an empty owner's
-/// `; Owner: ` arrives as `; Owner:`, the split on `"; Owner: "` fails, and the
-/// whole header is `None`: the entry (`COMMENT ON EXTENSION`'s, in the
-/// fixtures) still owns its span but carries no `TocHeader`, so `pgdt info`'s
-/// `object kinds:` census never counts it and TOC coverage reads it as
-/// unattributed. The empty-string arm of the owner's placeholder test is
-/// reached only by an untrimmed line, which the unit test below passes.
-fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
-    let rest = trimmed.strip_prefix("-- ")?;
-    let rest = rest
-        .strip_prefix("Data for ")
-        .or_else(|| rest.strip_prefix("Statistics for "))
-        .unwrap_or(rest);
-    let rest = rest.strip_prefix("Name: ")?;
-    let (name, rest) = rest.split_once("; Type: ")?;
-    let (kind, rest) = rest.split_once("; Schema: ")?;
-    let (schema, rest) = rest.split_once("; Owner: ")?;
-    let (owner, tablespace) = match rest.split_once("; Tablespace: ") {
-        Some((owner, tablespace)) => (owner, Some(tablespace.to_string())),
-        None => (rest, None),
-    };
-    let none_if_placeholder = |s: &str| (!s.is_empty() && s != "-").then(|| s.to_string());
-    Some(TocHeader {
-        name: name.to_string(),
-        kind: kind.to_string(),
-        schema: none_if_placeholder(schema),
-        owner: none_if_placeholder(owner),
-        tablespace,
-    })
-}
-
-/// Whether a span of this kind stores its text at all. `Data` spans never do
-/// (`docs/design/decisions.md`, "D30"); `Unscanned` covers bytes by
-/// definition unread, so there is nothing to slice.
-fn stores_text(body: &SpanBody) -> bool {
-    !matches!(body, SpanBody::Data(_) | SpanBody::Unscanned)
-}
-
-/// Fill in [`Span::text`] for every span that stores it, reading the bytes
-/// back from `source` by offset — sliced from the file, never accumulated
-/// from [`crate::scan::Event::Line`], which emits nothing for a dollar-quoted
-/// string and would miss every function body in the file.
-///
-/// Runs as a pass over finished spans rather than as each span closes,
-/// because only the caller owns the source. Contiguous runs of text-storing
-/// spans are coalesced into one `read_range`, so this is one read per gap
-/// between data blocks rather than one per span.
-///
-/// Deficiency register: `deficiency: KD31` — that read is capped at
-/// `SPAN_STORED_TEXT_MAX_BYTES` times the run's span count from the run's start, not per span,
-/// so a span following one longer than the cap can fall past what was read and
-/// be stored empty and `truncated` however short it is. **(c) unowned**;
-/// promoted by a `--map` listing seen to lose a statement's text, the fix
-/// being a read per span past the cap.
-pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {
-    let mut i = 0;
-    while i < spans.len() {
-        if !stores_text(&spans[i].body) {
-            spans[i].text = None;
-            i += 1;
-            continue;
-        }
-        // Extend over the whole contiguous run of text-storing spans, so one
-        // read serves all of them.
-        let mut j = i;
-        while j + 1 < spans.len()
-            && stores_text(&spans[j + 1].body)
-            && spans[j + 1].start == spans[j].end
-        {
-            j += 1;
-        }
-        let (run_start, run_end) = (spans[i].start, spans[j].end);
-        // Capped at what the run's spans can store between them, so a
-        // multi-gigabyte `Unparsed` region is never pulled into memory whole
-        // (`KD31`).
-        let want =
-            (run_end - run_start).min(((j - i + 1) * SPAN_STORED_TEXT_MAX_BYTES) as u64) as usize;
-        let bytes = source.read_range(run_start, want).await?;
-        for span in &mut spans[i..=j] {
-            let from = (span.start - run_start) as usize;
-            let to = ((span.end - run_start) as usize).min(bytes.len());
-            let slice = if from < to { &bytes[from..to] } else { &[][..] };
-            let truncated = slice.len() < (span.end - span.start) as usize
-                || (span.end - span.start) as usize > SPAN_STORED_TEXT_MAX_BYTES;
-            let slice = &slice[..slice.len().min(SPAN_STORED_TEXT_MAX_BYTES)];
-            span.text =
-                Some(SpanText { text: String::from_utf8_lossy(slice).into_owned(), truncated });
-        }
-        i = j + 1;
-    }
-    Ok(())
-}
-
-/// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
-/// no gaps or overlaps, starting at 0 and ending at `expected_end`. Returns
-/// every issue found, not just the first; a tiling failure is a bug in this
-/// module, never a reason to refuse the file
-/// (`docs/design/decisions.md`, "D30").
-pub fn check_tiling(spans: &[Span], expected_end: u64) -> Vec<TilingIssue> {
-    let mut issues = Vec::new();
-    if spans.is_empty() {
-        if expected_end != 0 {
-            issues.push(TilingIssue::DoesNotReachEnd { last_end: 0, expected_end });
-        }
-        return issues;
-    }
-
-    for (i, s) in spans.iter().enumerate() {
-        if s.start >= s.end {
-            issues.push(TilingIssue::Empty { index: i });
-        }
-    }
-    for i in 0..spans.len() - 1 {
-        let (a, b) = (&spans[i], &spans[i + 1]);
-        if b.start < a.start {
-            issues.push(TilingIssue::OutOfOrder { index: i + 1 });
-        } else if a.end != b.start {
-            issues.push(TilingIssue::Discontinuity {
-                after_index: i,
-                span_end: a.end,
-                next_start: b.start,
-            });
-        }
-    }
-    if spans[0].start != 0 {
-        issues.push(TilingIssue::DoesNotStartAtZero { first_start: spans[0].start });
-    }
-    let last_end = spans.last().unwrap().end;
-    if last_end != expected_end {
-        issues.push(TilingIssue::DoesNotReachEnd { last_end, expected_end });
-    }
-    issues
-}
 
 /// Accumulator state between one span boundary and the next.
 enum Mode {
@@ -320,7 +182,7 @@ enum Mode {
 
 /// The statement-driven boundary/classification pass, shared by
 /// `pgdt_query::build_map` (a standalone, always-to-EOF scan) and
-/// `pgdt_query::build_index`/[`crate::load::scan_preamble`], which drive
+/// `pgdt_query::build_index`/[`crate::preamble::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub struct Builder {
@@ -387,37 +249,6 @@ pub struct Builder {
     standard_strings: bool,
 }
 
-/// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
-/// present in `line` — the lexical, field-blind boundary signal the module
-/// docs describe. Deliberately not full TOC parsing: it never reads
-/// `Type:`/`Schema:`/`Owner:`, only confirms this comment block is a real
-/// TOC entry rather than framing prose.
-///
-/// `TOC_PREFIX_STATS` ("Statistics for ") counts, what follows a statistics
-/// entry being an ordinary statement the span must run into;
-/// `TOC_PREFIX_DATA` ("Data for ") does not
-/// (`docs/design/decisions.md`, "D31"). The refusal decides nothing on a
-/// default dump, and earns its keep on a `--disable-triggers` one (I31),
-/// where a statement *does* intervene between the entry and its data:
-/// absorbing there would run the entry into that statement's span, where
-/// [`Builder::push_statement_span`]'s `Framing` veto discards the header
-/// outright. Pinned by
-/// `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`.
-fn looks_like_toc_name_line(line: &str) -> bool {
-    let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
-    named && line.contains("; Type: ")
-}
-
-/// The root table named by a `-- load via partition root <name>` marker
-/// line (I2), if `line` is one. `pg_dump` writes it whenever the entry's
-/// `COPY` header names the partition's **root** rather than the partition —
-/// the only shape in which one header name owns several blocks.
-fn partition_root_marker(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("-- load via partition root ")?;
-    let rest = rest.trim();
-    (!rest.is_empty()).then(|| rest.to_string())
-}
-
 /// The table an `INSERT INTO <table> ...` line targets, if `line` is one —
 /// `pg_dump`'s `dumpTableData_insert()` always emits exactly this fixed
 /// casing, with or without a column list, only the identifier right after
@@ -442,34 +273,6 @@ const INSERT_INTO: &str = "INSERT INTO ";
 fn parse_insert_target_span(line: &str) -> Option<(String, usize)> {
     let rest = line.strip_prefix(INSERT_INTO)?;
     parse_qualified_name(rest).map(|(name, consumed)| (name, INSERT_INTO.len() + consumed))
-}
-
-/// Whether `line` is one of the version-header block's two lines (I9), and
-/// if so, which field it fills (`true` for server version, `false` for
-/// `pg_dump` version).
-fn version_header_field(line: &str) -> Option<(bool, String)> {
-    if let Some(rest) = line.strip_prefix("-- Dumped from database version ") {
-        return Some((true, rest.trim().to_string()));
-    }
-    line.strip_prefix("-- Dumped by pg_dump version ").map(|rest| (false, rest.trim().to_string()))
-}
-
-/// What a closing comment block becomes: a TOC entry stays [`SpanBody::Unparsed`]
-/// (its span continues into the statement it precedes — see [`Builder::step`]'s
-/// `Mode::Comment` arm), the version-header block becomes [`SpanBody::VersionHeader`],
-/// and everything else is generic [`SpanBody::Framing`].
-fn close_comment(
-    saw_name: bool,
-    server_version: Option<String>,
-    pg_dump_version: Option<String>,
-) -> SpanBody {
-    if saw_name {
-        SpanBody::Unparsed
-    } else if server_version.is_some() || pg_dump_version.is_some() {
-        SpanBody::VersionHeader { server_version, pg_dump_version }
-    } else {
-        SpanBody::Framing
-    }
 }
 
 impl Builder {
@@ -613,7 +416,7 @@ impl Builder {
     /// offset to seed the `Data` span that follows.
     ///
     /// `end` is the stop point [`finish`](Self::finish) is closing out at,
-    /// needed here because [`crate::load::scan_preamble`] can retreat it to
+    /// needed here because [`crate::preamble::scan_preamble`] can retreat it to
     /// a pending comment's own `start` rather than guess that comment's kind
     /// (`docs/design/decisions.md`, "D31"). A comment with `start >= end` is
     /// exactly that case, so it is dropped rather than pushed as a
@@ -1244,7 +1047,7 @@ impl Builder {
     /// [`on_copy_start`](Self::on_copy_start) at a database's first block, at
     /// the *start* offset of the still-pending `Data` span, where
     /// `self.spans.last()` is the DDL span before it and I1 makes this the
-    /// boundary `crate::preamble::dump_metadata_from_spans` may be called at.
+    /// boundary `crate::ddl::dump_metadata_from_spans` may be called at.
     pub fn snapshot(&self, end: u64) -> Vec<Span> {
         debug_assert!(matches!(self.mode, Mode::Idle));
         debug_assert!(self.pending_large_objects.is_none());
@@ -1258,7 +1061,7 @@ impl Builder {
     /// The start offset of a comment block currently being absorbed —
     /// `None` unless `self.mode` is [`Mode::Comment`]. A caller that must stop
     /// scanning *before* the decision a `--`-prefixed run is waiting on
-    /// ([`crate::load::scan_preamble`]) retreats its stop point here rather
+    /// ([`crate::preamble::scan_preamble`]) retreats its stop point here rather
     /// than guess the comment's kind (`docs/design/decisions.md`, "D31"):
     /// closing out at the stopping point would swallow it as a guessed
     /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span, permanently wrong

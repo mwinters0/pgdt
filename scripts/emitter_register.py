@@ -34,8 +34,9 @@ remembered.
 * **The function list follows the readers.** [`FUNCTIONS`] lists the
   functions whose output some pgdt reader consumes, each with the majors it
   exists at, and [`READS`] maps every keyword the scanner, the `COPY` framing,
-  the lexer, the map and the preamble recognise ([`reader_keywords`], read
-  out of their Rust source) to the listed functions writing it, or to the
+  the lexer, the map and the statement grammar recognise
+  ([`reader_keywords`], read out of their Rust source, a module and its
+  children as one reader: [`reader_source`]) to the listed functions writing it, or to the
   statement it is a clause of. A keyword with no row, a row no reader holds,
   or a function a row names that the list lacks fails the join
   ([`reads_problems`]), so a reader taught a statement brings its emitter
@@ -780,14 +781,28 @@ def _split(tokens: Sequence[Token], sep: str) -> Iterable[Sequence[Token]]:
 # --------------------------------------------------------------------------
 
 #: The pgdt modules that read a dump's statements: the scanner, the `COPY`
-#: framing, the lexer, the map's classification and the preamble's grammar.
+#: framing, the lexer, the map's classification and the statement grammar.
+#: Each is a module, read with its children ([`reader_source`]).
 READERS: tuple[str, ...] = (
     "crates/pgdt-dump/src/scan.rs",
     "crates/pgdt-core/src/copy.rs",
     "crates/pgdt-dump/src/lex.rs",
     "crates/pgdt-dump/src/map.rs",
-    "crates/pgdt-dump/src/preamble.rs",
+    "crates/pgdt-dump/src/ddl.rs",
 )
+
+
+def reader_source(reader: str, repo: Path = REPO) -> str:
+    """One reader's text: its file, then each `.rs` file under the directory
+    beside it but a `tests.rs`, in path order, each cut at its test module as
+    [`reader_keywords`] cuts one file. A module cut into children stays one
+    reader, so a `Clause` read in a child still lies within a `Read` its
+    parent dispatches on."""
+    path = repo / reader
+    tree = path.with_suffix("")
+    children = sorted(p for p in tree.rglob("*.rs") if p.name != "tests.rs") if tree.is_dir() else []
+    texts = (p.read_text() for p in [path, *children])
+    return "\n".join(text.split("#[cfg(test)]", 1)[0] for text in texts)
 
 #: Calls a reader matches a keyword with: a constant they take is a keyword
 #: whatever its case (`eat_keyword(b"copy")`).
@@ -946,7 +961,7 @@ class Clause:
     within: tuple[str, ...]
 
 
-_SCAN, _COPY, _LEX, _MAP, _PREAMBLE = READERS
+_SCAN, _COPY, _LEX, _MAP, _DDL = READERS
 
 _TYPE_EMITTERS = (
     "dumpCompositeType",
@@ -1004,37 +1019,37 @@ READS: tuple[Read | Clause, ...] = (
     Read(_MAP, "SELECT pg_catalog.set_config(", ("dumpSearchPath",)),
     Read(_MAP, "ALTER TYPE", ("dumpEnumType", "dumpCompositeType")),
     # The preamble: each statement it folds, and the forms of each.
-    Read(_PREAMBLE, "CREATE TABLE", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "CREATE UNLOGGED TABLE", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "CREATE FOREIGN TABLE", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "OF", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "PARTITION", ("dumpTableSchema", "dumpTableAttach")),
-    Read(_PREAMBLE, "ALTER TABLE", _ALTER_TABLE_EMITTERS),
-    Read(_PREAMBLE, "ALTER FOREIGN TABLE", _ALTER_TABLE_EMITTERS),
+    Read(_DDL, "CREATE TABLE", ("dumpTableSchema",)),
+    Read(_DDL, "CREATE UNLOGGED TABLE", ("dumpTableSchema",)),
+    Read(_DDL, "CREATE FOREIGN TABLE", ("dumpTableSchema",)),
+    Read(_DDL, "OF", ("dumpTableSchema",)),
+    Read(_DDL, "PARTITION", ("dumpTableSchema", "dumpTableAttach")),
+    Read(_DDL, "ALTER TABLE", _ALTER_TABLE_EMITTERS),
+    Read(_DDL, "ALTER FOREIGN TABLE", _ALTER_TABLE_EMITTERS),
     # v13 writes `ATTACH PARTITION` in dumpTableSchema, 14 on in its own.
-    Read(_PREAMBLE, "ATTACH", ("dumpTableAttach", "dumpTableSchema")),
-    Read(_PREAMBLE, "ADD", ("dumpConstraint", "dumpEnumType")),
-    Read(_PREAMBLE, "INHERIT", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "ALTER", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "SET", ("dumpTableSchema",)),
-    Read(_PREAMBLE, "CREATE TYPE", _TYPE_EMITTERS),
-    Read(_PREAMBLE, "AS", ("dumpCompositeType", "dumpDomain")),
-    Read(_PREAMBLE, "AS ENUM", ("dumpEnumType",)),
-    Read(_PREAMBLE, "AS RANGE", ("dumpRangeType",)),
-    Read(_PREAMBLE, "VALUE", ("dumpEnumType",)),
-    Read(_PREAMBLE, "DROP ATTRIBUTE", ("dumpCompositeType",)),
-    Read(_PREAMBLE, "CREATE DOMAIN", ("dumpDomain",)),
-    Read(_PREAMBLE, "CREATE EXTENSION", ("dumpExtension",)),
-    Read(_PREAMBLE, "CREATE COLLATION", ("dumpCollation",)),
-    Read(_PREAMBLE, "OWNER TO ", ("_printTocEntry",)),
-    Read(_PREAMBLE, "ALTER DEFAULT PRIVILEGES FOR ROLE", ("buildDefaultACLCommands",)),
-    Read(_PREAMBLE, "GRANT ", ("buildACLCommands", "dumpRoleMembership")),
-    Read(_PREAMBLE, "REVOKE ", ("buildACLCommands",)),
-    Read(_PREAMBLE, "SET default_tablespace", ("_selectTablespace",)),
-    Read(_PREAMBLE, "\\connect ", ("appendPsqlMetaConnect",)),
+    Read(_DDL, "ATTACH", ("dumpTableAttach", "dumpTableSchema")),
+    Read(_DDL, "ADD", ("dumpConstraint", "dumpEnumType")),
+    Read(_DDL, "INHERIT", ("dumpTableSchema",)),
+    Read(_DDL, "ALTER", ("dumpTableSchema",)),
+    Read(_DDL, "SET", ("dumpTableSchema",)),
+    Read(_DDL, "CREATE TYPE", _TYPE_EMITTERS),
+    Read(_DDL, "AS", ("dumpCompositeType", "dumpDomain")),
+    Read(_DDL, "AS ENUM", ("dumpEnumType",)),
+    Read(_DDL, "AS RANGE", ("dumpRangeType",)),
+    Read(_DDL, "VALUE", ("dumpEnumType",)),
+    Read(_DDL, "DROP ATTRIBUTE", ("dumpCompositeType",)),
+    Read(_DDL, "CREATE DOMAIN", ("dumpDomain",)),
+    Read(_DDL, "CREATE EXTENSION", ("dumpExtension",)),
+    Read(_DDL, "CREATE COLLATION", ("dumpCollation",)),
+    Read(_DDL, "OWNER TO ", ("_printTocEntry",)),
+    Read(_DDL, "ALTER DEFAULT PRIVILEGES FOR ROLE", ("buildDefaultACLCommands",)),
+    Read(_DDL, "GRANT ", ("buildACLCommands", "dumpRoleMembership")),
+    Read(_DDL, "REVOKE ", ("buildACLCommands",)),
+    Read(_DDL, "SET default_tablespace", ("_selectTablespace",)),
+    Read(_DDL, "\\connect ", ("appendPsqlMetaConnect",)),
     # A column's, an attribute's or a domain's type ends at one of these.
     *_clauses(
-        _PREAMBLE,
+        _DDL,
         ("CREATE TABLE", "CREATE TYPE", "CREATE DOMAIN", "ALTER TABLE"),
         "COLLATE",
         "NOT",
@@ -1048,17 +1063,17 @@ READS: tuple[Read | Clause, ...] = (
     ),
     # A column's or a domain's constraints.
     *_clauses(
-        _PREAMBLE, ("CREATE TABLE", "CREATE DOMAIN", "ALTER TABLE"), "NULL", "NO", "KEY", "IDENTITY"
+        _DDL, ("CREATE TABLE", "CREATE DOMAIN", "ALTER TABLE"), "NULL", "NO", "KEY", "IDENTITY"
     ),
     # A table's list, its parents, and a partition's bound.
-    *_clauses(_PREAMBLE, ("CREATE TABLE",), "INHERITS", "FOREIGN", "LIKE", "EXCLUDE", "USING"),
-    *_clauses(_PREAMBLE, ("CREATE TABLE", "ALTER TABLE"), "FOR", "VALUES", "IN", "WITH", "FROM", "TO"),
-    *_clauses(_PREAMBLE, ("ALTER TABLE",), "ONLY", "COLUMN"),
-    *_clauses(_PREAMBLE, ("CREATE EXTENSION",), "IF NOT EXISTS", "SCHEMA"),
-    *_clauses(_PREAMBLE, ("CREATE COLLATION",), "deterministic", "false"),
-    *_clauses(_PREAMBLE, ("CREATE TYPE",), "subtype", "multirange_type_name", "canonical", "delimiter"),
-    *_clauses(_PREAMBLE, ("GRANT ",), " TO "),
-    *_clauses(_PREAMBLE, ("REVOKE ",), " FROM "),
+    *_clauses(_DDL, ("CREATE TABLE",), "INHERITS", "FOREIGN", "LIKE", "EXCLUDE", "USING"),
+    *_clauses(_DDL, ("CREATE TABLE", "ALTER TABLE"), "FOR", "VALUES", "IN", "WITH", "FROM", "TO"),
+    *_clauses(_DDL, ("ALTER TABLE",), "ONLY", "COLUMN"),
+    *_clauses(_DDL, ("CREATE EXTENSION",), "IF NOT EXISTS", "SCHEMA"),
+    *_clauses(_DDL, ("CREATE COLLATION",), "deterministic", "false"),
+    *_clauses(_DDL, ("CREATE TYPE",), "subtype", "multirange_type_name", "canonical", "delimiter"),
+    *_clauses(_DDL, ("GRANT ",), " TO "),
+    *_clauses(_DDL, ("REVOKE ",), " FROM "),
 )
 
 
@@ -1069,7 +1084,7 @@ def reads_problems(
     a row, each row's keyword is recognised, each `Read` names only listed
     functions, and each `Clause` lies inside a `Read` of its own reader."""
     if sources is None:
-        sources = {reader: (REPO / reader).read_text() for reader in READERS}
+        sources = {reader: reader_source(reader) for reader in READERS}
     problems: list[str] = []
     rows: dict[tuple[str, str], Read | Clause] = {}
     for row in reads:

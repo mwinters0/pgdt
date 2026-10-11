@@ -272,7 +272,7 @@ flag sets.
 the `COPY` header is authoritative; the DDL is a by-name type lookup);
 `stream/table.rs`'s `TableColumns`, which reorders a table's blocks by name,
 unions their census by name, and reads a header listing no columns as a
-block copying none; `preamble.rs`'s `fold_alter_type_drop_attribute`, for
+block copying none; `ddl/metadata.rs`'s `fold_alter_type_drop_attribute`, for
 the composite (`fixtures/<version>/emitters/binary-upgrade.sql`'s
 `emitters.trio`, all six majors).
 **Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`,
@@ -427,7 +427,7 @@ has exactly one `-- Dumped from`/`-- Dumped by` pair, ahead of its one
 `\connect koji` — confirmed by grepping the raw file, not inferred from
 source alone.
 
-**Consequence for `crate::preamble`.** The version headers describe the
+**Consequence for `crate::ddl`.** The version headers describe the
 whole `pg_dump` invocation, not the database whose segment happens to
 contain them positionally. A `--create` dump's pre-`\connect` segment is
 otherwise pure `CREATE DATABASE` noise (see `dump_metadata_from_spans`) and is
@@ -618,7 +618,7 @@ through a real `COPY` block. `pg_dump` writes the completed `mybase` body's
 parameters in its own order — `INTERNALLENGTH` first, then
 `INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE`.
 
-**Consequence for `crate::preamble` / `crate::pgtype`.** One name is declared
+**Consequence for `crate::ddl` / `crate::pgtype`.** One name is declared
 twice, so `record_type` keeps one `TypeDef` per name: a definition replaces the
 entry in place and a `Shell` never replaces one, and `resolve_user_type` finds
 the completed base type rather than its shell.
@@ -990,7 +990,7 @@ Type: STATISTICS DATA; Schema: public; Owner: -` — the empty-owner shape,
 distinct from `Owner: -`, and not covered by the `Owner:`/`Schema:` grammar
 above, since `dumpRelationStats` sets no owner at all). The flag that produces
 it is `--statistics`; `--with-statistics` exists in no version.
-`map::parse_toc_header_line` recognizes all three prefixes; the boundary
+`map::toc::parse_toc_header_line` recognizes all three prefixes; the boundary
 signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS` but not
 `TOC_PREFIX_DATA`, since only the former heads a statement rather than a
 `COPY` block.
@@ -999,7 +999,7 @@ signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS` but not
 `Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6
 fixture for `TOC_PREFIX_STATS` (PG18+ only, per `--statistics`'s own
 availability).
-**Relied on by:** `decisions.md` ("D31") — `map::parse_toc_header_line` splits the
+**Relied on by:** `decisions.md` ("D31") — `map::toc::parse_toc_header_line` splits the
 line on these exact literal separators in this exact order.
 **Re-verify:**
 
@@ -1072,7 +1072,7 @@ its definition, `SET default_tablespace = '';` after) — the same fixture I18's
 for the `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES`/`SET default_tablespace`
 (both a real tablespace and the reset) shapes.
 
-**Relied on by:** `decisions.md` ("D30") — `preamble::extract_statement_cross_refs` matches these four
+**Relied on by:** `decisions.md` ("D30") — `ddl::refs::extract_statement_cross_refs` matches these four
 shapes by marker substring rather than a full grammar.
 
 **Re-verify:**
@@ -1249,7 +1249,7 @@ elements with it.
 and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
-`preamble::base_type_delimiter`, `pgtype::typdelim` and
+`ddl::types::base_type_delimiter`, `pgtype::typdelim` and
 `key::array_delimiter`, which split a strict parse's array of `box` at
 `;` and of a base type at its `DELIMITER`.
 
@@ -1715,7 +1715,7 @@ majors: `fmtId()` and the quoting rule are not version-varying, and the
 `Typename` grammar this interacts with is identical across v13-v18 (I28).
 
 **Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
-keyword-stripping helpers bail on a trailing `"`. `preamble.rs`'s statement
+keyword-stripping helpers bail on a trailing `"`. `ddl/`'s statement
 grammar — `extract_type_words`, `matching_paren`, `split_top_level_commas` —
 steps over a quoted name whole, and `parse_type_name` keeps a definition's
 name in the spelling `pgtype.rs`'s `find_type` compares a declaration in, so
@@ -2301,7 +2301,7 @@ the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends. The
 placement and every form above are observed in the committed fixtures at all
 six, the three v18-only window shapes at 18.
 
-**Relied on by.** `crate::preamble`'s `extract_collation` (the placement and the
+**Relied on by.** `crate::ddl::table`'s `extract_collation` (the placement and the
 form) and `ColumnDef::collation`/`TypeKind::Domain::collation`; the comparison
 register's collatable arms in `crate::pgtype`, which read a clause's absence as
 the type's default.
@@ -3871,7 +3871,7 @@ holds no constraint.
 **Verified against:** v13.23 and v18.6 (categories and `ColId` identical);
 `fixtures/18/emitters/default.sql`'s `emitters.child` holds `NOT NULL label`.
 
-**Relied on by:** `preamble.rs`'s `parse_table_element`.
+**Relied on by:** `ddl/table.rs`'s `parse_table_element`.
 
 **Re-verify.**
 
@@ -3911,7 +3911,7 @@ materialized view are other emitters.
 `emitters.external`, and `objects/include-foreign-data.sql`'s
 `objects.imported`, at all six majors.
 
-**Relied on by:** `preamble.rs`'s `classify_statement`.
+**Relied on by:** `ddl.rs`'s `classify_statement`.
 
 **Re-verify.**
 
@@ -3948,7 +3948,7 @@ guarded by the `template1`/`postgres` test.
 `fixtures/<version>/emitters/dumpall.sql`'s `pgdt-emitters` at all six
 majors.
 
-**Relied on by:** `preamble.rs`'s `parse_connect`.
+**Relied on by:** `ddl.rs`'s `parse_connect`.
 
 **Re-verify.**
 
@@ -4093,7 +4093,7 @@ two dumps of one database names it twice across two invocations.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `preamble::dump_metadata_from_spans`, which continues the
+**Relied on by:** `ddl::dump_metadata_from_spans`, which continues the
 current database at a `\connect` naming it when no header pair is staged and
 no block has been read.
 
@@ -5524,7 +5524,7 @@ another to `pg_default` would be dropped from the inventory.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 v16.15 (server).
 
-**Relied on by:** `preamble::insert_role` and `preamble::insert_tablespace`,
+**Relied on by:** `ddl::refs::insert_role` and `ddl::refs::insert_tablespace`,
 which drop exactly `public` and `pg_default` from the inventory.
 
 **Re-verify.**
@@ -5578,7 +5578,7 @@ parent's columns, which no lookup reaches (`KD102`).
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 the fixtures at every major (observed).
 
-**Relied on by:** `preamble::parse_alter_table_reference` and
+**Relied on by:** `ddl::table::parse_alter_table_reference` and
 `parse_create_table`, which read a partition's parent and bound into
 `TableDef::partition_of`; `gather::strict_unchecked`, which names a block's
 bounds and its routing as unchecked.

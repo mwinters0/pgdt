@@ -6317,7 +6317,13 @@ READ = tuple(
         "source/xz/file",
     )
 )
-MAP = ("crates/pgdt-dump/src/map.rs", "crates/pgdt-model/src/span.rs")
+MAP = (
+    "crates/pgdt-dump/src/map.rs",
+    "crates/pgdt-dump/src/map/statement.rs",
+    "crates/pgdt-dump/src/map/tiling.rs",
+    "crates/pgdt-dump/src/map/toc.rs",
+    "crates/pgdt-model/src/span.rs",
+)
 #: The map's own per-block cost is two modules, not one: `map::Builder::snapshot`
 #: clones the span list and `stream::map::splice` rebuilds the index from it,
 #: under the save throttle's gate. A figure that prices the map declares both,
@@ -6356,6 +6362,7 @@ CACHE = (
     "crates/pgdt-dump/src/cache.rs",
     "crates/pgdt-dump/src/cache/file.rs",
     "crates/pgdt-dump/src/cache/identity.rs",
+    "crates/pgdt-dump/src/cache/mode.rs",
 )
 #: The type register, and the files its non-API items sit in beside it.
 PGTYPE = (
@@ -6373,8 +6380,13 @@ UNREPRESENTABLE = (
 )
 NESTED = ("crates/pgdt-codec/src/nested.rs", "crates/pgdt-query/src/batch.rs")
 PREAMBLE = (
-    "crates/pgdt-dump/src/load.rs",
     "crates/pgdt-dump/src/preamble.rs",
+    "crates/pgdt-dump/src/ddl.rs",
+    "crates/pgdt-dump/src/ddl/lex.rs",
+    "crates/pgdt-dump/src/ddl/metadata.rs",
+    "crates/pgdt-dump/src/ddl/refs.rs",
+    "crates/pgdt-dump/src/ddl/table.rs",
+    "crates/pgdt-dump/src/ddl/types.rs",
     "crates/pgdt-model/src/catalog.rs",
 )
 #: A query figure also reads through the CLI's own row rendering. The whole

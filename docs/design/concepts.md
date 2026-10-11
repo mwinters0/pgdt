@@ -104,12 +104,8 @@ extends a map, and what is found wrong with the file
 ([`decisions.md`](decisions.md), "The file map and the preamble").
 
 - **pgdt-model** — `span.rs`, `diagnostic.rs`: what the cache persists (D68).
-- **pgdt-dump** — `map.rs`, `load.rs`: building a map, and loading one
-  before a scan.
-
-**Not in one place.** `load.rs` holds the preamble region's prepass and the
-map's tiling diagnostics, and loads nothing (`cache/` does); the map's
-statement framing (`StatementScan`) is in `preamble.rs`.
+- **pgdt-dump** — `map/`: building a map — where a statement ends, a comment
+  block read, and what every map is checked for and carries.
 
 ## The mapping pass
 
@@ -135,11 +131,10 @@ file map and the preamble").
 
 - **pgdt-model** — `catalog.rs`: persisted, so never a codec conclusion
   (D74).
-- **pgdt-dump** — `preamble.rs`: the DDL statement grammar.
-
-**Not in one place.** "Preamble" names two things: the DDL grammar
-(`preamble.rs`, applied across the whole file) and the region's prepass
-(`load.rs`).
+- **pgdt-dump** — `ddl/`, `preamble.rs`: the statement grammar, applied
+  across the whole file, and the prepass reading the region before the first
+  data, which the scanner and the grammar drive and pgdt-query's pass 1
+  reads too.
 
 ## The cache
 
@@ -151,10 +146,6 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
   parsers (D68).
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache (D90).
-
-**Not in one place.** A cache's identity: `WeakIdentity`, `OriginMatch`,
-`StrictIdentity` and `SourceWatch` are in `cache.rs`, `SourceIdentity` in
-`cache/identity.rs`, which imports back from its parent.
 
 ## What a pass records of a block's rows
 

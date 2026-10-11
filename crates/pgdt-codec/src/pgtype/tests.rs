@@ -41,7 +41,7 @@ fn oid_is_unsigned() {
 
 #[test]
 fn maps_case_insensitively_for_the_binary_upgrade_dummy_column_shape() {
-    // `INTEGER /* dummy */` -> preamble.rs already strips the comment,
+    // `INTEGER /* dummy */` -> pgdt-dump's DDL grammar already strips the comment,
     // leaving bare uppercase "INTEGER" (I5).
     assert_eq!(
         resolve_declared_type("INTEGER", &[]),

@@ -19,7 +19,7 @@
 //!
 //! [`crate::scan::CopyScanner`] lexes every line outside a block, so a `$$`
 //! inside any of these opens no body (`docs/design/decisions.md`, "D23"), and
-//! [`crate::preamble::StatementScan`] lexes a statement's lines with the
+//! [`crate::map`]'s `StatementScan` lexes a statement's lines with the
 //! same rules, so a statement's end agrees with the scanner's regions.
 //!
 //! **Line at a time.** Every caller holds whole lines, and nothing in a
@@ -106,7 +106,7 @@ const fn dolq_cont(b: u8) -> bool {
 }
 
 /// `scan.l`'s `ident_cont`, which the DDL grammar's word boundaries read
-/// too ([`crate::preamble::strip_kw`]).
+/// too ([`crate::ddl::strip_kw`]).
 pub(crate) const fn ident_cont(b: u8) -> bool {
     dolq_cont(b) || b == b'$'
 }

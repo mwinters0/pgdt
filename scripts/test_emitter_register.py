@@ -170,6 +170,23 @@ class ReaderKeywords(unittest.TestCase):
         src = "fn f<'a>(s: &'a str) -> Option<&'a str> { strip_kw(s, \"GRANT \") }"
         self.assertEqual(er.reader_keywords(src), ["GRANT "])
 
+    def test_a_reader_is_its_module_and_children_tests_excluded(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "r" / "child" / "deeper").mkdir(parents=True)
+            (root / "r.rs").write_text(
+                'fn f() { strip_kw(s, "ALTER TABLE"); }\n#[cfg(test)]\nmod tests;\n'
+            )
+            (root / "r" / "child.rs").write_text('fn g() { strip_kw(s, "ONLY"); }')
+            (root / "r" / "child" / "deeper.rs").write_text('fn h() { strip_kw(s, "OF"); }')
+            (root / "r" / "tests.rs").write_text('fn t() { strip_kw(s, "TESTED"); }')
+            (root / "r" / "child" / "tests.rs").write_text('fn u() { strip_kw(s, "ALSO"); }')
+            (root / "plain.rs").write_text('fn p() { strip_kw(s, "GRANT "); }')
+            self.assertEqual(
+                er.reader_keywords(er.reader_source("r.rs", root)), ["ALTER TABLE", "OF", "ONLY"]
+            )
+            self.assertEqual(er.reader_keywords(er.reader_source("plain.rs", root)), ["GRANT "])
+
     SOURCES = {"r.rs": 'fn f() { strip_kw(s, "ALTER TABLE"); strip_kw(s, "ONLY"); }'}
 
     def test_each_keyword_has_a_row_naming_listed_emitters(self):

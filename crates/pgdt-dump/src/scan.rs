@@ -80,7 +80,7 @@ pub struct CopyEnd {
 /// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
 /// `crate::map::Builder::feed_line` classifies into spans, using
-/// `crate::preamble`'s grammar. No line reaches a `DumpMetadata` directly:
+/// `crate::ddl`'s grammar. No line reaches a `DumpMetadata` directly:
 /// [`pgdt_model::DumpMetadata`] is derived from the finished spans
 /// (`docs/design/decisions.md`, "D34"), never from a second pass. A COPY block's data
 /// rows never reach this arm.

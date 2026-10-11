@@ -1,18 +1,19 @@
-//! The parsers and the cache: the SQL lexer, the scanner, the preamble grammar, the map
-//! builder, the interior split, and persisting and reloading the model
-//! (`docs/design/decisions.md`, "D68"). No Arrow (D74).
+//! The parsers and the cache: the SQL lexer, the scanner, the DDL statement
+//! grammar, the map builder, the preamble's prepass, the interior split, and
+//! persisting and reloading the model (`docs/design/decisions.md`, "D68"). No
+//! Arrow (D74).
 
 pub mod cache;
+mod ddl;
 mod leader;
 mod lex;
-mod load;
 mod map;
 mod preamble;
 mod scan;
 
-pub use load::preamble_only;
+pub use ddl::dump_metadata_from_spans;
 pub use map::{attach_text, check_tiling};
-pub use preamble::dump_metadata_from_spans;
+pub use preamble::preamble_only;
 pub use scan::{
     ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event, LargeObjectEnd,
     LargeObjectStart, Line, Row, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, scan,
@@ -32,10 +33,9 @@ pub mod internal {
     pub use crate::leader::{
         BoundBy, CensusPlan, Interior, RegionOutcome, RegionScan, Shortfall, scan_region,
     };
-    pub use crate::load::{
-        non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
-        toc_coverage_diagnostic,
+    pub use crate::map::{
+        Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
     };
-    pub use crate::map::Builder;
+    pub use crate::preamble::scan_preamble;
     pub use crate::scan::announce_cancellation;
 }

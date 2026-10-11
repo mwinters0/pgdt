@@ -104,7 +104,7 @@ than reading as a phase nobody has sliced.
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan all three are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
-  `crates/pgdt-dump/src/preamble.rs`.
+  `crates/pgdt-dump/src/map/statement.rs`.
 
 - **KD10** — a column whose declared type this build models no comparison for
   answers `=`/`!=` bytewise, which is not the server's answer for the geometric
@@ -209,7 +209,7 @@ than reading as a phase nobody has sliced.
   the run's start, so a span following one longer than the cap can be stored
   empty and `truncated` however short it is. **(c) unowned**; promoted by a
   `--map` listing seen to lose a statement's text. Detail:
-  `crates/pgdt-dump/src/map.rs`.
+  `crates/pgdt-dump/src/map/tiling.rs`.
 
 - **KD33** — statistics stop where the account fills: nothing releases
   `Term::Retained` while the pass gathers forward, so a dump long enough fills
@@ -376,7 +376,7 @@ than reading as a phase nobody has sliced.
   `ALTER TYPE` — a `DO` block, a function a statement calls, a write to
   `pg_enum`, a psql include — stay marked exact, so a parse fails on a field
   naming a label so added, which a restore reads. **(c) unowned**; promoted
-  by a hand-written dump doing so. Detail: `crates/pgdt-dump/src/preamble.rs`.
+  by a hand-written dump doing so. Detail: `crates/pgdt-dump/src/ddl/metadata.rs`.
 
 - **KD88** — a query's typed read of an enum column emits a label the type
   does not declare, which `enum_in` refuses, so such a field no default
@@ -390,7 +390,7 @@ than reading as a phase nobody has sliced.
   `pg_dump` writes, is folded as if it appended the label, so an ordering
   filter and the bounds it prunes by order that label last where the server
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `crates/pgdt-dump/src/preamble.rs`.
+  Detail: `crates/pgdt-dump/src/ddl/types.rs`.
 
 - **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
   want of a complete cache, names a `pgdt parse` without
@@ -433,7 +433,7 @@ than reading as a phase nobody has sliced.
   parent, and no lookup reaches them: each of its columns is declared
   nowhere, so read as text and checked for nothing, and a parent's `CHECK` is
   not named for it. **(c) unowned**; promoted by a hand-written dump holding
-  one. Detail: `crates/pgdt-dump/src/preamble.rs`.
+  one. Detail: `crates/pgdt-dump/src/ddl/table.rs`.
 
 - **KD103** — a carriage return inside a line outside a quoted region ends a
   `--` comment and is the newline a literal's continuation needs, as psql's
@@ -513,7 +513,7 @@ than reading as a phase nobody has sliced.
   `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry
   owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
   it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
-  any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map.rs`.
+  any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map/toc.rs`.
 
 - **KD115** — `StatisticsRequest::backfill` takes a `bounded` mask the caller
   must compute with `bounded_columns` over the same block and metadata, and

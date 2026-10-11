@@ -111,7 +111,7 @@ and only the `data_offset` question remains.
 
 ## The statement-end scan Track A needs already exists, and it is the scanner's lexer
 
-**Fact.** `preamble::StatementScan` is an incremental scan of a statement's
+**Fact.** `map::statement::StatementScan` is an incremental scan of a statement's
 lines — paren depth, where `lex::Lexer` leaves it (inside a literal, a quoted
 identifier, a comment or none), whether its last line ends in a `--` comment,
 and the last non-whitespace byte — fed by `feed_line(&[u8])` and queried by

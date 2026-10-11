@@ -2094,7 +2094,7 @@ pub fn accepted_form(kind: &CompareKind) -> String {
 /// How many of an enum's labels [`accepted_form`] names before it stops
 /// counting them out.
 ///
-/// A count cap rather than a length cap (`map.rs`'s `SPAN_STORED_TEXT_MAX_BYTES` is the other
+/// A count cap rather than a length cap (pgdt-model's `SPAN_STORED_TEXT_MAX_BYTES` is the other
 /// shape): every label a message prints is printed whole, where a length cap
 /// would hand the user a spelling that is not a label. Nothing bounds how
 /// many labels a type declares.

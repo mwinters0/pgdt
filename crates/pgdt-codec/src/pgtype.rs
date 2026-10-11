@@ -514,7 +514,7 @@ pub enum ComparisonDivergence {
     /// PostgreSQL's answer only if that collation is `C`/`POSIX`.
     ///
     /// deficiency: KD40 — a `--create` or `pg_dumpall` dump *does* state the
-    /// database's collation, in its `CREATE DATABASE`, which `preamble.rs`
+    /// database's collation, in its `CREATE DATABASE`, which pgdt-dump's `ddl.rs`
     /// leaves `Unparsed`; so this fires there too, and its sentence says the
     /// dump does not record what it does. Read, a `C`/`POSIX` database would
     /// make its uncollated columns agree outright and any other would make
