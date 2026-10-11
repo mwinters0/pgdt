@@ -65,7 +65,7 @@ preamble search at each `\connect`.
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `decisions.md` ("D30"); the mapping pass restating
 `DumpMetadata` at **each** `\connect`ed database's first `COPY` block
-(`crates/pgdt-query/src/stream.rs`, `map_forward`), which the per-database scope limit licenses — each
+(`crates/pgdt-query/src/stream/map.rs`, `map_forward`), which the per-database scope limit licenses — each
 database's first `COPY` header closes that database's preamble;
 `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers
 for metadata built by some scan other than the mapping pass.
@@ -270,7 +270,7 @@ another order) on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, under both
 flag sets.
 **Relied on by:** `decisions.md` ("D43" —
 the `COPY` header is authoritative; the DDL is a by-name type lookup);
-`stream.rs`'s `TableColumns`, which reorders a table's blocks by name,
+`stream/table.rs`'s `TableColumns`, which reorders a table's blocks by name,
 unions their census by name, and reads a header listing no columns as a
 block copying none; `preamble.rs`'s `fold_alter_type_drop_attribute`, for
 the composite (`fixtures/<version>/emitters/binary-upgrade.sql`'s
@@ -4868,7 +4868,7 @@ differences named above; v14–v18 are otherwise identical.
 cast trapping the error, which also catches `line_in`'s hard overflow: every
 case agrees across the three but `line '[(2,0),(3,1.7976931348623157e308)]'`,
 read by 13 alone, and `line '[(Infinity,1),(0,2)]'`, refused by 13 alone. The
-cases are `decode.rs`'s
+cases are `decode/tests.rs`'s
 `a_geometric_field_is_refused_only_where_every_major_refuses_it`; `box[]`'s
 and `point[]`'s are `key/order.rs`'s. Hexadecimal reading was checked against
 glibc's `strtod` over 595,823 generated spellings, with no difference.

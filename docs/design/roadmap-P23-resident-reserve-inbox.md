@@ -59,7 +59,8 @@ candidates are two:
   not reach it. `pgdt` frees cross-thread on every path — each read and each
   parse is its own `spawn_blocking` task, and a block's last `Arc` drops on
   whichever task evicts it, replaces it (`KD20`) or ends a scan holding its
-  view (`io.rs`, `BlockCache::slot`, `retain`, `PooledBuffer`'s `Drop`); a
+  view (`io/blocks.rs`, `BlockCache::slot`, `retain`; `io/local.rs`, `PooledBuffer`'s
+  `Drop`); a
   straddling first read's chunk buffer, never pooled, likewise.
 
 An option is set by `MIMALLOC_<NAME>` at init or `mi_option_set` at any time,

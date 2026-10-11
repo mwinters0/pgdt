@@ -3005,7 +3005,7 @@ def reader_bytes(unit: int) -> int:
     open for reading and the charge `BlockCache::affordable` then compares a
     budget to are the same charge. *Rejected:* charging the unannounced pool's
     `POOL_MAX_BYTES` ceiling — it runs the recommendation 7 MiB a reader high
-    and costs a reader at every allocation (`io.rs`, `charged_chunk_bytes`).
+    and costs a reader at every allocation (`io/blocks.rs`, `charged_chunk_bytes`).
     A flagless run's resolved budget is **never** this number times its count:
     the shared retention list is billed at every count,
     so a budget read off a run's own report carries `pool_bytes` besides, which
@@ -3033,7 +3033,7 @@ def reader_bytes(unit: int) -> int:
 #: obtaining the buffer `retain` then pushes back, so the pool holds
 #: `(POOL_DEPTH.max(jobs) - 1) x unit` on top of the one unit each reader has in
 #: flight. That is `pool_bytes`, which the library bills as what the pool
-#: holds (`io.rs`, `WorkerMemory`); naming it as a
+#: holds (`io/parallelism.rs`, `WorkerMemory`); naming it as a
 #: column of its own is what keeps it out of the residual, where it would read
 #: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
@@ -3148,7 +3148,7 @@ def discovered_budget(limit: int) -> int:
     budget: `limit − MEMORY_RESERVE`, floored at zero.
 
     `Parallelism::within`, mirrored — `allowance.saturating_sub(
-    MEMORY_RESERVE)` (`io.rs`), which a stated `--memory` reaches by the same
+    MEMORY_RESERVE)` (`io/parallelism.rs`), which a stated `--memory` reaches by the same
     call (`stated_allowance`).
 
     **The margin is deliberately left out**, as the recommendation is. The
@@ -3180,7 +3180,7 @@ def block_path_afforded(unit: int, budget: int) -> bool:
     retention list that one reader leaves standing**, so the line is
     106.03 MiB at 24 MiB blocks and 522.03 at 128 — against 34.03 and 138.03 for
     the per-reader term alone. So `reader_bytes <= budget` is not this
-    comparison (`io.rs`, `BlockCache::affordable`).
+    comparison (`io/blocks.rs`, `BlockCache::affordable`).
 
     **One function because the renderer asks the question at four places** — the
     flagless cell's own label, the fit's window, the model check's exclusion and
@@ -6230,11 +6230,34 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 #: that a change *outside* these paths that moves a figure goes unannounced —
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
+#: The streams: the mapping pass and the replay, a module of one file a
+#: concern, each named, since a declared path is matched by prefix and
+#: `stream.rs` is not a prefix of `stream/`; its tests are not declared.
+STREAM = (
+    "crates/pgdt-query/src/stream.rs",
+    *(
+        f"crates/pgdt-query/src/stream/{name}.rs"
+        for name in (
+            "backfill",
+            "dynamic",
+            "map",
+            "map_query",
+            "note",
+            "partition",
+            "plan",
+            "replay",
+            "resolve",
+            "segment",
+            "table",
+            "table_partitions",
+        )
+    ),
+)
 SCAN = (
     "crates/pgdt-dump/src/scan.rs",
     "crates/pgdt-core/src/copy.rs",
     "crates/pgdt-core/src/lex.rs",
-    "crates/pgdt-query/src/stream.rs",
+    *STREAM,
 )
 #: Every figure that times a `pgdt` run over a file reads its bytes through
 #: this one module, whatever else the figure is about, so it is its own
@@ -6243,13 +6266,30 @@ SCAN = (
 #: The read path was undeclared until the buffer pool landed, which made a
 #: change to the largest single term in a warm `parse`'s user time read green
 #: against every table it moved.
-READ = ("crates/pgdt-io/src/io.rs",)
+READ = (
+    "crates/pgdt-io/src/io.rs",
+    *(
+        f"crates/pgdt-io/src/io/{name}.rs"
+        for name in (
+            "blocks",
+            "cancel",
+            "fetched",
+            "local",
+            "memory",
+            "origin",
+            "parallelism",
+            "remote",
+            "source",
+            "xz",
+        )
+    ),
+)
 MAP = ("crates/pgdt-dump/src/map.rs", "crates/pgdt-model/src/span.rs")
-#: The map's own per-block cost is two files, not one: `map::Builder::snapshot`
-#: clones the span list and `stream::splice` rebuilds the index from it, under
-#: the save throttle's gate. A figure that prices the map declares both, or a
-#: change to the gate reads green against a table it just moved.
-MAP_BUILD = (*MAP, "crates/pgdt-query/src/stream.rs")
+#: The map's own per-block cost is two modules, not one: `map::Builder::snapshot`
+#: clones the span list and `stream::map::splice` rebuilds the index from it,
+#: under the save throttle's gate. A figure that prices the map declares both,
+#: or a change to the gate reads green against a table it just moved.
+MAP_BUILD = (*MAP, *STREAM)
 #: Where a filter term is resolved and evaluated, and the ordering keys it
 #: compares by. Its own mechanism because
 #: until `predicate-terms` no registered figure passed a filter at all, so
@@ -6270,8 +6310,12 @@ PREDICATE = (
 #: touched it.
 DECODE = (
     "crates/pgdt-codec/src/decode.rs",
+    "crates/pgdt-codec/src/decode/bit.rs",
     "crates/pgdt-codec/src/decode/digits.rs",
     "crates/pgdt-codec/src/decode/float.rs",
+    "crates/pgdt-codec/src/decode/geometric.rs",
+    "crates/pgdt-codec/src/decode/json.rs",
+    "crates/pgdt-codec/src/decode/network.rs",
     "crates/pgdt-codec/src/decode/refusal.rs",
     "crates/pgdt-codec/src/decode/stored.rs",
 )
@@ -6325,12 +6369,25 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 #: `pgdt sql`: the provider it reads the dump through, and DataFusion's CLI
 #: around it, the library `pgdt` calls.
 DATAFUSION = ("crates/datafusion-pgdump/src/", "crates/datafusion-cli-pgdump/src/")
-#: Where statistics are gathered, stored and read back. `gather.rs` and
+#: Where statistics are gathered, stored and read back. `gather` and
 #: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
 #: `PGTYPE`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
     "crates/pgdt-query/src/gather.rs",
+    *(
+        f"crates/pgdt-query/src/gather/{name}.rs"
+        for name in (
+            "bounds",
+            "charge",
+            "column",
+            "dictionary",
+            "gatherer",
+            "order",
+            "strict",
+            "tracking",
+        )
+    ),
     "crates/pgdt-query/src/statistics.rs",
     "crates/pgdt-model/src/statistics.rs",
     *PGTYPE,
@@ -10056,7 +10113,7 @@ FIGURES: list[Figure] = [
         ),
         #: The manual and the README state the *claim* this figure licenses to
         #: a reader who cannot check it against the code, and neither names the
-        #: figure — which is what keeps them declared while `io.rs`, which
+        #: figure — which is what keeps them declared while the read path (`READ`), which
         #: quotes the reading and says `peak-rss` doing it, is computed.
         #:
         #: **Only half of the manual's sentence is this figure's.** "Does not
@@ -10068,7 +10125,7 @@ FIGURES: list[Figure] = [
         #: them by stopping a leg at the preamble.
         section="What a scan holds resident, per byte and per block",
         stage="warm",
-        # `MAP` rather than `MAP_BUILD`: what the latter adds is `stream.rs`,
+        # `MAP` rather than `MAP_BUILD`: what the latter adds is `STREAM`,
         # which `SCAN` already names, and a path declared twice is printed
         # twice by `--list`.
         depends=(*RSS_INSTRUMENT, *READ, *SCAN, *MAP, *CACHE, *GEN_PERF, *GEN_BLOCKS),

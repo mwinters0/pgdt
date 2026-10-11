@@ -1,6 +1,25 @@
-use super::*;
+use super::bounds::{
+    BYTEA_ESCAPE_HEAD_BYTES, BoundsGatherer, bytea_upper, text_prefix, text_upper,
+};
+use super::charge::{grown_map_heap, map_heap, push_charged, reserve_charged};
+use super::column::ColumnGatherer;
+use super::gatherer::{Gatherer, Sizing, density_merges};
 use crate::statistics::StatisticsTerms;
+use crate::statistics::{Charge, StatisticsAccount, Term};
+use arrow::datatypes::DataType;
+use pgdt_codec::decode::{decode_bytea, render_bytea};
+use pgdt_codec::key::ValueKey;
+use pgdt_codec::pgtype::{CompareKind, ComparisonPlan, NestedPlan};
 use pgdt_model::internal::UnrepresentableExt;
+use pgdt_model::internal::{BlockObserver, max_rows_group, min_rows_group, vec_heap};
+use pgdt_model::{
+    BlockGathered, BlockStatistics, Bounds, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES,
+    FieldRefusal, GroupSizing, PostgresInvalidValues, RowGroup, Sortedness, Unrepresentable,
+    UnrepresentableTier,
+};
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// SplitMix64, seeded, so a failing case reproduces.
 struct Rng(u64);

@@ -679,7 +679,7 @@ first. How much a retained arena holds is not part of the claim.
 **Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
 refusal, which is not mechanical because under D12's `current_thread` runtime
 fewer than `arena_test` arenas exist before the arrangement resolves;
-`io.rs`, `MEMORY_RESERVE`'s rejected sizing from the arena count; and
+`io/memory.rs`, `MEMORY_RESERVE`'s rejected sizing from the arena count; and
 [`measurements.md`](measurements.md), "The apparatus" — the ceiling standing
 behind every figure.
 

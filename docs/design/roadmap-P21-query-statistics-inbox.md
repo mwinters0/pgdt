@@ -12,7 +12,7 @@ facts filed by destination".
 **Fact.** `pgdt query` carves its two passes apart
 (`crates/pgdt/src/main.rs`, `Discovered::resolve_query`): the mapping pass is billed a
 loaded cache's statistics as `held`, the replay nothing. That is true only
-because the replay keeps none — `Segment::new` in `crates/pgdt-query/src/stream.rs`
+because the replay keeps none — `Segment::new` in `crates/pgdt-query/src/stream/segment.rs`
 drops a block's statistics from each segment, and the matched blocks are
 dropped before a row is read.
 

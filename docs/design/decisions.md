@@ -32,7 +32,7 @@ resident and `Parallelism::within` carves it — reserve off the top, `margin_al
 — with `discover_in` calling the same function, so provenance still never enters `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
 allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
-giving statistics what it leaves. Code: `io.rs`. Evidence: `reserve`.
+giving statistics what it leaves. Code: `io/parallelism.rs`, `io/memory.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's
@@ -332,7 +332,7 @@ retained unit does not — and writes it onto the sub-streams. A plain source st
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
-readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream.rs`. Evidence: `parallel-scan-throughput`.
+readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream/partition.rs`. Evidence: `parallel-scan-throughput`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
@@ -501,7 +501,7 @@ filter shape a reading shows common. Code: `ResolvedTerm::truths`, `prune::Sorte
 may run to `--max-line-bytes`. Values agreeing on the head share every byte a stored bound reads, so bounds stay valid and only row
 order is lost (`Unsorted`), where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its
 last character by the next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte successor for text,
-which can end mid-character. Evidence: `gather.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
+which can end mid-character. Evidence: `gather/tests.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
 `map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is handed

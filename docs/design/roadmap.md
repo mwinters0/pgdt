@@ -746,7 +746,7 @@ code keeps describing what is built.
 
 What it inherits:
 
-- **The two bands** (`crates/pgdt-io/src/io.rs`, `statistics_allowance`): below
+- **The two bands** (`crates/pgdt-io/src/io/memory.rs`, `statistics_allowance`): below
   `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the cap binds and statistics
   have a floor; at and above it the ceiling binds and statistics get only the
   slack one worker's step leaves, so a **wide** host at a high `--jobs` is the

@@ -842,7 +842,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     // costs one ranged GET rather than one per read; both are dropped when the
     // scan leaves the block, and nothing is cached behind them, so a read
     // going back re-fetches (D21). That a block is decoded once as well as
-    // fetched once is counted in `io.rs` under `introspect`, this oracle
+    // fetched once is counted in `io/fetched.rs` under `introspect`, this oracle
     // seeing only the request stream.
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;

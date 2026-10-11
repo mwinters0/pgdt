@@ -35,6 +35,13 @@ import generate_xz_input
 import measure
 
 
+def read_path_source() -> str:
+    """The read path's production source, every file `measure.READ` declares:
+    what a check reading the library's own constants and arithmetic off the
+    source reads, whichever of the module's files holds the line."""
+    return "\n".join((measure.REPO / path).read_text() for path in measure.READ)
+
+
 class Numbers(unittest.TestCase):
     def test_median_odd_and_even(self):
         self.assertEqual(measure.median([3.0, 1.0, 2.0]), 2.0)
@@ -664,7 +671,7 @@ class StatisticsFigures(unittest.TestCase):
         # The regexes key on wording two crates print; a rewording there would
         # leave every leg reading as one that skipped nothing, which the
         # renderer refuses — loudly, but a sitting late.
-        stream = (measure.REPO / "crates/pgdt-query/src/stream.rs").read_text()
+        stream = (measure.REPO / "crates/pgdt-query/src/stream/note.rs").read_text()
         cli = (measure.REPO / "crates/pgdt/src/main.rs").read_text()
         self.assertIn(
             '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
@@ -3157,7 +3164,7 @@ class CompressedAccount(unittest.TestCase):
         # `limit.bytes.saturating_sub(MEMORY_RESERVE)`, read off the source
         # rather than trusted, since the whole point of the check above is that
         # it reasons in the library's own arithmetic.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn("allowance.saturating_sub(MEMORY_RESERVE)", src)
         self.assertEqual(
             measure.discovered_budget(512 << 20), (512 << 20) - measure.LIBRARY_MEMORY_RESERVE
@@ -3353,7 +3360,7 @@ class CompressedAccount(unittest.TestCase):
     def test_the_mirrored_chunk_size_is_the_librarys_default(self):
         # The one term of the three that is a library constant rather than a
         # property of the file or of the decoder.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
             src,
@@ -3395,7 +3402,7 @@ class CompressedAccount(unittest.TestCase):
         # read here rather than the arithmetic trusted: `affordable` asks
         # `worker_memory(..).at(1) <= budget`, and `worker_memory` is the
         # per-reader term `pooling`ed at `POOL_DEPTH`.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn(
             "self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget",
             src,
@@ -3620,7 +3627,7 @@ class CompressedAccount(unittest.TestCase):
         # in the library and not here would check the rule against a promise it
         # no longer makes — and the margin is the line `reserve`'s gate
         # reports each leg against.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
         self.assertIn(
             f"pub const MEMORY_RESERVE: u64 = {measure.LIBRARY_MEMORY_RESERVE >> 20} << 20;",
@@ -3646,7 +3653,7 @@ class CompressedAccount(unittest.TestCase):
         # then compares a budget to. Split, they are two numbers 7 MiB apart
         # and the mirror is a model of neither. Both come off one composition
         # site, which is what is pinned here.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn(
             "fn default_worker_memory(&self) -> Option<WorkerMemory> {\n"
             "        self.budget.block_worker_memory()",
@@ -3663,7 +3670,7 @@ class CompressedAccount(unittest.TestCase):
         # shape has to be the library's: a pool that clamped somewhere else
         # would make every cell of the check arithmetic about a rule nothing
         # implements.
-        src = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        src = read_path_source()
         self.assertIn(
             "(self.pool_depth.max(workers).saturating_sub(1) as u64)"
             ".saturating_mul(self.pool_unit)",
@@ -3697,10 +3704,10 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_line_it_reads_still_carries_that_pair_in_that_order(self):
         # The flagless axis rests on a log line, which is the one input here
-        # that is not a constant: a field renamed or reordered in `stream.rs`
+        # that is not a constant: a field renamed or reordered in `stream/map.rs`
         # turns every reader count into a missing key, and the figure would fail
         # a sitting in rather than at its first second.
-        src = (measure.REPO / "crates/pgdt-query/src/stream.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-query/src/stream/map.rs").read_text()
         event = src[: src.index('"scan started"')]
         jobs = event.rindex("jobs = ")
         budget = event.rindex("memory_bytes = ")
@@ -6689,17 +6696,17 @@ class ChunkSize(unittest.TestCase):
         # about the constant the library ships. A drift between the two would
         # publish a comparison against a value nothing runs.
         self.assertIn(measure.CHUNK_DEFAULT, measure.CHUNK_SIZES)
-        source = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        source = read_path_source()
         self.assertIn(
             f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << {measure.CHUNK_DEFAULT.bit_length() - 1};",
             source,
         )
 
     def test_the_sweep_brackets_the_read_path_pool_ceiling(self):
-        # Above `io::POOL_MAX_BYTES` the buffer pool stops keeping the buffer,
+        # Above `io::local::POOL_MAX_BYTES` the buffer pool stops keeping the buffer,
         # so every chunk is allocated and zeroed afresh. The sweep has to hold
         # a row either side of it or the table cannot say so.
-        source = (measure.REPO / "crates/pgdt-io/src/io.rs").read_text()
+        source = read_path_source()
         match = re.search(r"POOL_MAX_BYTES: usize = (\d+) << 20", source)
         assert match is not None, "the read path no longer names a pool ceiling"
         ceiling = int(match.group(1)) << 20

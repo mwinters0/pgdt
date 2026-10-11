@@ -1,5 +1,20 @@
+use super::blocks::{BlockCache, DecodedBlock};
+use super::local::{BufferPool, PLAIN_PARTITION_CHUNKS, POOL_DEPTH, POOL_MAX_BYTES};
+use super::memory::margin_allowance;
+use super::origin::{ORIGIN_LEADING_BYTES, XZ_MAGIC};
+use super::parallelism::BOUNDARIED_PARTITION_UNITS;
+use super::xz::xz_partition_advice;
 use super::*;
+use bytes::Bytes;
+use pgdt_core::{Error, Result};
 use std::io::Write;
+use std::num::NonZeroUsize;
+use std::ops::Range;
+use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 fn source_of(bytes: &[u8]) -> (tempfile::NamedTempFile, LocalFileSource) {
     let mut file = tempfile::NamedTempFile::new().unwrap();

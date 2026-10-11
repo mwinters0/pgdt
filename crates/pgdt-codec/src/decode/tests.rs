@@ -1,5 +1,6 @@
 use arrow_buffer::i256;
 
+use super::geometric::{MAX_ALLOC_SIZE, PATH_HEADER, POLYGON_HEADER, fits_allocation};
 use super::*;
 
 #[test]

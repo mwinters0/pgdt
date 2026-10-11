@@ -1,5 +1,29 @@
+use super::map::SaveThrottle;
+use super::map_query::map_for_query;
+use super::partition::{derived_source_span, distribute, plan_partitions};
+use super::plan::{ReplayPlan, resolve_for_query};
+use super::resolve::{query_fingerprint, resolve_expr};
+use super::segment::{Segment, SegmentEntry, activate};
+use super::table::{PlannedReplay, plan_replay, resolve_block};
 use super::*;
+use crate::batch::{QueryOptions, ScanExtent};
+use crate::predicate::{Expr, PredicateOp};
+use crate::prune::{DynamicPruning, prune_block};
+use bytes::Bytes;
+use pgdt_codec::SchemaMode;
+use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_core::{CopyHeader, Error, Result};
+use pgdt_dump::ScanOptions;
+use pgdt_dump::cache::StrictIdentity;
+use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
+use pgdt_io::internal::worker_count;
+use pgdt_io::{ByteRangeSource, Parallelism, WorkerMemory};
+use pgdt_model::{ArrayShape, CopyBlock, DumpMetadata, Finding, Severity};
+use std::collections::BTreeMap;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// **The span is spent before the count is cut, and it stops at the
 /// floor** (`docs/design/decisions.md`, "D84"). Every arm of

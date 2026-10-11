@@ -506,7 +506,7 @@ fn nth_smallest(rows: &[u64], rank: usize) -> u64 {
 /// `⌊G/2⌋+1`-th smallest of `G` groups' rows, so that at most half the groups
 /// fall short of the minimum. Reading the upper middle group rather than the
 /// nearest-rank `⌈G/2⌉`-th is what makes the predicate monotone in size
-/// (`gather::density_merges`). Panics on no groups.
+/// (`gather::gatherer::density_merges`). Panics on no groups.
 pub fn min_rows_group(rows: &[u64]) -> u64 {
     nth_smallest(rows, rows.len() / 2)
 }
