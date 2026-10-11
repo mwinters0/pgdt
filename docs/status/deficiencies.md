@@ -135,14 +135,14 @@ than reading as a phase nobody has sliced.
   twice the decode work and its speedup is capped near half the reader count.
   **(c) unowned**; promoted by a phase taking up compressed scan throughput,
   and the fix left is an in-flight map, a wider cut having been measured and
-  refused. Detail: `crates/pgdt-io/src/io/xz.rs`.
+  refused. Detail: `crates/pgdt-io/src/source/xz/file.rs`.
 
 - **KD21** — the block pool's slot ceiling follows the worker count a caller
   *announced* rather than the one delivered, so a `--jobs` well above what the
   read-buffer budget affords holds more than that budget — 1,280 MiB against
   1,024 at `--jobs 24` and a 1 GiB budget on a 128 MiB-block file.
   **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
-  Detail: `crates/pgdt-io/src/io/blocks.rs`.
+  Detail: `crates/pgdt-io/src/source/xz/blocks.rs`.
 
 - **KD22** — the leader cuts a window of `workers` partitions or more from a
   `COPY` block's start and drains every piece before merging, so a dump of
@@ -165,7 +165,7 @@ than reading as a phase nobody has sliced.
   flat in the count and never above the stated budget unless one chunk is. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
-  `crates/pgdt-io/src/io/blocks.rs`.
+  `crates/pgdt-io/src/source/xz/blocks.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS` chunks a reader,
   capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
@@ -173,14 +173,14 @@ than reading as a phase nobody has sliced.
   billed against 4 held at the shipped chunk, and unbounded above a budget of
   `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
   scan on a real device, which is that path's own reopening condition. Detail:
-  `crates/pgdt-io/src/io/local.rs`.
+  `crates/pgdt-io/src/source/local.rs`.
 
 - **KD26** — no charge bills a compressed source's seek table, the only
   unbilled term in the account that grows with the file rather than the count —
   3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
   read off. **(c) unowned**; promoted by a source whose index is not small
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
-  has no per-source term to bill it with. Detail: `crates/pgdt-io/src/io/xz.rs`.
+  has no per-source term to bill it with. Detail: `crates/pgdt-io/src/source/xz/file.rs`.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
   D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
@@ -226,7 +226,7 @@ than reading as a phase nobody has sliced.
   fetched arm's statelessness, which would have served several partitions for
   want of cut points alone, was spent to stop it re-decoding a block a scan sits
   inside. **(c) unowned**; promoted by a phase taking up compressed scan
-  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/io/xz.rs`.
+  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/xz.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs at least four round trips per
@@ -234,7 +234,7 @@ than reading as a phase nobody has sliced.
   read. The remedy is a straddling window, below which one fetch a stream is a
   floor rather than a remaining cost. **(c) unowned**; promoted by a phase that
   tunes the network, which is where the deferred fetch policy belongs.
-  Detail: `crates/pgdt-io/src/io/xz.rs`.
+  Detail: `crates/pgdt-io/src/source/xz.rs`.
 
 - **KD37** — a cancelled read the leader dispatched inside the statistics
   back-fill propagates instead of banking: a source answering a cancellation by
@@ -297,7 +297,7 @@ than reading as a phase nobody has sliced.
   batch spanning more chunks drops the rest and the reads after it zero fresh
   buffers — a third of the costing row's off-leg user cycles, under mimalloc.
   **(c) unowned**; promoted by a figure pricing the zeroing or a phase taking
-  up query-path memory. Detail: `crates/pgdt-io/src/io/local.rs`.
+  up query-path memory. Detail: `crates/pgdt-io/src/source/pool.rs`.
 
 - **KD55** — a membership over a text-compared column probes std's
   SipHash-keyed set with the field's text, among the costliest terms of the
@@ -321,7 +321,7 @@ than reading as a phase nobody has sliced.
   legs from four readers overrun `MEMORY_UNPOOLED_BOUND` by `KD111`'s unit and
   one mimalloc keeps, a worst rep the reserve and, in `-m 1536m`, the margin;
   their `system` twins hold inside all three. **(b) owned by P23**, which
-  re-takes them, sets both constants and runs the blind gate. Detail: `crates/pgdt-io/src/io/memory.rs`.
+  re-takes them, sets both constants and runs the blind gate. Detail: `crates/pgdt-io/src/memory.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its
@@ -334,7 +334,7 @@ than reading as a phase nobody has sliced.
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
-  streams. Detail: `crates/pgdt-io/src/io/remote.rs`.
+  streams. Detail: `crates/pgdt-io/src/source/remote.rs`.
 
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
@@ -495,7 +495,7 @@ than reading as a phase nobody has sliced.
   rather than the count — half of `MEMORY_UNPOOLED_BOUND` at 128 MiB blocks.
   Unattributed; `KD20`'s duplicate decode is the candidate. **(b) owned by
   P23**, which bills the unit or, if it is `KD20`'s, takes the in-flight map.
-  Detail: `crates/pgdt-io/src/io/parallelism.rs`.
+  Detail: `crates/pgdt-io/src/parallelism.rs`.
 
 - **KD112** — the provider splits a plain scan by `target_partitions` on any
   device, never reading the source's recommendation of one, so where one
@@ -507,7 +507,7 @@ than reading as a phase nobody has sliced.
   a source's recommended charge stands uncapped, at the count asked for, and
   the provider's scans share no budget, though unstated is not unlimited
   (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
-  user. Detail: `crates/pgdt-io/src/io/parallelism.rs`.
+  user. Detail: `crates/pgdt-io/src/parallelism.rs`.
 
 - **KD114** — a TOC header whose owner is empty (`; Owner: `, as
   `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry

@@ -1,23 +1,42 @@
 //! Byte sources — local, `.xz`, fetched, remote — the memory limit and its
 //! discovery, and worker sizing (`docs/design/decisions.md`, "D68"). The
 //! `http` feature is this crate's.
+//!
+//! Three concepts, one tree each: the byte sources, `source` and the arms
+//! nested under its read contract; memory and parallelism — the allowance
+//! (`memory`), a caller's arrangement and what a worker holds
+//! (`parallelism`), and where a range is cut (`partition`); and stopping,
+//! `cancel`.
 
-mod io;
+mod cancel;
+mod memory;
+mod parallelism;
+mod partition;
+mod source;
+#[cfg(test)]
+mod test_support;
 
-pub use io::{
-    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, FetchedXzSource, KnownCompression,
-    LocalFileSource, MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, MemoryLimit,
-    Origin, OriginProbe, Parallelism, PartitionBoundaries, PartitionRead, Partitioning, Recognized,
-    RemoteIdentity, RetainedUnit, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy, WorkerMemory,
-    XzSource, available_memory, available_memory_in, discover_memory_limit,
-    discover_memory_limit_in, open, open_local, statistics_allowance, walk_seek_table,
+pub use cancel::Cancellation;
+pub use memory::{
+    DEFAULT_MEMORY_BUDGET, MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND,
+    MemoryLimit, available_memory, available_memory_in, discover_memory_limit,
+    discover_memory_limit_in, statistics_allowance,
+};
+pub use parallelism::{Parallelism, WorkerMemory};
+pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};
+pub use source::{
+    ByteRangeSource, FetchedXzSource, KnownCompression, LocalFileSource, Origin, OriginProbe,
+    Recognized, RemoteIdentity, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy, XzSource, open,
+    open_local, walk_seek_table,
 };
 #[cfg(feature = "http")]
-pub use io::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
+pub use source::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
 
 /// What a crate above reaches that is not this crate's API: public only
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::io::{cut, is_weak_tag, memory_budget_display, worker_count};
+    pub use crate::parallelism::{memory_budget_display, worker_count};
+    pub use crate::partition::cut;
+    pub use crate::source::is_weak_tag;
 }

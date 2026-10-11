@@ -12,18 +12,20 @@ use bytes::Bytes;
 use pgdt_core::internal::DecodeCounter;
 use pgdt_core::{Error, Result};
 
+use crate::cancel::Cancellation;
+use crate::parallelism::{Parallelism, WorkerMemory};
+use crate::partition::Partitioning;
+use crate::source::pool::PooledBuffer;
+use crate::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
+
 use super::blocks::{BlockCache, BlockView, DecodedBlock, XzBudget};
-use super::cancel::Cancellation;
-use super::local::PooledBuffer;
-use super::parallelism::{Parallelism, Partitioning, WorkerMemory};
-use super::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
-use super::xz::{LiveBlock, piece_of, xz_short_read};
+use super::{LiveBlock, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
 /// have to be **fetched** rather than pulled
 /// (`docs/design/decisions.md`, "D14" and "D18").
 ///
-/// **The difference from [`XzSource`](super::xz::XzSource) starts at the transport**, and what
+/// **The difference from [`XzSource`](crate::XzSource) starts at the transport**, and what
 /// follows from it — the worker count, the wait policy, the decoder's charge,
 /// the state a failed read leaves — is stated where each lives. There the crate holds a `std::fs::File` and reads through it as it decodes;
 /// here nothing can `await` inside a decode, so this source fetches a block's
@@ -35,13 +37,13 @@ use super::xz::{LiveBlock, piece_of, xz_short_read};
 /// **Two arms, and the budget picks between them.**
 ///
 /// - Where the stated budget holds a whole decoded block, a read is served
-///   exactly as [`XzSource`](super::xz::XzSource)'s is: decode the block into a pooled slot, retain
+///   exactly as [`XzSource`](crate::XzSource)'s is: decode the block into a pooled slot, retain
 ///   it, slice the answer out of it.
 /// - Where it does not, the block is read **in pieces** through
 ///   `xz_seek::BlockRead` — the handle skips forward to the first wanted byte,
 ///   fills the caller's buffer and compares the block's check when we complete
 ///   it — so what is held is the compressed window and the decoder, never the
-///   plaintext. [`XzSource`](super::xz::XzSource) answers that arm the same way over a file it pulls
+///   plaintext. [`XzSource`](crate::XzSource) answers that arm the same way over a file it pulls
 ///   from, and this one keeps the window and the handle together across reads
 ///   so that a block a scan sits inside is decoded once (D15,
 ///   [`HeldBlock`]).
@@ -67,14 +69,14 @@ pub struct FetchedXzSource {
     /// failed, a block-arm read has run since, or a piecewise read has it
     /// ([`HeldBlock`]). Behind a `Mutex` because the handle goes
     /// forward only and one position cannot serve two readers, which is why
-    /// that arm advises a single partition ([`xz_partition_advice`](super::xz::xz_partition_advice)).
+    /// that arm advises a single partition ([`xz_partition_advice`](crate::source::xz::xz_partition_advice)).
     held: Mutex<Option<HeldBlock>>,
     /// How many block decodes the piecewise arm has begun. Absent without
     /// `introspect`, which is the build that asserts a block a scan sits
     /// inside is decoded once (`pgdt_core::internal::DecodeCounter`).
     decodes: DecodeCounter,
     /// What the caller announced and everything derived from it, which
-    /// [`XzSource`](super::xz::XzSource) holds the same value of: only the decoder charge inside it
+    /// [`XzSource`](crate::XzSource) holds the same value of: only the decoder charge inside it
     /// is this source's own ([`XzBudget`]).
     pub(super) budget: XzBudget,
 }
@@ -85,10 +87,10 @@ impl FetchedXzSource {
     /// (`docs/design/decisions.md`, "D18").
     ///
     /// `stored_size` is the compressed object's own length, which the caller
-    /// has from its [`Origin`](super::origin::Origin) probe; `xz_seek` validates the table against it
+    /// has from its [`Origin`](crate::Origin) probe; `xz_seek` validates the table against it
     /// and for internal consistency, reading **no bytes**. A table that does
     /// not describe this object is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
-    /// which is what [`open_remote`](super::remote::open_remote) turns into [`Recognized::Mismatch`](super::origin::Recognized::Mismatch)
+    /// which is what [`open_remote`](crate::open_remote) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
     /// rather than a walk.
     pub fn with_table(
         source: Arc<dyn ByteRangeSource>,
@@ -147,7 +149,7 @@ impl FetchedXzSource {
     ///
     /// **No lock is taken.** An `xz_seek::Layout` answers this from the table
     /// alone, which is why neither source locks anything to name a block
-    /// ([`XzSource::block`](super::xz::XzSource::block)).
+    /// ([`XzSource::block`](crate::XzSource::block)).
     fn task(&self, index: usize) -> Result<xz_seek::BlockTask> {
         self.layout.block_task(index).ok_or_else(xz_short_read)
     }
@@ -179,7 +181,7 @@ impl FetchedXzSource {
         Ok(block)
     }
 
-    /// A read served by decoding whole blocks — [`XzSource::read_by_blocks`](super::xz::XzSource::read_by_blocks)'s
+    /// A read served by decoding whole blocks — [`XzSource::read_by_blocks`](crate::XzSource::read_by_blocks)'s
     /// arithmetic over fetched windows.
     async fn read_by_blocks(
         &self,
@@ -228,7 +230,7 @@ impl FetchedXzSource {
     /// into the caller's buffer, and each but the last it touches is
     /// completed.
     ///
-    /// It is [`XzSource::read_in_pieces`](super::xz::XzSource::read_in_pieces)'s mechanism over a fetched window
+    /// It is [`XzSource::read_in_pieces`](crate::XzSource::read_in_pieces)'s mechanism over a fetched window
     /// instead of a file, which is the one asymmetry between the providers
     /// (D15). What it holds is the compressed window, the decoder and one chunk
     /// buffer — never the block's plaintext, which is the point.
@@ -527,7 +529,7 @@ impl ByteRangeSource for FetchedXzSource {
         Some((*self.table).clone())
     }
 
-    /// [`xz_partition_advice`](super::xz::xz_partition_advice), as the local source's is: the cut points are a
+    /// [`xz_partition_advice`](crate::source::xz::xz_partition_advice), as the local source's is: the cut points are a
     /// property of the file rather than of the transport, and reading them off
     /// the arm actually taken is what keeps
     /// `pgdt_query::stream::compressed_block_path_declined` honest here.
@@ -540,7 +542,7 @@ impl ByteRangeSource for FetchedXzSource {
     }
 
     /// **One**, where the local twin recommends `min(cores, block_count)` over
-    /// the same bytes ([`XzSource::default_workers`](super::xz::XzSource::default_workers)) — this is the one source
+    /// the same bytes ([`XzSource::default_workers`](crate::XzSource::default_workers)) — this is the one source
     /// whose recommendation differs from its local twin's, and the file's
     /// block count says what may be *cut*, not what a network should be asked
     /// for at once.
@@ -558,7 +560,7 @@ impl ByteRangeSource for FetchedXzSource {
     }
 
     /// What a reader of *this file* holds, which the transport does not change
-    /// — the same shape [`XzSource::default_worker_memory`](super::xz::XzSource::default_worker_memory) answers, with the
+    /// — the same shape [`XzSource::default_worker_memory`](crate::XzSource::default_worker_memory) answers, with the
     /// compressed window folded into the decoder term. It is a recommendation
     /// about memory rather than about concurrency, so D2's one worker for a
     /// fetched source does not reach it, nor the plain remote source's
@@ -574,3 +576,6 @@ impl ByteRangeSource for FetchedXzSource {
         Box::pin(async move { Self::leave(self.take_held()).await })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,28 +1,14 @@
 //! A caller's stated parallelism, what a source holds resident per worker,
-//! the partition advice a source gives, and the two rules the scan and the
-//! leader share: how many sub-streams a budget affords and where a range is
-//! cut.
+//! and how many sub-streams a budget affords — the rule the scan and the
+//! leader share.
 
 use std::num::NonZeroUsize;
-use std::ops::Range;
 use std::path::Path;
 
-use super::memory::{
+use crate::memory::{
     DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, available_memory_in, discover_memory_limit_in,
     margin_allowance,
 };
-use super::source::{PartitionBoundaries, PartitionRead, RetainedUnit};
-
-/// How many of a boundaried source's own units one partition covers
-/// ([`Partitioning::window_end`], [`PartitionBoundaries::At`]) — **the cut
-/// width**. See `docs/design/decisions.md`, "D8".
-///
-/// What a wider cut would buy is the tail read's second decode, amortised: a
-/// worker reads one chunk past its piece's end, and on a block-decoding source
-/// the successor decodes that block too (`KD20`). It does not widen what a
-/// reader holds — retention is capped by [`BufferPool::slots`](super::local::BufferPool::slots), not by the
-/// piece — and it costs granularity, a window being `want × k` units wide.
-pub(super) const BOUNDARIED_PARTITION_UNITS: usize = 1;
 
 /// What a source holds resident while some number of concurrent workers read
 /// it — **a shape rather than a scalar**, because the cost is not linear in
@@ -31,15 +17,15 @@ pub(super) const BOUNDARIED_PARTITION_UNITS: usize = 1;
 /// Two terms:
 ///
 /// - **per worker**, paid once for each concurrent reader, which is what
-///   [`Partitioning::partition_bytes`] states; and
+///   [`Partitioning::partition_bytes`](crate::Partitioning::partition_bytes) states; and
 /// - a **shared pool**, `(pool_depth.max(workers) − 1) × pool_unit` — the
 ///   buffers a pool retains beside the one each worker is filling, which is
 ///   the block pool's retention list and nothing every other source has.
 ///
-/// **The pool term is arithmetic from [`BufferPool`](super::local::BufferPool), not a safety margin.**
-/// [`BufferPool::slots`](super::local::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
-/// [`BlockCache::slot`](super::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
-/// obtaining the buffer [`BlockCache::retain`](super::blocks::BlockCache::retain) then pushes back onto it, so
+/// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
+/// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
+/// [`BlockCache::slot`](crate::source::xz::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
+/// obtaining the buffer [`BlockCache::retain`](crate::source::xz::blocks::BlockCache::retain) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
@@ -53,7 +39,7 @@ pub(super) const BOUNDARIED_PARTITION_UNITS: usize = 1;
 /// duplicate decode — a worker still holding its own block while its tail read
 /// decodes its successor's into a second slot — which only a second reader can
 /// cause; no reading confirms it. Being the program's, it is on every
-/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`](super::memory::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned
+/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`](crate::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned
 /// by P23**: closing it means billing the unit here, or, if it is `KD20`'s,
 /// not holding it.
 ///
@@ -83,7 +69,7 @@ impl WorkerMemory {
     }
 
     /// The per-worker term alone — **what one concurrent reader holds on its
-    /// own**, and what a *cut* is sized by ([`Partitioning::window_end`]).
+    /// own**, and what a *cut* is sized by ([`Partitioning::window_end`](crate::Partitioning::window_end)).
     ///
     /// It is deliberately not "what one more reader adds", which is not one
     /// number: the shared pool grows by a unit for every reader past
@@ -95,7 +81,7 @@ impl WorkerMemory {
     }
 
     /// The shared pool at `workers` readers: `pool_depth.max(workers) − 1`
-    /// units, which is [`BufferPool::slots`](super::local::BufferPool::slots) less the slot a decode is writing
+    /// units, which is [`BufferPool::slots`](crate::source::pool::BufferPool::slots) less the slot a decode is writing
     /// into — flat up to the depth and rising with the count above it, and
     /// zero for a shape with no pool unit ([`WorkerMemory::per_worker`]) or a
     /// depth of at most one at one reader.
@@ -134,7 +120,7 @@ impl WorkerMemory {
     /// pool is a constant `(pool_depth − 1)` units, so the cost is linear again
     /// with a different intercept; those candidates are enumerated rather than
     /// divided for, and there are at most `pool_depth` of them — which every
-    /// shipped shape sets to [`POOL_DEPTH`](super::local::POOL_DEPTH), though the type accepts any.
+    /// shipped shape sets to [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH), though the type accepts any.
     ///
     /// The cost is non-decreasing in the count on both pieces, so the first
     /// regime's answer is final whenever it reaches the depth at all.
@@ -150,192 +136,6 @@ impl WorkerMemory {
             return above.max(1);
         }
         (1..=most.min(self.pool_depth)).rev().find(|workers| self.at(*workers) <= cap).unwrap_or(1)
-    }
-}
-
-/// A source's answer to [`ByteRangeSource::partitions`](super::source::ByteRangeSource::partitions): where to split, what
-/// one partition holds resident while it reads, and what a batch held across
-/// reads pins.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Partitioning {
-    boundaries: PartitionBoundaries,
-    /// What concurrent readers of this source cost — the per-worker term every
-    /// constructor takes, plus whatever shared pool
-    /// [`Partitioning::pooling`] has stated ([`WorkerMemory`]).
-    memory: WorkerMemory,
-    retained: RetainedUnit,
-    read: PartitionRead,
-}
-
-impl Partitioning {
-    /// Split anywhere; each partition holds `partition_bytes`.
-    pub fn anywhere(partition_bytes: u64) -> Self {
-        Self {
-            boundaries: PartitionBoundaries::Anywhere,
-            memory: WorkerMemory::per_worker(partition_bytes),
-            retained: RetainedUnit::default(),
-            read: PartitionRead::default(),
-        }
-    }
-
-    /// Split only at `offsets`, which are sorted and deduplicated here so the
-    /// ascending order the accessor promises is a property of the value rather
-    /// than of every source that builds one.
-    pub fn at(mut offsets: Vec<u64>, partition_bytes: u64) -> Self {
-        offsets.sort_unstable();
-        offsets.dedup();
-        Self {
-            boundaries: PartitionBoundaries::At(offsets),
-            memory: WorkerMemory::per_worker(partition_bytes),
-            retained: RetainedUnit::default(),
-            read: PartitionRead::default(),
-        }
-    }
-
-    /// One partition: this range is not to be split at all.
-    pub fn single(partition_bytes: u64) -> Self {
-        Self::at(Vec::new(), partition_bytes)
-    }
-
-    /// State that what a retained batch pins on this source is `unit`, rather
-    /// than the [`RetainedUnit::ReadChunk`] every constructor starts at.
-    pub fn retaining(mut self, unit: RetainedUnit) -> Self {
-        self.retained = unit;
-        self
-    }
-
-    /// State how a worker should read one of these partitions, rather than the
-    /// [`PartitionRead::Chunked`] every constructor starts at.
-    pub fn reading(mut self, read: PartitionRead) -> Self {
-        self.read = read;
-        self
-    }
-
-    /// State that this source's pool retains `unit` bytes for every slot but
-    /// the one a worker is filling, over a pool `depth` slots deep or one per
-    /// worker — the block pool's retention list, and nothing every other
-    /// source has ([`WorkerMemory`]).
-    pub fn pooling(mut self, unit: u64, depth: usize) -> Self {
-        self.memory = self.memory.pooling(unit, depth);
-        self
-    }
-
-    /// What concurrent readers of this source cost, as a shape a budget is
-    /// solved against — [`Partitioning::partition_bytes`] is its per-worker
-    /// term. `worker_count` solves against it,
-    /// `pgdt_query::stream::plan_partitions` builds a query's charge from it, and
-    /// `pgdt_dump::leader` reads it for the `scan arrangement` note.
-    pub fn worker_memory(&self) -> WorkerMemory {
-        self.memory
-    }
-
-    /// Where this source is willing to be split. Any offsets are ascending
-    /// and deduplicated, [`Partitioning::at`] having made them so.
-    pub fn boundaries(&self) -> &PartitionBoundaries {
-        &self.boundaries
-    }
-
-    /// What one concurrent reader costs this source resident, in bytes:
-    /// **the buffers the source itself allocates per partition**, and nothing
-    /// else.
-    ///
-    /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`](super::local::PLAIN_PARTITION_CHUNKS) read chunks, capped
-    /// at [`POOL_MAX_BYTES`](super::local::POOL_MAX_BYTES) and floored at one chunk, which is the **cut**
-    /// size and not what a worker of it holds, so this over-bills that source
-    /// (`KD25`). For a block-decoding compressed one it
-    /// is the block unit **once** — the block being decoded is the block the
-    /// reader then retains — plus the chunk buffer a straddling read is
-    /// assembled into, plus the decoder's own retention. The rest of the
-    /// retention list is shared and is [`WorkerMemory`]'s second term.
-    ///
-    /// **The decoder's own retention is a declared number rather than a
-    /// guess**, the same whatever range is read and so charged once at
-    /// construction: `xz_seek::Layout::decode_footprint()` for a local file,
-    /// the decoder's bytes and the widest compressed window for a fetched one. The table
-    /// records only the first block's dictionary per stream, so it is an
-    /// estimate and not a ceiling; what cannot understate is the layout's
-    /// `memlimit`, compared against each block's own declared dictionary
-    /// before any backend object is built (`docs/design/decisions.md`, "D15").
-    pub fn partition_bytes(&self) -> u64 {
-        self.memory.bytes_per_worker()
-    }
-
-    /// What a batch this caller holds across reads pins on this source, which
-    /// is what a sub-stream's span allowance is charged against — see
-    /// [`RetainedUnit`], and `pgdt_query::stream::plan_partitions`, which is the
-    /// one caller that reads it.
-    pub fn retained_unit(&self) -> RetainedUnit {
-        self.retained
-    }
-
-    /// How a worker should read one of these partitions — see
-    /// [`PartitionRead`], and `pgdt_dump::leader::run_region`, which is the
-    /// one caller that reads it.
-    pub fn partition_read(&self) -> PartitionRead {
-        self.read
-    }
-
-    /// Whether a smaller read chunk makes one reader of this source cheaper —
-    /// the question a plan note's [`pgdt_query::PlanLever::SmallerReadChunk`]
-    /// answers of [`Partitioning::partition_bytes`].
-    ///
-    /// **Read off how a reader reads**: a [`PartitionRead::Chunked`] reader
-    /// holds chunk buffers, so what it is charged is a count of chunks — a
-    /// plain file's [`PLAIN_PARTITION_CHUNKS`](super::local::PLAIN_PARTITION_CHUNKS), and the one chunk a compressed
-    /// source's piecewise arm charges. A [`PartitionRead::Whole`] reader holds
-    /// the source's own unit, a decoded block the chunk does not size, and a
-    /// source charging nothing has no reader cost to lower.
-    pub fn sized_by_read_chunk(&self) -> bool {
-        matches!(self.read, PartitionRead::Chunked) && self.partition_bytes() > 0
-    }
-
-    /// How many partitions this advice describes, or `None` for
-    /// [`PartitionBoundaries::Anywhere`], which is bounded by the caller's
-    /// worker count rather than by the source.
-    pub fn max_partitions(&self) -> Option<usize> {
-        match &self.boundaries {
-            PartitionBoundaries::Anywhere => None,
-            PartitionBoundaries::At(offsets) => Some(offsets.len() + 1),
-        }
-    }
-
-    /// Where a window of `want` partitions starting at `start` ends, never
-    /// past `limit` — the number `pgdt_dump::leader::run_region` hands
-    /// `cut`, and **the cut size, which is not the memory
-    /// charge**.
-    ///
-    /// [`Partitioning::partition_bytes`] is what one reader *holds*; this is
-    /// what one reader *covers*, computed apart so a change made for one
-    /// cannot silently move the other (`docs/design/decisions.md`, "D8"):
-    ///
-    /// - [`PartitionBoundaries::Anywhere`] has no seams to respect, so a
-    ///   window is `want` charges wide;
-    /// - [`PartitionBoundaries::At`] ends the window at the
-    ///   **`want × `[`BOUNDARIED_PARTITION_UNITS`]-th boundary strictly past
-    ///   `start`**, so the window holds `want` pieces of that many units each
-    ///   and [`cut`]'s thinning picks every `k`-th boundary.
-    ///   Fewer boundaries left is the region's tail: the window runs to
-    ///   `limit`, and thinning still cannot give a piece more than `k` units.
-    ///
-    /// **Do not size the window at `want × unit`.** From a mid-block frontier
-    /// that window contains `want` boundaries, [`cut`] is asked
-    /// for `want` pieces, and the thinning drops the first — putting two
-    /// blocks in the first piece. Hence "strictly past `start`" and the `× k`.
-    /// Asserted by
-    /// [`a_block_decoding_partition_spans_at_most_the_cut_width`].
-    pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
-        let want = want.max(1);
-        match &self.boundaries {
-            PartitionBoundaries::Anywhere => start
-                .saturating_add((want as u64).saturating_mul(self.partition_bytes()))
-                .min(limit),
-            PartitionBoundaries::At(offsets) => offsets
-                .iter()
-                .copied()
-                .filter(|&at| at > start && at < limit)
-                .nth(want.saturating_mul(BOUNDARIED_PARTITION_UNITS) - 1)
-                .unwrap_or(limit),
-        }
     }
 }
 
@@ -456,7 +256,7 @@ impl Parallelism {
 
     /// The arrangement to run when the caller has stated neither number and
     /// has nothing open — the environment's own answer, composed from
-    /// [`discover_memory_limit`](super::memory::discover_memory_limit) and `std::thread::available_parallelism`
+    /// [`discover_memory_limit`](crate::discover_memory_limit) and `std::thread::available_parallelism`
     /// through [`MEMORY_RESERVE`].
     ///
     /// **It is a convenience over two primitives, and taking it is opting
@@ -473,8 +273,8 @@ impl Parallelism {
 
     /// [`Parallelism::discover`]'s rule against recommendations a caller has
     /// already obtained — a source's own worker count
-    /// ([`ByteRangeSource::default_workers`](super::source::ByteRangeSource::default_workers)) and what one of those workers
-    /// holds ([`ByteRangeSource::default_worker_memory`](super::source::ByteRangeSource::default_worker_memory)).
+    /// ([`ByteRangeSource::default_workers`](crate::ByteRangeSource::default_workers)) and what one of those workers
+    /// holds ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)).
     ///
     /// **It answers with both numbers, because they are a pair**: where the
     /// allowance affords fewer than `jobs`, the answer is the smaller count
@@ -499,8 +299,8 @@ impl Parallelism {
     ///   carries the pool's retention term beside the per-reader charge
     ///   (`docs/design/decisions.md`, "D4"). The **count** answers to a second
     ///   condition: its predicted resident must leave
-    ///   [`MEMORY_MARGIN_PERCENT`](super::memory::MEMORY_MARGIN_PERCENT) of the limit unused ([`margin_allowance`]);
-    /// - no limit found caps at half of [`available_memory`](super::memory::available_memory), an estimate two
+    ///   [`MEMORY_MARGIN_PERCENT`](crate::MEMORY_MARGIN_PERCENT) of the limit unused ([`margin_allowance`]);
+    /// - no limit found caps at half of [`available_memory`](crate::available_memory), an estimate two
     ///   processes reading at once each see the whole of, and where that
     ///   cannot be read, not at all.
     ///
@@ -602,7 +402,7 @@ impl Parallelism {
     /// count on that zero.
     ///
     /// **What is `held` comes off the ceiling alone**, as
-    /// [`statistics_allowance`](super::memory::statistics_allowance) bills statistics (`docs/design/decisions.md`,
+    /// [`statistics_allowance`](crate::statistics_allowance) bills statistics (`docs/design/decisions.md`,
     /// "D85"): the cap is the reserve's, which stands for the arrangements'
     /// own excess over their budgets, and a holding is none of that excess.
     /// So a holding lowers the count first.
@@ -652,8 +452,8 @@ impl Parallelism {
     ///
     /// **`charge_ceiling` is the margin, and it bounds the count alone**: the
     /// most this arrangement may be *charged* if its predicted resident —
-    /// `memory.at(n)` plus [`MEMORY_UNPOOLED_BOUND`](super::memory::MEMORY_UNPOOLED_BOUND) — is to leave
-    /// [`MEMORY_MARGIN_PERCENT`](super::memory::MEMORY_MARGIN_PERCENT) of the allowance unused
+    /// `memory.at(n)` plus [`MEMORY_UNPOOLED_BOUND`](crate::MEMORY_UNPOOLED_BOUND) — is to leave
+    /// [`MEMORY_MARGIN_PERCENT`](crate::MEMORY_MARGIN_PERCENT) of the allowance unused
     /// ([`margin_allowance`]), whether that allowance was discovered or typed
     /// (`docs/design/decisions.md`, "D83"). The budget stays `cap`-bounded
     /// rather than ceiling-bounded, so what a lowered count reports is still
@@ -674,7 +474,7 @@ impl Parallelism {
 
     /// Whether a larger allowance, carved as [`Parallelism::within`] carves
     /// one, would raise a budget of `budget` bytes for a source recommending
-    /// `memory` ([`ByteRangeSource::default_worker_memory`](super::source::ByteRangeSource::default_worker_memory)) — the question a
+    /// `memory` ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)) — the question a
     /// plan note's [`pgdt_query::PlanLever::LargerAllowance`] answers.
     ///
     /// **It is the carving's cap read backwards**, so the rule stays in one
@@ -718,7 +518,7 @@ pub fn memory_budget_display(p: Parallelism) -> String {
 /// per block**, the sub-streams being what run at once. A source that states
 /// no footprint (the declining default) is bounded by `jobs` alone, and the
 /// budget is *solved* against the source's cost, never divided by it
-/// ([`crate::io::WorkerMemory::affords`], and
+/// ([`WorkerMemory::affords`], and
 /// `docs/design/decisions.md`, "D4"). **Shared with the leader**, which asks
 /// the same question of an open `COPY` block's interior
 /// (`pgdt_dump::leader::scan_region`, and `docs/design/decisions.md`, "D48").
@@ -730,46 +530,5 @@ pub fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
     }
 }
 
-/// Cut `range` into at most `want` pieces where `advice` permits, in ascending
-/// order and tiling it exactly. `Anywhere` is cut evenly; `At(offsets)` at the
-/// source's own boundaries, thinned to `want - 1` of them and evenly spaced
-/// through the list when it offers more than the caller can use
-/// (`docs/design/decisions.md`, "D15"). An empty `At` is the source declining
-/// to be split, and it yields the range whole.
-///
-/// **Shared with the leader** (`pgdt_dump::leader::scan_region`), which cuts an
-/// open block's interior window with it: one cut rule for the two
-/// arrangements (`docs/design/decisions.md`, "D52").
-pub fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
-    if want <= 1 || range.start >= range.end {
-        return vec![range];
-    }
-    let mut cuts: Vec<u64> = match advice.boundaries() {
-        PartitionBoundaries::Anywhere => {
-            let len = range.end - range.start;
-            let want = want.min(usize::try_from(len).unwrap_or(usize::MAX)).max(1);
-            (1..want as u64).map(|i| range.start + len * i / want as u64).collect()
-        }
-        PartitionBoundaries::At(offsets) => {
-            let inside: Vec<u64> =
-                offsets.iter().copied().filter(|&o| o > range.start && o < range.end).collect();
-            let take = (want - 1).min(inside.len());
-            // `n` offers describe `n + 1` pieces, and what is spread evenly
-            // is the **pieces**, not the offers: with four offers and three
-            // wanted groups the cuts fall after the second and fourth piece.
-            // `ceil` rounds that the right way and keeps the picks strictly
-            // increasing, so `cuts.dedup()` below is a no-op on this arm — as
-            // it is on the other, once `want` is clamped to the length.
-            (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
-        }
-    };
-    cuts.dedup();
-    let mut out = Vec::with_capacity(cuts.len() + 1);
-    let mut start = range.start;
-    for cut in cuts {
-        out.push(start..cut);
-        start = cut;
-    }
-    out.push(start..range.end);
-    out
-}
+#[cfg(test)]
+mod tests;

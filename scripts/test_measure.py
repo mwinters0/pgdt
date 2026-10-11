@@ -2827,7 +2827,7 @@ class ParallelFigures(unittest.TestCase):
                 depends = measure.SELECTABLE_BY_ID[fid].depends
                 self.assertIn("crates/pgdt-dump/src/leader.rs", depends)
                 self.assertIn("vendor/xz-seek/src/", depends)
-                self.assertIn("crates/pgdt-io/src/io.rs", depends)
+                self.assertIn("crates/pgdt-io/src/source/xz.rs", depends)
 
     def test_a_stage_selection_does_not_reach_them(self):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
@@ -4559,7 +4559,7 @@ class CommentOnlyCommits(unittest.TestCase):
         self.assertEqual(measure.hunk_ranges(diff), ([3, 4, 10], [8, 9, 10]))
 
     def test_an_unresolvable_commit_is_not_comment_only(self):
-        self.assertFalse(measure.comment_only_commit("no-such-rev", "crates/pgdt-io/src/io.rs"))
+        self.assertFalse(measure.comment_only_commit("no-such-rev", "crates/pgdt-io/src/lib.rs"))
 
     def test_a_path_the_commit_did_not_touch_is_not_comment_only(self):
         # Silence is not an excuse: saying "comment-only" about a path with no
@@ -5611,7 +5611,7 @@ class OutsideInvalidation(unittest.TestCase):
         # two compared reports differing by one line of user-defined-type
         # detail the report had gained in between.
         for path in (
-            "crates/pgdt-io/src/io.rs",
+            "crates/pgdt-io/src/source.rs",
             "crates/pgdt-dump/src/scan.rs",
             "crates/pgdt-dump/src/map.rs",
             "crates/pgdt-dump/src/cache.rs",
@@ -6757,7 +6757,7 @@ class ChunkSize(unittest.TestCase):
         )
 
     def test_the_sweep_brackets_the_read_path_pool_ceiling(self):
-        # Above `io::local::POOL_MAX_BYTES` the buffer pool stops keeping the buffer,
+        # Above `source::pool::POOL_MAX_BYTES` the buffer pool stops keeping the buffer,
         # so every chunk is allocated and zeroed afresh. The sweep has to hold
         # a row either side of it or the table cannot say so.
         source = read_path_source()

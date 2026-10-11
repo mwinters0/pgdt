@@ -668,7 +668,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
     compressed
 }
 
-/// `XzSource` is just another `ByteRangeSource` to everything above `io.rs`
+/// `XzSource` is just another `ByteRangeSource` to everything above `pgdt-io`
 /// (`docs/design/decisions.md`, "D6"): `build_index`'s scan and
 /// `cache::save`/`load`'s round trip produce the same `DumpIndex` whether the
 /// bytes came straight off disk or through the decoder — the differential

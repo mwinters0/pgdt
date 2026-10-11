@@ -9,12 +9,12 @@ use std::time::SystemTime;
 
 use pgdt_core::{Error, Result};
 
+use super::ByteRangeSource;
 use super::local::LocalFileSource;
 #[cfg(feature = "http")]
 use super::remote::{
     REMOTE_READ_TIMEOUT, RemoteObject, open_remote, remote_name_of, without_credentials,
 };
-use super::source::ByteRangeSource;
 use super::xz::XzSource;
 
 /// The six bytes every `.xz` stream opens with
@@ -287,7 +287,7 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
 /// not re-walk its stream footers (`docs/design/decisions.md`, "D18").
 ///
 /// **A bare [`xz_seek::SeekTable`], not a cache.** What loads it is the
-/// caller's business, which keeps `io.rs` naming nothing in `pgdt_dump::cache`.
+/// caller's business, which keeps this crate naming nothing in `pgdt_dump::cache`.
 ///
 /// Three states, not an `Option`: "the cache says this file is plain" is a
 /// claim recognition can *contradict* (`docs/design/decisions.md`, "D18").
@@ -406,3 +406,6 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

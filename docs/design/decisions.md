@@ -32,7 +32,7 @@ resident and `Parallelism::within` carves it — reserve off the top, `margin_al
 — with `discover_in` calling the same function, so provenance still never enters `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
 allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
-giving statistics what it leaves. Code: `io/parallelism.rs`, `io/memory.rs`. Evidence: `reserve`.
+giving statistics what it leaves. Code: `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's

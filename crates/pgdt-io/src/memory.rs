@@ -5,18 +5,18 @@
 use std::path::{Path, PathBuf};
 
 /// What a source may hold in pooled buffers when the caller has stated no
-/// budget of its own — [`Parallelism::default`](super::parallelism::Parallelism::default)'s number, and what a `pgdt` run
+/// budget of its own — [`Parallelism::default`](crate::Parallelism::default)'s number, and what a `pgdt` run
 /// falls back to where neither `--memory` nor a limit says otherwise.
 ///
 /// **It is the serial path's budget and deliberately not the largest block
-/// anyone might write**: [`POOL_DEPTH`](super::local::POOL_DEPTH) slots at the largest chunk size the
+/// anyone might write**: [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots at the largest chunk size the
 /// `chunk-size` figure measured, so no chunk size in that range loses a slot
 /// to it. It is also the line a compressed source's whole-block decode is
-/// refused above ([`BlockCache::affordable`](super::blocks::BlockCache::affordable)). See
+/// refused above ([`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable)). See
 /// `docs/design/decisions.md`, "D3".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
-/// What [`Parallelism::within`](super::parallelism::Parallelism::within) holds back from a memory allowance, discovered
+/// What [`Parallelism::within`](crate::Parallelism::within) holds back from a memory allowance, discovered
 /// or stated, in bytes: everything the process holds that the pools' budget
 /// does not bound — the runtime's threads, the allocators' per-thread state, the
 /// decoder state a compressed source keeps outside its pools, and the binary
@@ -29,13 +29,13 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// [`MEMORY_MARGIN_PERCENT`] of the limit**, a cgroup's killer reading one
 /// run's peak. This is the smallest candidate measured against that criterion
 /// (`reserve`); what it covers is the remainder above
-/// [`BlockCache::reader_bytes`](super::blocks::BlockCache::reader_bytes) and not a per-reader term, the block pool's
-/// retention list being billed by [`WorkerMemory`](super::parallelism::WorkerMemory).
+/// [`BlockCache::reader_bytes`](crate::source::xz::blocks::BlockCache::reader_bytes) and not a per-reader term, the block pool's
+/// retention list being billed by [`WorkerMemory`](crate::WorkerMemory).
 ///
 /// **It is the cap, and it is not the bound on that excess** — that is
 /// [`MEMORY_UNPOOLED_BOUND`], which [`margin_allowance`] predicts with. This
 /// one comes off the top of the allowance and decides what
-/// [`BlockCache::affordable`](super::blocks::BlockCache::affordable) sees, so **raising it is also what declines the
+/// [`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable) sees, so **raising it is also what declines the
 /// block path**. One constant, taken from the compressed leg, a source's own
 /// answer being downstream of recognition and so of I/O.
 ///
@@ -68,7 +68,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// [`MEMORY_UNPOOLED_BOUND`] in every rep and this value in the worst, where
 /// the `system` build's same legs, in the same sitting, stay inside the bound
 /// (`measurements.md`, `reserve`). The overrun of the bound is two units: one
-/// the program holds on every allocator ([`WorkerMemory`](super::parallelism::WorkerMemory), `KD111`), and one
+/// the program holds on every allocator ([`WorkerMemory`](crate::WorkerMemory), `KD111`), and one
 /// mimalloc keeps after the program has freed it, on the shipped build alone;
 /// the worst rep holds nearly a third, which no instrument rep has reached and
 /// nothing names. In `-m 1536m` that leaves the shipped build's worst rep
@@ -97,10 +97,10 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// the few hundred bytes under it its rounding down reaches, nowhere below.
 ///
 /// **It bounds the count, and the budget only by what a caller holds besides
-/// its arrangements**: [`Parallelism::fit`](super::parallelism::Parallelism::fit) keeps one worker at whatever the
+/// its arrangements**: [`Parallelism::fit`](crate::Parallelism::fit) keeps one worker at whatever the
 /// cap is and reports the budget that count spends, up to the cap, and
-/// [`BlockCache::affordable`](super::blocks::BlockCache::affordable) reads the budget the cap leaves, lowered only by
-/// the holdings [`Parallelism::within_shared`](super::parallelism::Parallelism::within_shared) cannot fit under the margin.
+/// [`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable) reads the budget the cap leaves, lowered only by
+/// the holdings [`Parallelism::within_shared`](crate::Parallelism::within_shared) cannot fit under the margin.
 ///
 /// **What a gathering pass holds is inside it too**: the statistics account is
 /// billed against this same margin, [`statistics_allowance`] handing a mapping
@@ -110,7 +110,7 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
 /// the runtime's threads, the allocators' per-thread retention, the decoder
-/// state a compressed source keeps beyond [`BlockCache::reader_bytes`](super::blocks::BlockCache::reader_bytes), and
+/// state a compressed source keeps beyond [`BlockCache::reader_bytes`](crate::source::xz::blocks::BlockCache::reader_bytes), and
 /// the binary itself. [`margin_allowance`] predicts with it, and nothing else
 /// reads it.
 ///
@@ -164,7 +164,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// (`docs/design/decisions.md`, "D85"): the count is fixed before a byte is
 /// read, while statistics are gathered only as they accumulate. Those a cache
 /// hands the pass are known first and bill the workers' carving as `held`
-/// ([`Parallelism::within_shared`](super::parallelism::Parallelism::within_shared)), so what is left here covers them too.
+/// ([`Parallelism::within_shared`](crate::Parallelism::within_shared)), so what is left here covers them too.
 ///
 /// **[`MEMORY_RESERVE`] is not subtracted again here.** The reserve comes off
 /// the top for the *cap* a count is solved against, where this is the *margin*
@@ -173,7 +173,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// [`margin_allowance`] refuses to.
 ///
 /// **Which of the two bounds binds decides what is left, and the bands run the
-/// other way round from the intuition.** [`Parallelism::fit`](super::parallelism::Parallelism::fit) solves the count
+/// other way round from the intuition.** [`Parallelism::fit`](crate::Parallelism::fit) solves the count
 /// against `cap.min(ceiling)`, so below `5 × (MEMORY_RESERVE −
 /// MEMORY_UNPOOLED_BOUND)` the *cap* binds and what is left here is at least
 /// `ceiling − cap`, positive but in the few hundred bytes under the line the
@@ -363,7 +363,7 @@ pub struct MemoryLimit {
 /// `None` where nothing limits it (`docs/design/decisions.md`, "D11").
 ///
 /// **A primitive, not a policy**: what a caller may usefully take from a
-/// limit is [`Parallelism::discover`](super::parallelism::Parallelism::discover) (`docs/design/decisions.md`, "D11").
+/// limit is [`Parallelism::discover`](crate::Parallelism::discover) (`docs/design/decisions.md`, "D11").
 ///
 /// **`None` means no limit is being *enforced*, which is a complete and
 /// checkable statement** — unlike "are we in a container", which no reading of
@@ -382,7 +382,7 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 ///
 /// **Public because the arms a test must drive are the ones no machine has
 /// both of** (`docs/design/decisions.md`, "D11"). This is the seam a fixture
-/// tree is handed — here, and through [`Parallelism::discover_in`](super::parallelism::Parallelism::discover_in) and
+/// tree is handed — here, and through [`Parallelism::discover_in`](crate::Parallelism::discover_in) and
 /// [`available_memory_in`] — so a caller's own resolution can be pinned
 /// against a v1 hierarchy, an unlimited one and a below-reserve one
 /// (`crates/pgdt/tests/data/runtime/`). The memory controller lives in exactly one
@@ -440,3 +440,6 @@ pub fn available_memory_in(root: &Path) -> Option<u64> {
         Some(_) => None,
     }
 }
+
+#[cfg(test)]
+mod tests;

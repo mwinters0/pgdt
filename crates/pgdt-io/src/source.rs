@@ -1,6 +1,8 @@
 //! The byte-range read every source implements, the vocabulary a reader and
-//! a source exchange through it — identity, wait policy, partition advice,
-//! retention — and the read size a caller scales from.
+//! a source exchange through it — identity and wait policy — the read size a
+//! caller scales from, and beneath it the sources themselves: the plain file,
+//! the `.xz` file pulled or fetched, the remote object, the origin a
+//! `--source` argument resolves to, and the buffer pool they all read into.
 
 use std::future::Future;
 use std::ops::Range;
@@ -12,8 +14,24 @@ use bytes::Bytes;
 
 use pgdt_core::Result;
 
-use super::cancel::Cancellation;
-use super::parallelism::{Parallelism, Partitioning, WorkerMemory};
+use crate::cancel::Cancellation;
+use crate::parallelism::{Parallelism, WorkerMemory};
+use crate::partition::Partitioning;
+
+pub(crate) mod local;
+mod origin;
+pub(crate) mod pool;
+#[cfg(feature = "http")]
+mod remote;
+#[cfg(test)]
+mod tests;
+pub(crate) mod xz;
+
+pub use self::local::LocalFileSource;
+pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open, open_local};
+#[cfg(feature = "http")]
+pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
+pub use self::xz::{FetchedXzSource, XzSource, walk_seek_table};
 
 /// Minimal async byte-range read abstraction.
 ///
@@ -38,7 +56,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// it and reads a short supply as the file being shorter than the size it
     /// was constructed with, so a source answering a prefix would make a
     /// truncated file and a truncated *read* the same event
-    /// ([`walk_seek_table`](super::xz::walk_seek_table)).
+    /// ([`walk_seek_table`](crate::walk_seek_table)).
     fn read_range(
         &self,
         offset: u64,
@@ -87,9 +105,9 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// `None` by default, right for a source with no compression layer. Both
     /// compressed sources answer `Some`, and the table is either the one
-    /// walked for at open ([`XzSource::open`](super::xz::XzSource::open), [`open_remote`](super::remote::open_remote)) or the one
-    /// handed in from a cache ([`XzSource::with_table`](super::xz::XzSource::with_table),
-    /// [`FetchedXzSource::with_table`](super::fetched::FetchedXzSource::with_table)), which walks nothing at all —
+    /// walked for at open ([`XzSource::open`](crate::XzSource::open), [`open_remote`](crate::open_remote)) or the one
+    /// handed in from a cache ([`XzSource::with_table`](crate::XzSource::with_table),
+    /// [`FetchedXzSource::with_table`](crate::FetchedXzSource::with_table)), which walks nothing at all —
     /// that saving being the point (`docs/design/decisions.md`, "D18").
     /// A cloned value rather than a borrow: a caller
     /// building a `CacheFile` needs to own it across an `await`.
@@ -115,8 +133,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// that path to be taken at all, whether or not it was.
     ///
     /// One reader's charge *plus the retention list it leaves behind*, which
-    /// is the line [`BlockCache::affordable`](super::blocks::BlockCache::affordable) draws: a pool serving one reader
-    /// still holds [`POOL_DEPTH`](super::local::POOL_DEPTH) slots. `None` for a source with no such path
+    /// is the line [`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable) draws: a pool serving one reader
+    /// still holds [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots. `None` for a source with no such path
     /// to take, which is every source but a compressed one.
     ///
     /// Whether the path was declined is read off
@@ -137,7 +155,7 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
     /// is `worker_count`'s question, asked of every count
-    /// alike. [`LocalFileSource`](super::local::LocalFileSource) inherits the default; [`XzSource`](super::xz::XzSource) overrides
+    /// alike. [`LocalFileSource`](crate::LocalFileSource) inherits the default; [`XzSource`](crate::XzSource) overrides
     /// it. See `docs/design/decisions.md`, "D1" and "D2".
     fn default_workers(&self) -> usize {
         1
@@ -152,8 +170,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// ([`Parallelism::discover_for`], where the two meet).
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
-    /// caller on [`DEFAULT_MEMORY_BUDGET`](super::memory::DEFAULT_MEMORY_BUDGET), capped at the discovered allowance
-    /// less [`MEMORY_RESERVE`](super::memory::MEMORY_RESERVE) where one was found. It is what keeps "no
+    /// caller on [`DEFAULT_MEMORY_BUDGET`](crate::DEFAULT_MEMORY_BUDGET), capped at the discovered allowance
+    /// less [`MEMORY_RESERVE`](crate::MEMORY_RESERVE) where one was found. It is what keeps "no
     /// limit found" from meaning "serial", that constant affording no
     /// block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
@@ -170,11 +188,11 @@ pub trait ByteRangeSource: Send + Sync {
     /// beside [`ByteRangeSource::hint_read_size`].
     ///
     /// **Advisory, and it defaults to doing nothing.** What a source makes of
-    /// the numbers is its own business — [`LocalFileSource`](super::local::LocalFileSource) sizes its one
-    /// free list, [`XzSource`](super::xz::XzSource) divides the budget between its two read units
+    /// the numbers is its own business — [`LocalFileSource`](crate::LocalFileSource) sizes its one
+    /// free list, [`XzSource`](crate::XzSource) divides the budget between its two read units
     /// and decides from it whether it can afford to decode a whole block at
     /// all. A [`Parallelism`] that states no byte count leaves a source on
-    /// [`DEFAULT_MEMORY_BUDGET`](super::memory::DEFAULT_MEMORY_BUDGET).
+    /// [`DEFAULT_MEMORY_BUDGET`](crate::DEFAULT_MEMORY_BUDGET).
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     /// How long the read loop about to start will hold the bytes it gets back
     /// — announced once, beside the other two hints, and only for a holder
@@ -183,7 +201,7 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **A source applies it only where the loop is the holder**: a wait on a
     /// pool the source retains from blocks on a slot the loop could never
-    /// free, so [`XzSource`](super::xz::XzSource)'s block pool is left at
+    /// free, so [`XzSource`](crate::XzSource)'s block pool is left at
     /// [`WaitPolicy::NeverWait`] however a loop announces itself.
     ///
     /// **Advisory, and it defaults to doing nothing** — which is
@@ -280,7 +298,7 @@ impl RemoteIdentity {
     }
 
     /// Where the object was fetched from, as a message names it — the URL,
-    /// with no credential in it, [`Origin`](super::origin::Origin)'s own display form.
+    /// with no credential in it, [`Origin`](crate::Origin)'s own display form.
     pub fn origin(&self) -> &str {
         &self.origin
     }
@@ -331,106 +349,6 @@ pub enum WaitPolicy {
     /// a one-slot pool blocks forever. The promise binds the loop and nothing
     /// else ([`ByteRangeSource::hint_wait_policy`]).
     MayWait,
-}
-
-/// Where a source is willing to be split. See `docs/design/decisions.md`,
-/// "D7".
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PartitionBoundaries {
-    /// Anywhere in the range: no offset costs more to start reading at than
-    /// another. A plain file's answer, and what a caller may cut into as many
-    /// equal pieces as it has workers. **A fact about seeking, not a verdict
-    /// on concurrency** — a scheduler must not read this arm as
-    /// "device-bound, stay serial" (`docs/design/decisions.md`, "D7").
-    Anywhere,
-    /// Only at these offsets — ascending, and strictly inside the range, so
-    /// `n` of them describe `n + 1` partitions.
-    ///
-    /// **An empty list is "one partition", and it is a policy rather than an
-    /// absence**: a source that could enumerate boundaries and still advises
-    /// none is saying that splitting this range makes its readers worse
-    /// (`docs/design/decisions.md`, "D15").
-    At(Vec<u64>),
-}
-
-/// What a caller's **retained** bytes are rounded out to on this source — the
-/// unit a batch held across reads pins, as against the bytes one concurrent
-/// reader costs while it is reading, which is
-/// [`Partitioning::partition_bytes`].
-///
-/// A caller budgeting sub-streams charges each one its held batch's span *on
-/// top of* the decode footprint, and that second charge is honest for one
-/// source shape and double-counts for the other
-/// (`docs/design/decisions.md`, "D46").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RetainedUnit {
-    /// The read chunk. A batch spanning `pgdt_query::QueryOptions`'
-    /// `max_source_span` bytes pins the chunk buffers those bytes were read
-    /// into, and those are bytes [`Partitioning::partition_bytes`] has not
-    /// charged for — so a caller adds the span. A plain file's answer.
-    ///
-    /// **The default, for the same reason [`WaitPolicy::NeverWait`] is one**:
-    /// over-charging plans fewer readers than the budget could hold, where
-    /// under-charging plans readers it cannot.
-    #[default]
-    ReadChunk,
-    /// The partition itself. A batch confined to a partition pins that
-    /// partition whatever the span cap says
-    /// (`docs/design/decisions.md`, "D46"), and
-    /// [`Partitioning::partition_bytes`] has already charged for it — so
-    /// adding the span would count the same bytes twice. A block-decoding
-    /// source's answer.
-    ///
-    /// **That rationale holds only where a partition is one unit wide, which
-    /// the leader's window guarantees and a query's cut does not** — `KD23`.
-    /// `pgdt_dump::leader::scan_region` sizes its window with
-    /// [`Partitioning::window_end`] and is held to
-    /// [`BOUNDARIED_PARTITION_UNITS`](super::parallelism::BOUNDARIED_PARTITION_UNITS); `pgdt_query::stream::plan_partitions` cuts a
-    /// whole `CopyBlock` into `min(workers, max_partitions)` pieces, so a
-    /// piece may span more units than `partition_bytes` charged for.
-    Partition,
-}
-
-/// How a worker reads the piece it was handed
-/// (`pgdt_dump::leader::scan_region`) — **stated by the source, because the
-/// right answer differs by source**.
-///
-/// Separate from [`RetainedUnit`] and [`Partitioning::partition_bytes`], which
-/// say what a reader *holds*: this says what shape its reads are, and the cut
-/// size must not follow the memory charge ([`Partitioning::window_end`], and
-/// `docs/design/decisions.md`, "D8").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PartitionRead {
-    /// `ScanOptions::chunk_size_bytes` at a time, repeating until the piece is
-    /// consumed. A plain file's answer, and **the default, for the reason
-    /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
-    /// announced length, so [`BufferPool::keeps`](super::local::BufferPool::keeps) pools every buffer a worker
-    /// takes, where a partition-length read would allocate a buffer `keeps`
-    /// refuses to pool.
-    #[default]
-    Chunked,
-    /// One of the source's own `unit`s in a single call — the whole piece
-    /// where the piece is one unit, which is what
-    /// [`BOUNDARIED_PARTITION_UNITS`](super::parallelism::BOUNDARIED_PARTITION_UNITS) makes it. A block-decoding source's
-    /// answer, where that read is a **zero-copy slice** of a block the worker
-    /// was going to decode anyway, against one [`BlockCache::lookup`](super::blocks::BlockCache::lookup) per
-    /// chunk on the chunked arm.
-    ///
-    /// **The unit is what bounds the buffer, and it is the source's number
-    /// rather than the cut's.** `pgdt_dump::leader::scan_partition` reads
-    /// `min(piece, unit)`, so at the shipped width — where a piece *is* one
-    /// unit — this is the piece exactly, and above it the buffer is capped at
-    /// one unit instead of growing with the width. It does not remove the
-    /// copy: `xz_seek::SeekTable::max_block_uncompressed` is a file-wide
-    /// maximum, so a read starting on a boundary can still cross into a
-    /// smaller successor block (`docs/design/decisions.md`, "D8").
-    Whole {
-        /// The source's own unit, in bytes — the decoded block on the
-        /// block-decoding path, where [`BlockCache::unit`](super::blocks::BlockCache::unit) is
-        /// `xz_seek::SeekTable::max_block_uncompressed`. Never zero: a source
-        /// with no unit has nothing to state and stays [`PartitionRead::Chunked`].
-        unit: u64,
-    },
 }
 
 /// Bytes requested per read from the source, unless a caller says otherwise.

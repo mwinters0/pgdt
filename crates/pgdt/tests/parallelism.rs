@@ -2,7 +2,7 @@
 //! states its concurrency and its memory budget in
 //! (`docs/design/decisions.md`, "I/O, memory and parallelism").
 //!
-//! The library holds what the two numbers *mean*: `io.rs`'s pool tests drive
+//! The library holds what the two numbers *mean*: `pgdt-io`'s pool tests drive
 //! the budget's split between a source's two read units, its floor, and the
 //! block-decode line it draws. What only the binary can say is that the flags
 //! reach `ScanOptions`/`QueryOptions` at all — a flag parsed and dropped on

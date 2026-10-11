@@ -6,22 +6,13 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::local::{BufferPool, POOL_DEPTH, PooledBuffer};
-use super::memory::DEFAULT_MEMORY_BUDGET;
-use super::parallelism::{Parallelism, Partitioning, WorkerMemory};
-use super::source::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
-use super::xz::xz_partition_advice;
+use crate::memory::DEFAULT_MEMORY_BUDGET;
+use crate::parallelism::{Parallelism, WorkerMemory};
+use crate::partition::Partitioning;
+use crate::source::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
+use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 
-/// The byte budget a caller's [`Parallelism`] states, as a `usize`, falling
-/// back to [`DEFAULT_MEMORY_BUDGET`] where it states none — which is
-/// [`Parallelism::default`], and also a `u64` too large to be a length on this
-/// target, where the default is the smaller and therefore the safe answer.
-pub(super) fn budget_bytes(parallelism: Parallelism) -> usize {
-    parallelism
-        .memory_bytes()
-        .and_then(|bytes| usize::try_from(bytes).ok())
-        .unwrap_or(DEFAULT_MEMORY_BUDGET as usize)
-}
+use super::xz_partition_advice;
 
 /// One block's plaintext, decoded whole into a pooled slot.
 ///
@@ -78,10 +69,10 @@ impl AsRef<[u8]> for BlockView {
 /// *Rejected: retaining one block on the serial path.* A cap of one makes
 /// [`BlockCache::slot`] keep zero and drain before every decode, so any
 /// outstanding view forces a fresh allocation of the block unit.
-pub(super) struct BlockCache {
+pub(crate) struct BlockCache {
     /// Slot size: the file's largest block. Every slot fits every block, which
     /// is what `BlockTask::decode_into` is documented to allow, and it is what
-    /// the pool is hinted with so a slot survives [`POOL_MAX_BYTES`](super::local::POOL_MAX_BYTES).
+    /// the pool is hinted with so a slot survives [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES).
     pub(super) unit: usize,
     pub(super) pool: Arc<BufferPool>,
     /// Retained blocks by index, least-recently-used first.
@@ -241,7 +232,7 @@ impl BlockCache {
 /// policy, which each source announces for itself; two copies of one charge
 /// policy stay right exactly until one of them is edited
 /// (`docs/design/decisions.md`, "D15").
-pub(super) struct XzBudget {
+pub(crate) struct XzBudget {
     /// The chunk unit: what a read spanning more than one block is assembled
     /// into, and what a piecewise read fills.
     pub(super) pool: Arc<BufferPool>,
@@ -254,9 +245,9 @@ pub(super) struct XzBudget {
     /// decodes.
     ///
     /// **It is the one term the transport moves**, so it is stated by whoever
-    /// builds this policy rather than derived here — [`XzSource::over`](super::xz::XzSource::over) pays
+    /// builds this policy rather than derived here — [`XzSource::over`](crate::XzSource::over) pays
     /// for a compressed input chunk its source does not lend,
-    /// [`FetchedXzSource::assembled`](super::fetched::FetchedXzSource::assembled) for the window its source lends out of.
+    /// [`FetchedXzSource::assembled`](crate::FetchedXzSource::assembled) for the window its source lends out of.
     ///
     /// **Read once, at construction**: it is a property of the file and of the
     /// backend, not of a range.
@@ -341,11 +332,11 @@ impl XzBudget {
     }
 
     /// The chunk slot every one of a source's charges is stated against: the
-    /// length a read loop announced ([`ByteRangeSource::hint_read_size`](super::source::ByteRangeSource::hint_read_size)), or
+    /// length a read loop announced ([`ByteRangeSource::hint_read_size`](crate::ByteRangeSource::hint_read_size)), or
     /// [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`] where none has yet.
     ///
     /// **The fallback is the chunk a scan settles at, not
-    /// [`POOL_MAX_BYTES`](super::local::POOL_MAX_BYTES)**: an allowance is solved against this number by
+    /// [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES)**: an allowance is solved against this number by
     /// [`Parallelism::fit`] before the file is open, while the gate the count
     /// then meets ([`BlockCache::affordable`]) is compared at the steady-state
     /// slot (`docs/design/decisions.md`, "D4"). *Rejected:* moving the gate to
@@ -376,7 +367,7 @@ impl XzBudget {
     /// it, as one shape.
     ///
     /// It composes the recommendation's shape
-    /// ([`ByteRangeSource::default_worker_memory`](super::source::ByteRangeSource::default_worker_memory)); the gate
+    /// ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)); the gate
     /// ([`BlockCache::affordable`]) reads [`BlockCache::worker_memory`] itself
     /// and the advice ([`xz_partition_advice`]) builds the same shape from
     /// [`BlockCache::reader_bytes`], which
@@ -406,7 +397,7 @@ impl XzBudget {
 
     /// [`XzBudget::block_worker_memory`] evaluated at one reader: one
     /// statement of what the block path costs
-    /// ([`ByteRangeSource::block_decode_bytes`](super::source::ByteRangeSource::block_decode_bytes)).
+    /// ([`ByteRangeSource::block_decode_bytes`](crate::ByteRangeSource::block_decode_bytes)).
     pub(super) fn block_decode_bytes(&self) -> Option<u64> {
         Some(self.block_worker_memory()?.at(1))
     }
@@ -450,3 +441,6 @@ impl XzBudget {
         self.apportion();
     }
 }
+
+#[cfg(test)]
+mod tests;

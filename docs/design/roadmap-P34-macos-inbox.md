@@ -9,8 +9,8 @@ delete this file. See `docs/process.md`, "Inboxes: facts filed by destination".
 ## Memory discovery reads Linux files only, and finds nothing elsewhere
 
 **Fact.** A flagless run sizes itself from `/proc/meminfo`'s `MemAvailable`
-and the cgroup limit (`crates/pgdt-io/src/io/memory.rs`, `available_memory_in`,
-`discover_memory_limit_in`; `crates/pgdt-io/src/io/parallelism.rs`,
+and the cgroup limit (`crates/pgdt-io/src/memory.rs`, `available_memory_in`,
+`discover_memory_limit_in`; `crates/pgdt-io/src/parallelism.rs`,
 `Parallelism::discover_holding_in`;
 `crates/datafusion-pgdump/src/budget.rs`, `ScanBudget::discover_in`). On macOS each
 read fails into `None`: the CLI falls to `DEFAULT_MEMORY_BUDGET`, a source

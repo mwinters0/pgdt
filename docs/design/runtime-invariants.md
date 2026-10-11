@@ -264,7 +264,7 @@ machine runs a pure v2 unified hierarchy, and the memory controller lives in
 exactly one hierarchy at a time (`RT6`), so it cannot be mounted v1 alongside;
 observing this entry needs a host booted with
 `systemd.unified_cgroup_hierarchy=0`, which is what the `Re-verify` below runs.
-`io.rs`'s unit tests cover our reader instead: a fixture tree shaped as this
+`crates/pgdt-io/src/memory.rs`'s unit tests cover our reader instead: a fixture tree shaped as this
 entry claims, driven through `discover_memory_limit`'s filesystem-root seam
 (D11). That observes no kernel and does not upgrade `Verified against`.
 
@@ -679,7 +679,7 @@ first. How much a retained arena holds is not part of the claim.
 **Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
 refusal, which is not mechanical because under D12's `current_thread` runtime
 fewer than `arena_test` arenas exist before the arrangement resolves;
-`io/memory.rs`, `MEMORY_RESERVE`'s rejected sizing from the arena count; and
+`crates/pgdt-io/src/memory.rs`, `MEMORY_RESERVE`'s rejected sizing from the arena count; and
 [`measurements.md`](measurements.md), "The apparatus" — the ceiling standing
 behind every figure.
 

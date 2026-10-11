@@ -2433,7 +2433,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:
 #: **The divisor is per source, not universal.** `plan_partitions` adds the
 #: held batch's `max_source_span` only where the source retains by the read
-#: chunk (`crate::io::RetainedUnit`); a block-decoding `XzSource` retains by the
+#: chunk (`pgdt_io::RetainedUnit`); a block-decoding `XzSource` retains by the
 #: partition, whose decoded blocks `partition_bytes` has already charged, so its
 #: per-reader term is what one reader of it holds and nothing more.
 #:
@@ -3031,7 +3031,7 @@ def reader_bytes(unit: int) -> int:
     open for reading and the charge `BlockCache::affordable` then compares a
     budget to are the same charge. *Rejected:* charging the unannounced pool's
     `POOL_MAX_BYTES` ceiling — it runs the recommendation 7 MiB a reader high
-    and costs a reader at every allocation (`io/blocks.rs`, `charged_chunk_bytes`).
+    and costs a reader at every allocation (`source/xz/blocks.rs`, `charged_chunk_bytes`).
     A flagless run's resolved budget is **never** this number times its count:
     the shared retention list is billed at every count,
     so a budget read off a run's own report carries `pool_bytes` besides, which
@@ -3059,7 +3059,7 @@ def reader_bytes(unit: int) -> int:
 #: obtaining the buffer `retain` then pushes back, so the pool holds
 #: `(POOL_DEPTH.max(jobs) - 1) x unit` on top of the one unit each reader has in
 #: flight. That is `pool_bytes`, which the library bills as what the pool
-#: holds (`io/parallelism.rs`, `WorkerMemory`); naming it as a
+#: holds (`parallelism.rs`, `WorkerMemory`); naming it as a
 #: column of its own is what keeps it out of the residual, where it would read
 #: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
@@ -3174,7 +3174,7 @@ def discovered_budget(limit: int) -> int:
     budget: `limit − MEMORY_RESERVE`, floored at zero.
 
     `Parallelism::within`, mirrored — `allowance.saturating_sub(
-    MEMORY_RESERVE)` (`io/parallelism.rs`), which a stated `--memory` reaches by the same
+    MEMORY_RESERVE)` (`parallelism.rs`), which a stated `--memory` reaches by the same
     call (`stated_allowance`).
 
     **The margin is deliberately left out**, as the recommendation is. The
@@ -3206,7 +3206,7 @@ def block_path_afforded(unit: int, budget: int) -> bool:
     retention list that one reader leaves standing**, so the line is
     106.03 MiB at 24 MiB blocks and 522.03 at 128 — against 34.03 and 138.03 for
     the per-reader term alone. So `reader_bytes <= budget` is not this
-    comparison (`io/blocks.rs`, `BlockCache::affordable`).
+    comparison (`source/xz/blocks.rs`, `BlockCache::affordable`).
 
     **One function because the renderer asks the question at four places** — the
     flagless cell's own label, the fit's window, the model check's exclusion and
@@ -6292,29 +6292,30 @@ SCAN = (
     *STREAM,
 )
 #: Every figure that times a `pgdt` run over a file reads its bytes through
-#: this one module, whatever else the figure is about, so it is its own
+#: this one crate, whatever else the figure is about, so it is its own
 #: mechanism rather than part of `SCAN`: `nested-end-to-end` and
 #: `cross-file-floor` declare no scanner path and are still moved by it.
 #: The read path was undeclared until the buffer pool landed, which made a
 #: change to the largest single term in a warm `parse`'s user time read green
 #: against every table it moved.
-READ = (
-    "crates/pgdt-io/src/io.rs",
-    *(
-        f"crates/pgdt-io/src/io/{name}.rs"
-        for name in (
-            "blocks",
-            "cancel",
-            "fetched",
-            "local",
-            "memory",
-            "origin",
-            "parallelism",
-            "remote",
-            "source",
-            "xz",
-        )
-    ),
+READ = tuple(
+    f"crates/pgdt-io/src/{name}.rs"
+    for name in (
+        "cancel",
+        "lib",
+        "memory",
+        "parallelism",
+        "partition",
+        "source",
+        "source/local",
+        "source/origin",
+        "source/pool",
+        "source/remote",
+        "source/xz",
+        "source/xz/blocks",
+        "source/xz/fetched",
+        "source/xz/file",
+    )
 )
 MAP = ("crates/pgdt-dump/src/map.rs", "crates/pgdt-model/src/span.rs")
 #: The map's own per-block cost is two modules, not one: `map::Builder::snapshot`
@@ -9592,7 +9593,7 @@ def run_reserve(session: Session) -> str:
         f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH} and `BlockCache::slot` drains to one below it "
         "before taking the buffer `retain` pushes back, so the pool holds "
         "`(POOL_DEPTH.max(jobs) − 1) × unit` on top of the block each reader has in flight — "
-        "billed at **every** count (`io.rs`, `WorkerMemory`). What is left is what the charge "
+        "billed at **every** count (`parallelism.rs`, `WorkerMemory`). What is left is what the charge "
         "does not bill, and this column does not name it: the instrument legs below attribute "
         "a remainder of their own, which is a different subtraction on a different build. A "
         "leg that declined the block path is absent, holding none of these "

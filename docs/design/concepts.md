@@ -21,14 +21,10 @@ Where a dump is and how its bytes are read: the read contract, the plain file,
 the `.xz` file pulled or fetched, the remote object
 ([`decisions.md`](decisions.md), "The compressed source and the cache").
 
-- **pgdt-io** — `io.rs`, `io/source.rs`, `io/origin.rs`, `io/local.rs`,
-  `io/xz.rs`, `io/blocks.rs`, `io/fetched.rs`, `io/remote.rs`: the whole
-  concept, below the parsers that read through it.
-
-**Not in one place.** The buffer pool every source reads into is in
-`io/local.rs`, the plain-file source; what both `.xz` sources share is split
-between `io/xz.rs` and `io/blocks.rs`, which import each other; `io.rs` is a
-second re-export layer under the crate root.
+- **pgdt-io** — `source/`: the whole concept, below the parsers that read
+  through it — the read contract with its arms nested under it, the buffer
+  pool they all read into, and what both `.xz` sources share above the two of
+  them.
 
 ## Memory and parallelism
 
@@ -36,21 +32,20 @@ The memory allowance and its discovery, a caller's parallelism, what a worker
 holds resident, the partition advice a source gives and the cut
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
-- **pgdt-io** — `io/memory.rs`, `io/parallelism.rs`: a source says what a
-  worker holds, so sizing sits beside it (D68).
+- **pgdt-io** — `memory.rs`, `parallelism.rs`, `partition.rs`: a source says
+  what a worker holds, so sizing sits beside it (D68); the partition advice
+  and the cut read a worker's cost, and nothing in sizing reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session
   runs draws from.
 
-**Not in one place.** `Partitioning` is in `io/parallelism.rs` and its parts
-in `io/source.rs`, the two importing each other; `cut` applies a partitioning
-and sizes nothing. `pgdt`'s parallelism flags are in its `main.rs`.
+**Not in one place.** `pgdt`'s parallelism flags are in its `main.rs`.
 
 ## Stopping
 
 A caller's ask that a scan stop, and a signal that ends the process
 ([`decisions.md`](decisions.md), "D26").
 
-- **pgdt-io** — `io/cancel.rs`: the token a scan polls, below everything that
+- **pgdt-io** — `cancel.rs`: the token a scan polls, below everything that
   scans.
 - **namespace-init** — `lib.rs`, `unshare.rs`: ending as a PID namespace's
   init on a signal, shared by both binaries.

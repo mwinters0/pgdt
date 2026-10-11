@@ -82,3 +82,6 @@ impl Cancellation {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

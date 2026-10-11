@@ -215,7 +215,7 @@ def _index(ident: str) -> int:
 STANCE_RE = re.compile(r"\*\*\(([abc])\)\s+([^*]+?)\*\*")
 OWNED_RE = re.compile(r"^owned by\s+(\S.*)$")
 
-#: `Detail: `crates/pgdt-io/src/io.rs``. A repo-relative path in backticks, not a
+#: `Detail: `crates/pgdt-io/src/source.rs``. A repo-relative path in backticks, not a
 #: link: the target is source, and a Markdown link into it resolves nowhere a
 #: reader of the rendered index can follow anyway.
 DETAIL_RE = re.compile(r"Detail:\s*`([^`]+)`")

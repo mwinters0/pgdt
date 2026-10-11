@@ -14,13 +14,13 @@ use object_store::ObjectStore as _;
 
 use pgdt_core::{Error, Result};
 
-use super::cancel::Cancellation;
-use super::fetched::FetchedXzSource;
+use crate::cancel::Cancellation;
+
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, XZ_MAGIC,
 };
-use super::source::{ByteRangeSource, RemoteIdentity, is_weak_tag};
-use super::xz::walk_seek_table;
+use super::xz::{FetchedXzSource, walk_seek_table};
+use super::{ByteRangeSource, RemoteIdentity, is_weak_tag};
 
 /// How long a remote request may go without delivering a byte before it is
 /// abandoned.
@@ -394,12 +394,12 @@ impl ByteRangeSource for RemoteSource {
 
 /// Open `origin`, which must name a remote object, as a [`ByteRangeSource`].
 ///
-/// [`open_local`](super::origin::open_local)'s sibling, making the same two choices: the compression
+/// [`open_local`](crate::open_local)'s sibling, making the same two choices: the compression
 /// layer is read off the probe's magic bytes, and `known` is checked rather
 /// than believed.
 ///
 /// **A remote `.xz` is read exactly as a local one is**, through
-/// [`FetchedXzSource`] over the plain source rather than through [`XzSource`](super::xz::XzSource),
+/// [`FetchedXzSource`] over the plain source rather than through [`XzSource`](crate::XzSource),
 /// which pulls from a file (`docs/design/decisions.md`, "D14" and "D18").
 /// Where the cache holds the seek table there is no walk at all; where
 /// it does not, the walk is announced before it is paid for
