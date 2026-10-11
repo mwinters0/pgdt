@@ -150,8 +150,8 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 ## What a pass records of a block's rows
 
 The array-shape census and the count of values a column's Arrow type cannot
-hold, and the contracts over a block's rows a crate above implements
-([`decisions.md`](decisions.md), "D35", "D74").
+hold, and the contract over a block's rows that counts them, which a crate
+above implements ([`decisions.md`](decisions.md), "D35", "D74").
 
 - **pgdt-model** — `block.rs`: persisted, and a contract over the data is
   model wherever its implementor sits (D74); how a row is folded in is
@@ -248,7 +248,9 @@ What a pass records of each column per row group, and what reads it: pruning,
 a table's summary, DataFusion's statistics, `pgdt info --detail`
 ([`decisions.md`](decisions.md), "Statistics").
 
-- **pgdt-model** — `statistics.rs`: the stored shape, persisted (D74).
+- **pgdt-model** — `statistics.rs`: the stored shape, persisted, and the
+  contract over a block's rows that answers it, model wherever its
+  implementor sits (D74).
 - **pgdt-query** — `statistics.rs`, `gather.rs`, `gather/bounds.rs`,
   `gather/charge.rs`, `gather/column.rs`, `gather/dictionary.rs`,
   `gather/gatherer.rs`, `gather/order.rs`, `gather/tracking.rs`, `prune.rs`,

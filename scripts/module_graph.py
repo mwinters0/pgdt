@@ -114,20 +114,6 @@ OWED: dict[frozenset[str], str] = {
     ): "P35.17, the codec by type family",
     frozenset(
         {
-            "pgdt-dump::cache",
-            "pgdt-dump::cache::file",
-            "pgdt-dump::cache::identity",
-            "pgdt-dump::cache::mode",
-        }
-    ): "P35.23, `cache.rs` declaring and its operations in `cache/store.rs`",
-    frozenset({"pgdt-io::source::xz", "pgdt-io::source::xz::blocks"}): (
-        "P35.23, the advice beside `BlockCache`"
-    ),
-    frozenset(
-        {"pgdt-model::block", "pgdt-model::diagnostic", "pgdt-model::span", "pgdt-model::statistics"}
-    ): "P35.23, `BlockObserver`, `union_census` and `TilingIssue` beside what they read",
-    frozenset(
-        {
             "pgdt-query::batch",
             "pgdt-query::stream::dynamic",
             "pgdt-query::stream::map_query",

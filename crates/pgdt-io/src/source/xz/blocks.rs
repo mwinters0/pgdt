@@ -1,6 +1,7 @@
 //! The decoded-block cache and the decode budget every `.xz` source reads
-//! through: a block decoded once into a pooled slot, sliced zero-copy, and
-//! what a decoder may hold beside it.
+//! through: a block decoded once into a pooled slot, sliced zero-copy, what a
+//! decoder may hold beside it, and how a range may be cut given which of the
+//! two a read takes.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,11 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::memory::DEFAULT_MEMORY_BUDGET;
 use crate::parallelism::{Parallelism, WorkerMemory};
-use crate::partition::Partitioning;
+use crate::partition::{PartitionRead, Partitioning, RetainedUnit};
 use crate::source::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
-
-use super::xz_partition_advice;
 
 /// One block's plaintext, decoded whole into a pooled slot.
 ///
@@ -440,6 +439,82 @@ impl XzBudget {
         self.jobs.store(parallelism.jobs(), Ordering::Relaxed);
         self.apportion();
     }
+}
+
+/// An `.xz` source's partitioning advice, read off the **read path it took**
+/// rather than off the seek table.
+///
+/// Two answers, and which one applies is `blocks`:
+///
+/// **Block-decoding** — the boundaries are the block starts inside
+/// `range`, so a partition is a whole number of blocks. A partition costs
+/// what one concurrent reader holds — [`BlockCache::reader_bytes`], the
+/// per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
+/// [`BlockCache::affordable`] compares a budget against.
+///
+/// **Piecewise** — one partition, whatever the table says: one live
+/// `xz_seek::BlockRead` goes forward only, so two workers on different
+/// partitions would each force the other's block to be left and begun again.
+/// That is true of both providers, each holding one handle behind one mutex
+/// (`xz`'s `LiveBlock`, and `docs/design/decisions.md`, "D15").
+///
+/// Taken as a free function over the two pieces of state it reads, so the
+/// piecewise arm is assertable against a table that *does* have blocks.
+fn xz_partition_advice(
+    table: &xz_seek::SeekTable,
+    blocks: Option<&BlockCache>,
+    chunk_bytes: u64,
+    decode_bytes: u64,
+    range: Range<u64>,
+) -> Partitioning {
+    let Some(cache) = blocks else {
+        // **The piecewise arm charges the chunk buffer and not the
+        // decoder**: on both providers the decoder is a fixed cost of the
+        // source rather than of a concurrent reader
+        // ([`Partitioning::partition_bytes`]).
+        //
+        // Deficiency register: `deficiency: KD35` — one partition is not
+        // what the budget affords: a decoder retains far less than a decoded
+        // block, so several would fit where the blocks they decode do not,
+        // and the budget that sends a file down this arm is exactly the one
+        // that would benefit. **What pins the count at one is not the
+        // budget**: [`LiveBlock`] is forward-only behind one mutex on both
+        // providers, so two readers would force each other's restarts. The
+        // fetched arm's statelessness would have let it serve N partitions
+        // for want of cut points alone, and was spent to stop it re-decoding
+        // a block a scan sits inside ([`HeldBlock`]) — this is where that
+        // option went. **(c) unowned**;
+        // closing it means a handle per reader — which `xz_seek::BlockRead`
+        // being `Send` and borrowing nothing already allows — and a figure
+        // over the count, and the figure is the half this cannot skip.
+        return Partitioning::single(chunk_bytes);
+    };
+    let covering = table.blocks_in(range.clone());
+    let at = covering
+        .filter_map(|i| {
+            let start = table.blocks[i].uncompressed_offset;
+            (start > range.start && start < range.end).then_some(start)
+        })
+        .collect();
+    // Three statements the piecewise arm above does not make, each
+    // because a read inside a decoded block is a zero-copy slice of it:
+    //
+    // - **the retained unit is the partition, not the chunk**, so a caller
+    //   adding its span allowance on top would count the partition's
+    //   already-charged bytes twice ([`RetainedUnit`]);
+    // - **a worker reads one of this source's units in one call**, which
+    //   at the shipped cut width is the whole piece
+    //   ([`PartitionRead::Whole`]). The unit is `cache.unit`, read off the
+    //   cache rather than recomputed and non-zero by
+    //   `BlockCache::for_table`'s own guard;
+    // - **the block pool's retention list is stated beside the per-reader
+    //   charge**, which is what lets `worker_count` solve
+    //   for a count rather than divide by one
+    //   ([`BlockCache::worker_memory`]).
+    Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
+        .pooling(cache.unit as u64, POOL_DEPTH)
+        .retaining(RetainedUnit::Partition)
+        .reading(PartitionRead::Whole { unit: cache.unit as u64 })
 }
 
 #[cfg(test)]

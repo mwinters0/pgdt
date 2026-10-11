@@ -46,12 +46,6 @@ citing a path. `leader.rs` is untouched, 35.18 moving it.
 
 ## What later cuts inherit
 
-- **One edge runs both ways**: `cache/identity.rs`'s `SourceWatch` holds a
-  `StrictIdentity`, which the design puts in `cache/mode.rs`, and `mode`
-  reads `SourceWatch`, `WeakIdentity` and `OriginMatch` back. Moving
-  `StrictIdentity` into `identity.rs` would make it one-way — a placement
-  for 35.12's closing read to weigh, as 35.14 left `source/xz.rs` ↔
-  `xz/blocks.rs`.
 - `ddl/tests.rs` is the crate's longest test file. A split by child would
   share its `parse_*` helpers across the children's test files, as
   `parse_type` already is with `ddl/metadata/tests.rs`.

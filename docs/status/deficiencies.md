@@ -226,7 +226,7 @@ than reading as a phase nobody has sliced.
   fetched arm's statelessness, which would have served several partitions for
   want of cut points alone, was spent to stop it re-decoding a block a scan sits
   inside. **(c) unowned**; promoted by a phase taking up compressed scan
-  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/xz.rs`.
+  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/xz/blocks.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs at least four round trips per

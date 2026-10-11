@@ -161,7 +161,7 @@ async fn preamble_only_watched(
     // (`crate::cache::SourceWatch`).
     watch.check(source).await?;
     // A complete cache already carries this diagnostic, computed by
-    // `cache::status_from_file` off the persisted table — so this is
+    // `cache::store::status_from_file` off the persisted table — so this is
     // idempotent rather than gated on `!known`, which would miss a cache
     // that exists but whose preamble was not yet complete.
     if let Some(d) = non_seekable_compression_diagnostic(source.seek_table().as_ref())

@@ -1,5 +1,6 @@
-//! Per-row-group column statistics as a block persists them, and what a
-//! field's refusal leaves behind (`docs/design/decisions.md`, "D34", "D103").
+//! Per-row-group column statistics as a block persists them, what a
+//! field's refusal leaves behind (`docs/design/decisions.md`, "D34", "D103"),
+//! and the contract over a block's rows that answers both ([`BlockObserver`]).
 //! What a mapping pass is asked to gather, and the account of what it holds,
 //! are `pgdt_query::statistics`'.
 //!
@@ -284,6 +285,56 @@ impl IgnoredRefusalsExt for IgnoredRefusals {
             cache: cache.into(),
         })
     }
+}
+
+/// Receives every row of one `COPY` block from the mapping pass and answers
+/// the block's statistics once it closes. Defined here and implemented in query,
+/// the shape `docs/design/decisions.md`, "D74" gives a contract over a block's rows.
+///
+/// **A block the leader splits is observed piece by piece**: each piece's rows
+/// go to an observer [`Self::piece`] made, and the pieces are handed back in
+/// file order to [`Self::absorb`], after which the block's observer answers
+/// what it would have had it been handed every row itself — bar a decline,
+/// which a piece's charge alongside its neighbours' can reach where one
+/// observer's would not (`docs/design/decisions.md`, "D85").
+pub trait BlockObserver: Send {
+    /// One row, `offset` being where its first byte sits relative to the
+    /// block's first data byte, and `raw` the still-escaped line without its
+    /// terminator.
+    fn observe_row(&mut self, offset: u64, raw: &[u8]);
+
+    /// The block's statistics, or [`BlockGathered::Declined`] where the
+    /// allowance could not hold them before this call; the close it makes is
+    /// kept even past the allowance (`docs/design/decisions.md`, "D85"). `end`
+    /// is the terminator line's offset relative to the block's first data byte
+    /// — where the last row's line ends.
+    fn finish(self: Box<Self>, end: u64) -> BlockGathered;
+
+    /// An observer for a piece of this block: rows starting anywhere after the
+    /// ones this observer has been handed, to be given back to
+    /// [`Self::absorb`] rather than finished.
+    fn piece(&self) -> Box<dyn BlockObserver>;
+
+    /// Fold `later`, made by [`Self::piece`] and handed rows that all follow
+    /// every row this observer has seen, into this one.
+    fn absorb(&mut self, later: Box<dyn BlockObserver>);
+
+    /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
+    /// recovers the concrete piece it made.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+
+    /// The fields its type's `*_in` refuses that this observer keyed and went
+    /// past, being told to ignore them
+    /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
+    /// [`Self::finish`]: what the block records
+    /// ([`crate::CopyBlock::ignored_refusals`]).
+    fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
+
+    /// Whether this observer checks every field of every row it is handed as
+    /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so a
+    /// block it finishes unrefused is checked in full
+    /// ([`crate::CopyBlock::checked_in_full`]).
+    fn checks_every_field(&self) -> bool;
 }
 
 /// One block's statistics, held by [`crate::CopyBlock::statistics`].

@@ -69,7 +69,7 @@ pub struct FetchedXzSource {
     /// failed, a block-arm read has run since, or a piecewise read has it
     /// ([`HeldBlock`]). Behind a `Mutex` because the handle goes
     /// forward only and one position cannot serve two readers, which is why
-    /// that arm advises a single partition ([`xz_partition_advice`](crate::source::xz::xz_partition_advice)).
+    /// that arm advises a single partition ([`xz_partition_advice`](crate::source::xz::blocks::xz_partition_advice)).
     held: Mutex<Option<HeldBlock>>,
     /// How many block decodes the piecewise arm has begun. Absent without
     /// `introspect`, which is the build that asserts a block a scan sits
@@ -529,7 +529,7 @@ impl ByteRangeSource for FetchedXzSource {
         Some((*self.table).clone())
     }
 
-    /// [`xz_partition_advice`](crate::source::xz::xz_partition_advice), as the local source's is: the cut points are a
+    /// [`xz_partition_advice`](crate::source::xz::blocks::xz_partition_advice), as the local source's is: the cut points are a
     /// property of the file rather than of the transport, and reading them off
     /// the arm actually taken is what keeps
     /// `pgdt_query::stream::compressed_block_path_declined` honest here.

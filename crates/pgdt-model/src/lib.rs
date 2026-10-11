@@ -16,16 +16,17 @@ mod statistics;
 
 pub use block::{
     ArrayShape, BlockCensus, PG_ARRAY_MAX_DIMS, Unrepresentable, UnrepresentableTier, calendar_end,
-    union_census,
 };
 pub use catalog::{
     CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, NotNull,
     PartitionOf, TableDef, TableReference, TypeDef, TypeKind,
 };
-pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity, drain};
+pub use diagnostic::{
+    Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity, TilingIssue, drain,
+};
 pub use span::{
     CopyBlock, DataBlock, DumpIndex, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES,
-    Span, SpanBody, SpanText, TableName, TilingIssue, TocHeader,
+    Span, SpanBody, SpanText, TableName, TocHeader, union_census,
 };
 use statistics::deserialize_block_statistics;
 pub use statistics::{
@@ -39,14 +40,12 @@ pub use statistics::{
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::block::{
-        ArrayShapeExt, BlockCensusExt, BlockObserver, FieldCount, UnrepresentableExt,
-    };
+    pub use crate::block::{ArrayShapeExt, BlockCensusExt, FieldCount, UnrepresentableExt};
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::statistics::{
-        BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt,
-        max_rows_group, min_rows_group, text_heap, vec_heap,
+        BlockObserver, BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt,
+        IgnoredRefusalsExt, max_rows_group, min_rows_group, text_heap, vec_heap,
     };
 }
 

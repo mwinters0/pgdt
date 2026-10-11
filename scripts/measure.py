@@ -6363,6 +6363,7 @@ CACHE = (
     "crates/pgdt-dump/src/cache/file.rs",
     "crates/pgdt-dump/src/cache/identity.rs",
     "crates/pgdt-dump/src/cache/mode.rs",
+    "crates/pgdt-dump/src/cache/store.rs",
 )
 #: The type register, the comparison register its built-in table answers
 #: beside it, and the input grammar the comparison register's unordered

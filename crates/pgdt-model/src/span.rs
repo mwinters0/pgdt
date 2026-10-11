@@ -245,23 +245,6 @@ pub enum SpanBody {
     Unscanned,
 }
 
-/// What [`pgdt_dump::check_tiling`] found wrong, if anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum TilingIssue {
-    /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
-    Discontinuity { after_index: usize, span_end: u64, next_start: u64 },
-    /// The spans aren't sorted by `start` — every other check assumes they
-    /// are, so this is reported instead of a misleading discontinuity.
-    OutOfOrder { index: usize },
-    /// The first span doesn't start at byte 0.
-    DoesNotStartAtZero { first_start: u64 },
-    /// The last span's `end` doesn't reach `expected_end` (the scanned
-    /// prefix's length, or the file size for a full scan).
-    DoesNotReachEnd { last_end: u64, expected_end: u64 },
-    /// A span's own `start >= end`.
-    Empty { index: usize },
-}
-
 /// One located COPY block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyBlock {
@@ -349,6 +332,35 @@ impl CopyBlock {
         self.array_shapes = Some(census.shapes);
         self.unrepresentable = Some(census.unrepresentable);
     }
+}
+
+/// The census of several blocks read as one, one entry per name in `columns`
+/// — what a table spanning more than one `COPY` block (I2) resolves against,
+/// and what a query's schema commits to over exactly the blocks it will
+/// replay (`docs/design/decisions.md`, "D35").
+///
+/// **Keyed by column name, not by position**: a leaf partition's block lists
+/// its columns in the leaf's own order, which need not be the root's or a
+/// sibling's. A name a block carries and `columns` does not contributes
+/// nothing, and so does a census entry past its header's list — a block
+/// naming no columns copies none (I5). A block holding no census contributes
+/// nothing either, so a caller believing the union has first made sure every
+/// block holds one.
+pub fn union_census<'a>(
+    columns: &[String],
+    blocks: impl IntoIterator<Item = &'a CopyBlock>,
+) -> Vec<ArrayShape> {
+    let mut out = vec![ArrayShape::default(); columns.len()];
+    for block in blocks {
+        let census = block.array_shapes.iter().flatten();
+        for (name, shape) in block.header.columns.iter().zip(census) {
+            let slot = columns.iter().position(|c| c == name);
+            if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
+                slot.merge(shape);
+            }
+        }
+    }
+    out
 }
 
 /// One table as its `COPY` headers name it: the database whose `\connect`

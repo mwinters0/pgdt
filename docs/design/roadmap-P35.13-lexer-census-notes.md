@@ -26,9 +26,10 @@ moved whole; nothing persisted changed, so no format bump.
 
 ## What later cuts inherit
 
-- **Two `observe_row`s sit in `block.rs`**: the census's, on
-  `BlockCensusExt`, and the statistics observer's, on `BlockObserver`. A
-  profile tells them apart by trait path; `measurements.md`'s
+- **Two `observe_row`s sit in pgdt-model**: the census's, on
+  `BlockCensusExt` in `block.rs`, and the statistics observer's, on
+  `BlockObserver` in `statistics.rs`. A profile tells them apart by trait
+  path; `measurements.md`'s
   `statistics-gathering` prose names which it means.
 - **`measure.py`'s `SCAN` and `emitter_register.py`'s `READERS` name
   `crates/pgdt-dump/src/lex.rs`**; `type_name.rs` is in neither, being off

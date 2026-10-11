@@ -68,7 +68,7 @@ pub struct XzSource {
     /// The live piecewise decode, or `None` where no read has taken that arm
     /// yet or its last decode failed. Behind a `Mutex` because a handle goes forward only and one
     /// position cannot serve two readers — which is why that arm advises a
-    /// single partition ([`xz_partition_advice`](super::xz_partition_advice)).
+    /// single partition ([`xz_partition_advice`](super::blocks::xz_partition_advice)).
     pub(super) live: Arc<Mutex<Option<LiveBlock>>>,
     /// What the caller announced and everything derived from it: the two
     /// pools, which arm a read takes, and what a reader of this file costs.
@@ -277,7 +277,7 @@ impl XzSource {
     /// **The handle is kept across reads**, which is what makes a forward scan
     /// cost one decode of the file rather than one per read ([`LiveBlock`]).
     /// The mutex is therefore held across the decode, and one position cannot
-    /// serve two readers — the single partition [`xz_partition_advice`](super::xz_partition_advice)'s other
+    /// serve two readers — the single partition [`xz_partition_advice`](super::blocks::xz_partition_advice)'s other
     /// arm advises.
     fn read_in_pieces(
         offset: u64,

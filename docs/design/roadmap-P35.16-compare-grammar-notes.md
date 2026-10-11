@@ -59,5 +59,4 @@ whole; nothing persisted changed, so no format bump.
   `ComparisonPlan`. `grammar` ↔ `key::order`: `checked_key` refuses an
   uncomparable position by `grammar_refuses`, which reads a `box` array
   through `checked_key`. 35.17's families may dissolve the third; the first
-  two are placements for 35.12's closing read to weigh, as 35.14 and 35.15
-  left theirs.
+  two are placements for 35.12's closing read to weigh.

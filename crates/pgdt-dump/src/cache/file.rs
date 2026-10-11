@@ -1,7 +1,9 @@
-//! The cache file's format — its header, what it encodes, and the reading
-//! and writing of it that [`super::load`] and [`super::save`] go through. Not
-//! the cache's API: reached through `internal`, for the tests that write a
-//! cache by hand.
+//! The cache file — its format, its header, what it encodes, and the reading
+//! and writing of it that [`super::load`] and [`super::save`] go through — and
+//! what a read of it finds ([`CacheStatus`]), with the shape of the container
+//! under its offsets ([`CompressionShape`]) and the rest it persists
+//! ([`CacheEnvelope`]). Those three are the cache's API; the format is not,
+//! reached through `internal` for the tests that write a cache by hand.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -12,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bincode::error::DecodeError;
 use serde::{Deserialize, Serialize};
 
-use super::{CacheStatus, SourceIdentity};
+use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use pgdt_core::{Error, Result, Unusable};
 use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex, calendar_end};
 
@@ -77,6 +79,123 @@ pub struct CacheFile {
     /// ([`Unusable::CalendarChanged`]; `docs/design/decisions.md`, "D96").
     pub calendar_end: i32,
     pub index: DumpIndex,
+}
+
+/// The shape of the container a cache's offsets sit under, read off the
+/// persisted [`CompressionIndex`].
+///
+/// Three numbers, each answering a question the user is otherwise sent to
+/// `xz --list` for. `max_block_uncompressed` is the largest term of what a
+/// memory budget is compared against — four times over, one reader's block
+/// beside the further blocks the pool keeps, plus the chunk buffer and the
+/// decoder's own working memory — so it is most of the read-buffer budget
+/// `--memory` has to leave when a query says the block path was declined, and
+/// that query's own note states the whole of it
+/// (`pgdt_query::PlanNoteKind::CompressedBlockPathDeclined`); `blocks` is how much
+/// seeking the file offers at all; `streams` is what explains a slow first
+/// command, a concatenated file costing one seek per stream to walk
+/// (`docs/design/decisions.md`, "D18").
+///
+/// **Derived, not stored** — a projection of the seek table the envelope
+/// already carries, computed on load like the diagnostics beside it. It is a
+/// property of the *file*, which is why a cache answers it with no dump
+/// present, unlike a budget decline, which depends on the run and reaches a
+/// caller as `pgdt_query::PlanNoteKind::CompressedBlockPathDeclined`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CompressionShape {
+    /// The container: `"xz"` today, and the only value there is. A word
+    /// rather than a one-variant enum, being a name to print.
+    pub container: &'static str,
+    pub streams: usize,
+    pub blocks: usize,
+    pub max_block_uncompressed: u64,
+}
+
+impl CompressionShape {
+    pub(super) fn of(index: &CompressionIndex) -> Self {
+        let CompressionIndex::Xz(table) = index;
+        Self {
+            container: "xz",
+            streams: table.stream_count(),
+            blocks: table.block_count(),
+            max_block_uncompressed: table.max_block_uncompressed(),
+        }
+    }
+}
+
+/// Everything a cache file persists beside its index and `total_size`, as it
+/// was read — handed out on [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`]
+/// so a reporting caller can export the whole file, which `pgdt info --json`
+/// does (`docs/design/decisions.md`, "D67").
+///
+/// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
+/// matches on [`SourceIdentity`] or reads the seek table through this, and
+/// its `Serialize` is the persisted types' own, variant tags included. The
+/// seek table serializes as `seek_table`, the name `compression` being
+/// [`CompressionShape`]'s wherever the two sit side by side. Moved out of the
+/// decoded file rather than copied, so carrying it costs nothing the load did
+/// not already hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheEnvelope {
+    pub(super) format_version: u32,
+    pub(super) container_kind: ContainerKind,
+    pub(super) seek_table: Option<CompressionIndex>,
+    pub(super) identity: SourceIdentity,
+    pub(super) calendar_end: i32,
+}
+
+/// What [`load`](super::load) found at a cache path, once checked against the
+/// live source's identity — see the parent module's docs.
+///
+/// Each unusable outcome is named and stays named all the way to the caller:
+/// [`CacheMode::load`](super::CacheMode::load) carries it across as
+/// [`CacheLoad::Unusable`](super::CacheLoad::Unusable) rather
+/// than answering `None` (`docs/design/decisions.md`, "D22").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheStatus {
+    /// Nothing at this path.
+    Missing,
+    /// Something is at this path that cannot be used, and why.
+    Unusable(Unusable),
+    /// A usable cache whose `index.scanned_through` reaches the file's
+    /// recorded size — the whole file is mapped. `weak` is what the source's
+    /// current modification signal says against the one recorded at save time
+    /// and `origin` what its origin says against the recorded one, neither of
+    /// which itself makes the cache unusable (see the module docs).
+    /// `total_size` is [`CacheFile::total_size`]: a reporting caller
+    /// states coverage against it, and a cache-only caller has no live source
+    /// to stat. `compression` is the container's shape where one sits under
+    /// these offsets and `None` for a plain file — read off the persisted
+    /// seek table, so a cache-only caller answers it with no dump present
+    /// ([`CompressionShape`]). `envelope` is the rest of what the file
+    /// persists, for a caller exporting it ([`CacheEnvelope`]).
+    Valid {
+        index: DumpIndex,
+        weak: WeakIdentity,
+        origin: OriginMatch,
+        total_size: u64,
+        compression: Option<CompressionShape>,
+        envelope: CacheEnvelope,
+    },
+    /// A usable cache whose `index.scanned_through` falls short of
+    /// `total_size` — a real, not-yet-finished scan (a preamble-only scan, or
+    /// a query that stopped once its target settled), not a defect
+    /// (`docs/design/decisions.md`, "D22"). What "not enough" means is
+    /// caller-specific: `pgdt info` states the coverage
+    /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
+    /// incremental scan (`pgdt_query::map_file`,
+    /// `pgdt_query::table_stream`, `crate::preamble::preamble_only`) builds
+    /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
+    /// `total_size`, `compression` and `envelope` are
+    /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
+    Incomplete {
+        index: DumpIndex,
+        weak: WeakIdentity,
+        origin: OriginMatch,
+        total_size: u64,
+        compression: Option<CompressionShape>,
+        envelope: CacheEnvelope,
+    },
 }
 
 /// Read and header-check the cache at `path`, shared by [`load`](super::load),

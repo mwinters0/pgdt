@@ -63,14 +63,7 @@ pgdt-model's files stay, and three items move so its edges run one way —
 beside them in `statistics.rs`, which reads `block`'s `Unrepresentable`;
 `union_census` folds a table's `CopyBlock`s, so it sits in `span.rs`, which
 reads `block`'s census; `TilingIssue` is what a diagnostic reports, and moves
-to `diagnostic.rs`, which `span`'s `DumpIndex` reads. The 35.23 cut's moves,
-projected against `2ea0056b` with no cycle:
-
-```moves
-pgdt-model::block::BlockObserver -> pgdt-model::statistics
-pgdt-model::block::union_census -> pgdt-model::span
-pgdt-model::span::TilingIssue -> pgdt-model::diagnostic
-```
+to `diagnostic.rs`, which `span`'s `DumpIndex` reads. 35.23 cut it.
 
 ## pgdt-io
 
@@ -86,8 +79,8 @@ lib.rs                      crate doc and API re-exports (absorbs io.rs)
 source.rs                   the read contract: ByteRangeSource, RemoteIdentity, WaitPolicy, the default chunk
   source/pool.rs            BufferPool, PooledBuffer: what every source reads into (out of local.rs)
   source/local.rs           LocalFileSource
-  source/xz.rs              what both .xz sources share: LiveBlock, piece_of, the short read, the advice, walk_seek_table
-    xz/blocks.rs            BlockCache, XzBudget
+  source/xz.rs              what both .xz sources share: LiveBlock, piece_of, the short read, walk_seek_table
+    xz/blocks.rs            BlockCache, XzBudget, the partition advice
     xz/file.rs              XzSource
     xz/fetched.rs           FetchedXzSource
   source/origin.rs          Origin, the probe, open and open_local
@@ -102,14 +95,8 @@ cancel.rs                   Cancellation
 the `source` ↔ `parallelism` and `local` ↔ `blocks` cycles, and `fetched`
 stops reaching into `XzSource`'s file. `xz_partition_advice` reads
 `BlockCache` and `XzBudget` calls it, so it moves beside them into
-`xz/blocks.rs`, which removes `xz` ↔ `blocks` — the 35.23 cut:
-
-```moves
-pgdt-io::source::xz::xz_partition_advice -> pgdt-io::source::xz::blocks
-```
-
- `origin` → `remote` is a
-dispatcher and its `http` arm, and stays. The 2760-line `tests.rs` splits
+`xz/blocks.rs`, which removes `xz` ↔ `blocks` — the 35.23 cut. `origin` →
+`remote` is a dispatcher and its `http` arm, and stays. The 2760-line `tests.rs` splits
 beside each module, in the order it already runs.
 
 ## pgdt-dump
@@ -148,16 +135,7 @@ operations it defined read `file` and `identity` and `mode` read them, while
 `file`'s reader answers `CacheStatus` and `identity`'s `SourceWatch` reads
 `StrictIdentity`. So `CacheStatus` with its envelope and shape sits in
 `file.rs`, `StrictIdentity` in `identity.rs`, and the operations in
-`store.rs`, running `identity` ← `file` ← `store` ← `mode`. The 35.23 cut's
-moves, projected against `2ea0056b` with no cycle:
-
-```moves
-pgdt-dump::cache -> pgdt-dump::cache::store
-pgdt-dump::cache::CacheStatus -> pgdt-dump::cache::file
-pgdt-dump::cache::CacheEnvelope -> pgdt-dump::cache::file
-pgdt-dump::cache::CompressionShape -> pgdt-dump::cache::file
-pgdt-dump::cache::mode::StrictIdentity -> pgdt-dump::cache::identity
-```
+`store.rs`, running `identity` ← `file` ← `store` ← `mode`. 35.23 cut it.
 
 ## pgdt-codec
 

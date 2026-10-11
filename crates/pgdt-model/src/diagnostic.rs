@@ -43,8 +43,6 @@ use std::fmt::Debug;
 
 use serde::Serialize;
 
-use crate::TilingIssue;
-
 /// One finding from any of the library's diagnostic channels, as a
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
 /// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (the
@@ -105,6 +103,23 @@ pub enum Severity {
     Error,
 }
 
+/// What [`pgdt_dump::check_tiling`] found wrong, if anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum TilingIssue {
+    /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
+    Discontinuity { after_index: usize, span_end: u64, next_start: u64 },
+    /// The spans aren't sorted by `start` — every other check assumes they
+    /// are, so this is reported instead of a misleading discontinuity.
+    OutOfOrder { index: usize },
+    /// The first span doesn't start at byte 0.
+    DoesNotStartAtZero { first_start: u64 },
+    /// The last span's `end` doesn't reach `expected_end` (the scanned
+    /// prefix's length, or the file size for a full scan).
+    DoesNotReachEnd { last_end: u64, expected_end: u64 },
+    /// A span's own `start >= end`.
+    Empty { index: usize },
+}
+
 /// What a [`Diagnostic`] is about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum DiagnosticKind {
@@ -159,7 +174,7 @@ pub enum DiagnosticKind {
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
     /// non-seekable table — pushed once per index, whether the table was just
     /// walked (`pgdt_query::build_index`, `pgdt_dump::preamble_only`) or
-    /// read back from a persisted cache (`pgdt_dump::cache::status_from_file`).
+    /// read back from a persisted cache (`pgdt_dump::cache::store::status_from_file`).
     NonSeekableCompressedSource { block_count: usize },
 }
 

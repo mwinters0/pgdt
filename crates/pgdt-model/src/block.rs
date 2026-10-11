@@ -1,12 +1,11 @@
 //! What one pass over a `COPY` block's rows records beside them — the
 //! array-shape census and the unrepresentable count (`docs/design/decisions.md`,
-//! "D35", "D96"), and how a row is folded into them — and the contracts over a block's rows the parsers call and a
-//! crate above implements ([`FieldCount`], [`BlockObserver`]).
+//! "D35", "D96"), and how a row is folded into them — and the contract over a
+//! block's rows that counts it, which the parsers call and a crate above
+//! implements ([`FieldCount`]).
 
 use pgdt_core::split_fields;
 use serde::{Deserialize, Serialize};
-
-use crate::{BlockGathered, CopyBlock, IgnoredRefusals};
 
 /// The most dimensions PostgreSQL can give an array — `MAXDIM`, 6 in every
 /// supported version (I25). A literal whose leading brace run is longer than
@@ -245,40 +244,11 @@ impl BlockCensusExt for BlockCensus {
     }
 }
 
-/// The census of several blocks read as one, one entry per name in `columns`
-/// — what a table spanning more than one `COPY` block (I2) resolves against,
-/// and what a query's schema commits to over exactly the blocks it will
-/// replay (`docs/design/decisions.md`, "D35").
-///
-/// **Keyed by column name, not by position**: a leaf partition's block lists
-/// its columns in the leaf's own order, which need not be the root's or a
-/// sibling's. A name a block carries and `columns` does not contributes
-/// nothing, and so does a census entry past its header's list — a block
-/// naming no columns copies none (I5). A block holding no census contributes
-/// nothing either, so a caller believing the union has first made sure every
-/// block holds one.
-pub fn union_census<'a>(
-    columns: &[String],
-    blocks: impl IntoIterator<Item = &'a CopyBlock>,
-) -> Vec<ArrayShape> {
-    let mut out = vec![ArrayShape::default(); columns.len()];
-    for block in blocks {
-        let census = block.array_shapes.iter().flatten();
-        for (name, shape) in block.header.columns.iter().zip(census) {
-            let slot = columns.iter().position(|c| c == name);
-            if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
-                slot.merge(shape);
-            }
-        }
-    }
-    out
-}
-
 /// **What a data-level block's values are counted against**: whether a field
 /// holds a value no Arrow type of its column's could hold, and past which
 /// limit (`docs/design/decisions.md`, "D96"). Defined here and implemented by
 /// `pgdt_codec::unrepresentable`, which walks each leaf by the column's declared
-/// type — a contract over a block's rows, as [`BlockObserver`] is
+/// type — a contract over a block's rows, as `statistics`' `BlockObserver` is
 /// (`docs/design/decisions.md`, "D74").
 pub trait FieldCount: Send + Sync {
     /// Whether any column is tested, so a row is split for its count.
@@ -286,56 +256,6 @@ pub trait FieldCount: Send + Sync {
     /// The tier `field` — column `column`'s still-escaped bytes — is past,
     /// `None` for a value its column holds and for a column past the header.
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier>;
-}
-
-/// Receives every row of one `COPY` block from the mapping pass and answers
-/// the block's statistics once it closes. Defined here and implemented in query,
-/// the shape `docs/design/decisions.md`, "D74" gives a contract over a block's rows.
-///
-/// **A block the leader splits is observed piece by piece**: each piece's rows
-/// go to an observer [`Self::piece`] made, and the pieces are handed back in
-/// file order to [`Self::absorb`], after which the block's observer answers
-/// what it would have had it been handed every row itself — bar a decline,
-/// which a piece's charge alongside its neighbours' can reach where one
-/// observer's would not (`docs/design/decisions.md`, "D85").
-pub trait BlockObserver: Send {
-    /// One row, `offset` being where its first byte sits relative to the
-    /// block's first data byte, and `raw` the still-escaped line without its
-    /// terminator.
-    fn observe_row(&mut self, offset: u64, raw: &[u8]);
-
-    /// The block's statistics, or [`BlockGathered::Declined`] where the
-    /// allowance could not hold them before this call; the close it makes is
-    /// kept even past the allowance (`docs/design/decisions.md`, "D85"). `end`
-    /// is the terminator line's offset relative to the block's first data byte
-    /// — where the last row's line ends.
-    fn finish(self: Box<Self>, end: u64) -> BlockGathered;
-
-    /// An observer for a piece of this block: rows starting anywhere after the
-    /// ones this observer has been handed, to be given back to
-    /// [`Self::absorb`] rather than finished.
-    fn piece(&self) -> Box<dyn BlockObserver>;
-
-    /// Fold `later`, made by [`Self::piece`] and handed rows that all follow
-    /// every row this observer has seen, into this one.
-    fn absorb(&mut self, later: Box<dyn BlockObserver>);
-
-    /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
-    /// recovers the concrete piece it made.
-    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
-
-    /// The fields its type's `*_in` refuses that this observer keyed and went
-    /// past, being told to ignore them
-    /// ([`crate::PostgresInvalidValues::Ignore`]), taken before
-    /// [`Self::finish`]: what the block records
-    /// ([`crate::CopyBlock::ignored_refusals`]).
-    fn take_ignored(&mut self) -> Option<IgnoredRefusals>;
-
-    /// Whether this observer checks every field of every row it is handed as
-    /// a strict parse does ([`crate::PostgresInvalidValues::Strict`]), so a
-    /// block it finishes unrefused is checked in full
-    /// ([`crate::CopyBlock::checked_in_full`]).
-    fn checks_every_field(&self) -> bool;
 }
 
 #[cfg(test)]

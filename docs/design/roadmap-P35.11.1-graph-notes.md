@@ -16,8 +16,7 @@ refuted it. The doc's blocks projected together leave no cycle but the kept
   this one reads `2ea0056b`'s paths, which the blocks name.
 - **Each `OWED` entry names the cut that removes it**: 35.17 the codec's two,
   35.18 `gather/` and `map` ↔ `backfill`, 35.19 and 35.20 the stream's, 35.21
-  datafusion-pgdump's root, 35.22 `pgdt` ↔ `where_expr`, 35.23 pgdt-model's,
-  pgdt-dump's `cache/` and `xz` ↔ `blocks`.
+  datafusion-pgdump's root, 35.22 `pgdt` ↔ `where_expr`.
 - **A `--design` run still reads `OWED` for the cycles a block leaves
   untouched**, and names no entry its moves made stale; a cut reads the `!!`
   lines, and the tree's own run after the cut is what fails a stale entry.

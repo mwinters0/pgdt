@@ -41,13 +41,6 @@ path.
 
 ## What later cuts inherit
 
-- **One edge still runs both ways**: `source/xz.rs`'s `xz_partition_advice`
-  names `BlockCache`, and `XzBudget::partitions` in `source/xz/blocks.rs`
-  calls the advice. The design counted nesting as removing the `xz ↔ blocks`
-  cycle; parent and child still import each other. The advice's one input
-  from the cache is `BlockCache::reader_bytes`, so moving it into
-  `blocks.rs` would make the edge one-way — a placement for 35.12's closing
-  read to weigh, the design having put it in `xz.rs`.
-- The other cycles the design named are gone: `partition` reads
+- The cycles the design named are gone: `partition` reads
   `parallelism` and nothing reads back, the plain source and the block cache
   meet only in `pool`, and `fetched` reaches no item of `file`.

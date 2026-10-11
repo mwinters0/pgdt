@@ -1,10 +1,12 @@
 //! How a caller wants the cache handled for one operation ([`CacheMode`]),
-//! which identity signals bind while it is ([`StrictIdentity`]), and what a
-//! load answers a caller holding a live source ([`CacheLoad`]).
+//! the identity signals it binds among them, and what a load answers a
+//! caller holding a live source ([`CacheLoad`]).
 
 use std::path::{Path, PathBuf};
 
-use super::identity::{OriginMatch, SourceWatch, WeakIdentity, advisory_identity_diagnostics};
+use super::identity::{
+    OriginMatch, SourceWatch, StrictIdentity, WeakIdentity, advisory_identity_diagnostics,
+};
 use super::{CacheStatus, colocated_path, load, load_offline, save};
 use pgdt_core::{Error, Result, Unusable};
 use pgdt_io::{ByteRangeSource, Origin};
@@ -298,133 +300,6 @@ impl CacheMode {
                 "cache-only mode has no live source to scan and persist",
             )),
         }
-    }
-}
-
-/// Which weak identity signals a caller has asked to *bind*, and whether a
-/// source that changes under an in-flight read is an error.
-///
-/// **The default is today's stance**: the weak signals are advisory *between*
-/// runs — data moves, and a dump copied or touched is a different weak
-/// identity holding the same bytes — while a source that changes *during* a
-/// run is an error, which is [`SourceWatch`]. What still refuses either way is
-/// the stored size (`docs/design/decisions.md`, "D20"), which is not a weak
-/// signal and is not selectable.
-///
-/// It rides on [`CacheMode`] beside the path because the library owns the
-/// refusal: an embedder gets the same comparison without re-implementing it,
-/// and `pgdt`'s `--strict-identity` only sets it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StrictIdentity {
-    time: bool,
-    location: bool,
-    in_flight: bool,
-}
-
-impl StrictIdentity {
-    /// The default: nothing weak binds between runs, and a source that
-    /// changes under an in-flight read is still an error.
-    pub const ADVISORY: Self = Self { time: false, location: false, in_flight: true };
-    /// Nothing binds at all, the in-flight check included — `pgdt
-    /// --strict-identity=none`. The only way to turn that check off, because
-    /// it is not a question of whether to trust a weak signal but of whether
-    /// a read whose bytes changed underneath it may be believed.
-    pub const NONE: Self = Self { time: false, location: false, in_flight: false };
-
-    /// Bind the selected terms. The in-flight check is on: it is not one of
-    /// the selectors.
-    pub const fn binding(time: bool, location: bool) -> Self {
-        Self { time, location, in_flight: true }
-    }
-
-    /// Whether the modification signals bind — the local mtime, and remotely
-    /// `Last-Modified` and the ETag. Under it, **absence is a failure**: a
-    /// source that can offer no such signal cannot give the guarantee that
-    /// was asked for.
-    pub fn time(self) -> bool {
-        self.time
-    }
-
-    /// Whether the origin a cache was written for binds
-    /// ([`OriginMatch`]). A local cache records no origin, so two local runs
-    /// always agree and this binds nothing there.
-    pub fn location(self) -> bool {
-        self.location
-    }
-
-    /// Whether a source that changes under an in-flight read aborts the run
-    /// rather than merely warning ([`SourceWatch`]) — and so whether a source
-    /// nothing can check during a run is refused before it reads
-    /// ([`SourceWatch::open`]).
-    pub fn in_flight(self) -> bool {
-        self.in_flight
-    }
-}
-
-impl Default for StrictIdentity {
-    fn default() -> Self {
-        Self::ADVISORY
-    }
-}
-
-/// A selection as every front end writes it — `time`, `location`, both
-/// comma-separated, `advisory` or `none` — so `pgdt --strict-identity` and the
-/// DataFusion provider's option read one grammar. `advisory` is
-/// [`StrictIdentity::ADVISORY`] and `none` [`StrictIdentity::NONE`], and each
-/// is exclusive: it says what every term is, so naming it beside another is a
-/// contradiction rather than an override.
-///
-/// **The default has a word** because a dump's own selection replaces its
-/// session's rather than adding to it: without one, a dump under a stricter
-/// session loosens only to `none`, off its in-flight check. *Rejected: a word
-/// only where a dump overrides a session*, which would split this grammar
-/// between front ends; *`default`*, which in a per-dump value reads as the
-/// session's.
-impl std::str::FromStr for StrictIdentity {
-    type Err = String;
-
-    fn from_str(text: &str) -> std::result::Result<Self, String> {
-        const TERMS: &str = "`time`, `location`, `advisory` and `none`";
-        let mut time = false;
-        let mut location = false;
-        let mut whole = None;
-        for term in text.split(',') {
-            match term.trim() {
-                "time" => time = true,
-                "location" => location = true,
-                word @ ("advisory" | "none") => {
-                    if whole.replace(word).is_some_and(|earlier| earlier != word) {
-                        return Err("`advisory` and `none` each say what every term is, so they \
-                                    cannot be combined"
-                            .into());
-                    }
-                }
-                "" => return Err(format!("an empty term; write one of {TERMS}")),
-                other => return Err(format!("`{other}` is not one of {TERMS}")),
-            }
-        }
-        match (whole, time || location) {
-            (Some(word), true) => {
-                Err(format!("`{word}` says what every term is, so it cannot be combined with one"))
-            }
-            (Some("none"), false) => Ok(Self::NONE),
-            (Some(_), false) => Ok(Self::ADVISORY),
-            (None, _) => Ok(Self::binding(time, location)),
-        }
-    }
-}
-
-/// The selection as [`FromStr`](std::str::FromStr) reads it, so what a front
-/// end shows back is what it would take.
-impl std::fmt::Display for StrictIdentity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match (self.in_flight, self.time, self.location) {
-            (false, ..) => "none",
-            (true, true, true) => "time,location",
-            (true, true, false) => "time",
-            (true, false, true) => "location",
-            (true, false, false) => "advisory",
-        })
     }
 }
 
