@@ -807,7 +807,7 @@ GRANT SELECT ON TABLE public.u TO "PUBLIC";
 "#;
 
 /// An `INSERT` run's value holding `$$` neither ends the run nor hides the
-/// block after it: the scanner and the run's end lex alike (`crate::lex`).
+/// block after it: the scanner and the run's end lex alike (`pgdt_dump`'s `lex`).
 #[tokio::test]
 async fn an_insert_run_holding_a_dollar_pair_keeps_every_row() {
     use pgdt_model::DataBlock;

@@ -92,6 +92,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::lex::standard_conforming_strings;
 use crate::preamble::{
     StatementScan, StatementShape, alter_type_labels_unread, classify_statement,
     extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
@@ -102,10 +103,8 @@ use crate::preamble::{
 use crate::scan::{CopyEnd, CopyStart};
 use pgdt_core::Result;
 use pgdt_core::internal::StatisticsScope;
-use pgdt_core::internal::standard_conforming_strings;
-use pgdt_core::split_fields;
 use pgdt_io::ByteRangeSource;
-use pgdt_model::internal::{ArrayShapeExt, BlockCensusExt, FieldRefusalExt, UnrepresentableExt};
+use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
     SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TilingIssue, TocHeader, TypeDef,
@@ -386,43 +385,6 @@ pub struct Builder {
     /// (I50). `on` for a builder starting partway through a file, as for
     /// the scanner resumed beside it.
     standard_strings: bool,
-}
-
-/// Fold one data row of a `COPY` block into `census`: its fields into the
-/// array-shape census, one [`pgdt_model::ArrayShape`] per column, growing it for a row
-/// that turns out to have more fields than the header named — a malformed
-/// row, which the mapping pass does not refuse — and each field `counter`
-/// tests into the unrepresentable count.
-///
-/// The row is rejected wholesale before it is split where neither needs it:
-/// an array literal always contains a `{`, the only other thing that can
-/// start one is an `[lb:ub]=` prefix, so a row holding neither byte in a
-/// block whose counter tests no column costs one `memchr2` pass.
-///
-/// What it costs a scan is read off a profile of a data-level `parse`
-/// (`scripts/measure.py`, `PROFILE_SHAPES`), not off a build without it.
-///
-/// A free function because its callers hold their census in different
-/// places: the serial mapping pass on the [`Builder`], an interior worker
-/// (`crate::leader`) and a re-read (`pgdt_query::stream`) their own.
-pub fn census_row(census: &mut BlockCensus, counter: &dyn FieldCount, raw: &[u8]) {
-    let shaped = memchr::memchr2(b'{', b'[', raw).is_some();
-    if !shaped && !counter.counts_any() {
-        return;
-    }
-    for (i, field) in split_fields(raw).enumerate() {
-        if shaped {
-            if i >= census.shapes.len() {
-                census.shapes.resize(i + 1, Default::default());
-            }
-            census.shapes[i].observe(field);
-        }
-        if let Some(tier) = counter.tier(i, field)
-            && let Some(count) = census.unrepresentable.get_mut(i)
-        {
-            count.add(tier);
-        }
-    }
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -1026,15 +988,15 @@ impl Builder {
     }
 
     /// Fold one data row of the open `COPY` block into its census and count,
-    /// where it has them — see [`census_row`], shared with the interior
-    /// workers a split `COPY` block is scanned by (`crate::leader`) — and hand
-    /// it to the block's statistics observer, if it has one. `offset` is the
+    /// where it has them (`BlockCensusExt::observe_row`, as the interior
+    /// workers a split `COPY` block is scanned by fold theirs), and hand it to
+    /// the block's statistics observer, if it has one. `offset` is the
     /// row's absolute file offset.
     pub fn on_row(&mut self, offset: u64, raw: &[u8]) {
         if let (Some(census), Some(counter)) =
             (self.pending_census.as_mut(), self.pending_counter.as_deref())
         {
-            census_row(census, counter, raw);
+            census.observe_row(counter, raw);
         }
         if let (Some(observer), Some((_, start, ..))) =
             (self.pending_observer.as_mut(), self.pending_data.as_ref())

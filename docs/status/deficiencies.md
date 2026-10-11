@@ -440,7 +440,7 @@ than reading as a phase nobody has sliced.
   lexer reads it, where the lexer takes only the line's end, so a statement
   after a CR on a comment's line is read as that comment; no `pg_dump` writes
   one (I90). **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `crates/pgdt-core/src/lex.rs`.
+  Detail: `crates/pgdt-dump/src/lex.rs`.
 
 - **KD104** — a backslash before a raw LF or tab in a `COPY` row makes that
   byte data, as a restore reads it (I91), where the scanner ends the row at

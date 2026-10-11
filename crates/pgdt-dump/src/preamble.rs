@@ -28,8 +28,9 @@
 
 use std::collections::BTreeSet;
 
+use crate::lex::{Lexer, Region, ident_cont};
 use pgdt_core::internal::Cursor;
-use pgdt_core::internal::{Lexer, Region, canonical_type_name, ident_cont, parse_type_name};
+use pgdt_core::internal::{canonical_type_name, parse_type_name};
 use pgdt_model::internal::{DatabaseMetadataExt, TableDefExt};
 use pgdt_model::{
     CheckConstraint, CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, NotNull,
@@ -1219,7 +1220,7 @@ fn conninfo_dbname(conninfo: &str) -> Option<String> {
 }
 
 /// An incremental scan of a SQL statement's lines: how deep its parens are,
-/// where [`pgdt_core::lex`] leaves it — the rules [`crate::scan::CopyScanner`]
+/// where [`crate::lex`] leaves it — the rules [`crate::scan::CopyScanner`]
 /// lexes the same lines by, so a statement ends where the scanner's regions
 /// say it can — whether its last line ends in a `--` comment, and what its
 /// last non-whitespace byte was.

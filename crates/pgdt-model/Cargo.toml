@@ -14,6 +14,8 @@ introspect = ["pgdt-core/introspect"]
 # recorded by the cache that counted under it (`calendar_end`). No features:
 # only `NaiveDate`'s range is read, and the version is `arrow`'s own.
 chrono = { workspace = true }
+# `observe_row`'s one pass over a row holding no array and counting nothing.
+memchr = { workspace = true }
 pgdt-core = { path = "../pgdt-core" }
 # `rc` for `CopyBlock::statistics`, held by `Arc` so a map clone copies a
 # reference.

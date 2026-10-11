@@ -124,7 +124,7 @@ INSERT INTO public.specials VALUES
 -- value cap too, as is the 300-byte value, which is the one a truncated bound
 -- is taken from without the megabyte behind it. Ascending bytewise. It stays
 -- past the read chunk on every major: a shorter one hid a quadratic carry scan
--- (scan.rs, `a_line_many_chunks_long_is_scanned_once`).
+-- (scan/tests.rs, `a_line_many_chunks_long_is_scanned_once`).
 -- ---------------------------------------------------------------------
 CREATE TABLE public.long_value (
     id integer,

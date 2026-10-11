@@ -784,7 +784,7 @@ def _split(tokens: Sequence[Token], sep: str) -> Iterable[Sequence[Token]]:
 READERS: tuple[str, ...] = (
     "crates/pgdt-dump/src/scan.rs",
     "crates/pgdt-core/src/copy.rs",
-    "crates/pgdt-core/src/lex.rs",
+    "crates/pgdt-dump/src/lex.rs",
     "crates/pgdt-dump/src/map.rs",
     "crates/pgdt-dump/src/preamble.rs",
 )

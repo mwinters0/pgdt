@@ -280,7 +280,7 @@ CREATE TABLE objects.tablespaced_table (id integer) TABLESPACE fixture_ts;
 -- `$` outside a dollar-quoted body: a quoted table name holding `$$`, which
 -- pg_dump writes into the table's TOC comments, its COPY header and its
 -- COMMENT; a default holding `$x$`; and a comment holding `$$`. None opens a
--- body to psql, and crates/pgdt-core/src/lex.rs lexes as psql does -- a scanner
+-- body to psql, and crates/pgdt-dump/src/lex.rs lexes as psql does -- a scanner
 -- that took any of them for a delimiter swallowed the lines after it, the
 -- table's data among them.
 CREATE TABLE objects."price$$list" (

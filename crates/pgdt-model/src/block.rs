@@ -1,8 +1,9 @@
 //! What one pass over a `COPY` block's rows records beside them — the
 //! array-shape census and the unrepresentable count (`docs/design/decisions.md`,
-//! "D35", "D96") — and the contracts over a block's rows the parsers call and a
+//! "D35", "D96"), and how a row is folded into them — and the contracts over a block's rows the parsers call and a
 //! crate above implements ([`FieldCount`], [`BlockObserver`]).
 
+use pgdt_core::split_fields;
 use serde::{Deserialize, Serialize};
 
 use crate::{BlockGathered, CopyBlock, IgnoredRefusals};
@@ -179,6 +180,7 @@ pub struct BlockCensus {
 /// because a crate boundary forced it, and reached through `internal`.
 pub trait BlockCensusExt {
     fn new(columns: usize) -> Self;
+    fn observe_row(&mut self, counter: &dyn FieldCount, raw: &[u8]);
     fn merge(&mut self, other: &BlockCensus);
 }
 
@@ -188,6 +190,40 @@ impl BlockCensusExt for BlockCensus {
         BlockCensus {
             shapes: vec![ArrayShape::default(); columns],
             unrepresentable: vec![Unrepresentable::default(); columns],
+        }
+    }
+
+    /// Fold one data row of a `COPY` block in: its fields into the
+    /// array-shape census, one [`ArrayShape`] per column, growing it for a row
+    /// that turns out to have more fields than the header named — a malformed
+    /// row, which the mapping pass does not refuse — and each field `counter`
+    /// tests into the unrepresentable count. Every pass recording a census
+    /// calls it: the serial mapping pass, an interior worker and a re-read.
+    ///
+    /// The row is rejected wholesale before it is split where neither needs
+    /// it: an array literal always contains a `{`, the only other thing that
+    /// can start one is an `[lb:ub]=` prefix, so a row holding neither byte
+    /// in a block whose counter tests no column costs one `memchr2` pass.
+    ///
+    /// What it costs a scan is read off a profile of a data-level `parse`
+    /// (`scripts/measure.py`, `PROFILE_SHAPES`), not off a build without it.
+    fn observe_row(&mut self, counter: &dyn FieldCount, raw: &[u8]) {
+        let shaped = memchr::memchr2(b'{', b'[', raw).is_some();
+        if !shaped && !counter.counts_any() {
+            return;
+        }
+        for (i, field) in split_fields(raw).enumerate() {
+            if shaped {
+                if i >= self.shapes.len() {
+                    self.shapes.resize(i + 1, Default::default());
+                }
+                self.shapes[i].observe(field);
+            }
+            if let Some(tier) = counter.tier(i, field)
+                && let Some(count) = self.unrepresentable.get_mut(i)
+            {
+                count.add(tier);
+            }
         }
     }
 

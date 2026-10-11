@@ -1,12 +1,12 @@
 //! What every other `pgdt-*` crate reads and nothing else owns: the error
-//! type, the `introspect` hooks, the SQL lexer and the `COPY` text format
-//! (`docs/design/decisions.md`, "D68"). The error type names no dependency's
+//! type, the `introspect` hooks, a type name's canonical form and the `COPY`
+//! text format (`docs/design/decisions.md`, "D68"). The error type names no dependency's
 //! error; a dependency's is a cause it carries opaquely (D74).
 
 mod copy;
 mod error;
 pub mod instrument;
-mod lex;
+mod type_name;
 
 pub use copy::{
     COPY_BLOCK_TERMINATOR, COPY_TEXT_DELIMITER, CopyHeader, FieldRanges, RawRow, RowSplit,
@@ -28,9 +28,6 @@ pub mod internal {
     };
     #[cfg(feature = "introspect")]
     pub use crate::instrument::hooks::{evaluated_row, statistics_loaded, timed_span};
-    pub use crate::lex::{
-        Lexer, LineLex, Quote, Region, canonical_type_name, ident_cont, parse_type_name,
-        standard_conforming_strings,
-    };
+    pub use crate::type_name::{canonical_type_name, parse_type_name};
     pub use crate::{row_evaluated, timed};
 }

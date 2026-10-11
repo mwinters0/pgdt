@@ -89,8 +89,11 @@ escaped ([`decisions.md`](decisions.md), "The scanner").
 Which bytes of a line outside a `COPY` block are code, and which are inside a
 string, a quoted identifier or a comment; a type name canonicalized.
 
-- **pgdt-core** — `lex.rs`: read by the scanner and the DDL grammar, and by
-  the catalog and the type register for a type's name.
+- **pgdt-dump** — `lex.rs`: read by the scanner and the DDL grammar alone.
+- **pgdt-core** — `type_name.rs`: a type name's canonical form, read by the
+  DDL grammar and by the catalog and the type register, so below the model
+  and the codec, and kept out of the model, whose edits ask whether the
+  cache format bumps.
 
 ## The scanner
 
@@ -111,8 +114,7 @@ extends a map, and what is found wrong with the file
 
 **Not in one place.** `load.rs` holds the preamble region's prepass and the
 map's tiling diagnostics, and loads nothing (`cache/` does); the map's
-statement framing (`StatementScan`) is in `preamble.rs`; `census_row` in
-`map.rs` is shared with the interior split and the back-fill.
+statement framing (`StatementScan`) is in `preamble.rs`.
 
 ## The mapping pass
 
@@ -166,11 +168,10 @@ hold, and the contracts over a block's rows a crate above implements
 ([`decisions.md`](decisions.md), "D35", "D74").
 
 - **pgdt-model** — `block.rs`: persisted, and a contract over the data is
-  model wherever its implementor sits (D74).
+  model wherever its implementor sits (D74); how a row is folded in is
+  model's too, read by every pass that records, each above it.
 - **pgdt-codec** — `unrepresentable.rs`: told from a field's text against an
   Arrow type, so codec's.
-
-**Not in one place.** `census_row` is in pgdt-dump's `map.rs`.
 
 ## Type mapping
 

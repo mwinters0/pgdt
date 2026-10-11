@@ -603,7 +603,7 @@ async fn headers_of(text: &str) -> Vec<String> {
 }
 
 /// A `$` outside a dollar-quoted body opens one only where psql's lexer
-/// would (`crate::lex`): never inside a literal, a quoted identifier or a
+/// would (`pgdt_dump`'s `lex`): never inside a literal, a quoted identifier or a
 /// comment, each carried across lines, a plain literal's backslash read
 /// under the dump's own `standard_conforming_strings` (I50). Before, any of
 /// these swallowed every line after it, and both tables' data with them.

@@ -6288,7 +6288,7 @@ STREAM = (
 SCAN = (
     "crates/pgdt-dump/src/scan.rs",
     "crates/pgdt-core/src/copy.rs",
-    "crates/pgdt-core/src/lex.rs",
+    "crates/pgdt-dump/src/lex.rs",
     *STREAM,
 )
 #: Every figure that times a `pgdt` run over a file reads its bytes through
@@ -6364,7 +6364,8 @@ PGTYPE = (
     "crates/pgdt-codec/src/pgtype/strict.rs",
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside
-#: the census (`docs/design/decisions.md`, "D96").
+#: the census (`docs/design/decisions.md`, "D96"), and the fold of a row into
+#: both, in `block.rs`.
 UNREPRESENTABLE = (
     "crates/pgdt-codec/src/unrepresentable.rs",
     "crates/pgdt-model/src/block.rs",

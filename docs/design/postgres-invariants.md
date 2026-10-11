@@ -3720,7 +3720,7 @@ print both lines, call `_doSetFixedOutputState(AH)` at the same three sites and
 quote with the same two macro calls.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D23" — the lexer outside a
-`COPY` block (`crates/pgdt-core/src/lex.rs`), which the scanner, `map::Builder` and
+`COPY` block (`crates/pgdt-dump/src/lex.rs`), which the scanner, `map::Builder` and
 `StatementScan` read the setting into, and `CopyScanner::resume`'s default.
 
 **Re-verify.**

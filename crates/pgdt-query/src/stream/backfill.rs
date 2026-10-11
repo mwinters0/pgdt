@@ -12,7 +12,6 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_cancellation;
-use pgdt_dump::internal::census_row;
 use pgdt_dump::internal::{CensusPlan, RegionScan, scan_region};
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, WaitPolicy};
@@ -558,7 +557,7 @@ async fn observe_rows(
             while let Some(event) = scanner.next_event(span, span_eof)? {
                 match event {
                     Event::Row(row) => {
-                        census_row(&mut census, plan.counter.as_ref(), row.raw);
+                        census.observe_row(plan.counter.as_ref(), row.raw);
                         if let Some(observer) = observer.as_deref_mut() {
                             observer.observe_row(row.offset - block.data_offset, row.raw);
                         }

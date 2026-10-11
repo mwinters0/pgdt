@@ -31,7 +31,6 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::map::census_row;
 use crate::scan::{CopyEnd, CopyScanner, Event, PieceEndings, RowEnding, ScanOptions};
 use pgdt_core::{Error, Result, RowEndingRefusal};
 use pgdt_io::{
@@ -128,7 +127,7 @@ pub(crate) struct PieceObserver {
 ///
 /// `census` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list, and a row wider than it grows it
-/// (`crate::map::census_row`); `None` is a block at the metadata level, whose
+/// (`BlockCensusExt::observe_row`); `None` is a block at the metadata level, whose
 /// rows are counted and never split into fields (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
@@ -185,7 +184,7 @@ pub(crate) fn scan_piece(
             Event::Row(row) => {
                 rows += 1;
                 if let Some(plan) = plan {
-                    census_row(&mut census, plan.counter.as_ref(), row.raw);
+                    census.observe_row(plan.counter.as_ref(), row.raw);
                 }
                 if let Some(piece) = &mut observer {
                     piece.observer.observe_row(row.offset - piece.data_offset, row.raw);

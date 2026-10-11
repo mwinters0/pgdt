@@ -2637,12 +2637,13 @@ ranks them** (`measure.py --profile-recipe`'s
 `profile-parse-statistics-data-rss-{control,arrays}`, read for proportions
 under the profiling build, taken at `183a50e` on the platform allocator and not
 re-taken with this table, so the seconds below apply its shares to these
-walls): the samples under `map::census_row`, the census
-with the unrepresentable count inside it, are **8.8%** of the control's
+walls): the samples under the census's fold — `map::census_row` at that
+commit, `BlockCensusExt::observe_row` today — with the unrepresentable count
+inside it, are **8.8%** of the control's
 data-level `parse` and **9.0%** of the arrays file's, about 0.40 s and 0.39 s
 of the walls above; the count's own share of them, the samples under its
 `tier` test, is **3.8%** and **3.3%**, the rest splitting fields and finding
-`{` and `[`. The statistics, sampled under `observe_row`, are **72%** of
+`{` and `[`. The statistics, sampled under the block observer's `observe_row`, are **72%** of
 either, about 3.3 s and 3.1 s: unescaping each field, keying it, holding each
 group's bounds in every view and the previous value, and a dictionary's
 membership test, which `gather.rs` names and the profile does not split

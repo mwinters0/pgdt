@@ -17,21 +17,19 @@
 //! tag takes the identifier after it, so `$e'…'` opens a plain literal where
 //! psql gives the `e` back and reads an escape string.
 //!
-//! [`pgdt_dump::CopyScanner`] lexes every line outside a block, so a `$$`
+//! [`crate::scan::CopyScanner`] lexes every line outside a block, so a `$$`
 //! inside any of these opens no body (`docs/design/decisions.md`, "D23"), and
-//! [`pgdt_dump::preamble::StatementScan`] lexes a statement's lines with the same
-//! rules, so a statement's end agrees with the scanner's regions.
+//! [`crate::preamble::StatementScan`] lexes a statement's lines with the
+//! same rules, so a statement's end agrees with the scanner's regions.
 //!
 //! **Line at a time.** Every caller holds whole lines, and nothing in a
 //! region boundary straddles a newline but the regions themselves, which is
 //! what [`Lexer`] carries: a `''`, a `--`, a `/*` or a `$tag$` is always
 //! inside one line.
 
-use crate::copy::Cursor;
-
 /// Which kind of quoted literal is open, by what ends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Quote {
+pub(crate) enum Quote {
     /// `'…'` with `''` as the only escape: a standard string under
     /// `standard_conforming_strings = on`, and `U&'…'` always.
     Plain,
@@ -44,7 +42,7 @@ pub enum Quote {
 
 /// Where the lexer stands between two bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Region {
+pub(crate) enum Region {
     /// Between tokens, or inside an unquoted one.
     Code,
     Quoted(Quote),
@@ -59,7 +57,7 @@ pub enum Region {
 
 /// What lexing one line found, beyond where it left the [`Lexer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineLex {
+pub(crate) struct LineLex {
     /// The line began inside a dollar-quoted body, or opened one.
     pub dollar: bool,
     /// The line ends in a `--` comment, which the newline closes.
@@ -68,7 +66,7 @@ pub struct LineLex {
 
 /// The lexer's state across lines. See the module docs.
 #[derive(Debug, Clone)]
-pub struct Lexer {
+pub(crate) struct Lexer {
     region: Region,
     /// `standard_conforming_strings`, `on` until the dump says otherwise.
     standard_strings: bool,
@@ -107,9 +105,9 @@ const fn dolq_cont(b: u8) -> bool {
     ident_start(b) || b.is_ascii_digit()
 }
 
-/// `scan.l`'s `ident_cont`. `pub(crate)` for [`pgdt_dump::preamble::strip_kw`]'s
-/// word boundary.
-pub const fn ident_cont(b: u8) -> bool {
+/// `scan.l`'s `ident_cont`, which the DDL grammar's word boundaries read
+/// too ([`crate::preamble::strip_kw`]).
+pub(crate) const fn ident_cont(b: u8) -> bool {
     dolq_cont(b) || b == b'$'
 }
 
@@ -361,7 +359,7 @@ fn dollar_token(line: &[u8], boundary: usize, at: usize) -> DollarToken {
 /// `pg_dumpall` write to state the literal syntax that follows (I50), as
 /// `on`. Keywords in any case, `=` or `TO`, the value bare or quoted; any
 /// other line is `None`.
-pub fn standard_conforming_strings(line: &[u8]) -> Option<bool> {
+pub(crate) fn standard_conforming_strings(line: &[u8]) -> Option<bool> {
     let line = std::str::from_utf8(line).ok()?.trim();
     let rest = strip_word(line, "SET")?;
     let rest = strip_word(rest, "standard_conforming_strings")?;
@@ -392,259 +390,5 @@ fn strip_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
     Some(rest.trim_start())
 }
 
-/// Parse a (possibly schema-qualified) type name from the start of `s` into
-/// its **canonical spelling**, returning it and how many bytes of `s` it
-/// consumed — what [`pgdt_model::TypeDef::name`] holds, and what every lookup of a type by
-/// name compares ([`canonical_type_name`]).
-///
-/// Each part is read as the server reads it — an unquoted identifier folded to
-/// lower case, a quoted one taken verbatim (I29) — and written back bare where
-/// it is a plain lower-case identifier, quoted with `""` doubled everywhere
-/// else. So `public."Mood"`, `PUBLIC."Mood"` and `"public"."Mood"` agree while
-/// `public.Mood` is `public.mood`, and no two distinct names share a spelling:
-/// a bare part holds no `.` or `"`. It is `fmtId()`'s spelling but for a
-/// keyword, which `pg_dump` quotes and this leaves bare.
-pub fn parse_type_name(s: &str) -> Option<(String, usize)> {
-    fn push_part(out: &mut String, part: &str) {
-        let bytes = part.as_bytes();
-        let plain = bytes.first().is_some_and(|b| b.is_ascii_lowercase() || *b == b'_')
-            && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_');
-        if plain {
-            out.push_str(part);
-        } else {
-            out.push('"');
-            out.push_str(&part.replace('"', "\"\""));
-            out.push('"');
-        }
-    }
-    let mut cur = Cursor::new(s.as_bytes());
-    cur.skip_spaces();
-    let mut name = String::new();
-    push_part(&mut name, &cur.parse_ident()?);
-    let before_dot = cur.pos();
-    cur.skip_spaces();
-    if cur.eat_byte(b'.') {
-        cur.skip_spaces();
-        name.push('.');
-        push_part(&mut name, &cur.parse_ident()?);
-        return Some((name, cur.pos()));
-    }
-    Some((name, before_dot))
-}
-
-/// `reference` — a declared type, a domain's base, a multirange companion's
-/// name — in [`parse_type_name`]'s canonical spelling, or `None` where it is
-/// not one type name alone (`integer[]`, `double precision`, text the
-/// identifier grammar does not accept). Applied to both sides of a lookup, so
-/// two spellings of one name find each other and nothing else does.
-pub fn canonical_type_name(reference: &str) -> Option<String> {
-    let (name, consumed) = parse_type_name(reference)?;
-    reference[consumed..].trim().is_empty().then_some(name)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Lex `lines` from a fresh lexer under `standard`, returning where each
-    /// line left it and what it found.
-    fn lex(standard: bool, lines: &[&str]) -> Vec<(Region, LineLex)> {
-        let mut lexer = Lexer::with_standard_strings(standard);
-        lines
-            .iter()
-            .map(|line| {
-                let found = lexer.line(line.as_bytes(), |_| {});
-                (lexer.region().clone(), found)
-            })
-            .collect()
-    }
-
-    fn ends(standard: bool, lines: &[&str]) -> Region {
-        lex(standard, lines).pop().unwrap().0
-    }
-
-    fn dollar(tag: &str) -> Region {
-        Region::Dollar(tag.as_bytes().into())
-    }
-
-    #[test]
-    fn a_dollar_inside_a_string_identifier_or_comment_opens_nothing() {
-        for line in [
-            "COMMENT ON TABLE public.a IS 'costs $$ here';",
-            "COMMENT ON TABLE public.a IS E'costs \\' $$ here';",
-            "CREATE TABLE public.\"x$$\" (id integer);",
-            "SELECT 1; -- $$ in a comment",
-            "SELECT /* $x$ */ 1;",
-            "-- Name: f$$; Type: FUNCTION; Schema: public; Owner: -",
-        ] {
-            let found = lex(true, &[line]);
-            assert_eq!(found[0].0, Region::Code, "{line}");
-            assert!(!found[0].1.dollar, "{line}");
-        }
-    }
-
-    #[test]
-    fn a_dollar_quote_opens_and_closes_across_lines() {
-        let found = lex(true, &["    AS $$", "COPY public.t (a) FROM stdin;", "$$;"]);
-        assert_eq!(found[0].0, dollar("$$"));
-        assert!(found[0].1.dollar);
-        assert_eq!(found[1].0, dollar("$$"));
-        assert!(found[1].1.dollar, "a line inside a body reports it");
-        assert_eq!(found[2].0, Region::Code);
-        assert!(found[2].1.dollar, "so does the line closing it");
-    }
-
-    #[test]
-    fn only_the_opening_tag_closes_a_body() {
-        let found = lex(true, &["AS $func$", "SELECT 'x $$ y' AS note;", "$func$;"]);
-        assert_eq!(found[1].0, dollar("$func$"));
-        assert_eq!(found[2].0, Region::Code);
-        // A tag that starts like the open one, and one that ends like it.
-        assert_eq!(ends(true, &["AS $ab$ $abc$ $b$ $zab$"]), dollar("$ab$"));
-        assert_eq!(ends(true, &["AS $ab$ x$ab$"]), Region::Code);
-    }
-
-    #[test]
-    fn a_dollar_quote_can_open_and_close_on_one_line() {
-        let found = lex(true, &["SELECT $$literal$$ AS x;"]);
-        assert_eq!(found[0].0, Region::Code);
-        assert!(found[0].1.dollar);
-    }
-
-    #[test]
-    fn a_dollar_in_an_identifier_or_parameter_opens_nothing() {
-        for line in ["SELECT $1$;", "SELECT a$$b$ FROM t;", "SELECT a$b $1 FROM t;", "SELECT é$$;"]
-        {
-            assert_eq!(ends(true, &[line]), Region::Code, "{line}");
-        }
-        // After a number, a parameter or a closed region, a `$` starts a token.
-        assert_eq!(ends(true, &["SELECT 1$$"]), dollar("$$"));
-        assert_eq!(ends(true, &["SELECT $1$$"]), dollar("$$"));
-        assert_eq!(ends(true, &["SELECT $a$ x $a$$b$"]), dollar("$b$"));
-        assert_eq!(ends(true, &["SELECT \"a\"$é$"]), dollar("$é$"));
-    }
-
-    #[test]
-    fn a_string_is_carried_across_lines() {
-        let found = lex(true, &["COMMENT ON TABLE t IS 'first", "COPY public.t FROM stdin;", "';"]);
-        assert_eq!(found[0].0, Region::Quoted(Quote::Plain));
-        assert_eq!(found[1].0, Region::Quoted(Quote::Plain));
-        assert_eq!(found[2].0, Region::Code);
-    }
-
-    #[test]
-    fn a_backslash_escapes_only_where_the_literal_says_it_does() {
-        // `standard_conforming_strings = on`: a plain string's backslash is a
-        // byte, so `'a\'` closes, and an `E''` string's escapes the quote.
-        assert_eq!(ends(true, &["SELECT 'a\\';"]), Region::Code);
-        assert_eq!(ends(true, &["SELECT E'a\\';"]), Region::Quoted(Quote::Escape));
-        assert_eq!(ends(true, &["SELECT e'a\\'b';"]), Region::Code);
-        // `off`: the plain string escapes too, and `U&''` and bit strings never do.
-        assert_eq!(ends(false, &["SELECT 'a\\';"]), Region::Quoted(Quote::Escape));
-        assert_eq!(ends(false, &["SELECT U&'a\\';"]), Region::Code);
-        assert_eq!(ends(false, &["SELECT X'a\\';"]), Region::Code);
-        // A prefix that ends an identifier is not one.
-        assert_eq!(ends(true, &["SELECT xe'a\\';"]), Region::Code);
-        assert_eq!(ends(true, &["SELECT nu&'a\\';"]), Region::Code);
-        // An escaped newline leaves the next line's first quote to close it.
-        assert_eq!(ends(true, &["SELECT E'a\\", "';"]), Region::Code);
-    }
-
-    #[test]
-    fn a_doubled_quote_stays_inside_except_in_a_bit_string() {
-        assert_eq!(ends(true, &["SELECT 'it''s"]), Region::Quoted(Quote::Plain));
-        assert_eq!(ends(true, &["SELECT E'it''s"]), Region::Quoted(Quote::Escape));
-        // `B'0''1'` is `B'0'` and a standard string after it.
-        assert_eq!(ends(false, &["SELECT B'0''1\\'"]), Region::Quoted(Quote::Escape));
-        assert_eq!(ends(true, &["SELECT \"a\"\"b"]), Region::Identifier);
-        assert_eq!(ends(true, &["SELECT \"a\"\"b\" $$"]), dollar("$$"));
-    }
-
-    #[test]
-    fn a_literal_continued_after_a_newline_keeps_its_kind() {
-        // `E'…'` continued by a plain-looking `'…'` is still an escape string.
-        assert_eq!(
-            ends(true, &["SELECT E'a'", "  -- between", "", "'b\\';"]),
-            Region::Quoted(Quote::Escape)
-        );
-        // Without a newline between them, the second is a literal of its own.
-        assert_eq!(ends(true, &["SELECT E'a' 'b\\';"]), Region::Code);
-        // Nor across anything but whitespace and `--` comments.
-        assert_eq!(ends(true, &["SELECT E'a',", "'b\\';"]), Region::Code);
-        assert_eq!(ends(true, &["SELECT E'a' /* c */", "'b\\';"]), Region::Code);
-    }
-
-    #[test]
-    fn block_comments_nest_and_line_comments_end_the_line() {
-        assert_eq!(ends(true, &["/* a /* b */ $$"]), Region::Comment(1));
-        assert_eq!(ends(true, &["/* a /* b */ $$", "*/ $$"]), dollar("$$"));
-        assert_eq!(ends(true, &["SELECT 1 /**/ $$"]), dollar("$$"));
-        let found = lex(true, &["SELECT 1; -- it's /* here"]);
-        assert_eq!(found[0].0, Region::Code);
-        assert!(found[0].1.line_comment);
-        // A single `-` or `/` is an operator.
-        assert_eq!(ends(true, &["SELECT 1 - -2 / 3, 'x"]), Region::Quoted(Quote::Plain));
-    }
-
-    #[test]
-    fn a_meta_command_runs_to_the_end_of_its_line() {
-        let found = lex(true, &["\\connect -reuse-previous=on \"dbname='a$$b'"]);
-        assert_eq!(found[0].0, Region::Code);
-        assert!(!found[0].1.dollar);
-        assert_eq!(ends(true, &["SELECT 1 \\; SELECT 'a"]), Region::Quoted(Quote::Plain));
-    }
-
-    #[test]
-    fn code_runs_hold_every_parenthesis_outside_a_region() {
-        let mut lexer = Lexer::new();
-        let mut depth = 0;
-        lexer.line(b"INSERT INTO t VALUES (1, '(', \"(\", $$($$, E'\\'(') -- (", |run| {
-            for &b in run {
-                depth += match b {
-                    b'(' => 1,
-                    b')' => -1,
-                    _ => 0,
-                };
-            }
-        });
-        assert_eq!(depth, 0);
-    }
-
-    #[test]
-    fn the_setting_line_parses_as_pg_dump_writes_it() {
-        let parse = |s: &str| standard_conforming_strings(s.as_bytes());
-        assert_eq!(parse("SET standard_conforming_strings = on;"), Some(true));
-        assert_eq!(parse("SET standard_conforming_strings = off;"), Some(false));
-        assert_eq!(parse("set Standard_Conforming_Strings TO 'off' ;"), Some(false));
-        assert_eq!(parse("SET standard_conforming_strings_x = off;"), None);
-        assert_eq!(parse("SET standard_conforming_strings = maybe;"), None);
-        assert_eq!(parse("SET standard_conforming_strings = off"), None);
-        assert_eq!(parse("SET client_encoding = 'UTF8';"), None);
-    }
-
-    /// A type name is kept in one spelling however the DDL wrote it: each part
-    /// read as the server reads it — an unquoted one folded, a quoted one
-    /// verbatim — and quoted back only where it is not a plain lower-case
-    /// identifier (I29). Text that is not one name has no spelling.
-    #[test]
-    fn a_type_name_has_one_canonical_spelling() {
-        for (reference, canonical) in [
-            ("public.mood", "public.mood"),
-            ("PUBLIC.Mood", "public.mood"),
-            (r#""public"."mood""#, "public.mood"),
-            (r#"public."Mood""#, r#"public."Mood""#),
-            (r#"s."x ARRAY""#, r#"s."x ARRAY""#),
-            (r#"s."a""b""#, r#"s."a""b""#),
-            (r#"s."a.b""#, r#"s."a.b""#),
-            ("s.x$1", r#"s."x$1""#),
-            ("s . t ", "s.t"),
-            ("mood", "mood"),
-        ] {
-            assert_eq!(canonical_type_name(reference).as_deref(), Some(canonical), "{reference}");
-            assert_eq!(canonical_type_name(canonical).as_deref(), Some(canonical), "{canonical}");
-        }
-        for reference in ["integer[]", "double precision", r#"s."a"[]"#, "numeric(10,2)", "s."] {
-            assert_eq!(canonical_type_name(reference), None, "{reference}");
-        }
-    }
-}
+mod tests;

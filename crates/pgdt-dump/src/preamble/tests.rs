@@ -1463,7 +1463,7 @@ fn statement_complete_a_comment_run_to_end_of_buffer_is_never_complete() {
 }
 
 /// A statement ends where the scanner's lexer says its regions do
-/// (`pgdt_core::lex`): an escape string's `\'`, a `;` or paren in a block
+/// (`crate::lex`): an escape string's `\'`, a `;` or paren in a block
 /// comment, and a plain string's backslash under the dump's own setting.
 #[test]
 fn statement_complete_lexes_as_the_scanner_does() {

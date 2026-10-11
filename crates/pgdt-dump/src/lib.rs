@@ -1,9 +1,10 @@
-//! The parsers and the cache: the scanner, the preamble grammar, the map
+//! The parsers and the cache: the SQL lexer, the scanner, the preamble grammar, the map
 //! builder, the interior split, and persisting and reloading the model
 //! (`docs/design/decisions.md`, "D68"). No Arrow (D74).
 
 pub mod cache;
 mod leader;
+mod lex;
 mod load;
 mod map;
 mod preamble;
@@ -35,6 +36,6 @@ pub mod internal {
         non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
         toc_coverage_diagnostic,
     };
-    pub use crate::map::{Builder, census_row};
+    pub use crate::map::Builder;
     pub use crate::scan::announce_cancellation;
 }
