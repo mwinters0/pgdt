@@ -47,6 +47,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::{all_fixtures, fixtures_root};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
@@ -59,28 +60,14 @@ use in_order::{Order, RunScansInOrder};
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
 
-fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
-}
-
 /// Every flag set of every major's `statistics` schema: the one holding
 /// sorted, unsorted and gappy columns, an enum, special floats, and a table
 /// that is three blocks under `--load-via-partition-root`.
 fn statistics_fixtures() -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for major in std::fs::read_dir(fixtures_root()).unwrap() {
-        let schema = major.unwrap().path().join("statistics");
-        let Ok(dumps) = std::fs::read_dir(&schema) else { continue };
-        for dump in dumps {
-            let dump = dump.unwrap().path();
-            if dump.extension().is_some_and(|e| e == "sql") {
-                found.push(dump);
-            }
-        }
-    }
-    found.sort();
-    assert!(!found.is_empty(), "no statistics fixtures under {}", fixtures_root().display());
-    found
+    all_fixtures()
+        .into_iter()
+        .filter(|dump| dump.parent().is_some_and(|schema| schema.ends_with("statistics")))
+        .collect()
 }
 
 /// A group size several rows of every fixture table long, so a scan that

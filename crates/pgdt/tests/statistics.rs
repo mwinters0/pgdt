@@ -16,7 +16,7 @@ use std::path::Path;
 use serde_json::Value;
 
 mod common;
-use common::{run, run_ok, sandboxed, stderr_of, stdout_of};
+use common::{fixture, fixtures_root, run, run_ok, sandboxed, stderr_of, stdout_of};
 
 const DUMP: &str = "16/statistics/default.sql";
 
@@ -27,7 +27,7 @@ const BLOCKS: usize = 9;
 /// `parse` under `extra` on a private copy, then `info --json` over the cache
 /// it wrote, and the dump's path for a further `info`.
 fn info_after(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, Value) {
-    let (dir, dump) = sandboxed(DUMP, "statistics.sql");
+    let (dir, dump) = sandboxed(&fixtures_root().join(DUMP), "statistics.sql");
     let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
     args.extend_from_slice(extra);
     let out = run(&args);
@@ -142,7 +142,7 @@ fn a_selection_gathers_its_tables_and_columns_alone() {
 /// more. Asking again re-reads nothing and says it again.
 #[test]
 fn a_stated_maximum_rereads_the_dense_tables_and_says_where_they_still_miss() {
-    let (_dir, dump) = sandboxed(DUMP, "maximum.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "maximum.sql");
     let source = dump.to_str().unwrap();
     let flags = ["--row-group-min-rows", "8", "--row-group-max-rows", "100"];
     let parse = |extra: &[&str]| {
@@ -190,7 +190,7 @@ fn a_stated_maximum_rereads_the_dense_tables_and_says_where_they_still_miss() {
 /// block and prints no decline, so the allowance and nothing else declined it.
 #[test]
 fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads_it() {
-    let (_dir, dump) = sandboxed(DUMP, "decline.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "decline.sql");
     let source = dump.to_str().unwrap();
     let parse = |extra: &[&str]| {
         let mut args = vec!["parse", "--source", source];
@@ -389,7 +389,7 @@ fn a_rollup_keys_a_table_by_database_and_the_name_its_blocks_copy_into() {
             "    public.tenant_only: statistics over 1 of 1 block(s), ",
         ),
     ] {
-        let (_dir, dump) = sandboxed(fixture, "rollup.sql");
+        let (_dir, dump) = sandboxed(&fixtures_root().join(fixture), "rollup.sql");
         run_ok(&["parse", "--source", dump.to_str().unwrap()]);
         let detail = run_ok(&["info", "--source", dump.to_str().unwrap(), "--detail"]);
         let section: Vec<&str> = detail.lines().skip_while(|l| *l != "statistics:").collect();
@@ -406,7 +406,7 @@ fn a_rollup_keys_a_table_by_database_and_the_name_its_blocks_copy_into() {
 /// blocks lack nothing prints neither line and says so.
 #[test]
 fn a_backfilling_parse_counts_the_blocks_it_rereads() {
-    let (_dir, dump) = sandboxed(DUMP, "statistics.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "statistics.sql");
     let parse = |extra: &[&str]| {
         let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
         args.extend_from_slice(extra);
@@ -457,7 +457,7 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
 /// gathered and none cached — prints no such line, and neither does a `query`.
 #[test]
 fn a_parse_says_what_its_statistics_held() {
-    let (_dir, dump) = sandboxed(DUMP, "statistics.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "statistics.sql");
     let source = dump.to_str().unwrap();
     let held = |args: &[&str]| -> Vec<String> {
         let out = run(args);
@@ -496,7 +496,7 @@ fn a_parse_says_what_its_statistics_held() {
 
 #[test]
 fn contradictory_or_empty_statistics_flags_are_refused() {
-    let (_dir, dump) = sandboxed(DUMP, "refused.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "refused.sql");
     let source = dump.to_str().unwrap();
     for (extra, says) in [
         (&["--statistics-level", "metadata", "--row-group-size", "64"][..], "drop one of them"),
@@ -543,7 +543,7 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
 /// planned one would test the serial path twice.
 #[test]
 fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
-    let (_dir, dump) = sandboxed(DUMP, "pruned.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "pruned.sql");
     let source = dump.to_str().unwrap();
     run_ok(&["parse", "--source", source, "--row-group-size", "1024"]);
     for jobs in ["1", "3"] {
@@ -600,7 +600,7 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
 /// test.
 #[test]
 fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
-    let (_dir, dump) = sandboxed(DUMP, "stopped.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "stopped.sql");
     let source = dump.to_str().unwrap();
     run_ok(&["parse", "--source", source]);
     for jobs in ["1", "3"] {
@@ -696,12 +696,12 @@ fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
         assert!(out.status.success(), "{}", stderr_of(&out));
         (common::stdout_of(&out), stderr_of(&out))
     };
-    let (_data_dir, data) = sandboxed("16/types/default.sql", "data.sql");
+    let (_data_dir, data) = sandboxed(&fixture(16, "types", "default"), "data.sql");
     run_ok(&["parse", "--source", data.to_str().unwrap()]);
     let (expected, said) = query(&data);
     assert!(!said.contains("metadata level"), "{said}");
 
-    let (_dir, dump) = sandboxed("16/types/default.sql", "metadata.sql");
+    let (_dir, dump) = sandboxed(&fixture(16, "types", "default"), "metadata.sql");
     run_ok(&["parse", "--source", dump.to_str().unwrap(), "--statistics-level", "metadata"]);
     let listing = run_ok(&["info", "--source", dump.to_str().unwrap()]);
     assert!(listing.lines().any(|l| l == "    level: metadata"), "{listing}");
@@ -720,7 +720,7 @@ fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
 /// `strict`, a parse's mode alone.
 #[test]
 fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
-    let (_dir, dump) = sandboxed("16/types/default.sql", "strict.sql");
+    let (_dir, dump) = sandboxed(&fixture(16, "types", "default"), "strict.sql");
     let source = dump.to_str().unwrap();
     run_ok(&["parse", "--source", source]);
     let checked = |listing: &str| {
@@ -758,7 +758,7 @@ fn a_strict_parse_checks_a_held_cache_and_info_says_so() {
 /// its closing count pointing at `info --detail`.
 #[test]
 fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
-    let (_dir, dump) = sandboxed("16/emitters/default.sql", "unchecked.sql");
+    let (_dir, dump) = sandboxed(&fixture(16, "emitters", "default"), "unchecked.sql");
     let source = dump.to_str().unwrap();
     let counted = |listing: &str| {
         assert!(
@@ -824,7 +824,7 @@ fn a_strict_parse_names_what_it_leaves_unchecked_and_info_the_same() {
 /// the `ATTACH PARTITION` it read the bound from.
 #[test]
 fn a_strict_parse_lists_a_partition_s_bound_and_its_root_s_routing() {
-    let (_dir, dump) = sandboxed("16/partitions/default.sql", "partitions.sql");
+    let (_dir, dump) = sandboxed(&fixture(16, "partitions", "default"), "partitions.sql");
     let source = dump.to_str().unwrap();
     let said = run_ok(&["parse", "--source", source, "--postgres-invalid-values", "strict"]);
     let listed: Vec<&str> =
@@ -854,7 +854,7 @@ fn a_strict_parse_lists_a_partition_s_bound_and_its_root_s_routing() {
 /// value, and a filter spelled as the field is refused either way.
 #[test]
 fn parse_and_query_each_take_postgres_invalid_values() {
-    let (_dir, dump) = sandboxed("16/types/extra-float-digits-0.sql", "floats.sql");
+    let (_dir, dump) = sandboxed(&fixture(16, "types", "extra-float-digits-0"), "floats.sql");
     let source = dump.to_str().unwrap();
     let refused = run(&["parse", "--source", source]);
     assert!(!refused.status.success());

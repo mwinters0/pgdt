@@ -36,6 +36,7 @@ insta = { workspace = true }
 # What this crate's tests reach there (each one's `test-support`).
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }
+pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
 pgdt-mapping = { path = "../pgdt-mapping", features = ["test-support"] }
 # The benches' `#[global_allocator]`, as `pgdt-codec`'s.
 mimalloc = { workspace = true }

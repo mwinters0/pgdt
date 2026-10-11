@@ -110,7 +110,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.21** datafusion-pgdump's `filter/`: the leaf builders in its parent, the static and dynamic translations its children; and `lib.rs` declaring, `Error` in `error.rs` and what else it defines moved below its readers — [notes](../design/roadmap-P35.21-filter-notes.md)
 - [x] **35.22** `pgdt` a module a subcommand, each owning its flags as a `#[derive(Args)]` struct, `--filter`'s and `--where`'s grammar one `query/filter/`, `tests.rs` split beside them — [notes](../design/roadmap-P35.22-subcommands-notes.md)
 - [x] **35.25** pgdt-codec's `grammar` an API namespace declaring `TextGrammar`, `Geometric` and `Unchecked`, defined in `grammar/input.rs` and `grammar/check.rs`; `compare`'s `pub use` of them removed, `layering.py`'s `NAMESPACES` gaining `grammar`, and every `compare::` path to them repointed — [notes](../design/roadmap-P35.25-grammar-namespace-notes.md)
-- [ ] **35.26** `pgdt-fixtures`, a test-only member at the bottom of the graph holding the fixture vocabulary — paths, the sweep's enumerator, the sandboxes, `REFUSED_FIELDS`, `edge_cases.sql` — and behind a `mapping` feature the sweep's request builders; every crate's tests dev-depend on it, every cross-crate `#[path]` include and every copy in `pgdt` and `datafusion-pgdump` replaced, `check.py`'s `#[path]` arm removed, and D68 and `layering.py`'s `GRAPH` amended
+- [x] **35.26** `pgdt-fixtures`, a test-only member at the bottom of the graph holding the fixture vocabulary — paths, the sweep's enumerator, the sandboxes, `REFUSED_FIELDS`, `edge_cases.sql` — and behind a `mapping` feature the sweep's request builders; every crate's tests dev-depend on it, every cross-crate `#[path]` include and every copy in `pgdt` and `datafusion-pgdump` replaced, `check.py`'s `#[path]` arm removed, and D68 and `layering.py`'s `GRAPH` amended — [notes](../design/roadmap-P35.26-fixtures-notes.md)
 - [ ] **35.12** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns"
 - [ ] **35.24** The `release-profile` figure's third sitting, on the tree 35.12 leaves and carrying M222's `instructions:u`: the downstream-build rule read on it, its attribution clause applied to any workload failing the gate, and D105's Reopens read against the count
 
@@ -143,3 +143,12 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **35.26: `layering.py` refuses `#[path]` in every member's sources, tests
+  included**, where it had refused it in a library's alone. Removing
+  `check.py`'s `#[path]` arm left `--affected` blind to a test including a
+  file by path, so the refusal is what keeps its selection true; the spec
+  asked only that the includes be replaced. Reconsidering means either
+  allowing a test's `#[path]` again and restoring the arm with it, or keeping
+  the refusal and naming it in the spec's "The crate graph" list of what the
+  script holds.

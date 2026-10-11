@@ -1,8 +1,9 @@
 //! What the CLI's integration tests need before they can assert anything:
 //! how to run the binary, where the fixtures are, and where `scripts/` is.
 //!
-//! Same reason as `crates/pgdt-mapping/tests/common/mod.rs`: each `tests/*.rs` file
-//! is its own crate, so without a shared module each one carries its own copy.
+//! Each `tests/*.rs` file is its own crate, so without a shared module each one
+//! carries its own copy. The fixture vocabulary is `pgdt-fixtures`'s,
+//! re-exported here.
 
 // Each test binary compiles the whole module and uses a subset of it.
 #![allow(dead_code)]
@@ -16,10 +17,8 @@ use std::process::{Command, Output};
 /// another one.
 pub mod oracle;
 
-/// The fixtures holding a field PostgreSQL refuses, which a data-level parse
-/// fails on: `pgdt-mapping`'s list, included by path so no copy drifts.
-#[path = "../../../pgdt-mapping/tests/common/refused.rs"]
-pub mod refused;
+#[allow(unused_imports)]
+pub use pgdt_fixtures::*;
 
 /// The built `pgdt` binary, ready to take arguments. Cargo hands us the exact
 /// path, so this never resolves through `PATH` and never runs a stale install.
@@ -47,49 +46,6 @@ pub fn stdout_of(output: &Output) -> String {
 
 pub fn stderr_of(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("pgdt writes UTF-8")
-}
-
-/// A generated fixture, addressed relative to the `fixtures/` root
-/// (`"16/edge_cases/create.sql"`).
-pub fn fixture(relative: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(relative)
-}
-
-/// Every real `pg_dump` output file the fixture generator produced, across all
-/// six routine versions and every schema — read off the tree rather than
-/// listed, so a new schema or flag set is swept the moment the generator
-/// writes it. Includes the degenerate shapes: `data-only`, `schema-only`,
-/// `inserts`/`column-inserts` (no `COPY` blocks at all), and `dumpall`
-/// (concatenated, multi-`\connect`).
-///
-/// A deliberate second copy of `crates/pgdt-query/tests/common/mod.rs`'s function of
-/// the same name, for the reason stated at the top of this file: the two test
-/// crates cannot share a module, and a path helper is what each one needs
-/// before it can address a fixture at all.
-pub fn all_fixtures() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
-    let mut out = Vec::new();
-    for version in std::fs::read_dir(&root).unwrap() {
-        let version = version.unwrap().path();
-        if !version.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&version).unwrap() {
-            let schema = schema.unwrap().path();
-            if !schema.is_dir() {
-                continue;
-            }
-            for entry in std::fs::read_dir(&schema).unwrap() {
-                let path = entry.unwrap().path();
-                if path.extension().is_some_and(|e| e == "sql") {
-                    out.push(path);
-                }
-            }
-        }
-    }
-    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
-    out.sort();
-    out
 }
 
 /// `scripts/`, which is the working directory every `uv run` here needs.
@@ -120,15 +76,4 @@ pub fn strip_cache_line(output: &str) -> String {
         .filter(|line| !line.starts_with("wrote cache to "))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// A private copy of a fixture in a fresh tempdir, named `name`, so a
-/// colocated `.dtcache` can be written beside it without touching the
-/// checked-in tree. The `TempDir` is returned because dropping it deletes the
-/// copy.
-pub fn sandboxed(relative: &str, name: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join(name);
-    std::fs::copy(fixture(relative), &dump).unwrap();
-    (dir, dump)
 }

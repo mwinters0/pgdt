@@ -331,7 +331,7 @@ fn the_log_records_every_request_in_arrival_order() {
 
 #[test]
 fn a_fixture_is_served_byte_for_byte() {
-    let path = common::fixture("16/edge_cases/default.sql");
+    let path = common::fixture(16, "edge_cases", "default");
     let expected = std::fs::read(&path).expect("the fixture exists");
     let oracle = Oracle::serving_file(&path).start();
 

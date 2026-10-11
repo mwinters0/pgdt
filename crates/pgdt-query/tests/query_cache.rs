@@ -6,7 +6,7 @@
 //! `tests/cache.rs` for the on-disk cache format itself.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -463,10 +463,7 @@ async fn no_duplication_on_repeat_queries() {
 async fn a_query_built_index_tiles_in_every_cache_state() {
     for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only"] {
-            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/16")
-                .join(schema_dir)
-                .join(format!("{flag_set}.sql"));
+            let fixture = common::fixture(16, schema_dir, flag_set);
             if !fixture.exists() {
                 continue;
             }

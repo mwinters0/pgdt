@@ -36,7 +36,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{fixture, run_ok, strip_cache_line};
+use common::{fixtures_root, run_ok, strip_cache_line};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Recognized, open};
 
 /// The variable that turns this file's plain half on, by naming the object to
@@ -53,7 +53,7 @@ const XZ_URL_VAR: &str = "PGDT_HTTP_CONFORMANCE_XZ_URL";
 const FIXTURE: &str = "16/edge_cases/default.sql";
 
 fn dump_bytes() -> Vec<u8> {
-    std::fs::read(fixture(FIXTURE)).expect("the fixture is checked in")
+    std::fs::read(fixtures_root().join(FIXTURE)).expect("the fixture is checked in")
 }
 
 /// The URL to read, or `None` when nobody asked for a conformance run.
@@ -206,7 +206,7 @@ async fn a_real_server_accepts_the_precondition_every_read_after_the_probe_carri
 fn local_parse() -> String {
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join("local.dtcache");
-    let dump = fixture(FIXTURE);
+    let dump = fixtures_root().join(FIXTURE);
     let out = run_ok(&[
         "parse",
         "--source",
@@ -219,7 +219,7 @@ fn local_parse() -> String {
 
 /// `pgdt query public.widgets` over the checked-in fixture, cacheless.
 fn local_query() -> String {
-    let dump = fixture(FIXTURE);
+    let dump = fixtures_root().join(FIXTURE);
     run_ok(&[
         "query",
         "--source",

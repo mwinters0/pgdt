@@ -503,7 +503,7 @@ fn scans(plan: &Arc<dyn ExecutionPlan>, found: &mut Vec<usize>) {
 }
 
 fn fixture(major: u32) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/{major}/types/default.sql"))
+    pgdt_fixtures::types_fixture(major, "default")
 }
 
 /// A group size a few rows of every case's table long.

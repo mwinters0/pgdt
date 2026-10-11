@@ -14,7 +14,7 @@ use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, SpanBody};
 
 fn fixture(schema: &str) -> PathBuf {
-    common::fixture(&format!("16/{schema}/default.sql"))
+    common::fixture(16, schema, "default")
 }
 
 /// `fixture` copied into `dir` beside a complete cache holding no statistics

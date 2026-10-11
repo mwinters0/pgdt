@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use pgdt_io::{ByteRangeSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 
 mod common;
-use common::{all_fixtures, refused, run, stderr_of};
+use common::{all_fixtures, refused_field, run, stderr_of};
 
 /// `pgdt parse` under `extra`, writing its cache to `out`, and the bytes it
 /// wrote.
@@ -72,13 +72,12 @@ const TINY_GROUP: &str = "32";
 
 /// A data-level leg of a fixture holding a field PostgreSQL refuses keeps that
 /// column at the metadata level, a data-level parse failing on it
-/// (`refused::sweep_request`).
+/// (`pgdt_fixtures::sweep_request`).
 fn parse_cache(dump: &Path, out: &Path, statistics: &[&str], extra: &[&str]) -> Vec<u8> {
     let mut args = vec!["parse", "--source", dump.to_str().unwrap(), "--dtcache"];
     args.push(out.to_str().unwrap());
     args.extend_from_slice(statistics);
-    let past_refused =
-        refused::refused_field(dump).map(|r| format!("data,{}", r.statistics_level()));
+    let past_refused = refused_field(dump).map(|r| format!("data,{}", r.statistics_level()));
     if let Some(level) =
         past_refused.as_deref().filter(|_| !statistics.contains(&"--statistics-level"))
     {

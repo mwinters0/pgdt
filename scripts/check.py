@@ -61,7 +61,9 @@ first of the other three rules it meets gives it:
   above it -- runs that target (`binary_id` in nextest's terms), in any
   package. A test's working directory is its package's, and a templated
   literal names the directory it fills, so `format!("../fixtures/{major}")`
-  reads all of `fixtures/`; a bare `.` names nothing (`literal_path`).
+  reads all of `fixtures/`; a bare `.` names nothing (`literal_path`). A
+  library only dev-dependencies reach, a test-support crate, reads for every
+  target of each package depending on it, any of which may call what reads.
 - **Inside a workspace member** runs that package whole; outside its
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
   transitively, too. Those packages are the ones formatted and linted, and
@@ -379,6 +381,9 @@ class Package:
     #: Workspace members it depends on, of any dependency kind.
     deps: frozenset[str]
     targets: tuple[Target, ...]
+    #: Whether only dev-dependencies reach it: a test-support library, whose
+    #: reads are its dependents' tests' too (`plan_changes`).
+    support: bool = False
 
     @property
     def has_lib(self) -> bool:
@@ -386,20 +391,13 @@ class Package:
 
 
 _MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
-_PATH_MOD_RE = re.compile(
-    r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*\n(?:\s*#\[[^\]]*\]\s*\n)*'
-    r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;",
-    re.M,
-)
 
 
 def module_files(repo: Path, root: str) -> list[str]:
-    """`root` and every file its `mod name;` lines reach, repo-relative: at
-    the conventional paths, or where a `#[path]` on the line before names
-    one, relative to the declaring file's directory as Rust reads it — a test
-    including another crate's shared module by path reads what that module
-    reads. An attribute on the same line and a declaration inside an inline
-    module are not followed."""
+    """`root` and every file its `mod name;` lines reach, repo-relative, at
+    the conventional paths: no member loads a module by `#[path]`
+    (`layering.py`). A declaration inside an inline module is not
+    followed."""
     out: list[str] = []
     pending = [(root, True)]
     while pending:
@@ -410,17 +408,7 @@ def module_files(repo: Path, root: str) -> list[str]:
         path = repo / rel
         base = path.parent if is_mod_root else path.with_suffix("")
         text = path.read_text(encoding="utf-8", errors="replace")
-        pathed = set()
-        for target, name in _PATH_MOD_RE.findall(text):
-            pathed.add(name)
-            cand = Path(os.path.normpath(path.parent / target))
-            if cand.is_file():
-                # A file loaded by `#[path]` declares its children as a
-                # `mod.rs` does, beside itself.
-                pending.append((cand.relative_to(repo).as_posix(), True))
         for name in _MOD_RE.findall(text):
-            if name in pathed:
-                continue
             for cand, root_like in ((base / f"{name}.rs", False), (base / name / "mod.rs", True)):
                 if cand.is_file():
                     pending.append((cand.relative_to(repo).as_posix(), root_like))
@@ -602,6 +590,16 @@ def workspace(repo: Path) -> list[Package]:
         if p["id"] in members
     }
     by_dir = {d: name for name, d in dirs.items()}
+    # The kinds of the edges into each member, `None` being a normal one.
+    kinds_into: dict[str, set[str | None]] = {name: set() for name in dirs}
+    for p in meta["packages"]:
+        if p["id"] not in members:
+            continue
+        for d in p["dependencies"]:
+            if d.get("path"):
+                rel = Path(d["path"]).resolve().relative_to(root.resolve()).as_posix()
+                if by_dir.get(rel, p["name"]) != p["name"]:
+                    kinds_into[by_dir[rel]].add(d.get("kind"))
     packages = []
     for p in meta["packages"]:
         if p["id"] not in members:
@@ -627,7 +625,8 @@ def workspace(repo: Path) -> list[Package]:
             else:
                 continue  # benches, examples and build scripts run no tests
             targets.append(Target(bid, kind, tuple(sources)))
-        packages.append(Package(name, pdir, frozenset(deps - {name}), tuple(targets)))
+        support = kinds_into[name] == {"dev"}
+        packages.append(Package(name, pdir, frozenset(deps - {name}), tuple(targets), support))
     return packages
 
 
@@ -790,6 +789,10 @@ def plan_changes(
             for (pkg, t), pre in prefixes.items()
             if any(reads(x, path) for x in pre)
         }
+        # A test-support library reads for each test depending on it: any of
+        # them may call what reads.
+        for pkg in {pkg for pkg, bid in found if bid == pkg and by_name[pkg].support}:
+            found |= {(q.name, t.binary_id) for q in packages if pkg in q.deps for t in q.targets}
         reader_ids |= found
         if UNTESTED_RE.search(path):
             continue

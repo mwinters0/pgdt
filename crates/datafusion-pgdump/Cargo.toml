@@ -39,6 +39,8 @@ thiserror = { workspace = true }
 # `sql` for the tests' queries: the same SQL a user types is what reaches
 # `scan`'s projection and limit.
 datafusion = { workspace = true, features = ["sql"] }
+# The fixture vocabulary, its sweep's request builders with it.
+pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
 # `map_file` and the statistics request, which the tests map a dump with.
 pgdt-mapping = { path = "../pgdt-mapping" }
 tempfile = { workspace = true }

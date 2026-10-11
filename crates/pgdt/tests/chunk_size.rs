@@ -17,7 +17,7 @@ mod common;
 use common::{fixture, run, sandboxed, stderr_of, stdout_of};
 
 fn widgets(extra: &[&str]) -> Output {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let mut args = vec![
         "query",
         "--source",
@@ -53,7 +53,7 @@ fn a_query_reads_the_same_rows_at_any_chunk_size() {
 fn a_parse_reports_the_same_listing_at_any_chunk_size() {
     let mut reference: Option<String> = None;
     for size in [None, Some("1"), Some("4096")] {
-        let (_dir, dump) = sandboxed("16/edge_cases/default.sql", "chunked.sql");
+        let (_dir, dump) = sandboxed(&fixture(16, "edge_cases", "default"), "chunked.sql");
         let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
         if let Some(size) = size {
             args.extend_from_slice(&["--chunk-size", size]);

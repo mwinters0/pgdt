@@ -16,7 +16,7 @@ use common::{fixture, run, stderr_of, stdout_of};
 /// `(id, name, description, is_active, created_at)`. Row 2 has a NULL
 /// `description`, row 3 a NULL `created_at`, row 5 a NULL `is_active`.
 fn widgets(extra: &[&str]) -> Output {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let mut args = vec![
         "query",
         "--source",
@@ -95,7 +95,7 @@ fn an_unknown_column_in_a_later_term_names_that_column() {
 /// `--column` projects, and the projection still decides what is printed.
 #[test]
 fn a_conjunction_composes_with_a_projection() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let out = run(&[
         "query",
         "--source",
@@ -163,7 +163,7 @@ fn a_malformed_quote_is_refused() {
 /// failure was always loud; the note says why.
 #[test]
 fn a_quoted_column_flag_is_matched_literally_and_says_so() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let out = run(&[
         "query",
         "--source",

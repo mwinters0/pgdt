@@ -488,25 +488,6 @@ class Literals(unittest.TestCase):
             )
 
 
-    def test_a_module_included_by_path_is_followed_from_the_declaring_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            write(
-                repo,
-                "q/tests/common/mod.rs",
-                '#[path = "../../../p/tests/common/mod.rs"]\nmod vocabulary;\n',
-            )
-            write(repo, "p/tests/common/mod.rs", "pub mod refused;\n")
-            write(repo, "p/tests/common/refused.rs", "")
-            self.assertEqual(
-                check.module_files(repo, "q/tests/common/mod.rs"),
-                [
-                    "q/tests/common/mod.rs",
-                    "p/tests/common/mod.rs",
-                    "p/tests/common/refused.rs",
-                ],
-            )
-
 
 class CodeOf(unittest.TestCase):
     """What a comment-only change may touch, and what it may not."""
@@ -736,6 +717,40 @@ class Affected(unittest.TestCase):
             )
 
 
+class Support(unittest.TestCase):
+    """A library only dev-dependencies reach reads for its dependents' tests."""
+
+    def test_a_path_a_support_library_reads_runs_every_target_depending_on_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            files = {
+                "Cargo.toml": '[workspace]\nresolver = "2"\nmembers = ["vocab", "base", "app"]\n',
+                "vocab/Cargo.toml": '[package]\nname = "vocab"\nversion = "0.1.0"\nedition = "2021"\n',
+                "vocab/src/lib.rs": 'pub fn root() -> &\'static str { "../fixtures" }\n',
+                "base/Cargo.toml": (
+                    '[package]\nname = "base"\nversion = "0.1.0"\nedition = "2021"\n'
+                    '[dev-dependencies]\nvocab = { path = "../vocab" }\n'
+                ),
+                "base/src/lib.rs": "pub fn f() {}\n",
+                "base/tests/t.rs": "#[test]\nfn t() {}\n",
+                "app/Cargo.toml": (
+                    '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n'
+                    '[dependencies]\nbase = { path = "../base" }\n'
+                ),
+                "app/src/main.rs": "fn main() {}\n",
+                "fixtures/a.sql": "",
+            }
+            for rel, text in files.items():
+                write(repo, rel, text)
+            packages = check.workspace(repo)
+            self.assertEqual([p.name for p in packages if p.support], ["vocab"])
+            plan = check.plan_changes(repo, ["fixtures/a.sql"], lambda _: packages)
+            self.assertEqual(
+                argv_of(plan)["nextest"][-2:],
+                ["-E", "binary_id(=base) | binary_id(=base::t) | binary_id(=vocab)"],
+            )
+
+
 class RealWorkspace(unittest.TestCase):
     """The classification holds of this repository's own tests."""
 
@@ -783,11 +798,12 @@ class RealWorkspace(unittest.TestCase):
     def test_a_library_reads_its_data_and_not_its_whole_package(self):
         # `copy.rs` holds the value "." and `cache.rs` the template
         # ".{}-{}.tmp", each of which read as the package directory once;
-        # `interior.rs`'s tests read the hand-written dump its crate's
-        # integration tests read.
+        # the fixture vocabulary reads the tree and its own hand-written dump.
         libs = {p.name: t for p in self.packages for t in p.targets if t.kind == "lib"}
-        prefixes = self.prefixes[libs["pgdt-mapping"].binary_id]
-        self.assertIn("crates/pgdt-mapping/tests/data/edge_cases.sql", prefixes)
+        prefixes = self.prefixes[libs["pgdt-fixtures"].binary_id]
+        self.assertIn("fixtures", prefixes)
+        self.assertIn("crates/pgdt-fixtures/edge_cases.sql", prefixes)
+        self.assertEqual([p.name for p in self.packages if p.support], ["pgdt-fixtures"])
         for name in ("pgdt-core", "pgdt-dump", "pgdt-mapping"):
             prefixes = self.prefixes[libs[name].binary_id]
             self.assertNotIn(f"crates/{name}", prefixes)

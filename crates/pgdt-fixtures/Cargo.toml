@@ -1,0 +1,17 @@
+[package]
+name = "pgdt-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A member only tests depend on, each as a dev-dependency: the fixture
+# vocabulary every crate's tests speak (`docs/design/decisions.md`, "D68").
+# It depends on no member, so the tests of any crate reach it with the graph
+# one-way, but behind `mapping`, which a sweep's request builders need.
+[features]
+mapping = ["dep:pgdt-mapping"]
+
+[dependencies]
+pgdt-mapping = { path = "../pgdt-mapping", optional = true }
+tempfile = { workspace = true }

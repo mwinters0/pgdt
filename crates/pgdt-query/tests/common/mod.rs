@@ -1,6 +1,5 @@
-//! The fixture vocabulary every integration test speaks: `pgdt-mapping`'s,
-//! included by path so no copy drifts, and what reading a batch back adds to
-//! it.
+//! The fixture vocabulary every integration test speaks, `pgdt-fixtures`, and
+//! what reading a batch back adds to it.
 //!
 //! Everything here is a *path* or an *expectation*. Anything that drives the
 //! library — a `collect`, a `drain`, a `census_of` — stays in the file whose
@@ -14,10 +13,8 @@ use arrow::array::RecordBatch;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_query::render_field;
 
-#[path = "../../../pgdt-mapping/tests/common/mod.rs"]
-mod vocabulary;
 #[allow(unused_imports)]
-pub use vocabulary::*;
+pub use pgdt_fixtures::*;
 
 /// Every column of `batch` rendered back to PostgreSQL text via
 /// [`render_field`] — which works regardless of `SchemaMode`: a hand-written

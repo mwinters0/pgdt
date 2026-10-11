@@ -26,8 +26,7 @@ use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
 
-mod common;
-use common::all_fixtures;
+use pgdt_fixtures::all_fixtures;
 
 /// What a correct reading of the fixture would show.
 #[derive(Debug, Clone)]

@@ -37,35 +37,17 @@ use pgdt_codec::{
 };
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::{all_fixtures, fixtures_root};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
 use pgdt_query::column_divergences;
 
-fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
-}
-
 /// Every major's `default.sql` of every schema: each kind the register has,
 /// and the statistics fixture's groups, so a pushed filter is also pruned.
 fn default_fixtures() -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for major in std::fs::read_dir(fixtures_root()).unwrap() {
-        let major = major.unwrap().path();
-        if !major.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&major).unwrap() {
-            let dump = schema.unwrap().path().join("default.sql");
-            if dump.is_file() {
-                found.push(dump);
-            }
-        }
-    }
-    found.sort();
-    assert!(!found.is_empty(), "no fixtures under {}", fixtures_root().display());
-    found
+    all_fixtures().into_iter().filter(|dump| dump.ends_with("default.sql")).collect()
 }
 
 /// `fixture` copied into `dir` beside a complete cache holding every

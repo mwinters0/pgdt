@@ -23,7 +23,7 @@ use namespace_init::unshare::{NamespaceInit, as_namespace_init};
 const STALL: Duration = Duration::from_secs(60);
 
 fn dump_bytes() -> Vec<u8> {
-    std::fs::read(fixture("16/edge_cases/default.sql")).unwrap()
+    std::fs::read(fixture(16, "edge_cases", "default")).unwrap()
 }
 
 /// `pgdt args…` as its namespace's init, held until the oracle has received

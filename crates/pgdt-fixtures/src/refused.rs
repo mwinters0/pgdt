@@ -1,19 +1,15 @@
 //! The fixtures holding a field PostgreSQL's input function refuses, which a
 //! data-level parse fails on (`docs/design/roadmap.md`, "A literal is
 //! guaranteed in `*_out`'s form and never read past `*_in`'s"), and how a sweep
-//! maps one past it. One list for every crate's sweeps: `pgdt-query`'s,
-//! `datafusion-pgdump`'s and `pgdt`'s tests include this file by path, so no
-//! copy of it drifts.
+//! maps one past it, behind `mapping`. One list for every crate's sweeps.
 //!
 //! `pgdt-query`'s `tests/decode.rs`'s
 //! `every_refused_field_fails_a_data_level_parse_reading_it` holds each row to
 //! the refusal it names.
 
-// Each test binary uses a subset of it.
-#![allow(dead_code)]
-
 use std::path::Path;
 
+#[cfg(feature = "mapping")]
 use pgdt_mapping::statistics::{StatisticsLevel, StatisticsRequest, StatisticsTarget};
 
 /// A field PostgreSQL refuses, held by every major's copy of a fixture: a
@@ -50,6 +46,7 @@ impl RefusedField {
 
 /// What a sweep maps `path` at: every table and column at the data level, but a
 /// column holding a field PostgreSQL refuses ([`past_refused`]).
+#[cfg(feature = "mapping")]
 pub fn sweep_request(path: &Path) -> StatisticsRequest {
     past_refused(path, &StatisticsRequest::DATA)
 }
@@ -57,6 +54,7 @@ pub fn sweep_request(path: &Path) -> StatisticsRequest {
 /// `request`, but for a column of `path` holding a field PostgreSQL refuses,
 /// which goes unkeyed at the metadata level while its table is censused and
 /// gathered.
+#[cfg(feature = "mapping")]
 pub fn past_refused(path: &Path, request: &StatisticsRequest) -> StatisticsRequest {
     let mut request = request.clone();
     if let Some(refused) = refused_field(path) {

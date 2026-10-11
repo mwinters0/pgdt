@@ -26,10 +26,7 @@ use pgdt_model::{DataBlock, Diagnostic, DiagnosticSink, Finding, Severity, SpanB
 use pgdt_query::ComparisonNote;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/16")
-        .join(schema)
-        .join(format!("{flag_set}.sql"))
+    pgdt_fixtures::fixture(16, schema, flag_set)
 }
 
 /// `fixture` copied into `dir` beside the complete cache a parse leaves.

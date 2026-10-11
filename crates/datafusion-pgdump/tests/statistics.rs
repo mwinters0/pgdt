@@ -52,53 +52,21 @@ use futures::StreamExt;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::{all_fixtures, fixtures_root, past_refused};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{Finding, TableName};
 
-#[path = "../../pgdt-mapping/tests/common/refused.rs"]
-mod refused;
-
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
-
-fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
-}
-
-/// Every generated dump: `fixtures/<major>/<schema>/<flag-set>.sql`.
-fn every_fixture() -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for major in std::fs::read_dir(fixtures_root()).unwrap() {
-        let major = major.unwrap().path();
-        if !major.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&major).unwrap() {
-            let schema = schema.unwrap().path();
-            if !schema.is_dir() {
-                continue;
-            }
-            for dump in std::fs::read_dir(&schema).unwrap() {
-                let dump = dump.unwrap().path();
-                if dump.extension().is_some_and(|e| e == "sql") {
-                    found.push(dump);
-                }
-            }
-        }
-    }
-    found.sort();
-    assert!(!found.is_empty(), "no fixtures under {}", fixtures_root().display());
-    found
-}
 
 /// Every `default.sql`, and every flag set of the `statistics` schema — the
 /// one whose tables are several blocks under `--load-via-partition-root`. What
 /// the estimate and ordering targets plan over: each executes every table,
-/// where the aggregate target plans over [`every_fixture`].
+/// where the aggregate target plans over [`all_fixtures`].
 fn planned_fixtures() -> Vec<PathBuf> {
-    every_fixture()
+    all_fixtures()
         .into_iter()
         .filter(|dump| {
             dump.file_stem().is_some_and(|stem| stem == "default")
@@ -137,7 +105,7 @@ async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsR
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    let request = refused::past_refused(fixture, request);
+    let request = past_refused(fixture, request);
     map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
     copy
 }
@@ -481,7 +449,7 @@ async fn every_aggregate(
 /// nothing (D98).
 #[test]
 fn statistics_never_change_an_answer() {
-    let seen = per_major(every_fixture(), |fixtures| async move {
+    let seen = per_major(all_fixtures(), |fixtures| async move {
         let scratch = tempfile::tempdir().unwrap();
         let (mut typed, mut refusing, mut untyped, mut strings) =
             (Seen::default(), Seen::default(), Seen::default(), Seen::default());

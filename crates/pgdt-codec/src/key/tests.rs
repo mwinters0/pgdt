@@ -596,18 +596,15 @@ mod oracle {
     use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::preamble_only;
+    use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
     use pgdt_io::LocalFileSource;
     use pgdt_model::TypeDef;
 
     use crate::compare::{CompareKind, ComparisonPlan, comparison_for};
     use crate::key::{OrderKey, ValueKey, compare_keys, order_key};
 
-    /// The majors `scripts/generate_fixtures.py` generates, which is what
-    /// `fixtures/` holds a directory per.
-    const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
-
     fn fixture(major: u32, rest: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/{major}/{rest}"))
+        fixtures_root().join(major.to_string()).join(rest)
     }
 
     /// Split one COPY TEXT line of a committed oracle file into its

@@ -19,7 +19,7 @@ use common::{fixture, require_uv, run, scripts_dir, stderr_of, stdout_of};
 /// `(id, name, description, is_active, created_at)`, one of which has a NULL
 /// `description` and one an empty `name`.
 fn widgets(extra: &[&str]) -> Output {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let mut args = vec![
         "query",
         "--source",
@@ -123,7 +123,7 @@ fn an_unknown_or_repeated_column_name_is_refused() {
 /// where `--schema-mode strings` would have untyped all of them.
 #[test]
 fn projecting_a_column_away_escapes_its_decode_failure() {
-    let dump = fixture("16/types/default.sql");
+    let dump = fixture(16, "types", "default");
     let query = |extra: &[&str]| {
         let mut args = vec![
             "query",

@@ -84,16 +84,16 @@ impl Rng {
 }
 
 fn fixtures() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let root = pgdt_fixtures::fixtures_root();
     let mut found = Vec::new();
-    for major in ["13", "14", "15", "16", "17", "18"] {
+    for major in pgdt_fixtures::VERSIONS {
         for dump in [
             "types/default.sql",
             "statistics/default.sql",
             "statistics/load-via-partition-root.sql",
             "edge_cases/default.sql",
         ] {
-            found.push(root.join(major).join(dump));
+            found.push(root.join(major.to_string()).join(dump));
         }
     }
     found

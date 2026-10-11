@@ -21,10 +21,7 @@ use common::{fixture, run, run_ok, stderr_of};
 
 /// A writable copy of a real dump, so a test can move its modification time.
 fn sandboxed() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("dump.sql");
-    std::fs::copy(fixture("16/edge_cases/create.sql"), &dump).unwrap();
-    (dir, dump)
+    common::sandboxed(&fixture(16, "edge_cases", "create"), "dump.sql")
 }
 
 /// Move the dump's modification time an hour on, leaving every byte alone —

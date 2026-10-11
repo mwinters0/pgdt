@@ -292,11 +292,9 @@ mod oracle {
     use pgdt_core::{decode_field, split_fields};
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::{ScanOptions, preamble_only};
+    use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
     use pgdt_io::LocalFileSource;
     use pgdt_model::TypeDef;
-
-    /// The majors `scripts/generate_fixtures.py` generates.
-    const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 
     /// The oracle's declared types that resolve to a nested plan, asserted as
     /// an exact set so a type that quietly stops being nested — or a new
@@ -374,7 +372,7 @@ mod oracle {
     const SEMANTIC_REFUSALS: &[(&str, &str)] = &[("int4range", "[10,1)")];
 
     fn fixture(major: u32, rest: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/{major}/{rest}"))
+        fixtures_root().join(major.to_string()).join(rest)
     }
 
     /// Split one COPY TEXT line of a committed oracle file into its decoded

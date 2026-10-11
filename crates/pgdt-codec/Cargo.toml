@@ -32,6 +32,7 @@ mimalloc = { workspace = true }
 # The key's oracle tests read each major's `types` fixture's preamble
 # (`key/tests.rs`), which only the parser reads.
 pgdt-dump = { path = "../pgdt-dump" }
+pgdt-fixtures = { path = "../pgdt-fixtures" }
 pgdt-io = { path = "../pgdt-io" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

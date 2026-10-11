@@ -2293,12 +2293,9 @@ mod oracle {
     use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::preamble_only;
+    use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
     use pgdt_io::LocalFileSource;
     use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
-
-    /// The majors `scripts/generate_fixtures.py` generates, which is what
-    /// `fixtures/` holds a directory per.
-    const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 
     /// The six operators this asserts, in `comparisons.tsv`'s own column
     /// order, paired with their cell offset after the four key columns.
@@ -2481,7 +2478,7 @@ mod oracle {
     ];
 
     fn fixture(major: u32, rest: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/{major}/{rest}"))
+        fixtures_root().join(major.to_string()).join(rest)
     }
 
     /// Split one COPY TEXT line of a committed oracle file into its
@@ -2691,15 +2688,15 @@ mod oracle {
     /// exempt there beside its invariant — is read to the value some
     /// major reads it to, or refused.
     fn literals_are_read_as_the_server_reads_them(declared: &[&str]) {
-        let apart: BTreeSet<(Option<String>, Option<String>)> = rows(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle-differences.tsv"),
-        )
-        .into_iter()
-        .filter(|row| {
-            row[2].as_deref() == Some("literals") && row[10].as_deref() == Some("non-additive")
-        })
-        .map(|row| (row[3].clone(), row[4].clone()))
-        .collect();
+        let apart: BTreeSet<(Option<String>, Option<String>)> =
+            rows(&fixtures_root().join("oracle-differences.tsv"))
+                .into_iter()
+                .filter(|row| {
+                    row[2].as_deref() == Some("literals")
+                        && row[10].as_deref() == Some("non-additive")
+                })
+                .map(|row| (row[3].clone(), row[4].clone()))
+                .collect();
         let mut read_apart: BTreeMap<(String, String), (bool, Vec<u32>)> = BTreeMap::new();
         let newest = MAJORS[MAJORS.len() - 1];
         let newest_reads: BTreeSet<(Option<String>, Option<String>)> =

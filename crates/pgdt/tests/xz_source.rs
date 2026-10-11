@@ -12,7 +12,7 @@
 //! the input is 2,352 bytes and the compression cost is
 //! negligible. Both are derived from the same hand-written dump
 //! `crates/pgdt-query/tests/cache.rs`'s own xz tests already use
-//! (`tests/data/edge_cases.sql`), which is deliberately not
+//! (`pgdt-fixtures`'s `edge_cases.sql`), which is deliberately not
 //! `pg_dump` output and carries no `CREATE TABLE` DDL — every column here
 //! resolves `Utf8View`, so a byte-for-byte comparison between the plain and
 //! compressed renderings is exactly what "differential parity" means: same
@@ -26,12 +26,12 @@ use common::{run, stderr_of, stdout_of};
 use pgdt_dump::cache::OVERWRITE_WAYS_OUT;
 
 /// The hand-written dump these fixtures derive from —
-/// `crates/pgdt-mapping/tests/data/edge_cases.sql`, not the generated `fixtures/`
+/// `pgdt-fixtures`'s `edge_cases.sql`, not the generated `fixtures/`
 /// tree `common::fixture` addresses, which carries no equivalent file (xz
 /// container shape does not depend on a PostgreSQL major, so nothing here
 /// needs one).
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
+    common::edge_cases()
 }
 
 /// Compress `edge_cases.sql` with `xz_args` into a fresh directory as `name`.

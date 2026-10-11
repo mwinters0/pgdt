@@ -27,8 +27,7 @@ use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::DumpIndex;
 use pgdt_model::{DataBlock, SpanBody};
 
-mod common;
-use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use pgdt_fixtures::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
 
 struct Counting;
 

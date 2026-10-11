@@ -22,8 +22,7 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
-mod common;
-use common::{VERSIONS, types_fixture};
+use pgdt_fixtures::{VERSIONS, types_fixture};
 
 /// `index`'s count for every column holding one, as `table.column`.
 fn counts(index: &DumpIndex) -> BTreeMap<String, Unrepresentable> {

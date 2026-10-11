@@ -31,13 +31,13 @@ use common::{fixture, run, stderr_of};
 /// one block will do, since `an_interrupted_and_resumed_parse_is_told_apart_from_a_fresh_one`
 /// needs a real mid-file resume point.
 fn plain_dump() -> PathBuf {
-    fixture("16/edge_cases/default.sql")
+    fixture(16, "edge_cases", "default")
 }
 
 /// The same hand-written dump `xz_source.rs`/`parallelism.rs` build their
 /// `.xz` fixtures from.
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
+    common::edge_cases()
 }
 
 /// A seekable multi-block `.xz` copy, in a directory of its own. `xz` is not
@@ -226,7 +226,7 @@ fn an_uninterrupted_parse_never_looks_like_a_resumed_one() {
 /// *absence* of a preceding preamble pass.
 #[tokio::test]
 async fn a_genuine_resume_reports_no_preamble_pass_and_names_the_frontier() {
-    let (_dir, dump) = common::sandboxed("16/edge_cases/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "edge_cases", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 0).await;
     assert!(frontier > 0, "a real watermark, not byte 0");
     let cache = write_truncated_cache(&dump, frontier).await;
@@ -818,7 +818,7 @@ fn a_gathering_parse_is_not_corrected() {
 /// `the_mapping_span_carries_the_holding_and_a_cut_count`.
 #[tokio::test]
 async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
-    let (_dir, dump) = common::sandboxed("16/edge_cases/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "edge_cases", "default"), "dump.sql");
     let cache_path = cache::colocated_path(&dump);
     let out = run(&["parse", "--source", dump.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));

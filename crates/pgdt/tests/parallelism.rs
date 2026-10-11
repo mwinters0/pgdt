@@ -24,7 +24,7 @@ use common::{fixture, run, stderr_of, stdout_of};
 /// `CREATE TABLE` DDL, so every column resolves `Utf8View` and a byte-for-byte
 /// comparison is exactly what parity means here.
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
+    common::edge_cases()
 }
 
 /// A seekable multi-block `.xz` copy of it, in a directory of its own.
@@ -63,7 +63,7 @@ fn query(dump: &Path, table: &str, extra: &[&str]) -> Output {
 /// however the merge ordered them.
 #[test]
 fn a_query_reads_the_same_rows_at_any_stated_parallelism() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let reference = query(&dump, "public.widgets", &["--jobs", "1"]);
     assert!(reference.status.success(), "{}", stderr_of(&reference));
     for extra in [
@@ -176,7 +176,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 /// library's, and nothing else joins them.
 #[test]
 fn a_narrowed_span_is_a_note_and_still_says_where_its_budget_came_from() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     // Eight readers at the plain source's 8 MiB-a-reader charge spend the
     // whole 64 MiB budget, so the span is narrowed to its one-chunk floor and
     // the note fires; the allowance is far above what the budget settles at.
@@ -242,7 +242,7 @@ fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
 /// different sub-streams.
 #[test]
 fn the_merge_prints_file_order_at_every_job_count() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     for jobs in ["1", "2", "3", "5", "8", "24"] {
         let out = query(&dump, "public.widgets", &["--jobs", jobs, "--column", "id"]);
         assert!(out.status.success(), "--jobs {jobs}: {}", stderr_of(&out));
@@ -319,7 +319,7 @@ fn a_parse_reports_the_same_listing_at_any_stated_parallelism() {
     for extra in [vec![], vec!["--jobs", "8"], vec!["--memory", "1048576"]] {
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("parallel.sql");
-        std::fs::copy(fixture("16/edge_cases/default.sql"), &dump).unwrap();
+        std::fs::copy(fixture(16, "edge_cases", "default"), &dump).unwrap();
         let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
         args.extend_from_slice(&extra);
         let out = run(&args);
@@ -346,7 +346,7 @@ fn a_parse_reports_the_same_listing_at_any_stated_parallelism() {
 /// zero, which is the arm above.
 #[test]
 fn zero_is_refused_for_both_flags() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let jobs = query(&dump, "public.widgets", &["--jobs", "0"]);
     assert!(!jobs.status.success());
     assert!(stderr_of(&jobs).contains("--jobs 1 is the serial path"), "{}", stderr_of(&jobs));

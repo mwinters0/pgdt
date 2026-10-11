@@ -38,8 +38,7 @@ const ORDERED: &str = "shop.public.ordered";
 /// The statistics fixture copied into `dir` beside the complete cache a parse
 /// gathering every column's statistics at [`SMALL_GROUP`] leaves.
 async fn gathered_copy(dir: &Path) -> PathBuf {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/16/statistics/default.sql");
+    let fixture = pgdt_fixtures::statistics_fixture(16, "default");
     let copy = dir.join("default.sql");
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();

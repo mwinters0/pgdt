@@ -19,7 +19,7 @@ use common::{fixture, require_uv, run, scripts_dir, stderr_of, stdout_of};
 /// `(id, name, description, is_active, created_at)`. Row 2 has a NULL
 /// `description`, row 3 a NULL `created_at`, row 5 a NULL `is_active`.
 fn widgets(extra: &[&str]) -> Output {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let mut args = vec![
         "query",
         "--source",

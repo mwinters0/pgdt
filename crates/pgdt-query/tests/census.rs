@@ -204,8 +204,7 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 /// carries a census, so the combined answer covers every row the table has.
 #[tokio::test]
 async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/16/partitions/default.sql");
+    let path = common::partitions_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 

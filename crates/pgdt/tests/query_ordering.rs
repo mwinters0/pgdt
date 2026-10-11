@@ -17,7 +17,7 @@ use common::{fixture, run, stderr_of, stdout_of};
 /// One table of the generated `types` fixture, projected to one column so a
 /// sibling column's undecodable value cannot sink the query.
 fn query(table: &str, column: &str, extra: &[&str]) -> Output {
-    let dump = fixture("16/types/default.sql");
+    let dump = fixture(16, "types", "default");
     let mut args = vec![
         "query",
         "--source",
@@ -65,7 +65,7 @@ fn the_two_character_spellings_are_not_split_at_their_first_byte() {
 /// which would name a column that does not exist.
 #[test]
 fn a_value_containing_an_operator_byte_does_not_steal_the_split() {
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let out = run(&[
         "query",
         "--source",

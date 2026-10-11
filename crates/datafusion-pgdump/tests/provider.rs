@@ -19,47 +19,15 @@ use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
+use pgdt_fixtures::{all_fixtures, fixtures_root, sweep_request};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, DiagnosticKind, Finding, SpanBody, TableName};
 use pgdt_query::{QueryOptions, table_stream};
 
-#[path = "../../pgdt-mapping/tests/common/refused.rs"]
-mod refused;
-
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
-
-fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
-}
-
-/// Every generated dump: `fixtures/<major>/<schema>/<flag-set>.sql`.
-fn every_fixture() -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for major in std::fs::read_dir(fixtures_root()).unwrap() {
-        let major = major.unwrap().path();
-        if !major.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&major).unwrap() {
-            let schema = schema.unwrap().path();
-            if !schema.is_dir() {
-                continue;
-            }
-            for dump in std::fs::read_dir(&schema).unwrap() {
-                let dump = dump.unwrap().path();
-                if dump.extension().is_some_and(|e| e == "sql") {
-                    found.push(dump);
-                }
-            }
-        }
-    }
-    found.sort();
-    assert!(!found.is_empty(), "no fixtures under {}", fixtures_root().display());
-    found
-}
 
 /// `fixture` copied into `dir` beside the complete cache a parse leaves, so
 /// the committed tree is never written into.
@@ -70,7 +38,7 @@ async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy), &refused::sweep_request(fixture)).await;
+    map_ungathered(&source, &cache::colocated_path(&copy), &sweep_request(fixture)).await;
     copy
 }
 
@@ -158,7 +126,7 @@ async fn library_answer(
 async fn every_fixture_table_reads_as_the_library_reads_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut tables_compared = 0;
-    for fixture in every_fixture() {
+    for fixture in all_fixtures() {
         let copy = parsed_copy(&fixture, dir.path()).await;
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
             let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };

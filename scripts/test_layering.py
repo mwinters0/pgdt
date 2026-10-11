@@ -100,6 +100,12 @@ class Graph(unittest.TestCase):
         self.assertTrue(problems(deps={"pgdt-query": [("namespace-init", None)]}))
         self.assertTrue(problems(deps={"pgdt-query": [("datafusion-pgdump", None)]}))
 
+    def test_only_a_dev_dependency_reaches_the_fixtures(self):
+        for name in la.GRAPH:
+            if name != "pgdt-fixtures":
+                self.assertTrue(problems(deps={name: [("pgdt-fixtures", None)]}), name)
+                self.assertEqual(problems(deps={name: [("pgdt-fixtures", "dev")]}), [], name)
+
 
 class Arrow(unittest.TestCase):
     def test_below_the_codec_no_arrow_crate(self):
@@ -215,8 +221,13 @@ class Modules(unittest.TestCase):
         found = problems({"pgdt-io/src/tests.rs": '#[path = "x.rs"]\nmod x;\n'})
         self.assertEqual(found, ["crates/pgdt-io/src/tests.rs loads a module by `#[path]`"])
 
-    def test_a_path_attribute_in_an_integration_test_is_not_a_library_module(self):
-        self.assertEqual(problems({"pgdt-query/tests/a.rs": '#[path = "x.rs"]\nmod x;\n'}), [])
+    def test_a_path_attribute_in_an_integration_test_is_refused_too(self):
+        found = problems({"pgdt-query/tests/a.rs": '#[path = "x.rs"]\nmod x;\n'})
+        self.assertEqual(found, ["crates/pgdt-query/tests/a.rs loads a module by `#[path]`"])
+
+    def test_a_path_attribute_in_a_member_no_rule_reads_is_refused(self):
+        found = problems({"pgdt-fixtures/src/lib.rs": '#[path = "x.rs"]\nmod x;\n'})
+        self.assertEqual(found, ["crates/pgdt-fixtures/src/lib.rs loads a module by `#[path]`"])
 
     def test_a_public_module_that_is_no_namespace_is_refused(self):
         found = problems({"pgdt-dump/src/lib.rs": "pub mod cache;\npub mod scan;\n"})

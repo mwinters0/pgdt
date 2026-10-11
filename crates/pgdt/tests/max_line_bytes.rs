@@ -16,7 +16,7 @@
 use std::process::Output;
 
 mod common;
-use common::{fixture, run, sandboxed, stderr_of, stdout_of};
+use common::{fixtures_root, run, sandboxed, stderr_of, stdout_of};
 
 const DUMP: &str = "16/statistics/default.sql";
 
@@ -24,14 +24,14 @@ const DUMP: &str = "16/statistics/default.sql";
 const REFUSING: &str = "65536";
 
 fn parse(extra: &[&str]) -> Output {
-    let (_dir, dump) = sandboxed(DUMP, "long.sql");
+    let (_dir, dump) = sandboxed(&fixtures_root().join(DUMP), "long.sql");
     let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
     args.extend_from_slice(extra);
     run(&args)
 }
 
 fn query(extra: &[&str]) -> Output {
-    let dump = fixture(DUMP);
+    let dump = fixtures_root().join(DUMP);
     let mut args = vec![
         "query",
         "--source",

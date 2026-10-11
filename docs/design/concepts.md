@@ -320,3 +320,15 @@ them ([`decisions.md`](decisions.md), "D105").
 
 - **pgdt** — `alloc.rs`, `profile.rs`: the binary's choice, never the
   library's.
+
+## The fixture vocabulary
+
+What every crate's tests address the fixtures by: the generated tree and its
+enumerator, the sandboxes a test writes a cache beside, the multi-database
+concatenation, the fields PostgreSQL refuses and how a sweep maps past them,
+and the hand-written dump ([`decisions.md`](decisions.md), "D68").
+
+- **pgdt-fixtures** — `lib.rs`, `refused.rs`: a member only a dev-dependency
+  reaches, so every crate's tests share one copy with the graph one-way; the
+  sweep's request builders, which name the statistics request, behind its
+  `mapping` feature.

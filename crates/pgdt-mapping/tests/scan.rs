@@ -13,8 +13,7 @@ use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 
-mod common;
-use common::{edge_cases, edge_cases_fixture, types_fixture};
+use pgdt_fixtures::{edge_cases, edge_cases_fixture, objects_fixture, types_fixture};
 
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
@@ -520,9 +519,7 @@ async fn v17_plus_reports_one_large_object_region_per_blobs_entry() {
 }
 
 fn fixture18_objects(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/18/objects")
-        .join(format!("{name}.sql"))
+    objects_fixture(18, name)
 }
 
 /// `Event::DollarQuoteEnd` reports **where** a dollar-quoted region closed

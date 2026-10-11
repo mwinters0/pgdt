@@ -1,25 +1,22 @@
-//! The fixture vocabulary every integration test speaks.
+//! The fixture vocabulary every crate's tests speak: where the fixtures are,
+//! the sweep's enumerator, the sandboxes, the fields PostgreSQL refuses, and
+//! the hand-written `edge_cases.sql`.
 //!
-//! Each `tests/*.rs` file is its own crate, so without a shared module every
+//! Each `tests/*.rs` file is its own crate, so without one shared home every
 //! file that needs a fixture path carries its own copy of one — and copies of
-//! a path helper drift silently, since nothing compares them. This module is
-//! what a `tests/` directory has for that, and it costs one `mod common;` per
-//! file. It is this crate's, the lowest whose tests speak it, and
-//! `pgdt-query`'s `tests/common/mod.rs` includes it by path, so a path here
-//! resolves from either crate.
+//! a path helper drift silently, since nothing compares them. This is that
+//! home: a member only tests depend on, each as a dev-dependency, depending on
+//! no member but behind `mapping`, so every crate's tests reach it with the
+//! graph one-way (`docs/design/decisions.md`, "D68").
 //!
 //! Everything here is a *path* or an *expectation*. Anything that drives the
 //! library — a `collect`, a `drain`, a `census_of` — stays in the file whose
 //! subject it is: those differ per test file in ways that matter, and merging
-//! them here would be the second mistake this module exists to undo.
-
-// Each test binary compiles the whole module and uses a subset of it, so
-// per-binary dead-code warnings are structural rather than informative.
-#![allow(dead_code)]
+//! them here would be the second mistake this crate exists to undo.
 
 use std::path::{Path, PathBuf};
 
-/// The **hand-written** dump at `tests/data/edge_cases.sql` — not a `pg_dump`
+/// The **hand-written** dump beside this crate's manifest — not a `pg_dump`
 /// product and not part of the generated tree. It is the fixture for
 /// structural edge cases no real dump reliably contains (a `COPY`-like phrase
 /// inside a value, a header-less block, an embedded `\.`), which is why it is
@@ -28,7 +25,7 @@ use std::path::{Path, PathBuf};
 /// Its generated namesake is [`edge_cases_fixture`], which is real `pg_dump`
 /// output for the `edge_cases` schema. The two are unrelated files.
 pub fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("edge_cases.sql")
 }
 
 /// The root of the generated fixture tree, laid out as
@@ -86,7 +83,8 @@ pub const VERSIONS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 /// than listed, so a new schema or flag set is swept the moment the generator
 /// writes it. Includes the degenerate shapes the design doc calls out by
 /// name: `data-only`, `schema-only`, `inserts`/`column-inserts` (no `COPY`
-/// blocks at all), and `dumpall` (concatenated, multi-`\connect`).
+/// blocks at all), and `dumpall` (concatenated, multi-`\connect`). In path
+/// order, so a sweep's failures read the same on every filesystem.
 pub fn all_fixtures() -> Vec<PathBuf> {
     let root = fixtures_root();
     let mut out = Vec::new();
@@ -109,14 +107,14 @@ pub fn all_fixtures() -> Vec<PathBuf> {
         }
     }
     assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
+    out.sort();
     out
 }
 
-/// The fixtures holding a field PostgreSQL refuses, shared with the other
-/// crates' sweeps.
-pub mod refused;
-#[allow(unused_imports)]
-pub use refused::{REFUSED_FIELDS, RefusedField, refused_field, sweep_request};
+mod refused;
+pub use refused::{REFUSED_FIELDS, RefusedField, refused_field};
+#[cfg(feature = "mapping")]
+pub use refused::{past_refused, sweep_request};
 
 /// A private copy of `source` in a fresh tempdir, named `name`, so a test can
 /// freely read and write a colocated `.dtcache` beside it without touching

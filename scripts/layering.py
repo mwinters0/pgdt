@@ -22,8 +22,10 @@ this holds:
 * **no embedder names a crate's `internal` module, nor `timed!` or
   `row_evaluated!`**, which `#[macro_export]` roots at `pgdt_core` whatever
   module declares them -- in any of its sources, tests included;
-* **no library module loads by `#[path]`**, test modules included, so a file
-  is the module its name says;
+* **no module loads by `#[path]`**, in any member, tests included, so a file
+  is the module its name says and a test's sources are the files its `mod`
+  lines reach (`check.py`'s `module_files`) -- a crate's tests reach another's
+  vocabulary through `pgdt-fixtures`;
 * **every library module is private but `internal` and the namespaces
   `NAMESPACES` lists**, a namespace's own children included, so an item's
   only paths are its API one and `internal`'s;
@@ -73,7 +75,9 @@ EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 #: deliberately (D68). The dump's parsers and the codec are siblings, neither
 #: reaching the other; `namespace-init` installs a binary's signal handlers
 #: (D26), which no library does, and `peak-rss` and `count-instructions` are
-#: the harness's.
+#: the harness's. `pgdt-fixtures` is the tests' vocabulary, which no row
+#: lists, so only a dev-dependency reaches it; its own edge, behind its
+#: `mapping` feature, is for a sweep's request builders.
 GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-core": (),
     "pgdt-model": ("pgdt-core",),
@@ -95,6 +99,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "namespace-init": (),
     "peak-rss": (),
     "count-instructions": (),
+    "pgdt-fixtures": ("pgdt-mapping",),
 }
 
 #: Each library's API namespaces: the public modules an embedder names. Any
@@ -318,13 +323,16 @@ def problems(meta: dict, repo: Path) -> list[str]:
                         if item != "i256":
                             found.append(f"{where} names `arrow_buffer::{item}`, not `i256` (D74)")
 
-    # No `#[path]`, private modules, and one path an item.
-    for name in libraries:
-        src = dirs[name] / "src"
-        for file in rust_files(src):
+    # No `#[path]`, in any member.
+    for name in sorted(dirs):
+        for file in rust_files(dirs[name]):
             text = masked(file.read_text(encoding="utf-8"))
             if PATH_ATTR_RE.search(text):
                 found.append(f"{rel(file)} loads a module by `#[path]`")
+
+    # Private modules, and one path an item.
+    for name in libraries:
+        src = dirs[name] / "src"
         lib = src / "lib.rs"
         if not lib.is_file():
             continue

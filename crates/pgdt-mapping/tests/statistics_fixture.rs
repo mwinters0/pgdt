@@ -26,8 +26,7 @@ use pgdt_model::{DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES};
 
 use pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES;
 
-mod common;
-use common::{VERSIONS, statistics_fixture};
+use pgdt_fixtures::{VERSIONS, statistics_fixture};
 
 /// One table's `COPY` block: its column names, and each row's fields with
 /// `\N` read as `None`.

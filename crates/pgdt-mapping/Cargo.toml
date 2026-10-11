@@ -28,6 +28,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+pgdt-fixtures = { path = "../pgdt-fixtures" }
 # What this crate's tests reach there.
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 tempfile = { workspace = true }

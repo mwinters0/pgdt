@@ -10,8 +10,7 @@ use pgdt_mapping::{build_index, build_map};
 use pgdt_model::DiagnosticKind;
 use pgdt_model::{SpanBody, TilingIssue};
 
-mod common;
-use common::{all_fixtures, edge_cases, edge_cases_fixture, objects_fixture};
+use pgdt_fixtures::{all_fixtures, edge_cases, edge_cases_fixture, objects_fixture};
 
 async fn map_of(path: &Path) -> (Vec<pgdt_model::Span>, u64) {
     let source = LocalFileSource::open(path).unwrap();
@@ -70,7 +69,7 @@ async fn metadata_from_spans_is_a_pure_function_of_the_spans() {
     }
 }
 
-/// `tests/data/edge_cases.sql` is hand-written, not real `pg_dump` output —
+/// The hand-written `edge_cases.sql` is not real `pg_dump` output —
 /// no `-- Name: ...; Type: ...` TOC comments at all, unlike every generated
 /// fixture — so it's exactly the "statement-grammar fallback, no TOC
 /// header" path, and its two dollar-quoted `CREATE FUNCTION`s (including
@@ -668,7 +667,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
             _ => None,
         })
         .expect("build_index must report a TocCoverage diagnostic");
-    assert_eq!(coverage.0, 0, "tests/data/edge_cases.sql has no TOC comments at all");
+    assert_eq!(coverage.0, 0, "the hand-written edge_cases.sql has no TOC comments at all");
 }
 
 /// The cross-reference set over a real fixture: `postgres` (every object's

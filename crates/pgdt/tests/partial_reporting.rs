@@ -27,18 +27,6 @@ use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
 mod common;
 use common::{fixture, pgdt, run, stderr_of, stdout_of};
 
-/// Two copies of `edge_cases/create.sql` concatenated, the second's database
-/// renamed — a real `\connect`-delimited multi-database dump, the same
-/// construction `crates/pgdt-query/tests/common/mod.rs`'s `multidb_fixture` uses.
-fn sandboxed_multidb() -> (tempfile::TempDir, PathBuf) {
-    let content = std::fs::read_to_string(fixture("16/edge_cases/create.sql")).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("multidb.sql");
-    let renamed = content.replace("pgdt_fixture", "pgdt_fixture_2");
-    std::fs::write(&dump, format!("{content}{renamed}")).unwrap();
-    (dir, dump)
-}
-
 /// Write a cache holding everything the map held up to `frontier`, an
 /// `Unscanned` tail for the rest, and the first `keep_databases` databases'
 /// DDL.
@@ -109,7 +97,7 @@ async fn block_frontier(dump: &Path, n: usize) -> u64 {
 /// for the other.
 #[tokio::test]
 async fn info_with_no_cache_names_parse_and_exits_non_zero() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let out = run(&["info", "--source", dump.to_str().unwrap()]);
 
     assert!(!out.status.success(), "info must not succeed without a cache");
@@ -121,7 +109,7 @@ async fn info_with_no_cache_names_parse_and_exits_non_zero() {
 
 #[tokio::test]
 async fn info_against_a_changed_file_says_the_file_changed() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     // Same file, one byte longer: every offset in the cache could now be
@@ -146,7 +134,7 @@ async fn info_against_a_changed_file_says_the_file_changed() {
 /// half that would fail silently.
 #[tokio::test]
 async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
     let cache_path = cache::colocated_path(&dump);
     let before = std::fs::read(&cache_path).unwrap();
@@ -173,7 +161,7 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
 /// which `info` then reads (`docs/design/decisions.md`, "D20").
 #[tokio::test]
 async fn the_scanning_commands_replace_an_unusable_cache_when_told_to() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let source = dump.to_str().unwrap();
     for command in [
         vec!["parse", "--source", source, "--overwrite-unusable-cache"],
@@ -216,7 +204,7 @@ async fn the_scanning_commands_replace_an_unusable_cache_when_told_to() {
 /// to it meets a second refusal.
 #[tokio::test]
 async fn refusals_name_both_ways_out() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let mut bytes = std::fs::read(&dump).unwrap();
@@ -247,7 +235,7 @@ async fn refusals_name_both_ways_out() {
 /// changes.
 #[tokio::test]
 async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let cache_path = cache::colocated_path(&dump);
     std::fs::write(&cache_path, b"not a cache at all").unwrap();
 
@@ -279,7 +267,7 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
 /// the dump, which `parse --dtcache <path>` answers.
 #[tokio::test]
 async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let out = run(&["info", "--source", dump.to_str().unwrap(), "--dtcache", "none"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
@@ -292,7 +280,7 @@ async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
 /// touch it. Proven by the bytes on disk, not by the absence of a delay.
 #[tokio::test]
 async fn info_leaves_a_partial_cache_exactly_as_it_found_it() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (cache_path, _) = write_truncated_cache(&dump, frontier, 1).await;
     let before = std::fs::read(&cache_path).unwrap();
@@ -314,7 +302,7 @@ async fn info_leaves_a_partial_cache_exactly_as_it_found_it() {
 /// suggest a variation that does not exist.
 #[tokio::test]
 async fn a_partial_cache_lists_exactly_the_blocks_it_holds() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (_cache_path, truncated) = write_truncated_cache(&dump, frontier, 1).await;
     let expected: Vec<String> = truncated.blocks().map(|b| b.header.qualified_name()).collect();
@@ -347,7 +335,7 @@ async fn a_partial_cache_lists_exactly_the_blocks_it_holds() {
 /// partial answer raises.
 #[tokio::test]
 async fn a_complete_cache_reports_full_coverage() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
     let size = std::fs::metadata(&dump).unwrap().len();
 
@@ -361,7 +349,7 @@ async fn a_complete_cache_reports_full_coverage() {
 /// an answer.
 #[tokio::test]
 async fn cache_only_mode_reports_a_partial_cache() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (cache_path, _) = write_truncated_cache(&dump, frontier, 1).await;
 
@@ -384,7 +372,7 @@ async fn cache_only_mode_reports_a_partial_cache() {
 /// so the one line about the invocation goes above it.
 #[tokio::test]
 async fn parse_resumes_from_a_partial_cache_and_says_so() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     write_truncated_cache(&dump, frontier, 1).await;
 
@@ -407,7 +395,7 @@ async fn parse_resumes_from_a_partial_cache_and_says_so() {
 /// A first `parse` has nothing to resume from and says nothing about it.
 #[tokio::test]
 async fn a_cold_parse_prints_no_resume_line() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let out = run(&["parse", "--source", dump.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let text = stdout_of(&out);
@@ -420,7 +408,7 @@ async fn a_cold_parse_prints_no_resume_line() {
 /// any other.
 #[tokio::test]
 async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(pgdt().args(["info", "--preamble-only"]).output().unwrap().status.code() != Some(0));
 
     let out = run(&["parse", "--source", dump.to_str().unwrap(), "--preamble-only"]);
@@ -479,7 +467,7 @@ fn detail_column_lines(text: &str) -> Vec<Vec<String>> {
 /// token, whose words are the sentence's own opening.
 #[tokio::test]
 async fn the_json_export_and_the_detail_listing_agree_column_for_column() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
@@ -549,7 +537,7 @@ async fn the_json_export_and_the_detail_listing_agree_column_for_column() {
 /// it answers a user standing at one refused column.
 #[tokio::test]
 async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
@@ -594,7 +582,7 @@ async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
 /// and `--json` carries each block's count as the cache holds it.
 #[tokio::test]
 async fn a_columns_unrepresentable_count_is_stated_beneath_it() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
@@ -663,7 +651,7 @@ fn json_types(json: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
 /// `type_kind_summary` instead.
 #[tokio::test]
 async fn the_detail_listing_names_every_user_defined_type() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let plain = stdout_of(&run(&["info", "--source", dump.to_str().unwrap()]));
@@ -734,7 +722,7 @@ fn squash(line: &str) -> String {
 /// wants instead of parsing that line back apart.
 #[tokio::test]
 async fn the_json_export_carries_coverage_as_components() {
-    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     write_truncated_cache(&dump, frontier, 1).await;
     let size = std::fs::metadata(&dump).unwrap().len();
@@ -763,7 +751,7 @@ async fn the_json_export_carries_coverage_as_components() {
 /// `ResumeToken` carried across a re-scan.
 #[tokio::test]
 async fn a_later_databases_blocks_report_metadata_not_scanned() {
-    let (_dir, dump) = sandboxed_multidb();
+    let (_dir, dump) = common::multidb_fixture(16);
     let source = LocalFileSource::open(&dump).unwrap();
     let full = build_index(&source, &ScanOptions::default()).await.unwrap();
 

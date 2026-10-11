@@ -2061,6 +2061,7 @@ dependencies = [
  "pgdt-codec",
  "pgdt-core",
  "pgdt-dump",
+ "pgdt-fixtures",
  "pgdt-io",
  "pgdt-mapping",
  "pgdt-model",
@@ -3643,6 +3644,7 @@ dependencies = [
  "pgdt-codec",
  "pgdt-core",
  "pgdt-dump",
+ "pgdt-fixtures",
  "pgdt-io",
  "pgdt-mapping",
  "pgdt-model",
@@ -3668,6 +3670,7 @@ dependencies = [
  "mimalloc",
  "pgdt-core",
  "pgdt-dump",
+ "pgdt-fixtures",
  "pgdt-io",
  "pgdt-model",
  "serde",
@@ -3704,6 +3707,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgdt-fixtures"
+version = "0.1.0"
+dependencies = [
+ "pgdt-mapping",
+ "tempfile",
+]
+
+[[package]]
 name = "pgdt-io"
 version = "0.1.0"
 dependencies = [
@@ -3730,6 +3741,7 @@ dependencies = [
  "pgdt-codec",
  "pgdt-core",
  "pgdt-dump",
+ "pgdt-fixtures",
  "pgdt-io",
  "pgdt-model",
  "serde",
@@ -3764,6 +3776,7 @@ dependencies = [
  "pgdt-codec",
  "pgdt-core",
  "pgdt-dump",
+ "pgdt-fixtures",
  "pgdt-io",
  "pgdt-mapping",
  "pgdt-model",

@@ -39,7 +39,7 @@ fn already_cancelled() -> Arc<Cancellation> {
     cancel
 }
 
-/// A private copy of `tests/data/edge_cases.sql` in a fresh tempdir, so each
+/// A private copy of the hand-written `edge_cases.sql` in a fresh tempdir, so each
 /// test may freely write the colocated `.dtcache` beside it — same fixture and
 /// same convention as `tests/query_cache.rs`, which is what makes the "a query
 /// stops at its target" setup below behave identically here.
@@ -80,10 +80,7 @@ fn assert_matches_eager(actual: &DumpIndex, eager: &DumpIndex, label: &str) {
 async fn a_cold_map_file_matches_build_index() {
     for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only", "schema-only"] {
-            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/16")
-                .join(schema_dir)
-                .join(format!("{flag_set}.sql"));
+            let fixture = common::fixture(16, schema_dir, flag_set);
             if !fixture.exists() {
                 continue;
             }
@@ -123,10 +120,7 @@ async fn a_cold_map_file_matches_build_index() {
 async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
     for schema_dir in ["edge_cases", "emitters", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only"] {
-            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/16")
-                .join(schema_dir)
-                .join(format!("{flag_set}.sql"));
+            let fixture = common::fixture(16, schema_dir, flag_set);
             if !fixture.exists() {
                 continue;
             }
@@ -422,10 +416,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
 #[tokio::test]
 async fn a_full_scan_recovers_every_databases_ddl() {
     for version in [13, 16, 18] {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(version.to_string())
-            .join("edge_cases/create.sql");
+        let fixture = common::edge_cases_fixture(version, "create");
         let content = std::fs::read_to_string(&fixture).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("multidb.sql");
@@ -1013,10 +1004,7 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
 /// in the suite use: with both constructions in one file, a failure naming
 /// `pgdt_fixture_2` would not say which it came from.
 fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures")
-        .join(version.to_string())
-        .join("edge_cases/create.sql");
+    let fixture = common::edge_cases_fixture(version, "create");
     let content = std::fs::read_to_string(&fixture).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("multidb.sql");
@@ -1056,11 +1044,7 @@ fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
 async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("dump.sql");
-    std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/16/edge_cases/default.sql"),
-        &dump,
-    )
-    .unwrap();
+    std::fs::copy(common::edge_cases_fixture(16, "default"), &dump).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
@@ -1171,10 +1155,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
     for version in [13, 16, 18] {
         // Copied out of `fixtures/`, since the run writes a colocated cache.
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(version.to_string())
-            .join("edge_cases/dumpall.sql");
+        let fixture = common::edge_cases_fixture(version, "dumpall");
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("dumpall.sql");
         std::fs::copy(&fixture, &dump).unwrap();
@@ -1193,10 +1174,7 @@ async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
 #[tokio::test]
 async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() {
     for version in [13, 16, 18] {
-        let dump = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures")
-            .join(version.to_string())
-            .join("edge_cases/dumpall.sql");
+        let dump = common::edge_cases_fixture(version, "dumpall");
         let source = LocalFileSource::open(&dump).unwrap();
         let index = map_file(
             &source,

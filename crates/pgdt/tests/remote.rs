@@ -29,7 +29,7 @@ use pgdt_mapping::statistics::StatisticsRequest;
 /// The dump every test here serves: real `pg_dump` output, so a scan over it
 /// finds the same tables a local read finds.
 fn dump_bytes() -> Vec<u8> {
-    std::fs::read(fixture("16/edge_cases/default.sql")).unwrap()
+    std::fs::read(fixture(16, "edge_cases", "default")).unwrap()
 }
 
 /// An oracle serving that dump, with no knob set — the correct origin every
@@ -367,7 +367,7 @@ fn parse_over_a_url_finds_what_a_local_parse_finds() {
 
     let local_dir = tempfile::tempdir().unwrap();
     let local_cache = local_dir.path().join("local.dtcache");
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let local = run_ok(&[
         "parse",
         "--source",
@@ -392,7 +392,7 @@ fn info_reports_the_cache_a_remote_parse_left() {
 #[test]
 fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
     let oracle = serving_dump();
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let remote = run_ok(&[
         "query",
         "--source",
@@ -939,7 +939,7 @@ fn a_cached_seek_table_spares_a_remote_xz_the_walk_entirely() {
 #[test]
 fn query_over_a_remote_xz_streams_the_same_rows_the_plain_dump_streams() {
     let oracle = serving_xz_dump();
-    let dump = fixture("16/edge_cases/default.sql");
+    let dump = fixture(16, "edge_cases", "default");
     let remote = run_ok(&[
         "query",
         "--source",

@@ -1143,7 +1143,8 @@ const PERSISTED_INDEX: (u32, u64) = (68, 14_232_753_314_590_640_994);
 /// the data spans being persisted beside it.
 ///
 /// FNV-1a over each file's path under the fixture tree, in sorted order — the
-/// hand-written `tests/data/edge_cases.sql` among them — then the length and
+/// hand-written `edge_cases.sql` among them, under the label
+/// `tests/data/edge_cases.sql` the pin was taken with — then the length and
 /// bytes of its encoded index.
 #[tokio::test]
 async fn persisted_index_is_pinned_to_the_format_version() {
@@ -1191,7 +1192,7 @@ async fn persisted_index_is_pinned_to_the_format_version() {
 /// fixture's index is `map_file`'s to build.
 mod encoding {
     use std::io::Write;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::Command;
 
     use pgdt_core::Error;
@@ -1208,7 +1209,7 @@ mod encoding {
 
     /// Real `pg_dump` output whose columns gather bounds and dictionaries.
     fn statistics_fixture() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/16/statistics/default.sql")
+        pgdt_fixtures::statistics_fixture(16, "default")
     }
 
     /// Streaming changed where the bytes go, not what they are: a save writes

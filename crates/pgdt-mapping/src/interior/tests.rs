@@ -1,11 +1,10 @@
-use std::path::{Path, PathBuf};
-
 use super::region::BoundBy;
 use super::*;
 use pgdt_core::Error;
 use pgdt_dump::ChunkCarry;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::internal::Builder;
+use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::Cancellation;
 use pgdt_io::{ByteRangeSource, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
@@ -138,18 +137,6 @@ fn cut_up(file: &[u8], block: &Reference, pieces: usize) -> (Option<Interior>, u
     }
     let working = scans.iter().filter(|p| p.rows > 0).count();
     (merge(&scans), working)
-}
-
-fn fixture(version: u32, schema: &str, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures")
-        .join(version.to_string())
-        .join(schema)
-        .join(format!("{flag_set}.sql"))
-}
-
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
 }
 
 /// **The property the whole mechanism rests on: how a block's interior was

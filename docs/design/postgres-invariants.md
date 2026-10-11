@@ -463,7 +463,7 @@ pair *then* its own `\connect`.
 `pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
-(`crates/pgdt-query/tests/common/mod.rs`'s `multidb_fixture`, versions 13/16/18);
+(`crates/pgdt-fixtures/src/lib.rs`'s `multidb_fixture`, versions 13/16/18);
 `fixtures/{13..18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run at
 every major (`tests/preamble.rs`,
 `every_dumpall_database_keeps_its_own_version_headers`).
