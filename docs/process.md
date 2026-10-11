@@ -296,10 +296,10 @@ is that round's procedure.
 **A file past a limit indicts the design around it, not just itself.** It is
 where the seams of its module or crate first show they no longer fit the code,
 so the round redraws those seams: it designs the tree the code now wants —
-each file one concern a reader can hold, the names alone saying where a thing
-lives, no file past a limit — and cuts toward that design. Splitting the one
-file at its own banners and stopping is the failure this rule exists for: each
-such cut is locally sound, and a run of them leaves a layout nobody designed.
+**each concept in one place**, above all else; each file one concern a reader
+can hold, named for it; no file past a limit — and cuts toward that design.
+Splitting the one file at its banners and stopping is what this rule is for:
+each such cut is locally sound, and a run of them leaves no design at all.
 A design may land over several slices; none lands a cut the design lacks.
 **A crate is a seam too**: the workspace graph is the current answer, not a
 fixed one, and the same round asks whether a crate should split or two merge.

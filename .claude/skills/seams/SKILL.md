@@ -32,9 +32,12 @@ A red file says the seams around it have stopped fitting (`docs/process.md`,
 "Seams"), so the round's first product is **a design, not a cut**: the module
 tree the scope's code now wants, written out — each module with a one-line
 purpose, nesting where siblings form a group, no file past a limit — and
-compared with today's. The test of a design is a reader who knows the domain and
-not the code: from the names and module docs alone, can they say where a new
-feature goes and where a given item lives?
+compared with today's. **What a design is for, above everything else, is that
+each concept lives in one place**: everything a reader needs to understand or
+change one concept is in one module. That is what people look for in a code
+layout, and every other property here serves it. The test
+is a reader who knows the domain and not the code: from the names and module
+docs alone, can they say where a concept lives, and where a new feature goes?
 
 The evidence for where seams fall, in order of weight:
 
@@ -64,6 +67,10 @@ the scope for them before the design and again after the cuts. None is counted
 against a threshold: each one found is removed by the design or kept with its
 reason (a dispatcher and its feature-gated arm do import each other).
 
+- **One concept, several files** — the antipattern that matters most, every
+  other one below being a way of arriving at it or a symptom of it. A type
+  family's reader, renderer and refusal check, or one grammar, spread over
+  modules — or over a library and the binary that uses it.
 - **The banner split.** One file cut at its section banners into a flat list
   of siblings, and the round stops. The banners record where the file grew;
   groups among the siblings go unnested and the tree goes undesigned.
@@ -73,9 +80,6 @@ reason (a dispatcher and its feature-gated arm do import each other).
 - **The cut by visibility.** What is private, or what `internal` re-exports,
   moved out as a unit instead of a concern, so each family ends up half in
   the parent and half in a child.
-- **One concept, several files.** A type family's reader, renderer and refusal
-  check, or one grammar, spread over modules — or over a library and the
-  binary that uses it.
 - **The half-split.** Part of a concern moved out and the rest left, so the new
   module calls back into the one it left (`crate::` into a binary's root).
 - **Sibling cycles.** Two children importing each other (`rg -n 'use

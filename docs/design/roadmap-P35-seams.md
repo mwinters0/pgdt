@@ -145,10 +145,10 @@ long is the next seams round's.
 `.claude/skills/seams/SKILL.md` is that round. Its first cut in any file is
 the inline tests to a file beside the module. **A red file indicts the tree
 around it, not just itself**: the round designs the module tree its crate now
-wants — each file one concern, nested where siblings form a group, no file
-past a limit, tests beside what they test — and cuts toward that design, at a
-type cluster, a trait and its implementors, one arm of a family, never at a
-line count. Cutting the one file at its banners and stopping leaves a layout
+wants — each concept in one place above all, each file one concern, nested
+where siblings form a group, no file past a limit, tests beside what they
+test — and cuts toward that design, at a type cluster, a trait and its
+implementors, one arm of a family, never at a line count. Cutting the one file at its banners and stopping leaves a layout
 nobody designed; the skill's "Antipatterns" names what that looks like. Every
 marker, citation and script path moves with the code.
 
