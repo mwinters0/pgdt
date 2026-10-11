@@ -97,21 +97,15 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.5** The facade retired; every member under `crates/`; `tests/layering.rs` become `scripts/layering.py`, reading the graph from `cargo metadata`, refusing an embedder's `internal` path or `timed!`/`row_evaluated!`, a codec `arrow_buffer` item but `i256`, a `#[path]` on a library module, and an API item re-exported at its crate's root beside its namespace; scripts, docs, D68 and D74, `CLAUDE.md`'s commands and the graft index repointed to the new paths — [notes](../design/roadmap-P35.5-facade-retired-notes.md)
 - [x] **35.6** The seams round: every file `file_limits.py` names cut at its seams or exempted with its reason, the tree green — [notes](../design/roadmap-P35.6-seams-round-notes.md)
 - [ ] **35.11** Every crate's module tree designed, no code moved: the tree each library crate and `pgdt` now wants — each concept in one place above all, one concern a file, nested where siblings group, tests beside what they test, no file past a limit, each API namespace declaring its API from the private children that define it — drawn from the four reviews under `runs/seams-review-20261011/`, the taste calls settled with the maintainer, the design in its notes doc
-- [ ] **35.12** `pgdt-io` cut to 35.11's tree
-- [ ] **35.13** `pgdt-dump` cut to 35.11's tree
-- [ ] **35.14** `pgdt-codec`'s `decode` cut to 35.11's tree, a type family a module
-- [ ] **35.15** The rest of `pgdt-codec` — `key`, `pgtype`, `nested` — cut to 35.11's tree
-- [ ] **35.16** `pgdt-query`'s `predicate`, statistics and `batch` cut to 35.11's tree
-- [ ] **35.17** `pgdt-query`'s `stream` cut to 35.11's tree
-- [ ] **35.18** `pgdt` cut to 35.11's tree, a module a subcommand
-- [ ] **35.19** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns"
+- [ ] **35.13** The cuts toward 35.11's tree, sliced by 35.11's design: this row rewritten by 35.11 into one row a cut, numbered from 35.13 in the order they run, each owning whole concepts — a concept's items, and its tests, moved in one slice, none split between two — and sized by its review
+- [ ] **35.12** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns"
 
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain and `.xz`, with
+- **P35 is the open phase**, its checklist above. A dump is readable over HTTP, plain and `.xz`, with
   nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in

@@ -205,6 +205,7 @@ at their own banners and by visibility, which left most crates' trees
 undesigned; so the trees are designed next, every crate at once and with no
 code moved, the taste calls settled with the maintainer, because the trees are
 one design — a test or helper may belong a crate away from where it sits — and
-a design per slice would redraw what the last one drew. Then the cuts, bottom
-up, a crate or a half of one a slice, and a closing round that finds nothing
+a design per slice would redraw what the last one drew. Then the cuts, sliced
+by that design rather than by crate: each slice owns whole concepts, so no
+concept is half-moved between two; and a closing round that finds nothing
 past any limit.
