@@ -29,10 +29,13 @@ never assumed:
 the doc's ```` ```moves ```` blocks are applied to the current references,
 and the cycles the moved tree would have are reported, each with the
 references that make it. A line `<from> -> <to>` moves one item
-(`pgdt-codec::grammar::column_grammar`) or every item a module's own file
-defines (`pgdt-codec::key::order`); an item's own line wins over its
-module's. `<to>` is a module, existing or new. An item is a top-level
-definition, and an `impl`'s methods move with its self type. A cycle
+(`pgdt-codec::grammar::column_grammar`), one method of an item's `impl`s
+(`pgdt-query::predicate::ResolvedTerm::eval`), or every item a module's own
+file defines (`pgdt-codec::key::order`); a method's line wins over its item's,
+and an item's over its module's. `<to>` is a module, existing or new. An item
+is a top-level definition, and an `impl`'s methods move with its self type
+unless a line names one: a type whose impls are split by role, each beside
+the role's other items. A cycle
 spanning crates is one Cargo would refuse, and is reported as a crate
 cycle.
 
@@ -90,7 +93,7 @@ OWED: dict[frozenset[str], str] = {
             "datafusion-pgdump::report",
             "datafusion-pgdump::table",
         }
-    ): "P35.11.1: P35.11's design cuts only datafusion-pgdump's `filter/`",
+    ): "P35.21, the root declaring and what it defines moved below its readers",
     frozenset({"pgdt", "pgdt::where_expr"}): "P35.22, the filter grammars one `query/filter/`",
     frozenset(
         {
@@ -100,10 +103,7 @@ OWED: dict[frozenset[str], str] = {
             "pgdt-codec::key::order",
             "pgdt-codec::pgtype",
         }
-    ): (
-        "P35.17 dissolves `key::order`; `compare` <-> `grammar` and `compare` <-> `pgtype` "
-        "are P35.11.1's"
-    ),
+    ): "P35.17, the declared type below the register, `grammar` and `pgtype`",
     frozenset(
         {
             "pgdt-codec::decode",
@@ -119,13 +119,13 @@ OWED: dict[frozenset[str], str] = {
             "pgdt-dump::cache::identity",
             "pgdt-dump::cache::mode",
         }
-    ): "P35.11.1: P35.15 cut `cache/` as P35.11 drew it",
+    ): "P35.23, `cache.rs` declaring and its operations in `cache/store.rs`",
     frozenset({"pgdt-io::source::xz", "pgdt-io::source::xz::blocks"}): (
-        "the advice beside `BlockCache` (P35.14's notes), for P35.12"
+        "P35.23, the advice beside `BlockCache`"
     ),
     frozenset(
         {"pgdt-model::block", "pgdt-model::diagnostic", "pgdt-model::span", "pgdt-model::statistics"}
-    ): "P35.11.1: P35.11's design leaves pgdt-model unchanged",
+    ): "P35.23, `BlockObserver`, `union_census` and `TilingIssue` beside what they read",
     frozenset(
         {
             "pgdt-query::batch",
@@ -151,7 +151,7 @@ OWED: dict[frozenset[str], str] = {
             "pgdt-query::gather::strict",
             "pgdt-query::gather::tracking",
         }
-    ): "P35.11.1: P35.18 moves `gather/` whole",
+    ): "P35.18, `gather/` redrawn as it moves",
     frozenset({"pgdt-query::stream::backfill", "pgdt-query::stream::map"}): (
         "P35.18, the mapping pass carved with `forward` and `whole_file` above `backfill`"
     ),
@@ -385,6 +385,19 @@ class Source:
         return self._at(self.production, pos)
 
 
+def _strip_generics(header: str) -> str:
+    """An `impl` header without its leading `<...>` parameter list."""
+    header = header.lstrip()
+    if not header.startswith("<"):
+        return header
+    depth = 0
+    for k, ch in enumerate(header):
+        depth += {"<": 1, ">": -1}.get(ch, 0)
+        if depth == 0:
+            return header[k + 1 :]
+    return header
+
+
 def read_source(package: str, module: str, rel: str, text: str) -> Source:
     m = masked(text)
     grid = [list(line) for line in m.split("\n")]
@@ -405,7 +418,7 @@ def read_source(package: str, module: str, rel: str, text: str) -> Source:
         brace = m.find("{", im.end())
         if brace < 0:
             continue
-        header = re.sub(r"\s+", " ", m[im.end() : brace]).split(" where ")[0]
+        header = _strip_generics(re.sub(r"\s+", " ", m[im.end() : brace]).split(" where ")[0])
         self_ty = re.split(r"\bfor\b(?!\s*<)", header)[-1]
         self_ty = re.sub(r"<.*", "", self_ty).strip(" &'")
         name = re.findall(r"[A-Za-z_]\w*", self_ty)
@@ -464,6 +477,8 @@ class Ref:
     dst_item: str
     rel: str
     line: int  # 1-based
+    src_member: str | None = None  # the method of `src_item` it sits in, if any
+    dst_member: str | None = None  # the method of `dst_item` it names, if any
 
 
 def _items(src: Source, doc: Document) -> list[tuple[Position, Position, str]]:
@@ -486,6 +501,33 @@ def _items(src: Source, doc: Document) -> list[tuple[Position, Position, str]]:
     ]
 
 
+def member_name(symbol: str) -> str | None:
+    """The method an `impl`'s symbol belongs to — `eval` in
+    `impl#[ResolvedTerm]eval().` or `impl#[Ay][Clone]clone().` — or None."""
+    d = descriptors(symbol)
+    m = d and re.search(r"impl#\[(?:`[^`]*`|[^\]])*\](?:\[(?:`[^`]*`|[^\]])*\])?(`[^`]*`|[A-Za-z_]\w*)", d)
+    return m.group(1).strip("`") if m else None
+
+
+def _members(src: Source, doc: Document) -> list[tuple[Position, Position, str]]:
+    """Each method an `impl` defines, as a character span."""
+    spans = []
+    for o in doc.occurrences:
+        if not o.definition or o.enclosing is None:
+            continue
+        name = member_name(o.symbol)
+        if name is None:
+            continue
+        (l0, c0), (l1, c1) = o.enclosing
+        spans.append(((l0, src.char_col((l0, c0))), (l1, src.char_col((l1, c1))), name))
+    return spans
+
+
+def _member_at(members: list[tuple[Position, Position, str]], pos: Position) -> str | None:
+    found = _item_at(members, pos)
+    return None if found == TOP else found
+
+
 def _item_at(items: list[tuple[Position, Position, str]], pos: Position) -> str:
     best = None
     for lo, hi, name in items:
@@ -500,34 +542,48 @@ class Graph:
     items: dict[str, set[str]]  # module -> the items its file defines
     modules: set[str]
     docs: list[Ref]  # doc links, `dst_item` the path as written
+    members: dict[tuple[str, str], set[str]] = field(default_factory=dict)  # an item's methods
 
 
 def read_graph(sources: dict[str, Source], docs: list[Document]) -> Graph:
-    defs: dict[str, tuple[str, str]] = {}
+    defs: dict[str, tuple[str, str, str | None]] = {}
     items: dict[str, set[str]] = {s.module: set() for s in sources.values()}
+    members: dict[tuple[str, str], set[str]] = defaultdict(set)
     by_path = {d.path: d for d in docs if d.path in sources}
-    spans = {}
+    spans, methods = {}, {}
     for path, doc in by_path.items():
         src = sources[path]
         spans[path] = _items(src, doc)
+        methods[path] = _members(src, doc)
         items[src.module] |= {name for _, _, name in spans[path]}
+        for lo, _, name in methods[path]:
+            members[(src.module, _item_at(spans[path], lo))].add(name)
         for o in doc.occurrences:
             if o.definition and not is_module(o.symbol) and src.is_production(o.start):
+                # The top-level item holding the definition, which a move can
+                # name: a generic `impl`'s self type without its parameters, a
+                # function for what its body defines.
                 name = item_name(o.symbol)
-                if name is not None:
-                    defs.setdefault(o.symbol, (src.module, name))
+                if name is None:
+                    continue
+                at = (o.start[0], src.char_col(o.start))
+                held = _item_at(spans[path], at)
+                defs.setdefault(
+                    o.symbol, (src.module, name if held == TOP else held, _member_at(methods[path], at))
+                )
     refs: list[Ref] = []
     for path, doc in by_path.items():
         src = sources[path]
         for o in doc.occurrences:
             if o.definition or o.symbol not in defs or not src.is_code(o.start):
                 continue
-            here = _item_at(spans[path], (o.start[0], src.char_col(o.start)))
-            module, name = defs[o.symbol]
-            if (module, name) != (src.module, here):
-                refs.append(Ref(src.module, here, module, name, path, o.start[0] + 1))
+            at = (o.start[0], src.char_col(o.start))
+            here, method = _item_at(spans[path], at), _member_at(methods[path], at)
+            module, name, member = defs[o.symbol]
+            if (module, name, member) != (src.module, here, method):
+                refs.append(Ref(src.module, here, module, name, path, o.start[0] + 1, method, member))
     modules = {s.module for s in sources.values()}
-    return Graph(refs, items, modules, doc_links(sources, modules))
+    return Graph(refs, items, modules, doc_links(sources, modules), dict(members))
 
 
 def doc_links(sources: dict[str, Source], modules: set[str]) -> list[Ref]:
@@ -582,14 +638,20 @@ MOVES_RE = re.compile(r"(?ms)^```moves[^\n]*\n(.*?)^```")
 class Moves:
     modules: dict[str, str] = field(default_factory=dict)
     items: dict[tuple[str, str], str] = field(default_factory=dict)
+    members: dict[tuple[str, str, str], str] = field(default_factory=dict)
 
-    def target(self, module: str, item: str) -> str:
-        return self.items.get((module, item)) or self.modules.get(module) or module
+    def target(self, module: str, item: str, member: str | None = None) -> str:
+        return (
+            (member and self.members.get((module, item, member)))
+            or self.items.get((module, item))
+            or self.modules.get(module)
+            or module
+        )
 
 
 def read_moves(text: str, graph: Graph) -> tuple[Moves, list[str]]:
     """The moves in a design doc's ```` ```moves ```` blocks, and the lines
-    naming neither a module nor one of its items."""
+    naming neither a module, one of its items, nor an item's method."""
     moves, problems = Moves(), []
     for block in MOVES_RE.finditer(text):
         for raw in block.group(1).splitlines():
@@ -606,16 +668,22 @@ def read_moves(text: str, graph: Graph) -> tuple[Moves, list[str]]:
             module, _, item = frm.rpartition("::")
             if module in graph.modules and item in graph.items.get(module, set()):
                 moves.items[(module, item)] = to
+                continue
+            module, _, owner = module.rpartition("::")
+            if item in graph.members.get((module, owner), set()):
+                moves.members[(module, owner, item)] = to
             else:
-                problems.append(f"move `{frm}` names neither a module nor an item one defines")
+                problems.append(
+                    f"move `{frm}` names neither a module, an item one defines, nor a method of one"
+                )
     return moves, problems
 
 
 def edges(refs: list[Ref], moves: Moves | None = None) -> dict[tuple[str, str], list[Ref]]:
     out: dict[tuple[str, str], list[Ref]] = defaultdict(list)
     for r in refs:
-        a = moves.target(r.src_module, r.src_item) if moves else r.src_module
-        b = moves.target(r.dst_module, r.dst_item) if moves else r.dst_module
+        a = moves.target(r.src_module, r.src_item, r.src_member) if moves else r.src_module
+        b = moves.target(r.dst_module, r.dst_item, r.dst_member) if moves else r.dst_module
         if a != b:
             out[(a, b)].append(r)
     return out

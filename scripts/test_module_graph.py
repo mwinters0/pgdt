@@ -110,6 +110,22 @@ class Edges(unittest.TestCase):
         f.refer(A, "Bee", BEE, 0).refer(A, "Bee", BEE, 1)
         self.assertEqual({(r.src_item, r.line) for r in f.graph().refs}, {("Ay", 3), ("Ay", 4)})
 
+    def test_a_reference_names_the_item_a_move_would(self):
+        text = (
+            "pub struct Ay<'a>(&'a str);\n\n"
+            "impl<'a> Ay<'a> {\n    pub fn get(&self) {}\n}\n\n"
+            "pub fn ay() {\n    const KW: u8 = 0;\n}\n"
+        )
+        f = Fixture({A: ("c::a", text), B: ("c::b", "pub fn bee() {\n    get(); KW;\n}\n")})
+        f.define(A, "Ay", AY, (0, 0)).define(A, "get", sym("c", "a/impl#[`Ay<'a>`]get()."), (3, 3))
+        f.define(A, "ay", sym("c", "a/ay()."), (6, 8)).define(A, "KW", sym("c", "a/KW."), (7, 7))
+        f.define(B, "bee", sym("c", "b/bee()."), (0, 2))
+        f.refer(B, "get", sym("c", "a/impl#[`Ay<'a>`]get().")).refer(B, "KW", sym("c", "a/KW."))
+        f.define(A, "self", "local 1", (3, 3)).refer(B, "bee", "local 1")
+        graph = f.graph()
+        self.assertEqual({r.dst_item for r in graph.refs}, {"Ay", "ay"})
+        self.assertLessEqual({r.dst_item for r in graph.refs}, graph.items["c::a"])
+
     def test_columns_are_utf8_bytes(self):
         f = two_modules("pub fn ay() {\n    let _é = \"—\"; crate::b::Bee;\n}\n")
         f.define(A, "ay", sym("c", "a/ay()."), (0, 2)).refer(A, "Bee", BEE)
@@ -204,8 +220,33 @@ class Design(unittest.TestCase):
         _, problems = mg.read_moves("```moves\nc::b::nothing -> c::a\nc::b c::a\n```\n", self.graph())
         self.assertEqual(
             problems,
-            ["move `c::b::nothing` names neither a module nor an item one defines", "move `c::b c::a` has no `->`"],
+            [
+                "move `c::b::nothing` names neither a module, an item one defines, nor a method of one",
+                "move `c::b c::a` has no `->`",
+            ],
         )
+
+    def test_a_method_moves_away_from_its_type_by_its_own_line(self):
+        text = (
+            "pub struct Ay;\n"
+            "impl Ay {\n    pub fn eval(&self) {}\n}\n"
+            "impl Ay {\n    pub fn truths(&self) {\n        self.eval();\n    }\n}\n"
+        )
+        f = Fixture({A: ("c::a", text)}).define(A, "Ay", AY, (0, 0))
+        f.define(A, "eval", sym("c", "a/impl#[Ay]eval()."), (2, 2))
+        f.define(A, "truths", sym("c", "a/impl#[Ay]truths()."), (5, 7))
+        f.refer(A, "eval", sym("c", "a/impl#[Ay]eval()."), 1)
+        graph = f.graph()
+        self.assertEqual(graph.members[("c::a", "Ay")], {"eval", "truths"})
+        self.assertEqual(
+            [(r.src_item, r.src_member, r.dst_item, r.dst_member) for r in graph.refs],
+            [("Ay", "truths", "Ay", "eval")],
+        )
+        moves, problems = mg.read_moves("```moves\nc::a::Ay::truths -> c::a::truths\n```\n", graph)
+        self.assertEqual(problems, [])
+        self.assertEqual(moves.target("c::a", "Ay", "truths"), "c::a::truths")
+        self.assertEqual(moves.target("c::a", "Ay", "eval"), "c::a")
+        self.assertEqual(set(mg.edges(graph.refs, moves)), {("c::a::truths", "c::a")})
 
     def test_a_cycle_a_move_makes_across_crates_is_a_crate_cycle(self):
         moves, _ = mg.read_moves("```moves\nc::b::helper -> d::low\nc::b::Bee -> d::low\n```\n", self.graph())

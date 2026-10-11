@@ -56,14 +56,13 @@ goes to the maintainer as §4's answers do.
 
 **The design states its moves, and is checked before anything is cut.** A
 ```` ```moves ```` block in the notes doc lists `<from> -> <to>` against
-today's paths, a module's own items or one item (`module_graph.py`'s doc has
-the grammar), and `uv run module_graph.py --design <notes doc>` projects them
-onto today's references (`--save-index`, then `--index`, while iterating). A
+today's paths — a module's own items, one item or one method (the grammar is
+`module_graph.py`'s doc) — and `uv run module_graph.py --design <notes doc>`
+projects them onto today's references (`--save-index`, then `--index`). A
 cycle it reports is a seam drawn wrong: redraw until none is left, or take it
 to the maintainer with its references, to keep (`ACCEPTED`) or owe (`OWED`).
 Never write "nothing imports back" of a design the script has not read. A cut
-re-runs the projection over its own moves first, the cuts before it having
-moved the tree.
+re-projects its own moves first, the cuts before it having moved the tree.
 
 The evidence for where seams fall, in order of weight:
 
@@ -76,12 +75,13 @@ The evidence for where seams fall, in order of weight:
   left, whose span is one concern. Weakest: it records where the file grew,
   not where the design divides.
 
-Never at a line count, and never splitting one type's impls across files. A
-module that becomes a directory keeps `<module>.rs` holding the `mod` lines,
-the module doc, and the `pub use` re-exports that keep every external path
-unchanged; a nesting the design calls for may move a path, which pre-1.0
-allows. The doc moves with the items it describes, and tests follow their
-module.
+Never at a line count, and never splitting one type's impls across files but
+by role inside its own tree, each role's methods beside its other items (a
+predicate's row verdict, its group verdict). A module become a directory keeps
+`<module>.rs` holding the `mod` lines, the module doc and the `pub use`
+re-exports keeping every external path; a nesting the design calls for may
+move a path, which pre-1.0 allows. The doc moves with the items it describes,
+and tests follow their module.
 
 A design larger than one review lands over several slices, each a cut the
 design contains; the notes doc holds the design until the last lands.
