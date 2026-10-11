@@ -104,7 +104,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [ ] **35.16** `pgdt-query`'s `predicate`, statistics and `batch` cut to 35.11's tree
 - [ ] **35.17** `pgdt-query`'s `stream` cut to 35.11's tree
 - [ ] **35.18** `pgdt` cut to 35.11's tree, a module a subcommand
-- [ ] **35.19** The closing seams round: no file past any limit but an exemption, and the marks of an undesigned tree (the `seams` skill, "Design the tree, then cut toward it") read over every crate
+- [ ] **35.19** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns"
 
 ## Not started
 

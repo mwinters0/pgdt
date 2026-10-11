@@ -149,10 +149,8 @@ wants — each file one concern, nested where siblings form a group, no file
 past a limit, tests beside what they test — and cuts toward that design, at a
 type cluster, a trait and its implementors, one arm of a family, never at a
 line count. Cutting the one file at its banners and stopping leaves a layout
-nobody designed: sibling modules importing each other in cycles, children
-importing from their parent, `pub(super)` widened to let a cut compile, one
-concept split across files by visibility. Every marker, citation and script
-path moves with the code.
+nobody designed; the skill's "Antipatterns" names what that looks like. Every
+marker, citation and script path moves with the code.
 
 The first exemption is `datetime_in.rs`: a transliteration of upstream's
 `datetime.c`, sectioned as the original is, where a cut would un-mirror the
