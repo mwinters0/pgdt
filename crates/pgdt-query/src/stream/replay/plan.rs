@@ -1,12 +1,17 @@
-//! What a replay plans before it reads: each matched block resolved for the
-//! query, the row groups its filter prunes, and the columns whose values the
-//! front end cannot hold.
+//! What a replay plans before it reads: the table's one column order, each
+//! matched block resolved for the query and projected, the row groups its
+//! filter prunes, the columns whose values the front end cannot hold, and the
+//! plan cut into sub-streams.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use pgdt_codec::{ResolvedSchema, SchemaMode};
+use arrow::datatypes::Schema;
+
+use pgdt_codec::compare::ComparisonSemantics;
+use pgdt_codec::internal::{database_for_name, read_as_text};
+use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     UnrepresentableMode,
     internal::{UnrepresentableRead, unrepresentable_reads, unrepresentable_tests},
@@ -14,15 +19,17 @@ use pgdt_codec::{
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ScanOptions;
-use pgdt_model::{CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier};
+use pgdt_io::{ByteRangeSource, Partitioning};
+use pgdt_model::{
+    ArrayShape, CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier, union_census,
+};
 
-use super::note::{PlanNote, PlanNoteKind};
-use super::resolve::project;
+use super::partition::plan_partitions;
 use super::segment::{Segment, SegmentEntry};
-use super::table::{TableColumns, refuse_metadata_level, resolve_block};
-use crate::batch::QueryOptions;
+use crate::options::QueryOptions;
 use crate::predicate::{ComparisonNote, ResolvedExpr, resolve_expr};
 use crate::prune::{SortedStop, prune_block};
+use crate::stream::note::{PlanNote, PlanNoteKind};
 
 /// Everything a replay needs that the mapping pass produced, shared unchanged
 /// by every sub-stream of a partitioned replay
@@ -35,32 +42,32 @@ use crate::prune::{SortedStop, prune_block};
 /// table cannot order its columns or resolve its arrays differently
 /// (`docs/design/decisions.md`, "D35").
 #[derive(Clone)]
-pub(super) struct ReplayPlan {
-    pub(super) scan_options: ScanOptions,
-    pub(super) query_options: QueryOptions,
-    pub(super) metadata: Option<DumpMetadata>,
-    pub(super) table: TableColumns,
+pub(in crate::stream) struct ReplayPlan {
+    pub(in crate::stream) scan_options: ScanOptions,
+    pub(in crate::stream) query_options: QueryOptions,
+    pub(in crate::stream) metadata: Option<DumpMetadata>,
+    pub(in crate::stream) table: TableColumns,
     /// Every matched block, resolved and keyed by the
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
-    pub(super) blocks: BTreeMap<u64, PlannedBlock>,
+    pub(in crate::stream) blocks: BTreeMap<u64, PlannedBlock>,
     /// The runs of row groups each pruned block keeps, keyed as `blocks` is
     /// ([`crate::prune::BlockPruning::kept`]); a block absent here is read
     /// whole.
-    pub(super) kept: BTreeMap<u64, Vec<Range<u64>>>,
+    pub(in crate::stream) kept: BTreeMap<u64, Vec<Range<u64>>>,
     /// Where each block sorted on a column the filter bounds stops being read,
     /// keyed as `blocks` is ([`SortedStop`]).
-    pub(super) stops: BTreeMap<u64, SortedStop>,
+    pub(in crate::stream) stops: BTreeMap<u64, SortedStop>,
     /// What pruning skipped, where any block's statistics were consulted.
     pruned: Option<PlanNote>,
     /// Each materialized column's values read as NULL
     /// ([`PlanNoteKind::ReadAsNull`]).
     read_as_null: Vec<PlanNote>,
     /// At least the rows the replay can emit ([`Pruned::rows`]).
-    pub(super) kept_rows: u64,
+    pub(in crate::stream) kept_rows: u64,
     /// At least the text bytes the replay emits of each projected field
     /// ([`Pruned::value_bytes`]).
-    pub(super) kept_value_bytes: Vec<Option<u64>>,
+    pub(in crate::stream) kept_value_bytes: Vec<Option<u64>>,
 }
 
 impl ReplayPlan {
@@ -70,7 +77,7 @@ impl ReplayPlan {
     /// refusal, or else the first refusing block's ([`plan_blocks`]), or else,
     /// under the refuse mode, its first materialized column holding a value
     /// the query cannot hold ([`materialized_unrepresentable`]).
-    pub(super) fn new(
+    pub(in crate::stream) fn new(
         scan_options: ScanOptions,
         query_options: QueryOptions,
         matches: &[CopyBlock],
@@ -106,16 +113,16 @@ impl ReplayPlan {
     }
 
     /// What the plan settled before any row is read, as every sub-stream
-    /// carries it ([`TableStream::plan_notes`](super::table::TableStream::plan_notes)) bar what cutting it into
+    /// carries it ([`TableStream::plan_notes`](crate::stream::table::TableStream::plan_notes)(crate::stream::table::TableStream::plan_notes)) bar what cutting it into
     /// sub-streams adds.
-    pub(super) fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
+    pub(in crate::stream) fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
         self.read_as_null.iter().chain(&self.pruned).cloned()
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
     /// statistics keep: the run holding group 0 starts at the block's header,
     /// as a whole block does, and every other starts inside its data.
-    pub(super) fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
+    pub(in crate::stream) fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
         let Some(kept) = self.kept.get(&block.header_offset) else {
             return vec![Segment::new(
                 block,
@@ -251,7 +258,7 @@ fn materialized_unrepresentable(
 
 /// The map's count of column `name`'s values past the tiers `reach` names,
 /// over every one of `matches`, the blocks of one table.
-pub(super) fn unrepresentable_values(
+pub(in crate::stream) fn unrepresentable_values(
     matches: &[CopyBlock],
     name: &str,
     reach: UnrepresentableTier,
@@ -317,25 +324,25 @@ fn field_value_bytes(
 }
 
 /// One block's schema, filter and projection, resolved against a query —
-/// everything [`activate`](super::segment::activate) builds a [`RowBatcher`](crate::batch::RowBatcher) from, bar the batcher,
+/// everything [`activate`](super::activate) builds a [`RowBatcher`](crate::batch::RowBatcher) from, bar the batcher,
 /// which holds rows and so is built per activation.
 ///
 /// It records the two inputs the block itself contributes, so a lookup can
 /// confirm it answers the activation asking rather than trusting the offset
 /// alone; the rest are the [`ReplayPlan`]'s, and fixed.
 #[derive(Debug, Clone)]
-pub(super) struct PlannedBlock {
-    pub(super) header: CopyHeader,
-    pub(super) database: Option<String>,
+pub(in crate::stream) struct PlannedBlock {
+    pub(in crate::stream) header: CopyHeader,
+    pub(in crate::stream) database: Option<String>,
     /// The **projected** schema, which is what the batches carry.
-    pub(super) resolved: ResolvedSchema,
-    pub(super) field_targets: Vec<Option<usize>>,
+    pub(in crate::stream) resolved: ResolvedSchema,
+    pub(in crate::stream) field_targets: Vec<Option<usize>>,
     /// Per field of the block, how the query reads its values their type
     /// cannot hold ([`unrepresentable_reads`]) — what the batcher and the
     /// filter both read them by.
-    pub(super) unrepresentable: Vec<Option<UnrepresentableRead>>,
-    pub(super) filter: Arc<ResolvedExpr>,
-    pub(super) notes: Vec<ComparisonNote>,
+    pub(in crate::stream) unrepresentable: Vec<Option<UnrepresentableRead>>,
+    pub(in crate::stream) filter: Arc<ResolvedExpr>,
+    pub(in crate::stream) notes: Vec<ComparisonNote>,
 }
 
 /// Resolve one block for a query: its schema, the filter against
@@ -348,7 +355,7 @@ pub(super) struct PlannedBlock {
 ///
 /// `counts` is the block's unrepresentable count, where the map holds the
 /// block ([`unrepresentable_reads`]).
-pub(super) fn resolve_for_query(
+pub(in crate::stream) fn resolve_for_query(
     header: &CopyHeader,
     header_offset: u64,
     database: Option<&str>,
@@ -393,7 +400,7 @@ pub(super) fn resolve_for_query(
 }
 
 /// [`unrepresentable_reads`] for `query_options`' mode and front end.
-pub(super) fn query_reads(
+pub(in crate::stream) fn query_reads(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -446,7 +453,7 @@ fn query_tests(
 /// whose [`resolve_for_query`] refuses — its schema, its filter or its
 /// projection, in that order — is the error, before any row of any block
 /// (`docs/design/decisions.md`, "D54").
-pub(super) fn plan_blocks(
+pub(in crate::stream) fn plan_blocks(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
@@ -467,4 +474,257 @@ pub(super) fn plan_blocks(
             Ok((block.header_offset, planned))
         })
         .collect()
+}
+
+/// **One table, one schema**: the column order every batch of a table
+/// carries, whichever of its blocks the rows came from, and the census keyed
+/// to it.
+///
+/// A table can own several blocks (I2), each listing its columns in its own
+/// leaf's order (I5), so a block's batches are reordered by name into the
+/// table's order — the table's DDL order where the dump declares the table,
+/// the first block's order where it does not — and a table whose blocks name
+/// different *sets* of columns is refused, naming two of them. Neither the
+/// order nor the refusal reads [`SchemaMode`], so a table's columns come out
+/// the same with typing on or off (`docs/design/decisions.md`, "D66").
+///
+/// **A block naming no columns copies none** (I5: `pg_dump` lists none
+/// exactly when every column is dropped or generated), so its set is the
+/// empty one: a table whose blocks list nothing has an empty order whatever
+/// its DDL declares, and each of its rows is an empty line read as a row of
+/// zero fields ([`crate::batch::RowBatcher::push_row`]).
+///
+/// *Rejected: the first block's order, every other refused*, which refuses
+/// ordinary partitioned dumps; *the union of the names, an absent column
+/// filled with `NULL`*, which states values PostgreSQL never held; *and a
+/// list-less block taking the declared names where its width matches*, which
+/// reads an empty line as one field and gives a table of generated columns
+/// `''` for every value.
+#[derive(Debug, Clone)]
+pub(in crate::stream) struct TableColumns {
+    pub(in crate::stream) order: Vec<String>,
+    /// One entry per name in `order`, its census unioned over every block
+    /// ([`union_census`]).
+    census: Vec<(String, ArrayShape)>,
+    /// **The columns the untyped mode reads as their text**: under
+    /// [`UnrepresentableMode::Text`], each whose blocks count, over every one
+    /// of them, a value in the tiers the query's front end cannot hold — the
+    /// count the refuse mode refuses by (`materialized_unrepresentable`),
+    /// settled once for the table as its census is, so no two blocks of it
+    /// disagree on a column's type (`docs/design/decisions.md`, "D100").
+    /// Empty under every other mode.
+    text: Vec<String>,
+}
+
+impl TableColumns {
+    /// The table `matches` are the blocks of — one `(database, table)`
+    /// target, already narrowed (`docs/design/decisions.md`, "D49") — as
+    /// `query_options` reads it.
+    pub(in crate::stream) fn settle(
+        matches: &[CopyBlock],
+        metadata: Option<&DumpMetadata>,
+        query_options: &QueryOptions,
+    ) -> Result<Self> {
+        let Some(first) = matches.first() else {
+            return Ok(Self { order: Vec::new(), census: Vec::new(), text: Vec::new() });
+        };
+        fn set(b: &CopyBlock) -> Vec<&String> {
+            let mut names: Vec<&String> = b.header.columns.iter().collect();
+            names.sort();
+            names
+        }
+        let first_set = set(first);
+        if let Some(other) = matches.iter().find(|b| set(b) != first_set) {
+            return Err(Error::TableColumnsDisagree {
+                table: first.header.qualified_name(),
+                header_offset: first.header_offset,
+                other_offset: other.header_offset,
+            });
+        }
+        let declared: Option<Vec<&str>> = metadata
+            .and_then(|metadata| database_for_name(metadata, first.database.as_deref()))
+            .map(|db| db.declared_columns(&first.header.qualified_name()))
+            .map(|columns| columns.iter().map(|c| c.name.as_str()).collect());
+        // Stable, so a name the DDL does not declare keeps the first block's
+        // place for it, after every declared one.
+        let mut order = first.header.columns.clone();
+        let rank = |name: &String| declared.as_ref().and_then(|d| d.iter().position(|c| c == name));
+        order.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
+        let census = order.iter().cloned().zip(union_census(&order, matches)).collect();
+        let text = match (query_options.schema_mode, query_options.unrepresentable) {
+            (SchemaMode::Typed, UnrepresentableMode::Text) => {
+                let reach = query_options.unrepresentable_reach();
+                order
+                    .iter()
+                    .filter(|name| unrepresentable_values(matches, name, reach) > 0)
+                    .cloned()
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        Ok(Self { order, census, text })
+    }
+
+    /// Which of `names` the untyped mode reads as text, in `names`' order.
+    pub(in crate::stream) fn text_for(&self, names: &[String]) -> Vec<bool> {
+        names.iter().map(|name| self.text.contains(name)).collect()
+    }
+
+    /// `names`' census, one entry per name, in `names`' order.
+    pub(in crate::stream) fn census_for(&self, names: &[String]) -> Vec<ArrayShape> {
+        names
+            .iter()
+            .map(|name| {
+                self.census.iter().find(|(n, _)| n == name).map(|(_, s)| *s).unwrap_or_default()
+            })
+            .collect()
+    }
+}
+
+/// Build the [`ResolvedSchema`] for a table-matching block — the actual batch
+/// schema a [`RowBatcher`](crate::batch::RowBatcher) built from it carries (see
+/// [`TableStream::resolved_schema`](crate::stream::table::TableStream::resolved_schema)) — scoped to `database`, the block's own
+/// attribution, never a guess. Its
+/// fields are the header's list, in the order its rows carry them, and
+/// `census` is one entry per name, taken
+/// from the union over **every block this stream will replay**, a parameter
+/// rather than something `resolve_columns` looks up so that no call site can
+/// silently disagree (`docs/design/decisions.md`, "D35").
+///
+/// `Typed` mode against metadata that has no *complete* entry for `database`
+/// is `Error::MetadataNotScanned` rather than a silent `NotDeclared`
+/// degradation. **No map a mapping pass produced can trip it**: a block
+/// enters the map only past its database's first `COPY` header, where the
+/// pass marks that database's DDL complete. `table_schema` and
+/// `TablePartitions::plan` take a caller's `DumpIndex`, whose fields are
+/// public, so a hand-built one can. The check is pinned by a unit test.
+///
+/// `text` marks, as `census` is taken, each column the untyped mode reads as
+/// its text ([`TableColumns::text_for`]), compared in `semantics`
+/// ([`read_as_text`]).
+pub(in crate::stream) fn resolve_block(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+    schema_mode: SchemaMode,
+    census: &[ArrayShape],
+    text: &[bool],
+    semantics: ComparisonSemantics,
+) -> Result<ResolvedSchema> {
+    if schema_mode == SchemaMode::Typed
+        && let Some(meta) = metadata
+        && !meta.databases.iter().any(|db| db.name.as_deref() == database && db.preamble_complete)
+    {
+        return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
+    }
+    let mut resolved = resolve_columns(
+        &header.qualified_name(),
+        &header.columns,
+        metadata,
+        database,
+        schema_mode,
+        census,
+    );
+    read_as_text(&mut resolved, text, semantics);
+    Ok(resolved)
+}
+
+/// Refuse a typed plan over a block holding no census — one a map the caller
+/// holds records at the metadata level ([`Error::TableAtMetadataLevel`]),
+/// whose union ([`union_census`]) would read as a table holding no array
+/// deeper than its DDL says (`docs/design/decisions.md`, "D35"). A query that
+/// maps for itself has censused every block before it plans
+/// (`census_metadata_level`); [`SchemaMode::Strings`] reads no census.
+pub(in crate::stream) fn refuse_metadata_level(
+    matches: &[CopyBlock],
+    query_options: &QueryOptions,
+) -> Result<()> {
+    if query_options.schema_mode != SchemaMode::Typed {
+        return Ok(());
+    }
+    match matches.iter().find(|block| block.array_shapes.is_none()) {
+        Some(block) => Err(Error::TableAtMetadataLevel { table: block.header.qualified_name() }),
+        None => Ok(()),
+    }
+}
+
+/// Cut `resolved` down to `projection`, and say which of the block's fields
+/// each projected column is fed by. All five of [`ResolvedSchema`]'s vectors
+/// are cut together, in the requested order
+/// (`docs/design/decisions.md`, "D28").
+///
+/// Returns the projected schema and `field_targets` — one entry per field of
+/// the block, `Some(i)` when that field feeds projected column `i`. `None`
+/// projection is every column, in file order. Duplicate names are the caller's
+/// to reject: this resolves each requested name independently and would
+/// silently accept one twice.
+pub(in crate::stream) fn project(
+    resolved: &ResolvedSchema,
+    projection: Option<&[String]>,
+    header_offset: u64,
+) -> Result<(ResolvedSchema, Vec<Option<usize>>)> {
+    let width = resolved.schema.fields().len();
+    let Some(names) = projection else {
+        return Ok((resolved.clone(), (0..width).map(Some).collect()));
+    };
+    let mut field_targets = vec![None; width];
+    let mut sources = Vec::with_capacity(names.len());
+    for name in names {
+        let source =
+            resolved.schema.fields().iter().position(|f| f.name() == name).ok_or_else(|| {
+                Error::UnknownProjectionColumn { header_offset, column: name.clone() }
+            })?;
+        field_targets[source] = Some(sources.len());
+        sources.push(source);
+    }
+    let projected = ResolvedSchema {
+        schema: Arc::new(Schema::new(
+            sources.iter().map(|&i| resolved.schema.field(i).clone()).collect::<Vec<_>>(),
+        )),
+        columns: sources.iter().map(|&i| resolved.columns[i].clone()).collect(),
+        notes: sources.iter().map(|&i| resolved.notes[i].clone()).collect(),
+        plans: sources.iter().map(|&i| resolved.plans[i].clone()).collect(),
+        comparisons: sources.iter().map(|&i| resolved.comparisons[i].clone()).collect(),
+        not_null: sources.iter().map(|&i| resolved.not_null[i]).collect(),
+    };
+    Ok((projected, field_targets))
+}
+
+/// The plan and the sub-streams' segments for replaying a table's blocks
+/// ([`plan_replay`]).
+pub(in crate::stream) struct PlannedReplay {
+    pub(in crate::stream) plan: Arc<ReplayPlan>,
+    /// The blocks cut into sub-streams ([`plan_partitions`]).
+    pub(in crate::stream) groups: Vec<Vec<Segment>>,
+    /// What every sub-stream carries ([`TableStream::plan_notes`](crate::stream::table::TableStream::plan_notes)).
+    pub(in crate::stream) plan_notes: Vec<PlanNote>,
+    /// Each block's advice, in file order, as the cut was made by.
+    pub(in crate::stream) advice: Vec<Partitioning>,
+}
+
+/// The plan and the sub-streams' segments for replaying `matches`, shared by
+/// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) and [`TablePartitions::plan`](crate::stream::partitions::TablePartitions::plan).
+pub(in crate::stream) fn plan_replay(
+    source: &dyn ByteRangeSource,
+    matches: &[CopyBlock],
+    metadata: Option<DumpMetadata>,
+    scan_options: ScanOptions,
+    query_options: QueryOptions,
+) -> Result<PlannedReplay> {
+    let mut plan = ReplayPlan::new(scan_options, query_options, matches, metadata)?;
+    let (groups, mut plan_notes, span, advice) = plan_partitions(
+        source,
+        matches,
+        &plan.kept,
+        plan.query_options.parallelism,
+        plan.query_options.max_source_span,
+        plan.scan_options.chunk_size_bytes,
+    );
+    // **The span the plan was solved against is the span the batches use**, or
+    // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
+    // outside the resume fingerprint, being a batching knob
+    // (`docs/design/decisions.md`, "D49"), so writing it back moves no token.
+    plan.query_options.max_source_span = span;
+    plan_notes.extend(plan.notes());
+    Ok(PlannedReplay { plan: Arc::new(plan), groups, plan_notes, advice })
 }

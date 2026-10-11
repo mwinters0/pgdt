@@ -6,8 +6,8 @@
 //! Pure, synchronous, no I/O (`docs/design/decisions.md`, "D74"). A decode
 //! function takes an already-COPY-unescaped `&str` field (what
 //! `pgdt_core::decode_field` returns) and returns a plain Rust value; it
-//! never takes an Arrow builder — building the array is `batch.rs`'s job
-//! (query's), which is also where these are wired to their [`arrow_schema::DataType`].
+//! never takes an Arrow builder — building the array is query's job
+//! (`batch/builder.rs`), which is also where these are wired to their [`arrow_schema::DataType`].
 //!
 //! Every `render_*` function is the exact inverse of its `decode_*`
 //! counterpart — but [`render_bytea`], which writes the hex form whichever

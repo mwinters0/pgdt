@@ -1,5 +1,11 @@
 use arrow::datatypes::Field;
 
+use std::sync::Arc;
+
+use arrow::array::builder::{Int32Builder, StringViewBuilder};
+use arrow::buffer::OffsetBuffer;
+use arrow::datatypes::Fields;
+
 use super::*;
 
 /// The same deterministic 64-bit LCG `decode.rs`'s differential tests use,

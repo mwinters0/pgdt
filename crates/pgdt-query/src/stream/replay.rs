@@ -1,4 +1,12 @@
-//! Pass 2, for one sub-stream: replaying its segments in file order.
+//! Pass 2, for one sub-stream: replaying its segments in file order, and a
+//! block made active — at a `COPY` header the scanner read, inside a block
+//! where a partition starts, or where a token resumes — with what the loop
+//! records of where it is.
+
+pub(super) mod dynamic;
+pub(super) mod partition;
+pub(super) mod plan;
+pub(super) mod segment;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -8,33 +16,36 @@ use async_stream::try_stream;
 use bytes::Bytes;
 use futures::Stream;
 
+use pgdt_codec::ResolvedSchema;
+use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
 use pgdt_core::{RawRow, RowSplit, validated_prefix};
 use pgdt_dump::internal::announce_cancellation;
-use pgdt_dump::{ChunkCarry, CopyScanner, Event};
+use pgdt_dump::{ChunkCarry, CopyScanner, Event, Row};
 use pgdt_io::{ByteRangeSource, WaitPolicy};
 
-use super::dynamic::{DynamicRead, Skip};
+use self::dynamic::{DynamicRead, Skip};
+use self::plan::{ReplayPlan, resolve_for_query};
+use self::segment::{Segment, SegmentEntry, first_row_start};
 use super::note::EarlyStop;
-use super::plan::ReplayPlan;
-use super::resolve::row_text;
-use super::segment::{Segment, SegmentEntry, StreamShared, activate, first_row_start};
-use super::table::{ResumeToken, resume_state, snapshot};
-use crate::batch::RetainedChunks;
+use super::resume::{InCopyResume, ResumeToken};
+use super::table::StreamShared;
+use crate::batch::{RetainedChunks, RowBatcher};
+use crate::predicate::{ComparisonNote, ResolvedExpr};
 
 /// Pass 2, for one sub-stream: replay `segments` in file order, in whatever
 /// batches `plan.query_options` asks for. This is the whole of the row path: a
-/// serial [`table_stream`](super::table::table_stream) is this function over one segment per kept run of
+/// serial [`table_stream`](crate::stream::table_stream) is this function over one segment per kept run of
 /// each matching block, a partitioned replay it over each group
-/// [`plan_partitions`](super::partition::plan_partitions) handed out.
+/// [`plan_partitions`](self::partition::plan_partitions) handed out.
 ///
-/// **Under a [`DynamicFilter`](super::dynamic::DynamicFilter)** (`dynamic`), each row group the replay
+/// **Under a [`DynamicFilter`](crate::stream::replay::dynamic::DynamicFilter)** (`dynamic`), each row group the replay
 /// enters is first asked of the filter's state ([`DynamicRead::at_row`]), and
 /// the group being read is asked again where the state has moved by the next
 /// chunk the replay takes ([`DynamicRead::at_chunk`]): one it rules out ends
 /// the segment there, and the replay re-enters the block at the next group it
 /// keeps as a piece starting inside the data, the segment's limit unchanged.
-/// Under [`RowEvaluation::On`](super::dynamic::RowEvaluation::On), a row the static filter keeps is evaluated
+/// Under [`RowEvaluation::On`](crate::stream::replay::dynamic::RowEvaluation::On), a row the static filter keeps is evaluated
 /// against the state before a column of the row decodes, in every block, and
 /// dropped where it rejects it ([`DynamicRead::rejects`]). A block sorted on a
 /// bound the state requires stops at its first row past it, as under a static
@@ -448,4 +459,112 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
             EarlyStop { header_offset, unread_bytes: Some(unread) },
         ),
     }
+}
+
+/// State for a `COPY` block whose table matches the query: the batcher
+/// accumulating its rows, `QueryOptions::filter` resolved against this block's
+/// own schema (a table's blocks can order its columns differently), and the database this block
+/// is attributed to. Each
+/// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
+/// **unprojected** column list — plus the typed comparison it makes. Shared
+/// with the block's [`PlannedBlock`](self::plan::PlannedBlock), so every piece of a block evaluates one
+/// tree.
+pub(super) type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
+
+/// What [`activate`] hands back: the block's state, and the schema and notes
+/// a stream publishes for it.
+pub(super) type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
+
+/// Take one block's resolution from `plan` — resolving it here where the
+/// plan holds none ([`plan_blocks`](self::plan::plan_blocks)) — and build the [`RowBatcher`] that will
+/// hold its rows.
+///
+/// The three places a block becomes active — a `COPY` header the scanner
+/// read, a partition that started inside a block, and a resumed token —
+/// differ only in where the header comes from.
+pub(super) fn activate(
+    header: CopyHeader,
+    header_offset: u64,
+    database: Option<String>,
+    plan: &ReplayPlan,
+) -> Result<Opened> {
+    let resolved_here;
+    let block = match plan
+        .blocks
+        .get(&header_offset)
+        .filter(|planned| planned.database == database && planned.header == header)
+    {
+        Some(planned) => planned,
+        None => {
+            resolved_here = resolve_for_query(
+                &header,
+                header_offset,
+                database.as_deref(),
+                &plan.query_options,
+                plan.metadata.as_ref(),
+                &plan.table,
+                None,
+            )?;
+            &resolved_here
+        }
+    };
+    let batcher = RowBatcher::new(
+        &block.resolved,
+        header.qualified_name(),
+        plan.query_options.clone(),
+        block.field_targets.clone(),
+        block.unrepresentable.clone(),
+    );
+    let (resolved, notes) = (block.resolved.clone(), block.notes.clone());
+    Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
+}
+
+/// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
+/// the scanner's row counter (so a later `CopyEnd` reports the block's true
+/// total) and a fresh [`RowBatcher`](crate::batch::RowBatcher) on the original block's schema.
+pub(super) fn resume_state(
+    token: &ResumeToken,
+    plan: &ReplayPlan,
+) -> Result<(CopyScanner, Option<Opened>)> {
+    let scanner = CopyScanner::resume(
+        token.offset,
+        token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
+    );
+    let active = token
+        .in_copy
+        .as_ref()
+        .map(|ic| activate(ic.header.clone(), ic.header_offset, ic.database.clone(), plan))
+        .transpose()?;
+    Ok((scanner, active))
+}
+
+pub(super) fn snapshot(
+    scanner: &CopyScanner,
+    active: &Option<Active>,
+    rows_emitted: u64,
+    query_fingerprint: u64,
+) -> ResumeToken {
+    let in_copy = active.as_ref().map(|(header_offset, header, _, _, database)| InCopyResume {
+        header: header.clone(),
+        header_offset: *header_offset,
+        rows_in_block: scanner.in_copy_rows().unwrap_or(0),
+        database: database.clone(),
+    });
+    ResumeToken {
+        offset: scanner.position(),
+        rows_emitted,
+        query_fingerprint,
+        generation: 0,
+        in_copy,
+    }
+}
+
+/// Where `row` sits inside `prefix`, the UTF-8-validated leading part of the
+/// span it was scanned out of — `None` when the row runs past it, which is
+/// every row of a span whose validation failed and none of one whose
+/// validation held. `str::get` rather than an index, so a mis-derived offset
+/// costs the row its fast path instead of panicking.
+pub(super) fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
+    let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;
+    prefix.get(start..start.checked_add(row.raw.len())?)
 }

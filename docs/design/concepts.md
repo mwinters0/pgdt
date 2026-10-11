@@ -121,7 +121,7 @@ pieces and folded back, each block closed, the cache saved on a throttle
   back-fill re-reading what a mapped block lacks, and a block's interior split
   into pieces and folded. Above the codec, since a block it maps is gathered
   as it is read, and below the query layer, since it builds no array (D68).
-- **pgdt-query** — `stream/map_query.rs`: pass 1 of a query, which reads the
+- **pgdt-query** — `stream/mapping.rs`: pass 1 of a query, which reads the
   replay's resume token.
 
 ## The declared schema
@@ -182,11 +182,9 @@ time grammar, nested literals, and whether PostgreSQL refuses a field
   a decoder takes a field and returns a value (D74). A type family is one
   module — its reader, renderer, refusal classifier and key type — and reads
   nothing of the order key's dispatch.
-
-**Not in one place.** A value rendered back from an
-Arrow array (`render_field`, `decode_field`) is in pgdt-query's `batch.rs`:
-reading an array is query's (D74), but it is filed with the batcher rather than
-as its own module.
+- **pgdt-query** — `render.rs`: a value read back from an Arrow array, and one
+  field's text read into the array a batch of its column would hold; reading
+  an array is query's (D74), and it is a one-row column, not the batcher's.
 
 ## Comparison semantics
 
@@ -206,11 +204,9 @@ A block's rows into typed `RecordBatch`es, one builder per column, views over
 the retained read buffers ([`decisions.md`](decisions.md), "Batches, streams
 and the leader").
 
-- **pgdt-query** — `batch/`: building arrays is query's (D74).
-
-**Not in one place.** `batch.rs` also holds a query's request types
-(`QueryOptions`, `ScanExtent`), rendering back to text, and `read_table`,
-which drains a stream.
+- **pgdt-query** — `options.rs`, `batch/`: what a query asks for, and the
+  batcher, its column builders and the read chunks its views point into;
+  building arrays is query's (D74).
 
 ## Filtering
 
@@ -218,7 +214,7 @@ The filter expression — terms, membership, three-valued evaluation, its
 resolution against a block, a filter refined while a query runs — and each
 front end's spelling of it ([`decisions.md`](decisions.md), "Predicates").
 
-- **pgdt-query** — `predicate/`, `stream/dynamic.rs`: it evaluates the rows
+- **pgdt-query** — `predicate/`, `stream/replay/dynamic.rs`: it evaluates the rows
   the batcher splits, and answers a row group off its statistics for pruning
   to read.
 - **pgdt** — `where_expr.rs`: `--where`'s grammar, a front end's own syntax.
@@ -269,15 +265,12 @@ into sub-streams and read in file order into batches, and the stream an
 embedder pulls, with its resume token ([`decisions.md`](decisions.md),
 "Batches, streams and the leader").
 
-- **pgdt-query** — `stream.rs`, `stream/table.rs`,
-  `stream/table_partitions.rs`, `stream/partition.rs`, `stream/plan.rs`,
-  `stream/segment.rs`, `stream/replay.rs`, `stream/resolve.rs`.
-
-**Not in one place.** `TableColumns`, `resolve_block` and
-`refuse_metadata_level` are in `stream/table.rs` and used only by `plan.rs`
-and `dynamic.rs`; `ResumeToken` is split between `table.rs` and `resolve.rs`;
-`resolve.rs` and `segment.rs` each hold three things; `plan`, `segment`,
-`resolve`, `dynamic` and `table` import each other in cycles.
+- **pgdt-query** — `stream.rs`, `stream/table.rs`, `stream/partitions.rs`,
+  `stream/resume.rs`, `stream/replay.rs`, `stream/replay/plan.rs`,
+  `stream/replay/segment.rs`, `stream/replay/partition.rs`: the top of the
+  stream, pass 1 then pass 2, which no child reads; the handle an embedder
+  pulls; the partitioned replay; the resume token; and beneath the replay
+  loop, what it plans, the pieces it reads and how they are cut.
 
 ## What a query tells its caller
 

@@ -285,7 +285,7 @@ fn numeric_picks_decimal_width_by_precision() {
 
 /// **A scale past the precision widens it, and one no Arrow decimal
 /// carries is text** — every `numeric(p,s)` PostgreSQL 15 and later admit
-/// maps to a type `batch.rs` can build, compared at its own scale where
+/// maps to a type `batch/builder.rs` can build, compared at its own scale where
 /// typed and by value where not.
 #[test]
 fn numeric_widens_a_precision_below_its_scale_and_texts_a_scale_arrow_lacks() {

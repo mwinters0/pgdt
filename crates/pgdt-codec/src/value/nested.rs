@@ -191,7 +191,7 @@ fn push_token(out: &mut String, value: Option<&str>, syntax: &Syntax) {
 ///
 /// Exists for the render path that writes an element straight into the
 /// caller's buffer and so never builds an [`ArrayLiteral`] to hand to
-/// [`render_array`] (`batch::render_array_into`). The spelling stays here,
+/// [`render_array`] (`render::render_array_into`). The spelling stays here,
 /// beside the grammar that owns it.
 pub fn push_array_null(out: &mut String) {
     push_token(out, None, &ARRAY);

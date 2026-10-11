@@ -95,21 +95,6 @@ OWED: dict[frozenset[str], str] = {
         }
     ): "P35.21, the root declaring and what it defines moved below its readers",
     frozenset({"pgdt", "pgdt::where_expr"}): "P35.22, the filter grammars one `query/filter/`",
-    frozenset(
-        {
-            "pgdt-query::batch",
-            "pgdt-query::stream::dynamic",
-            "pgdt-query::stream::map_query",
-            "pgdt-query::stream::partition",
-            "pgdt-query::stream::plan",
-            "pgdt-query::stream::replay",
-            "pgdt-query::stream::resolve",
-            "pgdt-query::stream::segment",
-            "pgdt-query::stream::table",
-            "pgdt-query::stream::table_partitions",
-            "pgdt-query::summary",
-        }
-    ): "P35.20, whose tree P35.11's design says the stream's cycles fall to",
 }
 
 #: How many references are shown for each edge of a cycle.

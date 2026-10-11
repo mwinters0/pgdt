@@ -10,8 +10,8 @@ use pgdt_io::{
 };
 use pgdt_model::CopyBlock;
 
-use super::note::PlanNote;
 use super::segment::{Segment, SegmentEntry};
+use crate::stream::note::PlanNote;
 
 /// Whether this source is a compressed one that *could* be read a
 /// block at a time and is not, because the budget in force leaves no room to
@@ -60,7 +60,7 @@ fn compressed_block_path_declined(
 /// the serial replay (`docs/design/decisions.md`, "D51").
 ///
 /// Never empty: a table with no blocks at all is one sub-stream that yields
-/// nothing, which is what [`table_stream`](super::table::table_stream) does with the same map.
+/// nothing, which is what [`table_stream`](crate::stream::table_stream) does with the same map.
 ///
 /// **`max_source_span` is the second term the stated budget is solved against,
 /// not a separate cap of its own** (`docs/design/decisions.md`, "D4"). What one
@@ -100,9 +100,9 @@ fn compressed_block_path_declined(
 /// `workers` came up short of `parallelism.jobs()`, at most one naming a
 /// compressed source that declined the block-decode path under this budget
 /// ([`compressed_block_path_declined`]), at most one naming a budget that
-/// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`](super::note::PlanNoteKind::AllocationBelowFloor)),
+/// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`](crate::stream::note::PlanNoteKind::AllocationBelowFloor)),
 /// and at most one naming a batch span narrowed below what the caller stated
-/// ([`PlanNoteKind::BatchSpanNarrowed`](super::note::PlanNoteKind::BatchSpanNarrowed)).**
+/// ([`PlanNoteKind::BatchSpanNarrowed`](crate::stream::note::PlanNoteKind::BatchSpanNarrowed)).**
 /// Empty on every path that limits nothing, so a caller need not special-case
 /// "nothing to say" — though an empty `matches`, still charged its span, can
 /// name a count the budget cut. The fourth is each block's advice, which a cut
@@ -129,12 +129,12 @@ fn compressed_block_path_declined(
 /// `--chunk-size` states, and a provider's first scan after `SET
 /// pgdump.chunk_size` at the chunk before it. Only `max_source_span` follows
 /// the stated chunk, so the smaller chunk
-/// [`PlanNoteKind::ParallelismBudgetLimited`](super::note::PlanNoteKind::ParallelismBudgetLimited) advises does not seat more on
+/// [`PlanNoteKind::ParallelismBudgetLimited`](crate::stream::note::PlanNoteKind::ParallelismBudgetLimited) advises does not seat more on
 /// the plan it advises. **(c) unowned**; promoted by a stated chunk seen not
 /// to seat what the note promised, the fix being `hint_read_size(chunk_size)`
 /// beside `hint_parallelism` — a plan announcing a read size to a source
 /// other scans share.
-pub(super) fn plan_partitions(
+pub(in crate::stream) fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
     kept: &BTreeMap<u64, Vec<Range<u64>>>,
@@ -251,7 +251,7 @@ pub(super) fn plan_partitions(
 /// Cut `matches` — each whole, or the runs of row groups `kept` holds of it —
 /// into the pieces each block's `advice` permits, and group them into at most
 /// `workers` sub-streams ([`distribute`]), byte-balanced over what they read.
-pub(super) fn cut_blocks(
+pub(in crate::stream) fn cut_blocks(
     matches: &[CopyBlock],
     kept: &BTreeMap<u64, Vec<Range<u64>>>,
     advice: &[Partitioning],
@@ -301,7 +301,7 @@ pub(super) fn cut_blocks(
 
 /// The span a sub-stream's held batch is charged, given what one reader of
 /// this source costs and what the caller stated
-/// (`crate::batch::QueryOptions::max_source_span`, which is a ceiling).
+/// (`crate::options::QueryOptions::max_source_span`, which is a ceiling).
 ///
 /// **It moves down or not at all** (`docs/design/decisions.md`, "D84"). Where
 /// the stated span already affords the count asked for, it is returned
@@ -332,7 +332,7 @@ pub(super) fn cut_blocks(
 // count are both fixed at a number picked to answer a different question.
 // **(c) unowned**; closing it means a plain source recommending a per-reader
 // cost, which is `KD25`'s reading.
-pub(super) fn derived_source_span(
+pub(in crate::stream) fn derived_source_span(
     charge: WorkerMemory,
     parallelism: Parallelism,
     stated: usize,
@@ -353,7 +353,7 @@ pub(super) fn derived_source_span(
 /// (`docs/design/decisions.md`, "D51"). The group is chosen from a segment's
 /// **midpoint** in the running total, so one huge piece beside many small ones
 /// does not push everything after it into the last group.
-pub(super) fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
+pub(in crate::stream) fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
     let streams = streams.max(1).min(segments.len().max(1));
     if streams == 1 {
         return vec![segments];

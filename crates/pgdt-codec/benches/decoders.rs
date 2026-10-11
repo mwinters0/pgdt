@@ -8,7 +8,7 @@
 //! `text`/`varchar`/`char` decode zero-copy (`Utf8View`, no `decode.rs`
 //! function at all) and enum's "decode" is an unparsed dictionary-key append
 //! (also no `decode.rs` function) — neither has a decoder to benchmark here.
-//! `int` has no `decode.rs` function either (`batch.rs` calls `str::parse`
+//! `int` has no `decode.rs` function either (`batch/builder.rs` calls `str::parse`
 //! directly), but it is still benchmarked, both as a real mapped family and
 //! as the cheap baseline the other numeric families (`float`, `numeric`) are
 //! worth comparing against.

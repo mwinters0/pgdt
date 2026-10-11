@@ -6464,16 +6464,16 @@ STREAM = (
     *(
         f"crates/pgdt-query/src/stream/{name}.rs"
         for name in (
-            "dynamic",
-            "map_query",
+            "mapping",
             "note",
-            "partition",
-            "plan",
+            "partitions",
             "replay",
-            "resolve",
-            "segment",
+            "replay/dynamic",
+            "replay/partition",
+            "replay/plan",
+            "replay/segment",
+            "resume",
             "table",
-            "table_partitions",
         )
     ),
 )
@@ -6600,7 +6600,16 @@ UNREPRESENTABLE = (
     "crates/pgdt-codec/src/unrepresentable.rs",
     "crates/pgdt-model/src/block.rs",
 )
-NESTED = ("crates/pgdt-codec/src/value/nested.rs", "crates/pgdt-query/src/batch.rs")
+#: The nested literal codec, and the batch it is built into and read back
+#: from: what a query asks for, the batcher, its column builders and retained
+#: chunks, and the render back to text; their tests are not declared.
+NESTED = (
+    "crates/pgdt-codec/src/value/nested.rs",
+    *(
+        f"crates/pgdt-query/src/{name}.rs"
+        for name in ("batch", "batch/builder", "batch/chunks", "options", "render")
+    ),
+)
 PREAMBLE = (
     "crates/pgdt-dump/src/preamble.rs",
     "crates/pgdt-dump/src/ddl.rs",

@@ -79,7 +79,7 @@ than reading as a phase nobody has sliced.
   candidate it found. The DataFusion provider never shows it, reading only a
   complete map. **(c) unowned**; promoted by a concatenated or
   `pg_dumpall`-style file reaching a user through a cold query. Detail:
-  `crates/pgdt-query/src/batch.rs`.
+  `crates/pgdt-query/src/options.rs`.
 
 - **KD48** — a file's `SET search_path` is not read, so an unqualified name
   resolves as under the default path: a collation a declared one could shadow
@@ -157,7 +157,7 @@ than reading as a phase nobody has sliced.
   bound it and a held batch's `max_source_span` reaches up to four of koji's 24
   MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
   memory, the repair reversing a recorded decision either way. Detail:
-  `crates/pgdt-query/src/stream/partition.rs`.
+  `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD24** — the chunk pool's free list is billed nowhere, so a compressed
   source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks — 4
@@ -189,7 +189,7 @@ than reading as a phase nobody has sliced.
   to decline block decode on an ordinary `.xz`: a stated allowance raises
   neither, and `--chunk-size` moves them only as far as `KD41` lets it.
   **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
-  on a real device. Detail: `crates/pgdt-query/src/stream/partition.rs`.
+  on a real device. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows several
   kilobytes per table, about a fifth of it live structure the preamble alone
@@ -276,7 +276,7 @@ than reading as a phase nobody has sliced.
   provider's first scan after `SET pgdump.chunk_size` at the chunk before it,
   so the smaller chunk a plan note advises seats nothing more on that plan.
   **(c) unowned**; promoted by a stated chunk seen not to seat what the note
-  promised. Detail: `crates/pgdt-query/src/stream/partition.rs`.
+  promised. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
@@ -290,7 +290,7 @@ than reading as a phase nobody has sliced.
   is read balanced over what its static filter keeps rather than over what
   the join's filter does. **(c) unowned**; promoted by such a table's probe
   side seen unbalanced, the fix being a cut that breaks at every boundary
-  nothing proves. Detail: `crates/pgdt-query/src/stream/table_partitions.rs`.
+  nothing proves. Detail: `crates/pgdt-query/src/stream/partitions.rs`.
 
 - **KD54** — a query's replay keeps every chunk a batch's views point into
   until the batch flushes, and the read pool keeps `POOL_DEPTH` of them, so a
@@ -384,7 +384,7 @@ than reading as a phase nobody has sliced.
   refused only by a query ordering on the column or comparing an array or
   composite holding it. **(c) unowned**; a strict
   parse refuses it, so promoted by a query wanted to refuse it without one.
-  Detail: `crates/pgdt-query/src/batch.rs`.
+  Detail: `crates/pgdt-query/src/batch/builder.rs`.
 
 - **KD89** — an `ALTER TYPE … ADD VALUE … BEFORE` or `AFTER`, which no
   `pg_dump` writes, is folded as if it appended the label, so an ordering

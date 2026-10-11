@@ -15,9 +15,8 @@ use pgdt_dump::internal::scan_preamble;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata};
 
-use super::resolve::render_candidate;
-use super::table::ResumeToken;
-use crate::batch::{QueryOptions, ScanExtent};
+use super::resume::ResumeToken;
+use crate::options::{QueryOptions, ScanExtent};
 use pgdt_mapping::internal::{MapStop, Pass, announce_read_loop, map_forward, reread_rows, splice};
 
 /// What a query's mapping pass settled: the blocks this query will replay,
@@ -51,7 +50,7 @@ pub(super) fn validate_request(
 /// Pass 1 of a query, whole: load or start the map, capture the preamble,
 /// extend the map until this query's table is settled, then narrow the
 /// name-only matches to at most one candidate, whose census the plan takes
-/// ([`TableColumns`](super::table::TableColumns)). Yields
+/// ([`TableColumns`](super::replay::plan::TableColumns)). Yields
 /// no rows — see the module docs. **Both entry points run exactly this**, so a
 /// partitioned replay maps the file once rather than once per sub-stream.
 pub(super) async fn map_for_query(
@@ -240,4 +239,14 @@ async fn census_metadata_level(
         matches[at].set_census(census);
     }
     Ok(())
+}
+
+/// `database`, rendered as `database.schema.table`, or just `schema.table`
+/// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
+/// names its candidates in.
+pub(super) fn render_candidate((database, qualified_name): &(Option<String>, String)) -> String {
+    match database {
+        Some(db) => format!("{db}.{qualified_name}"),
+        None => qualified_name.clone(),
+    }
 }

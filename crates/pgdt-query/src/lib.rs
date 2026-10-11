@@ -4,20 +4,21 @@
 //! through.
 
 mod batch;
+mod options;
 mod predicate;
 mod prune;
+mod render;
 mod stream;
 mod summary;
 
-pub use batch::{
-    QueryOptions, ScanExtent, decode_field, read_table, render_field, render_field_into,
-};
+pub use options::{QueryOptions, ScanExtent};
 pub use predicate::{
     ComparisonNote, Expr, Membership, Predicate, PredicateOp, Truth, column_divergences,
 };
+pub use render::{decode_field, render_field, render_field_into};
 pub use stream::{
     BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, PlanLever, PlanNote,
-    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, table_schema,
-    table_stream, table_stream_partitions,
+    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, read_table,
+    table_schema, table_stream, table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};

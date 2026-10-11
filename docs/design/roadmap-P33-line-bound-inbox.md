@@ -31,7 +31,7 @@ memory, not the line. `MEMORY_RESERVE`'s premise changes with it
 
 **Fact.** `interior/region.rs`'s `scan_partition` finds a piece's first row start by
 doubling its read from the piece's offset until a row start is in it,
-ceilinged at `max_line_bytes`; `stream/segment.rs`'s `first_row_start` does the same
+ceilinged at `max_line_bytes`; `stream/replay/segment.rs`'s `first_row_start` does the same
 for a resume point. A piece wholly inside a long line reads up to the line's
 length to learn it holds no row start.
 

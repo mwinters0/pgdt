@@ -196,7 +196,7 @@ on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
 `str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
 bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
-the one that stands is `append_view_unchecked` (`batch.rs`), whose bounds come from the `contains`
+the one that stands is `append_view_unchecked` (`batch/chunks.rs`), whose bounds come from the `contains`
 that produced its coordinates and whose validity comes from the decode's borrowed arm (D46).
 
 ### D28 One row split, shared unconditionally
@@ -332,7 +332,7 @@ retained unit does not — and writes it onto the sub-streams. A plain source st
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
-readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream/partition.rs`. Evidence: `parallel-scan-throughput`.
+readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream/replay/partition.rs`. Evidence: `parallel-scan-throughput`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is

@@ -17,15 +17,14 @@ use pgdt_core::{
 };
 use pgdt_model::{BlockStatistics, CopyBlock, PostgresInvalidValues};
 
-use super::plan::{ReplayPlan, query_reads};
-use super::table::resolve_block;
-use super::table_partitions::Cut;
+use super::plan::{ReplayPlan, query_reads, resolve_block};
+use super::segment::Segment;
 use crate::predicate::{Expr, ResolvedExpr, resolve_loosened};
 use crate::prune::{DynamicPruning, SortedStop};
 
 /// A filter a query's consumer refines while the query runs — a hash join's
 /// build side, a TopK's heap — handed to a partitioned replay
-/// ([`TablePartitions::under`](super::table_partitions::TablePartitions::under)), which cuts its sub-streams over the row
+/// ([`TablePartitions::under`](crate::stream::partitions::TablePartitions::under)), which cuts its sub-streams over the row
 /// groups the state keeps when the first is polled, skips those it rules out
 /// as it reaches them, ends a sorted block at the first row past a bound the
 /// state requires, and, under [`RowEvaluation::On`], drops each row of the
@@ -74,27 +73,27 @@ pub enum RowEvaluation {
 
 /// A [`DynamicFilter`] as one sub-stream's replay reads it: the filter, the
 /// statistics of the blocks it may prune, and the block being read.
-pub(super) struct DynamicRead {
-    pub(super) filter: Arc<dyn DynamicFilter>,
+pub(in crate::stream) struct DynamicRead {
+    pub(in crate::stream) filter: Arc<dyn DynamicFilter>,
     /// Whether each row is evaluated against the state.
-    pub(super) evaluation: RowEvaluation,
-    pub(super) statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    pub(in crate::stream) evaluation: RowEvaluation,
+    pub(in crate::stream) statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
     /// The cut the sub-stream was handed, whose verdicts a state it read is
     /// read with again rather than asked of each group anew.
-    pub(super) cut: Arc<Cut>,
+    pub(in crate::stream) cut: Arc<Cut>,
     /// The block last entered, by `header_offset`, as the filter reads it —
     /// `None` for one whose schema does not resolve.
-    pub(super) block: Option<(u64, Option<DynamicBlock>)>,
-    /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`](super::table::TableStream::dynamic_filter_pruned_groups)).
-    pub(super) pruned: Arc<AtomicU64>,
-    /// The rows dropped so far ([`TableStream::dynamic_filter_pruned_rows`](super::table::TableStream::dynamic_filter_pruned_rows)).
-    pub(super) rows: Arc<AtomicU64>,
+    pub(in crate::stream) block: Option<(u64, Option<DynamicBlock>)>,
+    /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`](crate::stream::table::TableStream::dynamic_filter_pruned_groups)).
+    pub(in crate::stream) pruned: Arc<AtomicU64>,
+    /// The rows dropped so far ([`TableStream::dynamic_filter_pruned_rows`](crate::stream::table::TableStream::dynamic_filter_pruned_rows)).
+    pub(in crate::stream) rows: Arc<AtomicU64>,
 }
 
 /// One block as a [`DynamicFilter`] reads it: its unprojected schema, which
 /// each state is resolved against, the state last read, and its statistics'
 /// pruning where they answer.
-pub(super) struct DynamicBlock {
+pub(in crate::stream) struct DynamicBlock {
     header_offset: u64,
     full: ResolvedSchema,
     /// How the query reads each column's values its type cannot hold, which
@@ -113,13 +112,13 @@ pub(super) struct DynamicBlock {
     rows: Option<ResolvedExpr>,
     /// `None` where the block's statistics answer nothing
     /// ([`DynamicPruning::new`]), no group then being ruled out.
-    pub(super) pruning: Option<DynamicPruning>,
+    pub(in crate::stream) pruning: Option<DynamicPruning>,
 }
 
 impl DynamicBlock {
     /// `block` of `plan`'s table, pruned by `statistics` where they answer —
     /// or `None` where its schema does not resolve.
-    pub(super) fn new(
+    pub(in crate::stream) fn new(
         block: &CopyBlock,
         statistics: Option<&Arc<BlockStatistics>>,
         plan: &ReplayPlan,
@@ -163,7 +162,7 @@ impl DynamicBlock {
     /// this block ([`resolve_loosened`]) — whole for its groups, and in its
     /// row form for its rows where `evaluation` evaluates them
     /// (`docs/design/decisions.md`, "D93").
-    pub(super) fn read(
+    pub(in crate::stream) fn read(
         &mut self,
         generation: u64,
         state: &Expr,
@@ -184,7 +183,7 @@ impl DynamicBlock {
 
 /// What a [`DynamicFilter`] says of the row a replay is about to read
 /// ([`DynamicRead::at_row`]).
-pub(super) enum Skip {
+pub(in crate::stream) enum Skip {
     Read,
     /// The row's group and every one up to the group whose search starts at
     /// this offset are ruled out: the segment ends, and resumes here.
@@ -196,7 +195,7 @@ pub(super) enum Skip {
 impl DynamicRead {
     /// Make `block` the block being read, unless it already is. Its state is
     /// first read at the first group it enters or chunk it takes.
-    pub(super) fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {
+    pub(in crate::stream) fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {
         if self.block.as_ref().is_some_and(|(at, _)| *at == block.header_offset) {
             return;
         }
@@ -245,7 +244,7 @@ impl DynamicRead {
     /// group**: the state is re-read there where its generation has moved,
     /// and a group it rules out is skipped with every one after it that it
     /// also rules out, up to the segment's limit ([`Self::judge`]).
-    pub(super) fn at_row(
+    pub(in crate::stream) fn at_row(
         &mut self,
         offset: u64,
         start: u64,
@@ -268,7 +267,7 @@ impl DynamicRead {
     /// is judged again, the rest of it skipped with every later group the
     /// state rules out, and one still kept re-armed ([`Self::judge`];
     /// `docs/design/decisions.md`, "D93").
-    pub(super) fn at_chunk(
+    pub(in crate::stream) fn at_chunk(
         &mut self,
         offset: u64,
         start: u64,
@@ -316,7 +315,7 @@ impl DynamicRead {
     }
 
     /// Where the state last read stops the block being read, if anywhere.
-    pub(super) fn stop(&self) -> Option<&SortedStop> {
+    pub(in crate::stream) fn stop(&self) -> Option<&SortedStop> {
         self.block.as_ref()?.1.as_ref()?.pruning.as_ref()?.stop()
     }
 
@@ -328,18 +327,18 @@ impl DynamicRead {
     }
 
     /// Whether each row is evaluated against the state.
-    pub(super) fn evaluates_rows(&self) -> bool {
+    pub(in crate::stream) fn evaluates_rows(&self) -> bool {
         self.evaluation == RowEvaluation::On
     }
 
     /// Whether evaluating the state last read reads a field of a row.
-    pub(super) fn reads_fields(&self) -> bool {
+    pub(in crate::stream) fn reads_fields(&self) -> bool {
         self.state().is_some_and(ResolvedExpr::reads_fields)
     }
 
     /// Whether the state last read rejects `raw_row`, a row the static filter
     /// kept, which the replay then drops before decoding a column of it,
-    /// counting it ([`TableStream::dynamic_filter_pruned_rows`](super::table::TableStream::dynamic_filter_pruned_rows)) — never
+    /// counting it ([`TableStream::dynamic_filter_pruned_rows`](crate::stream::table::TableStream::dynamic_filter_pruned_rows)) — never
     /// where rows are not evaluated ([`RowEvaluation`]).
     ///
     /// **Evaluated in every block**, statistics or not, the state being read
@@ -348,7 +347,7 @@ impl DynamicRead {
     /// keeps the row**: a dynamic filter only licenses dropping a row, and
     /// the error is raised where evaluation or the row's own decoding
     /// reaches it (`docs/design/decisions.md`, "D54").
-    pub(super) fn rejects(
+    pub(in crate::stream) fn rejects(
         &self,
         raw_row: RawRow<'_>,
         split: &mut RowSplit,
@@ -366,4 +365,19 @@ impl DynamicRead {
             rejected
         })
     }
+}
+
+/// The byte cut a [`DynamicPartitions`](crate::stream::partitions::DynamicPartitions) made at its first poll, beside what
+/// it read to make it.
+pub(in crate::stream) struct Cut {
+    pub(in crate::stream) groups: Arc<Vec<Vec<Segment>>>,
+    /// The row groups the cut ruled out, until the first sub-stream to take
+    /// it counts them.
+    pub(in crate::stream) ruled_out: AtomicU64,
+    /// The generation of the state the cut read, and per block by header
+    /// offset the verdict it reached on each group under that state: a
+    /// sub-stream reading the same state takes them rather than asking each
+    /// group again ([`DynamicPruning::seed`](crate::prune::DynamicPruning::seed)).
+    pub(in crate::stream) generation: u64,
+    pub(in crate::stream) verdicts: BTreeMap<u64, Vec<Option<bool>>>,
 }

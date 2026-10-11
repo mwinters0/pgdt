@@ -37,7 +37,7 @@ use pgdt_model::{
 #[derive(Debug, Clone)]
 pub(crate) struct BlockPruning {
     /// Every run of kept groups, in file order, as a replay segment's search
-    /// bounds (`crate::stream::Segment`): a run's start finds its first row
+    /// bounds (`crate::stream::replay::segment::Segment`): a run's start finds its first row
     /// past the first LF at or after it, and it reads through the line ending
     /// at the first LF at or after its end. Group `k` of a block whose data
     /// starts at `D` is `[D + k·N − 1, D + (k+1)·N − 1)` in those terms — the
@@ -373,7 +373,7 @@ impl DynamicPruning {
     }
 
     /// Where a replay segment reading `group` from its first row starts its
-    /// search (`crate::stream::Segment`), as [`BlockPruning::kept`] states a
+    /// search (`crate::stream::replay::segment::Segment`), as [`BlockPruning::kept`] states a
     /// run's.
     pub(crate) fn search_start(&self, group: usize) -> u64 {
         self.run(group).start

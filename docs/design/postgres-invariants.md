@@ -270,7 +270,7 @@ another order) on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, under both
 flag sets.
 **Relied on by:** `decisions.md` ("D43" —
 the `COPY` header is authoritative; the DDL is a by-name type lookup);
-`stream/table.rs`'s `TableColumns`, which reorders a table's blocks by name,
+`stream/replay/plan.rs`'s `TableColumns`, which reorders a table's blocks by name,
 unions their census by name, and reads a header listing no columns as a
 block copying none; `ddl/metadata.rs`'s `fold_alter_type_drop_attribute`, for
 the composite (`fixtures/<version>/emitters/binary-upgrade.sql`'s

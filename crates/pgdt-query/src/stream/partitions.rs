@@ -1,5 +1,6 @@
-//! A partitioned replay over a complete map the caller holds, and its
-//! partitions under one dynamic filter.
+//! A partitioned replay — over the map a query's own mapping pass settles,
+//! or over a complete map the caller holds — and its partitions under one
+//! dynamic filter.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -12,28 +13,110 @@ use tokio::sync::OnceCell;
 use pgdt_codec::ResolvedSchema;
 use pgdt_core::{Error, Result};
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::SourceWatch;
+use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_io::{ByteRangeSource, Partitioning};
 use pgdt_model::{BlockStatistics, CopyBlock, DumpIndex, Sortedness, TableName};
 
-use super::dynamic::{DynamicBlock, DynamicFilter, DynamicRead, RowEvaluation};
-use super::map_query::validate_request;
+use super::mapping::{MappedTable, map_for_query, validate_request};
 use super::note::PlanNote;
-use super::partition::cut_blocks;
-use super::plan::ReplayPlan;
+use super::replay::dynamic::{Cut, DynamicBlock, DynamicFilter, DynamicRead, RowEvaluation};
+use super::replay::partition::cut_blocks;
+use super::replay::plan::{PlannedReplay, ReplayPlan, plan_replay};
 use super::replay::replay;
-use super::resolve::query_fingerprint;
-use super::segment::{Segment, StreamShared};
-use super::table::{PlannedReplay, ResumeToken, TableStream, plan_replay};
-use crate::batch::QueryOptions;
+use super::replay::segment::Segment;
+use super::resume::{ResumeToken, query_fingerprint};
+use super::table::{StreamShared, TableStream};
+use crate::options::QueryOptions;
 use crate::summary::partition_orders;
+
+/// The same query as [`table_stream`](crate::stream::table_stream), handed back as **N sub-streams over one
+/// map** — the partitioned replay
+/// (`docs/design/decisions.md`, "D51").
+///
+/// The mapping pass runs once, here, before any sub-stream exists, and so
+/// does the plan, whose resolution refusal this returns rather than a
+/// sub-stream ([`table_stream`](crate::stream::table_stream)'s filter paragraph); each
+/// sub-stream then replays a contiguous run of the blocks that pass settled,
+/// cut where the source said it was willing to be cut
+/// ([`ByteRangeSource::partitions`]) and no finer than
+/// `query_options.parallelism` allows. **The caller runs them**, concurrently
+/// or not: running them in order and concatenating is exactly what
+/// [`table_stream`](crate::stream::table_stream) yields. The returned `Vec` is never empty and never holds
+/// an empty sub-stream beyond the degenerate one a table with no blocks
+/// produces; the serial state is one sub-stream.
+///
+/// **Each sub-stream carries its own schema, notes and position.**
+/// [`TableStream::resolved_schema`] is empty on a sub-stream until that
+/// sub-stream's first block resolves, so a caller wanting the schema before
+/// consuming much reads it off the *first* sub-stream after its first poll:
+/// that sub-stream's first segment is the first block's and publishes its
+/// schema on entry, holding a row or not. [`TableStream::resume_token`] is stamped with the
+/// partition it came from, so feeding one back to [`table_stream`](crate::stream::table_stream) is
+/// `Error::ResumeQueryMismatch`: resuming a partitioned replay is not
+/// supported.
+///
+/// **What N sub-streams cost resident is N times one**, and N is solved
+/// against what the source charges concurrent readers
+/// (`Partitioning::worker_memory`, a shared pool term included) plus, on a
+/// source retaining by chunk alone, what a sub-stream's in-flight batch pins
+/// (`QueryOptions::max_source_span`) — see [`plan_partitions`](super::replay::partition::plan_partitions)
+/// (`docs/design/decisions.md`, "D4").
+pub async fn table_stream_partitions<'a>(
+    source: &'a dyn ByteRangeSource,
+    table: &str,
+    scan_options: ScanOptions,
+    query_options: QueryOptions,
+    cache: CacheMode,
+) -> Result<Vec<TableStream<'a>>> {
+    validate_request(&query_options, None, 0)?;
+    let table = table.to_string();
+    let watch = Arc::new(SourceWatch::open(source, cache.strict_identity()).await?);
+    let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await;
+    let mapped = watch.attribute(source, mapped).await?;
+    let MappedTable { matches, metadata } = mapped;
+    let PlannedReplay { plan, groups, plan_notes, .. } =
+        plan_replay(source, &matches, metadata, scan_options, query_options)?;
+    let of = groups.len();
+    Ok(groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, segments)| {
+            let fingerprint = query_fingerprint(&table, &plan.query_options, Some((index, of)));
+            let shared = StreamShared::new(ResumeToken::start(fingerprint))
+                .with_plan_notes(plan_notes.clone());
+            let plan = Arc::clone(&plan);
+            let shared_for_stream = shared.clone();
+            // **Once per sub-stream, not once per replay.** Each one is a
+            // reader that ends, and the first to notice aborts; a check that
+            // fired only on the last would let the others report rows read
+            // from a file that had already moved.
+            let watch = Arc::clone(&watch);
+            let inner = try_stream! {
+                let mut rows = Box::pin(replay(
+                    source,
+                    plan,
+                    segments,
+                    shared_for_stream,
+                    None,
+                    fingerprint,
+                    None,
+                ));
+                while let Some(batch) = rows.next().await {
+                    yield watch.attribute(source, batch).await?;
+                }
+                watch.finish(source).await?;
+            };
+            shared.into_stream(Box::pin(inner))
+        })
+        .collect())
+}
 
 /// A partitioned replay of one table over **a complete map the caller holds**,
 /// planned once and streamed per partition, for an embedder that schedules
 /// partitions itself and runs them in any order, or more than once
 /// (`docs/design/decisions.md`, "D90").
 ///
-/// [`table_stream_partitions`](super::table::table_stream_partitions) with the mapping pass taken out: no cache is
+/// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) with the mapping pass taken out: no cache is
 /// loaded or written and no byte is scanned for structure, so the map is
 /// believed exactly as handed over, which is why a map that stops short of
 /// the source's end is refused ([`Error::MapIncomplete`]). **The table is
@@ -73,7 +156,7 @@ impl TablePartitions {
     /// Plan the replay of `table` over `index`: its columns, every block
     /// resolved, statistics consulted, and the blocks cut into as many
     /// partitions as `query_options.parallelism` and the source's own advice
-    /// allow — the same plan [`table_stream_partitions`](super::table::table_stream_partitions) makes after its
+    /// allow — the same plan [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) makes after its
     /// mapping pass.
     pub async fn plan(
         source: Arc<dyn ByteRangeSource>,
@@ -410,19 +493,4 @@ impl DynamicPartitions {
             .get_or_init(|| async { Arc::new(self.partitions.cut_under(self.filter.as_ref())) });
         Arc::clone(made.await)
     }
-}
-
-/// The byte cut a [`DynamicPartitions`] made at its first poll, beside what
-/// it read to make it.
-pub(super) struct Cut {
-    groups: Arc<Vec<Vec<Segment>>>,
-    /// The row groups the cut ruled out, until the first sub-stream to take
-    /// it counts them.
-    ruled_out: AtomicU64,
-    /// The generation of the state the cut read, and per block by header
-    /// offset the verdict it reached on each group under that state: a
-    /// sub-stream reading the same state takes them rather than asking each
-    /// group again ([`DynamicPruning::seed`](crate::prune::DynamicPruning::seed)).
-    pub(super) generation: u64,
-    pub(super) verdicts: BTreeMap<u64, Vec<Option<bool>>>,
 }

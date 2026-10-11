@@ -2102,7 +2102,7 @@ because there are two questions.**
 
 - **Copy** — `String::from` over the same byte count: 19 ns at 49 bytes,
   24 ns at 601, 19 ns at 42. A nested value's *element* has no borrowed arm at
-  the Arrow builder (`crate::batch::append_nested` copies whatever it is
+  the Arrow builder (`crate::batch::builder::append_nested` copies whatever it is
   handed), so this isolates what the *parse* costs on top of the copy the
   builder cannot avoid. It allocates through the bench's
   `#[global_allocator]`, `pgdt`'s mimalloc ([`decisions.md`](decisions.md),

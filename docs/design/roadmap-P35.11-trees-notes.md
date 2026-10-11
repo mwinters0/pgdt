@@ -353,76 +353,7 @@ beside `key`, which dev-depends on pgdt-dump (`preamble_only`) and tokio for
 them; `layering.py` reads no dev-dependency. `oracle_register.py:216` names
 `predicate/tests.rs` and a test in it, and follows the test.
 
-35.19 cut the predicate. The 35.20 cut's moves, projected against `2ea0056b`
-with no cycle:
-
-```moves
-# 35.20: options, render, batch and the stream
-pgdt-query::batch::QueryOptions -> pgdt-query::options
-pgdt-query::batch::ScanExtent -> pgdt-query::options
-
-pgdt-query::batch::render_field -> pgdt-query::render
-pgdt-query::batch::render_field_into -> pgdt-query::render
-pgdt-query::batch::render_array_into -> pgdt-query::render
-pgdt-query::batch::render_list_level -> pgdt-query::render
-pgdt-query::batch::decode_field -> pgdt-query::render
-
-pgdt-query::batch::RetainedChunks -> pgdt-query::batch::chunks
-pgdt-query::batch::SourceChunk -> pgdt-query::batch::chunks
-pgdt-query::batch::push_utf8view_field -> pgdt-query::batch::chunks
-
-pgdt-query::batch::ColumnBuilder -> pgdt-query::batch::builder
-pgdt-query::batch::ListParts -> pgdt-query::batch::builder
-pgdt-query::batch::StructParts -> pgdt-query::batch::builder
-pgdt-query::batch::append_array_level -> pgdt-query::batch::builder
-pgdt-query::batch::append_nested -> pgdt-query::batch::builder
-pgdt-query::batch::append_null -> pgdt-query::batch::builder
-pgdt-query::batch::append_range -> pgdt-query::batch::builder
-pgdt-query::batch::append_typed -> pgdt-query::batch::builder
-pgdt-query::batch::array_depth -> pgdt-query::batch::builder
-pgdt-query::batch::builder_len -> pgdt-query::batch::builder
-pgdt-query::batch::finish_column -> pgdt-query::batch::builder
-pgdt-query::batch::new_column_builder -> pgdt-query::batch::builder
-pgdt-query::batch::new_list_parts -> pgdt-query::batch::builder
-pgdt-query::batch::new_struct_parts -> pgdt-query::batch::builder
-pgdt-query::batch::text_refused -> pgdt-query::batch::builder
-
-pgdt-query::batch::read_table -> pgdt-query::stream
-pgdt-query::stream::table::table_stream -> pgdt-query::stream
-pgdt-query::stream::segment::StreamShared -> pgdt-query::stream::table
-
-pgdt-query::stream::table::ResumeToken -> pgdt-query::stream::resume
-pgdt-query::stream::table::InCopyResume -> pgdt-query::stream::resume
-pgdt-query::stream::resolve::query_fingerprint -> pgdt-query::stream::resume
-pgdt-query::stream::resolve::hash_expr -> pgdt-query::stream::resume
-pgdt-query::stream::resolve::hash_children -> pgdt-query::stream::resume
-
-pgdt-query::stream::table::table_stream_partitions -> pgdt-query::stream::partitions
-pgdt-query::stream::table_partitions -> pgdt-query::stream::partitions
-pgdt-query::stream::table_partitions::Cut -> pgdt-query::stream::replay::dynamic
-
-pgdt-query::stream::map_query -> pgdt-query::stream::mapping
-pgdt-query::stream::resolve::render_candidate -> pgdt-query::stream::mapping
-
-pgdt-query::stream::resolve::row_text -> pgdt-query::stream::replay
-pgdt-query::stream::segment::activate -> pgdt-query::stream::replay
-pgdt-query::stream::resolve::Active -> pgdt-query::stream::replay
-pgdt-query::stream::resolve::Opened -> pgdt-query::stream::replay
-pgdt-query::stream::table::resume_state -> pgdt-query::stream::replay
-pgdt-query::stream::table::snapshot -> pgdt-query::stream::replay
-
-pgdt-query::stream::plan -> pgdt-query::stream::replay::plan
-pgdt-query::stream::resolve::project -> pgdt-query::stream::replay::plan
-pgdt-query::stream::table::TableColumns -> pgdt-query::stream::replay::plan
-pgdt-query::stream::table::resolve_block -> pgdt-query::stream::replay::plan
-pgdt-query::stream::table::refuse_metadata_level -> pgdt-query::stream::replay::plan
-pgdt-query::stream::table::PlannedReplay -> pgdt-query::stream::replay::plan
-pgdt-query::stream::table::plan_replay -> pgdt-query::stream::replay::plan
-
-pgdt-query::stream::segment -> pgdt-query::stream::replay::segment
-pgdt-query::stream::partition -> pgdt-query::stream::replay::partition
-pgdt-query::stream::dynamic -> pgdt-query::stream::replay::dynamic
-```
+35.19 cut the predicate, and 35.20 the rest of the tree.
 
 ## pgdt
 

@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use arrow::array::ArrayRef;
 
-use crate::batch::decode_field;
+use crate::render::decode_field;
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use pgdt_codec::internal::column_tiers;
