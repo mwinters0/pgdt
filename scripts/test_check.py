@@ -748,7 +748,7 @@ class RealWorkspace(unittest.TestCase):
         nextest = argv_of(fixture)["nextest"]
         self.assertIn("binary_id(=pgdt-query::pruning)", nextest[-1])
         self.assertIn("binary_id(=datafusion-pgdump::pushdown)", nextest[-1])
-        plan = check.plan_changes(check.REPO, ["pgdt/src/main.rs"], load)
+        plan = check.plan_changes(check.REPO, ["crates/pgdt/src/main.rs"], load)
         self.assertEqual(argv_of(plan)["nextest"][4:], ["-p", "pgdt"])
 
     def test_a_library_reads_its_data_and_not_its_whole_package(self):
@@ -767,7 +767,7 @@ class RealWorkspace(unittest.TestCase):
         plan = check.plan_changes(
             check.REPO, ["crates/pgdt-core/src/copy.rs"], load, {"crates/pgdt-core/src/copy.rs"}
         )
-        self.assertEqual(argv_of(plan)["nextest"][-1], "binary_id(=pgdump_query::layering)")
+        self.assertNotIn("nextest", argv_of(plan))
         self.assertNotIn("doctest", argv_of(plan))
 
     def test_the_commit_editing_only_doc_comments_runs_no_test(self):

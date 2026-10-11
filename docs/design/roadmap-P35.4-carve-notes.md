@@ -2,7 +2,7 @@
 
 What the next slices inherit from carving `pgdump_query` into `crates/pgdt-*`.
 The graph is [`decisions.md`](decisions.md), "D68", held by
-`pgdump_query/tests/layering.rs`; each crate's root says what it holds, and
+`scripts/layering.py`; each crate's root says what it holds, and
 its `internal` module what a crate above reaches past its API. No body
 changed: a file moved whole, its `crate::` paths rewritten to the crate now
 holding what they name, and a visibility widened only where a crate above
@@ -64,7 +64,7 @@ needs it.
 
 - **Every figure's `depends` names the new paths**, so `measure.py --stale`
   reads a moved file as changed against the commit a figure was taken at. The
-  release profiles and `pgdt/build.rs` did not move; the legs build as 35.8
+  release profiles and `crates/pgdt/build.rs` did not move; the legs build as 35.8
   left them.
 
 ## What 35.5 inherits

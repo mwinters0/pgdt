@@ -1,6 +1,6 @@
 # Type handling
 
-How `pgdump_query` decides what Arrow type a column gets, and where a
+How `pgdt` decides what Arrow type a column gets, and where a
 PostgreSQL type does not survive the trip into a dump file intact.
 
 ## The short version

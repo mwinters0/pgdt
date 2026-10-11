@@ -159,7 +159,7 @@ builds anything short; `pgdt sql` never parses either, a parse wanting `pgdt`'s 
 guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
 stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
 no partial map to keep, a dropped stream is its whole cancellation, no `ScanOptions::cancel` set (D26). Rejected:
-falling back to a cold query's early-stopping map, which brings each of those back. Code: `datafusion-pgdump/src/dump.rs`.
+falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/datafusion-pgdump/src/dump.rs`.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
@@ -378,7 +378,7 @@ static filter and the state then keep, a join's filter being complete by then, s
 planned cut stands where nothing is ruled out or an order would be lost (`KD53`). A group is asked once per state, the cut's verdicts seeding a replay.
 Rejected: the cut held by `TablePartitions`, outliving the filter a reset discards; keyed by the filter's `Arc`; the count re-planned (read at planning);
 re-pruning a whole block per generation; a partition reading its filter from state shared with the plan node, which its clones share, so a reset node hands out the filter its producer discarded; seeking the scanner in place at a skip.
-Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `crates/pgdt-query/tests/dynamic_filter.rs`, `datafusion-pgdump/tests/dynamic_filters.rs`.
+Code: `stream::DynamicPartitions`, `prune::DynamicPruning`. Evidence: `crates/pgdt-query/tests/dynamic_filter.rs`, `crates/datafusion-pgdump/tests/dynamic_filters.rs`.
 
 ### D98 The typed mode nulls what its front end cannot hold, tested before decode where the block's count says it holds one
 Under `UnrepresentableMode::Null` a value past the tiers the query's semantics cannot hold — the format spec's under PostgreSQL's, the calendar's too
@@ -468,7 +468,7 @@ the scan's own refusals. A typed literal must be the column's Arrow type and is 
 Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,
 answered from a set with no `-0` made `0`; `Exact` where the library agrees with PostgreSQL, which answers an enum `<`
 in declaration order pushed and in label order kept; `Inexact`, promising a superset another semantics can break.
-Evidence: `datafusion-pgdump/tests/pushdown.rs`.
+Evidence: `crates/datafusion-pgdump/tests/pushdown.rs`.
 
 ### D101 The unrepresentable test reads the text against the declared type; DataFusion's is a scan's alone
 `IS [NOT] UNREPRESENTABLE` tests a field's text in the tiers its semantics reads (D98), whatever the mode or the column's resolution,
@@ -625,7 +625,7 @@ pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value 
 core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`,
 `leader`), codec (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`, `key`), query (`batch`, `stream`,
 `predicate`, `gather`, `prune`, `summary`, `statistics`); each uses only crates before it, dump and codec siblings, each
-crate's dependencies held to that graph (`tests/layering.rs`); CLI and embedders above query. Model is what the cache persists, apart
+crate's dependencies held to that graph (`scripts/layering.py`); CLI and embedders above query. Model is what the cache persists, apart
 from core so an edit there is the one asking whether the format bumps, and below the parsers so the codec does not recompile
 with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them.
 Rejected: four layers in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's).
@@ -634,8 +634,8 @@ Rejected: four layers in one crate with upward deviations; the cache a crate of 
 Core, model, io and dump never name Arrow; the codec only its schema types and `i256`, is synchronous and does no I/O, nor does
 the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building
 to the read buffers, D46). Anything persisted is model vocabulary — declared type strings, never a `DataType` or another codec
-conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above (`model::BlockObserver`,
-`model::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by `map_err` where a crate meets
+conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above (`pgdt_model::internal::BlockObserver`,
+`pgdt_model::internal::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by `map_err` where a crate meets
 it and reached by downcast. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every
 crate; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
 

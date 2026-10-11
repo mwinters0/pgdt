@@ -55,18 +55,18 @@ Prose below the table.
 ROADMAP_SLICED = ROADMAP.replace("**Specified**; open", "**Current**; in flight")
 
 ENTRY_D1 = """- **KD1** — a thing that costs something. **(c) unowned**; promoted by a
-  dump in hand. Detail: `pgdump_query/src/lib.rs`.
+  dump in hand. Detail: `crates/pgdt-query/src/lib.rs`.
 
 """
 
 ENTRY_D2 = """- **KD2** — another thing. **(b) owned by P7**, whose plans rework it.
-  Detail: `pgdump_query/src/lib.rs`.
+  Detail: `crates/pgdt-query/src/lib.rs`.
 
 """
 
 ENTRY_D3 = """- **KD3** — a thing P11 is going to fix. **(b) owned by P11, struck at
   11.6** — 11.5 closes the first row and 11.6 the last. Detail:
-  `pgdump_query/src/lib.rs`.
+  `crates/pgdt-query/src/lib.rs`.
 
 """
 
@@ -85,7 +85,7 @@ Prose above the boxes, which the parser must skip.
 
 #: An entry whose owning phase has wrapped: `(b)` naming no live destination.
 ENTRY_D4 = """- **KD4** — a thing P12 was going to fix. **(b) owned by P12**, whose
-  wrap left it stranded. Detail: `pgdump_query/src/lib.rs`.
+  wrap left it stranded. Detail: `crates/pgdt-query/src/lib.rs`.
 
 """
 
@@ -145,18 +145,18 @@ def build(
     """A repo shaped like this one: an index beside a status, a doc tree, a
     crate source dir.
 
-    `code` is `pgdump_query/src/lib.rs`, which every fixture entry names as its
+    `code` is `crates/pgdt-query/src/lib.rs`, which every fixture entry names as its
     detail. A second source file, or a stray marker in a document, goes through
     `extra`.
     """
     roadmap = roadmap_for(status) if roadmap is None else roadmap
     (tmp / "docs" / "status").mkdir(parents=True)
     (tmp / "docs" / "design").mkdir(parents=True)
-    (tmp / "pgdump_query" / "src").mkdir(parents=True)
+    (tmp / "crates" / "pgdt-query" / "src").mkdir(parents=True)
     (tmp / "docs" / "status" / "deficiencies.md").write_text(register)
     (tmp / "docs" / "status" / "STATUS.md").write_text(status)
     (tmp / "docs" / "design" / "roadmap.md").write_text(roadmap)
-    (tmp / "pgdump_query" / "src" / "lib.rs").write_text(code)
+    (tmp / "crates" / "pgdt-query" / "src" / "lib.rs").write_text(code)
     for rel, text in (extra or {}).items():
         path = tmp / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ class Parsing(unittest.TestCase):
         self.assertEqual(entries[0].destination, "")
         self.assertEqual(entries[1].stance, "b")
         self.assertEqual(entries[1].destination, "P7")
-        self.assertEqual(entries[0].detail, "pgdump_query/src/lib.rs")
+        self.assertEqual(entries[0].detail, "crates/pgdt-query/src/lib.rs")
 
     def test_prose_above_the_entries_is_not_an_entry(self):
         entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1)
@@ -197,7 +197,7 @@ class Parsing(unittest.TestCase):
         self.assertIn("the register is gone", problems[0])
 
     def test_a_stanceless_entry_is_named(self):
-        text = INDEX_HEAD + "- **KD1** — a thing. Detail: `pgdump_query/src/lib.rs`.\n"
+        text = INDEX_HEAD + "- **KD1** — a thing. Detail: `crates/pgdt-query/src/lib.rs`.\n"
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("KD1 declares no stance" in p for p in problems))
 
@@ -295,7 +295,7 @@ class Reconciliation(unittest.TestCase):
                 Path(d),
                 register=INDEX_HEAD + ENTRY_D1,
                 code="",
-                extra={"pgdt/src/main.rs": CODE_D1},
+                extra={"crates/pgdt/src/main.rs": CODE_D1},
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -360,7 +360,7 @@ class Reconciliation(unittest.TestCase):
             build(
                 Path(d),
                 register=INDEX_HEAD
-                + ENTRY_D1.replace("pgdump_query/src/lib.rs", "docs/design/decisions.md"),
+                + ENTRY_D1.replace("crates/pgdt-query/src/lib.rs", "docs/design/decisions.md"),
                 code=CODE_D1,
             )
             code, text = run(Path(d))

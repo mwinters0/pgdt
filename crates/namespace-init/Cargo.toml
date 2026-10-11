@@ -1,0 +1,31 @@
+[package]
+name = "namespace-init"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# What `pgdt` does as its PID namespace's init, its native commands and `sql`
+# alike (`docs/design/decisions.md`, "D26"). A crate of its own because a
+# signal disposition is a binary's to choose: the library an embedder links
+# installs none, and a `pgdt-*` feature would put binary-only API in
+# front of every embedder (`docs/design/decisions.md`, "D13"). Never
+# published; `pgdt` and `datafusion-cli-pgdump`, whose `run` installs `sql`'s
+# handlers, state their dependency on it once each, and it states `libc` and
+# `signal-hook` once for both.
+
+[features]
+default = []
+# `unshare`: running a binary as a fresh PID namespace's init and signalling
+# it from the host. Test support only, enabled by `pgdt`'s
+# `[dev-dependencies]`, so a shipped binary never links it.
+test-support = []
+
+[dependencies]
+# The signal numbers, `SIGRTMIN()` and `SIGRTMAX()` among them, which
+# `signal-hook` does not re-export.
+libc = { workspace = true }
+# No default features: `flag::register_conditional_shutdown` and
+# `low_level::unregister` are all this uses. Its registry is the one `tokio`'s
+# `signal` installs through, so these run beside a binary's own handlers.
+signal-hook = { workspace = true }

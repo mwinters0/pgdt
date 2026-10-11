@@ -25,7 +25,7 @@ in the pinned image before the first reading, refusing with the command to run
 where the target is missing.
 
 **One test file is opt-in**, and it is the only thing a full run leaves
-unexercised: `pgdt/tests/http_conformance.rs` reads a dump over HTTP from a
+unexercised: `crates/pgdt/tests/http_conformance.rs` reads a dump over HTTP from a
 **real** static origin rather than from the misbehaving one the other remote
 tests build in-process, which is what says whether that in-process server
 encodes our own misreading of HTTP. Serve `fixtures/` from any static server

@@ -767,7 +767,7 @@ construction rather than by anyone keeping them in step. Evidence:
 
 **A declared path is matched by prefix, so moving code out of one silently
 un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
-`pgdt/src/` rather than `main.rs`: naming the one file left every other module
+`crates/pgdt/src/` rather than `main.rs`: naming the one file left every other module
 in that crate outside every declaration quoting it, which is a staleness edge
 nobody declared — and the crate holds `where_expr.rs`, `alloc.rs`,
 `info_statistics.rs` and `introspect.rs` beside `main.rs`. Splitting a crate up
@@ -1143,7 +1143,7 @@ and retention, and glibc sees C alone, so `liblzma`'s dictionaries are there
 and nowhere else; only the two allocators' sum is the heap. A report labelling
 glibc `whole-process` was taken with the counter over glibc, the Rust heap
 inside it, and is read as one heap. How to build it and what each
-line means is `pgdt/src/introspect.rs`; why a build whose `--version` names it
+line means is `crates/pgdt/src/introspect.rs`; why a build whose `--version` names it
 is never timed is [`decisions.md`](decisions.md), "D13". **The counter also attributes
 statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
@@ -1151,7 +1151,7 @@ same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
 
 **One built instrument times rather than counts**: under
 `datafusion-cli-pgdump`'s own `introspect` feature, which `pgdt`'s turns on,
-`pgdump_query::instrument` times each row a dynamic filter's state is evaluated
+`pgdt_core::instrument` times each row a dynamic filter's state is evaluated
 on, and within it each leaf's locating, unescaping and keying of its field, its
 comparison and a membership's lookup, writing `evaluation_*` lines to the same
 file — after the allocator's sections, on an instrumented `pgdt sql`. It reads
@@ -1765,7 +1765,7 @@ MB whatever the input — so the timed command runs under `peak-rss`, a static
 helper in the workspace that the harness builds for musl and mounts beside
 `/pgdt`: it spawns pgdt, waits, and reads `ru_maxrss` out of
 `getrusage(RUSAGE_CHILDREN)`, needing nothing of the image
-(`peak-rss/src/main.rs` says why `getrusage` and not `/proc`). **The reading
+(`crates/peak-rss/src/main.rs` says why `getrusage` and not `/proc`). **The reading
 can carry the wrapper's own share**: at `exec` the kernel folds the outgoing
 address space's high-water mark into the child's, so `measure.apparatus_preflight`
 runs it around `/bin/true` in the pinned image before every sweep and logs
@@ -1824,7 +1824,7 @@ by building the range under this figure's wrapper
 "`M139`: what moved the resident figures"), and both mechanisms stand:
 
 - **The binary's own pages are a fixed term.** `f672ad6` turned on
-  `pgdump_query`'s `http` feature in `pgdt`'s manifest, linking the HTTP client
+  `pgdt-io`'s `http` feature in `pgdt`'s manifest, linking the HTTP client
   stack into every build and doubling the binary. The extra pages are the
   image's own mappings, resident before a source is opened — `pgdt --version`
   carries them. It lifts every row and no slope, and so does DataFusion, which
@@ -1891,7 +1891,7 @@ finished cache carries **+6,495 B** to hold an index that was deserialized
 rather than built, with no scanner, no census and no splice anywhere in the
 process: about as much a block as the `parse` that built it, and 5,279 B a block
 more than the preamble leg. `info`'s peak is its report, which holds every block's
-resolved schema at once (`block_resolutions`, `pgdt/src/main.rs`) beside a
+resolved schema at once (`block_resolutions`, `crates/pgdt/src/main.rs`) beside a
 finished index carrying what the preamble has not reached, each `CopyBlock` and
 its data spans, so the gap between the two legs is those two terms, both per
 `COPY` block by construction.
@@ -2353,7 +2353,7 @@ exists against: a built-and-unrun instrument is *named* rather than latent.
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
 on what `pg_dump` writes (`decisions.md`, "The CLI") — so `cmp` on the
 two outputs is a valid smoke test here, and
-`pgdt/tests/perf_generator_fidelity.rs` asserts it on small generated files:
+`crates/pgdt/tests/perf_generator_fidelity.rs` asserts it on small generated files:
 the control, `--composite` alone and `--arrays --composite`, which are the
 three flag settings a published figure is taken on, so the generator cannot
 drift back out of that agreement.

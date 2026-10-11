@@ -13,7 +13,7 @@ shipped build".
   a profile of its own. `release` itself was left to 35.9, which made it
   `release-fat` restated (D105).
 - **`pgdt --version` names the profile**, `(profile: <name>)` after the
-  allocator's markers, from `pgdt/build.rs` through `src/profile.rs`. Every
+  allocator's markers, from `crates/pgdt/build.rs` through `src/profile.rs`. Every
   build carries it, a release's included.
 - **`release.py build --profile <name>`**: `Build.profile` replaces
   `--release` with `--profile` and lands the binary in the profile's own
@@ -73,7 +73,7 @@ phase.
   (`runs/release-profile-35.8-20261010-0341/log`), so it is handed off
   detached (`gosub`'s `handoff.md`).
 - **The carve moves `depends`' library paths, not the legs'**: `Cargo.toml`
-  and `pgdt/build.rs` stay where they are, and 35.5 repoints the rest with
+  and `crates/pgdt/build.rs` stay where they are, and 35.5 repoints the rest with
   every other figure's.
 
 ## Negative results

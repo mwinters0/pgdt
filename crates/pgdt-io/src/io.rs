@@ -941,7 +941,7 @@ impl Parallelism {
     /// the reason [`discover_memory_limit_in`] takes one — and public for the
     /// same reason it is: a caller's own resolution is pinned against
     /// environments this machine cannot be put into
-    /// (`pgdt/tests/data/runtime/`).
+    /// (`crates/pgdt/tests/data/runtime/`).
     pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
         Self::discover_holding_in(root, jobs, memory, 0)
     }
@@ -1518,7 +1518,7 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 /// tree is handed — here, and through [`Parallelism::discover_in`] and
 /// [`available_memory_in`] — so a caller's own resolution can be pinned
 /// against a v1 hierarchy, an unlimited one and a below-reserve one
-/// (`pgdt/tests/data/runtime/`). The memory controller lives in exactly one
+/// (`crates/pgdt/tests/data/runtime/`). The memory controller lives in exactly one
 /// hierarchy at a time (`RT6`), so a v1 shape cannot be produced beside a v2
 /// one on the same host.
 ///
@@ -4263,7 +4263,7 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 /// **An uncached `.xz` is opened on the calling task**, its footer walk
 /// included: only a first open reaches the walk, before anything else is
 /// scheduled, and it says `seek table build started` and `… complete` around
-/// itself (`pgdt/tests/status_output.rs`), so the wait does not read as a
+/// itself (`crates/pgdt/tests/status_output.rs`), so the wait does not read as a
 /// hang. An embedder opening one inside a busy runtime would want it on a
 /// blocking thread; the DataFusion provider never walks, reading the table
 /// its complete cache holds.

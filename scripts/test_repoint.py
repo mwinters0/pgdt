@@ -29,7 +29,7 @@ FILES = {
     "CLAUDE.md": "# C\n",
     "docs/process.md": "# P\n",
     ".claude/skills/x/SKILL.md": "---\nname: x\n---\n",
-    "pgdump_query/src/lib.rs": "//! lib\nfn f() {}\n",
+    "crates/pgdt-core/src/lib.rs": "//! lib\nfn f() {}\n",
     "vendor/xz-seek/src/lib.rs": "//! vendored\nfn v() {}\n",
 }
 
@@ -125,7 +125,7 @@ class Status(unittest.TestCase):
 class Comments(unittest.TestCase):
     def check(self, line: str) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
-            write(Path(tmp), "pgdump_query/src/a.rs", line + "\n")
+            write(Path(tmp), "crates/pgdt-core/src/a.rs", line + "\n")
             return repoint.comment_problems(Path(tmp))
 
     def test_provenance_in_a_comment_is_named(self):
@@ -170,10 +170,24 @@ class Meter(unittest.TestCase):
     def test_comment_lines_count_in_both_directions_and_code_does_not(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(tmp)
-            write(repo, "pgdump_query/src/lib.rs", "/// a\n/// b\n// c\nfn f() {}\nfn g() {}\n")
-            write(repo, "pgdump_query/src/new.rs", "//! new\nfn h() {}\n")  # untracked
+            write(repo, "crates/pgdt-core/src/lib.rs", "/// a\n/// b\n// c\nfn f() {}\nfn g() {}\n")
+            write(repo, "crates/pgdt-core/src/new.rs", "//! new\nfn h() {}\n")  # untracked
             g = repoint.growth_since(repo, repoint.read_stamp(repo))
         self.assertEqual(g.comments, 3)  # +3 -1 committed, +1 untracked
+
+    def test_a_member_moved_since_the_stamp_is_counted_where_it_stood(self):
+        # Git pairs a moved file with its old path only while the two are
+        # alike; one it does not pair is a deletion at the stamp's member root
+        # and an addition under `CODE_ROOTS`, and the deletion counts too.
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "Cargo.toml", '[workspace]\nmembers = ["old", "crates/*"]\n')
+            write(Path(tmp), "old/src/lib.rs", "// a\n// b\nfn o() {}\n")
+            repo = make_repo(tmp)
+            git(repo, "rm", "-q", "old/src/lib.rs")
+            write(repo, "Cargo.toml", '[workspace]\nmembers = ["crates/*"]\n')
+            write(repo, "crates/old/src/lib.rs", "// x\n// y\nfn n() { let z = 1; }\n")
+            g = repoint.growth_since(repo, repoint.read_stamp(repo))
+        self.assertEqual(g.comments, 0)
 
     def test_a_re_vendor_is_not_this_project_s_record(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -207,7 +221,7 @@ class ThisRepo(unittest.TestCase):
         self.assertFalse(repoint.is_live_doc("docs/status/history/2026-09-14.md"))
         self.assertFalse(repoint.is_live_doc("docs/design/roadmap-P10-row-group-statistics-inbox.md"))
         self.assertFalse(repoint.is_live_doc("vendor/xz-seek/README.md"))
-        self.assertTrue(repoint.is_source("pgdump_query/tests/layering.rs"))
+        self.assertTrue(repoint.is_source("crates/pgdt/tests/sql.rs"))
         self.assertFalse(repoint.is_source("vendor/xz-seek/src/lib.rs"))
 
     def test_every_workspace_crate_is_counted(self):

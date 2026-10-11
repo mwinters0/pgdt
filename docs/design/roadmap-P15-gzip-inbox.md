@@ -80,7 +80,7 @@ as xz-specific once a second codec is in.
 
 ## No test in the tree asserts that a compressed `parse` is deterministic in `--jobs`
 
-**Fact.** `pgdt/tests/determinism.rs` asserts that `pgdt parse` writes one
+**Fact.** `crates/pgdt/tests/determinism.rs` asserts that `pgdt parse` writes one
 byte-identical `.dtcache` at every stated `--jobs`, and its whole input tree is
 plain `.sql`. The compressed source's own suites assert something weaker:
 `xz_source.rs` carries end-to-end row and `info --json` parity across container

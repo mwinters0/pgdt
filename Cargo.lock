@@ -1606,7 +1606,11 @@ dependencies = [
  "dirs",
  "env_logger",
  "namespace-init",
- "pgdump_query",
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-model",
+ "pgdt-query",
  "regex",
  "tokio",
 ]
@@ -2047,8 +2051,12 @@ dependencies = [
  "async-trait",
  "datafusion",
  "futures",
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
+ "pgdt-model",
  "pgdt-query",
- "pgdump_query",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3624,8 +3632,12 @@ dependencies = [
  "libmimalloc-sys",
  "mimalloc",
  "namespace-init",
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
+ "pgdt-model",
  "pgdt-query",
- "pgdump_query",
  "serde",
  "serde_json",
  "signal-hook",
@@ -3726,18 +3738,6 @@ dependencies = [
  "tokio",
  "tracing",
  "xz-seek",
-]
-
-[[package]]
-name = "pgdump_query"
-version = "0.1.0"
-dependencies = [
- "pgdt-codec",
- "pgdt-core",
- "pgdt-dump",
- "pgdt-io",
- "pgdt-model",
- "pgdt-query",
 ]
 
 [[package]]

@@ -42,6 +42,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -81,15 +82,7 @@ MEASURED_RE = re.compile(
 #: `RT<n>` are handles, not provenance, and are what a comment should carry.
 PROVENANCE_RE = re.compile(r"\bP\d+\.\d+\b|\bM\d{1,3}\b|\b2026-\d\d-\d\d\b")
 COMMENT_RE = re.compile(r"^\s*//")
-CODE_ROOTS = (
-    "crates",
-    "pgdump_query",
-    "pgdt",
-    "datafusion-pgdump",
-    "datafusion-cli-pgdump",
-    "namespace-init",
-    "peak-rss",
-)
+CODE_ROOTS = ("crates",)
 
 
 @dataclass(frozen=True)
@@ -216,8 +209,20 @@ def is_live_doc(path: str) -> bool:
     )
 
 
-def is_source(path: str) -> bool:
-    return path.endswith(".rs") and path.startswith(CODE_ROOTS)
+def is_source(path: str, roots: Sequence[str] = CODE_ROOTS) -> bool:
+    return path.endswith(".rs") and path.startswith(tuple(f"{root}/" for root in roots))
+
+
+def members_at(repo: Path, rev: str) -> tuple[str, ...]:
+    """The workspace members' roots as `rev`'s manifest lists them: a member
+    since moved under `CODE_ROOTS` was a source where it stood, so a file
+    whose move git does not pair with its old path is subtracted there."""
+    try:
+        manifest = tomllib.loads(_git(repo, "show", f"{rev}:Cargo.toml"))
+    except (subprocess.CalledProcessError, tomllib.TOMLDecodeError):
+        return ()
+    members = manifest.get("workspace", {}).get("members", [])
+    return tuple(m.removesuffix("/*") for m in members)
 
 
 def growth_since(repo: Path, stamp: str) -> Growth:
@@ -232,6 +237,7 @@ def growth_since(repo: Path, stamp: str) -> Growth:
     # `is_source` per file, as the untracked pass below does: a `.rs` outside
     # `CODE_ROOTS` is not this project's record, and a re-vendor of the frozen
     # copy would otherwise spend the budget on comments no repoint may rake.
+    roots = (*CODE_ROOTS, *members_at(repo, stamp))
     old, counting = "", False
     for line in _git(repo, "diff", "-U0", stamp, "--", "*.rs").splitlines():
         if line.startswith("--- "):
@@ -239,7 +245,7 @@ def growth_since(repo: Path, stamp: str) -> Growth:
             continue
         if line.startswith("+++ "):
             new = line[6:] if line.startswith("+++ b/") else ""
-            counting = is_source(new or old)
+            counting = is_source(new or old, roots)
             continue
         if counting and line[:1] in "+-" and COMMENT_RE.match(line[1:]):
             comments += 1 if line[0] == "+" else -1

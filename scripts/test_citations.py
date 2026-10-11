@@ -66,7 +66,7 @@ class Repo:
         self.today = "2999-01-01"
         (tmp / "docs" / "design").mkdir(parents=True)
         (tmp / "docs" / "status" / "history").mkdir(parents=True)
-        (tmp / "pgdump_query" / "src").mkdir(parents=True)
+        (tmp / "crates" / "pgdt-core" / "src").mkdir(parents=True)
         (tmp / "scripts").mkdir(parents=True)
         self.write("docs/design/architecture.md", ARCH)
 

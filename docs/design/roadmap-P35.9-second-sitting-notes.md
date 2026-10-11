@@ -49,7 +49,7 @@ shipped build", and from the profile it decided,
   for the carve's paths, so the next sweep, the first under D105, re-takes
   every one; a later move of `release` after a sweep would go unflagged.
 - **35.5 repoints figure paths as planned**; the legs, `Cargo.toml` and
-  `pgdt/build.rs` did not move.
+  `crates/pgdt/build.rs` did not move.
 
 ## Negative results
 

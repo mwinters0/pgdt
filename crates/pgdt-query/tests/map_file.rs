@@ -13,7 +13,7 @@
 //! before the two are compared, the eager producer gathering none
 //! ([`assert_matches_eager`]). A gathering scan's statistics are compared
 //! against a serial one's instead, by `tests/statistics.rs` and
-//! `pgdt/tests/determinism.rs`. The back-fill tests start from a map at the
+//! `crates/pgdt/tests/determinism.rs`. The back-fill tests start from a map at the
 //! metadata level (`StatisticsRequest::METADATA`) over a dropping or a
 //! cancelling source, to see what an interrupted back-fill banks and reports.
 

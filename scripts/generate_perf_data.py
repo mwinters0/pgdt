@@ -14,7 +14,7 @@ lives in fixtures/, which pg_dump itself produces.
 failing silently: every column must declare a type pgdt maps and hold values
 pgdt re-renders unchanged, or a benchmark for the typed path is quietly
 measuring the untyped one. That floor is asserted from the Rust side --
-pgdt/tests/perf_generator_fidelity.rs generates a small file in every flag
+crates/pgdt/tests/perf_generator_fidelity.rs generates a small file in every flag
 combination a recorded figure is taken on and requires `pgdt query
 --schema-mode typed` and `strings` to agree byte for byte on each.
 
@@ -144,7 +144,7 @@ ESCAPES = {
 # the cost of an input 37.5% of whose timestamps render with no fraction.
 
 # FLT_DIG / DBL_DIG: the significant-digit counts float4out/float8out switch
-# to scientific notation at. `pgdump_query::decode::format_shortest` holds the
+# to scientific notation at. `pgdt_codec::decode::format_shortest` holds the
 # other half of this pair.
 FLT_DIG = 6
 DBL_DIG = 15
@@ -180,7 +180,7 @@ def float_text(value: float, *, single: bool) -> str:
     `repr()` in a `real` column does not survive that -- 17 significant digits
     round-trip through an f64 and not through the f32 the column decodes to,
     so `typed` prints something else and the benchmark's two modes disagree on
-    bytes that no real dump can hold. `pgdump_query::decode::render_f32` and
+    bytes that no real dump can hold. `pgdt_codec::decode::render_f32` and
     `render_f64` are the other side.
     """
     if single:
@@ -225,7 +225,7 @@ def float_text(value: float, *, single: bool) -> str:
 
 def hms_frac(micros_of_day: int) -> str:
     """`HH:MM:SS[.frac]`, trailing zeros trimmed and an all-zero fraction
-    dropped -- `pgdump_query::decode::format_hms_frac`, in Python."""
+    dropped -- `pgdt_codec::decode::format_hms_frac`, in Python."""
     seconds, micros = divmod(micros_of_day, 1_000_000)
     h, rest = divmod(seconds, 3600)
     mi, se = divmod(rest, 60)

@@ -236,7 +236,7 @@ are not bent to reach it. A long dump of ordinary rows is not such a shape.
 against an allowlist classifying each as hardware, intent, input contract or
 expert override, and fails on a flag nobody has classified — so a third
 hardware knob is a decision somebody wrote down, not one that arrived quietly
-(`pgdt/src/main.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
+(`crates/pgdt/src/main.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
 sql` alone**, whose flags are the DataFusion CLI's as upstream ships it — its
 `--memory-limit` sizing DataFusion's pool, which the provider bills against its
 allowance — bar `--dump` and `--strict-identity`, ours and taking no number; a
@@ -431,7 +431,7 @@ compile error until it is listed, so a new refusal cannot land without the
 `pg_dump` output that reaches it. **The one exemption is an outcome no scan can
 produce**, a property of how much of the file was read rather than of a
 declared type: `MetadataNotScanned`, listed apart in the same list, pinned by
-`pgdt/tests/partial_reporting.rs` against a hand-built cache, and failing the
+`crates/pgdt/tests/partial_reporting.rs` against a hand-built cache, and failing the
 test should a fixture ever reach it. The other half, a shape that resolves to
 an existing outcome and merely works, stays a judgement call; naming that limit
 beats a check implying coverage it does not have.
@@ -612,7 +612,7 @@ tool is a misconfigured environment, and the honest report is a failure naming
 **Why it is a rule.** A conditional skip is invisible in a passing suite, and
 the test most likely to carry one is a test nothing else covers — which is
 exactly when its silent absence costs the most.
-`pgdt/tests/perf_generator_fidelity.rs` is the whole example: one test, the
+`crates/pgdt/tests/perf_generator_fidelity.rs` is the whole example: one test, the
 suite's only guard against `scripts/generate_perf_data.py` drifting away from
 what `pg_dump` writes, and it skipped itself when `uv` was absent. Three
 infidelities had already survived in that generator for want of any guard at
@@ -1292,7 +1292,7 @@ which is what makes the difference worth minding at the moment one is found.
   phase finds something it does not use. Known candidates: `batch::read_table`
   (push mode, whose only callers are tests and a bench, and which the DataFusion
   provider does not use); `TableStream::batch_source_offset`, which exists for
-  `pgdt query`'s merge; and whether `pgdump_query` re-exports `bytes::Bytes`,
+  `pgdt query`'s merge; and whether `pgdt-io` re-exports `bytes::Bytes`,
   which `ByteRangeSource::read_range` names in its signature so that an
   embedder implementing a source must depend on `bytes` in step with us.
 

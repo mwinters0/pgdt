@@ -65,7 +65,7 @@ candidates are two:
 An option is set by `MIMALLOC_<NAME>` at init or `mi_option_set` at any time,
 each purge reading the delay afresh; upstream DataFusion sets none. The
 release build's statistics keep `purged` and `purge_calls` but no
-abandonment or reclaim count (`pgdt/src/introspect.rs`, `readings_of`), so
+abandonment or reclaim count (`crates/pgdt/src/introspect.rs`, `readings_of`), so
 neither candidate is confirmed by any reading the instrument takes. Peak RSS
 less the live and glibc high-waters is the retention reading; mimalloc's
 committed high-water is not resident at a moment, and `Billed` whole carries

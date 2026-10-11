@@ -673,7 +673,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 /// `cache::save`/`load`'s round trip produce the same `DumpIndex` whether the
 /// bytes came straight off disk or through the decoder — the differential
 /// parity at the library level. The CLI-level parity against generated
-/// fixtures is `pgdt/tests/xz_source.rs`.
+/// fixtures is `crates/pgdt/tests/xz_source.rs`.
 #[tokio::test]
 async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();

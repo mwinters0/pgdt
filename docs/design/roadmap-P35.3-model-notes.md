@@ -1,9 +1,9 @@
 # P35.3 notes — the cycles broken in place
 
 What the next slices inherit from breaking the crate-crossing edges inside
-`pgdump_query`. The assignment is `tests/layering.rs`'s `CRATES` and
-`DEPENDS` tables, and the reasoning [`decisions.md`](decisions.md), "D68" and
-"D74"; the vocabulary that moved is `src/model.rs` and its five submodules.
+`pgdump_query`. The assignment is `scripts/layering.py`'s `GRAPH`, and the
+reasoning [`decisions.md`](decisions.md), "D68" and "D74"; the vocabulary
+that moved is `src/model.rs` and its five submodules.
 
 ## What 35.4 inherits
 

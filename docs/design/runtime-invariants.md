@@ -18,7 +18,7 @@ release** — the host's or the figures' image's (`RT10` only) — a **bash
 release** (`RT20`), and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
-`pgdt/tests/http_conformance.rs` reads the same claims against a real origin
+`crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
 wherever one is offered — [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md),
 "Building and testing").
 
@@ -697,7 +697,7 @@ Substitute the version either command reports for `glibc-2.44`: a branch reading
 `__get_nprocs ()` is `max(8, ncores)`, one reading `NARENAS_FROM_NCORES` is
 `8 × ncores`. No built instrument reads the arena count a `system` build's
 scan reaches: the `introspect` build's `malloc_heaps` counts the arenas C's
-allocations open, its Rust heap being mimalloc's (`pgdt/src/introspect.rs`).
+allocations open, its Rust heap being mimalloc's (`crates/pgdt/src/introspect.rs`).
 
 ## RT11 — `std`'s `HashMap` allocates one table sized by its capacity, and a full map grows into a table twice the buckets
 
@@ -726,7 +726,7 @@ interning map is rebuilt rather than pruned — nor of any allocator's own
 rounding: the sizes are what `GlobalAlloc` is asked for.
 
 **Verified against:** Rust 1.98.0, `hashbrown` 0.17.1 (source read; observed
-through the instrument build, `pgdt/tests/statistics_account.rs`).
+through the instrument build, `crates/pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — the interned term of
 the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
@@ -764,7 +764,7 @@ vector by themselves, whose amortized capacities are the toolchain's choice, nor
 of any allocator's own rounding: the sizes are what `GlobalAlloc` is asked for.
 
 **Verified against:** Rust 1.98.0 (source read; observed through the instrument
-build, `pgdt/tests/statistics_account.rs`).
+build, `crates/pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — a vector charged
 ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
@@ -800,7 +800,7 @@ size of the object (#5272)"; `header_meta` reads the validators from the same
 answers `200` to a `Range` (which is `RT14`), or for any backend but this one.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
-oracle, `pgdt/tests/remote.rs`).
+oracle, `crates/pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteObject::probe` ([`decisions.md`](decisions.md),
 "D14") — the origin probe costs one round trip rather than a `HEAD` and a
@@ -831,7 +831,7 @@ particular server does. A server answering `206` with the wrong span is a
 different case, and is `RT15`.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
-oracle's `ignoring_range` knob, `pgdt/tests/remote.rs`).
+oracle's `ignoring_range` knob, `crates/pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteSource` ([`decisions.md`](decisions.md), "D6") —
 positioned reads are simply unavailable against such a server, and asking for
@@ -864,11 +864,11 @@ error from the body stream.
 
 **Scope limit.** Nothing is claimed about *which* servers do this; both
 conditions are produced deliberately by the oracle
-(`pgdt/tests/common/oracle.rs`), whose `short_range_after` and
+(`crates/pgdt/tests/common/oracle.rs`), whose `short_range_after` and
 `truncating_body_after` are the two halves.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against both
-oracle knobs, `pgdt/tests/remote.rs`).
+oracle knobs, `crates/pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteSource::read_range` ([`decisions.md`](decisions.md),
 "D6") — it answers exactly its `len` or errors, as `ByteRangeSource` requires
@@ -926,7 +926,7 @@ binary using it declares for itself.
 `rt-multi-thread`, and its `tokio` feature adds only `dep:tokio` and
 `dep:tracing`; `src/client/retry.rs` and `src/client/get.rs` await
 `tokio::time::sleep` and the response body directly, with no spawn. Observed:
-every async assertion in `pgdt/tests/remote.rs` runs under `#[tokio::test]`, whose
+every async assertion in `crates/pgdt/tests/remote.rs` runs under `#[tokio::test]`, whose
 flavour is `current_thread`.
 
 **Scope limit.** Multipart upload and the `list` path are not claimed; this
@@ -1020,9 +1020,9 @@ came about. The same signal *sent* to init is discarded like any other.
 **Relied on by:** [`decisions.md`](decisions.md), "D26" — as its
 namespace's init, `pgdt` handles every signal that ends it elsewhere by
 exiting `128 + n` but a fault's, which it leaves to the forced default
-(`namespace-init/src/lib.rs`), and `SIGINT` in `sql`'s REPL, which upstream's
+(`crates/namespace-init/src/lib.rs`), and `SIGINT` in `sql`'s REPL, which upstream's
 `ctrl_c` answers, and an interrupted `parse` exits `128 + n`
-rather than re-raising. `pgdt/tests/namespace_init.rs` pins both under
+rather than re-raising. `crates/pgdt/tests/namespace_init.rs` pins both under
 `unshare`, `sql` among the commands.
 
 **Re-verify:**
@@ -1086,7 +1086,7 @@ value is a valid `i32` or `i64`; every value up to it formats.
 13) - 1`, the year packed into `NaiveDate`'s high 19 bits, and `NaiveDate::MAX`
 its last day; `arrow-cast` converts through `chrono` to format. Observed by
 `every_extreme_is_held_by_arrow_or_recorded`
-(`datafusion-pgdump/tests/unrepresentable.rs`), `t_extremes` ids 14 and 15.
+(`crates/datafusion-pgdump/tests/unrepresentable.rs`), `t_extremes` ids 14 and 15.
 
 **Scope limit.** The upper end only: `chrono`'s lower end lies far below
 PostgreSQL's 4713 BC. Other Arrow consumers are not claimed.
@@ -1095,7 +1095,7 @@ PostgreSQL's 4713 BC. Other Arrow consumers are not claimed.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D98" — the provider's
 tier of unrepresentable values; and [`decisions.md`](decisions.md), "D96" — the count's engine tier, read off
-`chrono::NaiveDate::MAX` by `pgdump_query::calendar_end`, which a cache
+`chrono::NaiveDate::MAX` by `pgdt_model::calendar_end`, which a cache
 records and a build whose calendar ends elsewhere refuses where it holds a count.
 
 **Re-verify:**
@@ -1130,7 +1130,7 @@ the `TableScan` arm, which keeps above the scan only the conjuncts answered
 `Unsupported` or `Inexact`, and the volatile and subquery-holding ones.
 Observed by `the_unrepresentable_function_finds_what_the_null_mode_nulls` and
 `the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it`
-(`datafusion-pgdump/tests/unrepresentable.rs`), the first planning under the
+(`crates/datafusion-pgdump/tests/unrepresentable.rs`), the first planning under the
 guard every use a scan answers and the second refusing every other, a scalar
 subquery's included.
 

@@ -35,20 +35,20 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   the environment states it. The library cannot: a session is its caller's,
   and a pushed filter does not say which operator made it, so an aggregate's
   cannot be told from a TopK's and declined, so an embedder is told to turn
-  it off in the crate's docs (`datafusion-pgdump/src/lib.rs`), and a shell
+  it off in the crate's docs (`crates/datafusion-pgdump/src/lib.rs`), and a shell
   user what it costs to turn on in
   [`../manual/pgdt-sql.md`](../manual/pgdt-sql.md),
   "Types". Rejected: patching DataFusion in this workspace, which fixes our
   builds and no consumer's.
-- **Watch.** `datafusion-pgdump/tests/aggregate_bounds.rs` asserts the wrong
+- **Watch.** `crates/datafusion-pgdump/tests/aggregate_bounds.rs` asserts the wrong
   answers with the filter on, and fails at the pin carrying the fix.
 - **When it lands.** Drop the shell's default and its test; turn
   `aggregate_bounds.rs`'s filter-on cases into ones asserting the answer;
   strike `KD56`, index and marker; drop the crate docs' and the manual's
   paragraphs; remove the harness's `KD56` exclusion
-  (`datafusion-pgdump/tests/unrepresentable.rs`, `Config::meets_kd56`); and
+  (`crates/datafusion-pgdump/tests/unrepresentable.rs`, `Config::meets_kd56`); and
   turn the aggregate filter back on in
-  `datafusion-pgdump/tests/statistics.rs`'s `sessions()`.
+  `crates/datafusion-pgdump/tests/statistics.rs`'s `sessions()`.
 
 ## UF2 — `arrow-cast` prints a `date` or timestamp only to `262142-12-31`
 
@@ -73,9 +73,9 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   `pgdt query` prints it with a renderer of its own (`decode.rs`,
   `render_date32_into`).
 - **Watch.** `every_extreme_is_held_by_arrow_or_recorded`
-  (`datafusion-pgdump/tests/unrepresentable.rs`), whose fixture rows sit
+  (`crates/datafusion-pgdump/tests/unrepresentable.rs`), whose fixture rows sit
   either side of the bound; `RT21`'s re-verify commands.
-- **When it lands.** `pgdump_query::calendar_end` reads `chrono`'s bound, so
+- **When it lands.** `pgdt_model::calendar_end` reads `chrono`'s bound, so
   a display no longer through `chrono` needs it read from `arrow-cast` or the
   calendar tier retired (`decisions.md`, "D96" and "D98"); a moved bound
   refuses every cache counted under the old one, so the release note says to
@@ -95,7 +95,7 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
 - **Workaround.** `SET pgdump.memory = 0` returns to the budget's own
   allowance, as `target_partitions = 0` does to the machine's parallelism.
 - **Watch.** `a_zero_allowance_returns_to_the_budgets_own`
-  (`datafusion-pgdump/tests/settings.rs`) asserts `RESET` fails.
+  (`crates/datafusion-pgdump/tests/settings.rs`) asserts `RESET` fails.
 - **When it lands.** Implement `reset` on `PgDumpSettings` beside `0`, and
   strike [`../design/roadmap.md`](../design/roadmap.md)'s Future item
   "`RESET` for a provider's session settings, upstream"; the test above then

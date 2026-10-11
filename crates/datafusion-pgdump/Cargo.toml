@@ -1,0 +1,43 @@
+[package]
+name = "datafusion-pgdump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The DataFusion layer over the `pgdt-*` libraries: a catalog and a `TableProvider`
+# reading a dump through the complete cache `pgdt parse` leaves
+# (`docs/design/decisions.md`, "D90"). A library only; the binary that
+# carries it is a separate crate, so an embedder does not inherit
+# `datafusion-cli`.
+
+[features]
+default = []
+# Passes through to the library's remote source, off by default for the reason
+# it is off there: what `object_store`'s `http` feature drags in is too much to
+# impose on an embedder reading local files.
+http = ["pgdt-io/http"]
+
+[dependencies]
+# The pin is the one `arrow` follows (`docs/design/roadmap.md`, "Arrow follows
+# DataFusion"). No default features: the provider needs the catalog, the plan
+# and the session, and none of the file formats, function families or the SQL
+# front end — an embedder turns those on in its own manifest.
+datafusion = { workspace = true }
+arrow = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+pgdt-codec = { path = "../pgdt-codec" }
+pgdt-core = { path = "../pgdt-core" }
+pgdt-dump = { path = "../pgdt-dump" }
+pgdt-io = { path = "../pgdt-io" }
+pgdt-model = { path = "../pgdt-model" }
+pgdt-query = { path = "../pgdt-query" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# `sql` for the tests' queries: the same SQL a user types is what reaches
+# `scan`'s projection and limit.
+datafusion = { workspace = true, features = ["sql"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }

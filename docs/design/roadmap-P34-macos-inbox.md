@@ -11,13 +11,13 @@ delete this file. See `docs/process.md`, "Inboxes: facts filed by destination".
 **Fact.** A flagless run sizes itself from `/proc/meminfo`'s `MemAvailable`
 and the cgroup limit (`crates/pgdt-io/src/io.rs`, `available_memory_in`,
 `discover_memory_limit_in`, `Parallelism::discover_holding_in`;
-`datafusion-pgdump/src/budget.rs`, `ScanBudget::discover_in`). On macOS each
+`crates/datafusion-pgdump/src/budget.rs`, `ScanBudget::discover_in`). On macOS each
 read fails into `None`: the CLI falls to `DEFAULT_MEMORY_BUDGET`, a source
 recommending worker memory (`.xz`) keeps its whole recommendation under an
 uncapped bound, and the provider reports `AllowanceOrigin::NoneFound`.
 Elsewhere the code compiles there: the I/O layer is `std::os::unix`,
 `namespace-init`'s ending signals are `target_os = "linux"` with an empty
-fallback, and `pgdt/src/introspect.rs`'s glibc arms have a non-gnu stub. There
+fallback, and `crates/pgdt/src/introspect.rs`'s glibc arms have a non-gnu stub. There
 is no `target_os = "macos"` arm anywhere. Whether the workspace compiles for an
 Apple target has never been tried.
 

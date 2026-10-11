@@ -704,7 +704,7 @@ resolution_outcomes! {
 /// property of how much of the file was read rather than of a declared type.
 /// `ColumnResolution::MetadataNotScanned` is the one instance: no mapping scan
 /// leaves a banked block whose database's DDL it never read (the variant's
-/// own docs), so no fixture reaches it, and `pgdt/tests/partial_reporting.rs`
+/// own docs), so no fixture reaches it, and `crates/pgdt/tests/partial_reporting.rs`
 /// pins it against a hand-built truncated cache instead.
 /// `resolution_outcomes!` forces the exemption to be written down, and a
 /// fixture column producing an exempt outcome fails the test, the exemption's

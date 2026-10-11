@@ -3,7 +3,7 @@
 //!
 //! The library-level tests only: everything here drives `table_stream`
 //! directly. The flags are pinned separately, in
-//! `pgdt/tests/query_projection.rs`.
+//! `crates/pgdt/tests/query_projection.rs`.
 
 use futures::StreamExt;
 use pgdt_codec::ColumnResolution;

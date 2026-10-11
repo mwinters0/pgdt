@@ -507,7 +507,7 @@ async fn statistics_round_trip_through_the_cache() {
 /// at 256 bytes a group nearly every cut falls inside a group: the joined
 /// bounds, dictionaries and row order — an ascending column and a descending
 /// one — are the serial pass's. Every fixture is swept the same way by
-/// `pgdt/tests/determinism.rs`, byte for byte.
+/// `crates/pgdt/tests/determinism.rs`, byte for byte.
 #[tokio::test]
 async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     let dir = tempfile::tempdir().unwrap();

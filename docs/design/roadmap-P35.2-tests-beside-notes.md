@@ -24,8 +24,8 @@ limit became `#[cfg(test)] mod name;` with its body whole in
   sibling test file (`decode/prior_shape.rs`, `decode/differential.rs`,
   `batch/…`) could reach another through `super::tests`, though none does. A
   crate carve moving a module moves its directory with it.
-- **`pgdt/src/tests.rs` is the binary's unit tests**, beside `alloc.rs` and
-  the rest, not `pgdt/tests/`, which holds the integration tests; a crate
+- **`crates/pgdt/src/tests.rs` is the binary's unit tests**, beside `alloc.rs` and
+  the rest, not `crates/pgdt/tests/`, which holds the integration tests; a crate
   root's `mod tests;` can resolve nowhere else without `#[path]`.
 - **What named a test by its file.** `scripts/oracle_register.py`'s three
   `Evidence` rows now point at `pgtype/tests.rs` and `predicate/tests.rs`,

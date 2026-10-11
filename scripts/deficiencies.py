@@ -153,15 +153,7 @@ ROADMAP = REPO / "docs" / "design" / "roadmap.md"
 DOC_ROOT = REPO / "docs"
 
 #: Where a code marker may live -- and the only place a detail exists.
-CODE_ROOTS = (
-    *sorted((REPO / "crates").glob("*/src")),
-    REPO / "pgdump_query" / "src",
-    REPO / "pgdt" / "src",
-    REPO / "datafusion-pgdump" / "src",
-    REPO / "datafusion-cli-pgdump" / "src",
-    REPO / "namespace-init" / "src",
-    REPO / "peak-rss" / "src",
-)
+CODE_ROOTS = tuple(sorted((REPO / "crates").glob("*/src")))
 
 SECTION_HEADING = "# Known deficiencies"
 

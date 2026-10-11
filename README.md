@@ -3,7 +3,7 @@
 Inspect Postgres dumps and query them like they're parquet (with streaming Arrow batches).
 
 Available as:
-- A Rust library: `pgdump_query`
+- Rust libraries: the `pgdt-*` crates, `pgdt-query` at the top
 - A CLI: `pgdt`
     - Parse & cache your dump's metadata
     - Inspect it: tables, roles, functions, row counts, etc.

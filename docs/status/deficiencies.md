@@ -128,7 +128,7 @@ than reading as a phase nobody has sliced.
   `pgdt query`'s throughput, which weighs `parallel-scan-throughput`'s cold-NVMe
   column; the fix a choice between interleaving each sub-stream's runs, a
   reorder buffer under the budget, and unordered output.
-  Detail: `pgdt/src/main.rs`.
+  Detail: `crates/pgdt/src/main.rs`.
 
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
   its own**, nothing sharing the two, so a parallel compressed scan does about
@@ -203,7 +203,7 @@ than reading as a phase nobody has sliced.
   a limit rewritten between two reads is announced and carved for statistics as
   one number while the pools are budgeted from another. **(c) unowned**; promoted by a limit
   seen to move inside a run, or by discovery that can take a limit already
-  read. Detail: `pgdt/src/main.rs`.
+  read. Detail: `crates/pgdt/src/main.rs`.
 
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
@@ -249,7 +249,7 @@ than reading as a phase nobody has sliced.
   what they left, so a join's second-planned table can run on one reader while
   the first holds the whole allowance: planning order, which the user does not
   choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
-  of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
+  of two pgdump tables slowed by it. Detail: `crates/datafusion-pgdump/src/budget.rs`.
 
 - **KD46** — a block holding one distinct value records `Ascending`, so a
   descending table holding one declares no ordering to DataFusion and a sort
@@ -312,7 +312,7 @@ than reading as a phase nobody has sliced.
   default settings. **(c) unowned**; promoted by a DataFusion release carrying
   the fix, the shell meanwhile defaulting the filter off
   ([`upstream.md`](upstream.md), "UF1"). Detail:
-  `datafusion-pgdump/src/dynamic_filter.rs`.
+  `crates/datafusion-pgdump/src/dynamic_filter.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: a worst 544 MiB on a compressed
@@ -329,7 +329,7 @@ than reading as a phase nobody has sliced.
   enforces a limit, and a `--jobs` past one over a source recommending nothing
   prints the library's constant as that source's request too. **(c)
   unowned**; promoted by a status line read as the source's request where it
-  was the machine's or the library's. Detail: `pgdt/src/main.rs`.
+  was the machine's or the library's. Detail: `crates/pgdt/src/main.rs`.
 
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
@@ -339,7 +339,7 @@ than reading as a phase nobody has sliced.
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
   asks for `x IS NULL` and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
-  either. Detail: `pgdt/src/main.rs`.
+  either. Detail: `crates/pgdt/src/main.rs`.
 
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
@@ -396,7 +396,7 @@ than reading as a phase nobody has sliced.
   want of a complete cache, names a `pgdt parse` without
   `--postgres-invalid-values ignore`, which fails at the first such field it
   keys. **(c) unowned**; promoted by a user meeting it. Detail:
-  `datafusion-pgdump/src/dump.rs`.
+  `crates/datafusion-pgdump/src/dump.rs`.
 
 - **KD93** — a `COPY` line past `max_line_bytes`, 64 MiB by default, is
   refused though PostgreSQL writes and reads one up to I71's bound, and one up
@@ -480,14 +480,14 @@ than reading as a phase nobody has sliced.
   same bytes from the same code. **(c) unowned**; the remedy is a
   `MI_TRACK_VALGRIND` build of mimalloc run under valgrind, promoted by a
   question about the shipped heap a `system` recording cannot answer. Detail:
-  `pgdt/src/alloc.rs`.
+  `crates/pgdt/src/alloc.rs`.
 
 - **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
   help but `--dump`'s one word to a line, `--dump`'s value name being wider
   than the page, in any embedder not setting `next_line_help` as `pgdt sql`
   does. **(c) unowned**; promoted by the pass
   over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
-  Detail: `datafusion-cli-pgdump/src/lib.rs`.
+  Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
 - **KD111** — from two block-decoding readers up, the program holds one block
   unit more than `WorkerMemory`'s charge bills, on every allocator, so a run's
@@ -501,7 +501,7 @@ than reading as a phase nobody has sliced.
   device, never reading the source's recommendation of one, so where one
   reader saturates the device the split buys nothing, and on a rotational one
   its scattered reads are unread. **(c) unowned**; promoted by a reading of the
-  split cold on the HDD. Detail: `datafusion-pgdump/src/table.rs`.
+  split cold on the HDD. Detail: `crates/datafusion-pgdump/src/table.rs`.
 
 - **KD113** — where a host reports neither a memory limit nor `MemAvailable`,
   a source's recommended charge stands uncapped, at the count asked for, and

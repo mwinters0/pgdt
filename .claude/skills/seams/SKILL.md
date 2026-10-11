@@ -52,7 +52,7 @@ pg_refuses.py`. Every script that reads the file by path (`rg -n
 `floor_mapping.py` each name readers by file. Every citation by filename in
 `docs/` and `README.md` (`rg -n '`<module>\.rs`' docs/ README.md`), repointed
 to the file that now holds what the sentence names. A module's crate is the
-directory it lives under, and `tests/layering.rs` holds each crate's
+directory it lives under, and `scripts/layering.py` holds each crate's
 dependencies to D68's graph: a cut inside a crate leaves both alone.
 
 ## 4. A crate is a seam too

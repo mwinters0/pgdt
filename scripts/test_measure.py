@@ -636,7 +636,7 @@ class StatisticsFigures(unittest.TestCase):
         column, literal = expr.split("=")
         self.assertEqual(dict(perf.COLUMNS)[column], "smallint")
         self.assertEqual(int(literal), 0)
-        fidelity = (measure.REPO / "pgdt/tests/perf_generator_fidelity.rs").read_text()
+        fidelity = (measure.REPO / "crates/pgdt/tests/perf_generator_fidelity.rs").read_text()
         self.assertIn(f'"{expr}"', fidelity)
         self.assertIn(str(measure.ROW_GROUP_SIZE), fidelity)
 
@@ -665,7 +665,7 @@ class StatisticsFigures(unittest.TestCase):
         # leave every leg reading as one that skipped nothing, which the
         # renderer refuses — loudly, but a sitting late.
         stream = (measure.REPO / "crates/pgdt-query/src/stream.rs").read_text()
-        cli = (measure.REPO / "pgdt/src/main.rs").read_text()
+        cli = (measure.REPO / "crates/pgdt/src/main.rs").read_text()
         self.assertIn(
             '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
         )
@@ -867,7 +867,7 @@ class DynamicFilterFigures(unittest.TestCase):
         # `SET` of a key the provider does not register fails the run rather
         # than timing the default under the rows leg's name; held against the
         # provider's own source, as the allocator is below.
-        settings = (measure.REPO / "datafusion-pgdump/src/settings.rs").read_text()
+        settings = (measure.REPO / "crates/datafusion-pgdump/src/settings.rs").read_text()
         key, _, value = measure.DYNFILTER_ROWS_SQL.removeprefix("SET ").partition(" = ")
         self.assertEqual(key.partition(".")[0], "pgdump")
         self.assertIn(f'"{key.partition(".")[2]}" => {{', settings)
@@ -1208,7 +1208,7 @@ class Allocator(unittest.TestCase):
         # shipped one; and `rss-attribution` runs the shipped binary beside the
         # other two. Both are wrong the day `pgdt`'s default moves and this
         # tuple does not.
-        manifest = tomllib.loads((measure.REPO / "pgdt" / "Cargo.toml").read_text())
+        manifest = tomllib.loads((measure.REPO / "crates" / "pgdt" / "Cargo.toml").read_text())
         default = manifest["features"]["default"]
         self.assertEqual(
             [f for f in default if f in measure.ALLOCATOR_LEGS], [measure.ALLOCATOR_LEGS[0]]
@@ -1388,7 +1388,7 @@ class ReleaseProfile(unittest.TestCase):
 
     def test_its_declared_paths_include_where_the_legs_live(self):
         fig = measure.SELECTABLE_BY_ID["release-profile"]
-        for path in ("Cargo.toml", "pgdt/build.rs", "pgdt/Cargo.toml"):
+        for path in ("Cargo.toml", "crates/pgdt/build.rs", "crates/pgdt/Cargo.toml"):
             with self.subTest(path=path):
                 self.assertIn(path, fig.depends)
         for path in measure.FIGURES_BY_ID["allocator"].depends:
@@ -1933,12 +1933,13 @@ class PeakRss(unittest.TestCase):
         self.assertIn(f"time {measure.PEAK_RSS} /pgdt parse", script)
 
     # What the wrapper reads, how it exits and that the reading is the child's
-    # are `peak-rss`'s own tests (`peak-rss/tests/peak_rss.rs`); what is held
+    # are `peak-rss`'s own tests (`crates/peak-rss/tests/peak_rss.rs`); what is held
     # here is that the harness builds that crate and mounts it.
 
     def test_the_wrapper_is_the_workspace_crate(self):
         cargo = tomllib.loads((measure.REPO / "Cargo.toml").read_text())
-        self.assertIn("peak-rss", cargo["workspace"]["members"])
+        self.assertIn("crates/*", cargo["workspace"]["members"])
+        self.assertTrue((measure.REPO / "crates" / "peak-rss" / "Cargo.toml").is_file())
         self.assertEqual(measure.PEAK_RSS, "/peak-rss")
         self.assertFalse(hasattr(measure, "rss_wrapper"))
         self.assertFalse(hasattr(measure, "GETRUSAGE_SYSCALL"))
@@ -3989,7 +3990,7 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertIn("crates/pgdt-io/examples/xz_decode.rs", fig.depends)
         self.assertIn("scripts/generate_xz_input.py", fig.depends)
         for path in fig.depends:
-            self.assertFalse(path.startswith("pgdump_query/src/"), path)
+            self.assertFalse(path.startswith("crates/") and "/src/" in path, path)
 
     def test_a_compressed_input_has_its_own_nominal_size(self):
         # A dry run that guessed 3.00 GiB for a compressed leg would size the
@@ -4250,10 +4251,10 @@ class InstrumentReport(unittest.TestCase):
         # other would leave the instrument writing nowhere the harness looks —
         # which is now an error rather than an empty dict, but only because the
         # name is right.
-        source = (measure.REPO / "pgdt/src/introspect.rs").read_text()
+        source = (measure.REPO / "crates/pgdt/src/introspect.rs").read_text()
         self.assertIn(f'pub const OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source)
         # `datafusion-cli-pgdump`'s section, which `pgdt sql` writes, names it too.
-        source = (measure.REPO / "datafusion-cli-pgdump/src/pgdump.rs").read_text()
+        source = (measure.REPO / "crates/datafusion-cli-pgdump/src/pgdump.rs").read_text()
         self.assertIn(
             f'const INTROSPECT_OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source
         )
@@ -5556,7 +5557,7 @@ class OutsideInvalidation(unittest.TestCase):
             "crates/pgdt-dump/src/preamble.rs",
             "crates/pgdt-codec/src/resolve.rs",
             "crates/pgdt-codec/src/pgtype.rs",
-            "pgdt/src/main.rs",
+            "crates/pgdt/src/main.rs",
         ):
             with self.subTest(path=path):
                 self.assertEqual(
@@ -8959,7 +8960,7 @@ class GateLegs(unittest.TestCase):
     def test_both_gate_figures_declare_the_features_that_select_the_build(self):
         for fid in ("reserve", "parallel-peak-rss"):
             with self.subTest(figure=fid):
-                self.assertIn("pgdt/Cargo.toml", measure.EVERY_BY_ID[fid].depends)
+                self.assertIn("crates/pgdt/Cargo.toml", measure.EVERY_BY_ID[fid].depends)
 
     def test_the_verdicts(self):
         self.assertEqual(measure.gate_verdict(True, False)[1], True)

@@ -727,7 +727,7 @@ INSERT INTO public.t_nested_array VALUES
 -- its Arrow type holds or be counted unrepresentable, and which is decided by
 -- DataFusion's own path rather than by a bound written here
 -- (docs/design/decisions.md, "D102"); the ones that are not
--- held are recorded in datafusion-pgdump/tests/unrepresentable.rs.
+-- held are recorded in crates/datafusion-pgdump/tests/unrepresentable.rs.
 -- `floor_mapping.py` holds the columns to the arms both ways, so a newly
 -- typed arm arrives with its extremes.
 --

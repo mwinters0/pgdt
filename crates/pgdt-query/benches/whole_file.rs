@@ -32,7 +32,7 @@ use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
 use pgdt_query::{QueryOptions, read_table};
 
-/// `pgdt`'s allocator, as `pgdt` declares it (`pgdt/src/alloc.rs`): a bench
+/// `pgdt`'s allocator, as `pgdt` declares it (`crates/pgdt/src/alloc.rs`): a bench
 /// target is a binary of its own, outside the library's refusal of a global
 /// allocator (`docs/design/decisions.md`, "D13"), and without this line every
 /// allocation it times would be glibc's `malloc`, which `pgdt`'s Rust heap

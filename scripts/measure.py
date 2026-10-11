@@ -1219,7 +1219,7 @@ def parse_oom_kills(text: str) -> int | None:
 #: which is a channel of its own rather than a stream it shares.
 REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
 
-#: The environment variable naming the file `pgdt/src/introspect.rs` writes its
+#: The environment variable naming the file `crates/pgdt/src/introspect.rs` writes its
 #: report to. **Unset means no report at all**, so a default build and an
 #: unmeasured run of the instrument build behave identically.
 #:
@@ -1337,7 +1337,7 @@ def parse_query_notes(text: str) -> dict[str, str]:
 
 
 #: Where `peak-rss` is mounted in every container: the resident-set
-#: instrument, a workspace crate (`peak-rss/src/main.rs` says what it reads and
+#: instrument, a workspace crate (`crates/peak-rss/src/main.rs` says what it reads and
 #: why), built static by `ensure_peak_rss_binary` so it needs nothing of the
 #: image. A shape that reads a resident set runs its command under it, with
 #: anything the command's environment needs assigned in front of it.
@@ -2423,7 +2423,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #: The sub-stream count a provider leg of `parallel-scan-throughput` actually
 #: gets from `PARALLEL_BUDGET`, keyed by input — `worker_count`'s
 #: `WorkerMemory::affords`, reached through the scan budget's draw
-#: (`datafusion-pgdump/src/table.rs`, `scan`) — **for the legs
+#: (`crates/datafusion-pgdump/src/table.rs`, `scan`) — **for the legs
 #: a budget clamp reaches at all**. A leg absent from this dict is one the
 #: budget never clamps inside `PARALLEL_JOBS`, and it carries no per-cell
 #: annotation, there being nothing to say.
@@ -2836,7 +2836,7 @@ def parallel_scan_invocation(partitions: int, dump: str) -> tuple[list[str], lis
 #: apparatus departure and the figure's own table says so.
 DECODE_MEMORY = "2g"
 
-#: `pgdump_query::io::DEFAULT_MEMORY_BUDGET`, mirrored.
+#: `pgdt_io::DEFAULT_MEMORY_BUDGET`, mirrored.
 #:
 #: Hardcoded rather than read out of the source, on `QUERY_SUBSTREAM_CAP`'s
 #: argument: a second authority on the library's own constants goes stale
@@ -2945,7 +2945,7 @@ RESERVE_FLAGLESS = "parse-rss-discover-"
 #: across, and adding them there would multiply eight legs out of a pair.
 RESERVE_STEP_FAMILY = "parse-rss-step-"
 
-#: `pgdump_query::SCAN_CHUNK_DEFAULT_SIZE_BYTES`, mirrored — the read chunk a scan settles
+#: `pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES`, mirrored — the read chunk a scan settles
 #: at when no `--chunk-size` is stated, and one of the three terms in what a
 #: block-decoding reader holds.
 #:
@@ -3024,7 +3024,7 @@ def reader_bytes(unit: int) -> int:
     return unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
 
 
-#: `pgdump_query::io::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
+#: `pgdt_io`'s `io::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
 #: clamps a pool's slot count to, whatever worker count was announced to it.
 #:
 #: It lives with the charge rather than with the other library mirrors because
@@ -3038,7 +3038,7 @@ def reader_bytes(unit: int) -> int:
 #: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
 
-#: `pgdump_query::io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
+#: `pgdt_io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
 #: holds back from a discovered limit before it divides.
 #:
 #: It is the model's upper bound rather than a term in it. The rule's promise is
@@ -3074,7 +3074,7 @@ def stated_allowance(budget: int) -> int:
     return budget + LIBRARY_MEMORY_RESERVE
 
 
-#: `pgdump_query::io::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
+#: `pgdt_io::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
 #: what a scan holds resident outside the pools its charge bills, and what
 #: `margin_allowance` predicts a count's resident with.
 #:
@@ -3094,7 +3094,7 @@ def stated_allowance(budget: int) -> int:
 #: to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
-#: `pgdump_query::io::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
+#: `pgdt_io::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
 #: allocation the worst rep of a resolved arrangement must leave unused — the
 #: criterion `MEMORY_RESERVE` was chosen against, which `reserve`'s gate
 #: reports and does not fail on (`REPORTED_MARGIN_PERCENT`). Held to the
@@ -5391,7 +5391,7 @@ def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
 
     **`peak-rss` around `/bin/true`** proves it starts there, and its reading
     is the floor every resident reading stands on — the spawning side's share
-    it bounds (`peak-rss/src/main.rs`) — logged, never published."""
+    it bounds (`crates/peak-rss/src/main.rs`) — logged, never published."""
     if cfg.dry_run:
         ensure_peak_rss_binary(cfg, log)
         return []
@@ -5478,7 +5478,7 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
 
 
 #: The three legs of the `allocator` figure, each a `pgdt` feature, **the
-#: default build's first** -- `pgdt/Cargo.toml`'s `default`, which a test holds
+#: default build's first** -- `crates/pgdt/Cargo.toml`'s `default`, which a test holds
 #: this to -- so a dry run, which asks no binary, names the reference the
 #: shipped build would. `system` is the platform allocator, glibc's `malloc`
 #: on the recorded apparatus, and is spelled the way the binary spells it
@@ -5706,7 +5706,7 @@ def gate_section(
 ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
 
 #: What an *instrumented* build appends beside its allocator
-#: (`pgdt/src/introspect.rs`). Such a build takes atomics on every allocation
+#: (`crates/pgdt/src/introspect.rs`). Such a build takes atomics on every allocation
 #: and prints its own live bytes and its allocators' statistics: it is how an
 #: attribution is taken, and it is not what any figure may be timed or measured
 #: on (`docs/design/roadmap.md`, "Attribution is introspective; only the gate
@@ -5866,7 +5866,7 @@ PROFILE_LEGS: tuple[tuple[str, str], ...] = (
     ("release-fat", "fat LTO, one codegen unit"),
 )
 
-#: What `pgdt --version` names of the profile (`pgdt/src/profile.rs`).
+#: What `pgdt --version` names of the profile (`crates/pgdt/src/profile.rs`).
 PROFILE_RE = re.compile(r"\(profile: ([a-z0-9-]+)\)")
 
 
@@ -5875,7 +5875,7 @@ def binary_profile(binary: Path) -> str:
     binary, for `binary_allocator`'s reason: three legs differing only in a
     flag passed to `cargo` are a table of the wrong comparison the moment one
     flag is dropped, and nothing else would notice. A binary naming none is
-    refused, as is one naming `unknown`, which is `pgdt/build.rs` failing to
+    refused, as is one naming `unknown`, which is `crates/pgdt/build.rs` failing to
     read its profile."""
     out = run([str(binary), "--version"], capture=True)
     match = PROFILE_RE.search(out)
@@ -6304,12 +6304,12 @@ PREAMBLE = (
 #: prefix, so naming the one file leaves every other module in that crate as a
 #: staleness edge nobody declared -- and the crate now has three
 #: (`main.rs`, `where_expr.rs`, `alloc.rs`).
-QUERY_CLI = ("pgdt/src/",)
+QUERY_CLI = ("crates/pgdt/src/",)
 
 #: The resident-set instrument every resident figure reads through
 #: (`PEAK_RSS`): a figure running a shape under it declares it, since a change
 #: to what it reads moves every such reading.
-RSS_INSTRUMENT = ("peak-rss/src/",)
+RSS_INSTRUMENT = ("crates/peak-rss/src/",)
 
 GEN_PERF = ("scripts/generate_perf_data.py",)
 GEN_BLOCKS = ("scripts/generate_block_count_bench.py",)
@@ -6324,7 +6324,7 @@ GEN_PRUNING = ("scripts/generate_pruning_bench.py", *GEN_PERF)
 GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 #: `pgdt sql`: the provider it reads the dump through, and DataFusion's CLI
 #: around it, the library `pgdt` calls.
-DATAFUSION = ("datafusion-pgdump/src/", "datafusion-cli-pgdump/src/")
+DATAFUSION = ("crates/datafusion-pgdump/src/", "crates/datafusion-cli-pgdump/src/")
 #: Where statistics are gathered, stored and read back. `gather.rs` and
 #: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
 #: `PGTYPE`, `resolve.rs` and `PREDICATE` are the comparison a bound is
@@ -10170,7 +10170,7 @@ FIGURES: list[Figure] = [
             # so a change to it changes what this figure is a figure of.
             # `src/alloc.rs` needs no line of its own: `QUERY_CLI` is the
             # directory.
-            "pgdt/Cargo.toml",
+            "crates/pgdt/Cargo.toml",
         ),
         warm_inputs=("control",),
         shares=ALLOCATOR_SHARES,
@@ -10179,7 +10179,7 @@ FIGURES: list[Figure] = [
     # What link-time optimization buys the shipped build, read once on the
     # one-crate tree and once on the split one. `depends` is `allocator`'s,
     # the same three shapes, plus where the legs are declared — the root
-    # manifest's profiles — and `pgdt/build.rs`, which names a leg's profile.
+    # manifest's profiles — and `crates/pgdt/build.rs`, which names a leg's profile.
     Figure(
         id="release-profile",
         section="What link-time optimization buys the shipped build",
@@ -10194,8 +10194,8 @@ FIGURES: list[Figure] = [
             *GEN_PERF,
             *CACHE,
             *STATISTICS,
-            "pgdt/Cargo.toml",
-            "pgdt/build.rs",
+            "crates/pgdt/Cargo.toml",
+            "crates/pgdt/build.rs",
             "Cargo.toml",
         ),
         warm_inputs=("control",),
@@ -10273,7 +10273,7 @@ FIGURES: list[Figure] = [
             *GEN_PERF,
             # The gate's twins are the `system` build, which these features
             # select (`GATE_LEG`).
-            "pgdt/Cargo.toml",
+            "crates/pgdt/Cargo.toml",
         ),
         # **The query path's sub-stream sizing does not reach this figure.** It
         # is in `stream::plan_partitions`, and every leg here is
@@ -10321,7 +10321,7 @@ FIGURES: list[Figure] = [
             *CACHE,
             *PREAMBLE,
             *QUERY_CLI,
-            "pgdt/Cargo.toml",
+            "crates/pgdt/Cargo.toml",
             *GEN_BLOCKS,
         ),
         #: Read off `_attribution_specs` rather than respelling the two
@@ -10386,7 +10386,7 @@ FIGURES: list[Figure] = [
             *GEN_PERF,
             # The gate's twins are the `system` build, which these features
             # select (`GATE_LEG`).
-            "pgdt/Cargo.toml",
+            "crates/pgdt/Cargo.toml",
         ),
         # Every family's inputs, deduplicated: the stated axis's two, the
         # flagless axis's two block sizes, and the baseline's — which is one of
@@ -10579,8 +10579,6 @@ EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 CONSUMER_ROOTS: tuple[tuple[str, str], ...] = (
     ("docs", "**/*.md"),
     ("crates", "**/*.rs"),
-    ("pgdump_query", "**/*.rs"),
-    ("pgdt", "**/*.rs"),
     ("scripts", "*.py"),
 )
 #: Top-level documents, named rather than globbed: the working tree also holds
@@ -13036,7 +13034,7 @@ def profile_recipe(cfg: Config) -> str:
     environment and arguments. Beside it, **the introspection build**
     (`--features introspect`, in a target directory of its own so no timed
     binary is overwritten) runs the same legs, each run writing what
-    `pgdump_query::instrument` timed of its row evaluation to the file
+    `pgdt_core::instrument` timed of its row evaluation to the file
     `INSTRUMENT_OUT_VAR` names: a `runs/` artifact, like the profiles, and
     never a figure."""
     warm = cfg.warm_dir

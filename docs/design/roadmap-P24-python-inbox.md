@@ -60,7 +60,10 @@ module, and no embedder may name one
 
 **Why P24 cares.** The binding is an embedder like `datafusion-pgdump`, and
 which crates it depends on, and whether it wants one entry crate of its own,
-is its to decide — the spec says P24 makes its own entry point.
+is its to decide — the spec says P24 makes its own entry point. Whatever
+it decides, `scripts/layering.py` refuses a member its `GRAPH` does not
+list, and reads an embedder's sources for `internal` only once `EMBEDDERS`
+names it, so the binding's crate takes a row in both.
 
 **Origin.** Filed 2026-10-10, grilling P35; contingent on P35 landing as
 specified.

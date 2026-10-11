@@ -501,7 +501,7 @@ class ThisRepo(unittest.TestCase):
         leg = release.Build(features=("system",), default_features=False).cargo_argv()
         self.assertEqual(leg[: len(shipped)], shipped)
         self.assertEqual(leg[len(shipped):], ["--no-default-features", "--features", "system"])
-        example = release.Build(package="pgdump_query", example="xz_decode")
+        example = release.Build(package="pgdt-io", example="xz_decode")
         self.assertIn("--example", example.cargo_argv())
         self.assertEqual(
             example.binary(Path("/t")),
@@ -543,7 +543,7 @@ class ThisRepo(unittest.TestCase):
             release.build_step([release.Build(), release.Build(features=("system",))])
 
     def test_a_bench_is_built_and_run_as_the_release_build_is(self):
-        bench = release.Bench("pgdump_query", "decoders", "nested")
+        bench = release.Bench("pgdt-codec", "decoders", "nested")
         argv = bench.cargo_argv()
         self.assertEqual(argv[:2], ["cargo", "bench"])
         self.assertIn("--locked", argv)
@@ -557,8 +557,8 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(bench.criterion_root(Path("/t")), Path("/t/criterion"))
 
     def test_a_bench_step_round_trips_through_the_command_line(self):
-        for bench in (release.Bench("pgdump_query", "decoders", "nested"),
-                      release.Bench("pgdump_query", "whole_file")):
+        for bench in (release.Bench("pgdt-codec", "decoders", "nested"),
+                      release.Bench("pgdt-query", "whole_file")):
             seen = []
             with unittest.mock.patch.object(release, "check_inside"), \
                     unittest.mock.patch.object(release, "step_bench", lambda b: seen.append(b) or 0):
@@ -574,7 +574,7 @@ class ThisRepo(unittest.TestCase):
             })  # fmt: skip
 
         messages = "\n".join([
-            artifact("pgdump_query", "lib", None),
+            artifact("pgdt_codec", "lib", None),
             artifact("decoders", "bench", "/t/x/release/deps/decoders-0a1b"),
             artifact("whole_file", "bench", "/t/x/release/deps/whole_file-2c3d"),
             json.dumps({"reason": "build-finished", "success": True}),
@@ -587,7 +587,7 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(release.bench_executables(messages, "absent"), [])
 
     def test_a_bench_past_the_floor_is_not_run(self):
-        bench = release.Bench("pgdump_query", "decoders", "nested")
+        bench = release.Bench("pgdt-codec", "decoders", "nested")
         built = json.dumps({
             "reason": "compiler-artifact",
             "target": {"name": "decoders", "kind": ["bench"]},
