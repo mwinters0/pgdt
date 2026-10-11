@@ -4239,7 +4239,9 @@ mod oracle {
                     (0..30).map(|_| (0..1 + rng.below(5)).map(|_| *rng.pick(&held)).collect()),
                 );
                 for group in groups {
-                    let Some(stored) = crate::gather::one_group_bounds(kind.clone(), &group) else {
+                    let Some(stored) =
+                        pgdt_mapping::internal::one_group_bounds(kind.clone(), &group)
+                    else {
                         continue;
                     };
                     agreement.groups += 1;
@@ -4398,7 +4400,8 @@ mod oracle {
                 .expect("a set read is gathered");
                 let groups = std::iter::once(held.clone()).chain(held.chunks(3).map(<[_]>::to_vec));
                 for group in groups {
-                    let Some(stored) = crate::gather::one_group_bounds(stored_kind.clone(), &group)
+                    let Some(stored) =
+                        pgdt_mapping::internal::one_group_bounds(stored_kind.clone(), &group)
                     else {
                         continue;
                     };

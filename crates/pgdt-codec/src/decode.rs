@@ -17,7 +17,7 @@
 //! `pgdt_core::encode_field`'s job (`docs/design/decisions.md`, "D68").
 //! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text; the on-disk-byte leg is covered separately in
-//! `tests/scan.rs`.
+//! `pgdt-mapping`'s `tests/scan.rs`.
 
 pub use crate::value::bool::{decode_bool, render_bool};
 pub use crate::value::bytea::{

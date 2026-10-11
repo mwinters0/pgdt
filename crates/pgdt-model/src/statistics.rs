@@ -358,9 +358,9 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
+    /// An unstated size: [`pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`], or the finer size a
     /// re-read for a broken maximum predicts, merged pairwise
-    /// past [`pgdt_query::BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
+    /// past [`pgdt_mapping::statistics::BLOCK_MAX_ROW_GROUPS`] groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
     /// `max_rows` is the stated maximum the size was chosen under, if any: it
@@ -576,7 +576,7 @@ impl BlockStatistics {
     /// shares them included: what [`pgdt_query::statistics::StatisticsAccount`] charges a retained or a
     /// loaded block. Each term is the size the allocator was asked for — a
     /// vector's capacity, not its length — which
-    /// `tests/statistics_heap.rs` holds to what freeing a block gives back.
+    /// `pgdt-mapping`'s `tests/statistics_heap.rs` holds to what freeing a block gives back.
     pub fn heap_bytes(&self) -> u64 {
         let shared = size_of::<(usize, usize, Self)>() as u64;
         shared

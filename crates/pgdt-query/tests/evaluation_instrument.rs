@@ -17,9 +17,11 @@ use pgdt_core::instrument::{EvaluationPart, evaluation_reading};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
-    StatisticsRequest, StatisticsSelection, TablePartitions, map_file,
+    TablePartitions,
 };
 
 mod common;

@@ -28,7 +28,9 @@ use futures::StreamExt;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, WaitPolicy};
-use pgdt_query::{QueryOptions, StatisticsRequest, build_index, map_file, table_stream};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
+use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::edge_cases;

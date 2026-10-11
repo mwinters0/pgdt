@@ -15,11 +15,10 @@ use pgdt_dump::internal::scan_preamble;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata};
 
-use super::backfill::{announce_read_loop, reread_rows};
-use super::map::{MapStop, Pass, map_forward, splice};
 use super::resolve::render_candidate;
 use super::table::ResumeToken;
 use crate::batch::{QueryOptions, ScanExtent};
+use pgdt_mapping::internal::{MapStop, Pass, announce_read_loop, map_forward, reread_rows, splice};
 
 /// What a query's mapping pass settled: the blocks this query will replay,
 /// and the DDL to type them against.

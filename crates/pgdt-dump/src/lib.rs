@@ -1,11 +1,9 @@
 //! The parsers and the cache: the SQL lexer, the scanner, the DDL statement
-//! grammar, the map builder, the preamble's prepass, the interior split, and
-//! persisting and reloading the model (`docs/design/decisions.md`, "D68"). No
-//! Arrow (D74).
+//! grammar, the map builder, the preamble's prepass, and persisting and
+//! reloading the model (`docs/design/decisions.md`, "D68"). No Arrow (D74).
 
 pub mod cache;
 mod ddl;
-mod leader;
 mod lex;
 mod map;
 mod preamble;
@@ -30,12 +28,9 @@ pub mod internal {
     };
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::identity::SourceIdentity;
-    pub use crate::leader::{
-        BoundBy, CensusPlan, Interior, RegionOutcome, RegionScan, Shortfall, scan_region,
-    };
     pub use crate::map::{
         Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
     };
     pub use crate::preamble::scan_preamble;
-    pub use crate::scan::announce_cancellation;
+    pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_cancellation};
 }

@@ -16,8 +16,10 @@ use datafusion_pgdump::{
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, StrictIdentity};
 use pgdt_io::{LocalFileSource, MEMORY_RESERVE};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, DiagnosticSink, Finding, SpanBody};
-use pgdt_query::{PlanNoteKind, StatisticsRequest, map_file};
+use pgdt_query::PlanNoteKind;
 
 const EVENTS: &str = "shop.logs.events";
 

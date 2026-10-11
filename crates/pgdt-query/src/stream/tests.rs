@@ -1,4 +1,3 @@
-use super::map::SaveThrottle;
 use super::map_query::map_for_query;
 use super::partition::{derived_source_span, distribute, plan_partitions};
 use super::plan::{ReplayPlan, resolve_for_query};
@@ -23,7 +22,6 @@ use pgdt_model::{ArrayShape, CopyBlock, DumpMetadata, Finding, Severity};
 use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// **The span is spent before the count is cut, and it stops at the
 /// floor** (`docs/design/decisions.md`, "D84"). Every arm of
@@ -406,39 +404,6 @@ fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
     }
 }
 
-/// The throttle's whole rule, over measured quantities rather than a
-/// clock: a save that cost nothing never blocks another, and a save that
-/// cost something blocks the next one until the scan has done `K` times
-/// that much work.
-#[test]
-fn a_save_is_due_once_the_scan_has_outrun_the_last_ones_cost() {
-    let ms = Duration::from_millis;
-
-    assert!(SaveThrottle::due_after(Duration::ZERO, Duration::ZERO), "a free save never waits");
-    assert!(SaveThrottle::due_after(ms(1), Duration::ZERO));
-
-    // K = 20: 10ms of saving buys 200ms of silence.
-    assert!(!SaveThrottle::due_after(ms(199), ms(10)));
-    assert!(SaveThrottle::due_after(ms(200), ms(10)));
-    assert!(SaveThrottle::due_after(ms(1000), ms(10)));
-
-    // Blocks far apart and saves far cheaper than they are: untouched.
-    assert!(SaveThrottle::due_after(Duration::from_secs(45), ms(300)));
-
-    // And the pathological one: a cache expensive enough that saving it
-    // every block is the scan.
-    assert!(!SaveThrottle::due_after(ms(11), ms(10)));
-}
-
-/// A `last_cost` big enough to overflow `Duration * u32` saturates instead
-/// of panicking. Unreachable in practice — it takes a save costing a
-/// twentieth of `Duration::MAX` — but the multiplication is on the hot
-/// path of every block.
-#[test]
-fn an_absurd_save_cost_saturates_rather_than_panicking() {
-    assert!(!SaveThrottle::due_after(Duration::MAX / 2, Duration::MAX));
-}
-
 /// **The guard no caller can trip, pinned so it stays that way.**
 /// [`resolve_block`] refuses `Typed` resolution against metadata with no
 /// complete entry for the block's database, which every call site
@@ -689,8 +654,9 @@ async fn a_replay_holds_no_block_s_statistics() {
 #[tokio::test]
 async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     use crate::predicate::Predicate;
-    use crate::statistics::{StatisticsRequest, StatisticsSelection};
     use pgdt_io::LocalFileSource;
+    use pgdt_mapping::map_file;
+    use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ascending.sql");
@@ -763,8 +729,9 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
 #[tokio::test]
 async fn a_block_prunes_in_the_view_its_query_reads() {
     use crate::predicate::Predicate;
-    use crate::statistics::StatisticsRequest;
     use pgdt_io::LocalFileSource;
+    use pgdt_mapping::map_file;
+    use pgdt_mapping::statistics::StatisticsRequest;
     use pgdt_model::StatisticsView;
 
     let dir = tempfile::tempdir().unwrap();

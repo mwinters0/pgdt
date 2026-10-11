@@ -50,7 +50,7 @@ pub enum ColumnResolution {
     /// has not declared this column — so nothing is yet known about it, nor
     /// about any column where the scan never reached that DDL at all.
     ///
-    /// **No mapping scan produces this pairing**: `pgdt_query::stream`'s mapping
+    /// **No mapping scan produces this pairing**: `pgdt_mapping`'s mapping
     /// pass states a database's DDL at that database's first `COPY` block
     /// (I1's recurring boundary), before any of its blocks can be banked.
     /// What keeps the variant is that [`resolve_columns`] is public and takes

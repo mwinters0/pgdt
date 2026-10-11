@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 
 use pgdt_dump::ScanOptions;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
-use pgdt_query::build_map;
 
 mod common;
 use common::all_fixtures;

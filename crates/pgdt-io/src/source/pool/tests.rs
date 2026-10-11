@@ -158,7 +158,7 @@ fn the_stated_budget_and_depth_each_bound_the_slot_count() {
 /// Two threads, because a wait has no behaviour except its interaction
 /// with another holder. The one loop that grants this permission is the
 /// leader's fused worker, exercised against a real source by
-/// `pgdt_dump::leader`'s scheduler tests.
+/// `pgdt_mapping::interior`'s scheduler tests.
 #[test]
 fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
     let unit = 1 << 20;

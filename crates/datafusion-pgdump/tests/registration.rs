@@ -18,11 +18,12 @@ use pgdt_codec::{ColumnNote, SchemaMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, StrictIdentity};
 use pgdt_io::LocalFileSource;
-use pgdt_model::{DataBlock, Diagnostic, DiagnosticSink, Finding, Severity, SpanBody};
-use pgdt_query::{
-    ComparisonNote, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    map_file,
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
+use pgdt_model::{DataBlock, Diagnostic, DiagnosticSink, Finding, Severity, SpanBody};
+use pgdt_query::ComparisonNote;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

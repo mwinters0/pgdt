@@ -1,0 +1,34 @@
+[package]
+name = "pgdt-mapping"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+introspect = ["pgdt-core/introspect", "pgdt-model/introspect", "pgdt-io/introspect"]
+# What a crate above's tests reach that nothing else may: one group's stored
+# bounds, which `pgdt-query`'s predicate tests hold against another order.
+test-support = []
+
+[dependencies]
+# `DataType` alone: this crate builds no array (`docs/design/decisions.md`, "D74").
+arrow-schema = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+memchr = { workspace = true }
+pgdt-codec = { path = "../pgdt-codec" }
+pgdt-core = { path = "../pgdt-core" }
+pgdt-dump = { path = "../pgdt-dump" }
+pgdt-io = { path = "../pgdt-io" }
+pgdt-model = { path = "../pgdt-model" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+# What this crate's tests reach there.
+pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

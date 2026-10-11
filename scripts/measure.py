@@ -2522,7 +2522,7 @@ SWEEP_JOBS = 1
 #: queries such a cache.
 NO_STATISTICS = "--statistics-level metadata"
 
-#: `pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
+#: `pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
 #: held to the library's by a test.
 ROW_GROUP_SIZE = 1 << 20
 
@@ -6262,17 +6262,20 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 #: that a change *outside* these paths that moves a figure goes unannounced —
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
-#: The streams: the mapping pass and the replay, a module of one file a
-#: concern, each named, since a declared path is matched by prefix and
-#: `stream.rs` is not a prefix of `stream/`; its tests are not declared.
+#: The streams: the mapping pass, `pgdt-mapping`'s, and the replay, a module
+#: of one file a concern, each named, since a declared path is matched by
+#: prefix and `stream.rs` is not a prefix of `stream/`; their tests are not
+#: declared.
 STREAM = (
+    *(
+        f"crates/pgdt-mapping/src/{name}.rs"
+        for name in ("backfill", "forward", "forward/save", "whole_file")
+    ),
     "crates/pgdt-query/src/stream.rs",
     *(
         f"crates/pgdt-query/src/stream/{name}.rs"
         for name in (
-            "backfill",
             "dynamic",
-            "map",
             "map_query",
             "note",
             "partition",
@@ -6284,6 +6287,12 @@ STREAM = (
             "table_partitions",
         )
     ),
+)
+#: The interior split: a block's interior scanned in pieces and folded, and
+#: the scheduler handing them out.
+INTERIOR = (
+    "crates/pgdt-mapping/src/interior.rs",
+    "crates/pgdt-mapping/src/interior/region.rs",
 )
 SCAN = (
     "crates/pgdt-dump/src/scan.rs",
@@ -6325,7 +6334,7 @@ MAP = (
     "crates/pgdt-model/src/span.rs",
 )
 #: The map's own per-block cost is two modules, not one: `map::Builder::snapshot`
-#: clones the span list and `stream::map::splice` rebuilds the index from it,
+#: clones the span list and `forward::splice` rebuilds the index from it,
 #: under the save throttle's gate. A figure that prices the map declares both,
 #: or a change to the gate reads green against a table it just moved.
 MAP_BUILD = (*MAP, *STREAM)
@@ -6435,26 +6444,28 @@ GEN_DYNFILTER = ("scripts/generate_dynamic_filter_bench.py", *GEN_PERF)
 #: `pgdt sql`: the provider it reads the dump through, and DataFusion's CLI
 #: around it, the library `pgdt` calls.
 DATAFUSION = ("crates/datafusion-pgdump/src/", "crates/datafusion-cli-pgdump/src/")
-#: Where statistics are gathered, stored and read back. `gather` and
-#: `statistics.rs` are the gathering, `model/statistics.rs` what is stored;
+#: Where statistics are gathered, stored and read back. `pgdt-mapping`'s
+#: `statistics` is the gathering, `model/statistics.rs` what is stored;
 #: `PGTYPE`, `resolve.rs` and `PREDICATE` are the comparison a bound is
 #: keyed and ordered under.
 STATISTICS = (
-    "crates/pgdt-query/src/gather.rs",
+    "crates/pgdt-mapping/src/statistics.rs",
     *(
-        f"crates/pgdt-query/src/gather/{name}.rs"
+        f"crates/pgdt-mapping/src/statistics/{name}.rs"
         for name in (
-            "bounds",
-            "charge",
-            "column",
-            "dictionary",
-            "gatherer",
-            "order",
-            "strict",
-            "tracking",
+            "account",
+            "gather",
+            "gather/bounds",
+            "gather/charge",
+            "gather/clip",
+            "gather/column",
+            "gather/gatherer",
+            "gather/order",
+            "gather/strict",
+            "request",
+            "stored",
         )
     ),
-    "crates/pgdt-query/src/statistics.rs",
     "crates/pgdt-model/src/statistics.rs",
     *PGTYPE,
     "crates/pgdt-codec/src/resolve.rs",
@@ -10400,7 +10411,7 @@ FIGURES: list[Figure] = [
             *NESTED,
             *DECODE,
             *QUERY_CLI,
-            "crates/pgdt-dump/src/leader.rs",
+            *INTERIOR,
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
@@ -10430,7 +10441,7 @@ FIGURES: list[Figure] = [
             *MAP,
             *READ,
             *QUERY_CLI,
-            "crates/pgdt-dump/src/leader.rs",
+            *INTERIOR,
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
@@ -10543,7 +10554,7 @@ FIGURES: list[Figure] = [
             *READ,
             *CACHE,
             *QUERY_CLI,
-            "crates/pgdt-dump/src/leader.rs",
+            *INTERIOR,
             "vendor/xz-seek/src/",
             "scripts/generate_xz_input.py",
             *GEN_PERF,

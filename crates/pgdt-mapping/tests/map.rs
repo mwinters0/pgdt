@@ -6,9 +6,9 @@ use std::path::Path;
 
 use pgdt_dump::{ScanOptions, check_tiling, dump_metadata_from_spans};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::{build_index, build_map};
 use pgdt_model::DiagnosticKind;
 use pgdt_model::{SpanBody, TilingIssue};
-use pgdt_query::{build_index, build_map};
 
 mod common;
 use common::{all_fixtures, edge_cases, edge_cases_fixture, objects_fixture};

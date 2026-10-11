@@ -15,7 +15,8 @@ use futures::StreamExt;
 use pgdt_dump::cache::{CacheLoad, CacheMode};
 use pgdt_dump::{ScanOptions, cache, check_tiling};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
-use pgdt_query::{QueryOptions, ScanExtent, build_index, table_stream};
+use pgdt_mapping::build_index;
+use pgdt_query::{QueryOptions, ScanExtent, table_stream};
 
 mod common;
 use common::{objects_fixture, rows_of, sandboxed, sandboxed_edge_cases};

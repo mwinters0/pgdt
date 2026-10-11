@@ -28,10 +28,10 @@ use pgdt_io::{
     ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism,
     Partitioning,
 };
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::DiagnosticKind;
-use pgdt_query::{
-    QueryOptions, StatisticsRequest, map_file, table_stream, table_stream_partitions,
-};
+use pgdt_query::{QueryOptions, table_stream, table_stream_partitions};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};

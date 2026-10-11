@@ -43,10 +43,10 @@ use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{LocalFileSource, Parallelism};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::TableName;
-use pgdt_query::{
-    QueryOptions, RowEvaluation, StatisticsRequest, StatisticsSelection, TablePartitions, map_file,
-};
+use pgdt_query::{QueryOptions, RowEvaluation, TablePartitions};
 
 use super::*;
 use crate::dump::{PgDump, PgDumpOptions};

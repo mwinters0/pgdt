@@ -13,8 +13,9 @@ this holds:
   normal and build dependencies; a test may reach what the library may not,
   so dev-dependencies are not read;
 * **no crate below the query layer depends on Arrow**, the codec taking
-  `arrow-schema` and `arrow-buffer` alone, and **the codec names no
-  `arrow_buffer` item but `i256`**, which a dependency list cannot see;
+  `arrow-schema` and `arrow-buffer` alone and the mapping pass
+  `arrow-schema`, and **the codec names no `arrow_buffer` item but `i256`**,
+  which a dependency list cannot see;
 * **the core names no dependency whose error its error type would carry**,
   and **the model and the codec do no I/O**, the codec synchronous
   (`CORE_NAMES_NO_DEPENDENCY`, `NO_IO`);
@@ -54,8 +55,16 @@ from file_limits import masked, test_blocks
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: The six library crates, in the graph's order (D68).
-LIBRARIES = ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-codec", "pgdt-query")
+#: The seven library crates, in the graph's order (D68).
+LIBRARIES = (
+    "pgdt-core",
+    "pgdt-model",
+    "pgdt-io",
+    "pgdt-dump",
+    "pgdt-codec",
+    "pgdt-mapping",
+    "pgdt-query",
+)
 
 #: The embedders: everything above the query layer that links a library.
 EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
@@ -70,7 +79,15 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-io": ("pgdt-core", "pgdt-model"),
     "pgdt-dump": ("pgdt-core", "pgdt-model", "pgdt-io"),
     "pgdt-codec": ("pgdt-core", "pgdt-model"),
-    "pgdt-query": ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-codec"),
+    "pgdt-mapping": ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-codec"),
+    "pgdt-query": (
+        "pgdt-core",
+        "pgdt-model",
+        "pgdt-io",
+        "pgdt-dump",
+        "pgdt-codec",
+        "pgdt-mapping",
+    ),
     "datafusion-pgdump": LIBRARIES,
     "datafusion-cli-pgdump": (*LIBRARIES, "datafusion-pgdump", "namespace-init"),
     "pgdt": (*LIBRARIES, "datafusion-pgdump", "datafusion-cli-pgdump", "namespace-init"),
@@ -85,9 +102,13 @@ NAMESPACES: dict[str, tuple[str, ...]] = {
     "pgdt-core": ("instrument",),
     "pgdt-dump": ("cache",),
     "pgdt-codec": ("compare", "decode", "key", "nested", "pgtype"),
+    "pgdt-mapping": ("statistics",),
 }
 
-#: The Arrow crates a library below the query layer never depends on (D74).
+#: The Arrow crates a library below the query layer never depends on (D74):
+#: the codec and the mapping pass name `arrow-schema`'s types and build no
+#: array, and the crates below them name no Arrow at all.
+NAMES_ARROW_SCHEMA = ("pgdt-codec", "pgdt-mapping")
 ARROW_ABOVE_THE_CODEC = ("arrow",)
 ARROW_BELOW_THE_CODEC = ("arrow", "arrow-schema", "arrow-buffer")
 
@@ -268,7 +289,9 @@ def problems(meta: dict, repo: Path) -> list[str]:
             if dep in dirs and dep != name and dep not in GRAPH[name]:
                 found.append(f"{name} depends on {dep}, an edge the graph does not draw (D68)")
             if name in LIBRARIES and name != "pgdt-query":
-                refused = ARROW_ABOVE_THE_CODEC if name == "pgdt-codec" else ARROW_BELOW_THE_CODEC
+                refused = (
+                    ARROW_ABOVE_THE_CODEC if name in NAMES_ARROW_SCHEMA else ARROW_BELOW_THE_CODEC
+                )
                 if dep in refused:
                     found.append(f"{name} depends on {dep} (D74)")
 

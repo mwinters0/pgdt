@@ -24,7 +24,7 @@ use common::{fixture, run, stderr_of, stdout_of};
 /// `CREATE TABLE` DDL, so every column resolves `Utf8View` and a byte-for-byte
 /// comparison is exactly what parity means here.
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-query/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
 }
 
 /// A seekable multi-block `.xz` copy of it, in a directory of its own.

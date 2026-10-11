@@ -76,7 +76,7 @@ class Ladder(unittest.TestCase):
 
 class LibraryDefault(unittest.TestCase):
     def test_the_default_minimum_is_the_librarys(self):
-        src = (Path(__file__).resolve().parent.parent / "crates/pgdt-query/src/statistics.rs").read_text()
+        src = (Path(__file__).resolve().parent.parent / "crates/pgdt-mapping/src/statistics/request.rs").read_text()
         self.assertEqual(rd.DEFAULT_MIN_ROWS, 1 << 10)
         self.assertIn("pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;", src)
 

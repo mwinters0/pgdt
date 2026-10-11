@@ -20,10 +20,12 @@ use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, DiagnosticKind, Finding, SpanBody, TableName};
-use pgdt_query::{QueryOptions, StatisticsRequest, map_file, table_stream};
+use pgdt_query::{QueryOptions, table_stream};
 
-#[path = "../../pgdt-query/tests/common/refused.rs"]
+#[path = "../../pgdt-mapping/tests/common/refused.rs"]
 mod refused;
 
 /// A sink for a registration whose findings this target is not about.

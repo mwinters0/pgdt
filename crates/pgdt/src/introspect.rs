@@ -110,7 +110,7 @@ pub struct AtExit(Sections);
 /// Record what a mapping pass's statistics account held when it returned,
 /// with the instrument's own count read at the same moment, for [`report`]
 /// to print. A no-op without the `introspect` feature.
-pub fn statistics_returned(held: &pgdt_query::StatisticsHeld) {
+pub fn statistics_returned(held: &pgdt_mapping::statistics::StatisticsHeld) {
     #[cfg(feature = "introspect")]
     enabled::statistics_returned(held);
     #[cfg(not(feature = "introspect"))]
@@ -183,10 +183,13 @@ mod enabled {
     /// What [`super::statistics_returned`] recorded: the account and the
     /// instrument's reading, taken together.
     static RETURNED: std::sync::Mutex<
-        Option<(pgdt_query::StatisticsHeld, pgdt_core::instrument::StatisticsReading)>,
+        Option<(
+            pgdt_mapping::statistics::StatisticsHeld,
+            pgdt_core::instrument::StatisticsReading,
+        )>,
     > = std::sync::Mutex::new(None);
 
-    pub fn statistics_returned(held: &pgdt_query::StatisticsHeld) {
+    pub fn statistics_returned(held: &pgdt_mapping::statistics::StatisticsHeld) {
         let reading = pgdt_core::instrument::statistics_reading();
         if let Ok(mut returned) = RETURNED.lock() {
             *returned = Some((*held, reading));

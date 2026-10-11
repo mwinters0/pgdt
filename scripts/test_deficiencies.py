@@ -1007,14 +1007,14 @@ class ThisRepo(unittest.TestCase):
 
 
 class KnownFailureTables(unittest.TestCase):
-    """A row of a strict known-failure table (`crates/pgdt-query/tests/
+    """A row of a strict known-failure table (`crates/pgdt-mapping/tests/
     known_failures.rs`, and a sweep's own exclusion beside it) asserts that a
     filed defect still shows: one naming an entry the index does not carry
     asserts a defect nobody can look up. Checked here, the register's own
     reconciliation, because no Rust test reads `docs/`."""
 
     TABLES = (
-        "crates/pgdt-query/tests/known_failures.rs",
+        "crates/pgdt-mapping/tests/known_failures.rs",
         "crates/pgdt-query/tests/value_oracle.rs",
     )
 

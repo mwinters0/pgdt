@@ -72,7 +72,7 @@ than reading as a phase nobody has sliced.
   wherever the save throttle's gate does not close it — which is every
   `--dtcache none` scan, since a no-op save leaves nothing to amortize.
   **(c) unowned**; promoted by a dump with thousands of blocks
-  scanned under `--dtcache none`. Detail: `crates/pgdt-query/src/stream/map.rs`.
+  scanned under `--dtcache none`. Detail: `crates/pgdt-mapping/src/forward.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
@@ -149,7 +149,7 @@ than reading as a phase nobody has sliced.
   blocks much smaller than that window is read and parsed two orders of
   magnitude over, worse at every worker added and reached with no flag typed.
   **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
-  `crates/pgdt-dump/src/leader.rs`.
+  `crates/pgdt-mapping/src/interior/region.rs`.
 
 - **KD23** — a `pgdt query` sub-stream can pin several decoded blocks where the
   budget bills one: a query partition is cut over a whole `CopyBlock` rather
@@ -217,7 +217,7 @@ than reading as a phase nobody has sliced.
   file and a query pruning nothing over the tail. How much is covered depends on
   the allowance the box resolved, which a user cannot predict. **(b) owned by
   P23**, whose remedy is a granularity derived from the dump's length. Detail:
-  `crates/pgdt-query/src/gather/gatherer.rs`.
+  `crates/pgdt-mapping/src/statistics/gather/gatherer.rs`.
 
 - **KD35** — a budget too small for a decoded block is read serially: the
   piecewise arm advises one partition on both providers, where a decoder retains
@@ -243,7 +243,7 @@ than reading as a phase nobody has sliced.
   where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
   unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
   its map reached EOF, or in a strict one's check of a map short of it, the fix being the arm the mapping pass already carries.
-  Detail: `crates/pgdt-query/src/stream/backfill.rs`.
+  Detail: `crates/pgdt-mapping/src/backfill.rs`.
 
 - **KD38** — a pgdump scan planned while others hold the session budget gets
   what they left, so a join's second-planned table can run on one reader while
@@ -282,7 +282,7 @@ than reading as a phase nobody has sliced.
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
   90th-percentile group it is read at, so a block already past the maximum
   merges further past it. **(c) unowned**; promoted by a stated maximum seen
-  to leave a block's groups past it. Detail: `crates/pgdt-query/src/gather/gatherer.rs`.
+  to leave a block's groups past it. Detail: `crates/pgdt-mapping/src/statistics/gather/gatherer.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared
@@ -344,7 +344,7 @@ than reading as a phase nobody has sliced.
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
-  a file and is not told. Detail: `crates/pgdt-query/src/stream/map.rs`.
+  a file and is not told. Detail: `crates/pgdt-mapping/src/whole_file.rs`.
 
 - **KD82** — `=`, `!=` and `IN` on a canonicalized kind compare a field's
   spelling, so a hand-written field its decoder reads in a spelling `*_out`
@@ -519,7 +519,7 @@ than reading as a phase nobody has sliced.
   must compute with `bounded_columns` over the same block and metadata, and
   nothing checks the two agree, so an embedder back-filling one block can ask
   for the wrong columns silently. **(b) owned by P36**. Detail:
-  `crates/pgdt-query/src/statistics.rs`.
+  `crates/pgdt-mapping/src/statistics/request.rs`.
 
 - **KD116** — a nested value has no API key: an embedder orders a scalar as
   PostgreSQL does through `ValueKey`, but an array, record, range or

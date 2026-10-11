@@ -6,7 +6,12 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-introspect = ["pgdt-core/introspect", "pgdt-model/introspect", "pgdt-io/introspect"]
+introspect = [
+    "pgdt-core/introspect",
+    "pgdt-model/introspect",
+    "pgdt-io/introspect",
+    "pgdt-mapping/introspect",
+]
 
 [dependencies]
 arrow = { workspace = true }
@@ -18,6 +23,7 @@ pgdt-codec = { path = "../pgdt-codec" }
 pgdt-core = { path = "../pgdt-core" }
 pgdt-dump = { path = "../pgdt-dump" }
 pgdt-io = { path = "../pgdt-io" }
+pgdt-mapping = { path = "../pgdt-mapping" }
 pgdt-model = { path = "../pgdt-model" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
@@ -30,6 +36,7 @@ insta = { workspace = true }
 # What this crate's tests reach there (each one's `test-support`).
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }
+pgdt-mapping = { path = "../pgdt-mapping", features = ["test-support"] }
 # The benches' `#[global_allocator]`, as `pgdt-codec`'s.
 mimalloc = { workspace = true }
 tempfile = { workspace = true }

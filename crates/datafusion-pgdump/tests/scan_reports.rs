@@ -25,8 +25,10 @@ use datafusion_pgdump::{
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{LocalFileSource, MEMORY_RESERVE};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{DiagnosticSink, Finding, Severity};
-use pgdt_query::{PlanNote, PlanNoteKind, StatisticsRequest, StatisticsSelection, map_file};
+use pgdt_query::{PlanNote, PlanNoteKind};
 
 /// A group size several `ordered` rows long.
 const SMALL_GROUP: u64 = 1024;

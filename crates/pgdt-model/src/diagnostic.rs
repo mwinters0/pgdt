@@ -173,7 +173,7 @@ pub enum DiagnosticKind {
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
     /// non-seekable table — pushed once per index, whether the table was just
-    /// walked (`pgdt_query::build_index`, `pgdt_dump::preamble_only`) or
+    /// walked (`pgdt_mapping::build_index`, `pgdt_dump::preamble_only`) or
     /// read back from a persisted cache (`pgdt_dump::cache::store::status_from_file`).
     NonSeekableCompressedSource { block_count: usize },
 }

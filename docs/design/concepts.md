@@ -113,15 +113,14 @@ Extending a map forward from its frontier, a block's interior split into
 pieces and folded back, each block closed, the cache saved on a throttle
 ([`decisions.md`](decisions.md), "D48", "Batches, streams and the leader").
 
-- **pgdt-dump** — `leader.rs`: what one piece of a block answers alone and
-  how the pieces fold; it decodes nothing, so it sits by the scanner.
-- **pgdt-query** — `stream/map.rs`, `stream/map_query.rs`: the leader that
-  drives the pieces with the gatherer attached, query's because gathering
-  decodes (D68); and pass 1 of a query.
-
-**Not in one place.** `leader.rs` is named for its caller, the leader being
-`stream/map.rs`'s `map_forward`; `stream/map.rs` and `stream/backfill.rs`
-import each other.
+- **pgdt-mapping** — `forward/`, `whole_file.rs`, `backfill.rs`,
+  `interior/`: the pass whole — a map extended
+  from its frontier with its observers attached, the whole-file map and the
+  back-fill re-reading what a mapped block lacks, and a block's interior split
+  into pieces and folded. Above the codec, since a block it maps is gathered
+  as it is read, and below the query layer, since it builds no array (D68).
+- **pgdt-query** — `stream/map_query.rs`: pass 1 of a query, which reads the
+  replay's resume token.
 
 ## The declared schema
 
@@ -234,8 +233,8 @@ read by `prune.rs` alone.
 Every field of a block checked against its type's `*_in` and its column's
 typmod ([`decisions.md`](decisions.md), "D103").
 
-- **pgdt-query** — `gather/strict.rs`: an observer over a block's rows, as the
-  gatherer is.
+- **pgdt-mapping** — `statistics/gather/strict.rs`: an arm of the block
+  observer, built where a block's gatherer is.
 - **pgdt-codec** — `grammar/`: what a column's fields are read by, whether
   PostgreSQL refuses one, dispatching to the readers a key is built by, and
   the form a filter's literal has to take.
@@ -249,19 +248,21 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **pgdt-model** — `statistics.rs`: the stored shape, persisted, and the
   contract over a block's rows that answers it, model wherever its
   implementor sits (D74).
-- **pgdt-query** — `statistics.rs`, `gather.rs`, `gather/bounds.rs`,
-  `gather/charge.rs`, `gather/column.rs`, `gather/dictionary.rs`,
-  `gather/gatherer.rs`, `gather/order.rs`, `gather/tracking.rs`, `prune.rs`,
-  `summary.rs`, `stream/backfill.rs`: gathering decodes (D68), and pruning
-  and summaries read what it stores.
+- **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
+  `statistics/account.rs`, `statistics/stored.rs`, `statistics/gather.rs`,
+  `statistics/gather/gatherer.rs`, `statistics/gather/column.rs`,
+  `statistics/gather/bounds.rs`, `statistics/gather/order.rs`,
+  `statistics/gather/clip.rs`, `statistics/gather/charge.rs`: what a pass
+  gathers and what holding it costs, the mapping pass's because gathering
+  decodes and builds no array (D68); what a column's statistics are stored
+  against, which pruning and summaries read.
+- **pgdt-query** — `prune.rs`, `summary.rs`: what reads the statistics
+  through the filter expression.
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
   DataFusion's.
 - **pgdt** — `info_statistics.rs`: what `pgdt info --detail` prints of them.
 
-**Not in one place.** In pgdt-query the concept is four sibling modules and a
-child of `stream/`, not one tree; the contract between the gatherer and its
-readers is in `gather/tracking.rs`, which `prune.rs` and `summary.rs` import
-from inside the gatherer; the truth sets are in `predicate.rs`.
+**Not in one place.** The truth sets are in pgdt-query's `predicate.rs`.
 
 ## The replay
 

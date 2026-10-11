@@ -1,7 +1,7 @@
 //! What the CLI's integration tests need before they can assert anything:
 //! how to run the binary, where the fixtures are, and where `scripts/` is.
 //!
-//! Same reason as `crates/pgdt-query/tests/common/mod.rs`: each `tests/*.rs` file
+//! Same reason as `crates/pgdt-mapping/tests/common/mod.rs`: each `tests/*.rs` file
 //! is its own crate, so without a shared module each one carries its own copy.
 
 // Each test binary compiles the whole module and uses a subset of it.
@@ -17,8 +17,8 @@ use std::process::{Command, Output};
 pub mod oracle;
 
 /// The fixtures holding a field PostgreSQL refuses, which a data-level parse
-/// fails on: `pgdt-query`'s list, included by path so no copy drifts.
-#[path = "../../../pgdt-query/tests/common/refused.rs"]
+/// fails on: `pgdt-mapping`'s list, included by path so no copy drifts.
+#[path = "../../../pgdt-mapping/tests/common/refused.rs"]
 pub mod refused;
 
 /// The built `pgdt` binary, ready to take arguments. Cargo hands us the exact

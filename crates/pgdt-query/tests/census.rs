@@ -19,12 +19,11 @@ use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
 use pgdt_model::union_census;
-use pgdt_query::{
-    QueryOptions, ScanExtent, StatisticsRequest, TablePartitions, build_index, map_file,
-    table_schema, table_stream,
-};
+use pgdt_query::{QueryOptions, ScanExtent, TablePartitions, table_schema, table_stream};
 
 mod common;
 use common::{VERSIONS, types_fixture};

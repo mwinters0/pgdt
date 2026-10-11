@@ -15,26 +15,12 @@ use pgdt_model::{
     internal::{BlockObserver, max_rows_group, min_rows_group, vec_heap},
 };
 
-use super::bounds::merge_adjacent;
+use super::bounds::{Refused, merge_adjacent};
 use super::charge::{push_charged, reserve_charged};
-use super::column::ColumnGatherer;
+use super::column::{ColumnGatherer, Observed};
 use super::strict::{FieldCheck, check_row};
-use crate::statistics::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP, StatisticsBackfill, Term};
-
-/// A field PostgreSQL refuses — one its type's `*_in` refuses, met while
-/// keying it ([`BoundsGatherer::observe`](super::bounds::BoundsGatherer::observe)), or a NULL its column's `NOT NULL`
-/// refuses — or one a strict parse's check refuses.
-#[derive(Debug)]
-pub(super) struct Refused;
-
-/// What [`ColumnGatherer::observe`] answers of a field it read.
-pub(super) struct Observed {
-    /// What the column's heap grew by.
-    pub(super) grew: i64,
-    /// Whether the field is one its type's `*_in` refuses, kept out of the
-    /// group's statistics rather than stopping the block.
-    pub(super) ignored: bool,
-}
+use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP, Term};
+use crate::statistics::request::StatisticsBackfill;
 
 /// The group a row is being added to.
 struct OpenGroup {
@@ -219,7 +205,7 @@ impl Gatherer {
     ///
     /// deficiency: KD33 — the account this tests is cumulative, and nothing
     /// releases `Term::Retained` while the pass gathers forward (the back-fill
-    /// does, replacing a block's statistics, `crate::stream::backfill_statistics`), so
+    /// does, replacing a block's statistics, `crate::backfill::backfill_statistics`), so
     /// once a long dump's retained statistics reach the allowance every block
     /// from there on declines on its first charge update. Statistics are then a *prefix* of
     /// the file rather than a sample of it, and a query prunes nothing over
@@ -417,7 +403,7 @@ impl Gatherer {
     /// account never reads the moved groups as held by neither or by both.
     /// What is left of the piece goes back to its own charge in one update,
     /// released as the piece is freed.
-    /// Pieces are folded with none of them gathering (`pgdt_dump::leader`), so no
+    /// Pieces are folded with none of them gathering (`crate::interior`), so no
     /// other observer updates the account while one is half moved.
     fn join(&mut self, mut later: Gatherer) {
         debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");

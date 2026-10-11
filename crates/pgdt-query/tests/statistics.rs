@@ -6,7 +6,7 @@
 //! starts, and ordered by a comparison written here for the column's type —
 //! so a bound, a count or a dictionary is right or wrong about what the file
 //! holds. The `statistics` fixture's shapes are themselves asserted by
-//! `tests/statistics_fixture.rs`.
+//! `pgdt-mapping`'s `tests/statistics_fixture.rs`.
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -21,14 +21,14 @@ use bytes::Bytes;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_mapping::statistics::{
+    BLOCK_MAX_ROW_GROUPS, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
+    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+};
+use pgdt_mapping::{MapRun, bounded_columns, gather_block_statistics, map_file};
 use pgdt_model::{
     BlockStatistics, ColumnRefusals, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, Sortedness,
-};
-use pgdt_query::{
-    BLOCK_MAX_ROW_GROUPS, MapRun, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
-    bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -441,14 +441,14 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
         assert_eq!(statistics.groups.len(), 1, "{}", block.header.table);
     }
     let ordered = statistics(block(&index, "public.ordered"));
-    assert_eq!(ordered.group_size, pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
+    assert_eq!(ordered.group_size, pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES);
     let long_value = statistics(block(&index, "public.long_value"));
-    assert!(long_value.group_size > pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
+    assert!(long_value.group_size > pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES);
 
     let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::DATA };
     let index = gathered(&dump, &uncoarsened).await;
     let long_value = statistics(block(&index, "public.long_value"));
-    assert_eq!(long_value.group_size, pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES);
+    assert_eq!(long_value.group_size, pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES);
     assert!(long_value.groups.len() > 1);
     assert_eq!(long_value.sizing, GroupSizing::Density { min_rows: 0, max_rows: None });
 }
@@ -774,7 +774,7 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
 /// size lacks nothing an unstated request asks.
 #[tokio::test]
 async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
-    let dump_of = || statistics_fixture(16, "default");
+    let fixture = statistics_fixture(16, "default");
     let one_column = request(
         only(vec![StatisticsTarget::Column {
             table: "public.ordered".to_string(),
@@ -782,12 +782,12 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
         }]),
         SMALL_GROUP,
     );
-    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    let (_dir, dump) = sandboxed(&fixture, "s.sql");
     mapped_into_cache(&dump, &ScanOptions::default(), &one_column).await;
     let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::DATA).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (BLOCKS, BLOCKS));
-    let small = gathered(&dump_of(), &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
-    let default = gathered(&dump_of(), &StatisticsRequest::DATA).await;
+    let small = gathered(&fixture, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
+    let default = gathered(&fixture, &StatisticsRequest::DATA).await;
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &small } else { &default };
         assert_eq!(
@@ -797,7 +797,7 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
         );
     }
 
-    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    let (_dir, dump) = sandboxed(&fixture, "s.sql");
     mapped_into_cache(&dump, &ScanOptions::default(), &request(StatisticsSelection::DATA, 64))
         .await;
     let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::DATA).await;
@@ -809,8 +809,8 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
 /// whole at that size, not narrowed to the column.
 #[tokio::test]
 async fn a_backfill_never_drops_a_column_the_block_held() {
-    let dump_of = || statistics_fixture(16, "default");
-    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    let fixture = statistics_fixture(16, "default");
+    let (_dir, dump) = sandboxed(&fixture, "s.sql");
     let options = ScanOptions::default();
     mapped_into_cache(&dump, &options, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
     let one_column = request(
@@ -822,8 +822,8 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
     );
     let run = mapped_into_cache(&dump, &options, &one_column).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
-    let whole_at_64 = gathered(&dump_of(), &request(StatisticsSelection::DATA, 64)).await;
-    let small = gathered(&dump_of(), &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
+    let whole_at_64 = gathered(&fixture, &request(StatisticsSelection::DATA, 64)).await;
+    let small = gathered(&fixture, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
     for table in ["public.long_value", "public.ordered", "public.specials"] {
         let expected = if table == "public.ordered" { &whole_at_64 } else { &small };
         assert_eq!(

@@ -28,10 +28,12 @@ use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::{LocalFileSource, Parallelism};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
-    StatisticsRequest, StatisticsSelection, map_file, table_stream_partitions,
+    table_stream_partitions,
 };
 
 mod common;

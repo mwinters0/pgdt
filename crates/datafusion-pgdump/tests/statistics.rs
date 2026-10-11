@@ -53,10 +53,11 @@ use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{Finding, TableName};
-use pgdt_query::{StatisticsRequest, StatisticsSelection, map_file};
 
-#[path = "../../pgdt-query/tests/common/refused.rs"]
+#[path = "../../pgdt-mapping/tests/common/refused.rs"]
 mod refused;
 
 /// A sink for a registration whose findings this target is not about.

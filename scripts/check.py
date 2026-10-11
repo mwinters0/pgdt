@@ -386,12 +386,20 @@ class Package:
 
 
 _MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
+_PATH_MOD_RE = re.compile(
+    r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*\n(?:\s*#\[[^\]]*\]\s*\n)*'
+    r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;",
+    re.M,
+)
 
 
 def module_files(repo: Path, root: str) -> list[str]:
-    """`root` and every file its `mod name;` lines reach at the conventional
-    paths, repo-relative; a `#[path]`, an attribute on the same line and a
-    declaration inside an inline module are not followed."""
+    """`root` and every file its `mod name;` lines reach, repo-relative: at
+    the conventional paths, or where a `#[path]` on the line before names
+    one, relative to the declaring file's directory as Rust reads it — a test
+    including another crate's shared module by path reads what that module
+    reads. An attribute on the same line and a declaration inside an inline
+    module are not followed."""
     out: list[str] = []
     pending = [(root, True)]
     while pending:
@@ -401,7 +409,18 @@ def module_files(repo: Path, root: str) -> list[str]:
         out.append(rel)
         path = repo / rel
         base = path.parent if is_mod_root else path.with_suffix("")
-        for name in _MOD_RE.findall(path.read_text(encoding="utf-8", errors="replace")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        pathed = set()
+        for target, name in _PATH_MOD_RE.findall(text):
+            pathed.add(name)
+            cand = Path(os.path.normpath(path.parent / target))
+            if cand.is_file():
+                # A file loaded by `#[path]` declares its children as a
+                # `mod.rs` does, beside itself.
+                pending.append((cand.relative_to(repo).as_posix(), True))
+        for name in _MOD_RE.findall(text):
+            if name in pathed:
+                continue
             for cand, root_like in ((base / f"{name}.rs", False), (base / name / "mod.rs", True)):
                 if cand.is_file():
                     pending.append((cand.relative_to(repo).as_posix(), root_like))

@@ -80,7 +80,7 @@ pub enum Error {
     /// that is not a pgdt cache, is damaged, is another build's, or describes
     /// another file — so it refuses rather than starting cold and overwriting
     /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
-    /// points — `pgdt_query::map_file`, `pgdt_query::table_stream`,
+    /// points — `pgdt_mapping::map_file`, `pgdt_query::table_stream`,
     /// `pgdt_query::table_stream_partitions` and `pgdt_dump::preamble_only` —
     /// before any byte of the dump is read, through
     /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the mode
@@ -142,12 +142,12 @@ pub enum Error {
     /// size — which the cache's identity check cannot see
     /// (`docs/design/decisions.md`, "D21") — or is cut short of that end, and
     /// what was read would describe other bytes than the map does. Raised
-    /// before it is used (`pgdt_query::stream`'s `reread_rows`), never worked around
+    /// before it is used (`pgdt_mapping`'s `reread_rows`), never worked around
     /// (`docs/design/decisions.md`, "D20").
     ///
     /// `path` is the cache the map was loaded from, named as
     /// [`Error::CacheUnusable`] names it, so a caller whose cache is not
-    /// beside the dump knows which file to remove. `pgdt_query::map_file`'s
+    /// beside the dump knows which file to remove. `pgdt_mapping::map_file`'s
     /// back-fill has one under an enabled cache; the per-block entry point is handed a map
     /// with no cache attached, and leaves it `None`.
     #[error("{}", cached_block_changed(.path.as_deref(), *.header_offset))]

@@ -65,7 +65,7 @@ preamble search at each `\connect`.
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `decisions.md` ("D30"); the mapping pass restating
 `DumpMetadata` at **each** `\connect`ed database's first `COPY` block
-(`crates/pgdt-query/src/stream/map.rs`, `map_forward`), which the per-database scope limit licenses — each
+(`crates/pgdt-mapping/src/forward.rs`, `map_forward`), which the per-database scope limit licenses — each
 database's first `COPY` header closes that database's preamble;
 `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers
 for metadata built by some scan other than the mapping pass.
@@ -3594,7 +3594,7 @@ The infinities have one spelling each (I34).
 **Observed.** `fixtures/<13–18>/statistics/*.sql`'s `public.spans.stamp` is
 inserted from `2026-01-01 00:00:00+00` and `2026-01-01 05:00:00+05`, one
 instant, and `2026-07-01 12:00:00-07`: every major writes two texts, the first
-two as `2026-01-01 00:00:00+00` (`crates/pgdt-query/tests/statistics_fixture.rs`
+two as `2026-01-01 00:00:00+00` (`crates/pgdt-mapping/tests/statistics_fixture.rs`
 asserts the count).
 
 **Scope limit.** **Per connection, so per database.** `pg_dumpall` runs one
@@ -3707,7 +3707,7 @@ governs every line after the `SET` executes.
 
 **Observed.** Every fixture at all six routine versions carries
 `SET standard_conforming_strings = on;`, and
-`crates/pgdt-query/tests/scan.rs`,
+`crates/pgdt-mapping/tests/scan.rs`,
 `a_dollar_inside_a_literal_identifier_or_comment_opens_no_body`, reads a
 hand-written `off` file whose `'it\'s $$ here'` ends where `off` says.
 
@@ -5786,7 +5786,7 @@ restoring psql's major being outside the file.
 v16.15 (observed).
 
 **Relied on by:** `scan.rs`, `CopyScanner::next_event` and `RowEnding`;
-`leader.rs`, `BlockEndings`.
+`interior.rs`, `BlockEndings`.
 
 **Re-verify.**
 

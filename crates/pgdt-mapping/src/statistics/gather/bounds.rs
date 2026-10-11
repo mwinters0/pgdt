@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::mem::{self, size_of};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use pgdt_codec::compare::CompareKind;
@@ -21,11 +21,17 @@ use pgdt_model::{
 };
 
 use super::charge::{push_charged, reserve_charged};
-use super::gatherer::Refused;
+use super::clip::{CLIP_BYTES, Clipped, text_prefix};
 use super::order::{FirstValue, Previous, ViewOrders};
-use crate::statistics::Charge;
-#[cfg(test)]
-use crate::statistics::Term;
+use crate::statistics::account::Charge;
+#[cfg(any(test, feature = "test-support"))]
+use crate::statistics::account::Term;
+
+/// A field PostgreSQL refuses — one its type's `*_in` refuses, met while
+/// keying it ([`BoundsGatherer::observe`]), or a NULL its column's `NOT NULL`
+/// refuses — or one a strict parse's check refuses.
+#[derive(Debug)]
+pub(super) struct Refused;
 
 /// How a column's values are ordered while gathering.
 #[derive(Clone)]
@@ -81,79 +87,6 @@ impl Canonical {
 /// whole value's and it reads as no whole value, as the value itself does
 /// (`docs/design/decisions.md`, "D76").
 pub(super) const BYTEA_ESCAPE_HEAD_BYTES: usize = CLIP_BYTES / 2;
-
-/// How much of a bytewise value is kept: past the cap by one character's
-/// width, so a kept head longer than the cap says its value is too.
-const CLIP_BYTES: usize = DICTIONARY_ENTRY_MAX_BYTES + char::MAX.len_utf8();
-
-/// A bytewise value's first [`CLIP_BYTES`], which is all a stored bound is
-/// taken from (`docs/design/decisions.md`, "D76").
-///
-/// **Two values whose heads cannot be told apart store the same bound.** A
-/// head that is not its whole value is at least `CLIP_BYTES` less one
-/// character long, so two values it cannot place against each other share
-/// more bytes than [`clipped_bounds`] reads of either. That is what lets a
-/// group's bounds be joined from two halves' heads ([`GroupBounds::absorb`])
-/// and still store what one pass over the group's values stores: each keeps a
-/// value no other value in its half is certainly beyond, and that value can
-/// differ from the true extreme only by bytes no stored bound holds.
-#[derive(Clone)]
-pub(super) struct Clipped {
-    pub(super) head: String,
-    /// Whether `head` is the whole value.
-    whole: bool,
-}
-
-impl Clipped {
-    fn of(text: &str) -> Self {
-        let head = text_prefix(text, CLIP_BYTES);
-        Self { head: head.to_owned(), whole: head.len() == text.len() }
-    }
-
-    /// Where `text` orders against the value this was clipped from, `None`
-    /// when `text` begins with a head that is not the whole value. Two such
-    /// values share every byte a stored bound reads, so either stands for
-    /// the other in the group's bounds; only their row order is unknown.
-    fn locate(&self, text: &str) -> Option<Ordering> {
-        self.locate_bytes(text.as_bytes(), text.len())
-    }
-
-    /// [`Self::locate`] for a text known by its length and its first
-    /// [`CLIP_BYTES`] bytes (all of them, if it is shorter) — as much as the
-    /// answer reads — so a piece's first value is placed exactly as a row is.
-    pub(super) fn locate_bytes(&self, prefix: &[u8], len: usize) -> Option<Ordering> {
-        let head = self.head.as_bytes();
-        let shared = head.len().min(len);
-        match prefix[..shared].cmp(&head[..shared]) {
-            Ordering::Equal if len > head.len() => self.whole.then_some(Ordering::Greater),
-            Ordering::Equal if len == head.len() && self.whole => Some(Ordering::Equal),
-            Ordering::Equal => Some(Ordering::Less),
-            unequal => Some(unequal),
-        }
-    }
-
-    /// Where `other`'s value orders against this one's, known only by their
-    /// heads: `None` exactly where the shorter head agrees with the longer and
-    /// is not its whole value, which [`Clipped`] says stores the same bound.
-    fn order(&self, other: &Clipped) -> Option<Ordering> {
-        let (mine, theirs) = (self.head.as_bytes(), other.head.as_bytes());
-        let shared = mine.len().min(theirs.len());
-        match theirs[..shared].cmp(&mine[..shared]) {
-            Ordering::Equal => {}
-            unequal => return Some(unequal),
-        }
-        match theirs.len().cmp(&mine.len()) {
-            Ordering::Less => other.whole.then_some(Ordering::Less),
-            Ordering::Greater => self.whole.then_some(Ordering::Greater),
-            Ordering::Equal => match (self.whole, other.whole) {
-                (true, true) => Some(Ordering::Equal),
-                (true, false) => Some(Ordering::Greater),
-                (false, true) => Some(Ordering::Less),
-                (false, false) => None,
-            },
-        }
-    }
-}
 
 pub(super) struct BoundsGatherer {
     order: Order,
@@ -645,8 +578,8 @@ fn tiers_heap(tiers: &Option<Box<ClosedTiers>>) -> u64 {
 /// The bounds one group of `values` is stored with under `kind`'s order, or
 /// `None` where it keeps none — for a test outside this module that holds
 /// stored bounds against another order.
-#[cfg(test)]
-pub(crate) fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bounds> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bounds> {
     let mut gatherer = BoundsGatherer::new(kind);
     let mut group = gatherer.fresh_group();
     for value in values {
@@ -707,16 +640,6 @@ fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bo
         Canonical::Bytea => bytea_upper(&max.head)?,
     };
     Some(Bounds { min: lower, max: upper, min_exact, max_exact: false })
-}
-
-/// The longest prefix of `text` no longer than `cap` bytes that ends on a
-/// character boundary — a lower bound on `text` bytewise.
-pub(super) fn text_prefix(text: &str, cap: usize) -> &str {
-    let mut end = cap.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 /// A text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] ordering above `text` bytewise:

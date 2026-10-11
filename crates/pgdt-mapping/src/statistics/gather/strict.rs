@@ -11,49 +11,10 @@ use pgdt_codec::{
     compare::{ComparisonPlan, TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{CopyHeader, decode_field, split_fields};
-use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal, GroupSizing, internal::BlockObserver};
+use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
-use super::gatherer::{Gatherer, Sizing};
-use super::tracking::{declared_column, stored_resolution};
-use crate::statistics::{Charge, ROW_GROUP_DEFAULT_SIZE_BYTES, StatisticsAccount, Term};
-
-/// **An observer gathering nothing that checks every field of the block** as
-/// a strict parse does ([`PostgresInvalidValues::Strict`](pgdt_model::PostgresInvalidValues::Strict);
-/// `docs/design/decisions.md`, "D103"): what a block whose
-/// columns a request tracks none of is observed by, and what re-reads a block
-/// the cache holds that no strict parse checked. It answers
-/// [`BlockGathered::Checked`](pgdt_model::BlockGathered::Checked), or [`BlockGathered::Refused`](pgdt_model::BlockGathered::Refused) at the first
-/// field its type's `*_in` refuses or NULL its column's `NOT NULL` refuses,
-/// and never declines, holding nothing. What it holds to check — a
-/// comparison plan per column — is charged to no account (D81): fixed per
-/// block, shared with the block's pieces and freed with the observer.
-pub(crate) fn checker(
-    header: &CopyHeader,
-    metadata: Option<&DumpMetadata>,
-    database: Option<&str>,
-    account: &Arc<StatisticsAccount>,
-) -> Box<dyn BlockObserver> {
-    let _attributed = StatisticsScope::enter();
-    let charge = Charge::new(Arc::clone(account), Term::Gathering);
-    let resolved = stored_resolution(header, metadata, database);
-    let checks = field_checks(header, metadata, database, &resolved);
-    drop(resolved);
-    // No group is ever opened, so the size is never read.
-    let sizing = Sizing {
-        group_size: ROW_GROUP_DEFAULT_SIZE_BYTES,
-        cap: None,
-        min_rows: None,
-        max_rows: None,
-        record: GroupSizing::Stated,
-    };
-    let mut gatherer = Gatherer::block(sizing, Vec::new(), charge);
-    gatherer.gathers = false;
-    gatherer.checks = Some(checks);
-    gatherer.charge_held();
-    Box::new(gatherer)
-}
+use crate::statistics::stored::{declared_column, stored_resolution};
 
 /// What a strict parse checks each of `header`'s columns by, positionally:
 /// its comparison under `resolved`, which is what names the type a field is

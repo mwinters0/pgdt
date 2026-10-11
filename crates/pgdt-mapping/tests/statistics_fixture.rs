@@ -24,7 +24,7 @@ use pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 
 use pgdt_model::{DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES};
 
-use pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES;
+use pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES;
 
 mod common;
 use common::{VERSIONS, statistics_fixture};

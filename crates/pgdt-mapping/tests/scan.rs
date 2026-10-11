@@ -10,7 +10,8 @@ use pgdt_core::{decode_field, encode_field, split_fields};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{Event, ScanOptions, scan};
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
-use pgdt_query::{StatisticsRequest, build_index, map_file};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
 
 mod common;
 use common::{edge_cases, edge_cases_fixture, types_fixture};

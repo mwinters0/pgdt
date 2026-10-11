@@ -12,7 +12,6 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_cancellation;
-use pgdt_dump::internal::{CensusPlan, RegionScan, scan_region};
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, WaitPolicy};
 use pgdt_model::internal::{BlockCensusExt, BlockStatisticsExt, FieldRefusalExt};
@@ -21,23 +20,25 @@ use pgdt_model::{
     IgnoredRefusals, PostgresInvalidValues, SpanBody, internal::BlockObserver,
 };
 
-use super::map::{SaveThrottle, cancelled_read, merge_ignored, report_shortfall};
-use crate::gather;
-use crate::statistics::{StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term};
+use crate::forward::{SaveThrottle, cancelled_read, report_shortfall};
+use crate::interior::{CensusPlan, RegionScan, scan_region};
+use crate::statistics::account::{StatisticsAccount, Term};
+use crate::statistics::gather;
+use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
 
 /// What [`backfill_statistics`] did.
-pub(super) struct BackfillRun {
-    pub(super) lacking: usize,
-    pub(super) reread: usize,
+pub(crate) struct BackfillRun {
+    pub(crate) lacking: usize,
+    pub(crate) reread: usize,
     /// The blocks re-read only because no strict parse had checked them, or
     /// also for that.
-    pub(super) checked: usize,
-    pub(super) interrupted: bool,
+    pub(crate) checked: usize,
+    pub(crate) interrupted: bool,
 }
 
 /// Which blocks [`backfill_statistics`] re-reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Backfill {
+pub(crate) enum Backfill {
     /// Every block lacking what the request asks for, and under
     /// [`PostgresInvalidValues::Strict`] every block no strict parse checked:
     /// the pass once the map has reached EOF.
@@ -51,21 +52,21 @@ pub(super) enum Backfill {
 
 /// Re-read every block of a map that has reached EOF which lacks what
 /// `statistics` asks for, in file order, storing each block's statistics as it
-/// closes and saving through a [`SaveThrottle`] as [`map_forward`](super::map::map_forward) does; an
+/// closes and saving through a [`SaveThrottle`] as [`map_forward`](crate::forward::map_forward) does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did.
 ///
 /// Deficiency register: `deficiency: KD37` — that is true of the flag and of a
 /// dropped read this pass makes itself ([`observe_rows`]), and not of one the
-/// leader dispatched: [`reread_block`]'s `leader::scan_region` propagates, so a
+/// leader dispatched: [`reread_block`]'s [`scan_region`] propagates, so a
 /// source that answers a cancellation by failing its read ends a `parse` as
 /// `Error::ScanCancelled`, banking nothing since the throttle's last save, where the same Ctrl-C during the
 /// mapping pass is an interrupted run ([`cancelled_read`],
-/// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`](super::map::map_file) already
+/// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`](crate::map_file) already
 /// carries for the pass's own leader reads, here as well. **(c) unowned**;
 /// promoted by a parallel remote `parse` seen to error on Ctrl-C after its map
 /// reached EOF, or in a strict one's check of a map short of it, which
-/// [`map_file`](super::map::map_file) runs through here before mapping on.
+/// [`map_file`](crate::map_file) runs through here before mapping on.
 ///
 /// **A block lacking statistics was loaded, or broke a stated maximum**: a
 /// block this pass mapped holds what its own request asked, except for a
@@ -80,7 +81,7 @@ pub(super) enum Backfill {
 /// whichever runs built the map. `which` says whether this is that pass alone
 /// ([`Backfill::Unchecked`]).
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn backfill_statistics(
+pub(crate) async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
@@ -251,7 +252,7 @@ pub(super) async fn backfill_statistics(
 /// groups predicted, and one whose rows cluster can miss it there. Nothing
 /// reads such a block again, so every run under that maximum says what it
 /// keeps rather than what it will fix.
-pub(super) fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
+pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
     let Some(max_rows) = statistics.max_rows() else { return };
     for block in index.blocks() {
         let Some(held) = block.statistics.as_deref() else { continue };
@@ -268,7 +269,7 @@ pub(super) fn report_density_shortfall(statistics: &StatisticsRequest, index: &D
 
 /// **Say which blocks hold no statistics because the allowance could not hold
 /// them**, one line each, and answer how many — what
-/// [`MapRun::declined_statistics`](super::map::MapRun::declined_statistics) carries.
+/// [`MapRun::declined_statistics`](crate::MapRun::declined_statistics) carries.
 ///
 /// **Every run under an allowance says it, not only the run that declined**: a
 /// block's decline is recorded in the map ([`CopyBlock::statistics_declined`])
@@ -276,7 +277,7 @@ pub(super) fn report_density_shortfall(statistics: &StatisticsRequest, index: &D
 /// run that has to say what it is leaving and what would fix it
 /// (`docs/design/decisions.md`, "D85"). A pass that gathers nothing says
 /// nothing: the blocks it did not ask about are none of its business.
-pub(super) fn report_statistics_declines(
+pub(crate) fn report_statistics_declines(
     statistics: &StatisticsRequest,
     allowance: Option<u64>,
     index: &DumpIndex,
@@ -304,9 +305,9 @@ pub(super) fn report_statistics_declines(
 }
 
 /// The hints every top-level read loop announces before its first read
-/// (`pgdt_dump::scan`, [`map_forward`](super::map::map_forward)): its chunk length, its budget, the
+/// (`pgdt_dump::scan`, [`map_forward`](crate::forward::map_forward)): its chunk length, its budget, the
 /// caller's cancellation where there is one, and that it grants no wait.
-pub(super) fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
+pub fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
     source.hint_read_size(scan_options.chunk_size_bytes);
     source.hint_parallelism(scan_options.parallelism);
     announce_cancellation(source, scan_options);
@@ -344,7 +345,7 @@ pub struct BlockReread {
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —
-/// the public entry point onto the same per-block re-read [`map_file`](super::map::map_file)'s
+/// the public entry point onto the same per-block re-read [`map_file`](crate::map_file)'s
 /// back-fill runs over every block lacking what its request asks for, this one
 /// charging no account and naming no cache. `metadata` is the map's, whole-file where
 /// it can be, which the block's columns are resolved against as a mapping pass
@@ -365,7 +366,7 @@ pub struct BlockReread {
 /// **A block that no longer ends where the map says is refused**,
 /// [`Error::CachedBlockChanged`], rather than given statistics describing other
 /// bytes than its map does. It names no cache, this entry point being handed
-/// none; [`map_file`](super::map::map_file)'s back-fill names the one it loaded. **A field its
+/// none; [`map_file`](crate::map_file)'s back-fill names the one it loaded. **A field its
 /// type's `*_in` refuses fails the re-read** in a column `backfill`'s request
 /// tracks — in every column under [`pgdt_model::PostgresInvalidValues::Strict`],
 /// which checks every field ([`BlockReread::checked`]) — with
@@ -460,7 +461,7 @@ async fn reread_block(
 /// [`ScanOptions::cancel`] stopping it first; a block no longer ending where
 /// the map says is [`Error::CachedBlockChanged`], naming `cache_path`.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn reread_rows(
+pub async fn reread_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache_path: Option<&Path>,
@@ -517,7 +518,7 @@ pub(super) async fn reread_rows(
 /// there is one, and answer the `CopyEnd` the scanner met with the census —
 /// `None` where
 /// [`ScanOptions::cancel`] was set first, read once per chunk as
-/// [`map_forward`](super::map::map_forward) reads it.
+/// [`map_forward`](crate::forward::map_forward) reads it.
 async fn observe_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -580,4 +581,14 @@ async fn observe_rows(
             });
         }
     }
+}
+
+/// Merge what a re-read of a block went past into the block's record
+/// ([`IgnoredRefusals::merge`]): a column the re-read gathered whole holds
+/// its full count either way, and one it did not, or gathered only up to a
+/// decline, keeps what the fuller read met.
+fn merge_ignored(record: &mut Option<Box<IgnoredRefusals>>, reread: Option<IgnoredRefusals>) {
+    let mut merged = record.take().map(|record| *record);
+    IgnoredRefusals::merge(&mut merged, reread);
+    *record = merged.map(Box::new);
 }

@@ -542,7 +542,7 @@ class StatisticsFigures(unittest.TestCase):
         self.assertNotEqual(measure.STATISTICS_MEMORY, measure.Config().memory)
 
     def test_the_group_size_stated_is_the_librarys_default(self):
-        src = (measure.REPO / "crates/pgdt-query/src/statistics.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-mapping/src/statistics/request.rs").read_text()
         self.assertEqual(measure.ROW_GROUP_SIZE, 1 << 20)
         self.assertIn("pub const ROW_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;", src)
 
@@ -2825,7 +2825,7 @@ class ParallelFigures(unittest.TestCase):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
             with self.subTest(figure=fid):
                 depends = measure.SELECTABLE_BY_ID[fid].depends
-                self.assertIn("crates/pgdt-dump/src/leader.rs", depends)
+                self.assertIn("crates/pgdt-mapping/src/interior.rs", depends)
                 self.assertIn("vendor/xz-seek/src/", depends)
                 self.assertIn("crates/pgdt-io/src/source/xz.rs", depends)
 
@@ -3758,10 +3758,10 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_line_it_reads_still_carries_that_pair_in_that_order(self):
         # The flagless axis rests on a log line, which is the one input here
-        # that is not a constant: a field renamed or reordered in `stream/map.rs`
+        # that is not a constant: a field renamed or reordered in `forward.rs`
         # turns every reader count into a missing key, and the figure would fail
         # a sitting in rather than at its first second.
-        src = (measure.REPO / "crates/pgdt-query/src/stream/map.rs").read_text()
+        src = (measure.REPO / "crates/pgdt-mapping/src/forward.rs").read_text()
         event = src[: src.index('"scan started"')]
         jobs = event.rindex("jobs = ")
         budget = event.rindex("memory_bytes = ")

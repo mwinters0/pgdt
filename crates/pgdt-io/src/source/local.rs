@@ -22,7 +22,7 @@ use super::{ByteRangeSource, WaitPolicy};
 /// ([`LocalFileSource::partitions`]).
 ///
 /// **A partition is not one chunk, because a worker reads its piece and then
-/// one chunk more**: `pgdt_dump::leader::scan_region` reads `[start, end)` and
+/// one chunk more**: `pgdt_mapping::interior::scan_region` reads `[start, end)` and
 /// a chunk-sized tail read follows to finish the line ending at or past `end`,
 /// so those bytes are the next partition's body read a second time
 /// (`docs/design/decisions.md`, "D52"). The waste is `chunk / partition`, paid
@@ -136,7 +136,7 @@ impl ByteRangeSource for LocalFileSource {
     /// [`POOL_MAX_BYTES`] is a partition on its own.
     ///
     /// **It is the cut size, and not what a partition holds.**
-    /// `pgdt_dump::leader::scan_region` reads a [`PartitionRead::Chunked`](crate::PartitionRead::Chunked)
+    /// `pgdt_mapping::interior::scan_region` reads a [`PartitionRead::Chunked`](crate::PartitionRead::Chunked)
     /// piece one announced chunk at a time and the interior split caps what is
     /// outstanding at [`BufferPool::slots`], so this source holds
     /// `POOL_DEPTH` chunks flat in the reader count while

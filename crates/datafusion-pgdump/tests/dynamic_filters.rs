@@ -48,8 +48,10 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::Finding;
-use pgdt_query::{RowEvaluation, StatisticsRequest, StatisticsSelection, map_file};
+use pgdt_query::RowEvaluation;
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};

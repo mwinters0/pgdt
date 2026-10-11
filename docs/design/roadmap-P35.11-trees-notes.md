@@ -277,61 +277,7 @@ downward. **The dictionary is the column group's texts**:
 `DictionaryGatherer::observe` reads only `GroupState`'s texts, so it is folded
 into `column`.
 
-The 35.18 cut's moves, projected against `2ea0056b` with no cycle:
-
-```moves
-pgdt-query::stream::map -> pgdt-mapping::whole_file
-pgdt-query::stream::map::map_forward -> pgdt-mapping::forward
-pgdt-query::stream::map::splice -> pgdt-mapping::forward
-pgdt-query::stream::map::close_copy_block -> pgdt-mapping::forward
-pgdt-query::stream::map::BlockClose -> pgdt-mapping::forward
-pgdt-query::stream::map::MapStop -> pgdt-mapping::forward
-pgdt-query::stream::map::Pass -> pgdt-mapping::forward
-pgdt-query::stream::map::target_settled -> pgdt-mapping::forward
-pgdt-query::stream::map::cancelled_read -> pgdt-mapping::forward
-pgdt-query::stream::map::report_shortfall -> pgdt-mapping::forward
-pgdt-query::stream::map::SaveThrottle -> pgdt-mapping::forward::save
-pgdt-query::stream::map::SAVE_THROTTLE_K -> pgdt-mapping::forward::save
-pgdt-query::stream::map::merge_ignored -> pgdt-mapping::backfill
-pgdt-query::stream::backfill -> pgdt-mapping::backfill
-pgdt-dump::leader -> pgdt-mapping::interior
-pgdt-dump::leader::scan_region -> pgdt-mapping::interior::region
-pgdt-dump::leader::run_region -> pgdt-mapping::interior::region
-pgdt-dump::leader::scan_partition -> pgdt-mapping::interior::region
-pgdt-dump::leader::shortfall -> pgdt-mapping::interior::region
-pgdt-dump::leader::Shortfall -> pgdt-mapping::interior::region
-pgdt-dump::leader::BoundBy -> pgdt-mapping::interior::region
-pgdt-dump::leader::RegionOutcome -> pgdt-mapping::interior::region
-pgdt-dump::leader::RegionScan -> pgdt-mapping::interior::region
-pgdt-query::statistics -> pgdt-mapping::statistics::request
-pgdt-query::statistics::AccountState -> pgdt-mapping::statistics::account
-pgdt-query::statistics::Charge -> pgdt-mapping::statistics::account
-pgdt-query::statistics::StatisticsAccount -> pgdt-mapping::statistics::account
-pgdt-query::statistics::STATISTICS_ACCOUNT_CHARGE_STEP -> pgdt-mapping::statistics::account
-pgdt-query::statistics::StatisticsHeld -> pgdt-mapping::statistics::account
-pgdt-query::statistics::StatisticsTerms -> pgdt-mapping::statistics::account
-pgdt-query::statistics::TERMS -> pgdt-mapping::statistics::account
-pgdt-query::statistics::Term -> pgdt-mapping::statistics::account
-pgdt-query::gather::tracking -> pgdt-mapping::statistics::stored
-pgdt-query::gather::column::Summand -> pgdt-mapping::statistics::stored
-pgdt-query::gather -> pgdt-mapping::statistics::gather
-pgdt-query::gather::tracking::observer_for -> pgdt-mapping::statistics::gather
-pgdt-query::gather::tracking::observer_tracking -> pgdt-mapping::statistics::gather
-pgdt-query::gather::tracking::bounded_columns -> pgdt-mapping::statistics::gather
-pgdt-query::gather::strict::checker -> pgdt-mapping::statistics::gather  # builds a Gatherer, which reads strict
-pgdt-query::gather::gatherer -> pgdt-mapping::statistics::gather::gatherer
-pgdt-query::gather::column -> pgdt-mapping::statistics::gather::column
-pgdt-query::gather::bounds -> pgdt-mapping::statistics::gather::bounds
-pgdt-query::gather::order -> pgdt-mapping::statistics::gather::order
-pgdt-query::gather::dictionary -> pgdt-mapping::statistics::gather::column
-pgdt-query::gather::charge -> pgdt-mapping::statistics::gather::charge
-pgdt-query::gather::strict -> pgdt-mapping::statistics::gather::strict
-pgdt-query::gather::gatherer::Observed -> pgdt-mapping::statistics::gather::column
-pgdt-query::gather::gatherer::Refused -> pgdt-mapping::statistics::gather::bounds  # read by column and gatherer, which read bounds
-pgdt-query::gather::bounds::Clipped -> pgdt-mapping::statistics::gather::clip  # in bounds it made order <-> bounds
-pgdt-query::gather::bounds::CLIP_BYTES -> pgdt-mapping::statistics::gather::clip
-pgdt-query::gather::bounds::text_prefix -> pgdt-mapping::statistics::gather::clip
-```
+35.18 cut it.
 
 ## pgdt-query
 

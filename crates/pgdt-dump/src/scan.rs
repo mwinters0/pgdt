@@ -149,7 +149,7 @@ pub enum Event<'a> {
 /// How a `COPY` row's line ends, as `CopyReadLineText` reads it (I91): by the
 /// first raw CR no backslash escapes, or by its LF where it holds none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RowEnding {
+pub enum RowEnding {
     /// No unescaped CR: the row ends at its LF.
     Lf,
     /// The one unescaped CR is the byte before the LF.
@@ -173,7 +173,7 @@ impl RowEnding {
     /// What a restore says of a row ending as `self` in a block whose first row
     /// ended as `block` — `CopyReadLineText`'s refusal, or `None` where it reads
     /// the row. A block of bare-CR rows is checked for nothing (`KD101`).
-    pub(crate) fn refused_in(self, block: Self) -> Option<RowEndingRefusal> {
+    pub fn refused_in(self, block: Self) -> Option<RowEndingRefusal> {
         match (block, self) {
             // deficiency: KD101 — `CopyReadLineText` splits such a block's
             // rows at each unescaped CR and ends it at `\.` CR, discarding
@@ -185,7 +185,7 @@ impl RowEnding {
             // be refused where PostgreSQL reads it. Not refused as a
             // shortfall: that would fail the whole parse, and this match is
             // PostgreSQL's refusals alone. Reading one needs rows framed by
-            // CR in the leader's resync (`leader::scan_piece`) and a query
+            // CR in the leader's resync (`pgdt_mapping`'s `interior::scan_piece`) and a query
             // segment's (`stream::first_row_start`) too, each of which
             // searches for an LF such a block's interior does not hold.
             (Self::Cr, _) => None,
@@ -205,14 +205,40 @@ fn escaped(line: &[u8], at: usize) -> bool {
 
 /// The rows of one piece of a block's interior, as their endings stand
 /// against each other: what the leader holds against the block's first row
-/// (`crate::leader::scan_piece`).
+/// (`pgdt_mapping`'s `interior::scan_piece`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct PieceEndings {
+pub struct PieceEndings {
     /// The ending of the piece's first row, and that row's offset.
-    pub(crate) first: Option<(RowEnding, u64)>,
+    pub first: Option<(RowEnding, u64)>,
     /// The first row ending otherwise than `first`: its index among the
     /// piece's rows, its offset and its ending.
-    pub(crate) mismatch: Option<(u64, u64, RowEnding)>,
+    pub mismatch: Option<(u64, u64, RowEnding)>,
+}
+
+/// What the interior split asks of a [`CopyScanner`] beyond its API: a piece
+/// of a block's interior scanned with its rows' endings recorded rather than
+/// checked, the piece being unable to tell its first row from the block's.
+pub trait CopyScannerExt {
+    fn recording_endings(self) -> Self;
+    fn piece_endings(&self) -> PieceEndings;
+}
+
+impl CopyScannerExt for CopyScanner {
+    /// The same scanner, recording how the rows of the block it was resumed
+    /// in end rather than checking nothing, for
+    /// [`piece_endings`](CopyScannerExt::piece_endings).
+    fn recording_endings(mut self) -> Self {
+        self.endings = Endings::Recorded(PieceEndings::default());
+        self
+    }
+
+    /// What a scanner [`recording_endings`](CopyScannerExt::recording_endings) found.
+    fn piece_endings(&self) -> PieceEndings {
+        match &self.endings {
+            Endings::Recorded(piece) => piece.clone(),
+            Endings::Unchecked | Endings::Refused { .. } => PieceEndings::default(),
+        }
+    }
 }
 
 /// How a scanner holds a block's rows to the ending its first row fixed.
@@ -313,21 +339,6 @@ impl CopyScanner {
             None => State::Outside,
         };
         Self { base: offset, pos: 0, state, lexer: Lexer::new(), endings: Endings::Unchecked }
-    }
-
-    /// The same scanner, recording how the rows of the block it was resumed
-    /// in end rather than checking nothing, for [`piece_endings`](Self::piece_endings).
-    pub(crate) fn recording_endings(mut self) -> Self {
-        self.endings = Endings::Recorded(PieceEndings::default());
-        self
-    }
-
-    /// What a scanner [`recording_endings`](Self::recording_endings) found.
-    pub(crate) fn piece_endings(&self) -> PieceEndings {
-        match &self.endings {
-            Endings::Recorded(piece) => piece.clone(),
-            Endings::Unchecked | Endings::Refused { .. } => PieceEndings::default(),
-        }
     }
 
     /// The same scanner, lexing under the `standard_conforming_strings` a
@@ -721,7 +732,7 @@ pub struct ScanOptions {
     ///
     /// Chunk granularity — a window of pieces while the leader holds a region
     /// — not `CopyEnd` granularity, and read by
-    /// [`pgdt_query::map_file`]'s two passes alone — the mapping loop and
+    /// [`pgdt_mapping::map_file`]'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
     /// built on it never read the polled bit
@@ -758,13 +769,13 @@ pub struct ScanOptions {
     /// recorded in the map as having declined under this number
     /// ([`pgdt_model::CopyBlock::statistics_declined`]).
     ///
-    /// **Read by [`pgdt_query::map_file`] alone**: a query gathers nothing,
+    /// **Read by [`pgdt_mapping::map_file`] alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
     pub statistics_allowance_bytes: Option<u64>,
     /// What gathering does with a field its type's `*_in` refuses: fails the
     /// pass at the first, by default, or goes on past it, or checks every
-    /// field ([`PostgresInvalidValues`]). Read by [`pgdt_query::map_file`] and
-    /// [`pgdt_query::gather_block_statistics`] alone, as gathering is; a
+    /// field ([`PostgresInvalidValues`]). Read by [`pgdt_mapping::map_file`] and
+    /// [`pgdt_mapping::gather_block_statistics`] alone, as gathering is; a
     /// query's reads are [`pgdt_query::QueryOptions::postgres_invalid_values`]'.
     pub postgres_invalid_values: PostgresInvalidValues,
 }

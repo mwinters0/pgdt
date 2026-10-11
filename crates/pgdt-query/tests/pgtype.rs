@@ -15,8 +15,9 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::ScanOptions;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::build_index;
 use pgdt_model::{DumpMetadata, TableName};
-use pgdt_query::{QueryOptions, build_index, table_schema};
+use pgdt_query::{QueryOptions, table_schema};
 
 mod common;
 use common::{all_fixtures, multidb_fixture, types_fixture};
@@ -459,8 +460,9 @@ async fn every_column_resolves_alike_with_every_identifier_quoted() {
 async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
     use pgdt_core::Error;
     use pgdt_dump::cache::CacheMode;
+    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_mapping::{map_file, strict_unchecked};
     use pgdt_model::PostgresInvalidValues;
-    use pgdt_query::{StatisticsRequest, map_file, strict_unchecked};
     let strict = ScanOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
         ..ScanOptions::default()

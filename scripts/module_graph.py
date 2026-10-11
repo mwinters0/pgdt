@@ -110,20 +110,6 @@ OWED: dict[frozenset[str], str] = {
             "pgdt-query::summary",
         }
     ): "P35.19 and P35.20, whose tree P35.11's design says the stream's cycles fall to",
-    frozenset(
-        {
-            "pgdt-query::gather::bounds",
-            "pgdt-query::gather::column",
-            "pgdt-query::gather::dictionary",
-            "pgdt-query::gather::gatherer",
-            "pgdt-query::gather::order",
-            "pgdt-query::gather::strict",
-            "pgdt-query::gather::tracking",
-        }
-    ): "P35.18, `gather/` redrawn as it moves",
-    frozenset({"pgdt-query::stream::backfill", "pgdt-query::stream::map"}): (
-        "P35.18, the mapping pass carved with `forward` and `whole_file` above `backfill`"
-    ),
 }
 
 #: How many references are shown for each edge of a cycle.

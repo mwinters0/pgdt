@@ -2055,6 +2055,7 @@ dependencies = [
  "pgdt-core",
  "pgdt-dump",
  "pgdt-io",
+ "pgdt-mapping",
  "pgdt-model",
  "pgdt-query",
  "tempfile",
@@ -3636,6 +3637,7 @@ dependencies = [
  "pgdt-core",
  "pgdt-dump",
  "pgdt-io",
+ "pgdt-mapping",
  "pgdt-model",
  "pgdt-query",
  "serde",
@@ -3710,6 +3712,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgdt-mapping"
+version = "0.1.0"
+dependencies = [
+ "arrow-schema",
+ "bytes",
+ "futures",
+ "insta",
+ "memchr",
+ "pgdt-codec",
+ "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
+ "pgdt-model",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pgdt-model"
 version = "0.1.0"
 dependencies = [
@@ -3736,6 +3758,7 @@ dependencies = [
  "pgdt-core",
  "pgdt-dump",
  "pgdt-io",
+ "pgdt-mapping",
  "pgdt-model",
  "serde",
  "tempfile",

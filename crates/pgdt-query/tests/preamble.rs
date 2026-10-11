@@ -12,9 +12,11 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
 use pgdt_model::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdt_model::{DatabaseMetadata, DumpMetadata, PostgresInvalidValues};
-use pgdt_query::{QueryOptions, StatisticsRequest, build_index, map_file, table_stream};
+use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
@@ -1003,7 +1005,7 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
 #[tokio::test]
 async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() {
     use pgdt_codec::compare::Unchecked;
-    use pgdt_query::strict_unchecked;
+    use pgdt_mapping::strict_unchecked;
     fn base<'a>(column: &'a str, declared: &str) -> (&'a str, &'a str, String, Unchecked) {
         (column, "", declared.to_string(), Unchecked::BaseType)
     }
@@ -1021,7 +1023,7 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
                     assert!(!unchecked.declared, "{label}: {table}");
                     assert_eq!(
                         unchecked,
-                        pgdt_query::StrictUnchecked::default(),
+                        pgdt_mapping::StrictUnchecked::default(),
                         "{label}: {table}"
                     );
                     continue;
@@ -1108,7 +1110,7 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
 /// neither, and nothing else is named in this schema.
 #[tokio::test]
 async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
-    use pgdt_query::{StrictUnchecked, UncheckedBound, strict_unchecked};
+    use pgdt_mapping::{StrictUnchecked, UncheckedBound, strict_unchecked};
     let bound = |partition: &str, parent: &str, bound: &str| UncheckedBound {
         partition: partition.to_string(),
         parent: parent.to_string(),
@@ -1185,7 +1187,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
 #[tokio::test]
 async fn a_hand_written_partition_hierarchy_is_named_per_block() {
     use pgdt_codec::compare::Unchecked;
-    use pgdt_query::{UncheckedBound, strict_unchecked};
+    use pgdt_mapping::{UncheckedBound, strict_unchecked};
     let dir = tempfile::tempdir().unwrap();
     let unchecked_of = |text: &str| {
         let path = dir.path().join("dump.sql");

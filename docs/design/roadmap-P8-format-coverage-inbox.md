@@ -133,7 +133,7 @@ updates state and reports whether the run so far is complete, but does not
 return the offset of the terminating `;`. Adding that is a method on an
 existing type, and the lines it walks are the ones the scanner surfaces.
 A `$$` inside an `INSERT` row is proved over a hand-built dump only
-(`crates/pgdt-query/tests/map.rs`, `an_insert_run_holding_a_dollar_pair_keeps_every_row`):
+(`crates/pgdt-mapping/tests/map.rs`, `an_insert_run_holding_a_dollar_pair_keeps_every_row`):
 the objects fixture holds `$$` in a comment, a default and a quoted name, and
 an `--inserts` row holding one waits for this reader.
 

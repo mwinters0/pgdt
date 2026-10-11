@@ -488,6 +488,26 @@ class Literals(unittest.TestCase):
             )
 
 
+    def test_a_module_included_by_path_is_followed_from_the_declaring_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            write(
+                repo,
+                "q/tests/common/mod.rs",
+                '#[path = "../../../p/tests/common/mod.rs"]\nmod vocabulary;\n',
+            )
+            write(repo, "p/tests/common/mod.rs", "pub mod refused;\n")
+            write(repo, "p/tests/common/refused.rs", "")
+            self.assertEqual(
+                check.module_files(repo, "q/tests/common/mod.rs"),
+                [
+                    "q/tests/common/mod.rs",
+                    "p/tests/common/mod.rs",
+                    "p/tests/common/refused.rs",
+                ],
+            )
+
+
 class CodeOf(unittest.TestCase):
     """What a comment-only change may touch, and what it may not."""
 
@@ -763,12 +783,12 @@ class RealWorkspace(unittest.TestCase):
     def test_a_library_reads_its_data_and_not_its_whole_package(self):
         # `copy.rs` holds the value "." and `cache.rs` the template
         # ".{}-{}.tmp", each of which read as the package directory once;
-        # `leader.rs`'s tests read the hand-written dump beside another
-        # crate's tests.
+        # `interior.rs`'s tests read the hand-written dump its crate's
+        # integration tests read.
         libs = {p.name: t for p in self.packages for t in p.targets if t.kind == "lib"}
-        prefixes = self.prefixes[libs["pgdt-dump"].binary_id]
-        self.assertIn("crates/pgdt-query/tests/data/edge_cases.sql", prefixes)
-        for name in ("pgdt-core", "pgdt-dump"):
+        prefixes = self.prefixes[libs["pgdt-mapping"].binary_id]
+        self.assertIn("crates/pgdt-mapping/tests/data/edge_cases.sql", prefixes)
+        for name in ("pgdt-core", "pgdt-dump", "pgdt-mapping"):
             prefixes = self.prefixes[libs[name].binary_id]
             self.assertNotIn(f"crates/{name}", prefixes)
             self.assertNotIn(f"crates/{name}/src", prefixes)

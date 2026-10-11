@@ -171,7 +171,7 @@ impl WorkerMemory {
 /// is the block pool's depth and — capped by what the bytes afford — how many
 /// sub-streams a partitioned replay is cut into
 /// (`pgdt_query::table_stream_partitions`), a ceiling rather than a request. The
-/// third is `pgdt_dump::leader::scan_region`
+/// third is `pgdt_mapping::interior::scan_region`
 /// (`docs/design/decisions.md`, "D48").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parallelism {
@@ -521,7 +521,7 @@ pub fn memory_budget_display(p: Parallelism) -> String {
 /// ([`WorkerMemory::affords`], and
 /// `docs/design/decisions.md`, "D4"). **Shared with the leader**, which asks
 /// the same question of an open `COPY` block's interior
-/// (`pgdt_dump::leader::scan_region`, and `docs/design/decisions.md`, "D48").
+/// (`pgdt_mapping::interior::scan_region`, and `docs/design/decisions.md`, "D48").
 pub fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
     let jobs = parallelism.jobs();
     match parallelism.memory_bytes() {

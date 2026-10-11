@@ -49,10 +49,11 @@ nulls.
 `arrow-cast` still printing through `chrono` (`../status/upstream.md`, "UF2").
 
 
-## The library P24 binds is six crates with no facade
+## The library P24 binds is seven crates with no facade
 
 **Fact.** P35 splits `pgdump_query` into `pgdt-core`, `pgdt-model`,
-`pgdt-io`, `pgdt-dump`, `pgdt-codec` and `pgdt-query`, and retires the
+`pgdt-io`, `pgdt-dump`, `pgdt-codec`, `pgdt-mapping` and `pgdt-query`, and
+retires the
 `pgdump_query` facade rather than keeping it as a public face; what a
 boundary forces public that is not API sits in each crate's `internal`
 module, and no embedder may name one

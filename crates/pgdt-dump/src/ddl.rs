@@ -101,7 +101,7 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 }
 
 /// `\connect <name>` — a bare prefix check on a line the scanner already
-/// holds. Exposed to `pgdt_query::stream`'s live scan too:
+/// holds. Exposed to `pgdt_mapping`'s live scan too:
 /// tracking which database a `CopyBlock` belongs to needs only the name a
 /// `\connect` yields, never a column type.
 ///

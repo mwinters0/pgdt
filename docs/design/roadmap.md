@@ -53,7 +53,7 @@ is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
 [`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
-six crates, fix the direction dependencies may point, and pre-answer the
+seven crates, fix the direction dependencies may point, and pre-answer the
 cross-crate phases below: what statistics may persist and how they parse a
 value is settled there, and the remote source, as the ones P15 and P18 add, is io's. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as

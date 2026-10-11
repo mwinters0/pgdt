@@ -38,8 +38,10 @@ use pgdt_codec::{
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
-use pgdt_query::{StatisticsRequest, column_divergences, map_file};
+use pgdt_query::column_divergences;
 
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")

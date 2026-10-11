@@ -25,6 +25,8 @@ BASE: dict[str, str] = {
     "pgdt-codec/src/key.rs": "pub struct ValueKey;\n",
     "pgdt-codec/src/nested.rs": "pub struct ArrayLiteral;\n",
     "pgdt-codec/src/pgtype.rs": "pub enum TypeOutcome {}\n",
+    "pgdt-mapping/src/lib.rs": "pub mod statistics;\n",
+    "pgdt-mapping/src/statistics.rs": "pub struct StatisticsRequest;\n",
 }
 
 
@@ -108,6 +110,11 @@ class Arrow(unittest.TestCase):
         self.assertEqual(problems(deps=ok), [])
         found = problems(deps={"pgdt-codec": [("arrow", None)]})
         self.assertEqual(found, ["pgdt-codec depends on arrow (D74)"])
+
+    def test_the_mapping_pass_takes_the_schema_crate_but_not_arrow(self):
+        self.assertEqual(problems(deps={"pgdt-mapping": [("arrow-schema", None)]}), [])
+        found = problems(deps={"pgdt-mapping": [("arrow", None)]})
+        self.assertEqual(found, ["pgdt-mapping depends on arrow (D74)"])
 
     def test_the_query_layer_takes_arrow(self):
         self.assertEqual(problems(deps={"pgdt-query": [("arrow", None)]}), [])

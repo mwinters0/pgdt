@@ -476,7 +476,7 @@ fn unescape_field(field: &[u8]) -> Result<String> {
 /// convenience only; `COPY TO` never produces them, so `encode_field` doesn't
 /// need to reproduce them for a round trip against real `pg_dump` output to
 /// hold — see `copy_text_escaping_round_trips_through_postgres` in
-/// `tests/scan.rs`. `None` encodes as the `\N` null marker.
+/// `pgdt-mapping`'s `tests/scan.rs`. `None` encodes as the `\N` null marker.
 pub fn encode_field(field: Option<&str>) -> Vec<u8> {
     let Some(s) = field else {
         return COPY_TEXT_NULL_MARKER.to_vec();
@@ -736,7 +736,7 @@ mod tests {
         // them (postgres-invariants.md I15), so encode_field only needs to
         // invert the six mnemonics, the tab delimiter's among them, and `\\` -- exercised
         // against real pg_dump output in
-        // `copy_text_escaping_round_trips_through_postgres` (tests/scan.rs).
+        // `copy_text_escaping_round_trips_through_postgres` (`pgdt-mapping`'s `tests/scan.rs`).
         for field in [None, Some(""), Some("plain"), Some("a\\b\tc\nd\re\u{8}f\u{c}g\u{b}h")] {
             let encoded = encode_field(field);
             assert_eq!(decode_field(&encoded).unwrap().as_deref(), field);

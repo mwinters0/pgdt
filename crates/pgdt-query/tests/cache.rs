@@ -16,10 +16,12 @@ use pgdt_io::{
     ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
     open_local,
 };
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::DiagnosticKind;
 use pgdt_model::SpanBody;
-use pgdt_query::{QueryOptions, StatisticsRequest, build_index, map_file, table_stream};
+use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
@@ -1200,8 +1202,9 @@ mod encoding {
         read_cache_file, write_beside,
     };
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
+    use pgdt_mapping::map_file;
+    use pgdt_mapping::statistics::StatisticsRequest;
     use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
-    use pgdt_query::{StatisticsRequest, map_file};
 
     /// Real `pg_dump` output whose columns gather bounds and dictionaries.
     fn statistics_fixture() -> PathBuf {

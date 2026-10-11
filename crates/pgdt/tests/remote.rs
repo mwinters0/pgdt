@@ -24,7 +24,7 @@ use pgdt_io::{
     ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, open,
     open_local,
 };
-use pgdt_query::StatisticsRequest;
+use pgdt_mapping::statistics::StatisticsRequest;
 
 /// The dump every test here serves: real `pg_dump` output, so a scan over it
 /// finds the same tables a local read finds.
@@ -730,9 +730,10 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     });
 
     let started = Instant::now();
-    let run = pgdt_query::map_file(source.as_ref(), &options, &mode, &StatisticsRequest::METADATA)
-        .await
-        .expect("a cancelled read is not an error");
+    let run =
+        pgdt_mapping::map_file(source.as_ref(), &options, &mode, &StatisticsRequest::METADATA)
+            .await
+            .expect("a cancelled read is not an error");
     asker.await.unwrap();
 
     assert!(run.interrupted, "the run says it stopped short");

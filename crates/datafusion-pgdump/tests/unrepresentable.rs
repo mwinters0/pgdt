@@ -57,8 +57,10 @@ use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, Finding, SpanBody, Unrepresentable};
-use pgdt_query::{RowEvaluation, StatisticsRequest, decode_field, map_file};
+use pgdt_query::{RowEvaluation, decode_field};
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};

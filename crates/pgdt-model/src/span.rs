@@ -240,7 +240,7 @@ pub enum SpanBody {
     /// into its owning entry's span (the module docs' "no grouping").
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span
-    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_query::build_map`,
+    /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_mapping::build_map`,
     /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
 }
@@ -311,7 +311,7 @@ pub struct CopyBlock {
     pub checked_in_full: bool,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order, and `None` for a block mapped at the
-    /// [`pgdt_query::StatisticsLevel::Metadata`] level, which records nothing drawn
+    /// [`pgdt_mapping::statistics::StatisticsLevel::Metadata`] level, which records nothing drawn
     /// from its rows (`docs/design/decisions.md`, "D35"). A column that saw no
     /// array-shaped literal holds the default shape, and the vector is empty
     /// only for a header naming no columns. Shorter than `header.columns`
@@ -416,7 +416,7 @@ pub struct DumpIndex {
     /// eager scan.
     pub scanned_through: u64,
     /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` only for
-    /// a `DumpIndex` built by hand rather than by `pgdt_query::build_index`. A derived
+    /// a `DumpIndex` built by hand rather than by `pgdt_mapping::build_index`. A derived
     /// view over `spans` (`pgdt_dump::dump_metadata_from_spans`),
     /// computed once (`docs/design/decisions.md`, "D34").
     pub metadata: Option<DumpMetadata>,

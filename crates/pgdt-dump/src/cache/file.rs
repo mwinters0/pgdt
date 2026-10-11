@@ -183,7 +183,7 @@ pub enum CacheStatus {
     /// (`docs/design/decisions.md`, "D22"). What "not enough" means is
     /// caller-specific: `pgdt info` states the coverage
     /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
-    /// incremental scan (`pgdt_query::map_file`,
+    /// incremental scan (`pgdt_mapping::map_file`,
     /// `pgdt_query::table_stream`, `crate::preamble::preamble_only`) builds
     /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
     /// `total_size`, `compression` and `envelope` are

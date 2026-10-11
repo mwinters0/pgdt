@@ -1,12 +1,10 @@
-use super::bounds::{
-    BYTEA_ESCAPE_HEAD_BYTES, BoundsGatherer, bytea_upper, text_prefix, text_upper,
-};
+use super::bounds::{BYTEA_ESCAPE_HEAD_BYTES, BoundsGatherer, bytea_upper, text_upper};
 use super::charge::{grown_map_heap, map_heap, push_charged, reserve_charged};
+use super::clip::text_prefix;
 use super::column::ColumnGatherer;
 use super::gatherer::{Gatherer, Sizing, density_merges};
-use crate::statistics::StatisticsTerms;
-use crate::statistics::{Charge, StatisticsAccount, Term};
-use arrow::datatypes::DataType;
+use crate::statistics::account::{Charge, StatisticsAccount, StatisticsTerms, Term};
+use arrow_schema::DataType;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::{decode_bytea, render_bytea};
 use pgdt_codec::key::ValueKey;
@@ -353,7 +351,7 @@ fn join_type(kind: &CompareKind) -> DataType {
         CompareKind::Bytea => DataType::Binary,
         CompareKind::Date => DataType::Date32,
         CompareKind::Timestamp { .. } => {
-            DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None)
+            DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None)
         }
         _ => DataType::Utf8View,
     }

@@ -9,8 +9,9 @@ use std::process::Output;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DataBlock, SpanBody};
-use pgdt_query::{StatisticsRequest, map_file};
 
 fn fixture(schema: &str) -> PathBuf {
     common::fixture(&format!("16/{schema}/default.sql"))

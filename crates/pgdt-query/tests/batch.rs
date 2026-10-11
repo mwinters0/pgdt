@@ -1,5 +1,5 @@
 //! End-to-end tests for the row/batch layer over the hand-written
-//! edge-case dump (see `tests/scan.rs` for the same fixture used at the
+//! edge-case dump (see `pgdt-mapping`'s `tests/scan.rs` for the same fixture used at the
 //! event-stream level).
 
 use std::ops::ControlFlow;
@@ -674,7 +674,7 @@ async fn resume_token_from_break_continues_correctly() {
 /// Round-trip check against real `pg_dump` output, batched with a small
 /// `max_rows` so the 132-row `escapes` table crosses several batches: each
 /// batched value must match a value the test computes itself (see
-/// `tests/scan.rs`'s equivalent event-stream test for why — comparing
+/// `pgdt-mapping`'s `tests/scan.rs`'s equivalent event-stream test for why — comparing
 /// against a hand-transcribed literal risks baking in the same misreading
 /// twice). Exercises the zero-copy view path against every escape pg_dump
 /// emits, not just the hand-written edge cases.

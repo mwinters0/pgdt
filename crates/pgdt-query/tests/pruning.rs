@@ -6,7 +6,7 @@
 //! checked over every fixture with generated filters — the phase's
 //! correctness check. That skipping and stopping actually happen is pinned
 //! apart from it, by filters whose skip is known from the `statistics`
-//! fixture's shapes (`tests/statistics_fixture.rs`).
+//! fixture's shapes (`pgdt-mapping`'s `tests/statistics_fixture.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
@@ -21,10 +21,12 @@ use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::{LocalFileSource, Parallelism};
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
-    EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions,
-    StatisticsRequest, map_file, table_stream, table_stream_partitions,
+    EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
+    table_stream_partitions,
 };
 
 mod common;
@@ -1185,9 +1187,11 @@ enum Stop {
 /// a filter no order closes has no entry.
 #[tokio::test]
 async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
-    let (_dir, dump, index) =
-        gathered(&statistics_fixture(16, "default"), pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES)
-            .await;
+    let (_dir, dump, index) = gathered(
+        &statistics_fixture(16, "default"),
+        pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES,
+    )
+    .await;
     let block = index.blocks_for("public.ordered").next().unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
     let source = Recording {
@@ -1413,7 +1417,8 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
     // Past a stop: every row after the stopping row, `20`, holds `0x1F`.
     let dir = tempfile::tempdir().unwrap();
     let dump = with_undecodable(dir.path(), 2000, |id| id > 20);
-    let (_dir, dump, index) = gathered(&dump, pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES).await;
+    let (_dir, dump, index) =
+        gathered(&dump, pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES).await;
     assert_eq!(
         index.blocks_for("public.t").next().unwrap().statistics.as_deref().unwrap().groups.len(),
         1
@@ -1438,9 +1443,11 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
 /// resumes into the stopping row, and stops there again.
 #[tokio::test]
 async fn a_stopped_stream_resumes_to_the_same_rows() {
-    let (_dir, dump, _index) =
-        gathered(&statistics_fixture(16, "default"), pgdt_query::ROW_GROUP_DEFAULT_SIZE_BYTES)
-            .await;
+    let (_dir, dump, _index) = gathered(
+        &statistics_fixture(16, "default"),
+        pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES,
+    )
+    .await;
     let source = LocalFileSource::open(&dump).unwrap();
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));

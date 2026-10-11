@@ -29,7 +29,7 @@ memory, not the line. `MEMORY_RESERVE`'s premise changes with it
 
 ## The leader's row-start search grows a read to `max_line_bytes`
 
-**Fact.** `leader.rs`'s `scan_partition` finds a piece's first row start by
+**Fact.** `interior/region.rs`'s `scan_partition` finds a piece's first row start by
 doubling its read from the piece's offset until a row start is in it,
 ceilinged at `max_line_bytes`; `stream/segment.rs`'s `first_row_start` does the same
 for a resume point. A piece wholly inside a long line reads up to the line's
@@ -41,7 +41,7 @@ a line is merged into its predecessor, handed to the worker carrying the line,
 or found some other way is the leader's decision.
 
 **Origin.** As above. The tests asserting the growth ceiling are
-`leader.rs`'s `no_read_a_worker_makes_exceeds_the_chunk_size` and
+`interior/tests.rs`'s `no_read_a_worker_makes_exceeds_the_chunk_size` and
 `…_the_stated_unit`.
 
 ---

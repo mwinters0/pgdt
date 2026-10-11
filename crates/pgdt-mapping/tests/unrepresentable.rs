@@ -18,8 +18,9 @@ use std::path::Path;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
-use pgdt_query::{StatisticsRequest, map_file};
 
 mod common;
 use common::{VERSIONS, types_fixture};

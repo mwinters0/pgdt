@@ -28,7 +28,7 @@ pub struct DatabaseMetadata {
     /// arm).
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
-    /// `true` for every entry a [`pgdt_query::build_index`] full scan or a
+    /// `true` for every entry a [`pgdt_mapping::build_index`] full scan or a
     /// [`pgdt_dump::internal::scan_preamble`] prepass produces, neither ever leaving
     /// a segment half-read. The *first* database's metadata is present after
     /// any scan that persists a cache (the preamble prepass,

@@ -22,9 +22,10 @@ use std::sync::Arc;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsTerms};
+use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::DumpIndex;
 use pgdt_model::{DataBlock, SpanBody};
-use pgdt_query::{MapRun, StatisticsRequest, StatisticsSelection, StatisticsTerms, map_file};
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};

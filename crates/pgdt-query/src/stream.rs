@@ -11,7 +11,7 @@
 //! (`docs/design/decisions.md`, "D48"). A query runs in two phases, never
 //! interleaved:
 //!
-//! 1. [`map_forward`](self::map::map_forward) extends the [`DumpIndex`](pgdt_model::DumpIndex)'s map from its own
+//! 1. `pgdt_mapping`'s `map_forward` extends the [`DumpIndex`](pgdt_model::DumpIndex)'s map from its own
 //!    `scanned_through`, recording every `COPY` block it passes and
 //!    classifying the DDL between them through a [`pgdt_dump::internal::Builder`], and
 //!    **yields nothing**. It stops as soon as the queried table is settled
@@ -22,14 +22,14 @@
 //! So the queried block's bytes are read twice, and a [`ResumeToken`] can only
 //! ever point inside already-mapped territory. A [`CacheMode::Enabled`](pgdt_dump::cache::CacheMode::Enabled) cache
 //! is persisted where the map advances: completed blocks whose save has earned
-//! its cost ([`SaveThrottle`](self::map::SaveThrottle)), the block that settles the query, and every
+//! its cost (`pgdt_mapping`'s save throttle), the block that settles the query, and every
 //! exit past the first read but an error. [`CacheMode::Disabled`](pgdt_dump::cache::CacheMode::Disabled) runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
 //! that, [`table_stream`] runs [`pgdt_dump::internal::scan_preamble`] once (skipped
 //! once a cache already has it), whatever table was queried and under
 //! [`CacheMode::Disabled`](pgdt_dump::cache::CacheMode::Disabled) too. It covers the *first* database; every later
-//! `\connect`ed one is stated by [`map_forward`](self::map::map_forward) at that database's first
+//! `\connect`ed one is stated by `map_forward` at that database's first
 //! `COPY` block (I1).
 //!
 //! **Type resolution**: a matching `COPY` block's column list is resolved
@@ -40,9 +40,7 @@
 //! orders, and every batch comes out in the table's one order
 //! ([`TableColumns`](self::table::TableColumns)).
 
-mod backfill;
 mod dynamic;
-mod map;
 mod map_query;
 mod note;
 mod partition;
@@ -53,9 +51,7 @@ mod segment;
 mod table;
 mod table_partitions;
 
-pub use self::backfill::{BlockReread, bounded_columns, gather_block_statistics};
 pub use self::dynamic::{DynamicFilter, RowEvaluation};
-pub use self::map::{MapRun, build_index, build_map, map_file};
 pub use self::note::{EarlyStop, PlanLever, PlanNote, PlanNoteKind};
 pub use self::table::{
     BlockingTableIter, ResumeToken, TableStream, table_schema, table_stream,

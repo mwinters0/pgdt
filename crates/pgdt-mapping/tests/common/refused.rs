@@ -1,8 +1,9 @@
 //! The fixtures holding a field PostgreSQL's input function refuses, which a
 //! data-level parse fails on (`docs/design/roadmap.md`, "A literal is
 //! guaranteed in `*_out`'s form and never read past `*_in`'s"), and how a sweep
-//! maps one past it. One list for every crate's sweeps: `datafusion-pgdump`'s
-//! and `pgdt`'s tests include this file by path, so no copy of it drifts.
+//! maps one past it. One list for every crate's sweeps: `pgdt-query`'s,
+//! `datafusion-pgdump`'s and `pgdt`'s tests include this file by path, so no
+//! copy of it drifts.
 //!
 //! `pgdt-query`'s `tests/decode.rs`'s
 //! `every_refused_field_fails_a_data_level_parse_reading_it` holds each row to
@@ -13,7 +14,7 @@
 
 use std::path::Path;
 
-use pgdt_query::{StatisticsLevel, StatisticsRequest, StatisticsTarget};
+use pgdt_mapping::statistics::{StatisticsLevel, StatisticsRequest, StatisticsTarget};
 
 /// A field PostgreSQL refuses, held by every major's copy of a fixture: a
 /// data-level parse fails on it, naming its table and column, and a query

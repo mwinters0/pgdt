@@ -1,4 +1,4 @@
-//! `stream::map_file` — `pgdt parse`'s scan
+//! `pgdt_mapping::map_file` — `pgdt parse`'s scan
 //! (`docs/design/decisions.md`, "The CLI").
 //!
 //! **The claim these tests exist for**: a scan that stopped partway leaves a
@@ -26,8 +26,10 @@ use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdt_dump::{ScanOptions, cache, preamble_only};
 use pgdt_io::{ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::{build_index, map_file};
 use pgdt_model::{DataBlock, DumpIndex, SpanBody};
-use pgdt_query::{QueryOptions, StatisticsRequest, build_index, map_file, table_stream};
+use pgdt_query::{QueryOptions, table_stream};
 
 /// A cancellation already asked for, so the scan under it stops at its first
 /// poll rather than at a moment a test would have to arrange.

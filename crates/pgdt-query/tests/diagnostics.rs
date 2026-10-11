@@ -10,11 +10,11 @@ use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::build_index;
 use pgdt_model::drain;
 use pgdt_model::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 use pgdt_query::{
-    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, build_index, column_divergences,
-    table_stream,
+    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, column_divergences, table_stream,
 };
 
 mod common;

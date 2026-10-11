@@ -42,13 +42,13 @@
 //!
 //! - **Boundaries and classification.** [`Builder`] is the state machine,
 //!   driven directly by [`crate::preamble::scan_preamble`] and
-//!   `pgdt_query::stream`'s mapping passes, fed the same [`crate::scan::Event`]
-//!   stream those already walk. `pgdt_query::build_map` is a thin wrapper for
+//!   `pgdt_mapping`'s mapping passes, fed the same [`crate::scan::Event`]
+//!   stream those already walk. `pgdt_mapping::build_map` is a thin wrapper for
 //!   callers that just want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading;
-//!   closing that seam is the caller's job (`pgdt_query::stream::splice`).
+//!   closing that seam is the caller's job (`pgdt_mapping::forward::splice`).
 //!
 //! - **Bulk regions.** [`SpanBody::Data`] holds a [`DataBlock`] — a `COPY`
 //!   block, an `INSERT` run, or the whole `BEGIN;`/`COMMIT;`-wrapped
@@ -181,8 +181,8 @@ enum Mode {
 }
 
 /// The statement-driven boundary/classification pass, shared by
-/// `pgdt_query::build_map` (a standalone, always-to-EOF scan) and
-/// `pgdt_query::build_index`/[`crate::preamble::scan_preamble`], which drive
+/// `pgdt_mapping::build_map` (a standalone, always-to-EOF scan) and
+/// `pgdt_mapping::build_index`/[`crate::preamble::scan_preamble`], which drive
 /// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub struct Builder {
@@ -310,7 +310,7 @@ impl Builder {
     /// The database in scope right now — whatever the last `\\connect` this
     /// builder has seen named, or whatever [`with_database`](Self::with_database)
     /// seeded it with, and the value [`on_copy_end`](Self::on_copy_end) stamps
-    /// onto a block. Exposed for `pgdt_query::stream`'s mapping pass, which has to
+    /// onto a block. Exposed for `pgdt_mapping`'s mapping pass, which has to
     /// notice a `COPY` header belonging to a database whose DDL it has not
     /// stated.
     pub fn database(&self) -> Option<&str> {
@@ -1039,7 +1039,7 @@ impl Builder {
     /// `end`, and stamping its `end` there would be wrong.
     ///
     /// A `COPY` block's two edges are both such boundaries, and
-    /// `pgdt_query::stream`'s mapping pass calls this at both: right after
+    /// `pgdt_mapping`'s mapping pass calls this at both: right after
     /// [`on_copy_end`](Self::on_copy_end) where the save throttle's gate opens,
     /// to bank progress at a completed block (`mode` is `Idle` for the block's
     /// duration and I12 puts the large-object region strictly after it, so

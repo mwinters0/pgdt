@@ -81,6 +81,7 @@ pgdt-dump = { path = "../pgdt-dump" }
 # live in this crate, so `cargo test --workspace` runs them unconditionally
 # rather than behind feature unification.
 pgdt-io = { path = "../pgdt-io", features = ["http"] }
+pgdt-mapping = { path = "../pgdt-mapping" }
 pgdt-model = { path = "../pgdt-model" }
 pgdt-query = { path = "../pgdt-query" }
 serde = { workspace = true, features = ["derive"] }

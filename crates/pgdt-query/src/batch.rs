@@ -161,7 +161,7 @@ pub struct QueryOptions {
     /// hands back. Nothing here spawns — the caller runs them.
     pub parallelism: Parallelism,
     /// Whether the replay skips the row groups whose statistics — gathered by
-    /// a mapping pass ([`crate::stream::map_file`]) — prove no row satisfies
+    /// a mapping pass ([`pgdt_mapping::map_file`]) — prove no row satisfies
     /// `filter`, and stops reading a block sorted on a column `filter` bounds
     /// at its first row past the bound. On by default; the rows are the same
     /// either way, and `false` reads every row of every block, which is also

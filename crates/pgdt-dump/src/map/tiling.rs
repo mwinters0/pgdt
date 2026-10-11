@@ -133,7 +133,7 @@ pub fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// D19's warning for a `.xz` source with no usable seek structure — `None` when
 /// there is no compression layer at all (`table` is `None`) or the table
 /// already has more than one block. One function for both callers: a live
-/// [`ByteRangeSource`] (`pgdt_query::build_index`,
+/// [`ByteRangeSource`] (`pgdt_mapping::build_index`,
 /// [`preamble_only`](crate::preamble::preamble_only)) and a persisted cache
 /// (`crate::cache::store::status_from_file`).
 pub fn non_seekable_compression_diagnostic(

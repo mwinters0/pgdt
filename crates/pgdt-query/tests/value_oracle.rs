@@ -14,7 +14,7 @@
 //! does, so a column one of them reads as text is a failure too.
 //!
 //! A defect a flag set exposes is a strict exclusion naming its entry, as
-//! `crates/pgdt-query/tests/known_failures.rs` keeps them: the column is asserted
+//! `crates/pgdt-mapping/tests/known_failures.rs` keeps them: the column is asserted
 //! still to fail, so its fix fails this test until the fixing slice deletes
 //! the row. A column holding a field PostgreSQL refuses
 //! (`common::REFUSED_FIELDS`) is asserted to refuse its read.
@@ -34,9 +34,10 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
-use pgdt_query::{QueryOptions, build_map, table_stream};
+use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{VERSIONS, fixtures_root, types_fixture};

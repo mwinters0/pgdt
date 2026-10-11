@@ -457,7 +457,7 @@ async fn partition_root_is_recorded_only_on_marked_blocks() {
     for version in [13, 16, 18] {
         let path = partitions_fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
-        let index = pgdt_query::build_index(&source, &ScanOptions::default()).await.unwrap();
+        let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
 
         let marked: Vec<(&str, &str)> = index
             .blocks()

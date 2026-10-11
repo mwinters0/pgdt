@@ -3,7 +3,7 @@
 
 use std::mem::{align_of, size_of};
 
-use crate::statistics::Charge;
+use crate::statistics::account::Charge;
 
 /// Make room in `vec` for `additional` more, **charging the growth ahead of
 /// the allocation** ([`Charge::ahead`]): at least doubling, as the vector's

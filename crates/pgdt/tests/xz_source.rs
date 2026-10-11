@@ -26,12 +26,12 @@ use common::{run, stderr_of, stdout_of};
 use pgdt_dump::cache::OVERWRITE_WAYS_OUT;
 
 /// The hand-written dump these fixtures derive from —
-/// `crates/pgdt-query/tests/data/edge_cases.sql`, not the generated `fixtures/`
+/// `crates/pgdt-mapping/tests/data/edge_cases.sql`, not the generated `fixtures/`
 /// tree `common::fixture` addresses, which carries no equivalent file (xz
 /// container shape does not depend on a PostgreSQL major, so nothing here
 /// needs one).
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-query/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
 }
 
 /// Compress `edge_cases.sql` with `xz_args` into a fresh directory as `name`.

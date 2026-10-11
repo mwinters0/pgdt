@@ -21,8 +21,8 @@ use std::process::Command;
 
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
+use pgdt_mapping::build_index;
 use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
-use pgdt_query::build_index;
 
 mod common;
 use common::{fixture, run, stderr_of};
@@ -37,7 +37,7 @@ fn plain_dump() -> PathBuf {
 /// The same hand-written dump `xz_source.rs`/`parallelism.rs` build their
 /// `.xz` fixtures from.
 fn edge_cases_sql() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-query/tests/data/edge_cases.sql")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../pgdt-mapping/tests/data/edge_cases.sql")
 }
 
 /// A seekable multi-block `.xz` copy, in a directory of its own. `xz` is not
@@ -217,7 +217,7 @@ fn an_uninterrupted_parse_never_looks_like_a_resumed_one() {
 
 /// **A genuine resume, contrasted with the fresh case above.** `map_forward`
 /// skips the preamble pass whenever it is not starting at byte 0
-/// (`stream::map_file`'s `resumed_from == 0` gate), so a cache built to look
+/// (`pgdt_mapping::map_file`'s `resumed_from == 0` gate), so a cache built to look
 /// like an interrupted scan's produces no `"preamble scan"` line at all —
 /// only the real scan, naming the frontier it picked up from. That is the
 /// shape that actually distinguishes a resume from a cold start once the two

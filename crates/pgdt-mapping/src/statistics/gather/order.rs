@@ -11,7 +11,7 @@ use pgdt_model::{
     internal::{text_heap, vec_heap},
 };
 
-use super::bounds::Clipped;
+use super::clip::Clipped;
 
 /// A column's row order over the rows observed so far: the block's
 /// [`Sortedness`] once every row is in.

@@ -27,10 +27,13 @@ use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::{
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+};
 use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{
-    Expr, Membership, Predicate, PredicateOp, QueryOptions, StatisticsLevel, StatisticsRequest,
-    StatisticsSelection, StatisticsTarget, map_file, read_table, render_field, table_stream,
+    Expr, Membership, Predicate, PredicateOp, QueryOptions, read_table, render_field, table_stream,
 };
 
 mod common;

@@ -621,16 +621,16 @@ a script sums its own rollup, a table spanning blocks (I2) with no merge rule bu
 pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value name spells its suffixes past the page, its spec line exempt from the width assertion, until one pass over CLI output (`roadmap.md`, "Future — wanted, unscheduled"). Rejected: `long_help` per flag; a rollup; that value name cut to a placeholder piecemeal.
 
 ## Layering
-### D68 Six crates, the module assignment Cargo enforces
-core, model, io, dump, codec, query, each using only crates before it, dump and codec siblings, each module's crate and the reason for it stated once in
+### D68 Seven crates, the module assignment Cargo enforces
+core, model, io, dump, codec, mapping, query, each using only crates before it, dump and codec siblings, each module's crate and the reason for it stated once in
 `concepts.md`; CLI and embedders above query; every member's dependencies, and each library's API namespaces,
 held to tables in `scripts/layering.py`. Model is what the cache persists, apart from core so an edit there is the one asking whether the format bumps, and
-below the parsers so the codec does not recompile with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value
-semantics, so codec's; worker sizing and the cut are io's, the leader asking them. Rejected: four layers in one crate with upward deviations; the cache a crate of
-its own (the loader scans, so it is dump's); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`).
+below the parsers so the codec does not recompile with the grammar. Gathering decodes and builds no array, so is mapping's, with the pass handing it rows and the interior split
+that pass leads; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them. Rejected: four layers
+in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
-Core, model, io and dump never name Arrow; the codec only its schema types and `i256`, is synchronous and does no I/O, nor does
+Core, model, io and dump never name Arrow; the codec and mapping only its schema types, and the codec `i256`; the codec is synchronous and does no I/O, nor does
 the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building
 to the read buffers, D46). Anything persisted is model vocabulary — declared type strings, never a `DataType` or another codec
 conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above (`pgdt_model::internal::BlockObserver`,

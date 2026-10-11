@@ -23,10 +23,10 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::gather::{declared_column, stored_bounds_kinds};
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
 use pgdt_codec::compare::{CompareKind, bounds_set_keyed_by};
 use pgdt_core::{RawRow, RowSplit};
+use pgdt_mapping::internal::{declared_column, stored_bounds_kinds};
 use pgdt_model::internal::ColumnStatisticsExt;
 use pgdt_model::{
     BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata, Sortedness,
@@ -189,7 +189,7 @@ fn or_header_run(mut runs: Vec<Range<u64>>, data_offset: u64) -> Vec<Range<u64>>
 }
 
 /// Per header column, the kinds its stored sets of bounds are ordered by
-/// (`crate::gather::stored_bounds_kinds`).
+/// (`pgdt_mapping`'s `stored_bounds_kinds`).
 type StoredKinds = Vec<[Option<CompareKind>; 2]>;
 
 /// Per column of `block`, whether `statistics` — its own — are believed

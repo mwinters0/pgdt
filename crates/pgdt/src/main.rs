@@ -25,16 +25,17 @@ use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{
     ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, open,
 };
+use pgdt_mapping::statistics::{
+    ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget,
+};
+use pgdt_mapping::{StrictUnchecked, strict_unchecked};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::{
     ArrayShape, DataBlock, Diagnostic, DumpIndex, DumpMetadata, Finding, PostgresInvalidValues,
     Severity, Span, SpanBody, TableReference, TypeKind,
 };
-use pgdt_query::{
-    Expr, Membership, Predicate, PredicateOp, QueryOptions, ROW_GROUP_DEFAULT_MIN_ROWS,
-    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget, StrictUnchecked,
-    render_field_into, strict_unchecked,
-};
+use pgdt_query::{Expr, Membership, Predicate, PredicateOp, QueryOptions, render_field_into};
 use tracing::Instrument;
 
 mod alloc;
@@ -2320,7 +2321,7 @@ async fn commands(command: Command) -> Result<()> {
                 postgres_invalid_values: postgres_invalid_values.into(),
                 ..scan_options(read, &parallel)
             };
-            let run = pgdt_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
+            let run = pgdt_mapping::map_file(source.as_ref(), &scan_options, &mode, &statistics)
                 .await
                 .map_err(|e| naming_the_source(e, &origin))?;
             introspect::statistics_returned(&run.statistics);
@@ -3462,7 +3463,7 @@ fn print_index(
 }
 
 /// What a strict parse checks nothing of in `block`, read off the cache's
-/// preamble and the block's own framing (`pgdt_query::strict_unchecked`):
+/// preamble and the block's own framing (`pgdt_mapping::strict_unchecked`):
 /// a property of the dump, so the same whichever mode built the cache.
 fn block_unchecked(index: &DumpIndex, block: &pgdt_model::CopyBlock) -> StrictUnchecked {
     strict_unchecked(block, index.metadata.as_ref())
