@@ -1343,6 +1343,65 @@ def parse_query_notes(text: str) -> dict[str, str]:
 #: anything the command's environment needs assigned in front of it.
 PEAK_RSS = "/peak-rss"
 
+#: Where `count-instructions` is mounted in a counted figure's container: the
+#: instruction counter (`crates/count-instructions/src/main.rs`), built static
+#: as `peak-rss` is, by `ensure_count_instructions_binary`. A figure declaring
+#: `Figure.counts_instructions` runs every `pgdt` leg's timed command under it
+#: (`counted_script`), so its count and its wall clock are one run's.
+COUNT_INSTRUCTIONS = "/count-instructions"
+
+#: The capabilities a counted leg's container is given: the runtime's default
+#: seccomp profile refuses `perf_event_open` without `CAP_PERFMON`, and nothing
+#: else. Only a counted figure's containers carry it, and it moves nothing a
+#: `pgdt` run does.
+COUNT_INSTRUCTIONS_CAPS: tuple[str, ...] = ("PERFMON",)
+
+#: What `count-instructions` prints on stderr: the count, or in its place the
+#: times of a count the kernel multiplexed, which is refused rather than scaled.
+INSTRUCTIONS_RE = re.compile(r"^instructions_u=(\d+)$", re.MULTILINE)
+MULTIPLEXED_RE = re.compile(r"^instructions_multiplexed=(\d+)/(\d+)$", re.MULTILINE)
+
+
+def parse_instructions(text: str) -> int:
+    """The user-space instructions the counted command retired.
+
+    Exactly one count, for `parse_maxrss_kib`'s reason. A multiplexed count
+    is refused: scaling it by the time it ran would publish an estimate under
+    the name of a count, and the attribution it is read for compares counts
+    within their own spread."""
+    if multiplexed := MULTIPLEXED_RE.findall(text):
+        running, enabled = multiplexed[0]
+        raise ValueError(
+            f"the instruction counter was multiplexed, running {running} ns of {enabled} ns: "
+            "another user of the machine's counters shares them, and a scaled count is no count"
+        )
+    matches = INSTRUCTIONS_RE.findall(text)
+    if not matches:
+        raise ValueError(f"no `instructions_u` line in counted output:\n{text[-2000:]}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{len(matches)} `instructions_u` lines in one run; the script counts more than one command"
+        )
+    return int(matches[0])
+
+
+#: The timed `/pgdt` of a shape, behind the `time` builtin and any environment
+#: assigned in front of it, which is where `counted_script` puts the counter.
+_TIMED_PGDT_RE = re.compile(r"(?:^|(?<= ))time ((?:[A-Z_]+=\S+ )*)/pgdt ")
+
+
+def counted_script(script: str) -> str:
+    """A shape's script with its timed `/pgdt` run under `COUNT_INSTRUCTIONS`.
+
+    Inside the timer and after any environment assigned in front of the
+    program, which the counter's child inherits; an untimed builder ahead of
+    it is not counted. A shape whose timed command is not one `/pgdt` is
+    refused rather than counted around something else."""
+    counted, n = _TIMED_PGDT_RE.subn(rf"time \1{COUNT_INSTRUCTIONS} /pgdt ", script)
+    if n != 1:
+        raise ValueError(f"{n} timed `/pgdt` commands in a counted shape:\n{script}")
+    return counted
+
 
 def criterion_median_ns(criterion_root: Path, full_id: str) -> float:
     """The median point estimate, in nanoseconds, out of criterion's own JSON.
@@ -4385,6 +4444,10 @@ class Session:
         #: whose command shape carries the RSS wrapper have one, and a figure
         #: that wants it wants it *instead of* the wall clock, not beside it.
         self.rss: dict[str, list[float]] = {}
+        #: User-space instructions retired, under the same keys, for a counted
+        #: figure's legs (`Figure.counts_instructions`): `rss`'s shape, kept
+        #: beside the wall clock rather than instead of it.
+        self.instructions: dict[str, list[int]] = {}
         self.records: list[dict] = []
         #: The stager's step this sitting is at (`Stager.plan`): the figure in
         #: hand, or the group of a split figure being swept.
@@ -4430,6 +4493,7 @@ class Session:
         self._dry_reps: dict[str, int] = {}
         self._last_telemetry: dict[str, float] = {}
         self._last_rss: float | None = None
+        self._last_instructions: int | None = None
         #: Whether the run just taken was OOM-killed under a family that
         #: tolerates it. Read by `sweep`, which files the rep as censored
         #: instead of as a reading.
@@ -4704,6 +4768,9 @@ class Session:
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
         script = _script(spec.command)
+        counted = self.counted(spec)
+        if counted:
+            script = counted_script(script)
         bins: list[tuple[Path, str]] = []
         if spec.binary != "none":
             bins = [(self.binary_path(spec.binary), "/pgdt")]
@@ -4711,6 +4778,8 @@ class Session:
         # staged with it, so neither loads inside the timer.
         if PEAK_RSS in script.split():
             bins.append((ensure_peak_rss_binary(self.cfg, self.log), PEAK_RSS))
+        if counted:
+            bins.append((ensure_count_instructions_binary(self.cfg, self.log), COUNT_INSTRUCTIONS))
         mounts = [
             f"{self.stage_binary(path) if self.arm.staged else path}:{at}:ro"
             for path, at in bins
@@ -4762,6 +4831,8 @@ class Session:
         ]
         if cpus is not None:
             argv += ["--cpuset-cpus", cpu_list(cpus)]
+        if counted:
+            argv += [a for cap in COUNT_INSTRUCTIONS_CAPS for a in ("--cap-add", cap)]
         for m in mounts:
             argv += ["-v", m]
         argv += env_argv
@@ -4798,6 +4869,7 @@ class Session:
             self._dry_reps[key] = rep + 1
             digest = hashlib.sha256(f"{key}/{rep}".encode()).digest()
             self._last_rss = 6000 + digest[1] / 255 * 500 if "rss" in spec.command else None
+            self._last_instructions = 3_000_000_000 + digest[3] * 1_000_000 if counted else None
             # A plausible instrument report, for the same reason the reading is
             # plausible: a dry run must exercise every division a table performs
             # rather than stopping at the first missing key.
@@ -4924,6 +4996,7 @@ class Session:
                 # reproduces the cell; the sitting goes on to the next leg.
                 self._last_killed = True
                 self._last_rss = None
+                self._last_instructions = None
                 self._last_stdout = parse_resolution(proc.stderr)
                 # The instrument reports at exit and this process never got
                 # there, so its absence is the kill rather than an apparatus
@@ -4971,6 +5044,7 @@ class Session:
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
+        self._last_instructions = parse_instructions(proc.stderr) if counted else None
         # What the run said about itself on its own streams: the decode
         # example's counts on stdout, and, for a scan, the arrangement its
         # `scan started` line names. One dict, all of it identical across reps.
@@ -4995,6 +5069,8 @@ class Session:
                 "spec": dataclasses.asdict(spec),
                 "seconds": seconds,
                 "maxrss_kib": self._last_rss,
+                # `None` on a leg its figure does not count.
+                "instructions_u": self._last_instructions,
                 # Zero where the container answered and nothing was killed;
                 # `None` where `memory.events` could not be read, which is a
                 # different answer and stays one (`parse_oom_kills`).
@@ -5089,6 +5165,8 @@ class Session:
                     self.killed[key] = self.killed.get(key, 0) + 1
                     if "rss" in spec.command:
                         self.rss.setdefault(key, [])
+                    if self.counted(spec):
+                        self.instructions.setdefault(key, [])
                     if spec.instrument:
                         # Opened for the reason the RSS key is: an absent key
                         # means "this leg carries no instrument", which is a
@@ -5103,6 +5181,10 @@ class Session:
                 # quantity it carries is one the machine's load cannot move.
                 if self._last_rss is not None:
                     self.rss.setdefault(spec.key(figure), []).append(self._last_rss)
+                if self._last_instructions is not None:
+                    self.instructions.setdefault(spec.key(figure), []).append(
+                        self._last_instructions
+                    )
                 # The instrument's own report is a property of the *input and
                 # the flags*, identical across reps, so the last one stands for
                 # all of them rather than accumulating a list of one repeated
@@ -5156,6 +5238,19 @@ class Session:
 
     def get(self, figure: str, spec: RunSpec) -> list[float]:
         return self.readings[spec.key(figure)]
+
+    def counted(self, spec: RunSpec) -> bool:
+        """Whether this run's timed command goes under the instruction counter:
+        every leg running a `pgdt` of a figure declaring
+        `Figure.counts_instructions`, and no co-measured floor."""
+        fig = EVERY_BY_ID.get(self.figure_id)
+        return bool(fig and fig.counts_instructions and spec.binary != "none")
+
+    def get_instructions(self, figure: str, spec: RunSpec) -> list[int] | None:
+        """The user-space instructions of one spec's accepted reps, or `None`
+        where the sitting took none: a counted leg of a sitting from before
+        the figure counted, which renders as uncounted rather than failing."""
+        return self.instructions.get(spec.key(figure))
 
     def get_rss(self, figure: str, spec: RunSpec) -> list[float]:
         """The peak resident sets, in KiB, of one spec's accepted reps.
@@ -5389,21 +5484,92 @@ def ensure_peak_rss_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     out = peak_rss_path()
     if _PEAK_RSS_BUILT:
         return out
+    _build_static_instrument(cfg, "peak-rss", out, log)
+    _PEAK_RSS_BUILT = True
+    return out
+
+
+def _build_static_instrument(
+    cfg: Config, package: str, out: Path, log: Callable[[str], None]
+) -> None:
+    """One static instrument crate built for `peak_rss_target`, or the
+    command that installs the target where it is missing."""
     if cfg.dry_run:
         log(f"[dry-run] would build {out}")
-        _PEAK_RSS_BUILT = True
-        return out
+        return
     target = peak_rss_target()
     sysroot = Path(run(["rustc", "--print", "sysroot"], cwd=REPO, capture=True).strip())
     if not (sysroot / "lib" / "rustlib" / target).is_dir():
         raise RuntimeError(
-            f"the Rust target {target} is not installed, and `peak-rss` is built for it: "
+            f"the Rust target {target} is not installed, and `{package}` is built for it: "
             f"`rustup target add {target}`"
         )
     log(f"building {out}")
-    run(["cargo", "build", "--release", "-p", "peak-rss", "--target", target], cwd=REPO)
-    _PEAK_RSS_BUILT = True
+    run(["cargo", "build", "--release", "-p", package, "--target", target], cwd=REPO)
+
+
+#: Whether this process has already built `count-instructions`, for
+#: `_PEAK_RSS_BUILT`'s reason.
+_COUNTER_BUILT = False
+
+
+def count_instructions_path() -> Path:
+    """Where `cargo build --target` writes `count-instructions`, on the host."""
+    return REPO / "target" / peak_rss_target() / "release" / "count-instructions"
+
+
+def ensure_count_instructions_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """`count-instructions`, the instruction counter, built static before a
+    counted figure's first reading and mounted at `COUNT_INSTRUCTIONS`, on
+    `ensure_peak_rss_binary`'s terms."""
+    global _COUNTER_BUILT
+    out = count_instructions_path()
+    if _COUNTER_BUILT:
+        return out
+    _build_static_instrument(cfg, "count-instructions", out, log)
+    _COUNTER_BUILT = True
     return out
+
+
+def counter_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
+    """`count-instructions` around `/bin/true` in the pinned image, under
+    `COUNT_INSTRUCTIONS_CAPS`, before a counted figure's first reading: one
+    problem line where it does not count there.
+
+    **Run only where a selected figure counts**, so a machine whose kernel or
+    runtime refuses the counter can still take every figure that reads none.
+    The count is logged, never published: it is the dynamic loader's and
+    `true`'s, the floor no counted leg stands on, since the counter is enabled
+    at the command's `exec` and counts nothing of its own."""
+    try:
+        counter = ensure_count_instructions_binary(cfg, log)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        return [f"`count-instructions` could not be built: {exc}"]
+    if cfg.dry_run:
+        return []
+    argv = [
+        *cfg.container_argv(), "run", "--rm",
+        *(a for cap in COUNT_INSTRUCTIONS_CAPS for a in ("--cap-add", cap)),
+        "-v", f"{counter}:{COUNT_INSTRUCTIONS}:ro",
+        cfg.image, COUNT_INSTRUCTIONS, "/bin/true",
+    ]
+    proc = subprocess.run(argv, text=True, capture_output=True)
+    try:
+        count = parse_instructions(proc.stderr)
+    except ValueError:
+        count = None
+    if proc.returncode != 0 or count is None:
+        tail = " / ".join(proc.stderr.strip().splitlines()[-PREFLIGHT_STDERR_LINES:])
+        return [
+            f"`count-instructions` around /bin/true does not count in {cfg.image} "
+            f"(exit {proc.returncode}: {tail}): the kernel's `perf_event_paranoid` or the "
+            "runtime's seccomp profile refuses `perf_event_open`, so no counted figure can be taken"
+        ]
+    log(
+        f"count-instructions floor: {count} instructions:u around /bin/true in the pinned "
+        "image — never published"
+    )
+    return []
 
 
 #: What `apparatus_preflight` quotes of a refused start: the tail of its
@@ -5898,6 +6064,15 @@ PROFILE_LEGS: tuple[tuple[str, str], ...] = (
     ("release-fat", "fat LTO, one codegen unit"),
 )
 
+#: The leg `[profile.release]` restates (D105), which the default leg is held
+#: to by `downstream_verdict`.
+SHIPPED_PROFILE_LEG = "release-fat"
+
+#: How far the default leg may trail the shipped one in wall clock: the order's
+#: "small", which `roadmap.md`'s "A downstream build is within 3% of ours"
+#: states and this mirrors.
+DOWNSTREAM_GAP = 0.03
+
 #: What `pgdt --version` names of the profile (`crates/pgdt/src/profile.rs`).
 PROFILE_RE = re.compile(r"\(profile: ([a-z0-9-]+)\)")
 
@@ -6203,6 +6378,13 @@ class Figure:
     #: and the README: they state the claim to a reader who will never see a
     #: figure id, so nothing in their text can be matched against one.
     also_quoted_by: tuple[str, ...] = ()
+    #: Whether every `pgdt` leg of this figure runs under the instruction
+    #: counter (`COUNT_INSTRUCTIONS`), its count kept beside the wall clock
+    #: (`Session.instructions`). A figure declaring it declares
+    #: `COUNTER_INSTRUMENT` too, and its containers carry
+    #: `COUNT_INSTRUCTIONS_CAPS`; `emit` refuses it before the first reading
+    #: where the counter does not count (`counter_preflight`).
+    counts_instructions: bool = False
     run: Callable[[Session], str] = field(default=lambda s: "")
 
     @property
@@ -6429,6 +6611,10 @@ QUERY_CLI = ("crates/pgdt/src/",)
 #: (`PEAK_RSS`): a figure running a shape under it declares it, since a change
 #: to what it reads moves every such reading.
 RSS_INSTRUMENT = ("crates/peak-rss/src/",)
+
+#: The instruction counter a counted figure reads through
+#: (`COUNT_INSTRUCTIONS`), declared by it for `RSS_INSTRUMENT`'s reason.
+COUNTER_INSTRUMENT = ("crates/count-instructions/src/",)
 
 GEN_PERF = ("scripts/generate_perf_data.py",)
 GEN_BLOCKS = ("scripts/generate_block_count_bench.py",)
@@ -7612,6 +7798,7 @@ def run_release_profile(session: Session) -> str:
     )
     header = [f"`{leg}` — {caption}" for leg, caption in PROFILE_LEGS]
     table = md_table(["Warm, on tmpfs", *header], rows)
+    counts = _release_profile_counts(session, figure)
 
     if session.cfg.dry_run:
         provenance = "Legs are not built or interrogated under `--dry-run`.\n"
@@ -7639,14 +7826,156 @@ def run_release_profile(session: Session) -> str:
     return (
         table
         + "\n\n"
+        + _release_profile_count_table(counts)
         + provenance
         + "\n"
         + _cached_query_note("Each `query` row")
         + "\n"
         + sql
         + "\n"
+        + _release_profile_verdicts(session, figure, counts)
+        + "\n"
         + _per_rep(figure, session, specs)
+        + _per_rep_counts(figure, specs, counts)
     )
+
+
+def _release_profile_counts(
+    session: Session, figure: str
+) -> dict[tuple[str, str], list[int]] | None:
+    """Every leg's `instructions:u` by (shape, leg), or `None` for a sitting
+    taken before the figure counted. **All or none**: a sitting counting some
+    legs and not others was taken under two apparatus, and is refused."""
+    got = {
+        (command, leg): session.get_instructions(
+            figure, RunSpec(f"profile:{leg}", "control", command, "warm", "")
+        )
+        for command, _ in RELEASE_PROFILE_SHAPES
+        for leg, _ in PROFILE_LEGS
+    }
+    missing = [key for key, values in got.items() if not values]
+    if len(missing) == len(got):
+        return None
+    if missing:
+        raise RuntimeError(
+            f"{figure} counted some legs and not {missing}: one sitting, two apparatus"
+        )
+    return {key: list(values or ()) for key, values in got.items()}
+
+
+def fmt_instructions(values: Sequence[int]) -> str:
+    """A count's median and spread, in billions: a leg retires billions, and
+    the spread across reps is in the third decimal."""
+    lo, hi = spread(values)
+    return f"**{median(values) / 1e9:.3f} G** ({lo / 1e9:.3f}–{hi / 1e9:.3f})"
+
+
+def _release_profile_count_table(counts: dict[tuple[str, str], list[int]] | None) -> str:
+    """The legs' `instructions:u`, one row per shape, each against the default
+    leg's: what a codegen change moves, which layout does not
+    (`roadmap.md`, "A downstream build is within 3% of ours")."""
+    if counts is None:
+        return (
+            "This sitting took no `instructions:u`: it was taken before the figure counted, "
+            "so no gap in it is attributed.\n\n"
+        )
+    base = PROFILE_LEGS[0][0]
+    rows = []
+    for command, label in RELEASE_PROFILE_SHAPES:
+        reference = median(counts[(command, base)])
+        cells = [label]
+        for leg, _ in PROFILE_LEGS:
+            cell = fmt_instructions(counts[(command, leg)])
+            if leg != base:
+                cell += f" — {median(counts[(command, leg)]) / reference:.3f}×"
+            cells.append(cell)
+        rows.append(cells)
+    header = [f"`{leg}`" for leg, _ in PROFILE_LEGS]
+    return (
+        md_table(["`instructions:u`, the same runs", *header], rows)
+        + "\n\nEach count is the timed command's own, every thread's, from its `exec` to its "
+        "exit, taken by `count-instructions` in the run its wall clock is: user space only, "
+        "never scaled.\n\n"
+    )
+
+
+def downstream_verdict(
+    label: str,
+    walls: tuple[Sequence[float], Sequence[float]],
+    counts: tuple[Sequence[int], Sequence[int]] | None,
+) -> str:
+    """The downstream-build rule read on one workload: the default leg's
+    `walls[0]` against the shipped leg's `walls[1]`, and where it fails, the
+    same legs' `counts` (`roadmap.md`, "A downstream build is within 3% of
+    ours").
+
+    A gap is how far the default trails, against the default's median, and
+    **resolved** where the two legs' readings do not meet — the default's
+    fewest above the shipped leg's most. The gate fails on a resolved gap past
+    `DOWNSTREAM_GAP`; a failure owes the remedy only where the count's gap is
+    resolved too, no second threshold, and is layout where it is not."""
+    default, shipped = walls
+    gap = 1 - median(shipped) / median(default)
+    resolved = min(default) > max(shipped)
+    fails = gap > DOWNSTREAM_GAP and resolved
+    met = "resolved" if resolved else "unresolved, the two legs' readings meeting"
+    head = f"{'**fails**' if fails else 'passes'} — {gap * 100:+.2f}% in wall clock, {met}"
+    if counts is None:
+        tail = "; no `instructions:u` was taken" + (
+            ", so the failure is unattributed" if fails else ""
+        )
+    else:
+        cdefault, cshipped = counts
+        cgap = 1 - median(cshipped) / median(cdefault)
+        cresolved = min(cdefault) > max(cshipped)
+        tail = f"; `instructions:u` {cgap * 100:+.2f}%, {'resolved' if cresolved else 'unresolved'}"
+        if fails:
+            tail += (
+                ": lost inlining, which owes the remedy"
+                if cresolved
+                else ": layout, which owes nothing"
+            )
+    return f"- {label}: {head}{tail}."
+
+
+def _release_profile_verdicts(
+    session: Session, figure: str, counts: dict[tuple[str, str], list[int]] | None
+) -> str:
+    """`downstream_verdict` for every shape, in the table's row order."""
+    base = PROFILE_LEGS[0][0]
+    lines = []
+    for command, label in RELEASE_PROFILE_SHAPES:
+        walls = tuple(
+            session.get(figure, RunSpec(f"profile:{leg}", "control", command, "warm", ""))
+            for leg in (base, SHIPPED_PROFILE_LEG)
+        )
+        pair = (
+            None
+            if counts is None
+            else (counts[(command, base)], counts[(command, SHIPPED_PROFILE_LEG)])
+        )
+        lines.append(downstream_verdict(label, walls, pair))
+    return (
+        f"The downstream-build rule, `{base}` against `{SHIPPED_PROFILE_LEG}` "
+        "(`roadmap.md`, \"A downstream build is within 3% of ours\"):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+def _per_rep_counts(
+    figure: str, specs: Sequence[RunSpec], counts: dict[tuple[str, str], list[int]] | None
+) -> str:
+    """The per-rep counts, beside `_per_rep`'s seconds, in its rep order."""
+    if counts is None:
+        return ""
+    lines = [
+        f"- {spec.label}: "
+        + ", ".join(f"{v / 1e9:.3f}" for v in counts[(spec.command, spec.binary.removeprefix("profile:"))])
+        for spec in specs
+        if spec.binary != "none"
+    ]
+    return "\nPer-rep `instructions:u` (G):\n" + "\n".join(lines) + "\n"
 
 
 # -- xz decode scaling ------------------------------------------------------
@@ -10351,7 +10680,8 @@ FIGURES: list[Figure] = [
     # whose three shapes it times, plus where the legs are declared — the root
     # manifest's profiles — and `crates/pgdt/build.rs`, which names a leg's
     # profile, and what moves its fourth, the provider's typed scan: the
-    # DataFusion crates, and the pruning its filter consults.
+    # DataFusion crates, and the pruning its filter consults; and the counter
+    # every leg runs under.
     Figure(
         id="release-profile",
         section="What link-time optimization buys the shipped build",
@@ -10371,8 +10701,10 @@ FIGURES: list[Figure] = [
             "crates/pgdt/Cargo.toml",
             "crates/pgdt/build.rs",
             "Cargo.toml",
+            *COUNTER_INSTRUMENT,
         ),
         warm_inputs=("control",),
+        counts_instructions=True,
         run=run_release_profile,
     ),
     Figure(
@@ -12345,6 +12677,8 @@ class ReplaySession(Session):
         super().__init__(cfg, Stager(cfg, log), log)
         self.readings = raw["readings"]
         self.rss = raw.get("rss", {})
+        #: Absent from every sitting taken before a figure counted.
+        self.instructions = raw.get("instructions", {})
         self.killed = raw.get("killed", {})
         self.reported = raw.get("reported", {})
         #: Absent from every sitting taken before the report was a file, which
@@ -12565,6 +12899,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     stager.plan(figures)
     problems = stager.preflight(figures)
     problems += apparatus_preflight(cfg, log)
+    if any(fig.counts_instructions for fig in figures):
+        problems += counter_preflight(cfg, log)
     log(
         f"tmpfs budget: {stager.budget() / GIB:.2f} GiB "
         f"({WARM_FULL_INPUTS} full-size inputs + {WARM_SLACK // MIB} MiB; largest warm set "
@@ -12800,6 +13136,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "input_sizes": recorded_input_sizes(stager, figures),
                 "readings": session.readings,
                 "rss": session.rss,
+                "instructions": session.instructions,
                 "killed": session.killed,
                 "reported": session.reported,
                 "instrument": session.instrument,

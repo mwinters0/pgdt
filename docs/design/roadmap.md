@@ -286,6 +286,19 @@ hot cross-crate call, or a call that no longer crosses — never left to the
 profile. The `release-profile` figure's `release-default` leg is that build,
 and its gap to the shipped leg is this rule's check.
 
+**A failure is attributed before it is remedied.** A workload failing the
+gate owes the remedy only where the default leg retires more `instructions:u`
+than the shipped leg by a margin the count's own spread across the sitting's
+reps resolves, the two legs' counts not meeting — no second fixed threshold.
+Lost inlining moves retired instructions and `#[inline]` closes it; a gap in
+cycles with the counts level is layout ([`measurements.md`](measurements.md),
+"Two builds of one source can differ by layout"), which it cannot close, so it
+is recorded in the figure's prose and owes nothing. The calls a remedy names
+are those a sampling profile of the default leg shows hot and uninlined
+across a crate boundary, and the next sitting is the check. The figure counts
+each leg in the run its wall clock is, and prints this rule's verdict for
+every workload.
+
 ### Coverage increases monotonically
 
 **A later change may subdivide a span or attach detail to it, never reduce

@@ -1,0 +1,15 @@
+[package]
+name = "count-instructions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The measurement harness's instruction counter: it runs a command and reports
+# the user-space instructions it retired (`src/main.rs`). A workspace member
+# for `peak-rss`'s reasons, built static as it is and mounted into the
+# `release-profile` figure's container. Never shipped.
+
+[dependencies]
+# `syscall(SYS_perf_event_open, …)`, `read` and `close`.
+libc = { workspace = true }

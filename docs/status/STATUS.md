@@ -144,3 +144,20 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+
+- **The attribution clause names a profile of the default leg, which no
+  recipe takes.** M222 wrote the clause as the maintainer settled it
+  ([`../design/roadmap.md`](../design/roadmap.md), "A downstream build is
+  within 3% of ours"): the calls a remedy names are those a sampling profile of
+  the default leg shows hot and uninlined across a crate boundary. But
+  `measure.py --profile-recipe` profiles `target/profiling/pgdt`, and
+  `[profile.profiling]` inherits `release`, which is now fat LTO (D105) — a
+  build whose cross-crate calls are inlined, so its profile cannot show one
+  uninlined. Profiling `release-default` would want a profile inheriting it
+  with line tables, built with frame pointers, and a recipe leg selecting it.
+  The clause was left as settled and that apparatus was not built: nothing
+  owes a remedy until a sitting fails the gate, the one at `2df93720` passing,
+  and a recipe change is apparatus no row admits. Reconsidering means admitting an
+  `M<k>` for the default-leg profile now, ahead of 35.24, so the remedy path
+  exists before the sitting that could need it — or leaving it to whichever
+  session meets a failure.

@@ -319,7 +319,9 @@ Eighteen standing rules for reading anything below:
   *Rejected: `callgrind` / `iai-callgrind` as the standing instrument* — its
   per-function counts are immune to machine state but blind to changes that
   move memory behaviour rather than instruction count, which the allocator,
-  zero-copy views and chunk sizing all are.
+  zero-copy views and chunk sizing all are. Inside a figure's container,
+  where the host's `perf` does not run, `count-instructions` counts the same
+  event in the timed run itself (`release-profile`).
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase
   that admits levers from its own profiles is profiling the shape its figures
@@ -1429,7 +1431,7 @@ on `typed`, 0.007 s and 0.002 s ahead at the first two, 0.083 s here. No
 profile changed between the three sittings, only the tree: the carve, then
 its tail and the facade's retirement. Layout is the candidate ("Two builds
 of one source can differ by layout" above), and it stays unattributed: this
-figure takes no `instructions:u`, which is what would tell fat LTO's code
+sitting took no `instructions:u`, which is what would tell fat LTO's code
 from where one codegen unit places it. So fat's lead on `pgdt sql` is this
 sitting's, and no larger than this pair has moved by between neighbouring
 trees.

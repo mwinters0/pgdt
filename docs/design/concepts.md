@@ -70,6 +70,8 @@ the gate is blind").
 - **pgdt** — `introspect.rs`: what the process says about its memory, in an
   `introspect` build alone.
 - **peak-rss** — `main.rs`: the peak resident set `scripts/measure.py` reads.
+- **count-instructions** — `main.rs`: the user-space instructions
+  `scripts/measure.py`'s `release-profile` figure reads beside its wall clock.
 
 ## The `COPY` format
 

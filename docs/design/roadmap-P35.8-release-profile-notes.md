@@ -42,7 +42,7 @@ phase.
   criterion can be met there vacuously.
 - **It does not license a ranking of thin against fat.** Fat reads slower
   than thin on `strings` in user time, unattributed between fat LTO's code
-  and one codegen unit's layout; the figure takes no `instructions:u`, which
+  and one codegen unit's layout; the sitting took no `instructions:u`, which
   is what would tell them apart. A profile decision that leans on that cell
   needs that count first.
 - **It does not license comparing the default leg with the shipped binary or
