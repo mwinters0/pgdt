@@ -771,8 +771,8 @@ construction rather than by anyone keeping them in step. Evidence:
 un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
 `crates/pgdt/src/` rather than `main.rs`: naming the one file left every other module
 in that crate outside every declaration quoting it, which is a staleness edge
-nobody declared — and the crate holds `where_expr.rs`, `alloc.rs`,
-`info_statistics.rs` and `introspect.rs` beside `main.rs`. Splitting a crate up
+nobody declared — and the crate is a module a subcommand, the rows rendered
+in `query.rs`. Splitting a crate up
 is fine; whatever splits it widens the declaration to the directory in the same
 change, because the alternative is a `--stale` that is silent about the file
 the change is in.
@@ -834,7 +834,7 @@ over `_script` rather than a judgement. It says the changed code did not
 *run* — not that it runs identically — so an entry using it names the command
 shapes and, where a shape reaches part of the change, says which part and how
 often. The grep is over what runs, not over flag names: no command shape passes
-`--filter`, yet every `--where` leaf is read by its term grammar in `main.rs`.
+`--filter`, yet every `--where` leaf is read by its term grammar in `query/filter/term.rs`.
 
 **Comment-only is the third, and the harness decides it rather than being
 told.** A diff whose every hunk falls inside a `//`, `///`, `//!`, `#`, a
@@ -1909,7 +1909,7 @@ finished cache carries **+6,495 B** to hold an index that was deserialized
 rather than built, with no scanner, no census and no splice anywhere in the
 process: about as much a block as the `parse` that built it, and 5,279 B a block
 more than the preamble leg. `info`'s peak is its report, which holds every block's
-resolved schema at once (`block_resolutions`, `crates/pgdt/src/main.rs`) beside a
+resolved schema at once (`block_resolutions`, `crates/pgdt/src/info/labels.rs`) beside a
 finished index carrying what the preamble has not reached, each `CopyBlock` and
 its data spans, so the gap between the two legs is those two terms, both per
 `COPY` block by construction.

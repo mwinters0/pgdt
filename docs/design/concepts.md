@@ -37,8 +37,9 @@ holds resident, the partition advice a source gives and the cut
   and the cut read a worker's cost, and nothing in sizing reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session
   runs draws from.
-
-**Not in one place.** `pgdt`'s parallelism flags are in its `main.rs`.
+- **pgdt** — `parallel.rs`: `--jobs` and `--memory` as a front end spells
+  them, and where each number it resolves came from, which the library has
+  nowhere to carry (D64).
 
 ## Stopping
 
@@ -49,9 +50,8 @@ A caller's ask that a scan stop, and a signal that ends the process
   scans.
 - **namespace-init** — `lib.rs`, `unshare.rs`: ending as a PID namespace's
   init on a signal, shared by both binaries.
-
-**Not in one place.** `pgdt`'s interrupt guard (`InterruptGuard`, `die_by`)
-is in its `main.rs`.
+- **pgdt** — `interrupt.rs`: what a signal does to a `parse`, the binary's
+  own: cancel the scan, save, then end by that signal.
 
 ## Failure
 
@@ -217,13 +217,12 @@ front end's spelling of it ([`decisions.md`](decisions.md), "Predicates").
 - **pgdt-query** — `predicate/`, `stream/replay/dynamic.rs`: it evaluates the rows
   the batcher splits, and answers a row group off its statistics for pruning
   to read.
-- **pgdt** — `where_expr.rs`: `--where`'s grammar, a front end's own syntax.
+- **pgdt** — `query/filter/`: `--filter`'s and `--where`'s grammars, a front
+  end's own syntax: the term grammar at the bottom, the expression over its
+  leaves above it, and `--filter`'s entry above both (D60).
 - **datafusion-pgdump** — `filter/`, `unrepresentable.rs`: DataFusion's
   expressions as the library's filter tree, the leaves in the parent and the
   static and dynamic translations its children, neither reading the other.
-
-**Not in one place.** `--filter`'s term grammar is in `pgdt`'s `main.rs`, and
-`where_expr.rs` calls back into it for its leaves.
 
 ## Strict parse
 
@@ -257,7 +256,7 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
   through the filter expression.
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
   DataFusion's.
-- **pgdt** — `info_statistics.rs`: what `pgdt info --detail` prints of them.
+- **pgdt** — `info/statistics.rs`: what `pgdt info --detail` prints of them.
 
 ## The replay
 
@@ -282,8 +281,8 @@ it ([`decisions.md`](decisions.md), "Batches, streams and the leader").
   stop left unread.
 - **datafusion-pgdump** — `report.rs`: what registration and planning report
   to the caller's sink.
-
-**Not in one place.** `pgdt`'s `announce_*` functions are in its `main.rs`.
+- **pgdt** — its `query` command's `announce_*`: a front end printing each
+  note where its output already speaks.
 
 ## The DataFusion provider
 
@@ -307,12 +306,11 @@ with each change marked, and everything of ours beside it.
 The three subcommands, their flags and what each prints
 ([`decisions.md`](decisions.md), "The CLI").
 
-- **pgdt** — `main.rs`.
-
-**Not in one place.** `main.rs` holds every subcommand's body, `info`'s
-rendering, `--filter`'s grammar, the parallelism flags and the interrupt
-guard; `where_expr.rs` and `info_statistics.rs` are half of a concern whose
-other half is still in it.
+- **pgdt** — `main.rs`, `version.rs`, `args.rs`, `source.rs`, `parse.rs`,
+  `info.rs`, `info/text.rs`, `info/json.rs`, `info/labels.rs`, `query.rs`: a
+  module a subcommand, each owning its flags; the root dispatches and holds
+  nothing a subcommand reads, and what more than one reads — the shared flag
+  groups, the source opened against its cache — sits beside them.
 
 ## The binary's build
 

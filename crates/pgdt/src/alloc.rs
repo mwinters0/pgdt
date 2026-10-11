@@ -83,7 +83,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// What `pgdt --version` names of the allocator: `(allocator: <name>)`, and
-/// the instrument's marker where there is one. `main.rs`'s `version` puts it
+/// the instrument's marker where there is one. `version.rs`'s `version` puts it
 /// after the crate version and before DataFusion's.
 ///
 /// `system` rather than `glibc` in that leg's arm: it takes whatever libc it

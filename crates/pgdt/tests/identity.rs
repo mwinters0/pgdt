@@ -12,7 +12,7 @@
 //! One selection meaning one thing includes how the refusal *reads*, so the
 //! third case pins the same refusal on a command that scans: the source's name
 //! leads it on both, the classifier being shared rather than copied
-//! (`main.rs`'s `about_the_source`).
+//! (`source.rs`'s `about_the_source`).
 
 use std::time::{Duration, SystemTime};
 

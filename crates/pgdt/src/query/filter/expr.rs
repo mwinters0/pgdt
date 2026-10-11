@@ -205,7 +205,7 @@ enum Part {
 /// string into one leaf.
 ///
 /// The operator is found by `split_filter_op`'s own rule
-/// ([`crate::filter_op_at`]), asked of the pending leaf from its start.
+/// ([`super::term::filter_op_at`]), asked of the pending leaf from its start.
 fn tokenize(spec: &str) -> Vec<Token<'_>> {
     let bytes = spec.as_bytes();
     let mut tokens = Vec::new();
@@ -255,17 +255,17 @@ fn tokenize(spec: &str) -> Vec<Token<'_>> {
                 }
                 let start = *leaf.get_or_insert(i);
                 if part == Part::Column {
-                    match crate::filter_op_at(&bytes[start..], i - start) {
+                    match super::term::filter_op_at(&bytes[start..], i - start) {
                         // The list is the term's value, read to the `)` its
                         // own grammar closes it at, and one that never closes
                         // swallows the rest of the string as a quote does.
-                        Some((len, crate::TermOp::In)) => {
+                        Some((len, super::term::TermOp::In)) => {
                             let open = i + len + spec[i + len..].find('(').expect("`in_at`");
-                            i = crate::in_list(spec, open).end.unwrap_or(bytes.len());
+                            i = super::term::in_list(spec, open).end.unwrap_or(bytes.len());
                             part = Part::Value;
                             continue;
                         }
-                        Some((len, crate::TermOp::Compare(_))) => {
+                        Some((len, super::term::TermOp::Compare(_))) => {
                             part = Part::ValueStart;
                             i += len;
                             continue;
@@ -371,7 +371,7 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 // The leaf's own faults keep `parse_filter`'s wording, under
                 // a line saying which flag and which term they came from.
-                crate::parse_filter(text)
+                super::term::parse_filter(text)
                     .with_context(|| format!("--where `{}`: in the term `{text}`", self.spec))
             }
             Some(token) => {

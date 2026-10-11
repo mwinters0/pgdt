@@ -341,7 +341,7 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
 /// the suite runs on bare hosts and in containers, and a test that pinned one
 /// of them would pass on this machine and fail in the container the default
 /// exists for. Which *arm* is exercised is pinned instead over the committed
-/// runtime roots, in `main.rs`'s own resolution tests.
+/// runtime roots, in `parallel.rs`'s own resolution tests.
 #[test]
 fn a_scanning_command_reports_the_arrangement_it_resolved() {
     let dir = tempfile::tempdir().unwrap();
@@ -814,7 +814,7 @@ fn a_gathering_parse_is_not_corrected() {
 /// replay's, carved around nothing — does not carry; a cache that already
 /// settles the table maps nothing and prints no such line. A plain source's
 /// count cannot fall, so no `replay_jobs=` rides it; the span's rendering with
-/// a cut count is `main.rs`'s
+/// a cut count is `parallel.rs`'s
 /// `the_mapping_span_carries_the_holding_and_a_cut_count`.
 #[tokio::test]
 async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {

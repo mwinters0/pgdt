@@ -128,7 +128,7 @@ than reading as a phase nobody has sliced.
   `pgdt query`'s throughput, which weighs `parallel-scan-throughput`'s cold-NVMe
   column; the fix a choice between interleaving each sub-stream's runs, a
   reorder buffer under the budget, and unordered output.
-  Detail: `crates/pgdt/src/main.rs`.
+  Detail: `crates/pgdt/src/query.rs`.
 
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
   its own**, nothing sharing the two, so a parallel compressed scan does about
@@ -203,7 +203,7 @@ than reading as a phase nobody has sliced.
   a limit rewritten between two reads is announced and carved for statistics as
   one number while the pools are budgeted from another. **(c) unowned**; promoted by a limit
   seen to move inside a run, or by discovery that can take a limit already
-  read. Detail: `crates/pgdt/src/main.rs`.
+  read. Detail: `crates/pgdt/src/parallel.rs`.
 
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
@@ -329,7 +329,7 @@ than reading as a phase nobody has sliced.
   enforces a limit, and a `--jobs` past one over a source recommending nothing
   prints the library's constant as that source's request too. **(c)
   unowned**; promoted by a status line read as the source's request where it
-  was the machine's or the library's. Detail: `crates/pgdt/src/main.rs`.
+  was the machine's or the library's. Detail: `crates/pgdt/src/parallel.rs`.
 
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
@@ -339,7 +339,7 @@ than reading as a phase nobody has sliced.
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
   asks for `x IS NULL` and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
-  either. Detail: `crates/pgdt/src/main.rs`.
+  either. Detail: `crates/pgdt/src/query/filter/term.rs`.
 
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it

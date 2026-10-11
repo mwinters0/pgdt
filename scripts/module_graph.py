@@ -83,9 +83,7 @@ ACCEPTED: dict[frozenset[str], str] = {
 
 #: Cycles the tree has and a design or a slice removes, each naming which;
 #: a phase's closing seams round leaves none.
-OWED: dict[frozenset[str], str] = {
-    frozenset({"pgdt", "pgdt::where_expr"}): "P35.22, the filter grammars one `query/filter/`",
-}
+OWED: dict[frozenset[str], str] = {}
 
 #: How many references are shown for each edge of a cycle.
 WITNESSES = 3

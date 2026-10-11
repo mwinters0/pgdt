@@ -6623,8 +6623,8 @@ PREAMBLE = (
 #: A query figure also reads through the CLI's own row rendering. The whole
 #: `src/` directory rather than `main.rs`: a declared path is matched by
 #: prefix, so naming the one file leaves every other module in that crate as a
-#: staleness edge nobody declared -- and the crate now has three
-#: (`main.rs`, `where_expr.rs`, `alloc.rs`).
+#: staleness edge nobody declared -- and the crate is a module a subcommand,
+#: the rendering in `query.rs`.
 QUERY_CLI = ("crates/pgdt/src/",)
 
 #: The resident-set instrument every resident figure reads through

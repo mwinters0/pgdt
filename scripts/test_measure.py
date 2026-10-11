@@ -672,7 +672,7 @@ class StatisticsFigures(unittest.TestCase):
         # leave every leg reading as one that skipped nothing, which the
         # renderer refuses — loudly, but a sitting late.
         stream = (measure.REPO / "crates/pgdt-query/src/stream/note.rs").read_text()
-        cli = (measure.REPO / "crates/pgdt/src/main.rs").read_text()
+        cli = (measure.REPO / "crates/pgdt/src/query.rs").read_text()
         self.assertIn(
             '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
         )

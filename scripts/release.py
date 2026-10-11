@@ -105,7 +105,7 @@ NATIVE_TARGET = "x86_64-unknown-linux-gnu"
 #: The target the x86-64 image cross-builds, and the one an arm64 host is.
 CROSS_TARGET = "aarch64-unknown-linux-gnu"
 #: The variable `pgdt` reads to know it is a release's build, which must name
-#: the workspace version (`crates/pgdt/src/main.rs`, `RELEASED`).
+#: the workspace version (`crates/pgdt/src/version.rs`, `RELEASED`).
 RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
 
 CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
