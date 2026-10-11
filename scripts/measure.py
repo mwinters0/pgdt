@@ -2316,6 +2316,9 @@ JOBS_AXIS: tuple[str, ...] = (
 )
 
 #: The provider family's shape, `JOBS_AXIS`' third prefix less its `-jobs-`.
+#: **Unsuffixed, it is a shape of its own**: the same query at `SWEEP_JOBS`
+#: partitions, stating no allowance, as `parse` is `parse-jobs-<n>` at the
+#: apparatus's count (`typed_scan_invocation`).
 PARALLEL_SCAN = "dfcli-query-typed"
 
 #: The same query over a cache built **in a container of its own** ahead of the
@@ -2828,6 +2831,29 @@ def parallel_scan_invocation(partitions: int, dump: str) -> tuple[list[str], lis
         "-c", PARALLEL_SCAN_SQL,
     ]
     return env, argv
+
+
+def typed_scan_invocation(dump: str) -> tuple[list[str], list[str]]:
+    """The environment and the arguments of `PARALLEL_SCAN` unsuffixed:
+    `PARALLEL_SCAN_SQL` over the dump at `dump`, at `SWEEP_JOBS` partitions.
+
+    **No allowance is stated**, so the provider carves the container's limit
+    as the `pgdt query` shapes beside it in `release-profile` do; that figure's
+    shapes run in one container, which a stated `PARALLEL_BUDGET` would
+    overrun."""
+    env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
+    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q", "-c", PARALLEL_SCAN_SQL]
+    return env, argv
+
+
+#: The untimed builder every `PARALLEL_SCAN` shape but the prebuilt one runs
+#: ahead of its query: the cache, written beside the dump where `--dump`
+#: looks, at `SWEEP_JOBS` whatever partition count the query states, so every
+#: row of a figure reads one cache.
+PROVIDER_BUILDER = (
+    f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache --jobs {SWEEP_JOBS} "
+    f"{GATHER_STATISTICS} >/dev/null && "
+)
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3928,6 +3954,14 @@ def _script(command: str) -> str:
             f"--source /dump.sql --dtcache /tmp/x.dtcache "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
+    if command == PARALLEL_SCAN:
+        # The provider's typed scan at the apparatus's count, read as
+        # `PARALLEL_SCAN`'s axis rows are read (`typed_scan_invocation`).
+        env, argv = typed_scan_invocation("/dump.sql")
+        return (
+            f"{PROVIDER_BUILDER}time {dfcli_shell(env, SQL_SHELL, argv)} "
+            f">/tmp/result.csv && {DFCLI_ANSWER}"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Each `pgdt` one is otherwise the shape it is
@@ -3961,9 +3995,7 @@ def _script(command: str) -> str:
             # `target_partitions`, and `--memory` its `SET pgdump.memory`.
             env, argv = parallel_scan_invocation(int(jobs), "/dump.sql")
             return (
-                f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
-                f"{GATHER_STATISTICS} >/dev/null && "
-                f"time {dfcli_shell(env, SQL_SHELL, argv)} "
+                f"{PROVIDER_BUILDER}time {dfcli_shell(env, SQL_SHELL, argv)} "
                 f">/tmp/result.csv && {DFCLI_ANSWER}"
             )
         if shape == PARALLEL_SCAN_PREBUILT:
@@ -4038,6 +4070,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         *dynfilter_shapes(),
         DYNFILTER_STARTUP,
+        PARALLEL_SCAN,
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
@@ -4160,7 +4193,7 @@ GATHERING_FAMILIES: tuple[str, ...] = (
     STATISTICS_FAMILY,
     PRUNING_FAMILY,
     DYNFILTER_FAMILY,
-    f"{PARALLEL_SCAN}-jobs-",
+    PARALLEL_SCAN,
     *DATA_LEVEL_QUERIES,
 )
 
@@ -4789,11 +4822,10 @@ class Session:
                 }
                 if spec.command == DYNFILTER_STARTUP:
                     self._last_stdout = {"startup_answer": "1"}
-            if spec.command.startswith(
-                (f"{PARALLEL_SCAN}-jobs-", f"{PARALLEL_SCAN_PREBUILT}-jobs-")
-            ):
+            if spec.command.startswith(PARALLEL_SCAN):
                 # One answer for every provider leg of the figure, which it
-                # refuses to render otherwise.
+                # refuses to render otherwise; the prebuilt family's prefix
+                # is this one's too.
                 self._last_stdout = {
                     "result_rows": "1",
                     "result_first": "100",
@@ -7457,17 +7489,29 @@ def run_allocator(session: Session) -> str:
 # -- the release profile ----------------------------------------------------
 
 
-def _release_profile_specs() -> list[RunSpec]:
-    """Every leg of every `allocator` shape, plus the co-measured floor.
+#: The `release-profile` figure's shapes, in its table's row order:
+#: `_ALLOCATOR_SHAPES`, which hold the per-row split and the per-field decode
+#: a crate boundary stops the compiler inlining across, then **the typed
+#: DataFusion query**, the workload ranked first ("Where a setting trades one
+#: workload for another, the typed DataFusion query wins", `roadmap.md`),
+#: which the downstream rule checks first through this figure ("A downstream
+#: build is within 3% of ours"). That is `PARALLEL_SCAN` unsuffixed, the
+#: scaling figure's query at the apparatus's count, so its row is the same
+#: engine and decode over the same file as the `pgdt query` rows above it.
+RELEASE_PROFILE_SHAPES: tuple[tuple[str, str], ...] = (
+    *((command, label) for command, label, _ in _ALLOCATOR_SHAPES),
+    (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan"),
+)
 
-    The shapes are `_ALLOCATOR_SHAPES` rather than a list of their own: they
-    hold the per-row split and the per-field decode that a crate boundary
-    stops the compiler inlining across, which is what the figure prices. No
-    reading is borrowed (`Figure.shares` is empty), since no other figure
+
+def _release_profile_specs() -> list[RunSpec]:
+    """Every leg of every `RELEASE_PROFILE_SHAPES` shape, plus the co-measured floor.
+
+    No reading is borrowed (`Figure.shares` is empty), since no other figure
     times these builds."""
     specs = [
         RunSpec(f"profile:{leg}", "control", command, "warm", f"{label} ({leg})")
-        for command, label, _ in _ALLOCATOR_SHAPES
+        for command, label in RELEASE_PROFILE_SHAPES
         for leg, _ in PROFILE_LEGS
     ]
     specs.append(RunSpec("none", "control", "dd", "warm", "`dd` → `/dev/null` (warm)"))
@@ -7489,10 +7533,20 @@ def run_release_profile(session: Session) -> str:
     for leg, _ in PROFILE_LEGS:
         ensure_profile_binary(session.cfg, leg, session.log)
     session.sweep(figure, specs, session.cfg.reps(5))
+    # The three builds are one source, so the query's answer is one answer.
+    problems = parallel_answer_problems(
+        {
+            spec.label: session.reported.get(spec.key(figure), {})
+            for spec in specs
+            if spec.command == PARALLEL_SCAN
+        }
+    )
+    if problems:
+        raise RuntimeError(f"{figure} does not price one answer: " + "; ".join(problems))
 
     base = PROFILE_LEGS[0][0]
     rows = []
-    for command, label, _ in _ALLOCATOR_SHAPES:
+    for command, label in RELEASE_PROFILE_SHAPES:
         reference = median(
             session.get(figure, RunSpec(f"profile:{base}", "control", command, "warm", ""))
         )
@@ -7526,12 +7580,25 @@ def run_release_profile(session: Session) -> str:
             f"and each links `{ALLOCATOR_LEGS[0]}`, the shipped allocator, so the columns "
             "differ by the profile alone.\n"
         )
+    sql = (
+        f"The `pgdt sql` row runs `SELECT count({perf.COLUMNS[0][0]}), …, "
+        f"count({perf.COLUMNS[-1][0]}) FROM {perf.TABLE} WHERE id IS NOT NULL` at "
+        f"`{DFCLI_PARTITIONS}={SWEEP_JOBS}`, stating no allowance — "
+        "`parallel-scan-throughput`'s query at the apparatus's count — over a cache an "
+        f"untimed `pgdt parse` stating `{GATHER_STATISTICS}` wrote beside the dump: every "
+        "column decoded typed and one row out, the filter keeping every row, so its "
+        "statistics skip no group. Its reading carries the program's startup and the dump's "
+        "registration, which the `pgdt query` rows' do not, so it is read across its own "
+        "row and never against theirs. Every leg answered alike, byte for byte.\n"
+    )
     return (
         table
         + "\n\n"
         + provenance
         + "\n"
         + _cached_query_note("Each `query` row")
+        + "\n"
+        + sql
         + "\n"
         + _per_rep(figure, session, specs)
     )
@@ -7706,14 +7773,15 @@ def _parallel_specs() -> list[RunSpec]:
 
 
 def parallel_answer_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
-    """Why `parallel-scan-throughput`'s provider legs do not price one
-    answer, keyed by each leg's `RunSpec.label`.
+    """Why `parallel-scan-throughput`'s provider legs, or `release-profile`'s
+    `PARALLEL_SCAN` row across its builds, do not price one answer, keyed by
+    each leg's `RunSpec.label`.
 
     **Every provider cell must return one answer**, byte for byte, at every
-    partition count over both files: the two files are one plaintext and the
-    count changes no row, so a difference is a scan that lost or repeated rows
-    under the timer. An answer of no row, or a first count of none, is a
-    query that read nothing."""
+    partition count over both files, and under every profile: the two files
+    are one plaintext, and neither the count nor the build changes a row, so a
+    difference is a scan that lost or repeated rows under the timer. An answer
+    of no row, or a first count of none, is a query that read nothing."""
     digests = {answer.get("result_digest") for answer in reported.values()}
     if not reported or None in digests or "" in digests or len(digests) != 1:
         return ["the provider legs answered differently, or not at all"]
@@ -10235,8 +10303,10 @@ FIGURES: list[Figure] = [
     ),
     # What link-time optimization buys the shipped build, read once on the
     # one-crate tree and once on the split one. `depends` is `allocator`'s,
-    # the same three shapes, plus where the legs are declared — the root
-    # manifest's profiles — and `crates/pgdt/build.rs`, which names a leg's profile.
+    # whose three shapes it times, plus where the legs are declared — the root
+    # manifest's profiles — and `crates/pgdt/build.rs`, which names a leg's
+    # profile, and what moves its fourth, the provider's typed scan: the
+    # DataFusion crates, and the pruning its filter consults.
     Figure(
         id="release-profile",
         section="What link-time optimization buys the shipped build",
@@ -10251,6 +10321,8 @@ FIGURES: list[Figure] = [
             *GEN_PERF,
             *CACHE,
             *STATISTICS,
+            "crates/pgdt-query/src/prune.rs",
+            *DATAFUSION,
             "crates/pgdt/Cargo.toml",
             "crates/pgdt/build.rs",
             "Cargo.toml",

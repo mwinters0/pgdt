@@ -581,7 +581,7 @@ class StatisticsFigures(unittest.TestCase):
                 measure.STATISTICS_FAMILY,
                 measure.PRUNING_FAMILY,
                 measure.DYNFILTER_FAMILY,
-                f"{measure.PARALLEL_SCAN}-jobs-",
+                measure.PARALLEL_SCAN,
                 *measure.DATA_LEVEL_QUERIES,
             },
         )
@@ -1319,7 +1319,8 @@ def write_profile_leg(cfg: "measure.Config", leg: str) -> None:
 
 class ReleaseProfile(unittest.TestCase):
     """The `release-profile` figure: three profiles, `allocator`'s three
-    shapes, one table, every leg built from the tree measured.
+    shapes and the provider's typed scan, one table, every leg built from the
+    tree measured.
 
     Each assertion is a way to publish a plausible table of the wrong
     comparison: a leg built under the wrong profile or the wrong allocator, a
@@ -1342,21 +1343,68 @@ class ReleaseProfile(unittest.TestCase):
         self.assertEqual(fig.shares, ())
         self.assertEqual(measure.entangled_with("release-profile"), [])
 
-    def test_the_shapes_are_the_allocator_figure_s(self):
+    def test_the_shapes_are_the_allocator_figure_s_then_the_typed_provider_scan(self):
         specs = measure._release_profile_specs()
         timed = collections.Counter((s.command, s.binary) for s in specs if s.command != "dd")
+        commands = [*(c for c, _, _ in measure._ALLOCATOR_SHAPES), measure.PARALLEL_SCAN]
+        self.assertEqual([c for c, _ in measure.RELEASE_PROFILE_SHAPES], commands)
         self.assertEqual(
             set(timed),
-            {
-                (command, f"profile:{leg}")
-                for command, _, _ in measure._ALLOCATOR_SHAPES
-                for leg, _ in measure.PROFILE_LEGS
-            },
+            {(command, f"profile:{leg}") for command in commands for leg, _ in measure.PROFILE_LEGS},
         )
         self.assertEqual(set(timed.values()), {1})
         for spec in specs:
             with self.subTest(spec=spec.label):
                 self.assertEqual((spec.input, spec.regime), ("control", "warm"))
+
+    def test_the_provider_row_is_the_scaling_query_at_the_apparatus_count(self):
+        # `parallel-scan-throughput`'s one-partition row word for word, but
+        # for the allowance it states: the figure's one container is the
+        # register's, which `PARALLEL_BUDGET` would overrun.
+        script = measure._script(measure.PARALLEL_SCAN)
+        axis = measure._script(f"{measure.PARALLEL_SCAN}-jobs-{measure.SWEEP_JOBS}")
+        allowance = f" -c 'SET pgdump.memory = {measure.stated_allowance(measure.PARALLEL_BUDGET)}'"
+        self.assertIn(allowance, axis)
+        self.assertEqual(axis.replace(allowance, ""), script)
+        self.assertNotIn("pgdump.memory", script)
+        self.assertEqual(measure._dfcli_partitions(script), {str(measure.SWEEP_JOBS)})
+        self.assertIn(measure.PARALLEL_SCAN_SQL, script)
+        builder, _, timed = script.partition(" && ")
+        self.assertEqual(f"{builder} && ", measure.PROVIDER_BUILDER)
+        self.assertTrue(timed.startswith("time "))
+        self.assertIsNone(measure.FIGURES_BY_ID["release-profile"].memory)
+
+    def _render(self, digests):
+        figure = "release-profile"
+        specs = measure._release_profile_specs()
+        reported = {
+            s.key(figure): {"result_rows": "1", "result_first": "100", "result_digest": d}
+            for s, d in zip((s for s in specs if s.command == measure.PARALLEL_SCAN), digests)
+        }
+        raw = {
+            "readings": {s.key(figure): [1.0] * 5 for s in specs},
+            "reported": reported,
+            "input_sizes": {"control": 3221227790},
+            "runs": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(dry_run=True), raw, Path(tmp), lambda _m: None
+            )
+            session.figure_id = figure
+            return measure.run_release_profile(session)
+
+    def test_the_provider_row_renders_when_every_leg_answers_alike(self):
+        body = self._render(["ab", "ab", "ab"])
+        self.assertIn(f"| {measure.RELEASE_PROFILE_SHAPES[-1][1]} |", body)
+        self.assertIn(f"{measure.DFCLI_PARTITIONS}={measure.SWEEP_JOBS}", body)
+
+    def test_legs_answering_differently_are_refused(self):
+        # One source in three builds: a different answer is a scan that lost
+        # or repeated rows under the timer.
+        for digests in (["ab", "ab", "cd"], ["ab", "ab"]):
+            with self.subTest(digests=digests), self.assertRaises(RuntimeError):
+                self._render(digests)
 
     def test_no_leg_is_the_shipped_binary(self):
         # Every column built alike from the tree measured: the shipped binary
@@ -1395,7 +1443,13 @@ class ReleaseProfile(unittest.TestCase):
 
     def test_its_declared_paths_include_where_the_legs_live(self):
         fig = measure.SELECTABLE_BY_ID["release-profile"]
-        for path in ("Cargo.toml", "crates/pgdt/build.rs", "crates/pgdt/Cargo.toml"):
+        for path in (
+            "Cargo.toml",
+            "crates/pgdt/build.rs",
+            "crates/pgdt/Cargo.toml",
+            "crates/pgdt-query/src/prune.rs",
+            *measure.DATAFUSION,
+        ):
             with self.subTest(path=path):
                 self.assertIn(path, fig.depends)
         for path in measure.FIGURES_BY_ID["allocator"].depends:

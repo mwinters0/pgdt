@@ -691,7 +691,7 @@ runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc 
 ### D105 The shipped build is fat LTO in one codegen unit, as DataFusion's own release profile is
 `[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Both LTO legs beat Cargo's default on `pgdt query`'s typed shape, the
 per-field decode a DataFusion scan runs too, on the one-crate tree and the split one, and lose on no shape; thin and fat are level on every shape the split tree resolves, so the tie goes
-to the profile DataFusion's workspace declares and benchmarks its engine under, `pgdt sql` running that engine and no leg timing it (D13's precedent); `cargo install datafusion-cli`
+to the profile DataFusion's workspace declares and benchmarks its engine under, `pgdt sql` running that engine and no sitting having timed it (D13's precedent); `cargo install datafusion-cli`
 builds under Cargo's default, a published crate carrying no profile. The default leg is held to this one by the roadmap's downstream-build rule, closed in the code where it fails, never here.
 Rejected: Cargo's default (a resolved gain traded for nothing); thin LTO (level wherever the figure resolves, its quicker build a cost to us, not a user). Reopens: a leg timing a typed
 DataFusion query, or an `instructions:u` count, that tells thin from fat; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`,
