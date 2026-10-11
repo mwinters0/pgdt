@@ -64,7 +64,7 @@ figure but `session-drift` and `release-profile` was taken in one sitting at
 `3a34f062`, on the mimalloc build made in the release image under Cargo's default profile, before D105 made it fat LTO, and run in
 `debian:trixie` under its glibc, with its binaries staged on tmpfs**, the scan figures at the
 metadata level and the query figures over a data-level cache.
-`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `6b759eaf`, and `reserve`'s 128 MiB-block `rule`
+`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `2df93720`, and `reserve`'s 128 MiB-block `rule`
 cells are a reading `KD34` names.
 What a sweep does not re-take: `session-drift`, which only a second sweep on
 a first's commit does, and the koji section, outside the register and red,
@@ -129,3 +129,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **M221's fold read the downstream-build rule in wall clock, and filed no
+  obligation.** The `release-profile` sitting at `2df93720`
+  ([`../design/measurements.md`](../design/measurements.md), "What link-time
+  optimization buys the shipped build") holds the default leg within 3% of
+  `release-fat` in wall clock on `pgdt sql` and on `typed`, and not on
+  `strings`, where its one low rep meets fat's cell; in user time, what a
+  codegen change moves, it trails by more on all three. The fold read the
+  rule ([`../design/roadmap.md`](../design/roadmap.md), "A downstream build is
+  within 3% of ours") as holding: the figure's column is wall clock, the wait
+  a user feels; a gap the cells do not resolve is small by the same rule; and
+  every gap that widened since `6b759eaf` widened by the fat leg moving, the
+  default leg unmoved, by the size fat has swung against thin between
+  neighbouring trees, so layout rather than lost inlining is the candidate.
+  Reading the rule in user time, or `strings`' gap as resolved, owes the
+  rule's remedy instead: `#[inline]` on the hot cross-crate calls of the
+  `pgdt sql` and `strings` paths, admitted as an out-of-band row, the figure's
+  next sitting its check.
