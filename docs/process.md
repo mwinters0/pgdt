@@ -288,13 +288,21 @@ which states the numbers once: a **soft** limit on a file's production code
 lines and functions, past which a split is due the next time someone is in the
 file; a **hard** limit on each, and on its total length with its tests, past
 which it is due now; and an **exemption table** naming each file allowed past
-a hard limit with its reason — a port mirroring an upstream file's sections, a
-cut that would be arbitrary. The check is a **meter**, like repoint's: red
+a hard limit with its reason. The check is a **meter**, like repoint's: red
 never fails a round, because a slice is sized by its review and not by what it
 leaves long; it says a seams round is due, and `.claude/skills/seams/SKILL.md`
-is that round's procedure. **A crate is a seam too**: the workspace graph is
-the current answer to where the compilation units fall, not a fixed one, and
-the same round asks whether a crate should split or two should merge.
+is that round's procedure.
+
+**A file past a limit indicts the design around it, not just itself.** It is
+where the seams of its module or crate first show they no longer fit the code,
+so the round redraws those seams: it designs the tree the code now wants —
+each file one concern a reader can hold, the names alone saying where a thing
+lives, no file past a limit — and cuts toward that design. Splitting the one
+file at its own banners and stopping is the failure this rule exists for: each
+such cut is locally sound, and a run of them leaves a layout nobody designed.
+A design may land over several slices; none lands a cut the design lacks.
+**A crate is a seam too**: the workspace graph is the current answer, not a
+fixed one, and the same round asks whether a crate should split or two merge.
 
 ## The keystone: striking the centering
 

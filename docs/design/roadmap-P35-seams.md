@@ -1,9 +1,9 @@
 # P35 — Crate seams and file limits
 
-The library becomes six crates whose dependency graph Cargo enforces, every
-file over its size limit is cut at its own seams, and a check and a skill keep
-both true afterwards. No behaviour changes: every test that passes before a
-slice passes after it, unmoved or moved whole.
+The library becomes six crates whose dependency graph Cargo enforces, each
+crate's module tree is redrawn as a design in which no file is past a limit,
+and a check and a skill keep both true afterwards. No behaviour changes:
+every test that passes before a slice passes after it, unmoved or moved whole.
 
 What this phase will do and why; how it lands is its slices'. Progress is
 `STATUS.md`'s checklist, never this file. Grilled 2026-10-10.
@@ -143,10 +143,16 @@ check`, never a failure: a slice is sized by its review, and what it leaves
 long is the next seams round's.
 
 `.claude/skills/seams/SKILL.md` is that round. Its first cut in any file is
-the inline tests to a file beside the module; its cuts are at the file's own
-seams — a type cluster, a section banner, a trait and its implementors — never
-at a line count; and it carries every marker, citation and script path with
-the code it moves.
+the inline tests to a file beside the module. **A red file indicts the tree
+around it, not just itself**: the round designs the module tree its crate now
+wants — each file one concern, nested where siblings form a group, no file
+past a limit, tests beside what they test — and cuts toward that design, at a
+type cluster, a trait and its implementors, one arm of a family, never at a
+line count. Cutting the one file at its banners and stopping leaves a layout
+nobody designed: sibling modules importing each other in cycles, children
+importing from their parent, `pub(super)` widened to let a cut compile, one
+concept split across files by visibility. Every marker, citation and script
+path moves with the code.
 
 The first exemption is `datetime_in.rs`: a transliteration of upstream's
 `datetime.c`, sectioned as the original is, where a cut would un-mirror the
@@ -161,9 +167,10 @@ port. P33 grows it, and the exemption is reconsidered there.
   and `pgdt` never do — a check, not a convention. So no other path reaches
   it: every library module is private but an API namespace an embedder
   would name (`cache`, `decode`, `instrument`, …), which is its file's own
-  module made public, defining the API and holding what is not API in
-  private child modules cut at the seam between them, so no file loads by
-  `#[path]` under a second name; and a method a crate above calls that is not API is a method
+  module made public, **declaring** the API — its doc and the `pub use` of
+  each API item from the private child that defines it, a child holding one
+  whole concern, API and not alike — so no file loads by `#[path]` under a
+  second name and no API item has a second public path; and a method a crate above calls that is not API is a method
   of an extension trait `internal` exports, its body unmoved. **A crate's API
   is a designed surface**: what an embedder of that crate would call, given
   what its `lib.rs` says the crate is for, whether or not one does today —
@@ -191,7 +198,15 @@ Tests out of the big files before they are split, so the split reviews
 production code alone. The cycles inside the one crate broken, and the
 layering test rewritten to the crate assignment, before any `Cargo.toml`
 exists — the test passing is the proof the graph is acyclic. The profile
-figure's first sitting; then the carve, bottom up, behind the facade; then
-the figure's second sitting and the profile decided; then every forced-public
-item put where only `internal` reaches it, so the check is written against a
-tree it can hold; then the facade retired and the record repointed; then the seams round over what is still red.
+figure's first sitting; then the carve, bottom up, behind the facade; then the
+figure's second sitting and the profile decided; then every forced-public item
+put where only `internal` reaches it, so the check is written against a tree
+it can hold; then the facade retired and the record repointed; then the seams
+round over what is still red. That round cut only the files past a hard limit,
+at their own banners and by visibility, which left most crates' trees
+undesigned; so the trees are designed next, every crate at once and with no
+code moved, the taste calls settled with the maintainer, because the trees are
+one design — a test or helper may belong a crate away from where it sits — and
+a design per slice would redraw what the last one drew. Then the cuts, bottom
+up, a crate or a half of one a slice, and a closing round that finds nothing
+past any limit.
