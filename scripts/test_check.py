@@ -188,6 +188,14 @@ class Summaries(unittest.TestCase):
         self.assertEqual(o.details, ("/repo/pgdump_query/src/lib.rs", "/repo/pgdt/src/main.rs"))
         self.assertEqual(check.summarize_fmt("", 0).status, "ok")
 
+    def test_the_module_graph_names_each_cycle(self):
+        ok = "== cycle owed: a::x, a::y: the next cut\nmodule-graph: the tree: 2 modules, 2 edges, 1 cycles, 0 accepted, 1 owed; 0 doc links against the edges (--docs lists them)\n"
+        o = check.summarize_module_graph(ok, 0)
+        self.assertEqual((o.status, o.headline), ("ok", ok.splitlines()[1]))
+        bad = "!! cycle: a::x, a::y\n     a::x -> a::y\n" + ok.splitlines()[1] + "\n"
+        o = check.summarize_module_graph(bad, 1)
+        self.assertEqual((o.status, o.details), ("FAILED", ("!! cycle: a::x, a::y",)))
+
     def test_unittest_passing(self):
         o = check.summarize_unittest(UNITTEST_OK, 0)
         self.assertEqual((o.status, o.headline), ("ok", "Ran 12 tests in 3.214s; OK (skipped=1)"))
@@ -411,10 +419,10 @@ class RunAndVerify(unittest.TestCase):
             check.verify(repo, edits, before)
             self.assertIn("did not pass; running the checks", before.getvalue())
 
-    def test_the_real_checks_are_the_rounds_seven_commands(self):
+    def test_the_real_checks_are_the_rounds_eight_commands(self):
         self.assertEqual(
             [c.name for c in check.CHECKS],
-            ["fmt", "clippy", "nextest", "doctest", "unittest", "repoint", "seams"],
+            ["fmt", "clippy", "nextest", "doctest", "graph", "unittest", "repoint", "seams"],
         )
         for c in check.CHECKS:
             self.assertTrue((check.REPO / c.cwd).is_dir(), c.cwd)
@@ -611,6 +619,7 @@ class Affected(unittest.TestCase):
         self.assertEqual(argv["clippy"], ["cargo", "clippy", "--all-targets", "-p", "app", "-p", "base"])
         # `app` has no library, so no doctests.
         self.assertEqual(argv["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"])
+        self.assertEqual(argv["graph"], ["uv", "run", "module_graph.py"])
 
     def test_a_library_holding_no_doctest_runs_none(self):
         plain = [

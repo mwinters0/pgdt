@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The per-round checks, each run once, logged whole, summarized short.
 
-A round of work ends on the same seven commands every time -- `cargo fmt
+A round of work ends on the same eight commands every time -- `cargo fmt
 --check`, `cargo clippy`, the suite under `cargo nextest`, the doctests,
-the scripts' own `unittest`, `repoint.py` and `file_limits.py` -- and a session reading their raw
+`module_graph.py`, the scripts' own `unittest`, `repoint.py` and
+`file_limits.py` -- and a session reading their raw
 output pipes it through `grep` and `head` to find the lines that matter, then
 re-runs the suite when the pipe cut what it needed. This runs each command
 once, writes its whole output to a log under `runs/check/`, and prints a
@@ -36,6 +37,11 @@ last blind read and a repoint is due, which is a round of its own
 meter** (`file_limits.py`): a file past a hard limit says a seams round is due
 (`.claude/skills/seams/SKILL.md`), and only a stale exemption fails the check.
 
+**The module graph fails on a cycle neither kept nor owed**
+(`module_graph.py`): it is the one-way rule between modules, a check rather
+than a meter, and its doc links against the edges are a count that never
+fails.
+
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
 
@@ -60,7 +66,7 @@ first of the other three rules it meets gives it:
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
   transitively, too. Those packages are the ones formatted and linted, and
   doc-tested where they have a library, as is a library whose own tests read
-  a changed path.
+  a changed path; and the module graph runs, whole, since its index is.
 - **A comment, inside a workspace member** -- a `.rs` file in both trees
   whose `code_of` is unchanged, a doc comment's fenced doctest counting as
   code -- formats and lints that package alone and runs none of its tests,
@@ -267,6 +273,16 @@ def summarize_repoint(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
+def summarize_module_graph(text: str, exit_code: int) -> Outcome:
+    lines = [line.rstrip() for line in text.splitlines()]
+    verdict = next((line for line in lines if line.startswith("module-graph: ")), None)
+    problems = tuple(line for line in lines if line.startswith("!! "))
+    headline = verdict or "module_graph.py printed no result"
+    if exit_code == 0:
+        return Outcome("ok", headline)
+    return Outcome("FAILED", headline, problems or _tail(text))
+
+
 FILE_LIMITS_METER_RE = re.compile(r"^!! \S+: .* against \d+")
 
 
@@ -282,7 +298,7 @@ def summarize_file_limits(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
-#: The round's seven commands. `every_check` is what a run without
+#: The round's eight commands. `every_check` is what a run without
 #: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
     Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt),
@@ -299,6 +315,7 @@ CHECKS: tuple[Check, ...] = (
         ".",
         summarize_doctest,
     ),
+    Check("graph", ("uv", "run", "module_graph.py"), "scripts", summarize_module_graph),
     Check("unittest", ("uv", "run", "python", "-m", "unittest"), "scripts", summarize_unittest),
     Check("repoint", ("uv", "run", "repoint.py"), "scripts", summarize_repoint),
     Check("seams", ("uv", "run", "file_limits.py"), "scripts", summarize_file_limits),
@@ -801,6 +818,8 @@ def plan_changes(
         checks.append(Check("nextest", tuple(argv), ".", summarize_nextest))
     if doc_pkgs:
         checks.append(doctest_check(doc_pkgs))
+    if whole_pkgs:
+        checks.extend(c for c in CHECKS if c.name == "graph")
     parts = [f"{_paths(len(changed))} changed since HEAD"]
     if whole_pkgs:
         parts.append(f"packages {', '.join(whole_pkgs)}")

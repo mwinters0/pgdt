@@ -18,7 +18,10 @@ file's reading; read it for the whole scope, since the design is of the tree.
 
 Then read `docs/design/concepts.md` for every concept the scope's files hold,
 **and every crate each one reaches**: a concept is designed once, across the
-crates holding it, so its other crates' modules are in scope too.
+crates holding it, so its other crates' modules are in scope too. And run
+`uv run module_graph.py --docs`: each cycle in scope is in the round, with the
+references making it, and a doc link against the edges is a concept not yet
+standing on its own — weighed, never counted.
 
 ## 2. Tests out first
 
@@ -50,6 +53,17 @@ along the layering (`docs/process.md`, "Seams"), each part saying why its crate
 holds it; a part with no such reason moves to the crate the layering names, and
 a whole module changing crate edits `docs/design/decisions.md`, "D68", so it
 goes to the maintainer as §4's answers do.
+
+**The design states its moves, and is checked before anything is cut.** A
+```` ```moves ```` block in the notes doc lists `<from> -> <to>` against
+today's paths, a module's own items or one item (`module_graph.py`'s doc has
+the grammar), and `uv run module_graph.py --design <notes doc>` projects them
+onto today's references (`--save-index`, then `--index`, while iterating). A
+cycle it reports is a seam drawn wrong: redraw until none is left, or take it
+to the maintainer with its references, to keep (`ACCEPTED`) or owe (`OWED`).
+Never write "nothing imports back" of a design the script has not read. A cut
+re-runs the projection over its own moves first, the cuts before it having
+moved the tree.
 
 The evidence for where seams fall, in order of weight:
 
@@ -96,8 +110,8 @@ reason (a dispatcher and its feature-gated arm do import each other).
   the parent and half in a child.
 - **The half-split.** Part of a concern moved out and the rest left, so the new
   module calls back into the one it left (`crate::` into a binary's root).
-- **Sibling cycles.** Two children importing each other (`rg -n 'use
-  (super|crate)::' <module>/`): one concern cut in two, or a third they share
+- **Sibling cycles.** Two modules reading each other, which `module_graph.py`
+  lists with the references: one concern cut in two, or a third they share
   that neither should own.
 - **The child reaching up.** A child's `use super::` naming its parent's
   private items: the parent still holds part of the child's concern.
@@ -170,8 +184,9 @@ has come under the limit fails the check and is struck.
 ## 6. Finish
 
 Run `cargo fmt`, then `mise run check` — whole, never `--affected`, since a
-move touches paths no test reads — and `uv run citations.py` and `uv run
-concepts.py`. One commit a
+move touches paths no test reads; its module graph fails on a cycle the cut
+made, and a cut that removed or shrank an `OWED` cycle rewrites its entry —
+and `uv run citations.py` and `uv run concepts.py`. One commit a
 cut, subject `seams: <module> → <what it became>` or `seams: <module>'s tests
 beside it`, body listing each new file and what it holds. The notes doc of
 the slice that ran the round, or the day's history entry out of band, holds

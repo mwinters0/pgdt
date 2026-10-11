@@ -6,9 +6,11 @@
 #
 # The targets are the ones a checkout builds beyond its own: the release's
 # second, and the static one `peak-rss` is built for on an x86-64 host
-# (`scripts/measure.py`, `peak_rss_target`).
+# (`scripts/measure.py`, `peak_rss_target`). `rust-analyzer` is what
+# `scripts/module_graph.py` reads the code's references with, the release
+# of it this compiler ships.
 [toolchain]
 channel = "1.98.0"
 profile = "minimal"
-components = ["clippy", "rustfmt"]
+components = ["clippy", "rustfmt", "rust-analyzer"]
 targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]

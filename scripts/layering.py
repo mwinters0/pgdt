@@ -171,11 +171,11 @@ def _is_cfg_test(text: str, at: int) -> bool:
     return text[:at].rstrip().endswith("#[cfg(test)]")
 
 
-def module_tree(src: Path) -> dict[Path, str]:
-    """A library's production files from `lib.rs` down, each with its
+def module_tree(src: Path, root: str = "lib.rs") -> dict[Path, str]:
+    """A crate's production files from its root down, each with its
     production text: a module a `#[cfg(test)]` declares is not followed."""
     out: dict[Path, str] = {}
-    pending = [src / "lib.rs"]
+    pending = [src / root]
     while pending:
         file = pending.pop()
         if file in out or not file.is_file():

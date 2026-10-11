@@ -218,7 +218,10 @@ one design — a test or helper may belong a crate away from where it sits — a
 a design per slice would redraw what the last one drew. That design is the
 next version of the concept map ([`concepts.md`](concepts.md)), which records
 the tree as it stands and lists against each concept what it scatters; each
-cut moves the map toward it. Then the cuts, sliced
+cut moves the map toward it. Its moves are then projected onto the code's
+references by `scripts/module_graph.py` before any cut, the design having
+stated its edges' direction unread (`../status/history/2026-10-11.md`). Then
+the cuts, sliced
 by that design rather than by crate: each slice owns whole concepts, so no
 concept is half-moved between two; and a closing round that finds nothing
 past any limit.
