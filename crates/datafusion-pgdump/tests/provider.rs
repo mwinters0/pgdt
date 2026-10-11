@@ -16,7 +16,7 @@ use datafusion::physical_plan::{ExecutionPlan, execute_stream_partitioned};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
-use pgdt_codec::{SchemaMode, pgtype::ComparisonSemantics};
+use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::LocalFileSource;

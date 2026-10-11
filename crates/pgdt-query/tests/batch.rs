@@ -329,7 +329,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         "public.widgets",
         ScanOptions::default(),
         QueryOptions {
-            semantics: pgdt_codec::pgtype::ComparisonSemantics::DataFusion,
+            semantics: pgdt_codec::compare::ComparisonSemantics::DataFusion,
             ..options.clone()
         },
         Some(token.clone()),

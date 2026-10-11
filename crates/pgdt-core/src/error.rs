@@ -170,7 +170,7 @@ pub enum Error {
     /// from the one above, which ends by offering the text comparison that is
     /// unavailable here. Raised where the file *states* that the server's
     /// equality is not a comparison of the text it holds
-    /// (`pgdt_codec::pgtype::UnanswerableReason`), so answering bytewise would be
+    /// (`pgdt_codec::compare::UnanswerableReason`), so answering bytewise would be
     /// a wrong answer rather than a weaker one.
     #[error(
         "`{op}` on column `{column}` in the COPY block at offset {header_offset}: {reason}; no operator can be answered for this column, `=` and `!=` included"
@@ -179,7 +179,7 @@ pub enum Error {
         header_offset: u64,
         column: String,
         op: &'static str,
-        /// Which of `pgdt_codec::pgtype::UnanswerableReason`'s cases it is, worded
+        /// Which of `pgdt_codec::compare::UnanswerableReason`'s cases it is, worded
         /// beside the comparison it is about.
         reason: String,
     },

@@ -7,9 +7,10 @@ use super::gatherer::{Gatherer, Sizing, density_merges};
 use crate::statistics::StatisticsTerms;
 use crate::statistics::{Charge, StatisticsAccount, Term};
 use arrow::datatypes::DataType;
+use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::{decode_bytea, render_bytea};
 use pgdt_codec::key::ValueKey;
-use pgdt_codec::pgtype::{CompareKind, ComparisonPlan, NestedPlan};
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::internal::{BlockObserver, max_rows_group, min_rows_group, vec_heap};
 use pgdt_model::{

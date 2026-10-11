@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::mem::{self, size_of};
 
-use pgdt_codec::pgtype::CompareKind;
+use pgdt_codec::compare::CompareKind;
 use pgdt_model::{
     ColumnDictionary, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     internal::{text_heap, vec_heap},

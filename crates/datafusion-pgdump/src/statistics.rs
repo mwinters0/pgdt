@@ -26,7 +26,7 @@ use datafusion::common::stats::Precision;
 use datafusion::common::{ColumnStatistics, ScalarValue, Statistics};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
-use pgdt_codec::{ResolvedSchema, pgtype::ComparisonSemantics};
+use pgdt_codec::{ResolvedSchema, compare::ComparisonSemantics};
 use pgdt_model::{DumpIndex, Sortedness, StatisticsView, TableName};
 
 /// What the dump's map says about `table`, in the schema `resolved` states and

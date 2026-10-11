@@ -3,7 +3,7 @@
 //!
 //! **A filter is pushed `Exact` or not at all.** It is `Exact` where it
 //! translates here and the library's plan resolves it in
-//! [`ComparisonSemantics::DataFusion`](pgdt_codec::pgtype::ComparisonSemantics::DataFusion) —
+//! [`ComparisonSemantics::DataFusion`](pgdt_codec::compare::ComparisonSemantics::DataFusion) —
 //! which is where the library answers as DataFusion does over the value the
 //! column emits — and `Unsupported` everywhere else, DataFusion then filtering
 //! the rows itself. So a pushed filter and a kept one answer alike, and a
@@ -19,7 +19,7 @@ use datafusion::common::ScalarValue;
 use datafusion::logical_expr::expr::InList;
 use datafusion::logical_expr::{Between, BinaryExpr, Expr, Operator};
 use pgdt_codec::{
-    ColumnResolution, ResolvedSchema, pgtype::CompareKind, pgtype::ComparisonPlan,
+    ColumnResolution, ResolvedSchema, compare::CompareKind, compare::ComparisonPlan,
     pgtype::NestedPlan,
 };
 use pgdt_query::{Membership, Predicate, PredicateOp};

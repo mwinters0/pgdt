@@ -444,7 +444,7 @@ class Reconciling(unittest.TestCase):
         self.assertIn("Arms no oracle case can cover", out.getvalue())
         self.assertIn("ICU-only", out.getvalue())
         # And the report prints where the evidence is, not the reason alone.
-        self.assertIn("crates/pgdt-codec/src/pgtype/tests.rs", out.getvalue())
+        self.assertIn("crates/pgdt-codec/src/compare/tests.rs", out.getvalue())
 
     def test_an_exemption_that_acquired_a_case_is_a_problem(self):
         # The other direction, and the one that decays: if the oracle ever

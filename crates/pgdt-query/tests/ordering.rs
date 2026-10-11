@@ -9,7 +9,7 @@
 //! schemas; the flags are pinned in `crates/pgdt/tests/query_ordering.rs`.
 
 use futures::StreamExt;
-use pgdt_codec::pgtype::{ComparisonDivergence, ComparisonSemantics};
+use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;

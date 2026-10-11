@@ -5,9 +5,10 @@ use std::mem::{self};
 
 use arrow::datatypes::DataType;
 
+use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use pgdt_codec::decode::typmod_unscaled_digits;
 use pgdt_codec::internal::ColumnTier;
-use pgdt_codec::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_core::decode_field;
 use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::{

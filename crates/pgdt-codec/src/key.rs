@@ -2,20 +2,21 @@
 //! checks a strict parse reads through the same readers.
 //!
 //! A key is a function of a column's [`CompareKind`] (or
-//! [`NestedCompare`](crate::pgtype::NestedCompare)) and one unescaped text
+//! [`NestedCompare`](crate::compare::NestedCompare)) and one unescaped text
 //! alone, so a field, a filter's literal, a stored bound and a gathered value
 //! are ordered by one comparison: the filter's (`pgdt_query::predicate`), the
 //! statistics gatherer's (`pgdt_query::gather`) and the summaries' alike. What
-//! a literal of each kind has to look like, for the refusal naming it, is here
-//! too, beside the grammar it describes.
+//! a literal of each kind has to look like, for the refusal naming it, is
+//! [`crate::grammar`]'s, with the refusal checks a strict parse dispatches
+//! through these readers.
 
 pub(crate) mod order;
 
 use std::cmp::Ordering;
 
 use self::order::{OrderKey, compare_keys, field_key, order_key};
+use crate::compare::CompareKind;
 use crate::decode::Read;
-use crate::pgtype::CompareKind;
 
 /// A value's place in its column's order, opaque outside this module: the key
 /// a filter orders a row by, for a caller ordering values that meet no filter

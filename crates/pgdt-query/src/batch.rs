@@ -41,11 +41,12 @@ use bytes::Bytes;
 
 use crate::predicate::Expr;
 use crate::stream::{ResumeToken, table_stream};
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::decode;
 use pgdt_codec::internal::{
     char_typmod_refuses, float_field, push_array_null, push_integer, quote_array_element,
 };
-use pgdt_codec::pgtype::{ComparisonSemantics, NestedPlan, Position};
+use pgdt_codec::pgtype::{NestedPlan, Position};
 use pgdt_codec::{
     RangeLiteral, RecordLiteral, decode_array, decode_int2vector, decode_multirange, decode_range,
     decode_record, render_int2vector, render_range, render_record,

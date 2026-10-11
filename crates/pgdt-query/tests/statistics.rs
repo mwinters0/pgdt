@@ -580,7 +580,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
 /// incomplete rather than `Exact` over the groups that kept a bound.
 #[tokio::test]
 async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
-    use pgdt_codec::pgtype::ComparisonSemantics;
+    use pgdt_codec::compare::ComparisonSemantics;
     use pgdt_model::{DataBlock, SpanBody};
     use pgdt_model::{StatisticsView, TableName};
     use pgdt_query::{QueryOptions, table_schema, table_summary};

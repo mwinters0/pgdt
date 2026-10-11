@@ -21,9 +21,9 @@ use arrow::array::ArrayRef;
 use crate::batch::decode_field;
 use crate::gather::{declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution};
 use pgdt_codec::ResolvedSchema;
+use pgdt_codec::compare::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use pgdt_codec::internal::column_tiers;
 use pgdt_codec::key::ValueKey;
-use pgdt_codec::pgtype::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
 use pgdt_model::{
     Bounds, ColumnDef, ColumnDictionary, ColumnStatistics, CopyBlock, DumpIndex, DumpMetadata,
     Sortedness, StatisticsView, TableName, UnrepresentableTier,

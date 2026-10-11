@@ -88,7 +88,7 @@ than reading as a phase nobody has sliced.
   naming `pg_catalog` after the declaring schema, which only a hand-written
   file sets (I8). **(c) unowned**; promoted by such a
   file in hand, the fix being to model the path. Detail:
-  `crates/pgdt-codec/src/pgtype.rs`.
+  `crates/pgdt-codec/src/compare.rs`.
 
 - **KD7** — a column that *states* a collation this build does not implement is
   compared bytewise, so the row set is not the server's: under `<`/`>` always,
@@ -96,7 +96,7 @@ than reading as a phase nobody has sliced.
   the fix is a comparison per named collation, up to a provider version. **(c)
   unowned**; promoted by [`../design/roadmap.md`](../design/roadmap.md)'s
   Future item "collation-aware comparison", intent without a phase. Detail:
-  `crates/pgdt-codec/src/pgtype.rs`.
+  `crates/pgdt-codec/src/compare.rs`.
 
 - **KD9** — an `INSERT` run costs an order of magnitude more than a `COPY`
   scan warm and most of a cold NVMe scan's time (`measurements.md`,
@@ -112,7 +112,7 @@ than reading as a phase nobody has sliced.
   outright, and the announcement misses a type reached through a container
   (`box[]`). **(c) unowned**; promoted by a dump whose queried columns are
   geometric or hold a `money`-shaped extension type. Detail:
-  `crates/pgdt-codec/src/pgtype.rs`.
+  `crates/pgdt-codec/src/compare.rs`.
 
 - **KD13** — `money` is below the ADBC floor: the driver answers `int64` and we
   answer `Utf8View`, because `cash_out` renders through the monetary locale and
@@ -268,7 +268,7 @@ than reading as a phase nobody has sliced.
   database's columns warn where they agree with the server, and another
   collation's are announced as a possibility rather than a fact. **(c)
   unowned**; promoted by the roadmap's "Collation-aware comparison", whose
-  environment-free half it belongs to. Detail: `crates/pgdt-codec/src/pgtype.rs`.
+  environment-free half it belongs to. Detail: `crates/pgdt-codec/src/compare.rs`.
 
 - **KD41** — a replay plan never announces its read chunk, so a plain
   source is cut by the chunk its last read announced: a `pgdt query` over a

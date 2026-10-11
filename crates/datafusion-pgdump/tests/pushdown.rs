@@ -32,7 +32,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable};
 use futures::StreamExt;
 use pgdt_codec::{
-    ResolvedSchema, SchemaMode, pgtype::ComparisonDivergence, pgtype::ComparisonSemantics,
+    ResolvedSchema, SchemaMode, compare::ComparisonDivergence, compare::ComparisonSemantics,
     resolve_columns,
 };
 use pgdt_dump::ScanOptions;

@@ -11,7 +11,7 @@ use crate::predicate::{Expr, PredicateOp};
 use crate::prune::{DynamicPruning, prune_block};
 use bytes::Bytes;
 use pgdt_codec::SchemaMode;
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::StrictIdentity;

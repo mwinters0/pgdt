@@ -425,7 +425,7 @@ async fn v18_s_column_shapes_keep_their_type_and_their_displaced_collation() {
 ///
 /// Each name is kept verbatim and schema-qualified, exactly as `v_user`'s and
 /// `v_nd`'s `COLLATE` clauses above spell them — which is the join
-/// `crate::pgtype`'s register makes between the two.
+/// `pgdt_codec::compare`'s register makes between the two.
 #[tokio::test]
 async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation() {
     for version in VERSIONS {
@@ -1002,7 +1002,7 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
 /// declares no table, so no field of any is checked.
 #[tokio::test]
 async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() {
-    use pgdt_codec::pgtype::Unchecked;
+    use pgdt_codec::compare::Unchecked;
     use pgdt_query::strict_unchecked;
     fn base<'a>(column: &'a str, declared: &str) -> (&'a str, &'a str, String, Unchecked) {
         (column, "", declared.to_string(), Unchecked::BaseType)
@@ -1184,7 +1184,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
 /// table is declared.
 #[tokio::test]
 async fn a_hand_written_partition_hierarchy_is_named_per_block() {
-    use pgdt_codec::pgtype::Unchecked;
+    use pgdt_codec::compare::Unchecked;
     use pgdt_query::{UncheckedBound, strict_unchecked};
     let dir = tempfile::tempdir().unwrap();
     let unchecked_of = |text: &str| {

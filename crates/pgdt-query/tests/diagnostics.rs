@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use futures::StreamExt;
 use pgdt_codec::ColumnNote;
-use pgdt_codec::pgtype::{ComparisonDivergence, ComparisonSemantics};
+use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;

@@ -168,10 +168,6 @@ resolution and decoders").
 - **pgdt-codec** — `pgtype.rs`, `resolve.rs`: Arrow's schema types and no
   more (D74).
 
-**Not in one place.** `pgtype.rs` holds two other concepts' parts: the
-comparison register (comparison semantics) and the text grammar a strict
-parse reads.
-
 ## Values
 
 Each type's field read into what Arrow holds and rendered back, the date and
@@ -197,14 +193,13 @@ How PostgreSQL orders a value: the comparison register — plans, collation,
 where DataFusion's comparison diverges — and the order keys read from a
 value's text ([`decisions.md`](decisions.md), "Predicates").
 
-- **pgdt-codec** — `key/`, `pgtype/discrete.rs`, `pgtype/divergence.rs`:
-  value semantics, shared by a filter and the gatherer, so below both (D68).
+- **pgdt-codec** — `compare.rs`, `key/`: value semantics, shared by a
+  filter and the gatherer, so below both (D68). The built-in table answering
+  a type's comparison beside its Arrow type is the type mapping's (D40).
 
-**Not in one place.** The register itself (`CompareKind` to `comparison_for`)
-is in `pgtype.rs`, and `discrete.rs` and `divergence.rs` are one item each,
-split off it by visibility; `key/order.rs` holds every key family, a jsonb
-parser and refusal text; about 2,300 lines of pgdt-query's
-`predicate/tests.rs` test these keys.
+**Not in one place.** `key/order.rs` holds every key family and a jsonb
+parser; about 2,300 lines of pgdt-query's `predicate/tests.rs` test these
+keys.
 
 ## Arrow batches
 
@@ -243,11 +238,9 @@ typmod ([`decisions.md`](decisions.md), "D103").
 
 - **pgdt-query** — `gather/strict.rs`: an observer over a block's rows, as the
   gatherer is.
-- **pgdt-codec** — `pgtype/strict.rs`: what a column's fields are read by.
-
-**Not in one place.** The codec's part comes from three modules:
-`pgtype/strict.rs`, `TextGrammar` in `pgtype.rs`, and `field_refused` and
-`grammar_refuses` in `key/order.rs`.
+- **pgdt-codec** — `grammar.rs`: what a column's fields are read by, and
+  whether PostgreSQL refuses one, dispatching to the readers a key is built
+  by.
 
 ## Statistics
 

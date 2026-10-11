@@ -376,7 +376,7 @@ pub struct ColumnStatistics {
 }
 
 /// Which of a column's stored sets of bounds and row order a statistic is read
-/// from ([`pgdt_codec::pgtype::ComparisonPlan::bounds_kinds`]).
+/// from ([`pgdt_codec::compare::ComparisonPlan::bounds_kinds`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsSet {
     /// [`ColumnStatistics::bounds`]: the register's order where it is

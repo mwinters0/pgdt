@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::{ResolvedSchema, SchemaMode};
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};

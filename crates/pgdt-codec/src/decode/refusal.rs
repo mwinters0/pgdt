@@ -40,7 +40,7 @@ pub fn bytea_unread(s: &str) -> Unread {
 /// `length` characters, with anything but a blank, `0x20`, past them (I75).
 /// The characters are counted in UTF-8, the one encoding read here; a field
 /// no longer in bytes than `length` is read without counting, and a field it
-/// does not refuse is read as written ([`crate::pgtype::CompareKind::Text`]).
+/// does not refuse is read as written ([`crate::compare::CompareKind::Text`]).
 // deficiency: KD96 — a field longer than `length` only by trailing blanks,
 // which `varchar_input` and `bpchar_input` cut to `length` characters (I75),
 // keeps them here, and a `character(n)` field shorter than `length`, which

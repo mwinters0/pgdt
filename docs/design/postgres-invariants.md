@@ -376,9 +376,9 @@ typmod where the grammar does — `timestamp(3) with time zone`,
 word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
 cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
 `bpchar`, and its `t_bit` a column declared `bit` written `bit(1)` and one
-declared `"bit"` written so, at all six majors. `pgtype.rs` reads both:
-`builtin_name` gives `character` its length of 1, and `text_grammar` gives
-`bit` its.
+declared `"bit"` written so, at all six majors. Both are read:
+`pgtype.rs`'s `builtin_name` gives `character` its length of 1, and
+`grammar.rs`'s `text_grammar` gives `bit` its.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
 `format_type` passes a name it does not spell as a keyword through
@@ -1359,7 +1359,7 @@ output.
 **Verified against:** v13.23 and v18.6 (`heap.c`, same check and message),
 plus both rejections observed live on the local PostgreSQL 16 instance.
 
-**Relied on by:** `decisions.md`, "D41" — it is why `pgtype.rs`'s type walks
+**Relied on by:** `decisions.md`, "D41" — it is why the type walks of `pgtype.rs` and `compare.rs`
 can be bounded by the number of definitions the file declares: a path that
 visits more has visited one twice, which only a file this does not hold for
 reaches, and it answers `Unknown` rather than recursing without end.
@@ -1959,7 +1959,7 @@ infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
-`pgtype.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`.
+`compare.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`.
 
 **Re-verify.**
 
@@ -3233,7 +3233,7 @@ the element's own question, one level down, and I32/I37/I43 are where it lives.
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key/order.rs`'s `compare_nested`, and `pgtype.rs`'s
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key/order.rs`'s `compare_nested`, and `compare.rs`'s
 `NestedCompare`, whose `Uncomparable` position is the inheritance rule.
 
 **Re-verify.** Read the functions:
@@ -3375,8 +3375,8 @@ observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6, its out-of-range lines against 13.23 too.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D58" — `key/order.rs`'s `make_range`, `serialize_range`, `compare_range`,
-`compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
-`NestedCompare::Range`/`Multirange` and the `Discrete` value
+`compare_bounds` and `canonical_multirange`, and `compare.rs`'s
+`NestedCompare::Range`/`Multirange` and the `Discrete` value `pgtype.rs`'s
 `builtin_range_subtype` sets. The first claim is also what makes a
 user-declared `canonical` function (I10) a refusal rather than a divergence:
 the rewriting happens before the value is stored *or* compared, so it is not
@@ -4655,7 +4655,7 @@ meets; no field is refused here for it.
 **Relied on by:** `key/order.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
-it holds; `pgtype::text_grammar`, whose `TextGrammar::RefusesAll` refuses
+it holds; `grammar::text_grammar`, whose `TextGrammar::RefusesAll` refuses
 every field of an enum whose labels are exactly none.
 
 **Re-verify.**
@@ -4813,7 +4813,7 @@ into a `bit varying(2)` one. `format_type` names columns declared `bit`,
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `decode::bit_in`, which a strict parse checks a `bit` or
-`bit varying` field by, through `pgtype::text_grammar`.
+`bit varying` field by, through `grammar::text_grammar`.
 
 **Re-verify.**
 
@@ -4883,7 +4883,7 @@ of megabytes; only arithmetic reaches it.
 **Relied on by:** `decode::point_in`, `decode::line_in`, `decode::lseg_in`,
 `decode::box_in`, `decode::path_in`, `decode::poly_in` and
 `decode::circle_in`, which a strict parse checks a geometric field by, through
-`pgtype::text_grammar`; `line_in` refusing only where every supported major
+`grammar::text_grammar`; `line_in` refusing only where every supported major
 refuses.
 
 **Re-verify.**
@@ -5134,7 +5134,7 @@ function, as statistics import may.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `pgtype::text_grammar`, whose `TextGrammar::RefusesAll`
+**Relied on by:** `grammar::text_grammar`, whose `TextGrammar::RefusesAll`
 refuses every non-NULL field of these types.
 
 **Re-verify.**
@@ -5175,7 +5175,7 @@ any input function, is not an input function's refusal.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `pgtype::text_grammar`, whose `TextGrammar::RefusesNothing`
+**Relied on by:** `grammar::text_grammar`, whose `TextGrammar::RefusesNothing`
 reads a field of these types and refuses none, a field being refused only
 where every supported major refuses it.
 

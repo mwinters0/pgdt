@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use arrow::datatypes::DataType;
 
+use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use pgdt_codec::internal::column_tiers;
-use pgdt_codec::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_core::CopyHeader;
 use pgdt_core::internal::StatisticsScope;

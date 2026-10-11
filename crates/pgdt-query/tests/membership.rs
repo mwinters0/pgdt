@@ -24,7 +24,7 @@ use arrow::array::RecordBatch;
 use arrow::compute::concat_batches;
 use futures::StreamExt;
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::{LocalFileSource, Parallelism};

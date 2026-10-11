@@ -3,8 +3,10 @@
 //! column resolution (`docs/design/decisions.md`, "D68"). Synchronous, no
 //! I/O, and Arrow's schema types only (D74).
 
+pub mod compare;
 mod datetime_in;
 pub mod decode;
+mod grammar;
 pub mod key;
 mod nested;
 pub mod pgtype;
@@ -24,6 +26,8 @@ pub use unrepresentable::UnrepresentableMode;
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
+    pub use crate::compare::discrete::DiscreteExt;
+    pub use crate::compare::divergence::datafusion_position_divergences;
     pub use crate::decode::digits::push_integer;
     pub use crate::decode::float::{Float, float_field};
     pub use crate::decode::refusal::{
@@ -33,15 +37,15 @@ pub mod internal {
     pub use crate::decode::stored::{
         render_timestamp_postgres_micros, time_of_day_micros, timestamp_postgres_micros,
     };
+    pub use crate::grammar::{
+        accepted_form, column_grammar, field_refused, grammar_refuses, nested_accepted_form,
+        unchecked_positions,
+    };
     pub use crate::key::order::{
-        NestedKey, OrderKey, Side, accepted_form, compare_keys, compare_nested, field_refused,
-        grammar_refuses, int_in, literal_key, nested_accepted_form, nested_key, order_key,
-        read_key, render_macaddr, special_order_key,
+        NestedKey, OrderKey, Side, compare_keys, compare_nested, int_in, literal_key, nested_key,
+        order_key, read_key, render_macaddr, special_order_key,
     };
     pub use crate::nested::{push_array_null, quote_array_element};
-    pub use crate::pgtype::discrete::DiscreteExt;
-    pub use crate::pgtype::divergence::datafusion_position_divergences;
-    pub use crate::pgtype::strict::{column_grammar, unchecked_positions};
     pub use crate::resolve::{database_for_name, read_as_text};
     pub use crate::unrepresentable::{
         ColumnTier, UnrepresentableRead, column_tiers, counter_for, unrepresentable_reads,

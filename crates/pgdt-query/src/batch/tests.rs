@@ -384,7 +384,7 @@ fn one_column_batcher_fed_by(
 ) -> RowBatcher {
     use arrow::datatypes::Schema;
 
-    use pgdt_codec::pgtype::comparison_for;
+    use pgdt_codec::compare::comparison_for;
     use pgdt_codec::{ColumnNote, ColumnResolution};
 
     let declared = if data_type == DataType::Int32 { "integer" } else { "text" };

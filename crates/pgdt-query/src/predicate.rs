@@ -12,11 +12,11 @@ use pgdt_codec::internal::{
 };
 use pgdt_codec::{ColumnResolution, ResolvedSchema};
 use pgdt_codec::{
-    internal::datafusion_position_divergences,
-    pgtype::{
+    compare::{
         CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, NestedCompare,
         UnanswerableReason,
     },
+    internal::datafusion_position_divergences,
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
@@ -406,7 +406,7 @@ impl Finding for ComparisonNote {
 /// filter a plan keeps reach it too, so a nested column whose every term is
 /// refused here still reports [`ComparisonDivergence::NestedOrder`] for
 /// its order, and each position inside it its own divergence under its path
-/// ([`pgdt_codec::pgtype::NestedCompare::datafusion_divergences`]). A
+/// ([`pgdt_codec::compare::NestedCompare::datafusion_divergences`]). A
 /// kind [`CompareKind::datafusion_order`] moves reports
 /// [`CompareKind::datafusion_divergence`], beside any collation the register
 /// already announced; `jsonb`'s string collation is dropped, the whole value
@@ -732,7 +732,7 @@ struct ComparedTerm {
 #[derive(Debug, Clone)]
 struct BelievedStatistics {
     /// The kind the term compares by, which names the stored set of bounds
-    /// it reads in each block ([`pgdt_codec::pgtype::bounds_set_keyed_by`]), and
+    /// it reads in each block ([`pgdt_codec::compare::bounds_set_keyed_by`]), and
     /// its literal read as a key — present only where the term's semantics
     /// believes bounds in that kind ([`ComparisonPlan::bounds_read_by`]).
     /// Carried for the equality operators too, whose [`Comparison`] keeps no
@@ -868,7 +868,7 @@ const NESTED_IN_DATAFUSION: &str = "the column is nested (array, composite, rang
      multirange), and this build does not compare a nested value in DataFusion's semantics";
 
 /// The sentence for a column the register can answer **no** operator on,
-/// worded here rather than in `pgdt_codec::pgtype` for the same reason
+/// worded here rather than in `pgdt_codec::compare` for the same reason
 /// [`accepted_form`] is: the register carries the fact, this layer says it in
 /// a sentence about the comparison a filter was going to make.
 fn unanswerable_reason(reason: &UnanswerableReason) -> String {
@@ -904,7 +904,7 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// column with an uncompared position still answers `=` and refuses `<`.
 ///
 /// Nothing here reads the Arrow type: how a column compares is a conclusion
-/// resolution already reached (`pgdt_codec::pgtype::comparison_for`), carried in
+/// resolution already reached (`pgdt_codec::compare::comparison_for`), carried in
 /// [`ResolvedSchema::comparisons`].
 ///
 /// **Under [`ComparisonSemantics::DataFusion`]** a scalar compares by its kind's
@@ -2069,7 +2069,7 @@ pub(crate) trait GroupStatistics {
 
     /// A lower and an upper bound on `column`'s non-NULL values, as unescaped
     /// field text, from the stored set ordered as `kind` orders
-    /// ([`pgdt_codec::pgtype::bounds_set_keyed_by`]): no value's key under `kind`
+    /// ([`pgdt_codec::compare::bounds_set_keyed_by`]): no value's key under `kind`
     /// is below `min`'s or above `max`'s.
     ///
     /// **A bound need not be a value the group holds**, and is never read as

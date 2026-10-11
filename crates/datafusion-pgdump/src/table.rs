@@ -12,7 +12,7 @@ use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
-use pgdt_codec::{ResolvedSchema, SchemaMode, pgtype::ComparisonSemantics};
+use pgdt_codec::{ResolvedSchema, SchemaMode, compare::ComparisonSemantics};
 use pgdt_model::TableName;
 use pgdt_query::{QueryOptions, TablePartitions};
 

@@ -16,7 +16,7 @@ use datafusion_pgdump::{
     register_table_factory,
 };
 use namespace_init::InitShutdown;
-use pgdt_codec::{SchemaMode, UnrepresentableMode, pgtype::ComparisonDivergence};
+use pgdt_codec::{SchemaMode, UnrepresentableMode, compare::ComparisonDivergence};
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_model::{DiagnosticSink, Finding, PostgresInvalidValues, Severity};
 use pgdt_query::ComparisonNote;

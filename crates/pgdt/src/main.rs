@@ -14,8 +14,8 @@ use futures::StreamExt;
 use namespace_init::{InitShutdown, namespace_init};
 use pgdt_codec::pgtype::RANGE_STRUCT_FIELDS;
 use pgdt_codec::{
-    ColumnResolution, ResolvedSchema, SchemaMode, UnrepresentableMode, pgtype::CompareKind,
-    pgtype::ComparisonPlan, pgtype::NestedPlan, resolve_columns,
+    ColumnResolution, ResolvedSchema, SchemaMode, UnrepresentableMode, compare::CompareKind,
+    compare::ComparisonPlan, pgtype::NestedPlan, resolve_columns,
 };
 use pgdt_dump::cache::{
     CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, OVERWRITE_WAYS_OUT,
@@ -2944,7 +2944,7 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
 /// every other column — read off the column's own [`ComparisonPlan`], where
 /// resolution already put them (`docs/design/decisions.md`, "The CLI").
 ///
-/// A domain over an enum answers here too, `pgtype::comparison_user_type`
+/// A domain over an enum answers here too, `compare::comparison_user_type`
 /// recursing through the domain chain. An *empty* enum is
 /// `ComparisonPlan::Refused` and has nothing to list, matching the
 /// `empty enum` sentence the line above prints.

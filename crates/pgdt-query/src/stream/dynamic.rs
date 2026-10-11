@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pgdt_codec::ResolvedSchema;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::internal::UnrepresentableRead;
-use pgdt_codec::pgtype::ComparisonSemantics;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::{evaluated_row, timed_span};
 use pgdt_core::{RawRow, RowSplit};

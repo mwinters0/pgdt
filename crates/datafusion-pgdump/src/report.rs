@@ -23,7 +23,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_model::{DiagnosticSink, Finding, Severity, TableName};
 use pgdt_query::{PlanLever, PlanNote, column_divergences};
 

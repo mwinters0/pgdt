@@ -39,7 +39,7 @@ use datafusion::physical_expr::expressions::{
 };
 use datafusion::physical_expr::utils::collect_columns;
 use futures::StreamExt;
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{LocalFileSource, Parallelism};
@@ -583,7 +583,7 @@ fn resolved(fields: Vec<(&str, DataType, bool)>) -> ResolvedSchema {
         columns: vec![pgdt_codec::ColumnResolution::NotDeclared; n],
         notes: Vec::new(),
         plans: vec![pgdt_codec::pgtype::NestedPlan::Scalar; n],
-        comparisons: vec![pgdt_codec::pgtype::ComparisonPlan::Refused; n],
+        comparisons: vec![pgdt_codec::compare::ComparisonPlan::Refused; n],
         not_null: vec![false; n],
     }
 }

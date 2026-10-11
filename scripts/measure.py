@@ -6364,12 +6364,13 @@ CACHE = (
     "crates/pgdt-dump/src/cache/identity.rs",
     "crates/pgdt-dump/src/cache/mode.rs",
 )
-#: The type register, and the files its non-API items sit in beside it.
+#: The type register, the comparison register its built-in table answers
+#: beside it, and the input grammar the comparison register's unordered
+#: positions carry.
 PGTYPE = (
     "crates/pgdt-codec/src/pgtype.rs",
-    "crates/pgdt-codec/src/pgtype/discrete.rs",
-    "crates/pgdt-codec/src/pgtype/divergence.rs",
-    "crates/pgdt-codec/src/pgtype/strict.rs",
+    "crates/pgdt-codec/src/compare.rs",
+    "crates/pgdt-codec/src/grammar.rs",
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96"), and the fold of a row into

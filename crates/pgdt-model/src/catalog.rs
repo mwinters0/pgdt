@@ -290,7 +290,7 @@ impl DatabaseMetadataExt for DatabaseMetadata {
 pub struct CollationDef {
     /// Schema-qualified name, in the canonical spelling a type's name is kept
     /// in (`public.c_collation`, `public."CI"`) — which
-    /// [`pgdt_codec::pgtype::comparison_for`] reads back as the server reads a
+    /// [`pgdt_codec::compare::comparison_for`] reads back as the server reads a
     /// column's `COLLATE` clause, which is how it joins the two.
     pub name: String,
     /// `false` only where the statement carried `deterministic = false`.
@@ -324,7 +324,7 @@ pub struct Extension {
 /// clause whenever a column's collation is its *type's* default, so a bare
 /// `name` column is `C` and a bare `text` column is the database's — two
 /// facts behind one absence, decided by
-/// [`pgdt_codec::pgtype::comparison_for`].
+/// [`pgdt_codec::compare::comparison_for`].
 ///
 /// `not_null` is the `NOT NULL` among its constraints, or what implies one —
 /// an inline `PRIMARY KEY`, `GENERATED … AS IDENTITY` or a `serial` type —

@@ -10,8 +10,8 @@ use async_stream::try_stream;
 use futures::{Stream, StreamExt};
 
 use pgdt_codec::UnrepresentableMode;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::internal::{database_for_name, read_as_text};
-use pgdt_codec::pgtype::ComparisonSemantics;
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
@@ -113,7 +113,7 @@ impl<'a> TableStream<'a> {
     ///
     /// **Per term, because a divergence is operator-conditional**
     /// (`docs/design/decisions.md`, "D59"): most are divergences of *order*
-    /// alone (`pgdt_codec::pgtype::ComparisonDivergence::affects_equality`), so a
+    /// alone (`pgdt_codec::compare::ComparisonDivergence::affects_equality`), so a
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (the model)
     /// and `ResolvedSchema.notes` (the codec), each a [`pgdt_model::Finding`] a

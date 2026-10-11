@@ -8,8 +8,8 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::database_for_name;
 use pgdt_codec::internal::{field_refused, grammar_refuses};
 use pgdt_codec::{
+    compare::{ComparisonPlan, TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
-    pgtype::{ComparisonPlan, TextGrammar, Unchecked},
 };
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{CopyHeader, decode_field, split_fields};
@@ -139,7 +139,7 @@ impl StrictUnchecked {
 pub struct UncheckedColumn {
     pub column: String,
     /// The position within the column's value, spelled as
-    /// [`pgdt_codec::pgtype::NestedCompare::uncomparable`] spells one — `[]` an element,
+    /// [`pgdt_codec::compare::NestedCompare::uncomparable`] spells one — `[]` an element,
     /// `.name` a field, `.bound` a range's bound — and empty for the value.
     pub path: String,
     /// The type declared at that position, as the dump wrote it; empty for

@@ -6,8 +6,9 @@ and every piece of evidence is about an arm.
 description. This module is the join.
 
 **What it exists to check.** The comparison register in
-`crates/pgdt-codec/src/pgtype.rs` says how a column of a declared type compares and
-whether that is PostgreSQL's own order; `scripts/comparison_oracle.py`'s case
+`crates/pgdt-codec/src/compare.rs`, over the built-in table in `pgtype.rs`,
+says how a column of a declared type compares and whether that is
+PostgreSQL's own order; `scripts/comparison_oracle.py`'s case
 table is what PostgreSQL actually answers. Neither knows about the other. The
 register grows one arm at a time as types are closed, and an arm added with no
 case is a claim nothing checks -- coverage decaying quietly, which is the
@@ -24,8 +25,8 @@ So both directions, failing on either:
 
 **An arm is a match arm, read out of the source.** The register's arms cannot
 be enumerated from a running program -- a `match` is not data -- so they are
-parsed from `pgtype.rs` itself, which is the same direction `deficiencies.py`
-reads its markers in. Three functions are read:
+parsed from `compare.rs` and `pgtype.rs` themselves, which is the same
+direction `deficiencies.py` reads its markers in. Three functions are read:
 
 * `builtin_scalar` -- **one arm per declared base name**, not per match arm:
   several names share `(Utf8View, text)` and they are separately closable, so
@@ -109,8 +110,12 @@ import comparison_oracle as co
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "fixtures"
 
-#: The register itself. Arms are read out of it because a `match` is not data.
-REGISTER = REPO / "crates" / "pgdt-codec" / "src" / "pgtype.rs"
+#: The register itself: its walk, and the built-in table it shares with the
+#: type mapping. Arms are read out of them because a `match` is not data.
+REGISTER = (
+    REPO / "crates" / "pgdt-codec" / "src" / "compare.rs",
+    REPO / "crates" / "pgdt-codec" / "src" / "pgtype.rs",
+)
 
 #: The DDL the oracle's database is loaded from, and therefore the only source
 #: that says what kind a `public.*` case names.
@@ -205,11 +210,11 @@ COLLATION_ARMS = (
         ),
         evidence=(
             Evidence(
-                "crates/pgdt-codec/src/pgtype/tests.rs",
+                "crates/pgdt-codec/src/compare/tests.rs",
                 "fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too(",
             ),
             Evidence(
-                "crates/pgdt-codec/src/pgtype/tests.rs",
+                "crates/pgdt-codec/src/compare/tests.rs",
                 "fn only_the_non_deterministic_collation_reaches_equality(",
             ),
             Evidence(
@@ -318,13 +323,18 @@ class Register:
     problems: list[str] = field(default_factory=list)
 
 
-def parse_register(path: Path = REGISTER) -> Register:
-    """Every arm of the comparison register, read out of `pgtype.rs`."""
+def parse_register(paths: Path | Sequence[Path] = REGISTER) -> Register:
+    """Every arm of the comparison register, read out of `compare.rs` and
+    `pgtype.rs`, taken as one text."""
     out = Register()
-    if not path.is_file():
-        out.problems.append(f"{path} does not exist")
+    paths = (paths,) if isinstance(paths, Path) else tuple(paths)
+    for path in paths:
+        if not path.is_file():
+            out.problems.append(f"{path} does not exist")
+    if out.problems:
         return out
-    text = path.read_text()
+    text = "\n".join(path.read_text() for path in paths)
+    path = " and ".join(str(path) for path in paths)
 
     bodies: dict[str, str] = {}
     for name, (signature, anchors) in ANCHORS.items():
@@ -692,7 +702,7 @@ def case_label(type_name: str, collation: str | None) -> str:
 
 
 def reconcile(
-    register_path: Path = REGISTER,
+    register_path: Path | Sequence[Path] = REGISTER,
     schema_path: Path = SCHEMA,
     fixtures: Path = FIXTURES,
     evidence_root: Path = REPO,
@@ -828,7 +838,7 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
 
 
 def check(
-    register_path: Path = REGISTER,
+    register_path: Path | Sequence[Path] = REGISTER,
     schema_path: Path = SCHEMA,
     fixtures: Path = FIXTURES,
     out=sys.stdout,
@@ -847,7 +857,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--fixtures", type=Path, default=FIXTURES, help="fixture root (tests use this)"
     )
     parser.add_argument(
-        "--register", type=Path, default=REGISTER, help="the Rust file holding the arms"
+        "--register",
+        type=Path,
+        nargs="+",
+        default=REGISTER,
+        help="the Rust files holding the arms",
     )
     parser.add_argument(
         "--schema", type=Path, default=SCHEMA, help="the DDL the oracle's database uses"

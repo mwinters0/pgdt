@@ -5,12 +5,13 @@ use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 
 use super::*;
 use pgdt_codec::ColumnNote;
+use pgdt_codec::compare::Discrete;
+use pgdt_codec::compare::{bounds_set_keyed_by, comparison_for};
 use pgdt_codec::internal::DiscreteExt;
 use pgdt_codec::internal::field_refused;
 use pgdt_codec::internal::scalar_read;
 use pgdt_codec::key::ValueKey;
-use pgdt_codec::pgtype::{Discrete, NestedPlan};
-use pgdt_codec::pgtype::{bounds_set_keyed_by, comparison_for};
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_core::encode_field;
 use pgdt_model::{BoundsSet, CollationDef, ColumnDef, TypeDef, TypeKind, UnrepresentableTier};
 
@@ -2050,7 +2051,7 @@ fn a_nested_float_s_negative_zero_is_not_zero_to_datafusion() {
 /// `--schema-mode strings` — answer alike and announce nothing. Both read
 /// bounds by `Text`; which stored set that names is the block's to say,
 /// gathering having resolved the column under whatever type its DDL gives
-/// it (`pgdt_codec::pgtype::bounds_set_keyed_by`).
+/// it (`pgdt_codec::compare::bounds_set_keyed_by`).
 #[test]
 fn datafusion_semantics_orders_a_column_with_no_plan_bytewise() {
     let mut unknown = one_column("box", DataType::Utf8View);

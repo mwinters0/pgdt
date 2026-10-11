@@ -652,7 +652,7 @@ by classing every cell moving between adjacent majors as additive or not (I37, I
 literal is exempt beside the invariant narrowing it, each move a row of the manual's "Where PostgreSQL majors differ", every row asked.
 
 ### D71 Registers are read out of their producer's source, and the join is existence
-A `match` cannot be enumerated at run time, so `oracle_register.py` parses `pgtype.rs`'s arms; `emitter_register.py` reads the literals `pg_dump`
+A `match` cannot be enumerated at run time, so `oracle_register.py` parses `compare.rs`'s and `pgtype.rs`'s arms; `emitter_register.py` reads the literals `pg_dump`
 appends in each function some reader consumes, and its long options, out of a checkout into `emitters.tsv`, extraction being generation and the join
 over committed files the check, the checkouts being machine-local. Anchors turn a rewrite into a report. An arm or a literal is the finest closable unit,
 joined by existence — an arm in the oracle's cases, a literal in fixture bytes at its own major — never by branch coverage; an exemption names what the

@@ -9,8 +9,8 @@ use std::mem::{self, size_of};
 #[cfg(test)]
 use std::sync::Arc;
 
+use pgdt_codec::compare::CompareKind;
 use pgdt_codec::key::ValueKey;
-use pgdt_codec::pgtype::CompareKind;
 use pgdt_codec::{
     decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea},
     internal::{bytea_unread, char_typmod_refuses},

@@ -1,7 +1,7 @@
 //! What a query's plan settles, said to its caller: each [`PlanNote`], the
 //! settings it names, and the blocks an early stop left unread.
 
-use pgdt_codec::pgtype::ComparisonSemantics;
+use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_model::{Finding, Severity};
 
 /// One fact about *this query's plan*, as opposed to a fact about the file

@@ -34,7 +34,7 @@ bindings were carved out of.
 
 **Fact.** `QueryOptions::semantics` names the front end, not an abstract
 order: `ComparisonSemantics::DataFusion` is DataFusion's comparison (a
-float's `-0` made `0`, `pgtype.rs`), and under the typed mode it also nulls
+float's `-0` made `0`, `compare.rs`), and under the typed mode it also nulls
 what DataFusion cannot print, `arrow-cast`'s calendar ending at `262142-12-31`
 ([`decisions.md`](decisions.md), "D98"; `RT21`).
 
