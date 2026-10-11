@@ -1,5 +1,6 @@
+use pgdt_model::{ColumnDef, TypeDef, TypeKind};
+
 use super::*;
-use pgdt_model::ColumnDef;
 
 fn ty(name: &str, kind: TypeKind) -> TypeDef {
     TypeDef { name: name.to_string(), kind }

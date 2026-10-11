@@ -84,7 +84,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
 NAMESPACES: dict[str, tuple[str, ...]] = {
     "pgdt-core": ("instrument",),
     "pgdt-dump": ("cache",),
-    "pgdt-codec": ("compare", "decode", "key", "pgtype"),
+    "pgdt-codec": ("compare", "decode", "key", "nested", "pgtype"),
 }
 
 #: The Arrow crates a library below the query layer never depends on (D74).

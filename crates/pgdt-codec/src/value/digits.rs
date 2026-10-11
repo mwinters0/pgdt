@@ -1,9 +1,10 @@
 //! The decimal digit writers every renderer appends a number through, off
-//! one table of digit pairs. Private to `decode` but for [`push_integer`],
-//! which a crate above calls, so `internal` re-exports it.
+//! one table of digit pairs, and the hex pairs `bytea` and `uuid` are written
+//! with. Private to the families but for [`push_integer`], which a crate above
+//! calls, so `internal` re-exports it.
 
 /// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
-/// at `v * 2` — [`HEX_PAIRS`](super::HEX_PAIRS)'s decimal counterpart. Every
+/// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every
 /// zero-padded field a `date`, a `time` or a `timestamp` is written from is two
 /// digits wide, or a four-digit year's two of them, so a field becomes an
 /// indexed slice and a two-byte copy rather than a trip through `core::fmt`
@@ -22,7 +23,7 @@ const DEC_PAIRS_BYTES: [u8; 200] = {
 
 /// The same table as text, converted once at compile time, so a renderer
 /// appends with `push_str` and pays no UTF-8 validation — the same shape as
-/// [`HEX_PAIRS`](super::HEX_PAIRS).
+/// [`HEX_PAIRS`].
 static DEC_PAIRS: &str = match str::from_utf8(&DEC_PAIRS_BYTES) {
     Ok(s) => s,
     Err(_) => panic!("decimal digits are ASCII"),
@@ -133,4 +134,34 @@ pub(super) fn push_fraction(out: &mut String, micros: i64) {
         }
     }
     out.truncate(end);
+}
+
+/// The 256 lowercase hex pairs end to end, so byte `b`'s pair is the two bytes
+/// at `b * 2` — [`HEX_NIBBLE`](crate::value::libc::HEX_NIBBLE)'s counterpart in
+/// the render direction. The two renderers below loop per *byte* over a value
+/// of any length, and each knows its whole output length before it starts, so a
+/// byte becomes an indexed slice and a two-byte copy into a pre-sized `String`
+/// rather than a trip through `core::fmt` (`docs/design/decisions.md`, "D44").
+const HEX_PAIRS_BYTES: [u8; 512] = {
+    let digits = *b"0123456789abcdef";
+    let mut table = [0u8; 512];
+    let mut b = 0usize;
+    while b < 256 {
+        table[b * 2] = digits[b >> 4];
+        table[b * 2 + 1] = digits[b & 0x0F];
+        b += 1;
+    }
+    table
+};
+
+/// The same table as text, so a renderer appends a pair with `push_str` and
+/// pays no UTF-8 validation; the conversion happens once, at compile time.
+static HEX_PAIRS: &str = match str::from_utf8(&HEX_PAIRS_BYTES) {
+    Ok(s) => s,
+    Err(_) => panic!("hex digits are ASCII"),
+};
+
+pub(crate) fn push_hex_pair(out: &mut String, byte: u8) {
+    let at = byte as usize * 2;
+    out.push_str(&HEX_PAIRS[at..at + 2]);
 }

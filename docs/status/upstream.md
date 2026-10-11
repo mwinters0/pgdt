@@ -70,7 +70,7 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   without `chrono`, or `chrono`'s `NaiveDate::MAX` moves.
 - **Workaround.** The typed mode reads such a value as NULL and the text mode
   as its text ([`../design/decisions.md`](../design/decisions.md), "D98");
-  `pgdt query` prints it with a renderer of its own (`decode.rs`,
+  `pgdt query` prints it with a renderer of its own (`decode`'s
   `render_date32_into`).
 - **Watch.** `every_extreme_is_held_by_arrow_or_recorded`
   (`crates/datafusion-pgdump/tests/unrepresentable.rs`), whose fixture rows sit

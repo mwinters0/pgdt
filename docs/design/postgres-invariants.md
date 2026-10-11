@@ -377,7 +377,7 @@ word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
 cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries
 `bpchar`, and its `t_bit` a column declared `bit` written `bit(1)` and one
 declared `"bit"` written so, at all six majors. Both are read:
-`pgtype.rs`'s `builtin_name` gives `character` its length of 1, and
+`declared.rs`'s `builtin_name` gives `character` its length of 1, and
 `grammar.rs`'s `text_grammar` gives `bit` its.
 
 **Under `--quote-all-identifiers` a built-in is quoted, still unqualified.**
@@ -386,7 +386,7 @@ declared `"bit"` written so, at all six majors. Both are read:
 `fixtures/<13–18>/types/quote-all-identifiers.sql` writes `"text"`, `"date"`,
 `"box"` and `"bpchar"` where `default.sql` writes them bare, and `integer`,
 `timestamp(3) with time zone` and `interval day to second(2)` alike in both. A
-reader comparing a built-in's spelling reads it through `pgtype.rs`'s
+reader comparing a built-in's spelling reads it through `declared.rs`'s
 `builtin_name`, which takes a quoted name as a catalog name.
 
 **Verified against:** v18.6 source; koji and all three fixture versions emit
@@ -554,7 +554,7 @@ fixture carries a `canonical` parameter, so that third claim rests on the
 source at both ends of the supported range plus the 16.15 probe.
 **Relied on by:** `decisions.md` ("Type resolution and decoders" — the mapping
 table and "Ranges and multiranges", and "D58" for the `canonical` parameter);
-`pgtype.rs`'s companion lookup and `TypeKind::Range`'s
+`declared.rs`'s companion lookup and `TypeKind::Range`'s
 `multirange_type_name` and `canonical` fields.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
 src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
@@ -810,7 +810,7 @@ precision`: `1e14` → `100000000000000` (`1e14`, 15 digits), `1e15` →
 crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
-**Relied on by:** `crates/pgdt-codec/src/decode.rs`'s `render_f32`/`render_f64`
+**Relied on by:** `crates/pgdt-codec/src/value/float.rs`'s `render_f32`/`render_f64`
 (`docs/design/decisions.md`, "D44"), whose fixed/scientific decision uses
 `FLT_DIG`/`DBL_DIG` (6/15) as the threshold, and the round-trip test under
 `decisions.md`'s "D73".
@@ -1249,7 +1249,7 @@ elements with it.
 and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
-`ddl::types::base_type_delimiter`, `pgtype::typdelim` and
+`ddl::types::base_type_delimiter`, `declared::typdelim` and
 `key::array_delimiter`, which split a strict parse's array of `box` at
 `;` and of a base type at its `DELIMITER`.
 
@@ -1359,7 +1359,7 @@ output.
 **Verified against:** v13.23 and v18.6 (`heap.c`, same check and message),
 plus both rejections observed live on the local PostgreSQL 16 instance.
 
-**Relied on by:** `decisions.md`, "D41" — it is why the type walks of `pgtype.rs` and `compare.rs`
+**Relied on by:** `decisions.md`, "D41" — it is why the type walks of `pgtype.rs` and `compare/walk.rs`
 can be bounded by the number of definitions the file declares: a path that
 visits more has visited one twice, which only a file this does not hold for
 reaches, and it answers `Unknown` rather than recursing without end.
@@ -1714,11 +1714,11 @@ PostgreSQL"), and on the one spelling a type's name is compared in
 majors: `fmtId()` and the quoting rule are not version-varying, and the
 `Typename` grammar this interacts with is identical across v13-v18 (I28).
 
-**Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
+**Relied on by:** `declared.rs`'s `array_element` — its bound- and
 keyword-stripping helpers bail on a trailing `"`. `ddl/`'s statement
 grammar — `extract_type_words`, `matching_paren`, `split_top_level_commas` —
 steps over a quoted name whole, and `parse_type_name` keeps a definition's
-name in the spelling `pgtype.rs`'s `find_type` compares a declaration in, so
+name in the spelling `declared.rs`'s `find_type` compares a declaration in, so
 the quoted declaration finds its definition.
 
 **Re-verify:**
@@ -1959,7 +1959,7 @@ infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
-`compare.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`.
+`compare/walk.rs`'s `comparison_for` and `key.rs`'s `pg_float_cmp`.
 
 **Re-verify.**
 
@@ -2057,7 +2057,7 @@ answer at 17–18. Live against the koji replica (PostgreSQL 16.15): every one o
 `'Infinity'::numeric > 5` answers `t`; `'NaN'::numeric(5,2)` yields `NaN`;
 `'Infinity'::numeric(5,2)` raises *numeric field overflow*.
 
-**Relied on by.** `key/order.rs`'s `special_order_key` and `OrderKey`'s three
+**Relied on by.** `key.rs`'s `special_order_key` and `OrderKey`'s three
 non-finite variants — [`decisions.md`](decisions.md), "D55", whose `Date32`, `Timestamp`, `Decimal` and
 `interval` register rows are *Agrees* only because of this.
 
@@ -2590,7 +2590,7 @@ v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
 type can hold.
 
 **Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
-and `MacAddr` arms and `key/order.rs`'s parsers for them —
+and `MacAddr` arms and the parsers `key.rs` dispatches to for them —
 [`decisions.md`](decisions.md), "D55",
 where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
@@ -2739,7 +2739,7 @@ and the duplicate rule are unchanged. `escape_json`'s body moved into an
 across all six. `json_lex_number` gained the incremental-parser branch at v17,
 which `jsonb_in` does not enter.
 
-**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `key/order.rs`'s
+**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order` —
@@ -3068,7 +3068,7 @@ and no parser can reproduce them without the subtype's own order:
 (`{[5,6),[1,2)}` → `{[1,2),[5,6)}`, `{[1,3),[2,5)}` → `{[1,5)}`, `{[1,1)}` →
 `{}`). A discrete range also canonicalizes its bounds — `int4range '[1,10]'` is
 `[1,11)` — through the subtype's successor function. All three are I46, and
-`key/order.rs` reproduces them over the decoded bound *keys* after this
+`value/nested/key.rs` reproduces them over the decoded bound *keys* after this
 grammar has done what it can.
 
 **Proof.** `array_in`/`ArrayCount`/`ReadArrayStr` in
@@ -3233,7 +3233,7 @@ the element's own question, one level down, and I32/I37/I43 are where it lives.
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key/order.rs`'s `compare_nested`, and `compare.rs`'s
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `value/nested/key.rs`'s `compare_nested`, and `compare.rs`'s
 `NestedCompare`, whose `Uncomparable` position is the inheritance rule.
 
 **Re-verify.** Read the functions:
@@ -3374,7 +3374,7 @@ read (see `decisions.md`, "D58").
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6, its out-of-range lines against 13.23 too.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `key/order.rs`'s `make_range`, `serialize_range`, `compare_range`,
+**Relied on by:** [`decisions.md`](decisions.md), "D58" — `value/nested/key.rs`'s `make_range`, `serialize_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `compare.rs`'s
 `NestedCompare::Range`/`Multirange` and the `Discrete` value `pgtype.rs`'s
 `builtin_range_subtype` sets. The first claim is also what makes a
@@ -3526,7 +3526,7 @@ probe below run against 16.15.
 
 **Relied on by:** [`decisions.md`](decisions.md), "Type resolution and decoders" (the
 `List<Int16>` mapping and `NestedPlan::Int2Vector`), "D44"
-(`nested.rs`'s `decode_int2vector`/`render_int2vector`/`parse_int2vector`) and
+(`value/nested.rs`'s `decode_int2vector`/`render_int2vector`/`parse_int2vector`) and
 "D55" (`NestedCompare::Int2Vector`, and the
 constant `dims`/`lower_bounds` `nested_key` builds).
 
@@ -3660,8 +3660,8 @@ backward compatibility with no alternative left to select.
 carry both typedefs and the same two limits.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D97" and "D99" — a
-timestamp's comparison key (`key/order.rs`, `order_key`, through
-`decode::stored::timestamp_postgres_micros`), so every value's view bounds such a
+timestamp's comparison key (`key.rs`, `order_key`, through
+`value::datetime::timestamp_postgres_micros`), so every value's view bounds such a
 value and the refuse mode's filter orders it.
 
 **Re-verify.**
@@ -3785,7 +3785,7 @@ the precision.
 v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 `maxdigits` check at all six.
 
-**Relied on by:** `decode::typmod_unscaled_digits` and `decode::typmod_round`,
+**Relied on by:** `decode::typmod_unscaled_digits` and `value::numeric::typmod_round`,
 which put a field through its typmod, rounding half away from zero and
 refusing past the precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
 unscaled integer at the column's scale exactly, and `decode::render_decimal`,
@@ -4046,7 +4046,7 @@ literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
 
 **Relied on by:** the `types` fixtures' `common::REFUSED_FIELDS` row, which
 holds that a data-level parse of a `pg_dump` output fails on the spelling
-`decode::float_in` refuses (I59) — no decoder reading it as a value but under
+`value::float::float_in` refuses (I59) — no decoder reading it as a value but under
 `ignore`.
 
 **Re-verify.**
@@ -4142,7 +4142,7 @@ platform whose `strtod` does not set `ERANGE` on underflow reads the zero.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::float_in`, which refuses a field or a filter
+**Relied on by:** `value::float::float_in`, which refuses a field or a filter
 literal of either type on the same two conditions, a parse keying the field
 failing on it.
 
@@ -4242,10 +4242,10 @@ named zone — are spellings, not bounds.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::civil_days`, `decode::date_days`,
-`decode::parse_time_of_day`, `decode::extract_offset` and
-`decode::timestamp_micros_wide`, which refuse a filter literal of any of the
-five types so spelled, and a field where `datetime_in::datetime_reads` reads
+**Relied on by:** `value::datetime::civil_days`, `value::datetime::date_days`,
+`value::datetime::parse_time_of_day`, `value::datetime::extract_offset` and
+`value::datetime::timestamp_micros_wide`, which refuse a filter literal of any of the
+five types so spelled, and a field where `value::datetime::grammar::datetime_reads` reads
 it at no major too (I83), a parse keying the field failing on it.
 
 **Re-verify.**
@@ -4298,9 +4298,9 @@ bounds.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::interval_parts` and `decode::interval_time_micros`,
+**Relied on by:** `value::datetime::interval_parts` and `value::datetime::interval_time_micros`,
 which refuse a filter literal so spelled, and a field where
-`datetime_in::interval_reads` reads it at no major too (I84).
+`value::datetime::grammar::interval_reads` reads it at no major too (I84).
 
 **Re-verify.**
 
@@ -4357,9 +4357,9 @@ which spellings it reads is I82.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::refusal::numeric_in_stores`, which `key/order.rs` applies to
+**Relied on by:** `value::numeric::numeric_in_stores`, which `key.rs` applies to
 a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
-semantics, `decode::NumericSpelling::stored`, which bounds a field spelled
+semantics, `value::numeric::NumericSpelling::stored`, which bounds a field spelled
 otherwise, and `JsonCursor::number`, which refuses a `jsonb` number so
 spelled, field and literal alike.
 
@@ -4439,7 +4439,7 @@ holds in a UTF-8 locale under glibc.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::bool_unread`, which refuses a field and a filter
+**Relied on by:** `value::bool::bool_unread`, which refuses a field and a filter
 literal so spelled.
 
 **Re-verify.**
@@ -4481,7 +4481,7 @@ server was built against.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::oid_in`, through which `decode::oid_unread`
+**Relied on by:** `value::int::oid_in`, through which `value::int::oid_unread`
 refuses a field and a filter literal every major refuses.
 
 **Re-verify.**
@@ -4528,7 +4528,7 @@ the port gives, by I40's order.
 `inet_net_pton.c` differs only in an `#include`, `network_in` only in v16's
 soft errors).
 
-**Relied on by:** `decode::network_in`, which reads a field and a filter
+**Relied on by:** `value::network::network_in`, which reads a field and a filter
 literal of either type by this grammar.
 
 **Re-verify.**
@@ -4568,13 +4568,13 @@ as `macaddr`, `08:00:2b:01:02:100000000ff` as `…:ff` (truncated), and `+3`,
 `macaddr8`, and refuses `08:00:2b:01:02:03:04`, `08::00:…` and
 `08:00:2b:01:02 03`.
 
-**Scope limit.** glibc's `sscanf`; `decode::macaddr_unread` leaves a run
+**Scope limit.** glibc's `sscanf`; `value::network::macaddr_unread` leaves a run
 opening with a sign or a `0x` to it, refusing no text holding one.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source;
 both differ only in v16's soft errors).
 
-**Relied on by:** `decode::macaddr_unread` and `decode::macaddr8_in`, which
+**Relied on by:** `value::network::macaddr_unread` and `value::network::macaddr8_in`, which
 refuse a field and a filter literal so spelled.
 
 **Re-verify.**
@@ -4612,7 +4612,7 @@ refuses `\xgg` at all six majors.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::refusal::bytea_unread`, which refuses a field and a filter
+**Relied on by:** `value::bytea::bytea_unread`, which refuses a field and a filter
 literal so spelled.
 
 **Re-verify.**
@@ -4652,7 +4652,7 @@ meets; no field is refused here for it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `key/order.rs`'s `field_key`, which refuses a field naming
+**Relied on by:** `key.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
 it holds; `grammar::text_grammar`, whose `TextGrammar::RefusesAll` refuses
@@ -4756,7 +4756,7 @@ no depth is refused here.
 v17's incremental parser and its `JSON_TD_MAX_STACK` are not entered by
 `json_in`.
 
-**Relied on by:** `decode::json_in`, which a strict parse checks a `json`
+**Relied on by:** `value::json::json_in`, which a strict parse checks a `json`
 field by.
 
 **Re-verify.**
@@ -4812,7 +4812,7 @@ into a `bit varying(2)` one. `format_type` names columns declared `bit`,
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::bit_in`, which a strict parse checks a `bit` or
+**Relied on by:** `value::bit::bit_in`, which a strict parse checks a `bit` or
 `bit varying` field by, through `grammar::text_grammar`.
 
 **Re-verify.**
@@ -4868,9 +4868,9 @@ differences named above; v14–v18 are otherwise identical.
 cast trapping the error, which also catches `line_in`'s hard overflow: every
 case agrees across the three but `line '[(2,0),(3,1.7976931348623157e308)]'`,
 read by 13 alone, and `line '[(Infinity,1),(0,2)]'`, refused by 13 alone. The
-cases are `decode/tests.rs`'s
+cases are `value/geometric/tests.rs`'s
 `a_geometric_field_is_refused_only_where_every_major_refuses_it`; `box[]`'s
-and `point[]`'s are `key/order.rs`'s. Hexadecimal reading was checked against
+and `point[]`'s are `key/tests.rs`'s. Hexadecimal reading was checked against
 glibc's `strtod` over 595,823 generated spellings, with no difference.
 
 **Scope limit.** A server whose `strtod` reads no hexadecimal number refuses
@@ -4880,9 +4880,9 @@ of megabytes; only arithmetic reaches it.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 13.23, 16.15 and 18.6 (observed).
 
-**Relied on by:** `decode::point_in`, `decode::line_in`, `decode::lseg_in`,
-`decode::box_in`, `decode::path_in`, `decode::poly_in` and
-`decode::circle_in`, which a strict parse checks a geometric field by, through
+**Relied on by:** `value::geometric::point_in`, `value::geometric::line_in`, `value::geometric::lseg_in`,
+`value::geometric::box_in`, `value::geometric::path_in`, `value::geometric::poly_in` and
+`value::geometric::circle_in`, which a strict parse checks a geometric field by, through
 `grammar::text_grammar`; `line_in` refusing only where every supported major
 refuses.
 
@@ -4939,7 +4939,7 @@ dump in another server encoding counts them otherwise.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 16.15 (observed).
 
-**Relied on by:** `decode::refusal::char_typmod_refuses`, which a parse keying, a
+**Relied on by:** `value::text::char_typmod_refuses`, which a parse keying, a
 query decoding and a strict parse checking such a field read it by, through
 `CompareKind::Text`'s and `CompareKind::PaddedText`'s `length` and
 `NestedPlan::Text`.
@@ -5022,7 +5022,7 @@ subcommands), are not followed; no `pg_dump` writes the latter.
 16.15 (observed).
 
 **Relied on by:** `model::DatabaseMetadata::column_not_null` and
-`pgtype::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
+`declared::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
 keying, a query reading or filtering on and a strict parse checking a column
 refuse a NULL by, and through `pgtype::Position::not_null`, which a query
 reading or comparing a nested column, a filter literal and a strict parse
@@ -5209,7 +5209,7 @@ and `scanint8` (`int8.c`, before v15) or `pg_strtoint64`: `isspace`, a sign,
 `32` and `64`, whose slow path reads the prefixes and underscores; v17 and
 v18 differ from v16 in how they negate alone.
 
-**Observed.** Every integer case of `key/order.rs`'s
+**Observed.** Every integer case of `key/tests.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 each of the three types in a `postgres:<major>-trixie` container at all six
 majors: `0x1F`, `0x_1F`, `0_1` and ` -0x1_F ` are read from v16 only; `_1`,
@@ -5221,7 +5221,7 @@ blanks, which every locale a server runs in agrees on below `0x80`.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `decode::int_unread`, which refuses a field of the three
+**Relied on by:** `value::int::int_unread`, which refuses a field of the three
 types its reader does not read where v16's grammar or the width refuses it,
 so only where every major does.
 
@@ -5255,7 +5255,7 @@ converts nothing, then `isspace` and end. The backend keeps `LC_NUMERIC` at
 `C` (`src/backend/main/main.c`), so the point is `.`. The grammar is the same
 at every major; v13 also corrects a Solaris `strtod`.
 
-**Observed.** Every float case of `key/order.rs`'s
+**Observed.** Every float case of `key/tests.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 both types in a `postgres:<major>-trixie` container (glibc 2.41) at all six
 majors, alike at each: `0x1.8p1`, `0x.8`, `nan(abc_1)` and `\t-1.5e3\n` are
@@ -5270,7 +5270,7 @@ otherwise.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `decode::float_unread`, which refuses a field or a filter
+**Relied on by:** `value::float::float_unread`, which refuses a field or a filter
 literal of either type its reader does not read where this grammar or I59's
 range refuses it.
 
@@ -5307,7 +5307,7 @@ v16.15 (`set_var_from_non_decimal_integer_str`, the exponent loop); v15
 differs from v14 only in a negative scale's typmod, and v17 and v18 from v16
 in nothing these functions do.
 
-**Observed.** Every `numeric` case of `key/order.rs`'s
+**Observed.** Every `numeric` case of `key/tests.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 `numeric_in` with no typmod, with `numeric(10,2)`'s and from v15 with
 `numeric(3,-2)`'s, in a `postgres:<major>-trixie` container at all six
@@ -5322,9 +5322,9 @@ typmod, the cast applying it after, which is not how `COPY` reads a field:
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `decode::numeric_spelling_v14` and
-`decode::numeric_spelling_v16`, each reading one side of the change, so that
-`decode::numeric_unread` refuses a field of a `numeric` column its reader
+**Relied on by:** `value::numeric::numeric_spelling_v14` and
+`value::numeric::numeric_spelling_v16`, each reading one side of the change, so that
+`value::numeric::numeric_unread` refuses a field of a `numeric` column its reader
 does not read only where both sides do.
 
 **Re-verify.**
@@ -5385,7 +5385,7 @@ PostgreSQL's files (D55).
 each text put to every input it suits — in a `postgres:<major>-trixie`
 container at all six majors, under each `DateStyle` order with `Default`,
 `Australia` and a file naming each word no keyword names as a fixed
-abbreviation, beside a zone file `Foo/Bar`: `datetime_in::datetime_reads`
+abbreviation, beside a zone file `Foo/Bar`: `value::datetime::grammar::datetime_reads`
 read every case some server read and refused every case none read but those a
 zone named with punctuation decides, which no file of the run named, and a
 timestamp at its range's edge. `y2001m02d04`, `2020-01-01 y` and `12:00 m`
@@ -5393,7 +5393,7 @@ are read to v15 only, `2020-01-01 t abcd-05` to v17 only, `1999-12-30 995959`
 by v18 only; `2020-01-01 mon sat` only under `Australia`; `2020-01-01 foo5`
 (a POSIX spec) at every major, and `2020-01-01 foo//bar` at none; under
 `TimeZone = 'FOO24'` v18 reads `4714-11-23 BC` as a `timestamptz`, and
-refuses a `TimeZone` of `FOO-168`. `datetime_in`'s
+refuses a `TimeZone` of `FOO-168`. `value/datetime/grammar/tests.rs`'s
 `a_text_is_read_exactly_where_some_major_reads_it_under_some_setting` holds
 a sample with the majors reading each.
 
@@ -5408,7 +5408,7 @@ classed by the server's locale, so a text holding one is taken as read.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `datetime_in::datetime_reads`, which refuses a field of the
+**Relied on by:** `value::datetime::grammar::datetime_reads`, which refuses a field of the
 five types only where no major reads it under any of these settings, a reader
 in `decode` having read no value from it.
 
@@ -5427,7 +5427,7 @@ The first prints the labelled year to v15, the unit checks from v16, the
 digit check from v18 and the session zone's lookup from v18; the second
 `date < -1` to v17 and the checked product from v18. The last two print each
 keyword a shipped abbreviation file names, `sat` alone and matching
-`datetime_in::SHADOWED_KEYWORDS`, and each the installed tzdata uses as an
+`value::datetime::grammar::SHADOWED_KEYWORDS`, and each the installed tzdata uses as an
 abbreviation in force, none; `zdump` rather than `tzdata.zi`, whose `%s`
 crossed with every rule letter spells `AT` where no zone ever used it.
 
@@ -5461,7 +5461,7 @@ parsing in internal values"); the qualifier's range in `DecodeInterval`'s
 
 **Observed.** I83's differential run, its 42,000 `interval` texts put to
 `interval` and to each qualifier from `year` to `minute to second` under both
-styles: `datetime_in::interval_reads` agreed with every server on every one.
+styles: `value::datetime::grammar::interval_reads` agreed with every server on every one.
 `4294968 millennium` and `P-nanD` are read by 13 and 14 alone, `1 day h` and
 `1 day  day` by 13 to 16, `1 day at` by 17 and 18, `3000000000` from 15 and
 never as an `interval year`, `100:30` but as an `interval minute to second`.
@@ -5475,7 +5475,7 @@ the column's qualifier agreed on all 48,000, no precision deciding one
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `datetime_in::interval_reads`, which refuses an `interval`
+**Relied on by:** `value::datetime::grammar::interval_reads`, which refuses an `interval`
 field only where no major reads it under any style and its column's
 qualifier (`pgtype::IntervalQualifier`).
 

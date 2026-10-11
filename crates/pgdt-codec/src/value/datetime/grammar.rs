@@ -33,8 +33,8 @@
 //! A byte past `0x7F` is classed by the server's locale, so a text holding
 //! one is taken as read.
 
-use crate::decode;
-use crate::pgtype::IntervalQualifier;
+use crate::declared::IntervalQualifier;
+use crate::value::libc;
 
 /// A supported major whose grammar differs from the one before it: 14 reads
 /// as 13 does.
@@ -459,7 +459,7 @@ fn strtod(b: &[u8], i: usize) -> (f64, usize, bool) {
     while isspace(at(b, j)) {
         j += 1;
     }
-    match decode::strtod(b, j) {
+    match libc::strtod(b, j) {
         None => (0.0, i, false),
         Some((value, end, out_of_range)) => {
             let sign = usize::from(matches!(at(b, j), b'+' | b'-'));

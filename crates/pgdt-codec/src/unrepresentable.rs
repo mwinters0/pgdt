@@ -25,10 +25,12 @@ use std::sync::Arc;
 
 use arrow_schema::DataType;
 
-use crate::decode::{civil_from_days, decode_date32, interval_parts, timestamp_micros_wide};
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
+use crate::value::datetime::{
+    civil_from_days, decode_date32, interval_parts, timestamp_micros_wide,
+};
 use pgdt_core::{CopyHeader, decode_field};
 use pgdt_model::{
     DumpMetadata, Unrepresentable, UnrepresentableTier, calendar_end, internal::FieldCount,

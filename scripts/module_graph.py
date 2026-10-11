@@ -97,23 +97,6 @@ OWED: dict[frozenset[str], str] = {
     frozenset({"pgdt", "pgdt::where_expr"}): "P35.22, the filter grammars one `query/filter/`",
     frozenset(
         {
-            "pgdt-codec::compare",
-            "pgdt-codec::datetime_in",
-            "pgdt-codec::grammar",
-            "pgdt-codec::key::order",
-            "pgdt-codec::pgtype",
-        }
-    ): "P35.17, the declared type below the register, `grammar` and `pgtype`",
-    frozenset(
-        {
-            "pgdt-codec::decode",
-            "pgdt-codec::decode::float",
-            "pgdt-codec::decode::refusal",
-            "pgdt-codec::decode::stored",
-        }
-    ): "P35.17, the codec by type family",
-    frozenset(
-        {
             "pgdt-query::batch",
             "pgdt-query::stream::dynamic",
             "pgdt-query::stream::map_query",

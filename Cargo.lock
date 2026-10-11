@@ -3658,8 +3658,11 @@ dependencies = [
  "criterion",
  "mimalloc",
  "pgdt-core",
+ "pgdt-dump",
+ "pgdt-io",
  "pgdt-model",
  "serde",
+ "tokio",
 ]
 
 [[package]]

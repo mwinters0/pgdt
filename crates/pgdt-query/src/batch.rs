@@ -46,11 +46,11 @@ use pgdt_codec::decode;
 use pgdt_codec::internal::{
     char_typmod_refuses, float_field, push_array_null, push_integer, quote_array_element,
 };
-use pgdt_codec::pgtype::{NestedPlan, Position};
-use pgdt_codec::{
+use pgdt_codec::nested::{
     RangeLiteral, RecordLiteral, decode_array, decode_int2vector, decode_multirange, decode_range,
     decode_record, render_int2vector, render_range, render_record,
 };
+use pgdt_codec::pgtype::{NestedPlan, Position};
 use pgdt_codec::{ResolvedSchema, SchemaMode};
 use pgdt_codec::{UnrepresentableMode, internal::UnrepresentableRead};
 use pgdt_core::{Error, Result};
@@ -1503,7 +1503,7 @@ pub fn render_field_into(
 }
 
 /// Write an `array_out` literal for a `List` value straight into `out`,
-/// walking the Arrow list rather than building a [`pgdt_codec::ArrayLiteral`].
+/// walking the Arrow list rather than building a [`pgdt_codec::nested::ArrayLiteral`].
 ///
 /// Each element is rendered where it will be read, and
 /// [`quote_array_element`] moves it aside only if the grammar wants

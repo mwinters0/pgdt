@@ -33,3 +33,6 @@ pub(crate) fn bit_in(text: &str, varying: bool, length: Option<u32>) -> bool {
         digits.iter().all(|&d| matches!(d, b'0' | b'1'))
     }
 }
+
+#[cfg(test)]
+mod tests;

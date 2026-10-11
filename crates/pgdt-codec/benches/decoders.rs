@@ -53,7 +53,7 @@ use pgdt_codec::decode::{
     decode_timestamp_micros, decode_uuid, render_bool, render_bytea, render_date32, render_decimal,
     render_f64, render_time64_micros, render_timestamp_micros, render_uuid, typmod_unscaled_digits,
 };
-use pgdt_codec::{decode_array, decode_record, render_array, render_record};
+use pgdt_codec::nested::{decode_array, decode_record, render_array, render_record};
 
 /// `pgdt`'s allocator, as `pgdt` declares it (`crates/pgdt/src/alloc.rs`): a bench
 /// target is a binary of its own, outside the library's refusal of a global

@@ -2,7 +2,7 @@ use super::*;
 
 /// Walk one `List` level, appending its lengths to `dims` and its leaves
 /// to `elements` in row-major order — the flattened shape
-/// [`pgdt_codec::ArrayLiteral`] wants.
+/// [`pgdt_codec::nested::ArrayLiteral`] wants.
 fn collect_array(
     column: &dyn Array,
     row: usize,
@@ -40,5 +40,9 @@ pub(super) fn render_array(
         return Ok("{}".to_string());
     }
     let lower_bounds = vec![1; dims.len()];
-    Ok(pgdt_codec::render_array(&pgdt_codec::ArrayLiteral { elements, dims, lower_bounds }))
+    Ok(pgdt_codec::nested::render_array(&pgdt_codec::nested::ArrayLiteral {
+        elements,
+        dims,
+        lower_bounds,
+    }))
 }

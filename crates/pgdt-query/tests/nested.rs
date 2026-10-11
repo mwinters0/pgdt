@@ -1,7 +1,7 @@
 //! The nested literal codec against real `pg_dump` output — the I20
 //! conformance test (`docs/design/decisions.md`, "D44").
 //!
-//! `nested.rs`'s own unit tests are hand-written literals, which can encode a
+//! `pgdt_codec::nested`'s own unit tests are hand-written literals, which can encode a
 //! misreading of the escaping rules twice. This file cannot: it reads every
 //! nested column of `fixtures/*/types/default.sql` in `SchemaMode::Strings` —
 //! the untyped path, byte-for-byte what `copy::decode_field` produced — and
@@ -14,11 +14,11 @@ use std::ops::ControlFlow;
 use std::path::Path;
 
 use pgdt_codec::SchemaMode;
-use pgdt_codec::pgtype::NestedPlan;
-use pgdt_codec::{
+use pgdt_codec::nested::{
     decode_array, decode_int2vector, decode_multirange, decode_range, decode_record, render_array,
     render_int2vector, render_multirange, render_range, render_record,
 };
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
@@ -284,11 +284,11 @@ mod oracle {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
-    use pgdt_codec::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
-    use pgdt_codec::{
+    use pgdt_codec::nested::{
         parse_array, parse_int2vector, parse_multirange, parse_range, parse_record, render_array,
         render_int2vector, render_multirange, render_range, render_record,
     };
+    use pgdt_codec::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
     use pgdt_core::{decode_field, split_fields};
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::{ScanOptions, preamble_only};
@@ -307,7 +307,7 @@ mod oracle {
     /// are array literals: an array whose element is an array (I26) resolves
     /// to `TypeOutcome::NestedArrayElement`, so the column is text and
     /// compares as text (`KD3`). The parser reads its literals perfectly well
-    /// — `nested.rs`'s unit tests carry the shape — but nothing will ever ask
+    /// — `pgdt_codec::nested`'s unit tests carry the shape — but nothing will ever ask
     /// it to.
     const NESTED: &[&str] = &[
         "integer[]",

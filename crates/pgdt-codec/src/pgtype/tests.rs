@@ -2,6 +2,7 @@ use arrow_schema::TimeUnit;
 
 use super::*;
 use crate::compare::{TextGrammar, comparison_for};
+use crate::declared::domain_not_null;
 use crate::grammar::text_grammar;
 use pgdt_model::ColumnDef;
 

@@ -6330,14 +6330,21 @@ MAP = (
 #: or a change to the gate reads green against a table it just moved.
 MAP_BUILD = (*MAP, *STREAM)
 #: Where a filter term is resolved and evaluated, and the ordering keys it
-#: compares by. Its own mechanism because
+#: compares by: the key's dispatch, and each family's key type beside its
+#: reader (which `DECODE` declares too). Its own mechanism because
 #: until `predicate-terms` no registered figure passed a filter at all, so
 #: nothing in the register was moved by this file and nothing declared it --
 #: which is the same shape of blindness the read path had before `READ`.
 PREDICATE = (
     "crates/pgdt-query/src/predicate.rs",
     "crates/pgdt-codec/src/key.rs",
-    "crates/pgdt-codec/src/key/order.rs",
+    "crates/pgdt-codec/src/value.rs",
+    "crates/pgdt-codec/src/value/datetime.rs",
+    "crates/pgdt-codec/src/value/int.rs",
+    "crates/pgdt-codec/src/value/json.rs",
+    "crates/pgdt-codec/src/value/nested/key.rs",
+    "crates/pgdt-codec/src/value/network.rs",
+    "crates/pgdt-codec/src/value/numeric.rs",
 )
 #: Per-type scalar decode and render-back. Its own mechanism rather than part
 #: of `NESTED`, because the figures it moves are not the ones `NESTED` moves:
@@ -6349,14 +6356,21 @@ PREDICATE = (
 #: touched it.
 DECODE = (
     "crates/pgdt-codec/src/decode.rs",
-    "crates/pgdt-codec/src/decode/bit.rs",
-    "crates/pgdt-codec/src/decode/digits.rs",
-    "crates/pgdt-codec/src/decode/float.rs",
-    "crates/pgdt-codec/src/decode/geometric.rs",
-    "crates/pgdt-codec/src/decode/json.rs",
-    "crates/pgdt-codec/src/decode/network.rs",
-    "crates/pgdt-codec/src/decode/refusal.rs",
-    "crates/pgdt-codec/src/decode/stored.rs",
+    "crates/pgdt-codec/src/value.rs",
+    "crates/pgdt-codec/src/value/bit.rs",
+    "crates/pgdt-codec/src/value/bool.rs",
+    "crates/pgdt-codec/src/value/bytea.rs",
+    "crates/pgdt-codec/src/value/datetime.rs",
+    "crates/pgdt-codec/src/value/digits.rs",
+    "crates/pgdt-codec/src/value/float.rs",
+    "crates/pgdt-codec/src/value/geometric.rs",
+    "crates/pgdt-codec/src/value/int.rs",
+    "crates/pgdt-codec/src/value/json.rs",
+    "crates/pgdt-codec/src/value/libc.rs",
+    "crates/pgdt-codec/src/value/network.rs",
+    "crates/pgdt-codec/src/value/numeric.rs",
+    "crates/pgdt-codec/src/value/text.rs",
+    "crates/pgdt-codec/src/value/uuid.rs",
 )
 CACHE = (
     "crates/pgdt-dump/src/cache.rs",
@@ -6366,12 +6380,16 @@ CACHE = (
     "crates/pgdt-dump/src/cache/store.rs",
 )
 #: The type register, the comparison register its built-in table answers
-#: beside it, and the input grammar the comparison register's unordered
-#: positions carry.
+#: beside it, the declared type's catalog walk both read, and the input
+#: grammar the comparison register's unordered positions carry.
 PGTYPE = (
     "crates/pgdt-codec/src/pgtype.rs",
+    "crates/pgdt-codec/src/declared.rs",
     "crates/pgdt-codec/src/compare.rs",
+    "crates/pgdt-codec/src/compare/walk.rs",
     "crates/pgdt-codec/src/grammar.rs",
+    "crates/pgdt-codec/src/grammar/check.rs",
+    "crates/pgdt-codec/src/grammar/form.rs",
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside
 #: the census (`docs/design/decisions.md`, "D96"), and the fold of a row into
@@ -6380,7 +6398,7 @@ UNREPRESENTABLE = (
     "crates/pgdt-codec/src/unrepresentable.rs",
     "crates/pgdt-model/src/block.rs",
 )
-NESTED = ("crates/pgdt-codec/src/nested.rs", "crates/pgdt-query/src/batch.rs")
+NESTED = ("crates/pgdt-codec/src/value/nested.rs", "crates/pgdt-query/src/batch.rs")
 PREAMBLE = (
     "crates/pgdt-dump/src/preamble.rs",
     "crates/pgdt-dump/src/ddl.rs",
@@ -10257,7 +10275,7 @@ FIGURES: list[Figure] = [
         id="nested-decode-micro",
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
-        depends=("crates/pgdt-codec/src/nested.rs", "crates/pgdt-codec/benches/decoders.rs"),
+        depends=("crates/pgdt-codec/src/value/nested.rs", "crates/pgdt-codec/benches/decoders.rs"),
         run=run_nested_decode_micro,
     ),
     # `depends` carries the scan path as well as the decode one, which no other
@@ -10296,7 +10314,7 @@ FIGURES: list[Figure] = [
         id="allocator",
         section="Which allocator a figure was taken under",
         stage="warm",
-        depends=(
+        depends=_declare(
             *SCAN,
             *MAP,
             *NESTED,
@@ -10375,7 +10393,7 @@ FIGURES: list[Figure] = [
         id="parallel-scan-throughput",
         section="What a second scan worker buys, and where the plain path stops",
         stage="warm-parallel+cold-nvme-parallel",
-        depends=(
+        depends=_declare(
             *SCAN,
             *MAP,
             *READ,

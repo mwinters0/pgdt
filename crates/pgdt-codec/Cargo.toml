@@ -29,6 +29,11 @@ criterion = { workspace = true }
 # binary ships rather than glibc's `malloc`. A dev-dependency because the
 # library names no allocator (`docs/design/decisions.md`, "D13").
 mimalloc = { workspace = true }
+# The key's oracle tests read each major's `types` fixture's preamble
+# (`key/tests.rs`), which only the parser reads.
+pgdt-dump = { path = "../pgdt-dump" }
+pgdt-io = { path = "../pgdt-io" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[bench]]
 name = "decoders"

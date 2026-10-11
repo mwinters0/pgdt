@@ -6,9 +6,9 @@ and every piece of evidence is about an arm.
 description. This module is the join.
 
 **What it exists to check.** The comparison register in
-`crates/pgdt-codec/src/compare.rs`, over the built-in table in `pgtype.rs`,
-says how a column of a declared type compares and whether that is
-PostgreSQL's own order; `scripts/comparison_oracle.py`'s case
+`crates/pgdt-codec/src/compare.rs` and its walk, `compare/walk.rs`, over the
+built-in table in `pgtype.rs`, says how a column of a declared type compares
+and whether that is PostgreSQL's own order; `scripts/comparison_oracle.py`'s case
 table is what PostgreSQL actually answers. Neither knows about the other. The
 register grows one arm at a time as types are closed, and an arm added with no
 case is a claim nothing checks -- coverage decaying quietly, which is the
@@ -25,8 +25,8 @@ So both directions, failing on either:
 
 **An arm is a match arm, read out of the source.** The register's arms cannot
 be enumerated from a running program -- a `match` is not data -- so they are
-parsed from `compare.rs` and `pgtype.rs` themselves, which is the same
-direction `deficiencies.py` reads its markers in. Three functions are read:
+parsed from `compare.rs`, `compare/walk.rs` and `pgtype.rs` themselves, which
+is the same direction `deficiencies.py` reads its markers in. Three functions are read:
 
 * `builtin_scalar` -- **one arm per declared base name**, not per match arm:
   several names share `(Utf8View, text)` and they are separately closable, so
@@ -110,10 +110,12 @@ import comparison_oracle as co
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "fixtures"
 
-#: The register itself: its walk, and the built-in table it shares with the
-#: type mapping. Arms are read out of them because a `match` is not data.
+#: The register itself: its types, its walk, and the built-in table it shares
+#: with the type mapping. Arms are read out of them because a `match` is not
+#: data.
 REGISTER = (
     REPO / "crates" / "pgdt-codec" / "src" / "compare.rs",
+    REPO / "crates" / "pgdt-codec" / "src" / "compare" / "walk.rs",
     REPO / "crates" / "pgdt-codec" / "src" / "pgtype.rs",
 )
 
@@ -324,8 +326,8 @@ class Register:
 
 
 def parse_register(paths: Path | Sequence[Path] = REGISTER) -> Register:
-    """Every arm of the comparison register, read out of `compare.rs` and
-    `pgtype.rs`, taken as one text."""
+    """Every arm of the comparison register, read out of `compare.rs`,
+    `compare/walk.rs` and `pgtype.rs`, taken as one text."""
     out = Register()
     paths = (paths,) if isinstance(paths, Path) else tuple(paths)
     for path in paths:

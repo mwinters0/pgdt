@@ -165,8 +165,10 @@ A declared type to an Arrow type, and a `COPY` header's columns joined
 against the declared schema ([`decisions.md`](decisions.md), "Type
 resolution and decoders").
 
-- **pgdt-codec** — `pgtype.rs`, `resolve.rs`: Arrow's schema types and no
-  more (D74).
+- **pgdt-codec** — `declared.rs`, `pgtype.rs`, `resolve.rs`: Arrow's schema
+  types and no more (D74). A declared type read against the catalog is
+  beneath every module reading one — the mapping, the comparison register, a
+  strict parse's grammar, the datetime grammar.
 
 ## Values
 
@@ -174,15 +176,13 @@ Each type's field read into what Arrow holds and rendered back, the date and
 time grammar, nested literals, and whether PostgreSQL refuses a field
 ([`decisions.md`](decisions.md), "Type resolution and decoders").
 
-- **pgdt-codec** — `decode/`, `datetime_in.rs`, `nested.rs`: synchronous and
-  free of Arrow past its schema types, so a decoder takes a field and returns
-  a value (D74).
+- **pgdt-codec** — `value/`, and the `decode.rs` and `nested.rs` namespaces
+  declaring from it: synchronous and free of Arrow past its schema types, so
+  a decoder takes a field and returns a value (D74). A type family is one
+  module — its reader, renderer, refusal classifier and key type — and reads
+  nothing of the order key's dispatch.
 
-**Not in one place.** Four families — float, numeric, bytea, timestamp — are
-split between `decode.rs` and a child named for its visibility
-(`decode/refusal.rs`, `decode/stored.rs`, `decode/float.rs`); the refusal
-classifiers sit in six places, `key/order.rs` among them; JSON's grammar is in
-`decode/json.rs` and jsonb's in `key/order.rs`. A value rendered back from an
+**Not in one place.** A value rendered back from an
 Arrow array (`render_field`, `decode_field`) is in pgdt-query's `batch.rs`:
 reading an array is query's (D74), but it is filed with the batcher rather than
 as its own module.
@@ -193,13 +193,11 @@ How PostgreSQL orders a value: the comparison register — plans, collation,
 where DataFusion's comparison diverges — and the order keys read from a
 value's text ([`decisions.md`](decisions.md), "Predicates").
 
-- **pgdt-codec** — `compare.rs`, `key/`: value semantics, shared by a
-  filter and the gatherer, so below both (D68). The built-in table answering
-  a type's comparison beside its Arrow type is the type mapping's (D40).
-
-**Not in one place.** `key/order.rs` holds every key family and a jsonb
-parser; about 2,300 lines of pgdt-query's `predicate/tests.rs` test these
-keys.
+- **pgdt-codec** — `compare/`, `key.rs`: value semantics, shared by a filter
+  and the gatherer, so below both (D68). The key is the dispatch building an
+  `OrderKey` over the families' key types, which are each family's own
+  (Values), the nested keys included. The built-in table answering a type's
+  comparison beside its Arrow type is the type mapping's (D40).
 
 ## Arrow batches
 
@@ -238,9 +236,9 @@ typmod ([`decisions.md`](decisions.md), "D103").
 
 - **pgdt-query** — `gather/strict.rs`: an observer over a block's rows, as the
   gatherer is.
-- **pgdt-codec** — `grammar.rs`: what a column's fields are read by, and
-  whether PostgreSQL refuses one, dispatching to the readers a key is built
-  by.
+- **pgdt-codec** — `grammar/`: what a column's fields are read by, whether
+  PostgreSQL refuses one, dispatching to the readers a key is built by, and
+  the form a filter's literal has to take.
 
 ## Statistics
 

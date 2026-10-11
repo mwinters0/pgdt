@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::declared::IntervalQualifier;
+use crate::internal::NUMERIC_DSCALE_MAX;
 
 /// **A field PostgreSQL refuses is told from one this build does not
 /// read** ([`Unread`]): every check carrying a `pg-refuses` marker answers
@@ -12,7 +14,7 @@ use super::*;
 fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
     use CompareKind as K;
     let bare = K::Numeric { infinities: true, typmod: None };
-    let past_dscale = format!("1.{}", "0".repeat(decode::NUMERIC_DSCALE_MAX + 1));
+    let past_dscale = format!("1.{}", "0".repeat(NUMERIC_DSCALE_MAX + 1));
     // `numeric_in` reads it at a scale within its bounds.
     let past_dscale_by_exponent = format!("{past_dscale}e5");
     // `NAMEDATALEN` less one is the longest label a type can hold (I70).
@@ -540,7 +542,7 @@ fn power_of_ten_in(n: u32, bits: usize, less_one: bool) -> String {
 /// zone `+99` in `12:34:56.789 t a/b-99:00` is part of a POSIX zone, and
 /// `day` in `1 day  day` a unit with no count, which 13 to 16 read — and
 /// an `interval` under its column's field qualifier. Each case's reading
-/// by the servers is `datetime_in`'s tests'.
+/// by the servers is the datetime grammar's tests'.
 #[test]
 fn a_date_or_time_field_is_refused_only_where_no_major_reads_it() {
     use CompareKind as K;
@@ -578,5 +580,245 @@ fn a_date_or_time_field_is_refused_only_where_no_major_reads_it() {
     for (kind, text, read) in cases {
         let refused = field_key(kind, text) == Err(Unread::Refused);
         assert_eq!(refused, !read, "{kind:?} {text:?}");
+    }
+}
+
+/// The committed comparison oracle's values against the key alone: what
+/// holds of [`OrderKey`] and [`ValueKey`] over every value the server
+/// wrote, whatever a filter does with them. Every other oracle test drives
+/// a filter, and is pgdt-query's.
+mod oracle {
+    use std::cmp::Ordering;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::{Path, PathBuf};
+
+    use pgdt_core::{decode_field, split_fields};
+    use pgdt_dump::ScanOptions;
+    use pgdt_dump::cache::CacheMode;
+    use pgdt_dump::preamble_only;
+    use pgdt_io::LocalFileSource;
+    use pgdt_model::TypeDef;
+
+    use crate::compare::{CompareKind, ComparisonPlan, comparison_for};
+    use crate::key::{OrderKey, ValueKey, compare_keys, order_key};
+
+    /// The majors `scripts/generate_fixtures.py` generates, which is what
+    /// `fixtures/` holds a directory per.
+    const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
+
+    fn fixture(major: u32, rest: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/{major}/{rest}"))
+    }
+
+    /// Split one COPY TEXT line of a committed oracle file into its
+    /// decoded fields — the same core decoder that reads a dump, because
+    /// the server wrote these files with `COPY ... TO STDOUT`.
+    fn fields(line: &[u8]) -> Vec<Option<String>> {
+        split_fields(line).map(|f| decode_field(f).unwrap().map(|v| v.into_owned())).collect()
+    }
+
+    fn rows(path: &Path) -> Vec<Vec<Option<String>>> {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()).map(fields).collect()
+    }
+
+    /// Every major's `CREATE TYPE`/`CREATE DOMAIN` list, read from the
+    /// `types` fixture that major's oracle database was loaded from.
+    async fn types_of(major: u32) -> Vec<TypeDef> {
+        let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
+        let (metadata, _) =
+            preamble_only(&source, &ScanOptions::default(), &CacheMode::DISABLED).await.unwrap();
+        metadata.databases.into_iter().next().expect("a dump names a database").types
+    }
+
+    /// A stable name per [`CompareKind`] variant, which the golden digest
+    /// hashes: pgdt-query's oracle tests name each kind alike for their own
+    /// table, and a new kind fails to compile in both.
+    fn kind_name(kind: &CompareKind) -> &'static str {
+        match kind {
+            CompareKind::Bool => "Bool",
+            CompareKind::Int { .. } => "Int",
+            CompareKind::UnsignedInt => "UnsignedInt",
+            CompareKind::Float32 => "Float32",
+            CompareKind::Float64 => "Float64",
+            CompareKind::Decimal { .. } => "Decimal",
+            CompareKind::Date => "Date",
+            CompareKind::Time => "Time",
+            CompareKind::Timestamp { .. } => "Timestamp",
+            CompareKind::Uuid => "Uuid",
+            CompareKind::Bytea => "Bytea",
+            CompareKind::Text { .. } => "Text",
+            CompareKind::PaddedText { .. } => "PaddedText",
+            CompareKind::Numeric { .. } => "Numeric",
+            CompareKind::Enum { .. } => "Enum",
+            CompareKind::Interval { .. } => "Interval",
+            CompareKind::TimeTz => "TimeTz",
+            CompareKind::Network { .. } => "Network",
+            CompareKind::MacAddr { .. } => "MacAddr",
+            CompareKind::Jsonb => "Jsonb",
+            CompareKind::IntervalFields { .. } => "IntervalFields",
+        }
+    }
+
+    /// **The key a filter compares by is a total order over every value
+    /// the server wrote**, per declared type the register compares as a
+    /// scalar: reflexive, antisymmetric and transitive over the output
+    /// spelling of every literal it accepted. A single comparison needs
+    /// none of that, and a running minimum, maximum or sortedness flag
+    /// needs all of it — two values that never meet in a filter still
+    /// have to agree with a third about where they sit.
+    ///
+    /// Whether that order is *the server's* is pgdt-query's cell walk
+    /// (`the_register_answers_every_committed_oracle_cell`); this is the
+    /// property that walk cannot see, since it asks each pair once against a
+    /// literal.
+    #[tokio::test]
+    async fn the_key_is_a_total_order_over_every_committed_value() {
+        let mut kinds = 0usize;
+        let mut triples = 0usize;
+        for major in MAJORS {
+            let types = types_of(major).await;
+            let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                if let (Some(declared), Some("ok"), Some(output)) =
+                    (row[0].clone(), row[2].as_deref(), row[3].clone())
+                {
+                    outputs.entry(declared).or_default().insert(output);
+                }
+            }
+            for (declared, values) in outputs {
+                let ComparisonPlan::Compared { kind, .. } =
+                    comparison_for(&declared, None, &types, &[])
+                else {
+                    continue;
+                };
+                kinds += 1;
+                let keys: Vec<(&String, OrderKey)> = values
+                    .iter()
+                    .map(|v| {
+                        let key = order_key(&kind, v).unwrap_or_else(|| {
+                            panic!("{major} {declared}: the server wrote {v:?}")
+                        });
+                        (v, key)
+                    })
+                    .collect();
+                for (a, ka) in &keys {
+                    assert_eq!(compare_keys(ka, ka), Ordering::Equal, "{major} {declared} {a}");
+                    for (b, kb) in &keys {
+                        let ab = compare_keys(ka, kb);
+                        assert_eq!(
+                            ab,
+                            compare_keys(kb, ka).reverse(),
+                            "{major} {declared}: {a:?} against {b:?}"
+                        );
+                        for (c, kc) in &keys {
+                            triples += 1;
+                            let bc = compare_keys(kb, kc);
+                            if ab != Ordering::Greater && bc != Ordering::Greater {
+                                let ac = compare_keys(ka, kc);
+                                assert_ne!(
+                                    ac,
+                                    Ordering::Greater,
+                                    "{major} {declared}: {a:?} <= {b:?} <= {c:?}"
+                                );
+                                if ab == Ordering::Equal && bc == Ordering::Equal {
+                                    assert_eq!(ac, Ordering::Equal);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Floors, not counts: the scalar kinds of six majors.
+        assert!(kinds > 150, "only {kinds} declared types walked");
+        assert!(triples > 50_000, "only {triples} triples asserted");
+    }
+
+    /// The persisted format version and the ordering digest it was pinned
+    /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
+    const GOLDEN_ORDER: (u32, u64) = (68, 18_361_034_400_210_632_537);
+
+    /// **Every committed oracle value, sorted under its declared type's
+    /// comparison kind and under each kind a set of its bounds is stored
+    /// by, digests to the value pinned beside the cache's
+    /// `CACHE_FORMAT_VERSION`.** A stored bound, sortedness or dictionary means
+    /// what this build's comparison says, so a change to how any kind
+    /// orders or equates values is a persisted reshape that bumps the
+    /// version (`docs/design/decisions.md`, "D22"); this fails until it
+    /// is bumped and the digest re-pinned. A regenerated oracle moves the
+    /// digest with no change to any comparison, and is re-pinned alone.
+    ///
+    /// The digest is FNV-1a over each major, each declared type and its
+    /// values in stored order ([`ValueKey::stored_order`]), ties broken by
+    /// text, with whether each value keys equal to the one before it, and
+    /// whether only the stored order tells the two apart — so equality
+    /// moves it as well as order.
+    #[tokio::test]
+    async fn golden_order_is_pinned_to_the_format_version() {
+        fn fnv(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes {
+                *hash ^= u64::from(*byte);
+                *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        let mut digest = 0xcbf2_9ce4_8422_2325u64;
+        let mut values_sorted = 0usize;
+        for major in MAJORS {
+            let types = types_of(major).await;
+            let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                if let (Some(declared), Some("ok"), Some(output)) =
+                    (row[0].clone(), row[2].as_deref(), row[3].clone())
+                {
+                    outputs.entry(declared).or_default().insert(output);
+                }
+            }
+            for (declared, values) in outputs {
+                let plan = comparison_for(&declared, None, &types, &[]);
+                let ComparisonPlan::Compared { kind, .. } = &plan else {
+                    continue;
+                };
+                // The register's kind, and each kind a set of bounds is
+                // stored under.
+                let mut kinds = vec![kind.clone()];
+                for stored in plan.bounds_kinds().into_iter().flatten() {
+                    if !kinds.contains(&stored) {
+                        kinds.push(stored);
+                    }
+                }
+                for kind in kinds {
+                    let mut keyed: Vec<(ValueKey, &String)> = values
+                        .iter()
+                        .map(|v| (ValueKey::of(&kind, v).expect("the server wrote it"), v))
+                        .collect();
+                    keyed.sort_by(|(ka, a), (kb, b)| ka.stored_order(kb).then_with(|| a.cmp(b)));
+                    let name = kind_name(&kind);
+                    fnv(&mut digest, format!("{major}\t{declared}\t{name}\n").as_bytes());
+                    let mut previous: Option<&ValueKey> = None;
+                    for (key, value) in &keyed {
+                        let tie = previous.map(|p| (p.compare(key), p.stored_order(key)));
+                        fnv(
+                            &mut digest,
+                            match tie {
+                                Some((Ordering::Equal, Ordering::Equal)) => b"=",
+                                Some((Ordering::Equal, _)) => b"~",
+                                _ => b"<",
+                            },
+                        );
+                        fnv(&mut digest, value.as_bytes());
+                        previous = Some(key);
+                        values_sorted += 1;
+                    }
+                }
+            }
+        }
+        assert!(values_sorted > 800, "only {values_sorted} values sorted");
+        assert_eq!(
+            (pgdt_model::CACHE_FORMAT_VERSION, digest),
+            GOLDEN_ORDER,
+            "the comparison order moved, or CACHE_FORMAT_VERSION did: bump CACHE_FORMAT_VERSION if any \
+                 kind orders or equates differently, then re-pin both here"
+        );
     }
 }

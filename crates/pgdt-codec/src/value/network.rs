@@ -1,8 +1,12 @@
 //! Whether `inet`, `cidr`, `macaddr` and `macaddr8` input reads a text: ports
 //! of `inet_net_pton.c` and the `macaddr` scanners, read or refused. Not
-//! `decode`'s API; a strict parse and a filter's literal call them.
+//! `decode`'s API; a strict parse and a filter's literal call them. And an
+//! `inet` or `cidr` value's order key ([`NetworkKey`]).
 
-use super::{HEX_NIBBLE, Unread, is_c_space};
+use std::cmp::Ordering;
+
+use crate::decode::Unread;
+use crate::value::libc::{HEX_NIBBLE, is_c_space};
 
 /// An `inet` or `cidr` value as `network_in` reads it: its family (`true`
 /// for IPv6), its netmask's bits, and its address left-aligned in sixteen
@@ -511,3 +515,61 @@ pub(crate) fn macaddr8_in(s: &str) -> Option<[u8; 8]> {
         _ => None,
     }
 }
+
+/// One side of an `inet`/`cidr` comparison: the family, the netmask length,
+/// and the address left-aligned in sixteen bytes.
+///
+/// Not a byte key, and it cannot be made into one: `network_cmp_internal`
+/// compares the *shorter* netmask's worth of address bits first (I40), so how
+/// many bits are significant depends on the value being compared against.
+/// The pair is compared, not two independently sortable keys.
+///
+/// `v6` is the family; `PGSQL_AF_INET6` is `PGSQL_AF_INET + 1`, so an IPv4
+/// address sorts below every IPv6 one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkKey {
+    pub(crate) v6: bool,
+    pub(crate) bits: u8,
+    /// The address, left-aligned: an IPv4 address occupies the first four
+    /// bytes and the rest are zero, which is what `bitncmp` reads, never
+    /// looking past `maxbits`.
+    pub(crate) addr: [u8; 16],
+}
+
+impl NetworkKey {
+    /// `ip_maxbits` — the family's address width.
+    fn maxbits(&self) -> u8 {
+        if self.v6 { 128 } else { 32 }
+    }
+
+    /// `network_cmp_internal` (I40): family, then the shorter netmask's
+    /// worth of address bits, then the netmask length, then the whole
+    /// address.
+    pub(crate) fn cmp(&self, other: &Self) -> Ordering {
+        if self.v6 != other.v6 {
+            return self.v6.cmp(&other.v6);
+        }
+        let shared = self.bits.min(other.bits);
+        bitncmp(&self.addr, &other.addr, shared)
+            .then_with(|| self.bits.cmp(&other.bits))
+            .then_with(|| bitncmp(&self.addr, &other.addr, self.maxbits()))
+    }
+}
+
+/// PostgreSQL's `bitncmp`: the first `n` bits of two addresses, most
+/// significant first. Whole bytes by `memcmp`, then the straddling byte's
+/// remaining bits under a high-bit mask — the same answer as `bitncmp`'s
+/// bit-at-a-time loop, which stops at the first differing bit.
+fn bitncmp(left: &[u8; 16], right: &[u8; 16], n: u8) -> Ordering {
+    let whole = usize::from(n / 8);
+    let full = left[..whole].cmp(&right[..whole]);
+    let spare = n % 8;
+    if full != Ordering::Equal || spare == 0 {
+        return full;
+    }
+    let mask = 0xffu8 << (8 - spare);
+    (left[whole] & mask).cmp(&(right[whole] & mask))
+}
+
+#[cfg(test)]
+mod tests;

@@ -356,13 +356,13 @@ than reading as a phase nobody has sliced.
 - **KD84** — an `oid` written with a leading zero, which no `pg_dump` writes,
   is read in decimal as v15 and earlier read it, where v16 and later read it
   in octal, `010` as 8, and refuse `08`. **(c) unowned**; promoted by a
-  hand-written dump holding one. Detail: `crates/pgdt-codec/src/decode.rs`.
+  hand-written dump holding one. Detail: `crates/pgdt-codec/src/value/int.rs`.
 
 - **KD85** — a `macaddr` field in which a layout `macaddr_in`'s `sscanf`
   tries meets an octet opening with a sign or `0x`, read by glibc's rules,
   is never refused, though the server refuses some (`08:00:2b:01:02:-1`, a
   malformed dash-separated address), so a parse keying it goes on past one. **(c) unowned**; promoted by a hand-written dump holding one.
-  Detail: `crates/pgdt-codec/src/decode/network.rs`.
+  Detail: `crates/pgdt-codec/src/value/network.rs`.
 
 - **KD86** — on an enum whose labels the preamble did not read exactly, a
   filter literal naming a label they lack is refused, and so is such a field
@@ -411,14 +411,14 @@ than reading as a phase nobody has sliced.
   hold; only the `varchar(n)` half changes an answer, its `<` and `=`, the
   latter needing `KD82` closed too. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail:
-  `crates/pgdt-codec/src/decode/refusal.rs`.
+  `crates/pgdt-codec/src/value/text.rs`.
 
 - **KD99** — a `time(p)`, `timetz(p)`, `timestamp(p)`, `timestamptz(p)` or
   qualified `interval` field is read as written, not rounded or truncated by
   its typmod as PostgreSQL stores it, which no `pg_dump` writes, so a typed
   read emits, keys and compares a value the server does not hold. **(c)
   unowned**; promoted by a hand-written dump holding one. Detail:
-  `crates/pgdt-codec/src/decode.rs`.
+  `crates/pgdt-codec/src/value/datetime.rs`.
 
 - **KD101** — a `COPY` block whose first row holds a raw CR before its
   line's end, its rows ending in a bare CR, is read as LF-split lines and
@@ -471,7 +471,7 @@ than reading as a phase nobody has sliced.
   as the parse rounds it, as a decimal one is, but fails a query decoding
   it; `float_out` writes neither spelling. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail:
-  `crates/pgdt-codec/src/decode/float.rs`.
+  `crates/pgdt-codec/src/value/float.rs`.
 
 - **KD109** — no instrument attributes the shipped allocator's blocks to call
   stacks: mimalloc is linked without `override`, so heaptrack and valgrind,
@@ -525,4 +525,4 @@ than reading as a phase nobody has sliced.
   PostgreSQL does through `ValueKey`, but an array, record, range or
   multirange only through `internal`'s `NestedKey`, which exposes its
   representation. **(b) owned by P36**. Detail:
-  `crates/pgdt-codec/src/key/order.rs`.
+  `crates/pgdt-codec/src/value/nested/key.rs`.

@@ -147,7 +147,7 @@ impl DatabaseMetadata {
     /// column, at the table, or by an `ALTER TABLE … SET NOT NULL` — or takes
     /// it from a parent, in `INHERITS` order and each parent asked the same
     /// way, which passes on every `NOT NULL` but v18's `NO INHERIT` (I76). A
-    /// domain's is its type's, [`pgdt_codec::pgtype::domain_not_null`]'s to say.
+    /// domain's is its type's, `pgdt_codec`'s `domain_not_null`'s to say.
     ///
     /// Read against the preamble's final state, as
     /// [`declared_column`](Self::declared_column) is; a `NOT NULL` added after
@@ -525,7 +525,7 @@ pub enum TypeKind {
     ///
     /// `not_null` is whether the domain declares `NOT NULL`, which `domain_in`
     /// checks of a NULL it is handed, and every domain over this one with it
-    /// ([`pgdt_codec::pgtype::domain_not_null`], I76).
+    /// (`pgdt_codec`'s `domain_not_null`, I76).
     ///
     /// `check` is whether its `CREATE DOMAIN` declares a `CHECK`, an
     /// expression `domain_in` evaluates against each value of it (I77).

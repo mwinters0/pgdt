@@ -986,7 +986,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
 /// another refuses — `3000000000` as a year, `100:30` as minutes — and a
 /// data-level parse keying it fails naming it, as a strict one does, which
 /// alone finds it beneath an array. Every case put to `interval_in` under its
-/// qualifier at each supported major (`datetime_in`'s tests).
+/// qualifier at each supported major (`pgdt_codec`'s datetime grammar's tests).
 #[tokio::test]
 async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     let dir = tempfile::tempdir().unwrap();
